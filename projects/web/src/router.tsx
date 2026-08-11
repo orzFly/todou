@@ -5,7 +5,6 @@ import {
   createRouter,
   Navigate,
   Outlet,
-  useRouterState,
 } from "@tanstack/react-router";
 import { issueSearchSchema } from "@/api/issues.ts";
 import { meQuery } from "@/api/queries.ts";
@@ -49,7 +48,6 @@ const authedRoute = createRoute({
 
 function AuthedLayout() {
   const me = useQuery(meQuery);
-  const href = useRouterState({ select: (state) => state.location.href });
   if (me.isPending) {
     return (
       <div className="mx-auto max-w-6xl space-y-4 px-4 py-10">
@@ -62,7 +60,13 @@ function AuthedLayout() {
     const status = (me.error as { status?: number }).status;
     if (status === 401) {
       // Carry the interrupted location (e.g. /cli-auth?...) through login.
-      return <Navigate to="/login" search={{ redirect: href }} />;
+      // Read window.location (the last COMMITTED url), never live router
+      // state: that updates mid-transition, so Navigate would re-fire with
+      // an ever-nesting redirect param and wedge the main thread.
+      const here = window.location.pathname + window.location.search;
+      return (
+        <Navigate to="/login" search={here === "/" ? {} : { redirect: here }} />
+      );
     }
     return (
       <div className="mx-auto max-w-lg px-4 py-20 text-center text-destructive">
