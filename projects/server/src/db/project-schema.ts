@@ -4,6 +4,7 @@
 // schema works in both placements and multiple projects may safely share
 // one target database. References to users are LOGICAL ids into the system
 // database — no foreign keys are possible across databases.
+import type { AgentContext } from "@todou/shared";
 import {
   bigint,
   index,
@@ -112,6 +113,9 @@ export const comments = pgTable(
       .references(() => issues.id, { onDelete: "cascade" }),
     authorId: bigint("author_id", { mode: "number" }).notNull(),
     body: text("body").notNull(),
+    // Self-reported client provenance (e.g. Claude Code session/model);
+    // never authoritative — authorship stays author_id.
+    agentContext: jsonb("agent_context").$type<AgentContext | null>(),
     createdAt: createdAt(),
     editedAt: timestamp("edited_at", { withTimezone: true }),
   },
@@ -143,6 +147,7 @@ export const issueEvents = pgTable(
       ],
     }).notNull(),
     payload: jsonb("payload").notNull().default({}),
+    agentContext: jsonb("agent_context").$type<AgentContext | null>(),
     createdAt: createdAt(),
   },
   (t) => [index("issue_events_issue_created_idx").on(t.issueId, t.createdAt)],

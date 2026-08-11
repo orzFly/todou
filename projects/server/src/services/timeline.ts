@@ -197,6 +197,7 @@ export async function getTimeline(
           body: m.row.body,
           created_at: m.row.createdAt.toISOString(),
           edited_at: m.row.editedAt?.toISOString() ?? null,
+          agent_context: m.row.agentContext ?? null,
         }
       : {
           type: "event",
@@ -205,6 +206,7 @@ export async function getTimeline(
           actor: refs.get(m.row.actorId) ?? ghost(m.row.actorId),
           payload: m.row.payload as Record<string, unknown>,
           created_at: m.row.createdAt.toISOString(),
+          agent_context: m.row.agentContext ?? null,
         },
   );
 

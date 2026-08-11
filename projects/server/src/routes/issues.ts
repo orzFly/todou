@@ -133,6 +133,7 @@ export function issueRoutes() {
         c.get("user"),
         slug,
         c.req.valid("json"),
+        c.get("agentContext"),
       ),
       201,
     );
@@ -155,6 +156,7 @@ export function issueRoutes() {
         slug,
         number,
         c.req.valid("json"),
+        c.get("agentContext"),
       ),
       200,
     );
@@ -183,6 +185,7 @@ export function issueRoutes() {
         slug,
         number,
         c.req.valid("json"),
+        c.get("agentContext"),
       ),
       201,
     );
@@ -198,6 +201,7 @@ export function issueRoutes() {
         number,
         commentId,
         c.req.valid("json"),
+        c.get("agentContext"),
       ),
       200,
     );

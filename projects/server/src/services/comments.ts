@@ -1,4 +1,5 @@
 import type {
+  AgentContext,
   ChangeEvent,
   CommentCreateInput,
   CommentUpdateInput,
@@ -30,6 +31,7 @@ async function toTimelineComment(
     body: row.body,
     created_at: row.createdAt.toISOString(),
     edited_at: row.editedAt?.toISOString() ?? null,
+    agent_context: row.agentContext ?? null,
   };
 }
 
@@ -49,6 +51,7 @@ export async function createComment(
   slug: string,
   issueNumber: number,
   input: CommentCreateInput,
+  agentContext: AgentContext | null = null,
 ): Promise<TimelineComment> {
   const { project } = await requireProject(ctx, actor, slug, "writer");
   const db = await ctx.router.forProject(routeInfoOf(project));
@@ -63,6 +66,7 @@ export async function createComment(
         issueId: issue.id,
         authorId: actor.id,
         body: input.body,
+        agentContext,
       })
       .returning();
     const comment = inserted[0];
@@ -81,6 +85,7 @@ export async function createComment(
       actor.id,
       { issueNumber, commentId: comment.id },
       input.body,
+      agentContext,
     );
     for (const ref of refs) {
       events.push({
@@ -127,6 +132,9 @@ export async function updateComment(
   issueNumber: number,
   commentId: number,
   input: CommentUpdateInput,
+  // The comment row keeps its original provenance; only the referenced
+  // events born from this edit carry the editing request's context.
+  agentContext: AgentContext | null = null,
 ): Promise<TimelineComment> {
   const { projectId, db, row } = await loadCommentForWrite(
     ctx,
@@ -149,6 +157,7 @@ export async function updateComment(
     actor.id,
     { issueNumber, commentId: row.id },
     input.body,
+    agentContext,
   );
   ctx.bus.publish(projectId, {
     entity: "timeline",

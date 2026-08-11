@@ -76,6 +76,7 @@ describe("TimelineItem", () => {
       body: "hello",
       created_at: "2026-08-11T12:00:00Z",
       edited_at: null,
+      agent_context: null,
     });
     expect(comment.type).toBe("comment");
 
@@ -86,6 +87,7 @@ describe("TimelineItem", () => {
       actor: author,
       payload: { from: "Todo", to: "Done" },
       created_at: "2026-08-11T12:00:01Z",
+      agent_context: null,
     });
     expect(event.type).toBe("event");
   });
@@ -137,8 +139,9 @@ describe("AgentContext on timeline items", () => {
     edited_at: null,
   };
 
-  it("accepts missing, null, and populated agent_context", () => {
-    expect(TimelineComment.safeParse(base).success).toBe(true);
+  it("accepts null and populated agent_context, rejects missing", () => {
+    // The server always emits the field; a missing one is a contract break.
+    expect(TimelineComment.safeParse(base).success).toBe(false);
     expect(
       TimelineComment.safeParse({ ...base, agent_context: null }).success,
     ).toBe(true);

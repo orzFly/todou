@@ -80,6 +80,7 @@ describe("timeline paging helpers", () => {
       body: `c${id}`,
       created_at: "2026-08-11T00:00:00Z",
       edited_at: null,
+      agent_context: null,
     })),
     prev_cursor: prev,
     next_cursor: next,
@@ -108,6 +109,7 @@ describe("timeline rendering", () => {
           body: "**bold potato**",
           created_at: "2026-08-11T00:00:00Z",
           edited_at: null,
+          agent_context: null,
         }}
       />,
     );
@@ -124,6 +126,7 @@ describe("timeline rendering", () => {
           actor: bot,
           payload: { to: { name: "Done" } },
           created_at: "2026-08-11T00:00:00Z",
+          agent_context: null,
         }}
       />,
     );

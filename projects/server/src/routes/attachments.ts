@@ -60,6 +60,7 @@ export function attachmentRoutes() {
       slug,
       form.issue_number,
       form.file,
+      c.get("agentContext"),
     );
     return c.json(attachment, 201);
   });

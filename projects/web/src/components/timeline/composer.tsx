@@ -52,6 +52,7 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
           body,
           created_at: new Date().toISOString(),
           edited_at: null,
+          agent_context: null,
         },
       },
     ]);

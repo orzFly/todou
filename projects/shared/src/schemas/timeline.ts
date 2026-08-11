@@ -25,9 +25,7 @@ export const TimelineComment = z.object({
   body: z.string(),
   created_at: Timestamp,
   edited_at: Timestamp.nullable(),
-  // nullish until the server emits the field everywhere (spec step 4
-  // tightens this to nullable).
-  agent_context: AgentContext.nullish(),
+  agent_context: AgentContext.nullable(),
 });
 export type TimelineComment = z.infer<typeof TimelineComment>;
 
@@ -38,7 +36,7 @@ export const TimelineEvent = z.object({
   actor: UserRef,
   payload: z.record(z.string(), z.unknown()),
   created_at: Timestamp,
-  agent_context: AgentContext.nullish(),
+  agent_context: AgentContext.nullable(),
 });
 export type TimelineEvent = z.infer<typeof TimelineEvent>;
 

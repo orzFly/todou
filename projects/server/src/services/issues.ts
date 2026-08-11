@@ -190,6 +190,7 @@ export async function createIssue(
   actor: UserRow,
   slug: string,
   input: IssueCreateInput,
+  agentContext: AgentContext | null = null,
 ): Promise<Issue> {
   const { project } = await requireProject(ctx, actor, slug, "writer");
   const db = await ctx.router.forProject(routeInfoOf(project));
@@ -260,6 +261,7 @@ export async function createIssue(
         actorId: actor.id,
         type: "opened",
         payload: {},
+        agentContext,
       })
       .returning({ id: issueEvents.id });
 
@@ -285,6 +287,7 @@ export async function createIssue(
       actor.id,
       { issueNumber: number },
       input.body,
+      agentContext,
     );
     for (const ref of refs) {
       events.push({
@@ -437,6 +440,7 @@ export async function updateIssue(
   slug: string,
   number: number,
   input: IssueUpdateInput,
+  agentContext: AgentContext | null = null,
 ): Promise<Issue> {
   const { project } = await requireProject(ctx, actor, slug, "writer");
   const db = await ctx.router.forProject(routeInfoOf(project));
@@ -502,6 +506,7 @@ export async function updateIssue(
           actorId: actor.id,
           type,
           payload,
+          agentContext,
         })
         .returning({ id: issueEvents.id });
       pushTimeline(inserted[0]?.id);
@@ -621,6 +626,7 @@ export async function updateIssue(
         actor.id,
         { issueNumber: number },
         input.body,
+        agentContext,
       );
       for (const ref of refs) {
         events.push({

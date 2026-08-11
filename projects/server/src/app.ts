@@ -4,6 +4,7 @@ import { createMiddleware } from "hono/factory";
 import { type AppEnv, authMiddleware } from "./auth/middleware.ts";
 import type { AppContext } from "./bootstrap.ts";
 import { registerErrorHandler } from "./errors.ts";
+import { agentContextMiddleware } from "./middleware/agent-context.ts";
 import { agentRoutes } from "./routes/agents.ts";
 import { attachmentRoutes } from "./routes/attachments.ts";
 import { authRoutes } from "./routes/auth.ts";
@@ -96,6 +97,7 @@ export function createApp(ctx: AppContext) {
     },
   });
   api.use("*", authMiddleware(ctx));
+  api.use("*", agentContextMiddleware());
   api.route("/", meRoutes());
   api.route("/agents", agentRoutes());
   api.route("/projects", projectRoutes());

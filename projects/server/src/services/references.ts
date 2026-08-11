@@ -1,3 +1,4 @@
+import type { AgentContext } from "@todou/shared";
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/driver.ts";
 import { issueEvents, issues } from "../db/project-schema.ts";
@@ -26,6 +27,7 @@ export async function recordReferences(
   actorId: number,
   source: { issueNumber: number; commentId?: number },
   text: string,
+  agentContext: AgentContext | null = null,
 ): Promise<Array<{ eventId: number; issueId: number; issueNumber: number }>> {
   const numbers = extractIssueRefs(text).filter(
     (n) => n !== source.issueNumber,
@@ -74,6 +76,7 @@ export async function recordReferences(
         issueId: target.id,
         actorId,
         type: "referenced",
+        agentContext,
         payload: {
           by_issue: source.issueNumber,
           ...(source.commentId === undefined

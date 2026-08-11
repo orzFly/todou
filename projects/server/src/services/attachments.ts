@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Attachment } from "@todou/shared";
+import type { AgentContext, Attachment } from "@todou/shared";
 import { and, eq } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -44,6 +44,7 @@ export async function uploadAttachment(
   slug: string,
   issueNumber: number,
   file: File,
+  agentContext: AgentContext | null = null,
 ): Promise<Attachment> {
   const { project } = await requireProject(ctx, actor, slug, "writer");
   const db = await ctx.router.forProject(routeInfoOf(project));
@@ -90,6 +91,7 @@ export async function uploadAttachment(
       issueId: issue.id,
       actorId: actor.id,
       type: "attachment_added",
+      agentContext,
       payload: {
         attachment: { id: attachment.id, filename, size: file.size },
       },

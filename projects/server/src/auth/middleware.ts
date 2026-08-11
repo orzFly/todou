@@ -1,3 +1,4 @@
+import type { AgentContext } from "@todou/shared";
 import { getCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
 import type { AppContext } from "../bootstrap.ts";
@@ -9,6 +10,8 @@ export type AppEnv = {
   Variables: {
     appCtx: AppContext;
     user: UserRow;
+    /** Parsed x-todou-agent-context header; null when absent. */
+    agentContext: AgentContext | null;
   };
 };
 
