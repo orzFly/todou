@@ -2,11 +2,17 @@ import type { TodouClient } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
-import { parsePositiveInt } from "../parse.ts";
 
 export class CommentAddCommand extends ProjectCommand {
-  static paths = [["comment", "add"]];
-  static usage = Command.Usage({ description: "Comment on an issue" });
+  static paths = [
+    ["comment", "add"],
+    ["issue", "comment"],
+  ];
+  static usage = Command.Usage({
+    description: "Comment on an issue",
+    details:
+      "`<number>` also accepts `<project>/<number>` or a full issue URL; `issue comment` is an alias of `comment add`.",
+  });
 
   number = Option.String({ required: true });
   body = Option.String("--body");
@@ -15,8 +21,7 @@ export class CommentAddCommand extends ProjectCommand {
   });
 
   protected async run(client: TodouClient): Promise<void> {
-    const project = this.requireProject();
-    const number = parsePositiveInt(this.number, "issue number");
+    const { project, number } = this.resolveIssueRef(this.number);
     const body = await readBody({
       body: this.body,
       bodyFile: this.bodyFile,

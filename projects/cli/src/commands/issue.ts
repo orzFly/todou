@@ -97,16 +97,20 @@ export class IssueListCommand extends ProjectCommand {
 }
 
 export class IssueViewCommand extends ProjectCommand {
-  static paths = [["issue", "view"]];
+  static paths = [
+    ["issue", "view"],
+    ["issue", "show"],
+  ];
   static usage = Command.Usage({
     description: "Show an issue with its full timeline",
+    details:
+      "`<number>` also accepts `<project>/<number>` (like `todou/16`) or a full issue URL; `issue show` is an alias of `issue view`.",
   });
 
   number = Option.String({ required: true });
 
   protected async run(client: TodouClient): Promise<void> {
-    const project = this.requireProject();
-    const number = parsePositiveInt(this.number, "issue number");
+    const { project, number } = this.resolveIssueRef(this.number);
     const issue = await client.getIssue(project, number);
     const timeline = await fullTimeline(client, project, number);
     const paint = makePainter(this.context.stdout, this.context.env);
@@ -155,6 +159,8 @@ export class IssueEditCommand extends ProjectCommand {
   static paths = [["issue", "edit"]];
   static usage = Command.Usage({
     description: "Edit an issue's fields, labels, or assignees",
+    details:
+      "`<number>` also accepts `<project>/<number>` or a full issue URL.",
   });
 
   number = Option.String({ required: true });
@@ -168,8 +174,7 @@ export class IssueEditCommand extends ProjectCommand {
   removeAssignees = Option.Array("--remove-assignee", []);
 
   protected async run(client: TodouClient): Promise<void> {
-    const project = this.requireProject();
-    const number = parsePositiveInt(this.number, "issue number");
+    const { project, number } = this.resolveIssueRef(this.number);
     const input: IssueUpdateInput = {};
 
     if (this.title !== undefined) input.title = this.title;
@@ -228,6 +233,8 @@ export class IssueCloseCommand extends ProjectCommand {
   static paths = [["issue", "close"]];
   static usage = Command.Usage({
     description: "Move an issue to a closed status",
+    details:
+      "`<number>` also accepts `<project>/<number>` or a full issue URL.",
   });
 
   number = Option.String({ required: true });
@@ -239,8 +246,7 @@ export class IssueCloseCommand extends ProjectCommand {
   });
 
   protected async run(client: TodouClient): Promise<void> {
-    const project = this.requireProject();
-    const number = parsePositiveInt(this.number, "issue number");
+    const { project, number } = this.resolveIssueRef(this.number);
     const target = await resolveClosedStatus(client, project, this.status);
     if (this.comment !== undefined) {
       await client.createComment(project, number, this.comment);

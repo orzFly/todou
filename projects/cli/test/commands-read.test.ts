@@ -251,6 +251,59 @@ describe("issue view", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("positive integer");
   });
+
+  it("accepts the show alias, project/number refs, and issue URLs", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3", issue],
+      ["GET", "/api/projects/todou/issues/3/timeline", timelinePages[1]],
+    ]);
+    const viaShow = await runCli(["issue", "show", "3"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(viaShow.exitCode).toBe(0);
+    expect(viaShow.stdout).toContain("#3 Fix the potato");
+
+    // no TODOU_PROJECT here: the ref itself supplies the project
+    const viaRef = await runCli(["issue", "view", "todou/3"], {
+      fetchImpl,
+      env: loggedInEnv(),
+    });
+    expect(viaRef.exitCode).toBe(0);
+    expect(viaRef.stdout).toContain("#3 Fix the potato");
+
+    const viaUrl = await runCli(
+      ["issue", "view", "http://stub.test/projects/todou/issues/3"],
+      { fetchImpl, env: loggedInEnv() },
+    );
+    expect(viaUrl.exitCode).toBe(0);
+
+    const agreeing = await runCli(["issue", "view", "todou/3", "-p", "todou"], {
+      fetchImpl,
+      env: loggedInEnv(),
+    });
+    expect(agreeing.exitCode).toBe(0);
+  });
+
+  it("rejects a ref contradicting -p, and a URL on a foreign server", async () => {
+    const { fetchImpl } = fakeFetch([]);
+    const conflict = await runCli(
+      ["issue", "view", "dogfood/3", "-p", "todou"],
+      {
+        fetchImpl,
+        env: loggedInEnv(),
+      },
+    );
+    expect(conflict.exitCode).toBe(1);
+    expect(conflict.stderr).toContain('says project "dogfood"');
+
+    const elsewhere = await runCli(
+      ["issue", "view", "https://other.example/projects/todou/issues/3"],
+      { fetchImpl, env: loggedInEnv() },
+    );
+    expect(elsewhere.exitCode).toBe(1);
+    expect(elsewhere.stderr).toContain("active server");
+  });
 });
 
 describe("status/label list", () => {

@@ -8,6 +8,7 @@ import {
   resolveContext,
 } from "./context.ts";
 import { CliError, reportError } from "./errors.ts";
+import { parseIssueRef } from "./parse.ts";
 
 export type CliContext = BaseContext & {
   cwd: string;
@@ -112,5 +113,34 @@ export abstract class ProjectCommand extends ApiCommand {
       );
     }
     return this.ctx.project;
+  }
+
+  /**
+   * Resolves a `<number>` positional that may carry its own project
+   * (`todou/16`, `#16`, or an issue URL). An inline project is as explicit
+   * as -p, so it silently overrides TODOU_PROJECT and the git binding;
+   * only a contradicting -p flag is an error.
+   */
+  protected resolveIssueRef(raw: string): { project: string; number: number } {
+    const ref = parseIssueRef(raw, "issue number");
+    if (ref.origin !== undefined && this.ctx.server !== undefined) {
+      const active = new URL(this.ctx.server).origin;
+      if (ref.origin !== active) {
+        throw new CliError(
+          `"${raw}" points at ${ref.origin}, but the active server is ${active}`,
+          "pass --server to switch servers, or reference the issue as <project>/<number>",
+        );
+      }
+    }
+    if (ref.project === undefined) {
+      return { project: this.requireProject(), number: ref.number };
+    }
+    if (this.project !== undefined && this.project !== ref.project) {
+      throw new CliError(
+        `"${raw}" says project "${ref.project}" but -p/--project says "${this.project}"`,
+        "drop one of them — they must agree",
+      );
+    }
+    return { project: ref.project, number: ref.number };
   }
 }

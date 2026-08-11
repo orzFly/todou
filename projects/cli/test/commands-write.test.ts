@@ -173,6 +173,26 @@ describe("issue edit", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("nothing to change");
   });
+
+  it("lets a project/number ref override TODOU_PROJECT", async () => {
+    let patched: Record<string, unknown> | undefined;
+    const { fetchImpl } = fakeFetch([
+      [
+        "PATCH",
+        "/api/projects/todou/issues/3",
+        (init: RequestInit) => {
+          patched = jsonBody(init);
+          return issueWith({ title: "Renamed" });
+        },
+      ],
+    ]);
+    const result = await runCli(
+      ["issue", "edit", "todou/3", "--title", "Renamed"],
+      { fetchImpl, env: loggedInEnv("dogfood") },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(patched).toEqual({ title: "Renamed" });
+  });
 });
 
 describe("issue close", () => {
@@ -236,6 +256,23 @@ describe("issue close", () => {
     expect(result.exitCode).toBe(0);
     expect(patched).toEqual({ status_id: 3 });
   });
+
+  it("accepts a #-prefixed number", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/statuses", statuses],
+      [
+        "PATCH",
+        "/api/projects/todou/issues/3",
+        () => issueWith({ status: statuses[1] }),
+      ],
+    ]);
+    const result = await runCli(["issue", "close", "#3"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("#3 closed (Done)\n");
+  });
 });
 
 describe("comment add", () => {
@@ -264,6 +301,29 @@ describe("comment add", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(posted).toEqual({ body: "a note" });
+    expect(result.stdout).toBe("commented on #7\n");
+  });
+
+  it("supports the issue comment alias with a project/number ref", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "POST",
+        "/api/projects/todou/issues/7/comments",
+        (init: RequestInit) => ({
+          type: "comment",
+          id: 1,
+          author: me,
+          body: jsonBody(init).body,
+          created_at: "2026-08-11T12:00:00Z",
+          edited_at: null,
+        }),
+      ],
+    ]);
+    const result = await runCli(
+      ["issue", "comment", "todou/7", "--body", "a note"],
+      { fetchImpl, env: loggedInEnv() },
+    );
+    expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe("commented on #7\n");
   });
 });
@@ -415,5 +475,34 @@ describe("attach", () => {
     });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("cannot read");
+  });
+
+  it("accepts a project/number ref", async () => {
+    const file = join(dir, "ref.txt");
+    writeFileSync(file, "x");
+    const { fetchImpl } = fakeFetch([
+      [
+        "POST",
+        "/api/projects/todou/attachments",
+        (init: RequestInit) => {
+          const upload = (init.body as FormData).get("file") as File;
+          return {
+            id: 1,
+            filename: upload.name,
+            content_type: "text/plain",
+            size: 1,
+            url: `/attachments/${upload.name}`,
+            uploader: me,
+            created_at: "2026-08-11T12:00:00Z",
+          };
+        },
+      ],
+    ]);
+    const result = await runCli(["attach", "todou/3", file], {
+      fetchImpl,
+      env: loggedInEnv(),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("ref.txt → /attachments/ref.txt\n");
   });
 });

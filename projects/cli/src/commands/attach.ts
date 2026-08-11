@@ -4,20 +4,20 @@ import type { Attachment, TodouClient } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { CliError } from "../errors.ts";
-import { parsePositiveInt } from "../parse.ts";
 
 export class AttachCommand extends ProjectCommand {
   static paths = [["attach"]];
   static usage = Command.Usage({
     description: "Upload files as attachments on an issue",
+    details:
+      "`<number>` also accepts `<project>/<number>` or a full issue URL.",
   });
 
   number = Option.String({ required: true });
   files = Option.Rest({ required: 1 });
 
   protected async run(client: TodouClient): Promise<void> {
-    const project = this.requireProject();
-    const number = parsePositiveInt(this.number, "issue number");
+    const { project, number } = this.resolveIssueRef(this.number);
     const uploaded: Attachment[] = [];
     for (const path of this.files) {
       let blob: Blob;

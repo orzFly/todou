@@ -23,6 +23,11 @@ does two things automatically — no flags, no configuration:
    authenticated user — this is self-reported context for display and
    auditing, not authentication.
 
+The command surface is also forgiving of gh-style habits: `issue show`
+and `issue comment` work as aliases, and anywhere a `<number>` is
+expected you can write `project/16`, `"#16"`, or paste the full issue
+URL.
+
 ## Where the metadata comes from
 
 - `session_id` — `CLAUDE_CODE_SESSION_ID`, documented and set by Claude
