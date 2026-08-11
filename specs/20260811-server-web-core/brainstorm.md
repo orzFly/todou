@@ -224,7 +224,7 @@ mode = "single"              # single | oidc | forward（后两者后续切片�
 # [auth.forward] user_header = "Remote-User"
 
 [http]
-port = 3000                  # TODOU_HTTP_PORT
+port = 8637                  # TODOU_HTTP_PORT（web dev 默认 8636）
 
 [database]
 system = "pglite://./data/system"   # TODOU_DATABASE_SYSTEM；postgres:// 亦可

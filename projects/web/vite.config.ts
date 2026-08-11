@@ -11,9 +11,12 @@ export default defineConfig({
     },
   },
   server: {
+    port: 8636,
     proxy: {
       "/api": {
-        target: "http://localhost:3000",
+        // Point at the todou server; override with TODOU_API when it runs
+        // on a non-default port.
+        target: process.env.TODOU_API ?? "http://localhost:8637",
         changeOrigin: false,
       },
     },

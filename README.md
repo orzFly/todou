@@ -27,3 +27,41 @@ pnpm lint       # check formatting and lints
 pnpm typecheck  # tsc --noEmit in every package
 pnpm test       # vitest in every package
 ```
+
+## Running
+
+```bash
+# 1. Start the server on :8637 (single-user mode, embedded PGlite — zero setup).
+node projects/server/src/index.ts serve
+#    Config: ./todou.toml or --config; every key has a TODOU_* env twin.
+
+# 2. Start the web app on :8636 (dev server proxies /api to the server).
+pnpm --filter @todou/web dev
+#    TODOU_API=http://localhost:PORT overrides the proxy target.
+```
+
+The REST API is documented at `/api/openapi.json`. Agents are machine
+users: create one in Settings → Agents, issue it a personal access token,
+and it can do everything a member can via `Authorization: Bearer todou_pat_…`.
+
+### Database placement
+
+```toml
+[database]
+system = "pglite://./data/system"        # or postgres://…
+
+[database.projects]
+placement = "shared"                     # project data lives in the system db
+# placement = "dedicated"                # …or route each project by template:
+# url_template = "pglite://./data/projects/${project.id}"
+# url_template = "postgres://${project.id > 100 ? 'pg-b' : 'pg-a'}/todou_${project.id}"
+# workers = true                         # experimental: worker-thread PGlite hosts
+```
+
+`url_template` is compiled once at startup as a JS template literal with
+`project = {id, slug}` in scope — keep it deterministic; per-project moves
+go through the registry's `database_url` override column.
+
+`todou-server migrate` applies pending migrations to the system database
+and every project database (pglite auto-migrates on open by default;
+postgres requires the explicit command).

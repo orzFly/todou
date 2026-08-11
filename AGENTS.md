@@ -9,7 +9,7 @@
 
 1. Format and check:
    ```bash
-   pnpm fmt && pnpm lint
+   pnpm fmt && pnpm lint && pnpm typecheck
    ```
 2. Run tests:
    ```bash

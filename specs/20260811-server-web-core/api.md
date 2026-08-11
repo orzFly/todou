@@ -56,14 +56,14 @@ Bearer todou_pat_…`）。错误统一：
 | --- | --- |
 | GET `/projects/:slug/issues/:number/timeline` | 评论⨯事件归并流。参数 `before` / `after`（不透明 cursor）、`limit`（默认 50）、`last=1`（最新一页）。响应 `{ items, prev_cursor?, next_cursor? }`；item 为判别联合：`{ type: "comment", … }` \| `{ type: "event", event_type, payload, … }`，均含 `author/actor` 摘要 |
 | POST `/projects/:slug/issues/:number/comments` | req `{ body }`（writer+；解析 `#N` → 在被引用 issue 写 `referenced` 事件） |
-| PATCH/DELETE `/comments/:id` | 作者本人或 project admin；编辑置 `edited_at` |
+| PATCH/DELETE `/projects/:slug/issues/:number/comments/:id` | 作者本人或 project admin；编辑置 `edited_at`。（实现注：两层库架构下 comment id 无法脱离 project 定位，故路径挂在 project 下） |
 
 ## Attachments
 
 | 方法 路径 | 说明 |
 | --- | --- |
 | POST `/projects/:slug/attachments` | multipart `file` + `issue_number`；≤ `storage.max_upload_mb`；写 `attachment_added` 事件 → `{ id, url, filename, size, content_type }` |
-| GET `/attachments/:id/download` | project member 鉴权；fs 后端流式返回 + Content-Disposition（s3 后端将 302，后续切片） |
+| GET `/projects/:slug/attachments/:id/download` | project member 鉴权；fs 后端流式返回 + Content-Disposition（s3 后端将 302，后续切片）。（实现注：同 comment，附件路径挂在 project 下） |
 
 ## SSE
 

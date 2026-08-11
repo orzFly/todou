@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle as drizzleNodePg } from "drizzle-orm/node-postgres";
@@ -61,6 +62,9 @@ export async function openDb(
     // in-memory; anything else is a data directory path.
     const target = url.slice("pglite://".length);
     const isMemory = target.startsWith("memory");
+    // PGlite fails obscurely on first query when the data directory's
+    // parents don't exist yet.
+    if (!isMemory) await mkdir(target, { recursive: true });
     // EXPERIMENTAL worker host: PGlite lives in a worker thread and the
     // proxy satisfies drizzle's query surface, so per-project databases
     // execute on separate cores.

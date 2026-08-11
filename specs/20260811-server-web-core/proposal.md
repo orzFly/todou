@@ -144,3 +144,10 @@ worker threads + IPC 利用多核（实验性，feature flag，不阻塞主线�
 用户自己写的逻辑允许多个 project 解析到同一目标库（分桶因此仍可由
 用户表达），路由规则须保持稳定，迁移由用户自理（逐项目搬迁走注册表
 `database_url` 覆盖列）。
+
+## 实现期间补充需求（2026-08-11）
+
+> let's define a default port 8636 for web, 8637 for server
+
+含义（已并入实现）：web 开发服务器默认端口 **8636**，todou server 默认
+端口 **8637**（`http.port` 默认值；vite proxy 默认指向 8637）。

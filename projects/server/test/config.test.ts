@@ -5,7 +5,7 @@ describe("loadConfig", () => {
   it("applies defaults with empty input", () => {
     const config = loadConfig({ tomlSource: "", env: {} });
     expect(config.auth.mode).toBe("single");
-    expect(config.http.port).toBe(3000);
+    expect(config.http.port).toBe(8637);
     expect(config.database.system).toBe("pglite://./data/system");
     expect(config.database.projects.placement).toBe("shared");
     expect(config.storage.backend).toBe("fs");
