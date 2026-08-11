@@ -65,3 +65,19 @@ export const IssueListQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(30),
 });
 export type IssueListQuery = z.infer<typeof IssueListQuery>;
+
+/** Category-neutral subset of the list filters, for the counts endpoint. */
+export const IssueCountsQuery = IssueListQuery.pick({
+  status: true,
+  label: true,
+  assignee: true,
+  q: true,
+});
+export type IssueCountsQuery = z.infer<typeof IssueCountsQuery>;
+
+/** Open/closed totals under the same filters, for the list header tabs. */
+export const IssueCounts = z.object({
+  open: z.number().int().nonnegative(),
+  closed: z.number().int().nonnegative(),
+});
+export type IssueCounts = z.infer<typeof IssueCounts>;

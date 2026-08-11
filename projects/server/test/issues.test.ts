@@ -356,6 +356,58 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
     ]);
   });
 
+  it("counts open/closed issues, honoring the list filters", async () => {
+    const countsSlug = `counts-${placement.replaceAll(/[^a-z]/g, "")}`;
+    await t.app.request("/api/projects", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ slug: countsSlug, name: "Counts" }),
+    });
+    const statuses = await json(
+      await t.app.request(`/api/projects/${countsSlug}/statuses`, {
+        headers: { cookie },
+      }),
+    );
+    const done = statuses.find((s: { name: string }) => s.name === "Done");
+
+    for (let i = 1; i <= 5; i++) {
+      const res = await t.app.request(`/api/projects/${countsSlug}/issues`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({
+          title: `Task ${i}`,
+          body: i === 3 ? "the special one" : "",
+          ...(i % 2 === 0 ? { status_id: done.id } : {}),
+        }),
+      });
+      expect(res.status).toBe(201);
+    }
+
+    const all = await json(
+      await t.app.request(`/api/projects/${countsSlug}/issues/counts`, {
+        headers: { cookie },
+      }),
+    );
+    expect(all).toEqual({ open: 3, closed: 2 });
+
+    const searched = await json(
+      await t.app.request(
+        `/api/projects/${countsSlug}/issues/counts?q=special`,
+        { headers: { cookie } },
+      ),
+    );
+    expect(searched).toEqual({ open: 1, closed: 0 });
+
+    // A filter that matches nothing yields zeros, not an error.
+    const none = await json(
+      await t.app.request(
+        `/api/projects/${countsSlug}/issues/counts?assignee=999`,
+        { headers: { cookie } },
+      ),
+    );
+    expect(none).toEqual({ open: 0, closed: 0 });
+  });
+
   it("pages the timeline in both directions", async () => {
     const issue = await createIssue({ title: "Long thread" });
     for (let i = 1; i <= 7; i++) {

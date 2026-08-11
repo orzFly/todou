@@ -3,6 +3,8 @@ import {
   CommentCreateInput,
   CommentUpdateInput,
   Issue,
+  IssueCounts,
+  IssueCountsQuery,
   IssueCreateInput,
   IssueListPage,
   IssueListQuery,
@@ -21,6 +23,7 @@ import {
   updateComment,
 } from "../services/comments.ts";
 import {
+  countIssuesByCategory,
   createIssue,
   getIssue,
   listIssues,
@@ -50,6 +53,14 @@ const listRoute = createRoute({
   summary: "List issues with filters and cursor pagination",
   request: { params: slugParam, query: IssueListQuery },
   responses: { 200: { description: "Page", ...jsonBody(IssueListPage) } },
+});
+
+const countsRoute = createRoute({
+  method: "get",
+  path: "/{slug}/issues/counts",
+  summary: "Open/closed totals under the same (category-neutral) filters",
+  request: { params: slugParam, query: IssueCountsQuery },
+  responses: { 200: { description: "Counts", ...jsonBody(IssueCounts) } },
 });
 
 const createIssueRoute = createRoute({
@@ -143,6 +154,19 @@ export function issueRoutes() {
         items: page.items.map(({ body: _body, ...rest }) => rest),
         next_cursor: page.next_cursor,
       },
+      200,
+    );
+  });
+
+  app.openapi(countsRoute, async (c) => {
+    const { slug } = c.req.valid("param");
+    return c.json(
+      await countIssuesByCategory(
+        c.get("appCtx"),
+        c.get("user"),
+        slug,
+        c.req.valid("query"),
+      ),
       200,
     );
   });

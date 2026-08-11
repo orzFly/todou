@@ -3,6 +3,8 @@ import { CheckIcon, FilterIcon, SearchIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   csvToIds,
+  effectiveCategory,
+  effectiveSort,
   type IssueSearch,
   idsToCsv,
   toggleId,
@@ -64,11 +66,12 @@ export function FilterBar({
       </div>
 
       <Select
-        value={search.category ?? "all"}
+        value={effectiveCategory(search)}
         onValueChange={(v) =>
           onChange({
             ...search,
-            category: v === "all" ? undefined : (v as "open" | "closed"),
+            // Open is the default, so it maps to a clean URL.
+            category: v === "open" ? undefined : (v as "closed" | "all"),
           })
         }
       >
@@ -128,7 +131,7 @@ export function FilterBar({
       </Select>
 
       <Select
-        value={`${search.sort ?? "created"}-${search.order ?? "desc"}`}
+        value={`${effectiveSort(search).sort}-${effectiveSort(search).order}`}
         onValueChange={(v) => {
           const [sort, order] = v.split("-") as [
             IssueSearch["sort"],

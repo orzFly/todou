@@ -6,15 +6,24 @@ import {
   useSearch,
 } from "@tanstack/react-router";
 import type {
+  IssueCounts,
   IssueListItem,
   IssueListPage as IssueListPageData,
   Status,
 } from "@todou/shared";
-import { CheckIcon, TagIcon } from "lucide-react";
+import {
+  CheckCircle2Icon,
+  CheckIcon,
+  CircleDotIcon,
+  TagIcon,
+} from "lucide-react";
 import { useState } from "react";
 import {
+  effectiveCategory,
   type IssueSearch,
+  issueCountsQuery,
   issuesQuery,
+  listParams,
   useIssueLabelsMutation,
   useIssueStatusMutation,
 } from "@/api/issues.ts";
@@ -54,6 +63,7 @@ export function IssueListPage() {
   const labels = useSuspenseQuery(labelsQuery(slug));
   const members = useSuspenseQuery(membersQuery(slug));
   const issues = useSuspenseQuery(issuesQuery(slug, search));
+  const counts = useSuspenseQuery(issueCountsQuery(slug, search));
 
   const setSearch = (next: IssueSearch) =>
     navigate({
@@ -65,6 +75,16 @@ export function IssueListPage() {
 
   return (
     <div className="space-y-4">
+      <CategoryTabs
+        counts={counts.data}
+        active={effectiveCategory(search)}
+        onSelect={(category) =>
+          setSearch({
+            ...search,
+            category: category === "open" ? undefined : category,
+          })
+        }
+      />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <FilterBar
           search={search}
@@ -82,6 +102,42 @@ export function IssueListPage() {
         allLabels={labels.data}
         search={search}
       />
+    </div>
+  );
+}
+
+function CategoryTabs({
+  counts,
+  active,
+  onSelect,
+}: {
+  counts: IssueCounts;
+  active: "open" | "closed" | "all";
+  onSelect: (category: "open" | "closed") => void;
+}) {
+  const tab = (selected: boolean) =>
+    selected
+      ? "flex cursor-pointer items-center gap-1.5 font-semibold text-foreground"
+      : "flex cursor-pointer items-center gap-1.5 text-muted-foreground hover:text-foreground";
+  return (
+    <div className="flex items-center gap-3 text-sm">
+      <button
+        type="button"
+        className={tab(active === "open")}
+        onClick={() => onSelect("open")}
+      >
+        <CircleDotIcon className="size-4" />
+        Open {counts.open}
+      </button>
+      <span className="text-muted-foreground">·</span>
+      <button
+        type="button"
+        className={tab(active === "closed")}
+        onClick={() => onSelect("closed")}
+      >
+        <CheckCircle2Icon className="size-4" />
+        Closed {counts.closed}
+      </button>
     </div>
   );
 }
@@ -112,16 +168,7 @@ function IssueTable({
     const next = await queryClient.fetchQuery({
       queryKey: ["issues", slug, search, lastCursor],
       queryFn: () =>
-        api.listIssues(slug, {
-          q: search.q,
-          category: search.category,
-          status: search.status,
-          label: search.label,
-          assignee: search.assignee,
-          sort: search.sort,
-          order: search.order,
-          cursor: lastCursor,
-        }),
+        api.listIssues(slug, { ...listParams(search), cursor: lastCursor }),
     });
     setExtraPages((prev) => [...prev, next]);
   }

@@ -3,8 +3,11 @@ import type { IssueListPage, Status } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import {
   csvToIds,
+  effectiveCategory,
+  effectiveSort,
   idsToCsv,
   issueSearchSchema,
+  listParams,
   patchIssueStatus,
   toggleId,
 } from "../src/api/issues.ts";
@@ -32,6 +35,31 @@ describe("issueSearchSchema (filter state ↔ URL)", () => {
 
   it("rejects malformed csv", () => {
     expect(issueSearchSchema.safeParse({ status: "1,x" }).success).toBe(false);
+  });
+
+  it("accepts the explicit 'all' category", () => {
+    expect(issueSearchSchema.parse({ category: "all" }).category).toBe("all");
+  });
+});
+
+describe("list defaults (open, recently updated)", () => {
+  it("defaults to the open category and updated-desc sort", () => {
+    expect(effectiveCategory({})).toBe("open");
+    expect(effectiveSort({})).toEqual({ sort: "updated", order: "desc" });
+    expect(listParams({})).toMatchObject({
+      category: "open",
+      sort: "updated",
+      order: "desc",
+    });
+  });
+
+  it("keeps explicit choices and maps 'all' to no category param", () => {
+    expect(effectiveCategory({ category: "closed" })).toBe("closed");
+    expect(listParams({ category: "all" }).category).toBeUndefined();
+    expect(listParams({ sort: "number", order: "asc" })).toMatchObject({
+      sort: "number",
+      order: "asc",
+    });
   });
 });
 

@@ -2,6 +2,8 @@ import type {
   AgentContext,
   ChangeEvent,
   Issue,
+  IssueCounts,
+  IssueCountsQuery,
   IssueCreateInput,
   IssueListQuery,
   IssueUpdateInput,
@@ -19,6 +21,7 @@ import {
   inArray,
   lt,
   or,
+  type SQL,
   sql,
 } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
@@ -338,6 +341,50 @@ function decodeCursor(raw: string): ListCursor {
   }
 }
 
+/**
+ * WHERE clauses for the category-neutral list filters, shared by list and
+ * counts. Returns null when a filter provably matches nothing.
+ */
+async function issueFilterConditions(
+  db: Db,
+  projectId: number,
+  query: IssueCountsQuery,
+): Promise<SQL[] | null> {
+  const conditions: SQL[] = [eq(issues.projectId, projectId)];
+
+  if (query.status !== undefined) {
+    conditions.push(inArray(issues.statusId, query.status));
+  }
+  if (query.label !== undefined) {
+    // Any-of semantics for multi-label filters.
+    const tagged = await db
+      .select({ issueId: issueLabels.issueId })
+      .from(issueLabels)
+      .where(inArray(issueLabels.labelId, query.label));
+    const ids = [...new Set(tagged.map((t) => t.issueId))];
+    if (ids.length === 0) return null;
+    conditions.push(inArray(issues.id, ids));
+  }
+  if (query.assignee !== undefined) {
+    const assigned = await db
+      .select({ issueId: issueAssignees.issueId })
+      .from(issueAssignees)
+      .where(eq(issueAssignees.userId, query.assignee));
+    const ids = assigned.map((a) => a.issueId);
+    if (ids.length === 0) return null;
+    conditions.push(inArray(issues.id, ids));
+  }
+  if (query.q !== undefined && query.q !== "") {
+    const pattern = `%${query.q.replaceAll(/[%_\\]/g, (m) => `\\${m}`)}%`;
+    const textMatch = or(
+      ilike(issues.title, pattern),
+      ilike(issues.body, pattern),
+    );
+    if (textMatch) conditions.push(textMatch);
+  }
+  return conditions;
+}
+
 export async function listIssues(
   ctx: AppContext,
   actor: UserRow,
@@ -355,11 +402,9 @@ export async function listIssues(
   const direction = query.order === "asc" ? asc : desc;
   const beyond = query.order === "asc" ? gt : lt;
 
-  const conditions = [eq(issues.projectId, project.id)];
+  const conditions = await issueFilterConditions(db, project.id, query);
+  if (conditions === null) return { items: [], next_cursor: null };
 
-  if (query.status !== undefined) {
-    conditions.push(inArray(issues.statusId, query.status));
-  }
   if (query.category !== undefined) {
     const catStatuses = await db
       .select({ id: statuses.id })
@@ -373,33 +418,6 @@ export async function listIssues(
     const ids = catStatuses.map((s) => s.id);
     if (ids.length === 0) return { items: [], next_cursor: null };
     conditions.push(inArray(issues.statusId, ids));
-  }
-  if (query.label !== undefined) {
-    // Any-of semantics for multi-label filters.
-    const tagged = await db
-      .select({ issueId: issueLabels.issueId })
-      .from(issueLabels)
-      .where(inArray(issueLabels.labelId, query.label));
-    const ids = [...new Set(tagged.map((t) => t.issueId))];
-    if (ids.length === 0) return { items: [], next_cursor: null };
-    conditions.push(inArray(issues.id, ids));
-  }
-  if (query.assignee !== undefined) {
-    const assigned = await db
-      .select({ issueId: issueAssignees.issueId })
-      .from(issueAssignees)
-      .where(eq(issueAssignees.userId, query.assignee));
-    const ids = assigned.map((a) => a.issueId);
-    if (ids.length === 0) return { items: [], next_cursor: null };
-    conditions.push(inArray(issues.id, ids));
-  }
-  if (query.q !== undefined && query.q !== "") {
-    const pattern = `%${query.q.replaceAll(/[%_\\]/g, (m) => `\\${m}`)}%`;
-    const textMatch = or(
-      ilike(issues.title, pattern),
-      ilike(issues.body, pattern),
-    );
-    if (textMatch) conditions.push(textMatch);
   }
   if (query.cursor !== undefined) {
     const cur = decodeCursor(query.cursor);
@@ -435,6 +453,29 @@ export async function listIssues(
 
   const bundles = await bundleIssues(ctx, db, project.id, page);
   return { items: bundles.map(toIssue), next_cursor };
+}
+
+export async function countIssuesByCategory(
+  ctx: AppContext,
+  actor: UserRow,
+  slug: string,
+  query: IssueCountsQuery,
+): Promise<IssueCounts> {
+  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const db = await ctx.router.forProject(routeInfoOf(project));
+
+  const counts: IssueCounts = { open: 0, closed: 0 };
+  const conditions = await issueFilterConditions(db, project.id, query);
+  if (conditions === null) return counts;
+
+  const rows = await db
+    .select({ category: statuses.category, count: sql<number>`count(*)` })
+    .from(issues)
+    .innerJoin(statuses, eq(issues.statusId, statuses.id))
+    .where(and(...conditions))
+    .groupBy(statuses.category);
+  for (const row of rows) counts[row.category] = Number(row.count);
+  return counts;
 }
 
 export async function updateIssue(

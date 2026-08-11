@@ -4,6 +4,7 @@ import type {
   AgentUpdateInput,
   Attachment,
   Issue,
+  IssueCounts,
   IssueCreateInput,
   IssueListPage,
   IssueUpdateInput,
@@ -210,6 +211,10 @@ export class TodouClient {
   // — issues —
   listIssues = (slug: string, query?: Query) =>
     this.request<IssueListPage>("GET", `/projects/${slug}/issues`, { query });
+  getIssueCounts = (slug: string, query?: Query) =>
+    this.request<IssueCounts>("GET", `/projects/${slug}/issues/counts`, {
+      query,
+    });
   createIssue = (slug: string, input: IssueCreateInput) =>
     this.request<Issue>("POST", `/projects/${slug}/issues`, { json: input });
   getIssue = (slug: string, number: number) =>

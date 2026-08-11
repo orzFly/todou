@@ -3,7 +3,12 @@ import {
   useMutation,
   useQueryClient,
 } from "@tanstack/react-query";
-import type { IssueListItem, IssueListPage, Status } from "@todou/shared";
+import type {
+  IssueCounts,
+  IssueListItem,
+  IssueListPage,
+  Status,
+} from "@todou/shared";
 import { toast } from "sonner";
 import { z } from "zod";
 import { api } from "@/api/queries.ts";
@@ -11,7 +16,8 @@ import { api } from "@/api/queries.ts";
 /** URL search params for the list view — shareable filter state. */
 export const issueSearchSchema = z.object({
   q: z.string().optional(),
-  category: z.enum(["open", "closed"]).optional(),
+  // "all" is explicit because the absence of the param means "open".
+  category: z.enum(["open", "closed", "all"]).optional(),
   status: z
     .string()
     .regex(/^\d+(,\d+)*$/)
@@ -25,6 +31,33 @@ export const issueSearchSchema = z.object({
   order: z.enum(["asc", "desc"]).optional(),
 });
 export type IssueSearch = z.infer<typeof issueSearchSchema>;
+
+/** GitHub-like defaults: open issues, most recently updated first. */
+export function effectiveCategory(
+  search: IssueSearch,
+): "open" | "closed" | "all" {
+  return search.category ?? "open";
+}
+
+export function effectiveSort(search: IssueSearch): {
+  sort: "created" | "updated" | "number";
+  order: "asc" | "desc";
+} {
+  return { sort: search.sort ?? "updated", order: search.order ?? "desc" };
+}
+
+/** URL search state → list API params, with the defaults applied. */
+export function listParams(search: IssueSearch) {
+  const category = effectiveCategory(search);
+  return {
+    q: search.q,
+    category: category === "all" ? undefined : category,
+    status: csvToIds(search.status),
+    label: csvToIds(search.label),
+    assignee: search.assignee,
+    ...effectiveSort(search),
+  };
+}
 
 export function csvToIds(csv?: string): number[] | undefined {
   if (!csv) return undefined;
@@ -42,15 +75,32 @@ export function toggleId(ids: number[], id: number): number[] {
 export const issuesQuery = (slug: string, search: IssueSearch) =>
   queryOptions({
     queryKey: ["issues", slug, search],
-    queryFn: () =>
-      api.listIssues(slug, {
+    queryFn: () => api.listIssues(slug, listParams(search)),
+  });
+
+/**
+ * Keyed under ["issues", slug] on purpose: every existing invalidation of
+ * the list (mutations, SSE, reconnect) refreshes the tab counts with it.
+ */
+export const issueCountsQuery = (slug: string, search: IssueSearch) =>
+  queryOptions({
+    queryKey: [
+      "issues",
+      slug,
+      "counts",
+      {
         q: search.q,
-        category: search.category,
+        status: search.status,
+        label: search.label,
+        assignee: search.assignee,
+      },
+    ],
+    queryFn: () =>
+      api.getIssueCounts(slug, {
+        q: search.q,
         status: csvToIds(search.status),
         label: csvToIds(search.label),
         assignee: search.assignee,
-        sort: search.sort,
-        order: search.order,
       }),
   });
 
@@ -82,11 +132,12 @@ export function useIssueStatusMutation(slug: string) {
       api.updateIssue(slug, vars.issueNumber, { status_id: vars.status.id }),
     onMutate: async (vars) => {
       await queryClient.cancelQueries({ queryKey: ["issues", slug] });
-      const snapshots = queryClient.getQueriesData<IssueListPage>({
-        queryKey: ["issues", slug],
-      });
+      const snapshots = queryClient.getQueriesData<IssueListPage | IssueCounts>(
+        { queryKey: ["issues", slug] },
+      );
       for (const [key, data] of snapshots) {
-        if (data) {
+        // The counts query shares the key prefix but has no items to patch.
+        if (data && "items" in data) {
           queryClient.setQueryData(
             key,
             patchIssueStatus(data, vars.issueNumber, vars.status),
