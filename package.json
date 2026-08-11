@@ -1,0 +1,29 @@
+{
+  "name": "todou",
+  "version": "0.1.0",
+  "description": "A to-do list app — reads as To-Do, sounds like 土豆 🥔",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "fmt": "prettier --write .",
+    "lint": "prettier --check .",
+    "test": "node --test"
+  },
+  "keywords": [
+    "todo",
+    "todou"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "^11.20.0",
+      "onFail": "download"
+    }
+  },
+  "type": "module",
+  "devDependencies": {
+    "prettier": "^3.9.6"
+  }
+}

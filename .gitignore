@@ -1,0 +1,8 @@
+/.direnv/
+/.env
+/.env.*
+/.research/
+/.opencode/
+node_modules/
+/dist/
+/coverage/
