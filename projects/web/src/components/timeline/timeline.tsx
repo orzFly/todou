@@ -1,4 +1,3 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
 import type { TimelineComment, TimelineItem } from "@todou/shared";
 import { ArrowDownIcon } from "lucide-react";
 import {
@@ -33,7 +32,7 @@ export function Timeline({
   viewer?: Viewer | null;
 }) {
   const timeline = useTimeline(slug, issueNumber);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
   const [newBelow, setNewBelow] = useState(false);
   const didInitialScroll = useRef(false);
@@ -42,63 +41,90 @@ export function Timeline({
   const items: TimelineItem[] = flattenTimeline(timeline.data?.pages ?? []);
   const totalCount = items.length + pendingComments.length;
 
-  const virtualizer = useVirtualizer({
-    count: totalCount,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => 88,
-    overscan: 10,
-  });
+  // Bottom of the document, not of the list: the composer is sticky, and
+  // the document end sits below its in-flow position — so this lands with
+  // the last item fully visible above the composer.
+  const scrollToBottom = useCallback(() => {
+    window.scrollTo(0, document.documentElement.scrollHeight);
+  }, []);
 
   // Initial position: bottom of the newest page (chat-style).
   useLayoutEffect(() => {
     if (!didInitialScroll.current && totalCount > 0) {
       didInitialScroll.current = true;
-      virtualizer.scrollToIndex(totalCount - 1, { align: "end" });
+      scrollToBottom();
     }
-  }, [totalCount, virtualizer]);
+  }, [totalCount, scrollToBottom]);
 
-  // After prepending older items, keep the viewport anchored.
+  // After prepending older items, keep the viewport anchored. Consume the
+  // saved height only once the backward fetch settles — the fetching-state
+  // flip commits first with an unchanged document, and consuming it there
+  // would leave the actual prepend uncompensated.
   useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (prependAdjust.current !== null && el) {
-      const delta = virtualizer.getTotalSize() - prependAdjust.current;
+    if (prependAdjust.current !== null && !timeline.isFetchingPreviousPage) {
+      const delta =
+        document.documentElement.scrollHeight - prependAdjust.current;
       prependAdjust.current = null;
-      if (delta > 0) el.scrollTop += delta;
+      if (delta > 0) window.scrollBy(0, delta);
     }
   });
 
-  // New items while following the bottom → keep following.
-  const lastCount = useRef(totalCount);
+  // New items at the END while following the bottom → keep following.
+  // Keyed off the last item's identity, not the count: prepending older
+  // pages also grows the count, and that must not announce "new below".
+  const lastPending = pendingComments[pendingComments.length - 1];
+  const lastItem = items[items.length - 1];
+  const lastKey = lastPending
+    ? `pending-${lastPending.key}`
+    : lastItem
+      ? `${lastItem.type}-${lastItem.id}`
+      : null;
+  const prevLastKey = useRef(lastKey);
   useEffect(() => {
-    if (totalCount > lastCount.current) {
+    if (lastKey !== prevLastKey.current && prevLastKey.current !== null) {
       if (atBottomRef.current) {
-        virtualizer.scrollToIndex(totalCount - 1, { align: "end" });
+        scrollToBottom();
       } else {
         setNewBelow(true);
       }
     }
-    lastCount.current = totalCount;
-  }, [totalCount, virtualizer]);
+    prevLastKey.current = lastKey;
+  }, [lastKey, scrollToBottom]);
 
-  const onScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    atBottomRef.current = shouldFollowBottom(
-      el.scrollTop,
-      el.scrollHeight,
-      el.clientHeight,
-    );
-    if (atBottomRef.current) setNewBelow(false);
+  // The page itself scrolls, so follow-bottom and fetch-older both hang off
+  // the window scroll position. The handler reads the query through a ref
+  // so it can subscribe exactly once and never miss an event.
+  const timelineRef = useRef(timeline);
+  useEffect(() => {
+    timelineRef.current = timeline;
+  });
+  useEffect(() => {
+    const onScroll = () => {
+      const query = timelineRef.current;
+      atBottomRef.current = shouldFollowBottom(
+        window.scrollY,
+        document.documentElement.scrollHeight,
+        window.innerHeight,
+      );
+      if (atBottomRef.current) setNewBelow(false);
 
-    if (
-      el.scrollTop < 200 &&
-      timeline.hasPreviousPage &&
-      !timeline.isFetchingPreviousPage
-    ) {
-      prependAdjust.current = virtualizer.getTotalSize();
-      timeline.fetchPreviousPage();
-    }
-  }, [timeline, virtualizer]);
+      const listTop = listRef.current?.getBoundingClientRect().top;
+      if (
+        listTop !== undefined &&
+        listTop > -200 &&
+        query.hasPreviousPage &&
+        !query.isFetchingPreviousPage
+      ) {
+        prependAdjust.current = document.documentElement.scrollHeight;
+        // Successive scroll events can outrun the isFetchingPreviousPage
+        // flip; without this the second call cancels and re-issues the
+        // in-flight request instead of piggybacking on it.
+        query.fetchPreviousPage({ cancelRefetch: false });
+      }
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   if (timeline.isPending) {
     return (
@@ -117,82 +143,55 @@ export function Timeline({
   }
 
   return (
-    <div className="relative">
-      <div
-        ref={scrollRef}
-        onScroll={onScroll}
-        className="h-[55dvh] overflow-y-auto pr-1"
-        data-testid="timeline-scroll"
-      >
-        {timeline.isFetchingPreviousPage && (
-          <div className="py-2 text-center text-xs text-muted-foreground">
-            loading older…
-          </div>
-        )}
-        <div
-          style={{
-            height: virtualizer.getTotalSize(),
-            width: "100%",
-            position: "relative",
-          }}
-        >
-          {virtualizer.getVirtualItems().map((virtualRow) => {
-            const isPending = virtualRow.index >= items.length;
-            const pending = isPending
-              ? pendingComments[virtualRow.index - items.length]
-              : undefined;
-            const item = isPending ? undefined : items[virtualRow.index];
-            return (
-              <div
-                key={
-                  pending
-                    ? `pending-${pending.key}`
-                    : `${item?.type}-${item?.id}`
-                }
-                data-index={virtualRow.index}
-                ref={virtualizer.measureElement}
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  transform: `translateY(${virtualRow.start}px)`,
-                }}
-                className="pb-2"
-              >
-                {pending ? (
-                  <CommentItem
-                    slug={slug}
-                    issueNumber={issueNumber}
-                    comment={pending.comment}
-                    pending
-                  />
-                ) : item?.type === "comment" ? (
-                  <CommentItem
-                    slug={slug}
-                    issueNumber={issueNumber}
-                    comment={item}
-                    viewer={viewer}
-                  />
-                ) : item ? (
-                  <EventRow event={item} />
-                ) : null}
-              </div>
-            );
-          })}
+    // Native scroll anchoring would fight the manual prepend compensation
+    // above, adjusting the viewport a second time for the same insertion.
+    <div
+      ref={listRef}
+      className="[overflow-anchor:none]"
+      data-testid="timeline-scroll"
+    >
+      {timeline.isFetchingPreviousPage && (
+        <div className="py-2 text-center text-xs text-muted-foreground">
+          loading older…
         </div>
-      </div>
+      )}
+      {items.map((item) => (
+        <div key={`${item.type}-${item.id}`} className="pb-2">
+          {item.type === "comment" ? (
+            <CommentItem
+              slug={slug}
+              issueNumber={issueNumber}
+              comment={item}
+              viewer={viewer}
+            />
+          ) : (
+            <EventRow event={item} />
+          )}
+        </div>
+      ))}
+      {pendingComments.map((pending) => (
+        <div key={`pending-${pending.key}`} className="pb-2">
+          <CommentItem
+            slug={slug}
+            issueNumber={issueNumber}
+            comment={pending.comment}
+            pending
+          />
+        </div>
+      ))}
       {newBelow && (
-        <Button
-          size="sm"
-          className="absolute bottom-3 left-1/2 -translate-x-1/2 shadow-lg"
-          onClick={() => {
-            virtualizer.scrollToIndex(totalCount - 1, { align: "end" });
-            setNewBelow(false);
-          }}
-        >
-          <ArrowDownIcon className="size-4" /> 新消息
-        </Button>
+        <div className="sticky bottom-36 z-10 flex h-0 items-end justify-center">
+          <Button
+            size="sm"
+            className="shadow-lg"
+            onClick={() => {
+              scrollToBottom();
+              setNewBelow(false);
+            }}
+          >
+            <ArrowDownIcon className="size-4" /> 新消息
+          </Button>
+        </div>
       )}
     </div>
   );

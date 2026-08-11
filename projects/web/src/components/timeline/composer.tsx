@@ -114,7 +114,9 @@ export function Composer({
           onChange={(e) => setBody(e.target.value)}
           placeholder="Write a comment… (#N references other issues)"
           rows={3}
-          className="flex-1"
+          // Sticky at the viewport bottom: an auto-growing draft must not
+          // swallow the page, especially on small/mobile viewports.
+          className="max-h-[40dvh] flex-1"
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
               e.currentTarget.form?.requestSubmit();

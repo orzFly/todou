@@ -69,11 +69,15 @@ export function IssueDetailPage() {
           pendingComments={composer.pending.filter((p) => !p.failed)}
           viewer={viewer}
         />
-        <Composer
-          onSend={composer.send}
-          failed={composer.pending.filter((p) => p.failed)}
-          onRetry={composer.retry}
-        />
+        {/* Floats at the viewport bottom while the timeline scrolls by,
+            and settles into flow at the end of the page (GitHub-style). */}
+        <div className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4">
+          <Composer
+            onSend={composer.send}
+            failed={composer.pending.filter((p) => p.failed)}
+            onRetry={composer.retry}
+          />
+        </div>
       </div>
       <Sidebar
         slug={slug}
