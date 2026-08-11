@@ -79,6 +79,7 @@ describe("resolveContext", () => {
       token: "todou_pat_bound",
       project: "todou",
       binding: config.bindings[0],
+      remoteUrl: "git@example.com:me/repo.git",
     });
   });
 

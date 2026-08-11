@@ -28,6 +28,7 @@ export type ResolvedContext = {
   token?: string;
   project?: string;
   binding: Binding | null;
+  remoteUrl: string | null;
 };
 
 export function resolveContext(input: {
@@ -61,7 +62,7 @@ export function resolveContext(input: {
       ? binding.project
       : undefined);
 
-  return { server, token, project, binding };
+  return { server, token, project, binding, remoteUrl };
 }
 
 function normalizeIfSet(origin: string | undefined): string | undefined {
