@@ -1,3 +1,5 @@
+import { type App, createApp } from "../src/app.ts";
+import { type AppContext, bootstrap } from "../src/bootstrap.ts";
 import { type Config, loadConfig } from "../src/config.ts";
 import { DbRouter } from "../src/db/router.ts";
 
@@ -50,4 +52,34 @@ export async function makeRouter(
   const config = testConfig(placement, overrides);
   const router = await DbRouter.open(config);
   return { config, router };
+}
+
+export type TestApp = {
+  app: App;
+  ctx: AppContext;
+  /** POST /api/auth/login and return a Cookie header value. */
+  login: () => Promise<string>;
+  cleanup: () => Promise<void>;
+};
+
+export async function makeTestApp(
+  placement: PlacementMode = "shared",
+): Promise<TestApp> {
+  const config = testConfig(placement);
+  const ctx = await bootstrap(config);
+  const app = createApp(ctx);
+  return {
+    app,
+    ctx,
+    login: async () => {
+      const res = await app.request("/api/auth/login", { method: "POST" });
+      if (res.status !== 200) {
+        throw new Error(`login failed: ${res.status}`);
+      }
+      const setCookie = res.headers.get("set-cookie");
+      if (!setCookie) throw new Error("login did not set a cookie");
+      return setCookie.split(";")[0] as string;
+    },
+    cleanup: () => ctx.router.close(),
+  };
 }

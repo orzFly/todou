@@ -1,5 +1,5 @@
 import type { Config, ProjectRouteInfo } from "../config.ts";
-import { type Db, type DbHandle, dbKindOf, openDb } from "./driver.ts";
+import { type Db, type DbHandle, openDb } from "./driver.ts";
 
 /**
  * Routes queries to the system database and to per-project databases.

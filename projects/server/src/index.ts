@@ -1,4 +1,6 @@
+import { serve } from "@hono/node-server";
 import { Builtins, Cli, Command, Option } from "clipanion";
+import { createApp } from "./app.ts";
 import { bootstrap } from "./bootstrap.ts";
 import { loadConfig } from "./config.ts";
 import { DbRouter } from "./db/router.ts";
@@ -28,10 +30,21 @@ class ServeCommand extends ConfiguredCommand {
   async execute(): Promise<number | undefined> {
     const config = this.loadConfig();
     const context = await bootstrap(config);
+    const app = createApp(context);
     const port = this.port ? Number(this.port) : config.http.port;
-    this.context.stdout.write(
-      `todou server bootstrapped (db ready) — HTTP app lands in the next phase; would listen on :${port} 🥔\n`,
-    );
+
+    const server = serve({ fetch: app.fetch, port }, (info) => {
+      this.context.stdout.write(`todou server listening on :${info.port} 🥔\n`);
+    });
+
+    await new Promise<void>((resolve) => {
+      const shutdown = () => {
+        this.context.stdout.write("shutting down…\n");
+        server.close(() => resolve());
+      };
+      process.once("SIGINT", shutdown);
+      process.once("SIGTERM", shutdown);
+    });
     await context.router.close();
     return 0;
   }
