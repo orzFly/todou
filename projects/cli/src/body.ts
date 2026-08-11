@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { CliError } from "./errors.ts";
 
-async function drain(stream: Readable): Promise<string> {
+export async function drain(stream: Readable): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of stream) {
     chunks.push(Buffer.from(chunk));

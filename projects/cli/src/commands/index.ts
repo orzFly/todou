@@ -1,5 +1,6 @@
 import type { CommandClass } from "clipanion";
 import type { CliContext } from "../api-command.ts";
+import { ApiPassthroughCommand } from "./api.ts";
 import { AttachCommand } from "./attach.ts";
 import { CommentAddCommand } from "./comment.ts";
 import {
@@ -41,4 +42,5 @@ export const commands: Array<CommandClass<CliContext>> = [
   LabelDeleteCommand,
   StatusListCommand,
   AttachCommand,
+  ApiPassthroughCommand,
 ];
