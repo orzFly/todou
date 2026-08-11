@@ -97,8 +97,8 @@ todou issue close <number> [-p] [--status <name>] [--comment <text>]
 todou comment add <issue-number> [-p] [--body <b> | --body-file <f|->]
 
 todou label list [-p]
-todou label create [-p] --name <n> [--color <#hex>] [--description <d>]
-todou label edit <name> [-p] [--name] [--color] [--description]
+todou label create [-p] --name <n> [--color <#hex>]
+todou label edit <name> [-p] [--name <n>] [--color <#hex>]
 todou label delete <name> [-p]
 
 todou status list [-p]
