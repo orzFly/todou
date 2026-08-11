@@ -4,6 +4,8 @@ import type { Db } from "./db/driver.ts";
 import { DbRouter } from "./db/router.ts";
 import { users } from "./db/system-schema.ts";
 import { EventBus } from "./events/bus.ts";
+import { FsStorage } from "./storage/fs.ts";
+import type { StorageBackend } from "./storage/types.ts";
 
 export const BUILTIN_LOGIN = "user";
 
@@ -11,6 +13,7 @@ export type AppContext = {
   config: Config;
   router: DbRouter;
   bus: EventBus;
+  storage: StorageBackend;
 };
 
 export async function bootstrap(config: Config): Promise<AppContext> {
@@ -18,7 +21,12 @@ export async function bootstrap(config: Config): Promise<AppContext> {
   if (config.auth.mode === "single") {
     await ensureBuiltinUser(router.system());
   }
-  return { config, router, bus: new EventBus() };
+  return {
+    config,
+    router,
+    bus: new EventBus(),
+    storage: new FsStorage(config.storage.path),
+  };
 }
 
 /** Single-user mode signs everyone in as this seeded account. */

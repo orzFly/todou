@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { type App, createApp } from "../src/app.ts";
 import { type AppContext, bootstrap } from "../src/bootstrap.ts";
 import { type Config, loadConfig } from "../src/config.ts";
@@ -22,10 +25,14 @@ let instance = 0;
  */
 export function testConfig(
   placement: PlacementMode = "shared",
-  overrides?: { maxOpen?: number; urlTemplate?: string },
+  overrides?: { maxOpen?: number; urlTemplate?: string; maxUploadMb?: number },
 ): Config {
   const run = `r${instance++}`;
+  const storageDir = mkdtempSync(join(tmpdir(), "todou-storage-"));
   const lines = [
+    "[storage]",
+    `path = '${storageDir}'`,
+    `max_upload_mb = ${overrides?.maxUploadMb ?? 20}`,
     "[database]",
     `system = "pglite://memory/${run}-system"`,
     "[database.projects]",
@@ -66,7 +73,7 @@ export type TestApp = {
 
 export async function makeTestApp(
   placement: PlacementMode = "shared",
-  overrides?: { maxOpen?: number; urlTemplate?: string },
+  overrides?: { maxOpen?: number; urlTemplate?: string; maxUploadMb?: number },
 ): Promise<TestApp> {
   const config = testConfig(placement, overrides);
   const ctx = await bootstrap(config);
