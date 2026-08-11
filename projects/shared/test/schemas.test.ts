@@ -5,6 +5,7 @@ import {
   IssueListQuery,
   Login,
   ProjectSlug,
+  TimelineComment,
   TimelineItem,
   TokenCreateInput,
 } from "../src/index.ts";
@@ -117,5 +118,45 @@ describe("ChangeEvent", () => {
       issue_number: 42,
     });
     expect(e.issue_number).toBe(42);
+  });
+});
+
+describe("AgentContext on timeline items", () => {
+  const base = {
+    type: "comment",
+    id: 1,
+    author: {
+      id: 2,
+      login: "claude",
+      display_name: "Claude",
+      kind: "machine",
+      owner: null,
+    },
+    body: "hi",
+    created_at: "2026-08-11T00:00:00Z",
+    edited_at: null,
+  };
+
+  it("accepts missing, null, and populated agent_context", () => {
+    expect(TimelineComment.safeParse(base).success).toBe(true);
+    expect(
+      TimelineComment.safeParse({ ...base, agent_context: null }).success,
+    ).toBe(true);
+    const populated = TimelineComment.safeParse({
+      ...base,
+      agent_context: {
+        agent: "claude-code",
+        session_id: "s",
+        model: "claude-fable-5",
+      },
+    });
+    expect(populated.success).toBe(true);
+  });
+
+  it("rejects malformed agent_context", () => {
+    expect(
+      TimelineComment.safeParse({ ...base, agent_context: { agent: "" } })
+        .success,
+    ).toBe(false);
   });
 });

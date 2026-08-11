@@ -103,6 +103,22 @@ describe("TodouClient", () => {
     );
   });
 
+  it("sends custom headers without letting them override auth", async () => {
+    const { fetch, calls } = mockFetch(200, { id: 1 });
+    const client = new TodouClient({
+      fetch,
+      token: "todou_pat_x",
+      headers: {
+        "x-todou-agent-context": '{"agent":"claude-code"}',
+        authorization: "Bearer forged",
+      },
+    });
+    await client.me();
+    const headers = calls[0]?.init.headers as Record<string, string>;
+    expect(headers["x-todou-agent-context"]).toBe('{"agent":"claude-code"}');
+    expect(headers.authorization).toBe("Bearer todou_pat_x");
+  });
+
   it("exposes request() for raw API calls", async () => {
     const { fetch, calls } = mockFetch(200, { ok: true });
     const client = new TodouClient({ fetch, token: "todou_pat_x" });

@@ -31,6 +31,11 @@ export type TodouClientOptions = {
   baseUrl?: string;
   /** Bearer PAT for agents/CLI; omitted = cookie session (web). */
   token?: string;
+  /**
+   * Extra headers on every request (e.g. x-todou-agent-context).
+   * authorization and content-type cannot be overridden.
+   */
+  headers?: Record<string, string>;
   fetch?: typeof fetch;
 };
 
@@ -71,11 +76,13 @@ function queryString(query?: Query): string {
 export class TodouClient {
   #baseUrl: string;
   #token?: string;
+  #headers?: Record<string, string>;
   #fetch: typeof fetch;
 
   constructor(options?: TodouClientOptions) {
     this.#baseUrl = options?.baseUrl ?? "";
     this.#token = options?.token;
+    this.#headers = options?.headers;
     // Never store the bare global fetch: calling it as `this.#fetch(...)`
     // rebinds `this` to the client and browsers throw
     // "'fetch' called on an object that does not implement interface Window".
@@ -92,7 +99,7 @@ export class TodouClient {
     path: string,
     init?: { json?: unknown; form?: FormData; query?: Query },
   ): Promise<T> {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { ...this.#headers };
     if (this.#token) headers.authorization = `Bearer ${this.#token}`;
     let body: string | FormData | undefined;
     if (init?.json !== undefined) {
