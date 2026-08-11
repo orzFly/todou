@@ -6,6 +6,7 @@ import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import { migrate as migratePglite } from "drizzle-orm/pglite/migrator";
 import pg from "pg";
+import { WorkerPgliteClient } from "./worker-client.ts";
 
 /** Driver-agnostic database type both pglite and node-postgres satisfy. */
 export type Db = PgDatabase<PgQueryResultHKT>;
@@ -50,15 +51,26 @@ export function dbKindOf(url: string): DbKind {
   throw new Error(`unsupported database URL: ${url}`);
 }
 
-export async function openDb(url: string): Promise<DbHandle> {
+export async function openDb(
+  url: string,
+  opts?: { workerHost?: boolean },
+): Promise<DbHandle> {
   const kind = dbKindOf(url);
   if (kind === "pglite") {
     // "pglite://memory" (with optional suffix for distinct instances) is
     // in-memory; anything else is a data directory path.
     const target = url.slice("pglite://".length);
-    const client = target.startsWith("memory")
-      ? new PGlite()
-      : new PGlite(target);
+    const isMemory = target.startsWith("memory");
+    // EXPERIMENTAL worker host: PGlite lives in a worker thread and the
+    // proxy satisfies drizzle's query surface, so per-project databases
+    // execute on separate cores.
+    const client = opts?.workerHost
+      ? (new WorkerPgliteClient(
+          isMemory ? undefined : target,
+        ) as unknown as PGlite)
+      : isMemory
+        ? new PGlite()
+        : new PGlite(target);
     const db = drizzlePglite(client);
     return {
       db: db as unknown as Db,

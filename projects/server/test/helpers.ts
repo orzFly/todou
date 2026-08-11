@@ -23,9 +23,16 @@ let instance = 0;
  * memory URLs so suites never share state. "dedicated-bucketed" exercises
  * a user-written ${} expression that maps several projects onto one target.
  */
+export type ConfigOverrides = {
+  maxOpen?: number;
+  urlTemplate?: string;
+  maxUploadMb?: number;
+  workers?: boolean;
+};
+
 export function testConfig(
   placement: PlacementMode = "shared",
-  overrides?: { maxOpen?: number; urlTemplate?: string; maxUploadMb?: number },
+  overrides?: ConfigOverrides,
 ): Config {
   const run = `r${instance++}`;
   const storageDir = mkdtempSync(join(tmpdir(), "todou-storage-"));
@@ -51,12 +58,15 @@ export function testConfig(
   if (overrides?.maxOpen) {
     lines.push(`max_open = ${overrides.maxOpen}`);
   }
+  if (overrides?.workers) {
+    lines.push("workers = true");
+  }
   return loadConfig({ tomlSource: lines.join("\n"), env: {} });
 }
 
 export async function makeRouter(
   placement: PlacementMode = "shared",
-  overrides?: { maxOpen?: number; urlTemplate?: string },
+  overrides?: ConfigOverrides,
 ): Promise<{ config: Config; router: DbRouter }> {
   const config = testConfig(placement, overrides);
   const router = await DbRouter.open(config);
@@ -73,7 +83,7 @@ export type TestApp = {
 
 export async function makeTestApp(
   placement: PlacementMode = "shared",
-  overrides?: { maxOpen?: number; urlTemplate?: string; maxUploadMb?: number },
+  overrides?: ConfigOverrides,
 ): Promise<TestApp> {
   const config = testConfig(placement, overrides);
   const ctx = await bootstrap(config);

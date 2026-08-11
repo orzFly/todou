@@ -67,7 +67,9 @@ export class DbRouter {
       return cached;
     }
 
-    const handle = await openDb(url);
+    const handle = await openDb(url, {
+      workerHost: this.#config.database.projects.workers,
+    });
     if (
       shouldAutoMigrate(this.#config, handle.kind) &&
       !this.#migrated.has(url)
