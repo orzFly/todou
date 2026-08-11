@@ -14,6 +14,8 @@ export const Issue = z.object({
   labels: z.array(Label),
   created_at: Timestamp,
   updated_at: Timestamp,
+  /** Last body-changing edit; null when the body was never edited. */
+  body_edited_at: Timestamp.nullable(),
 });
 export type Issue = z.infer<typeof Issue>;
 

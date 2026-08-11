@@ -15,6 +15,13 @@
       "when": 1786463255776,
       "tag": "0001_brave_nekra",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786489084105,
+      "tag": "0002_purple_stick",
+      "breakpoints": true
     }
   ]
 }

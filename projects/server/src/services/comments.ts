@@ -13,6 +13,7 @@ import { comments, issues } from "../db/project-schema.ts";
 import { ForbiddenError, NotFoundError } from "../errors.ts";
 import { requireProject, routeInfoOf } from "./access.ts";
 import { recordReferences } from "./references.ts";
+import { deleteRevisionsFor, recordRevision } from "./revisions.ts";
 import { getUserRefs } from "./users.ts";
 
 type CommentRow = typeof comments.$inferSelect;
@@ -143,22 +144,38 @@ export async function updateComment(
     issueNumber,
     commentId,
   );
-  const updated = await db
-    .update(comments)
-    .set({ body: input.body, editedAt: new Date() })
-    .where(eq(comments.id, row.id))
-    .returning();
-  const after = updated[0];
-  if (!after) throw new Error("comment update returned no row");
+  // No-op saves succeed but record nothing: no revision, no edited_at
+  // bump, no SSE, no reference re-scan.
+  if (input.body === row.body) return toTimelineComment(ctx, row);
 
-  const refs = await recordReferences(
-    db,
-    projectId,
-    actor.id,
-    { issueNumber, commentId: row.id },
-    input.body,
-    agentContext,
-  );
+  const { after, refs } = await db.transaction(async (tx) => {
+    const updated = await tx
+      .update(comments)
+      .set({ body: input.body, editedAt: new Date() })
+      .where(eq(comments.id, row.id))
+      .returning();
+    const after = updated[0];
+    if (!after) throw new Error("comment update returned no row");
+
+    await recordRevision(tx, {
+      projectId,
+      subjectType: "comment",
+      subjectId: row.id,
+      body: row.body,
+      actorId: actor.id,
+      agentContext,
+    });
+
+    const refs = await recordReferences(
+      tx,
+      projectId,
+      actor.id,
+      { issueNumber, commentId: row.id },
+      input.body,
+      agentContext,
+    );
+    return { after, refs };
+  });
   ctx.bus.publish(projectId, {
     entity: "timeline",
     id: row.id,
@@ -190,7 +207,10 @@ export async function deleteComment(
     issueNumber,
     commentId,
   );
-  await db.delete(comments).where(eq(comments.id, row.id));
+  await db.transaction(async (tx) => {
+    await tx.delete(comments).where(eq(comments.id, row.id));
+    await deleteRevisionsFor(tx, projectId, "comment", row.id);
+  });
   ctx.bus.publish(projectId, {
     entity: "timeline",
     id: row.id,

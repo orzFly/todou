@@ -38,6 +38,7 @@ import { NotFoundError, ValidationFailedError } from "../errors.ts";
 import { type ProjectRow, requireProject, routeInfoOf } from "./access.ts";
 import { toLabel } from "./labels.ts";
 import { recordReferences } from "./references.ts";
+import { recordRevision } from "./revisions.ts";
 import { toStatus } from "./statuses.ts";
 import { getUserRefs } from "./users.ts";
 
@@ -63,6 +64,7 @@ function toIssue(bundle: IssueBundle): Issue {
     labels: bundle.labels,
     created_at: bundle.row.createdAt.toISOString(),
     updated_at: bundle.row.updatedAt.toISOString(),
+    body_edited_at: bundle.row.bodyEditedAt?.toISOString() ?? null,
   };
 }
 
@@ -618,6 +620,19 @@ export async function updateIssue(
     if (input.title !== undefined) patch.title = input.title;
     if (input.body !== undefined) patch.body = input.body;
     if (input.status_id !== undefined) patch.statusId = input.status_id;
+    if (input.body !== undefined && input.body !== before.body) {
+      // History, not timeline: body edits record a revision (the
+      // superseded text) and deliberately emit no event.
+      await recordRevision(tx, {
+        projectId: project.id,
+        subjectType: "issue_body",
+        subjectId: before.id,
+        body: before.body,
+        actorId: actor.id,
+        agentContext,
+      });
+      patch.bodyEditedAt = new Date();
+    }
     await tx.update(issues).set(patch).where(eq(issues.id, before.id));
 
     if (input.body !== undefined && input.body !== before.body) {

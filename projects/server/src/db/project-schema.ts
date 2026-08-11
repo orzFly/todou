@@ -71,6 +71,7 @@ export const issues = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    bodyEditedAt: timestamp("body_edited_at", { withTimezone: true }),
   },
   (t) => [
     uniqueIndex("issues_project_number_idx").on(t.projectId, t.number),
@@ -151,6 +152,35 @@ export const issueEvents = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("issue_events_issue_created_idx").on(t.issueId, t.createdAt)],
+);
+
+// One row per content-changing edit, holding the superseded text (snapshot
+// BEFORE the edit). Polymorphic over what it versions — future subjects
+// (e.g. spec files) extend the enum without a migration. No FKs by
+// consequence: cleanup is the owning service's job.
+export const revisions = pgTable(
+  "revisions",
+  {
+    id: id(),
+    projectId: projectId(),
+    subjectType: text("subject_type", {
+      enum: ["issue_body", "comment"],
+    }).notNull(),
+    subjectId: bigint("subject_id", { mode: "number" }).notNull(),
+    body: text("body").notNull(),
+    // Who performed the edit that replaced this content.
+    actorId: bigint("actor_id", { mode: "number" }).notNull(),
+    agentContext: jsonb("agent_context").$type<AgentContext | null>(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("revisions_subject_idx").on(
+      t.projectId,
+      t.subjectType,
+      t.subjectId,
+      t.id,
+    ),
+  ],
 );
 
 export const attachments = pgTable(
