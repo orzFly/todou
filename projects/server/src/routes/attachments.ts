@@ -15,10 +15,9 @@ const uploadRoute = createRoute({
       content: {
         "multipart/form-data": {
           schema: z.object({
-            file: z.custom<File>(
-              (v: unknown) => v instanceof File,
-              "file required",
-            ),
+            file: z
+              .custom<File>((v: unknown) => v instanceof File, "file required")
+              .openapi({ type: "string", format: "binary" }),
             issue_number: z.coerce.number().int().positive(),
           }),
         },

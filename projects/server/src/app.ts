@@ -9,6 +9,7 @@ import { issueRoutes } from "./routes/issues.ts";
 import { labelRoutes } from "./routes/labels.ts";
 import { meRoutes } from "./routes/me.ts";
 import { projectRoutes } from "./routes/projects.ts";
+import { sseRoutes } from "./routes/sse.ts";
 import { statusRoutes } from "./routes/statuses.ts";
 
 /** Zod validation failures become uniform 422 error bodies. */
@@ -35,11 +36,23 @@ export function createApp(ctx: AppContext) {
     await next();
   });
 
-  const api = new OpenAPIHono<AppEnv>({ defaultHook });
-  // Order matters: /auth endpoints are registered before the auth guard so
-  // login works unauthenticated; everything after the guard requires
-  // a session cookie or a bearer PAT.
+  // basePath (rather than a prefixed mount) so the generated OpenAPI
+  // document carries the /api prefix in its paths.
+  const api = new OpenAPIHono<AppEnv>({ defaultHook }).basePath("/api");
+  // Order matters: /auth endpoints and the OpenAPI document are registered
+  // before the auth guard so they work unauthenticated; everything after
+  // the guard requires a session cookie or a bearer PAT.
   api.route("/auth", authRoutes(ctx));
+  api.doc31("/openapi.json", {
+    openapi: "3.1.0",
+    info: {
+      title: "todou",
+      version: "0.1.0",
+      description:
+        "A to-do system where projects behave like GitHub-Issues-style " +
+        "boards and agents are first-class machine users.",
+    },
+  });
   api.use("*", authMiddleware(ctx));
   api.route("/", meRoutes());
   api.route("/agents", agentRoutes());
@@ -48,8 +61,9 @@ export function createApp(ctx: AppContext) {
   api.route("/projects", labelRoutes());
   api.route("/projects", issueRoutes());
   api.route("/projects", attachmentRoutes());
+  api.route("/projects", sseRoutes());
 
-  app.route("/api", api);
+  app.route("/", api);
   registerErrorHandler(app);
   return app;
 }
