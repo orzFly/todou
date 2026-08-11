@@ -1,13 +1,12 @@
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { parse as parseToml } from "smol-toml";
+import {
+  ConfigError,
+  flexibleBool,
+  loadTomlConfig,
+} from "@todou/shared/config";
 import { z } from "zod";
 
-/** TOML supplies real booleans; ENV supplies "true"/"false"/"1"/"0". */
-const flexibleBool = z.preprocess(
-  (v) => (typeof v === "string" ? v === "true" || v === "1" : v),
-  z.boolean(),
-);
+export { ConfigError };
 
 const ConfigSchema = z.object({
   auth: z
@@ -101,8 +100,6 @@ export function compileUrlTemplate(
   return resolve;
 }
 
-export class ConfigError extends Error {}
-
 /** ENV names → config paths. ENV always wins over TOML. */
 const ENV_MAP: Array<[string, string[]]> = [
   ["TODOU_AUTH_MODE", ["auth", "mode"]],
@@ -122,56 +119,20 @@ const ENV_MAP: Array<[string, string[]]> = [
   ["TODOU_STORAGE_MAX_UPLOAD_MB", ["storage", "max_upload_mb"]],
 ];
 
-function setPath(
-  target: Record<string, unknown>,
-  path: string[],
-  value: unknown,
-): void {
-  let node = target;
-  for (const key of path.slice(0, -1)) {
-    const next = node[key];
-    if (typeof next !== "object" || next === null) {
-      node[key] = {};
-    }
-    node = node[key] as Record<string, unknown>;
-  }
-  node[path.at(-1) as string] = value;
-}
-
 export function loadConfig(options?: {
   configPath?: string;
   env?: Record<string, string | undefined>;
   tomlSource?: string;
 }): Config {
-  const env = options?.env ?? process.env;
-
-  let raw: Record<string, unknown> = {};
-  if (options?.tomlSource !== undefined) {
-    raw = parseToml(options.tomlSource) as Record<string, unknown>;
-  } else {
-    const path = options?.configPath ?? "./todou.toml";
-    try {
-      raw = parseToml(readFileSync(path, "utf8")) as Record<string, unknown>;
-    } catch (cause) {
-      // The default path is optional; an explicitly requested file is not.
-      if (options?.configPath !== undefined) {
-        throw new ConfigError(`cannot read config ${path}: ${String(cause)}`);
-      }
-    }
-  }
-
-  for (const [name, path] of ENV_MAP) {
-    const value = env[name];
-    if (value !== undefined && value !== "") {
-      setPath(raw, path, value);
-    }
-  }
-
-  const parsed = ConfigSchema.safeParse(raw);
-  if (!parsed.success) {
-    throw new ConfigError(`invalid config: ${parsed.error.message}`);
-  }
-  const config = parsed.data;
+  const config = loadTomlConfig({
+    schema: ConfigSchema,
+    tomlSource: options?.tomlSource,
+    path: options?.configPath ?? "./todou.toml",
+    // The default path is optional; an explicitly requested file is not.
+    optional: options?.configPath === undefined,
+    envMap: ENV_MAP,
+    env: options?.env,
+  });
 
   // serveStatic resolves a relative root against the process CWD, which in
   // production is the state directory rather than the checkout. Absolutising
