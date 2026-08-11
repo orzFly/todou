@@ -216,9 +216,18 @@ importers:
 
   projects/cli:
     dependencies:
+      '@todou/shared':
+        specifier: workspace:*
+        version: link:../shared
       clipanion:
         specifier: 4.0.0-rc.4
         version: 4.0.0-rc.4(typanion@3.14.0)
+      smol-toml:
+        specifier: ^1.7.1
+        version: 1.7.1
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@types/node':
         specifier: ^26.2.0
