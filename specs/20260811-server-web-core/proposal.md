@@ -130,10 +130,17 @@
 或按 project id 路由到不同 PostgreSQL 服务器）。多开 PGlite 时研究用
 worker threads + IPC 利用多核（实验性，feature flag，不阻塞主线）。
 
-### 复审批注（brainstorm.md，url_template 配置处）
+### 复审批注（brainstorm.md，url_template 配置处；后续口头修订）
 
-> 也可能是 id%10这种
+初版批注提出支持 `id%10` 式取模分桶，随后用户修订为：
 
-含义（已并入设计）：dedicated 放置的 `url_template` 占位符除 `{id}`
-（一 project 一库）外，还要支持 **`{id%N}` 取模分桶**——N 个库分摊全部
-project，多个 project 共享一个桶库（项目库表恒带 project_id，共桶安全）。
+> 哦, id%N还是去掉吧，这个太奇怪了，不实用，尤其是不可迁移。感觉应该
+> 有个自由模板，让用户自己写逻辑比较好。启动的时候Function()把他编译
+> 一下，这样用户可以写那种，比如>100怎么样怎么样的逻辑
+
+含义（已并入设计，取代 `{id%N}` 方案）：dedicated 放置的 `url_template`
+是**自由模板**——启动时用 `new Function()` 编译为 JS 模板字面量，
+`${}` 内可写任意逻辑（如 `project.id > 100` 分流到不同服务器）。
+用户自己写的逻辑允许多个 project 解析到同一目标库（分桶因此仍可由
+用户表达），路由规则须保持稳定，迁移由用户自理（逐项目搬迁走注册表
+`database_url` 覆盖列）。

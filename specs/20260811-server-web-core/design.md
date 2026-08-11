@@ -39,13 +39,24 @@ workers = false                          # 实验：worker threads 承载 PGlite
 ```
 
 - `shared`：项目库物理上就是系统库连接（一切同库，按 project_id 区分）。
-- `dedicated`：`url_template` 占位符支持 **`{id}`**（一 project 一库）与
-  **`{id%N}`**（取模分桶，N 个库分摊全部 project）。项目库表恒带
-  project_id 且查询恒过滤，**共桶天然安全**；桶粒度对 service 层不可见。
-  PGlite 与 PostgreSQL 同一套模板机制（后者即按 id/桶路由不同库/服务器）。
+- `dedicated`：`url_template` 是**自由模板**——启动时编译为 JS 模板
+  字面量：`new Function("project", "return \`" + tpl + "\`")`，作用域
+  提供 `project = {id, slug}`，`${}` 内可写任意逻辑（分流、区间路由等）：
+
+  ```toml
+  url_template = "pglite://./data/projects/${project.id}"
+  url_template = "postgres://${project.id > 100 ? 'pg-b' : 'pg-a'}/todou_${project.id}"
+  ```
+
+  约定：**表达式必须确定且稳定**（同一 project 永远解析到同一 URL；
+  改路由规则需自行迁移数据——个别项目搬家用注册表覆盖列，见下）。
+  配置属管理员信任输入，`Function()` 编译无沙箱诉求；启动时编译失败
+  即配置错误退出，解析结果必须是合法 `pglite://`/`postgres://` URL。
+  项目库表恒带 project_id 且查询恒过滤，**多 project 解析到同一目标库
+  天然安全**（用户想自己写分桶逻辑也没问题）。
 - **按 project 覆盖**：注册表 `projects.database_url` 非空时优先于
-  template（支持"个别大项目单独放一台服务器"）。本切片 router 读取该列，
-  管理 API/UI 后置。
+  template（"个别大项目单独放一台服务器"，也是改路由规则时逐项目搬迁
+  的落点）。本切片 router 读取该列，管理 API/UI 后置。
 
 ### DbRouter
 
@@ -60,11 +71,11 @@ db/
     └── project/         drizzle-kit 生成（配置 B）
 ```
 
-- `forProject(id)`：查放置（注册表覆盖 → 配置模板）→ 解析出**最终
-  URL**（`{id}` / `{id%N}` 展开）→ **句柄缓存以 URL 为键**（分桶时多个
-  project 命中同一句柄）；dedicated PGlite 按 `max_open` LRU 关闭空闲。
+- `forProject(id)`：查放置（注册表覆盖 → 编译好的模板函数）→ 解析出
+  **最终 URL** → **句柄缓存以 URL 为键**（多 project 解析到同一库时
+  命中同一句柄）；dedicated PGlite 按 `max_open` LRU 关闭空闲。
 - **provision**（project 创建事务的一部分，见 §4 一致性）：解析目标
-  URL → **幂等**确保库存在且迁移到位（分桶时桶库可能已被先前 project
+  URL → **幂等**确保库存在且迁移到位（目标库可能已被其他 project
   建好）→ 写 project_meta + seed 三 status。
 - `migrate` 子命令：迁移系统库 → 遍历注册表迁移所有项目库。
   `pglite://` 打开时默认自动迁移；`postgres://` 需显式（可配置覆盖）。
@@ -79,9 +90,9 @@ db/
 - issue 编号计数器在项目库 `project_meta` → 创建 issue 是**单库事务**。
 - project 创建跨两库：先写注册表（系统库）→ provision 项目库；provision
   失败则回滚注册表行（补偿删除）。project 删除反向：先移除注册表行
-  （不可再路由到）→ dedicated `{id}` 放置删库文件；**分桶/shared 放置
-  改为删该 project_id 的行**（桶库被其他 project 共享，不可删库）；
-  失败仅遗留孤儿数据，记日志。
+  （不可再路由到）→ 默认**删该 project_id 的行**；若目标是 PGlite 文件
+  且解析剩余全部 project 后确认无人共用，则直接删库文件。失败仅遗留
+  孤儿数据，记日志。
 - `referenced`（`#N`）只在同 project 内解析——天然单库。
 - 跨 project 聚合/全局搜索不在本切片范围（架构上未来可对 dedicated
   做 fan-out 或引入索引服务）。
