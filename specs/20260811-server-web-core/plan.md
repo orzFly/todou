@@ -21,20 +21,27 @@
 
 **Commit**: `chore: add shared package and slice-1 dependencies`
 
-## Phase 1 — shared schemas + server 配置 + DB 基础
+## Phase 1 — shared schemas + 配置 + 双层 DB 基础
 
-1. shared `schemas/*`：common（ID/cursor/error）、user、token、project
-   （含 status/label/member）、issue（含过滤 DTO）、timeline（event type
-   枚举 + payload 判别联合）、attachment；`events.ts` SSE 常量。单测。
+1. shared `schemas/*`：common（ID/cursor/error）、user（含 UserRef）、
+   token、project（含 status/label/member）、issue（含过滤 DTO）、
+   timeline（event type 枚举 + payload 判别联合）、attachment；
+   `events.ts` SSE 常量。单测。
 2. server `config.ts`：默认值 → TOML（`--config`，默认 ./todou.toml）→
-   `TODOU_*` ENV → zod 校验（`[auth] mode` 本切片仅接受 `single`）。单测。
-3. server `db/schema.ts` 全部表（见 brainstorm §2）+ `db/index.ts` 驱动
-   工厂（`pglite://` / `postgres://`）；drizzle-kit 生成首个迁移进仓库；
-   clipanion `migrate` 子命令；`bootstrap.ts`（pglite 自动迁移 + single
-   seed 内置 `user`）。
-4. 测试基建：`pglite://memory` 每 suite 新库 + 迁移的 helper。
+   `TODOU_*` ENV → zod 校验。含 `[database] system`、`[database.projects]
+   placement/url_template/max_open/workers`、`[auth] mode`（本切片仅
+   `single`）。单测（含 dedicated 缺 url_template 报错）。
+3. server `db/`：`system-schema.ts` + `project-schema.ts`（见 brainstorm
+   §2）；`driver.ts`（pglite:// | postgres:// → drizzle 实例，host 先只有
+   inline）；`router.ts`（`system()`/`forProject(id)`：注册表覆盖 →
+   placement 解析、句柄缓存、dedicated PGlite LRU）。
+4. 两份 drizzle-kit 配置生成 `migrations/system/` 与 `migrations/project/`
+   首个迁移进仓库；clipanion `migrate` 子命令（系统库 + 遍历注册表迁移
+   项目库）；`bootstrap.ts`（pglite 自动迁移 + single seed 内置 `user`）。
+5. 测试基建：`pglite://memory` helper，**参数化放置模式**（shared /
+   dedicated）供后续 suite 复用；router 单测（放置解析、LRU、覆盖列）。
 
-**Commit**: `feat(server): config, schema, migrations, db drivers`
+**Commit**: `feat(server): config, two-tier db schemas, router, migrations`
 
 ## Phase 2 — 认证
 
@@ -50,24 +57,30 @@
 
 ## Phase 3 — projects / members / statuses / labels
 
-1. services + routes：project CRUD（建者即 admin、seed 三 status）、
-   member 增删改、status CRUD（排序、被引用删除 → 409）、label CRUD。
-2. 角色守卫 helper（reader/writer/admin + instance admin 旁路）。
-3. 测试：CRUD + 权限矩阵 + status 删除保护 + slug 冲突 409。
+1. `projects.ts`：注册表 CRUD + **provision 流程**（dedicated：建库 →
+   项目库迁移 → project_meta + seed 三 status；失败补偿删除注册表行）；
+   删除反向（先摘注册表再删库，孤儿仅记日志）。
+2. `members.ts`（系统库）；`statuses.ts`/`labels.ts`（项目库；status
+   排序、被引用删除 → 409）。
+3. 角色守卫 helper（reader/writer/admin + instance admin 旁路，只读
+   系统库）。
+4. 测试（shared/dedicated 双放置跑）：CRUD、权限矩阵、provision 失败
+   补偿、status 删除保护、slug 冲突 409。
 
-**Commit**: `feat(server): projects, members, statuses, labels`
+**Commit**: `feat(server): projects with provisioning, members, statuses, labels`
 
 ## Phase 4 — issues / comments / timeline / 事件
 
-1. `issues.ts`：编号事务分配、创建（`opened` 事件）、PATCH 差异 →
-   事件（closed/reopened/status_changed/title_changed/label_*/
-   (un)assigned）、列表过滤 + cursor 分页。
-2. `comments.ts` + `references.ts`（`#N` 解析 → `referenced` 事件，
-   去重、排除自引用）。
-3. `timeline.ts`：归并查询 + 双向 keyset cursor + `last=1`。
-4. 测试：编号并发（Promise.all 创建 20 个 issue 编号不重）、事件正确性、
-   引用解析边界（代码块内 `#N` 不豁免——按纯文本正则，记录该取舍）、
-   timeline 排序与双向翻页。
+1. `issues.ts`：`project_meta` 编号事务分配、创建（`opened` 事件）、
+   PATCH 差异 → 事件（closed/reopened/status_changed/title_changed/
+   label_*/(un)assigned）、列表过滤 + cursor 分页。
+2. `comments.ts` + `references.ts`（`#N` → `referenced` 事件，去重、
+   排除自引用）。
+3. `timeline.ts`：归并 + 双向 keyset cursor + `last=1`；`user-refs.ts`
+   系统库批量 enrich + 30s TTL 缓存（含 ghost 用户兜底）。
+4. 测试（双放置）：编号并发（Promise.all 20 个不重号）、事件正确性、
+   引用解析边界（代码块内 `#N` 误报为已知取舍）、timeline 排序与双向
+   翻页、enrich 缓存。
 
 **Commit**: `feat(server): issues, comments, timeline, issue events`
 
@@ -75,7 +88,7 @@
 
 1. `storage/types.ts` + `storage/fs.ts`（分片路径、大小限制）。
 2. 上传（multipart）/下载路由 + member 鉴权 + `attachment_added` 事件。
-3. 测试：上传下载往返、超限 413/422、无权限 403、文件名 sanitize。
+3. 测试：上传下载往返、超限、无权限 403、文件名 sanitize。
 
 **Commit**: `feat(server): fs attachment storage`
 
@@ -97,11 +110,22 @@
 
 **Commit**: `feat(server): SSE change feed and OpenAPI document`
 
-## Phase 8 — web 基础
+## Phase 8 — PGlite worker host（spike，时间盒 ≤1 天，可跳过不阻塞）
+
+1. `driver.ts` 增加 `worker` host：worker_thread 内跑 PGlite，主线程
+   MessagePort 代理实现 drizzle-orm/pglite 所需查询接口。
+2. `[database.projects] workers = true` 时启用（默认 false）。
+3. 验收：项目库集成测试在 worker host 下全绿 + 多库并发 benchmark
+   （对比 inline）。若代理不可行，记录结论与退化方案后关闭该 flag。
+
+**Commit**: `feat(server): experimental worker-hosted pglite` 或
+`docs: worker-pglite spike findings`
+
+## Phase 9 — web 基础
 
 1. Tailwind v4（@tailwindcss/vite + styles.css）+ shadcn/ui 初始化
-   （components.json，`pnpm dlx shadcn add` 基础组件：button/input/
-   table/dialog/select/badge/dropdown-menu/tooltip/sonner…）。
+   （components.json，基础组件：button/input/table/dialog/select/badge/
+   dropdown-menu/tooltip/sonner…）。
 2. TanStack Router 路由树 + QueryClient + shared `TodouClient`（同源
    /api，vite proxy → :3000）。
 3. 登录流：401 → `/login` → single 模式自动调 `/auth/login` 秒过 → 回跳。
@@ -109,7 +133,7 @@
 
 **Commit**: `feat(web): app shell, tailwind + shadcn, login flow, projects page`
 
-## Phase 9 — list view
+## Phase 10 — list view
 
 1. `/projects/:slug`：IssueTable + FilterBar（状态/标签/指派/类别/搜索，
    全部落 search params）+ cursor 翻页。
@@ -119,7 +143,7 @@
 
 **Commit**: `feat(web): issue list view with filters`
 
-## Phase 10 — issue 详情 + 虚拟 timeline
+## Phase 11 — issue 详情 + 虚拟 timeline
 
 1. `/projects/:slug/issues/:number`：标题/正文（MarkdownView）、侧栏
    （status/labels/assignees 编辑）。
@@ -131,7 +155,7 @@
 
 **Commit**: `feat(web): issue page with virtualized timeline`
 
-## Phase 11 — kanban
+## Phase 12 — kanban
 
 1. `/projects/:slug/board`：列 = status（position 排序），dnd-kit 拖拽。
 2. 落下 → PATCH status（乐观移动，失败回滚 + toast）。
@@ -140,7 +164,7 @@
 
 **Commit**: `feat(web): kanban board`
 
-## Phase 12 — 实时
+## Phase 13 — 实时
 
 1. `useProjectEvents`：EventSource 连接 `/projects/:slug/events`，指针
    事件 → invalidate 映射（见 api.md）；重连后全量 invalidate 补偿。
@@ -149,7 +173,7 @@
 
 **Commit**: `feat(web): SSE live updates`
 
-## Phase 13 — 设置页
+## Phase 14 — 设置页
 
 1. `/projects/:slug/settings`：members（增删改 role，可加 agent）、
    statuses（增删改排序，删除被引用时提示迁移）、labels。
@@ -159,14 +183,15 @@
 
 **Commit**: `feat(web): project settings and agent management`
 
-## Phase 14 — 收尾
+## Phase 15 — 收尾
 
-1. 空态/加载骨架/错误 toast 巡检；`todou-server serve` 优雅关闭复核。
+1. 空态/加载骨架/错误 toast 巡检；优雅关闭复核（含关闭全部项目库句柄）。
 2. README 更新（运行方式：`todou-server serve` + `pnpm --filter
-   @todou/web dev`）；AGENTS.md 若命令有变则同步。
+   @todou/web dev`；两种放置的配置示例）；AGENTS.md 若命令有变则同步。
 3. 全量验证：`pnpm fmt && pnpm lint && pnpm typecheck && pnpm test`；
-   手动冒烟：单用户登录 → 建项目 → 建 issue → 评论（含 #N 引用）→
-   拖 kanban → 双开浏览器验证 SSE → agent PAT 走 API 发评论。
+   手动冒烟：单用户登录 → 建项目（dedicated 放置验证一次）→ 建 issue →
+   评论（含 #N 引用）→ 拖 kanban → 双开浏览器验证 SSE → agent PAT 走
+   API 发评论。
 
 **Commit**: `chore: slice-1 polish and docs`
 
@@ -174,9 +199,11 @@
 
 - **@hono/zod-openapi 与 zod v4**：若版本不兼容，降级方案为
   `@hono/zod-validator` + 手写精简 openapi.json（API 面不变）。
-- **PGlite 并发**：单连接串行执行，编号并发测试意在验证事务正确性
-  而非并行度；postgres:// 路径同套测试跑一遍（CI 可选）。
-- **`#N` 解析在代码块内误报**：本切片接受（纯正则），如成噪音在
-  后续切片改为 markdown AST 解析。
-- **虚拟列表测高抖动**：react-virtual `measureElement` 动态测量；
-  图片加载引起的高度变化用 `onLoad` 触发 re-measure。
+- **双层库跨库一致性**：project 创建/删除是跨库操作，采用补偿式
+  （设计 §2）；其余写路径均为单库事务。
+- **PGlite 并发**：单实例单连接串行；dedicated 放置下不同 project 天然
+  并行（inline host 下仍共享主线程 CPU——worker spike 即为此而设）。
+- **`#N` 解析在代码块内误报**：本切片接受（纯正则），如成噪音后续改
+  markdown AST。
+- **虚拟列表测高抖动**：react-virtual `measureElement` 动态测量；图片
+  `onLoad` 触发 re-measure。

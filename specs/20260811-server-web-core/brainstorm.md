@@ -30,15 +30,27 @@ shadcn/ui + Tailwind v4。纯 TS、零 codegen。
 
 | 插拔点 | 本切片实现 | 后续切片 |
 | --- | --- | --- |
-| DB 驱动（由 `database.url` scheme 决定） | `pglite://`（内嵌、文件持久化）；`postgres://`（node-postgres，同一方言近乎免费，轻度验证） | 生产 PG 硬化 |
+| DB（两层：系统库 + 项目库，驱动由 URL scheme 决定：`pglite://` / `postgres://`） | 系统库 + 项目库 `shared`/`dedicated` 两种放置；PGlite 与 postgres 驱动 | 生产 PG 硬化、PGlite worker threads 转正、按 project 路由管理 UI |
 | 认证（`auth.mode`） | `single`（零输入登录为内置 `user`） | `oidc`、`forward` |
 | 存储（`storage.backend`） | `fs` | `s3`（presigned URL） |
+
+**两层数据库架构**（redline 评审补充的需求）：**系统库**存全局数据
+（users、sessions、tokens、项目注册表、members）；**项目库**存单个
+project 的业务数据（issues、comments、events、statuses、labels、附件
+元数据）。放置策略由配置决定——`shared`：项目数据与系统库同库（按
+project_id 区分）；`dedicated`：每个 project 独立数据库（PGlite 一
+project 一文件，天生横向分表；PostgreSQL 可按 project id 路由到不同
+服务器）。服务层通过 `DbRouter`（`system()` / `forProject(id)`）访问，
+对放置策略透明。多开 PGlite 时以 worker threads + IPC 利用多核为实验
+特性（feature flag，默认关）。
 
 **零构建约束**：`@todou/shared` 的 `exports` 直接指向 `.ts` 源码；pnpm
 workspace 符号链接解析到 `node_modules` 之外的真实路径，Node 24 type
 stripping 与 Vite 均可直接消费，无构建步骤。全仓 `erasableSyntaxOnly`。
 
-## 2. 数据模型（Drizzle pg-core，一份 schema）
+## 2. 数据模型（Drizzle pg-core，系统/项目两套 schema）
+
+**系统库 schema**：
 
 ```
 users            id · kind(human|machine) · login(唯一) · display_name · email?
@@ -48,8 +60,17 @@ users            id · kind(human|machine) · login(唯一) · display_name · e
 sessions         id · user_id → users · expires_at        （web cookie 会话）
 tokens (PAT)     id · user_id → users · name · token_hash · prefix(展示用)
                  · expires_at? · revoked_at? · last_used_at?
-projects         id · slug(唯一) · name · description · next_issue_number
+projects         id · slug(唯一) · name · description
+                 · database_url?（按 project 路由的覆盖项，空 = 按配置放置）
 project_members  project_id ⨯ user_id（唯一）· role(admin|writer|reader)
+```
+
+**项目库 schema**（shared 放置时这些表与系统库同库；dedicated 时每
+project 一库。所有表保留 project_id 列，使同一套 schema/查询在两种
+放置下通用）：
+
+```
+project_meta     project_id(唯一) · next_issue_number · schema_version
 statuses         id · project_id · name · category(open|closed) · position · color
 labels           id · project_id · name · color   （project 内名字唯一）
 issues           id · project_id · number(project 内唯一) · title · body(md)
@@ -61,6 +82,12 @@ issue_events     id · issue_id · actor_id · type · payload(jsonb) · created
 attachments      id · issue_id · uploader_id · filename · content_type · size
                  · storage_key · created_at
 ```
+
+**跨库引用规则**：项目库中对 user 的引用（author_id、actor_id、
+uploader_id、assignee 的 user_id）是**逻辑 ID，不建外键**（dedicated
+放置下物理上不可能）；service 层从系统库批量取用户摘要做 enrich（带
+短 TTL 缓存）。项目库内部（status_id、label_id 等）保留真外键。issue
+编号计数器放在项目库 `project_meta`，保证 issue 创建在单库事务内完成。
 
 - **agent 就是 `users.kind = machine`**，成员/指派/评论复用同一套外键；
   UI 依据 kind 渲染徽章。每个 machine user **必须归属一个 human
@@ -197,8 +224,16 @@ mode = "single"              # single | oidc | forward（后两者后续切片�
 port = 3000                  # TODOU_HTTP_PORT
 
 [database]
-url = "pglite://./data/db"   # TODOU_DATABASE_URL；postgres:// 亦可
-# auto_migrate 默认：pglite=true · postgres=false
+system = "pglite://./data/system"   # TODOU_DATABASE_SYSTEM；postgres:// 亦可
+# auto_migrate 默认：pglite=true · postgres=false（系统库/项目库同规则）
+
+[database.projects]
+placement = "shared"                # shared | dedicated
+# dedicated 时必填，{id} 为 project id 占位：
+# url_template = "pglite://./data/projects/{id}"
+# url_template = "postgres://pg-shard-a/todou_project_{id}"
+# max_open = 32          # dedicated PGlite 的 LRU 打开上限
+# workers = false        # 实验：worker threads 承载 PGlite（多核）
 
 [storage]
 backend = "fs"               # fs | s3（后续切片）
@@ -215,9 +250,11 @@ max_upload_mb = 20
 
 ## 7. 迁移与运维
 
-- drizzle-kit 生成 SQL 迁移文件，进仓库；`todou-server migrate` 显式执行
-  （PGlite / PG 通用）。
-- `pglite://` 默认 serve 启动自动迁移；`postgres://` 必须显式执行
+- **两套迁移**（系统库 / 项目库各一），drizzle-kit 生成 SQL 进仓库；
+  `todou-server migrate` 迁移系统库 + 遍历注册表迁移全部项目库。
+- dedicated 项目库在 project 创建时 provision（建库/建文件 + 迁移 +
+  seed），打开时校验 `project_meta.schema_version`。
+- `pglite://` 默认打开时自动迁移；`postgres://` 必须显式执行
   （`database.auto_migrate` 可覆盖两者默认）。
 - server 入口 clipanion：`serve`、`migrate`，后续按需加管理子命令。
 - 优雅关闭：断开 SSE、落盘 PGlite。
@@ -229,7 +266,8 @@ max_upload_mb = 20
 - **server**：对**真 PGlite** 跑集成测试（每 suite 一个内存实例 + 迁移，
   无 mock）；路由用 `app.request()` 进程内打请求，覆盖鉴权矩阵（PAT
   有效/吊销/过期、single 登录、role 403）；`#N` 引用解析、issue 编号
-  并发自增、timeline 归并等单测。
+  并发自增、timeline 归并等单测。**核心 service 套件在 shared 与
+  dedicated 两种放置下各跑一遍**（参数化 test helper），保证放置透明。
 - **shared**：schema parse/serialize 单测。
 - **web**：Testing Library + happy-dom；重点：timeline 归并渲染、kanban
   乐观更新/回滚、SSE→invalidate 映射 hooks。
@@ -248,4 +286,7 @@ max_upload_mb = 20
 ## 10. 明确不做（本切片）
 
 OIDC / forward 认证 · S3 · CLI · E2E 测试 · web 静态托管 · 全文搜索
-（q 仅 ILIKE）· 通知/邮件 · 多实例横向扩展（SSE bus 单进程）
+（q 仅 ILIKE）· 通知/邮件 · 多实例横向扩展（SSE bus 单进程）·
+PGlite worker threads 转正（本切片仅 spike + feature flag）·
+按 project 路由（`projects.database_url`）的管理 UI/API（列保留，
+本切片仅 router 读取）

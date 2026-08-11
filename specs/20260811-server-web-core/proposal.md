@@ -111,3 +111,21 @@
 - **第 4 节（实时 + Web）**：OK，继续最后一节
 - **第 5 节（配置、存储、错误处理、测试）**：不要顶层mode，不如搞个[auth] mode="single"，意义更明确。真实用户就 mode="oidc"，甚至还可以支持那种forward auth (header) mode="forward"
   - 修订（[auth] mode = single/oidc/forward，DB/存储/认证三点正交，自动迁移改挂 DB 驱动）后：OK，写文档吧
+
+## Redline 评审批注（2026-08-11，design.md）
+
+> 总的来说我有个新的想法：
+> 就是有个系统数据库，然后，
+> 任何和project相关的信息，分数据库：
+> pqlite可以公用系统数据库，也可以每个project一个单独的pqlite，这样天生横向分表了。
+> 然后pgsql也可以作系统数据库，然后proejct也可以公用同一个pgsql（同系统数据库），或者per project id进不同的服务器。
+>
+> 我感觉这个对架构变化比较大，要提前规划。
+> 多开pqlite的情况下，看看能否开worker thread，然后ipc来实现充分利用多核心
+
+含义（已并入设计）：数据库架构改为**系统库 + 项目库**两层。系统库存
+全局数据（用户、会话、token、项目注册表、成员）；每个 project 的业务
+数据（issues、comments、事件、statuses、labels、附件元数据）按配置放置：
+`shared`（与系统库同库）或 `dedicated`（每 project 独立 PGlite 文件，
+或按 project id 路由到不同 PostgreSQL 服务器）。多开 PGlite 时研究用
+worker threads + IPC 利用多核（实验性，feature flag，不阻塞主线）。
