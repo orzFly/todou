@@ -58,7 +58,7 @@ export function CommentItem({
         <UserChip user={comment.author} />
         <AgentContextBadge context={comment.agent_context} />
         <span
-          className="text-xs text-muted-foreground"
+          className="shrink-0 text-xs whitespace-nowrap text-muted-foreground"
           title={comment.created_at}
         >
           {new Date(comment.created_at).toLocaleString()}

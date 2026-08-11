@@ -62,12 +62,12 @@ export function RevisionHistory({
     <>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger
-          className="cursor-pointer text-xs text-muted-foreground/70 hover:underline"
+          className="shrink-0 cursor-pointer text-xs whitespace-nowrap text-muted-foreground/70 hover:underline"
           title={editedAt}
         >
           (edited)
         </PopoverTrigger>
-        <PopoverContent className="w-80">
+        <PopoverContent className="max-h-80 w-96 overflow-y-auto">
           {history.isPending ? (
             <p className="px-2 py-1.5 text-xs text-muted-foreground">
               Loading history…
@@ -88,11 +88,14 @@ export function RevisionHistory({
                 className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted"
                 onClick={() => setSelected(revision)}
               >
-                <UserChip user={revision.actor} compact />
-                <span className="font-medium text-foreground/80">
-                  {revision.actor.login}
-                </span>
-                <AgentContextBadge context={revision.agent_context} />
+                <UserChip
+                  user={revision.actor}
+                  nameClassName="font-medium text-foreground/80"
+                />
+                <AgentContextBadge
+                  context={revision.agent_context}
+                  className="shrink"
+                />
                 <span
                   className="ml-auto shrink-0 text-xs text-muted-foreground/70"
                   title={revision.created_at}

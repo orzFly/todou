@@ -75,19 +75,22 @@ const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
 };
 
 export function EventRow({ event }: { event: TimelineEvent }) {
+  const action = describeEvent(event.event_type, event.payload);
   return (
     <div className="flex items-center gap-2 py-1.5 pl-1 text-sm text-muted-foreground">
-      <span className="text-muted-foreground/70">
+      <span className="shrink-0 text-muted-foreground/70">
         {ICONS[event.event_type]}
       </span>
-      <UserChip user={event.actor} compact />
-      <span className="font-medium text-foreground/80">
-        {event.actor.login}
-      </span>
-      <span>{describeEvent(event.event_type, event.payload)}</span>
+      <UserChip
+        user={event.actor}
+        nameClassName="font-medium text-foreground/80"
+      />
       <AgentContextBadge context={event.agent_context} />
+      <span className="min-w-0 flex-1 truncate" title={action}>
+        {action}
+      </span>
       <span
-        className="ml-auto shrink-0 text-xs text-muted-foreground/70"
+        className="shrink-0 text-xs text-muted-foreground/70"
         title={event.created_at}
       >
         {new Date(event.created_at).toLocaleString()}

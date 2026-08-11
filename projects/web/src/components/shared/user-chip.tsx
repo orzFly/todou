@@ -7,6 +7,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 /**
  * Uniform user rendering across the app. Machine users get a bot badge and
@@ -15,9 +16,11 @@ import {
 export function UserChip({
   user,
   compact = false,
+  nameClassName,
 }: {
   user: UserRef;
   compact?: boolean;
+  nameClassName?: string;
 }) {
   const initials = user.display_name
     .split(/\s+/)
@@ -27,7 +30,7 @@ export function UserChip({
     .toUpperCase();
 
   const chip = (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex shrink-0 items-center gap-1.5">
       <span className="relative inline-flex">
         <Avatar className="size-5">
           <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
@@ -39,7 +42,11 @@ export function UserChip({
           />
         )}
       </span>
-      {!compact && <span className="text-sm">{user.login}</span>}
+      {!compact && (
+        <span className={cn("text-sm whitespace-nowrap", nameClassName)}>
+          {user.login}
+        </span>
+      )}
     </span>
   );
 

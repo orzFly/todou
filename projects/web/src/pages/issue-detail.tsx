@@ -181,7 +181,7 @@ function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
       <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
         <UserChip user={issue.author} />
         <span
-          className="text-xs text-muted-foreground"
+          className="shrink-0 text-xs whitespace-nowrap text-muted-foreground"
           title={issue.created_at}
         >
           {new Date(issue.created_at).toLocaleString()}
