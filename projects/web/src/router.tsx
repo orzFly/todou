@@ -11,11 +11,13 @@ import { meQuery } from "@/api/queries.ts";
 import { AppShell } from "@/components/shell.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/sonner";
+import { AgentsSettingsPage } from "@/pages/agents-settings.tsx";
 import { BoardPage } from "@/pages/board.tsx";
 import { IssueDetailPage } from "@/pages/issue-detail.tsx";
 import { IssueListPage } from "@/pages/issue-list.tsx";
 import { LoginPage } from "@/pages/login.tsx";
 import { ProjectLayout } from "@/pages/project-layout.tsx";
+import { ProjectSettingsPage } from "@/pages/project-settings.tsx";
 import { ProjectsPage } from "@/pages/projects.tsx";
 
 const rootRoute = createRootRoute({
@@ -78,15 +80,6 @@ const projectsRoute = createRoute({
   component: ProjectsPage,
 });
 
-// Placeholder pages — filled in by the list/kanban/issue/settings phases.
-function ComingSoon({ what }: { what: string }) {
-  return (
-    <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
-      {what} — under construction 🚧🥔
-    </div>
-  );
-}
-
 const projectRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/projects/$slug",
@@ -115,13 +108,13 @@ const issueRoute = createRoute({
 const projectSettingsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "settings",
-  component: () => <ComingSoon what="Project settings" />,
+  component: ProjectSettingsPage,
 });
 
 const agentsSettingsRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/settings/agents",
-  component: () => <ComingSoon what="Agent management" />,
+  component: AgentsSettingsPage,
 });
 
 const routeTree = rootRoute.addChildren([
