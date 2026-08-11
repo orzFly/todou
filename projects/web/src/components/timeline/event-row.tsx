@@ -11,6 +11,7 @@ import {
   UserPlusIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 
 type Payload = Record<string, unknown>;
@@ -84,6 +85,7 @@ export function EventRow({ event }: { event: TimelineEvent }) {
         {event.actor.login}
       </span>
       <span>{describeEvent(event.event_type, event.payload)}</span>
+      <AgentContextBadge context={event.agent_context} />
       <span
         className="ml-auto shrink-0 text-xs text-muted-foreground/70"
         title={event.created_at}

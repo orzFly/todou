@@ -1,4 +1,5 @@
 import type { TimelineComment } from "@todou/shared";
+import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 
@@ -16,6 +17,7 @@ export function CommentItem({
     >
       <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
         <UserChip user={comment.author} />
+        <AgentContextBadge context={comment.agent_context} />
         <span
           className="text-xs text-muted-foreground"
           title={comment.created_at}
