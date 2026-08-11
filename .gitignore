@@ -9,3 +9,5 @@ coverage/
 *.tsbuildinfo
 data/
 /todou.toml
+.claude/
+.mcp.json
