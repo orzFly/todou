@@ -28,6 +28,7 @@ export type ConfigOverrides = {
   urlTemplate?: string;
   maxUploadMb?: number;
   workers?: boolean;
+  staticDir?: string;
 };
 
 export function testConfig(
@@ -60,6 +61,9 @@ export function testConfig(
   }
   if (overrides?.workers) {
     lines.push("workers = true");
+  }
+  if (overrides?.staticDir) {
+    lines.unshift("[http]", `static_dir = '${overrides.staticDir}'`);
   }
   return loadConfig({ tomlSource: lines.join("\n"), env: {} });
 }

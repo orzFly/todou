@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConfigError, compileUrlTemplate, loadConfig } from "../src/config.ts";
 
@@ -27,6 +28,31 @@ describe("loadConfig", () => {
       env: { TODOU_HTTP_PORT: "5000" },
     });
     expect(config.http.port).toBe(5000);
+  });
+
+  it("leaves static_dir unset by default", () => {
+    const config = loadConfig({ tomlSource: "", env: {} });
+    expect(config.http.static_dir).toBeUndefined();
+  });
+
+  // serveStatic resolves a relative root against the CWD, which in production
+  // is the state directory rather than the checkout.
+  it("absolutises a relative static_dir", () => {
+    const config = loadConfig({
+      tomlSource: ["[http]", "static_dir = './projects/web/dist'"].join("\n"),
+      env: {},
+    });
+    expect(config.http.static_dir).toBe(
+      resolve(process.cwd(), "projects/web/dist"),
+    );
+  });
+
+  it("reads static_dir from ENV", () => {
+    const config = loadConfig({
+      tomlSource: "",
+      env: { TODOU_HTTP_STATIC_DIR: "/srv/todou/dist" },
+    });
+    expect(config.http.static_dir).toBe("/srv/todou/dist");
   });
 
   it("rejects unimplemented auth modes", () => {

@@ -1,4 +1,6 @@
+import { serveStatic } from "@hono/node-server/serve-static";
 import { OpenAPIHono } from "@hono/zod-openapi";
+import { createMiddleware } from "hono/factory";
 import { type AppEnv, authMiddleware } from "./auth/middleware.ts";
 import type { AppContext } from "./bootstrap.ts";
 import { registerErrorHandler } from "./errors.ts";
@@ -28,6 +30,46 @@ const defaultHook = (result: any, c: any) => {
     );
   }
 };
+
+const IMMUTABLE_CACHE = "public, max-age=31536000, immutable";
+const REVALIDATE_CACHE = "no-cache";
+
+const isApiPath = (path: string) => path === "/api" || path.startsWith("/api/");
+
+/**
+ * serveStatic finalises its response body before handing control back, so
+ * Cache-Control has to be stamped on the way out rather than through its
+ * onFound hook — headers set there are dropped.
+ */
+const cacheControl = (value: string) =>
+  createMiddleware<AppEnv>(async (c, next) => {
+    await next();
+    if (c.res.ok) c.res.headers.set("Cache-Control", value);
+  });
+
+/**
+ * Serves the built web app next to the API so the two share an origin: the
+ * session cookie and the SSE stream then need no CORS or proxy-buffering
+ * setup.
+ */
+function mountWebApp(app: OpenAPIHono<AppEnv>, root: string): void {
+  const files = serveStatic({ root });
+
+  // Vite content-hashes everything here, so it can be cached forever. A miss
+  // is a stale build reference rather than a client route — 404 it, or the
+  // fallthrough below would cache the SPA shell under an asset URL forever.
+  app.use("/assets/*", cacheControl(IMMUTABLE_CACHE), files);
+  app.all("/assets/*", (c) => c.notFound());
+
+  app.use("*", cacheControl(REVALIDATE_CACHE), files);
+  // The web router uses browser history, so an unmatched path is a deep link
+  // and must return the shell for the client to resolve. Under /api it is a
+  // genuine miss instead, and has to stay machine-readable, not become HTML.
+  const shell = serveStatic({ root, path: "index.html" });
+  app.on(["GET", "HEAD"], "*", (c, next) =>
+    isApiPath(c.req.path) ? next() : shell(c, next),
+  );
+}
 
 export function createApp(ctx: AppContext) {
   const app = new OpenAPIHono<AppEnv>({ defaultHook });
@@ -64,6 +106,9 @@ export function createApp(ctx: AppContext) {
   api.route("/projects", sseRoutes());
 
   app.route("/", api);
+  if (ctx.config.http.static_dir) {
+    mountWebApp(app, ctx.config.http.static_dir);
+  }
   registerErrorHandler(app);
   return app;
 }

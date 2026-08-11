@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 
@@ -17,6 +18,7 @@ const ConfigSchema = z.object({
   http: z
     .object({
       port: z.coerce.number().int().min(1).max(65535).default(8637),
+      static_dir: z.string().optional(),
     })
     .prefault({}),
   database: z
@@ -105,6 +107,7 @@ export class ConfigError extends Error {}
 const ENV_MAP: Array<[string, string[]]> = [
   ["TODOU_AUTH_MODE", ["auth", "mode"]],
   ["TODOU_HTTP_PORT", ["http", "port"]],
+  ["TODOU_HTTP_STATIC_DIR", ["http", "static_dir"]],
   ["TODOU_DATABASE_SYSTEM", ["database", "system"]],
   ["TODOU_DATABASE_AUTO_MIGRATE", ["database", "auto_migrate"]],
   ["TODOU_DATABASE_PROJECTS_PLACEMENT", ["database", "projects", "placement"]],
@@ -169,6 +172,13 @@ export function loadConfig(options?: {
     throw new ConfigError(`invalid config: ${parsed.error.message}`);
   }
   const config = parsed.data;
+
+  // serveStatic resolves a relative root against the process CWD, which in
+  // production is the state directory rather than the checkout. Absolutising
+  // here keeps the setting independent of where the server was launched from.
+  if (config.http.static_dir !== undefined) {
+    config.http.static_dir = resolve(config.http.static_dir);
+  }
 
   if (config.auth.mode !== "single") {
     throw new ConfigError(

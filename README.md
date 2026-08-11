@@ -17,8 +17,9 @@ pnpm workspace, packages under `projects/*`:
 
 - Node 24 — runs TypeScript directly via native type stripping; the codebase
   uses erasable syntax only (`erasableSyntaxOnly` is enforced by tsconfig).
-- **No build step**: server and CLI execute `.ts` sources directly; the web
-  app is served by Vite.
+- **No build step for the server and CLI**: they execute `.ts` sources
+  directly. The web app runs under Vite in development and is built to static
+  assets for production.
 - Biome for formatting and linting, Vitest for tests.
 
 ```bash
@@ -26,6 +27,7 @@ pnpm fmt        # format + fix
 pnpm lint       # check formatting and lints
 pnpm typecheck  # tsc --noEmit in every package
 pnpm test       # vitest in every package
+pnpm build      # build the web app to projects/web/dist
 ```
 
 ## Running
@@ -43,6 +45,28 @@ pnpm --filter @todou/web dev
 The REST API is documented at `/api/openapi.json`. Agents are machine
 users: create one in Settings → Agents, issue it a personal access token,
 and it can do everything a member can via `Authorization: Bearer todou_pat_…`.
+
+### Production: one process, one port
+
+Point `http.static_dir` at the built web app and the server serves it
+alongside the API, so there is no second process and no proxy to configure:
+
+```bash
+pnpm build
+node projects/server/src/index.ts serve   # :8637 serves both the SPA and /api
+```
+
+```toml
+[http]
+port = 8637
+static_dir = "./projects/web/dist"       # relative paths resolve against the CWD
+```
+
+Hashed files under `/assets` are served immutable; `index.html` is
+revalidated, and any unmatched non-`/api` path returns it so the client
+router can resolve deep links. Because the SPA is then same-origin with the
+API, the session cookie and the SSE stream need no CORS or reverse-proxy
+buffering setup. See [docs/deploy.md](docs/deploy.md) for a full deployment.
 
 ### Database placement
 
