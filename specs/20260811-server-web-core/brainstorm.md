@@ -38,9 +38,11 @@ shadcn/ui + Tailwind v4。纯 TS、零 codegen。
 （users、sessions、tokens、项目注册表、members）；**项目库**存单个
 project 的业务数据（issues、comments、events、statuses、labels、附件
 元数据）。放置策略由配置决定——`shared`：项目数据与系统库同库（按
-project_id 区分）；`dedicated`：每个 project 独立数据库（PGlite 一
-project 一文件，天生横向分表；PostgreSQL 可按 project id 路由到不同
-服务器）。服务层通过 `DbRouter`（`system()` / `forProject(id)`）访问，
+project_id 区分）；`dedicated`：按 `url_template` 路由——`{id}` 一
+project 一库（PGlite 一文件，天生横向分表），或 `{id%N}` 取模分桶
+（N 个库分摊全部 project；项目库表恒带 project_id，共桶天然安全）；
+PostgreSQL 同理可按 id/桶路由到不同服务器。服务层通过 `DbRouter`
+（`system()` / `forProject(id)`）访问，
 对放置策略透明。多开 PGlite 时以 worker threads + IPC 利用多核为实验
 特性（feature flag，默认关）。
 
@@ -229,8 +231,9 @@ system = "pglite://./data/system"   # TODOU_DATABASE_SYSTEM；postgres:// 亦可
 
 [database.projects]
 placement = "shared"                # shared | dedicated
-# dedicated 时必填，{id} 为 project id 占位：
-# url_template = "pglite://./data/projects/{id}"
+# dedicated 时必填。占位符支持 {id} 与取模分桶 {id%N}：
+# url_template = "pglite://./data/projects/{id}"          # 一 project 一库
+# url_template = "pglite://./data/buckets/{id%10}"        # 10 个桶共享
 # url_template = "postgres://pg-shard-a/todou_project_{id}"
 # max_open = 32          # dedicated PGlite 的 LRU 打开上限
 # workers = false        # 实验：worker threads 承载 PGlite（多核）

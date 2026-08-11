@@ -34,12 +34,14 @@
 3. server `db/`：`system-schema.ts` + `project-schema.ts`（见 brainstorm
    §2）；`driver.ts`（pglite:// | postgres:// → drizzle 实例，host 先只有
    inline）；`router.ts`（`system()`/`forProject(id)`：注册表覆盖 →
-   placement 解析、句柄缓存、dedicated PGlite LRU）。
+   模板解析——支持 `{id}` 与 `{id%N}` 取模分桶——句柄**按最终 URL**
+   缓存、dedicated PGlite LRU）。
 4. 两份 drizzle-kit 配置生成 `migrations/system/` 与 `migrations/project/`
    首个迁移进仓库；clipanion `migrate` 子命令（系统库 + 遍历注册表迁移
    项目库）；`bootstrap.ts`（pglite 自动迁移 + single seed 内置 `user`）。
 5. 测试基建：`pglite://memory` helper，**参数化放置模式**（shared /
-   dedicated）供后续 suite 复用；router 单测（放置解析、LRU、覆盖列）。
+   dedicated-per-project / dedicated-bucketed）供后续 suite 复用；router
+   单测（`{id}`/`{id%N}` 模板解析、URL 键缓存去重、LRU、覆盖列）。
 
 **Commit**: `feat(server): config, two-tier db schemas, router, migrations`
 
@@ -57,9 +59,10 @@
 
 ## Phase 3 — projects / members / statuses / labels
 
-1. `projects.ts`：注册表 CRUD + **provision 流程**（dedicated：建库 →
-   项目库迁移 → project_meta + seed 三 status；失败补偿删除注册表行）；
-   删除反向（先摘注册表再删库，孤儿仅记日志）。
+1. `projects.ts`：注册表 CRUD + **provision 流程**（dedicated：幂等
+   确保目标库存在并迁移——分桶时桶库可能已存在——→ project_meta +
+   seed 三 status；失败补偿删除注册表行）；删除反向（先摘注册表；
+   `{id}` 放置删库文件，分桶/shared 放置删该 project_id 的行）。
 2. `members.ts`（系统库）；`statuses.ts`/`labels.ts`（项目库；status
    排序、被引用删除 → 409）。
 3. 角色守卫 helper（reader/writer/admin + instance admin 旁路，只读

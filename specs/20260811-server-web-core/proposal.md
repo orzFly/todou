@@ -129,3 +129,11 @@
 `shared`（与系统库同库）或 `dedicated`（每 project 独立 PGlite 文件，
 或按 project id 路由到不同 PostgreSQL 服务器）。多开 PGlite 时研究用
 worker threads + IPC 利用多核（实验性，feature flag，不阻塞主线）。
+
+### 复审批注（brainstorm.md，url_template 配置处）
+
+> 也可能是 id%10这种
+
+含义（已并入设计）：dedicated 放置的 `url_template` 占位符除 `{id}`
+（一 project 一库）外，还要支持 **`{id%N}` 取模分桶**——N 个库分摊全部
+project，多个 project 共享一个桶库（项目库表恒带 project_id，共桶安全）。

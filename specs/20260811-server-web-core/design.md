@@ -33,14 +33,16 @@ system = "pglite://./data/system"        # 或 postgres://…
 
 [database.projects]
 placement = "shared"                     # shared | dedicated
-url_template = "pglite://./data/projects/{id}"   # dedicated 必填，{id} 占位
+url_template = "pglite://./data/projects/{id}"   # dedicated 必填
 max_open = 32                            # dedicated PGlite LRU 打开上限
 workers = false                          # 实验：worker threads 承载 PGlite
 ```
 
 - `shared`：项目库物理上就是系统库连接（一切同库，按 project_id 区分）。
-- `dedicated`：`url_template` 展开 `{id}` → 每 project 独立 PGlite 文件
-  （天生横向分表），或不同 PostgreSQL 库/服务器。
+- `dedicated`：`url_template` 占位符支持 **`{id}`**（一 project 一库）与
+  **`{id%N}`**（取模分桶，N 个库分摊全部 project）。项目库表恒带
+  project_id 且查询恒过滤，**共桶天然安全**；桶粒度对 service 层不可见。
+  PGlite 与 PostgreSQL 同一套模板机制（后者即按 id/桶路由不同库/服务器）。
 - **按 project 覆盖**：注册表 `projects.database_url` 非空时优先于
   template（支持"个别大项目单独放一台服务器"）。本切片 router 读取该列，
   管理 API/UI 后置。
@@ -58,10 +60,12 @@ db/
     └── project/         drizzle-kit 生成（配置 B）
 ```
 
-- `forProject(id)`：查放置（注册表覆盖 → 配置）→ 句柄缓存 Map →
-  懒打开；dedicated PGlite 按 `max_open` LRU 关闭空闲句柄。
-- **provision**（project 创建事务的一部分，见 §4 一致性）：dedicated
-  时新建库/文件 → 跑项目库迁移 → 写 project_meta + seed 三 status。
+- `forProject(id)`：查放置（注册表覆盖 → 配置模板）→ 解析出**最终
+  URL**（`{id}` / `{id%N}` 展开）→ **句柄缓存以 URL 为键**（分桶时多个
+  project 命中同一句柄）；dedicated PGlite 按 `max_open` LRU 关闭空闲。
+- **provision**（project 创建事务的一部分，见 §4 一致性）：解析目标
+  URL → **幂等**确保库存在且迁移到位（分桶时桶库可能已被先前 project
+  建好）→ 写 project_meta + seed 三 status。
 - `migrate` 子命令：迁移系统库 → 遍历注册表迁移所有项目库。
   `pglite://` 打开时默认自动迁移；`postgres://` 需显式（可配置覆盖）。
 
@@ -75,7 +79,9 @@ db/
 - issue 编号计数器在项目库 `project_meta` → 创建 issue 是**单库事务**。
 - project 创建跨两库：先写注册表（系统库）→ provision 项目库；provision
   失败则回滚注册表行（补偿删除）。project 删除反向：先移除注册表行
-  （不可再路由到）→ 删项目库文件/库（失败仅遗留孤儿文件，记日志）。
+  （不可再路由到）→ dedicated `{id}` 放置删库文件；**分桶/shared 放置
+  改为删该 project_id 的行**（桶库被其他 project 共享，不可删库）；
+  失败仅遗留孤儿数据，记日志。
 - `referenced`（`#N`）只在同 project 内解析——天然单库。
 - 跨 project 聚合/全局搜索不在本切片范围（架构上未来可对 dedicated
   做 fan-out 或引入索引服务）。
