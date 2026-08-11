@@ -28,6 +28,8 @@ describe("AgentContextBadge in the timeline", () => {
   it("shows agent · model with the session in the tooltip", () => {
     const { getByTestId } = render(
       <CommentItem
+        slug="p"
+        issueNumber={1}
         comment={comment({
           agent: "claude-code",
           session_id: "sess-123",
@@ -42,7 +44,11 @@ describe("AgentContextBadge in the timeline", () => {
 
   it("degrades to the agent name alone", () => {
     const { getByTestId } = render(
-      <CommentItem comment={comment({ agent: "claude-code" })} />,
+      <CommentItem
+        slug="p"
+        issueNumber={1}
+        comment={comment({ agent: "claude-code" })}
+      />,
     );
     const badge = getByTestId("agent-context-badge");
     expect(badge.textContent).toBe("claude-code");
@@ -50,7 +56,9 @@ describe("AgentContextBadge in the timeline", () => {
   });
 
   it("renders nothing without agent context", () => {
-    const { queryByTestId } = render(<CommentItem comment={comment(null)} />);
+    const { queryByTestId } = render(
+      <CommentItem slug="p" issueNumber={1} comment={comment(null)} />,
+    );
     expect(queryByTestId("agent-context-badge")).toBeNull();
   });
 

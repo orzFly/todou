@@ -156,9 +156,18 @@ export function Timeline({
                 className="pb-2"
               >
                 {pending ? (
-                  <CommentItem comment={pending.comment} pending />
+                  <CommentItem
+                    slug={slug}
+                    issueNumber={issueNumber}
+                    comment={pending.comment}
+                    pending
+                  />
                 ) : item?.type === "comment" ? (
-                  <CommentItem comment={item} />
+                  <CommentItem
+                    slug={slug}
+                    issueNumber={issueNumber}
+                    comment={item}
+                  />
                 ) : item ? (
                   <EventRow event={item} />
                 ) : null}

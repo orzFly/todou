@@ -19,6 +19,7 @@ import {
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
+import { RevisionHistory } from "@/components/shared/revision-history.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   Composer,
@@ -174,6 +175,15 @@ function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
         >
           {new Date(issue.created_at).toLocaleString()}
         </span>
+        {issue.body_edited_at && (
+          <RevisionHistory
+            label="description"
+            editedAt={issue.body_edited_at}
+            filename="description.md"
+            queryKey={["revisions", slug, issue.number, "issue_body"]}
+            fetchRevisions={() => api.getIssueRevisions(slug, issue.number)}
+          />
+        )}
         <Button
           size="icon-sm"
           variant="ghost"

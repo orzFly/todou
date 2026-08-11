@@ -102,6 +102,8 @@ describe("timeline rendering", () => {
   it("renders comments with markdown bodies", () => {
     const { getByText } = render(
       <CommentItem
+        slug="p"
+        issueNumber={1}
         comment={{
           type: "comment",
           id: 1,
