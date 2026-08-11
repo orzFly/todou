@@ -1,5 +1,6 @@
-import { TodouClient } from "@todou/shared";
+import { AGENT_CONTEXT_HEADER, TodouClient } from "@todou/shared";
 import { type BaseContext, Command, Option } from "clipanion";
+import { detectAgentContext } from "./agent-context.ts";
 import { type CliConfig, loadCliConfig } from "./config.ts";
 import {
   gitRemoteUrl,
@@ -61,10 +62,14 @@ export abstract class ApiCommand extends Command<CliContext> {
           `run \`todou login ${this.ctx.server}\` or set TODOU_TOKEN`,
         );
       }
+      const agentContext = detectAgentContext(this.context.env);
       await this.run(
         new TodouClient({
           baseUrl: this.ctx.server,
           token: this.ctx.token,
+          headers: agentContext
+            ? { [AGENT_CONTEXT_HEADER]: JSON.stringify(agentContext) }
+            : undefined,
           fetch: this.context.fetchImpl,
         }),
       );

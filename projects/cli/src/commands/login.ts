@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { hostname } from "node:os";
-import { TodouClient } from "@todou/shared";
+import { AGENT_CONTEXT_HEADER, TodouClient } from "@todou/shared";
 import { Command, Option } from "clipanion";
+import { detectAgentContext } from "../agent-context.ts";
 import type { CliContext } from "../api-command.ts";
 import { loadCliConfig, normalizeServer, saveCliConfig } from "../config.ts";
 import { CliError, reportError } from "../errors.ts";
@@ -56,9 +57,13 @@ export class LoginCommand extends Command<CliContext> {
         : await this.browserToken(origin);
 
       // Verify before persisting so a mis-paste fails loudly, not later.
+      const agentContext = detectAgentContext(this.context.env);
       const client = new TodouClient({
         baseUrl: origin,
         token,
+        headers: agentContext
+          ? { [AGENT_CONTEXT_HEADER]: JSON.stringify(agentContext) }
+          : undefined,
         fetch: this.context.fetchImpl,
       });
       const me = await client.me();
