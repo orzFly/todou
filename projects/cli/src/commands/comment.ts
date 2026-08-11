@@ -2,6 +2,7 @@ import type { TodouClient } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
+import { parsePositiveInt } from "../parse.ts";
 
 export class CommentAddCommand extends ProjectCommand {
   static paths = [
@@ -38,6 +39,8 @@ export class CommentEditCommand extends ProjectCommand {
   static paths = [["comment", "edit"]];
   static usage = Command.Usage({
     description: "Edit a comment's body (author or project admin)",
+    details:
+      "`<number>` also accepts `<project>/<number>` or a full issue URL.",
   });
 
   number = Option.String({ required: true });
@@ -48,8 +51,7 @@ export class CommentEditCommand extends ProjectCommand {
   });
 
   protected async run(client: TodouClient): Promise<void> {
-    const project = this.requireProject();
-    const number = parsePositiveInt(this.number, "issue number");
+    const { project, number } = this.resolveIssueRef(this.number);
     const commentId = parsePositiveInt(this.commentId, "comment id");
     const body = await readBody({
       body: this.body,
