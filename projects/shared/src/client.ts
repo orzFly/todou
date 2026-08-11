@@ -82,7 +82,12 @@ export class TodouClient {
     this.#fetch = options?.fetch ?? ((...args) => fetch(...args));
   }
 
-  async #request<T>(
+  /**
+   * Raw escape hatch for endpoints without a dedicated method (the CLI's
+   * `todou api`). `path` is relative to `/api`; auth and error mapping
+   * behave exactly like the typed methods.
+   */
+  async request<T>(
     method: string,
     path: string,
     init?: { json?: unknown; form?: FormData; query?: Query },
@@ -122,87 +127,87 @@ export class TodouClient {
   }
 
   // — auth / me —
-  login = () => this.#request<Me>("POST", "/auth/login");
-  logout = () => this.#request<void>("POST", "/auth/logout");
-  me = () => this.#request<Me>("GET", "/me");
+  login = () => this.request<Me>("POST", "/auth/login");
+  logout = () => this.request<void>("POST", "/auth/logout");
+  me = () => this.request<Me>("GET", "/me");
   createMyToken = (input: TokenCreateInput) =>
-    this.#request<TokenCreated>("POST", "/me/tokens", { json: input });
-  listMyTokens = () => this.#request<TokenListItem[]>("GET", "/me/tokens");
+    this.request<TokenCreated>("POST", "/me/tokens", { json: input });
+  listMyTokens = () => this.request<TokenListItem[]>("GET", "/me/tokens");
   revokeMyToken = (id: number) =>
-    this.#request<void>("DELETE", `/me/tokens/${id}`);
+    this.request<void>("DELETE", `/me/tokens/${id}`);
 
   // — agents —
   createAgent = (input: AgentCreateInput) =>
-    this.#request<Agent>("POST", "/agents", { json: input });
+    this.request<Agent>("POST", "/agents", { json: input });
   listAgents = (owner: "me" | "all" = "me") =>
-    this.#request<Agent[]>("GET", "/agents", { query: { owner } });
+    this.request<Agent[]>("GET", "/agents", { query: { owner } });
   updateAgent = (id: number, input: AgentUpdateInput) =>
-    this.#request<Agent>("PATCH", `/agents/${id}`, { json: input });
-  disableAgent = (id: number) => this.#request<void>("DELETE", `/agents/${id}`);
+    this.request<Agent>("PATCH", `/agents/${id}`, { json: input });
+  disableAgent = (id: number) => this.request<void>("DELETE", `/agents/${id}`);
   enableAgent = (id: number) =>
-    this.#request<Agent>("POST", `/agents/${id}/enable`);
+    this.request<Agent>("POST", `/agents/${id}/enable`);
   issueAgentToken = (id: number, input: TokenCreateInput) =>
-    this.#request<TokenCreated>("POST", `/agents/${id}/tokens`, {
+    this.request<TokenCreated>("POST", `/agents/${id}/tokens`, {
       json: input,
     });
   listAgentTokens = (id: number) =>
-    this.#request<TokenListItem[]>("GET", `/agents/${id}/tokens`);
+    this.request<TokenListItem[]>("GET", `/agents/${id}/tokens`);
   revokeAgentToken = (id: number, tokenId: number) =>
-    this.#request<void>("DELETE", `/agents/${id}/tokens/${tokenId}`);
+    this.request<void>("DELETE", `/agents/${id}/tokens/${tokenId}`);
 
   // — projects —
-  listProjects = () => this.#request<Project[]>("GET", "/projects");
+  listProjects = () => this.request<Project[]>("GET", "/projects");
   createProject = (input: ProjectCreateInput) =>
-    this.#request<Project>("POST", "/projects", { json: input });
+    this.request<Project>("POST", "/projects", { json: input });
   getProject = (slug: string) =>
-    this.#request<Project>("GET", `/projects/${slug}`);
+    this.request<Project>("GET", `/projects/${slug}`);
   updateProject = (slug: string, input: ProjectUpdateInput) =>
-    this.#request<Project>("PATCH", `/projects/${slug}`, { json: input });
+    this.request<Project>("PATCH", `/projects/${slug}`, { json: input });
   deleteProject = (slug: string) =>
-    this.#request<void>("DELETE", `/projects/${slug}`);
+    this.request<void>("DELETE", `/projects/${slug}`);
 
   listMembers = (slug: string) =>
-    this.#request<Member[]>("GET", `/projects/${slug}/members`);
+    this.request<Member[]>("GET", `/projects/${slug}/members`);
   setMember = (slug: string, userId: number, role: MemberRole) =>
-    this.#request<void>("PUT", `/projects/${slug}/members/${userId}`, {
+    this.request<void>("PUT", `/projects/${slug}/members/${userId}`, {
       json: { role },
     });
   removeMember = (slug: string, userId: number) =>
-    this.#request<void>("DELETE", `/projects/${slug}/members/${userId}`);
+    this.request<void>("DELETE", `/projects/${slug}/members/${userId}`);
 
   listStatuses = (slug: string) =>
-    this.#request<Status[]>("GET", `/projects/${slug}/statuses`);
+    this.request<Status[]>("GET", `/projects/${slug}/statuses`);
   createStatus = (slug: string, input: StatusCreateInput) =>
-    this.#request<Status>("POST", `/projects/${slug}/statuses`, {
+    this.request<Status>("POST", `/projects/${slug}/statuses`, {
       json: input,
     });
   updateStatus = (slug: string, id: number, input: StatusUpdateInput) =>
-    this.#request<Status>("PATCH", `/projects/${slug}/statuses/${id}`, {
+    this.request<Status>("PATCH", `/projects/${slug}/statuses/${id}`, {
       json: input,
     });
   deleteStatus = (slug: string, id: number) =>
-    this.#request<void>("DELETE", `/projects/${slug}/statuses/${id}`);
+    this.request<void>("DELETE", `/projects/${slug}/statuses/${id}`);
 
   listLabels = (slug: string) =>
-    this.#request<Label[]>("GET", `/projects/${slug}/labels`);
+    this.request<Label[]>("GET", `/projects/${slug}/labels`);
   createLabel = (slug: string, input: LabelCreateInput) =>
-    this.#request<Label>("POST", `/projects/${slug}/labels`, { json: input });
+    this.request<Label>("POST", `/projects/${slug}/labels`, { json: input });
   updateLabel = (slug: string, id: number, input: LabelUpdateInput) =>
-    this.#request<Label>("PATCH", `/projects/${slug}/labels/${id}`, {
+    this.request<Label>("PATCH", `/projects/${slug}/labels/${id}`, {
       json: input,
     });
   deleteLabel = (slug: string, id: number) =>
-    this.#request<void>("DELETE", `/projects/${slug}/labels/${id}`);
+    this.request<void>("DELETE", `/projects/${slug}/labels/${id}`);
 
   // — issues —
   listIssues = (slug: string, query?: Query) =>
-    this.#request<IssueListPage>("GET", `/projects/${slug}/issues`, { query });
+    this.request<IssueListPage>("GET", `/projects/${slug}/issues`, { query });
   createIssue = (slug: string, input: IssueCreateInput) =>
-    this.#request<Issue>("POST", `/projects/${slug}/issues`, { json: input });
+    this.request<Issue>("POST", `/projects/${slug}/issues`, { json: input });
   getIssue = (slug: string, number: number) =>
-    this.#request<Issue>("GET", `/projects/${slug}/issues/${number}`);
+    this.request<Issue>("GET", `/projects/${slug}/issues/${number}`);
   updateIssue = (slug: string, number: number, input: IssueUpdateInput) =>
-    this.#request<Issue>("PATCH", `/projects/${slug}/issues/${number}`, {
+    this.request<Issue>("PATCH", `/projects/${slug}/issues/${number}`, {
       json: input,
     });
 
@@ -212,13 +217,13 @@ export class TodouClient {
     number: number,
     query?: { before?: string; after?: string; last?: boolean; limit?: number },
   ) =>
-    this.#request<TimelinePage>(
+    this.request<TimelinePage>(
       "GET",
       `/projects/${slug}/issues/${number}/timeline`,
       { query: query ? { ...query, last: query.last ? 1 : undefined } : {} },
     );
   createComment = (slug: string, number: number, body: string) =>
-    this.#request<TimelineComment>(
+    this.request<TimelineComment>(
       "POST",
       `/projects/${slug}/issues/${number}/comments`,
       { json: { body } },
@@ -229,13 +234,13 @@ export class TodouClient {
     commentId: number,
     body: string,
   ) =>
-    this.#request<TimelineComment>(
+    this.request<TimelineComment>(
       "PATCH",
       `/projects/${slug}/issues/${number}/comments/${commentId}`,
       { json: { body } },
     );
   deleteComment = (slug: string, number: number, commentId: number) =>
-    this.#request<void>(
+    this.request<void>(
       "DELETE",
       `/projects/${slug}/issues/${number}/comments/${commentId}`,
     );
@@ -245,7 +250,7 @@ export class TodouClient {
     const form = new FormData();
     form.set("file", file);
     form.set("issue_number", String(issueNumber));
-    return this.#request<Attachment>("POST", `/projects/${slug}/attachments`, {
+    return this.request<Attachment>("POST", `/projects/${slug}/attachments`, {
       form,
     });
   };

@@ -102,4 +102,18 @@ describe("TodouClient", () => {
       "/api/projects/todou/issues/42/timeline?last=1&limit=50",
     );
   });
+
+  it("exposes request() for raw API calls", async () => {
+    const { fetch, calls } = mockFetch(200, { ok: true });
+    const client = new TodouClient({ fetch, token: "todou_pat_x" });
+    const result = await client.request<{ ok: boolean }>(
+      "POST",
+      "/projects/todou/members",
+      { json: { user_id: 2 }, query: { dry: true } },
+    );
+    expect(result).toEqual({ ok: true });
+    expect(calls[0]?.url).toBe("/api/projects/todou/members?dry=true");
+    expect(calls[0]?.init.method).toBe("POST");
+    expect(calls[0]?.init.body).toBe('{"user_id":2}');
+  });
 });
