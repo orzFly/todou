@@ -19,6 +19,9 @@ export class LoginCommand extends Command<CliContext> {
   });
 
   server = Option.String({ required: false });
+  profile = Option.String("--profile", {
+    description: "Store the token under this profile name instead of default",
+  });
   manual = Option.Boolean("--manual", false, {
     description: "Paste a token instead of using the browser",
   });
@@ -41,6 +44,12 @@ export class LoginCommand extends Command<CliContext> {
       if (!/^https?:\/\//.test(origin)) {
         throw new CliError(`server must be an http(s) origin, got "${origin}"`);
       }
+      if (this.profile === "default") {
+        throw new CliError(
+          '"default" is reserved for the default token',
+          "omit --profile to store the default token",
+        );
+      }
 
       const token = this.manual
         ? await this.manualToken(origin)
@@ -54,10 +63,20 @@ export class LoginCommand extends Command<CliContext> {
       });
       const me = await client.me();
 
-      config.servers[origin] = { token };
+      const entry = config.servers[origin] ?? { tokens: {} };
+      if (this.profile) {
+        entry.tokens = { ...entry.tokens, [this.profile]: token };
+      } else {
+        entry.token = token;
+      }
+      config.servers[origin] = entry;
       config.default_server = origin;
       saveCliConfig(config, env);
-      this.context.stderr.write(`logged in to ${origin} as ${me.login}\n`);
+      this.context.stderr.write(
+        `logged in to ${origin} as ${me.login}${
+          this.profile ? ` (profile "${this.profile}")` : ""
+        }\n`,
+      );
       return 0;
     } catch (error) {
       return reportError(error, this.context.stderr, this.server);
@@ -75,7 +94,10 @@ export class LoginCommand extends Command<CliContext> {
         const url = new URL(`${origin}/cli-auth`);
         url.searchParams.set("port", String(port));
         url.searchParams.set("state", state);
-        url.searchParams.set("name", `cli @ ${hostname()}`);
+        url.searchParams.set(
+          "name",
+          `cli @ ${hostname()}${this.profile ? ` (${this.profile})` : ""}`,
+        );
         this.context.stderr.write(
           `Authorize the CLI in your browser:\n  ${url}\n`,
         );

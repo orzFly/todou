@@ -39,7 +39,9 @@ describe("load/save round-trip", () => {
     saveCliConfig(
       {
         default_server: "https://todou.example",
-        servers: { "https://todou.example": { token: "todou_pat_x" } },
+        servers: {
+          "https://todou.example": { token: "todou_pat_x", tokens: {} },
+        },
         bindings: [
           {
             remote: "git@example.com:me/repo.git",

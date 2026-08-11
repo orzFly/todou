@@ -19,6 +19,9 @@ export abstract class ApiCommand extends Command<CliContext> {
   serverFlag = Option.String("--server", {
     description: "Server origin, e.g. https://todou.example",
   });
+  profile = Option.String("--profile", {
+    description: 'Named token profile ("default" = the default token)',
+  });
   json = Option.Boolean("--json", false, {
     description: "Print the raw API response as JSON",
   });
@@ -37,7 +40,11 @@ export abstract class ApiCommand extends Command<CliContext> {
     try {
       this.config = loadCliConfig(this.context.env);
       this.ctx = resolveContext({
-        flags: { server: this.serverFlag, project: this.projectFlag() },
+        flags: {
+          server: this.serverFlag,
+          project: this.projectFlag(),
+          profile: this.profile,
+        },
         env: this.context.env,
         config: this.config,
         remoteUrl: gitRemoteUrl(this.context.cwd),

@@ -54,8 +54,8 @@ describe("gitRemoteUrl", () => {
 const config: CliConfig = {
   default_server: "https://fallback.example",
   servers: {
-    "https://todou.example": { token: "todou_pat_bound" },
-    "https://fallback.example": { token: "todou_pat_fallback" },
+    "https://todou.example": { token: "todou_pat_bound", tokens: {} },
+    "https://fallback.example": { token: "todou_pat_fallback", tokens: {} },
   },
   bindings: [
     {
@@ -77,6 +77,7 @@ describe("resolveContext", () => {
     expect(ctx).toEqual({
       server: "https://todou.example",
       token: "todou_pat_bound",
+      tokenSource: "default",
       project: "todou",
       binding: config.bindings[0],
       remoteUrl: "git@example.com:me/repo.git",

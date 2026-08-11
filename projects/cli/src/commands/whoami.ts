@@ -10,6 +10,20 @@ export class WhoamiCommand extends ApiCommand {
 
   protected async run(client: TodouClient): Promise<void> {
     const me = await client.me();
+    switch (this.ctx.tokenSource) {
+      case "auto-claude-code":
+        this.note('token: profile "claude-code" (auto via CLAUDECODE)');
+        break;
+      case "flag-profile":
+      case "env-profile":
+        this.note(`token: profile "${this.ctx.tokenProfile}"`);
+        break;
+      case "env-token":
+        this.note("token: TODOU_TOKEN");
+        break;
+      default:
+        break;
+    }
     this.output(
       me,
       () =>

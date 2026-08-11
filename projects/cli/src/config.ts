@@ -13,9 +13,17 @@ export const Binding = z.object({
 });
 export type Binding = z.infer<typeof Binding>;
 
+export const ServerEntry = z.object({
+  /** Default identity; optional so a server may hold only named profiles. */
+  token: z.string().optional(),
+  /** Named token profiles, e.g. tokens."claude-code". */
+  tokens: z.record(z.string(), z.string()).default({}),
+});
+export type ServerEntry = z.infer<typeof ServerEntry>;
+
 export const CliConfig = z.object({
   default_server: z.string().optional(),
-  servers: z.record(z.string(), z.object({ token: z.string() })).default({}),
+  servers: z.record(z.string(), ServerEntry).default({}),
   bindings: z.array(Binding).default([]),
 });
 export type CliConfig = z.infer<typeof CliConfig>;
@@ -40,7 +48,16 @@ export function saveCliConfig(config: CliConfig, env: Env = process.env): void {
   const path = configPath(env);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   // Round-trip through JSON to drop undefined optionals smol-toml rejects.
-  const doc = JSON.parse(JSON.stringify(config)) as Record<string, unknown>;
+  const doc = JSON.parse(JSON.stringify(config)) as {
+    servers?: Record<string, { tokens?: Record<string, string> }>;
+  } & Record<string, unknown>;
+  // Empty profile tables would render as noisy empty [servers.X.tokens]
+  // sections; the schema defaults them back on load.
+  for (const entry of Object.values(doc.servers ?? {})) {
+    if (entry.tokens && Object.keys(entry.tokens).length === 0) {
+      delete entry.tokens;
+    }
+  }
   writeFileSync(path, `${stringify(doc)}\n`, { mode: 0o600 });
   // writeFileSync applies mode only on create; tighten pre-existing files too.
   chmodSync(path, 0o600);
