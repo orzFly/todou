@@ -1,0 +1,23 @@
+{
+  "name": "@todou/cli",
+  "version": "0.1.0",
+  "description": "todou client CLI, for humans and agents",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "todou": "src/index.ts"
+  },
+  "scripts": {
+    "start": "node src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "clipanion": "4.0.0-rc.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

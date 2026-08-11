@@ -4,5 +4,6 @@
 /.research/
 /.opencode/
 node_modules/
-/dist/
-/coverage/
+dist/
+coverage/
+*.tsbuildinfo

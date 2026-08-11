@@ -28,7 +28,7 @@
               {
                 name = "todou";
                 command = ''
-                  exec pnpm start "$@"
+                  exec node "$PRJ_ROOT/projects/cli/src/index.ts" "$@"
                 '';
               }
             ];

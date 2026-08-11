@@ -2,19 +2,14 @@
   "name": "todou",
   "version": "0.1.0",
   "description": "A to-do list app — reads as To-Do, sounds like 土豆 🥔",
-  "main": "src/index.js",
+  "private": true,
+  "type": "module",
   "scripts": {
-    "start": "node src/index.js",
-    "fmt": "prettier --write .",
-    "lint": "prettier --check .",
-    "test": "node --test"
+    "fmt": "biome check --write .",
+    "lint": "biome check .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
   },
-  "keywords": [
-    "todo",
-    "todou"
-  ],
-  "author": "",
-  "license": "ISC",
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
@@ -22,8 +17,8 @@
       "onFail": "download"
     }
   },
-  "type": "module",
   "devDependencies": {
-    "prettier": "^3.9.6"
+    "@biomejs/biome": "^2.5.7",
+    "typescript": "^7.0.2"
   }
 }
