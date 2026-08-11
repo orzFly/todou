@@ -1,7 +1,7 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { Hono } from "hono";
 
-type ErrorStatus = 401 | 403 | 404 | 409 | 422;
+type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 422;
 
 export class DomainError extends Error {
   readonly status: ErrorStatus;

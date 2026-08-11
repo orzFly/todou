@@ -1,4 +1,5 @@
 import type {
+  AgentContext,
   ChangeEvent,
   Issue,
   IssueCreateInput,

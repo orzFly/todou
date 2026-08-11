@@ -67,10 +67,16 @@ todou issue close 1 --comment "done"
 
 # Agents/CI need no config file, and every command takes --json:
 TODOU_SERVER=… TODOU_TOKEN=todou_pat_… TODOU_PROJECT=… todou issue list --json
+
+# Store a separate identity per agent: inside Claude Code (CLAUDECODE=1)
+# the "claude-code" profile is picked automatically, and every write is
+# stamped with the session/model as timeline metadata.
+todou login https://todou.example --profile claude-code
 ```
 
 `todou --help` lists every command; `todou api <method> </path>` reaches
-any endpoint the CLI doesn't wrap yet.
+any endpoint the CLI doesn't wrap yet. See
+[docs/claude-code.md](docs/claude-code.md) for the Claude Code integration.
 
 ### Production: one process, one port
 
