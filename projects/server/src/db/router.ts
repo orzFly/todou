@@ -125,6 +125,16 @@ export class DbRouter {
     return this.#projectHandles.size;
   }
 
+  /** Close and forget the cached handle for a resolved URL, if any. */
+  async closeUrl(url: string): Promise<void> {
+    const handle = this.#projectHandles.get(url);
+    if (handle) {
+      this.#projectHandles.delete(url);
+      this.#migrated.delete(url);
+      await handle.close();
+    }
+  }
+
   async close(): Promise<void> {
     for (const handle of this.#projectHandles.values()) {
       await handle.close();

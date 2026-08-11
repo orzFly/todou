@@ -3,7 +3,10 @@ import { type AppEnv, authMiddleware } from "./auth/middleware.ts";
 import type { AppContext } from "./bootstrap.ts";
 import { registerErrorHandler } from "./errors.ts";
 import { authRoutes } from "./routes/auth.ts";
+import { labelRoutes } from "./routes/labels.ts";
 import { meRoutes } from "./routes/me.ts";
+import { projectRoutes } from "./routes/projects.ts";
+import { statusRoutes } from "./routes/statuses.ts";
 
 /** Zod validation failures become uniform 422 error bodies. */
 // biome-ignore lint/suspicious/noExplicitAny: hook signature is generic
@@ -36,6 +39,9 @@ export function createApp(ctx: AppContext) {
   api.route("/auth", authRoutes(ctx));
   api.use("*", authMiddleware(ctx));
   api.route("/", meRoutes());
+  api.route("/projects", projectRoutes());
+  api.route("/projects", statusRoutes());
+  api.route("/projects", labelRoutes());
 
   app.route("/api", api);
   registerErrorHandler(app);

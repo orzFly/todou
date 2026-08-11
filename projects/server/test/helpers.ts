@@ -2,6 +2,8 @@ import { type App, createApp } from "../src/app.ts";
 import { type AppContext, bootstrap } from "../src/bootstrap.ts";
 import { type Config, loadConfig } from "../src/config.ts";
 import { DbRouter } from "../src/db/router.ts";
+import { users } from "../src/db/system-schema.ts";
+import { issueToken } from "../src/services/tokens.ts";
 
 export type PlacementMode = "shared" | "dedicated" | "dedicated-bucketed";
 
@@ -64,8 +66,9 @@ export type TestApp = {
 
 export async function makeTestApp(
   placement: PlacementMode = "shared",
+  overrides?: { maxOpen?: number; urlTemplate?: string },
 ): Promise<TestApp> {
-  const config = testConfig(placement);
+  const config = testConfig(placement, overrides);
   const ctx = await bootstrap(config);
   const app = createApp(ctx);
   return {
@@ -82,4 +85,36 @@ export async function makeTestApp(
     },
     cleanup: () => ctx.router.close(),
   };
+}
+
+/** Insert an extra user and mint a PAT so tests can act as them. */
+export async function addUserWithToken(
+  ctx: AppContext,
+  login: string,
+  opts?: {
+    kind?: "human" | "machine";
+    ownerId?: number;
+    instanceAdmin?: boolean;
+  },
+): Promise<{
+  user: typeof users.$inferSelect;
+  headers: { authorization: string };
+}> {
+  const inserted = await ctx.router
+    .system()
+    .insert(users)
+    .values({
+      kind: opts?.kind ?? "human",
+      login,
+      displayName: login,
+      ownerId: opts?.ownerId ?? null,
+      isInstanceAdmin: opts?.instanceAdmin ?? false,
+    })
+    .returning();
+  const row = inserted[0];
+  if (!row) throw new Error("user insert returned no row");
+  const token = await issueToken(ctx.router.system(), row.id, {
+    name: `${login}-token`,
+  });
+  return { user: row, headers: { authorization: `Bearer ${token.token}` } };
 }
