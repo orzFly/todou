@@ -46,6 +46,32 @@ The REST API is documented at `/api/openapi.json`. Agents are machine
 users: create one in Settings → Agents, issue it a personal access token,
 and it can do everything a member can via `Authorization: Bearer todou_pat_…`.
 
+### CLI
+
+The `todou` CLI runs straight from the checkout (`node
+projects/cli/src/index.ts`); `pnpm --filter @todou/cli exec pnpm link
+--global` puts a global `todou` on your PATH.
+
+```bash
+# Log in once — opens the browser to authorize the CLI and stores the
+# token in ~/.config/todou/config.toml (0600). --manual pastes a token.
+todou login https://todou.example
+
+# Bind this git repository to a server/project (stored in the user
+# config, not the repo), then work from anywhere inside it:
+todou project link my-project
+todou issue list --open
+todou issue create --title "Fix the potato" --body "It sprouted."
+todou issue view 1
+todou issue close 1 --comment "done"
+
+# Agents/CI need no config file, and every command takes --json:
+TODOU_SERVER=… TODOU_TOKEN=todou_pat_… TODOU_PROJECT=… todou issue list --json
+```
+
+`todou --help` lists every command; `todou api <method> </path>` reaches
+any endpoint the CLI doesn't wrap yet.
+
 ### Production: one process, one port
 
 Point `http.static_dir` at the built web app and the server serves it
