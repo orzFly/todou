@@ -11,6 +11,7 @@ import { meQuery } from "@/api/queries.ts";
 import { AppShell } from "@/components/shell.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/sonner";
+import { BoardPage } from "@/pages/board.tsx";
 import { IssueDetailPage } from "@/pages/issue-detail.tsx";
 import { IssueListPage } from "@/pages/issue-list.tsx";
 import { LoginPage } from "@/pages/login.tsx";
@@ -102,7 +103,7 @@ const projectIndexRoute = createRoute({
 const projectBoardRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "board",
-  component: () => <ComingSoon what="Kanban board" />,
+  component: BoardPage,
 });
 
 const issueRoute = createRoute({
