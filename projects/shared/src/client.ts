@@ -76,7 +76,10 @@ export class TodouClient {
   constructor(options?: TodouClientOptions) {
     this.#baseUrl = options?.baseUrl ?? "";
     this.#token = options?.token;
-    this.#fetch = options?.fetch ?? fetch;
+    // Never store the bare global fetch: calling it as `this.#fetch(...)`
+    // rebinds `this` to the client and browsers throw
+    // "'fetch' called on an object that does not implement interface Window".
+    this.#fetch = options?.fetch ?? ((...args) => fetch(...args));
   }
 
   async #request<T>(

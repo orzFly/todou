@@ -64,6 +64,32 @@ describe("TodouClient", () => {
     await expect(client.logout()).resolves.toBeUndefined();
   });
 
+  it("never invokes the default fetch with the client as `this`", async () => {
+    // Browsers enforce that fetch's `this` is window/undefined; storing the
+    // bare global fetch and calling it via a private field breaks Firefox.
+    const original = globalThis.fetch;
+    let observedThis: unknown = "unset";
+    globalThis.fetch = function (
+      this: unknown,
+      ...args: Parameters<typeof fetch>
+    ) {
+      observedThis = this;
+      void args;
+      return Promise.resolve(
+        new Response(JSON.stringify({ id: 1 }), { status: 200 }),
+      );
+    } as typeof fetch;
+    try {
+      const client = new TodouClient();
+      await client.me();
+      expect(observedThis === undefined || observedThis === globalThis).toBe(
+        true,
+      );
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   it("maps timeline last=true onto last=1", async () => {
     const { fetch, calls } = mockFetch(200, {
       items: [],
