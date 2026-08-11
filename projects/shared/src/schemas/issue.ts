@@ -17,6 +17,16 @@ export const Issue = z.object({
 });
 export type Issue = z.infer<typeof Issue>;
 
+/** List rows exclude the (potentially huge) markdown body. */
+export const IssueListItem = Issue.omit({ body: true });
+export type IssueListItem = z.infer<typeof IssueListItem>;
+
+export const IssueListPage = z.object({
+  items: z.array(IssueListItem),
+  next_cursor: z.string().nullable(),
+});
+export type IssueListPage = z.infer<typeof IssueListPage>;
+
 export const IssueCreateInput = z.object({
   title: z.string().min(1).max(300),
   body: z.string().max(65536).default(""),

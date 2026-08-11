@@ -3,6 +3,7 @@ import { type AppEnv, authMiddleware } from "./auth/middleware.ts";
 import type { AppContext } from "./bootstrap.ts";
 import { registerErrorHandler } from "./errors.ts";
 import { authRoutes } from "./routes/auth.ts";
+import { issueRoutes } from "./routes/issues.ts";
 import { labelRoutes } from "./routes/labels.ts";
 import { meRoutes } from "./routes/me.ts";
 import { projectRoutes } from "./routes/projects.ts";
@@ -42,6 +43,7 @@ export function createApp(ctx: AppContext) {
   api.route("/projects", projectRoutes());
   api.route("/projects", statusRoutes());
   api.route("/projects", labelRoutes());
+  api.route("/projects", issueRoutes());
 
   app.route("/api", api);
   registerErrorHandler(app);

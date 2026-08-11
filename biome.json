@@ -37,7 +37,8 @@
       "includes": [
         "projects/server/src/config.ts",
         "projects/server/test/config.test.ts",
-        "projects/server/test/helpers.ts"
+        "projects/server/test/helpers.ts",
+        "projects/server/test/projects.test.ts"
       ],
       "linter": {
         "rules": {
