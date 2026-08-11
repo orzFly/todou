@@ -1,25 +1,17 @@
-import { Builtins, Cli, Command } from "clipanion";
+import { Builtins, Cli } from "clipanion";
+import type { CliContext } from "./api-command.ts";
+import { commands } from "./commands/index.ts";
 
-class PingCommand extends Command {
-  static paths = [["ping"], Command.Default];
-
-  static usage = Command.Usage({
-    description: "Check that the todou CLI is alive",
-  });
-
-  async execute(): Promise<number | undefined> {
-    this.context.stdout.write("todou 🥔 — pong\n");
-    return 0;
-  }
-}
-
-const cli = new Cli({
+const cli = new Cli<CliContext>({
   binaryLabel: "todou",
   binaryName: "todou",
   binaryVersion: "0.1.0",
 });
 
-cli.register(PingCommand);
+for (const command of commands) {
+  cli.register(command);
+}
 cli.register(Builtins.HelpCommand);
 cli.register(Builtins.VersionCommand);
-cli.runExit(process.argv.slice(2));
+
+cli.runExit(process.argv.slice(2), { cwd: process.cwd() });
