@@ -139,6 +139,8 @@ export class TodouClient {
   updateAgent = (id: number, input: AgentUpdateInput) =>
     this.#request<Agent>("PATCH", `/agents/${id}`, { json: input });
   disableAgent = (id: number) => this.#request<void>("DELETE", `/agents/${id}`);
+  enableAgent = (id: number) =>
+    this.#request<Agent>("POST", `/agents/${id}/enable`);
   issueAgentToken = (id: number, input: TokenCreateInput) =>
     this.#request<TokenCreated>("POST", `/agents/${id}/tokens`, {
       json: input,

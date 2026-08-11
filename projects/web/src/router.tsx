@@ -19,6 +19,7 @@ import { LoginPage } from "@/pages/login.tsx";
 import { ProjectLayout } from "@/pages/project-layout.tsx";
 import { ProjectSettingsPage } from "@/pages/project-settings.tsx";
 import { ProjectsPage } from "@/pages/projects.tsx";
+import { TokensSettingsPage } from "@/pages/tokens-settings.tsx";
 
 const rootRoute = createRootRoute({
   component: () => (
@@ -117,6 +118,12 @@ const agentsSettingsRoute = createRoute({
   component: AgentsSettingsPage,
 });
 
+const tokensSettingsRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/settings/tokens",
+  component: TokensSettingsPage,
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   authedRoute.addChildren([
@@ -129,6 +136,7 @@ const routeTree = rootRoute.addChildren([
       projectSettingsRoute,
     ]),
     agentsSettingsRoute,
+    tokensSettingsRoute,
   ]),
 ]);
 

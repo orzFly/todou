@@ -48,6 +48,9 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
               <DropdownMenuItem asChild>
                 <Link to="/settings/agents">Agents</Link>
               </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link to="/settings/tokens">Personal tokens</Link>
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => logout.mutate()}>
                 Log out

@@ -1,6 +1,6 @@
 import { fireEvent, render, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { TokenReveal } from "../src/pages/agents-settings.tsx";
+import { TokenReveal } from "../src/components/shared/token-reveal.tsx";
 
 const token = {
   id: 1,

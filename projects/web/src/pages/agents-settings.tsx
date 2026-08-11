@@ -1,19 +1,16 @@
 import {
   useMutation,
+  useQuery,
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import type { Agent, TokenCreated } from "@todou/shared";
-import {
-  CheckIcon,
-  CopyIcon,
-  KeyIcon,
-  PlusIcon,
-  PowerOffIcon,
-} from "lucide-react";
+import { KeyIcon, PlusIcon, PowerIcon, PowerOffIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { agentsQuery, api } from "@/api/queries.ts";
+import { TokenReveal } from "@/components/shared/token-reveal.tsx";
+import { TokenTable } from "@/components/shared/token-table.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import {
@@ -88,6 +85,16 @@ function AgentRow({ agent }: { agent: Agent }) {
     },
     onError: (error) => toast.error(error.message),
   });
+  const enable = useMutation({
+    mutationFn: () => api.enableAgent(agent.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
+      toast.success(
+        `${agent.login} re-enabled. Old tokens stay revoked — issue a new one.`,
+      );
+    },
+    onError: (error) => toast.error(error.message),
+  });
 
   const disabled = agent.disabled_at !== null;
   return (
@@ -105,15 +112,21 @@ function AgentRow({ agent }: { agent: Agent }) {
       </TableCell>
       <TableCell>
         <div className="flex justify-end gap-2">
-          {!disabled && <IssueTokenDialog agent={agent} />}
-          {!disabled && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => disable.mutate()}
-            >
-              <PowerOffIcon className="size-3.5" /> Disable
+          {disabled ? (
+            <Button variant="outline" size="sm" onClick={() => enable.mutate()}>
+              <PowerIcon className="size-3.5" /> Enable
             </Button>
+          ) : (
+            <>
+              <AgentTokensDialog agent={agent} />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => disable.mutate()}
+              >
+                <PowerOffIcon className="size-3.5" /> Disable
+              </Button>
+            </>
           )}
         </div>
       </TableCell>
@@ -191,14 +204,32 @@ function CreateAgentDialog() {
   );
 }
 
-export function IssueTokenDialog({ agent }: { agent: Agent }) {
+export function AgentTokensDialog({ agent }: { agent: Agent }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [created, setCreated] = useState<TokenCreated | null>(null);
+  const queryClient = useQueryClient();
+
+  const tokens = useQuery({
+    queryKey: ["agent-tokens", agent.id],
+    queryFn: () => api.listAgentTokens(agent.id),
+    enabled: open,
+  });
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ["agent-tokens", agent.id] });
 
   const issue = useMutation({
     mutationFn: () => api.issueAgentToken(agent.id, { name }),
-    onSuccess: (token) => setCreated(token),
+    onSuccess: (token) => {
+      setCreated(token);
+      setName("");
+      invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+  const revoke = useMutation({
+    mutationFn: (tokenId: number) => api.revokeAgentToken(agent.id, tokenId),
+    onSuccess: invalidate,
     onError: (error) => toast.error(error.message),
   });
 
@@ -215,79 +246,55 @@ export function IssueTokenDialog({ agent }: { agent: Agent }) {
     <Dialog open={open} onOpenChange={reset}>
       <DialogTrigger asChild>
         <Button variant="outline" size="sm">
-          <KeyIcon className="size-3.5" /> Issue token
+          <KeyIcon className="size-3.5" /> Tokens
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Issue token for {agent.login}</DialogTitle>
+          <DialogTitle>Tokens for {agent.login}</DialogTitle>
           <DialogDescription>
-            The token is shown exactly once — copy it before closing.
+            New tokens are shown exactly once — copy them before closing.
           </DialogDescription>
         </DialogHeader>
-        {created ? (
-          <TokenReveal token={created} />
+
+        {tokens.isPending ? (
+          <p className="py-3 text-sm text-muted-foreground">loading…</p>
+        ) : tokens.isError ? (
+          <p className="py-3 text-sm text-destructive">
+            {tokens.error.message}
+          </p>
         ) : (
-          <form
-            className="space-y-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (name.trim()) issue.mutate();
-            }}
-          >
-            <div className="space-y-2">
-              <Label htmlFor="token-name">Token name</Label>
-              <Input
-                id="token-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="ci"
-                required
-              />
-            </div>
-            <DialogFooter>
-              <Button type="submit" disabled={issue.isPending}>
-                Issue
-              </Button>
-            </DialogFooter>
-          </form>
+          <TokenTable
+            tokens={tokens.data}
+            onRevoke={(id) => revoke.mutate(id)}
+          />
         )}
+
+        {created && <TokenReveal token={created} />}
+
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (name.trim()) issue.mutate();
+          }}
+        >
+          <Label htmlFor="token-name" className="sr-only">
+            Token name
+          </Label>
+          <Input
+            id="token-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="New token name (e.g. ci)"
+            className="w-56"
+            required
+          />
+          <Button type="submit" size="sm" disabled={issue.isPending}>
+            <PlusIcon className="size-3.5" /> Issue
+          </Button>
+        </form>
       </DialogContent>
     </Dialog>
-  );
-}
-
-export function TokenReveal({ token }: { token: TokenCreated }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="space-y-3">
-      <div
-        className="rounded-md border bg-muted/40 p-3 font-mono text-sm break-all"
-        data-testid="token-plaintext"
-      >
-        {token.token}
-      </div>
-      <Button
-        size="sm"
-        onClick={async () => {
-          await navigator.clipboard.writeText(token.token);
-          setCopied(true);
-        }}
-      >
-        {copied ? (
-          <>
-            <CheckIcon className="size-4" /> Copied
-          </>
-        ) : (
-          <>
-            <CopyIcon className="size-4" /> Copy token
-          </>
-        )}
-      </Button>
-      <p className="text-xs text-muted-foreground">
-        Store it somewhere safe — only the prefix “{token.prefix}…” will be
-        shown from now on.
-      </p>
-    </div>
   );
 }

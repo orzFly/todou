@@ -12,6 +12,7 @@ import type { AppEnv } from "../auth/middleware.ts";
 import {
   createAgent,
   disableAgent,
+  enableAgent,
   issueAgentToken,
   listAgents,
   listAgentTokens,
@@ -58,6 +59,16 @@ const disableAgentRoute = createRoute({
   summary: "Disable an agent: blocks auth and revokes all its tokens",
   request: { params: idParam },
   responses: { 204: { description: "Disabled" } },
+});
+
+const enableAgentRoute = createRoute({
+  method: "post",
+  path: "/{id}/enable",
+  summary:
+    "Re-enable a disabled agent. Previously revoked tokens stay revoked — " +
+    "issue a new one.",
+  request: { params: idParam },
+  responses: { 200: { description: "Enabled", ...jsonBody(Agent) } },
 });
 
 const issueTokenRoute = createRoute({
@@ -128,6 +139,17 @@ export function agentRoutes() {
     await disableAgent(c.get("appCtx"), c.get("user"), c.req.valid("param").id);
     return c.body(null, 204);
   });
+
+  app.openapi(enableAgentRoute, async (c) =>
+    c.json(
+      await enableAgent(
+        c.get("appCtx"),
+        c.get("user"),
+        c.req.valid("param").id,
+      ),
+      200,
+    ),
+  );
 
   app.openapi(issueTokenRoute, async (c) =>
     c.json(

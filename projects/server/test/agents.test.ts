@@ -191,4 +191,33 @@ describe("agents (machine users)", () => {
     });
     expect(reissue.status).toBe(409);
   });
+
+  it("re-enables an agent without resurrecting revoked tokens", async () => {
+    const agent = await createAgent("phoenix-bot");
+    const oldToken = await issueToken(agent.id);
+    await t.app.request(`/api/agents/${agent.id}`, {
+      method: "DELETE",
+      headers: { cookie },
+    });
+
+    const enable = await t.app.request(`/api/agents/${agent.id}/enable`, {
+      method: "POST",
+      headers: { cookie },
+    });
+    expect(enable.status).toBe(200);
+    expect((await json(enable)).disabled_at).toBeNull();
+
+    // The token revoked by the disable stays dead…
+    const stale = await t.app.request("/api/me", {
+      headers: { authorization: `Bearer ${oldToken.token}` },
+    });
+    expect(stale.status).toBe(401);
+
+    // …but a freshly issued one works again.
+    const fresh = await issueToken(agent.id);
+    const alive = await t.app.request("/api/me", {
+      headers: { authorization: `Bearer ${fresh.token}` },
+    });
+    expect(alive.status).toBe(200);
+  });
 });

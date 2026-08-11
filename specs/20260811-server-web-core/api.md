@@ -28,6 +28,7 @@ Bearer todou_pat_…`）。错误统一：
 | POST `/agents` | 创建 agent，owner=当前 human。req `{ login, display_name }`。machine 用户不能调用（403） |
 | GET `/agents?owner=me` | 我名下（instance admin 可 `?owner=all`） |
 | PATCH `/agents/:id` · DELETE `/agents/:id` | 改名/停用；仅 owner 或 instance admin |
+| POST `/agents/:id/enable` | 还原停用（被吊销的旧 token 不复活，需重新签发）；仅 owner 或 instance admin |
 | POST `/agents/:id/tokens` · GET 同 · DELETE `/agents/:id/tokens/:tokenId` | 为 agent 签发/列出/吊销 PAT；仅 owner 或 instance admin |
 
 ## Projects / Members / Statuses / Labels

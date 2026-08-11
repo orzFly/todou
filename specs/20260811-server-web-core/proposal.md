@@ -151,3 +151,13 @@ worker threads + IPC 利用多核（实验性，feature flag，不阻塞主线�
 
 含义（已并入实现）：web 开发服务器默认端口 **8636**，todou server 默认
 端口 **8637**（`http.port` 默认值；vite proxy 默认指向 8637）。
+
+> 哪儿管理token？需要管理token的页面，both for user & machine user.
+> 然后 machine user 禁用了怎么还原？都要补
+
+含义（已并入实现）：
+1. **Token 管理页**：`/settings/tokens` 管理当前用户自己的 PAT（列表/
+   签发/吊销，一次性明文展示）；agents 页的每个 agent 提供完整的
+   Tokens 对话框（列表/签发/吊销）。
+2. **Agent 还原**：新增 `POST /agents/:id/enable` 与界面上的 Enable
+   按钮；还原不复活被吊销的旧 token，需重新签发。

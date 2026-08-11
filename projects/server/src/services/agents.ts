@@ -135,6 +135,27 @@ export async function disableAgent(
     .where(and(eq(tokens.userId, agent.id), isNull(tokens.revokedAt)));
 }
 
+/**
+ * Undo a disable. Tokens revoked by the disable stay revoked — the agent
+ * needs a freshly issued PAT to act again.
+ */
+export async function enableAgent(
+  ctx: AppContext,
+  actor: UserRow,
+  agentId: number,
+): Promise<Agent> {
+  const agent = await loadManagedAgent(ctx, actor, agentId);
+  const updated = await ctx.router
+    .system()
+    .update(users)
+    .set({ disabledAt: null })
+    .where(eq(users.id, agent.id))
+    .returning();
+  const row = updated[0];
+  if (!row) throw new Error("agent enable returned no row");
+  return toAgent(ctx, row);
+}
+
 export async function issueAgentToken(
   ctx: AppContext,
   actor: UserRow,
