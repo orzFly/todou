@@ -10,10 +10,20 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "clipanion": "4.0.0-rc.4"
+    "@electric-sql/pglite": "^0.5.4",
+    "@hono/node-server": "^2.1.0",
+    "@hono/zod-openapi": "^1.5.2",
+    "@todou/shared": "workspace:*",
+    "clipanion": "4.0.0-rc.4",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.13.1",
+    "pg": "^8.23.0",
+    "smol-toml": "^1.7.1"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
+    "@types/pg": "^8.21.0",
+    "drizzle-kit": "^0.31.10",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }

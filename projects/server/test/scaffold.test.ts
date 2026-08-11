@@ -1,5 +1,6 @@
+import { TODOU } from "@todou/shared";
 import { expect, it } from "vitest";
 
-it("scaffold sanity check", () => {
-  expect(1 + 1).toBe(2);
+it("consumes @todou/shared TypeScript source directly", () => {
+  expect(TODOU).toBe("todou");
 });
