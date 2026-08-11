@@ -6,11 +6,14 @@ import {
   Navigate,
   Outlet,
 } from "@tanstack/react-router";
+import { issueSearchSchema } from "@/api/issues.ts";
 import { meQuery } from "@/api/queries.ts";
 import { AppShell } from "@/components/shell.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/sonner";
+import { IssueListPage } from "@/pages/issue-list.tsx";
 import { LoginPage } from "@/pages/login.tsx";
+import { ProjectLayout } from "@/pages/project-layout.tsx";
 import { ProjectsPage } from "@/pages/projects.tsx";
 
 const rootRoute = createRootRoute({
@@ -82,27 +85,34 @@ function ComingSoon({ what }: { what: string }) {
   );
 }
 
-const projectListRoute = createRoute({
+const projectRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/projects/$slug",
-  component: () => <ComingSoon what="Issue list" />,
+  component: ProjectLayout,
+});
+
+const projectIndexRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/",
+  component: IssueListPage,
+  validateSearch: (search) => issueSearchSchema.parse(search),
 });
 
 const projectBoardRoute = createRoute({
-  getParentRoute: () => authedRoute,
-  path: "/projects/$slug/board",
+  getParentRoute: () => projectRoute,
+  path: "board",
   component: () => <ComingSoon what="Kanban board" />,
 });
 
 const issueRoute = createRoute({
-  getParentRoute: () => authedRoute,
-  path: "/projects/$slug/issues/$number",
+  getParentRoute: () => projectRoute,
+  path: "issues/$number",
   component: () => <ComingSoon what="Issue detail" />,
 });
 
 const projectSettingsRoute = createRoute({
-  getParentRoute: () => authedRoute,
-  path: "/projects/$slug/settings",
+  getParentRoute: () => projectRoute,
+  path: "settings",
   component: () => <ComingSoon what="Project settings" />,
 });
 
@@ -117,10 +127,12 @@ const routeTree = rootRoute.addChildren([
   authedRoute.addChildren([
     indexRoute,
     projectsRoute,
-    projectListRoute,
-    projectBoardRoute,
-    issueRoute,
-    projectSettingsRoute,
+    projectRoute.addChildren([
+      projectIndexRoute,
+      projectBoardRoute,
+      issueRoute,
+      projectSettingsRoute,
+    ]),
     agentsSettingsRoute,
   ]),
 ]);
