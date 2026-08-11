@@ -50,6 +50,12 @@ export function IssueDetailPage() {
   const members = useSuspenseQuery(membersQuery(slug));
 
   const composer = useCommentComposer(slug, issueNumber, me.data);
+  const viewer = {
+    id: me.data.id,
+    isAdmin: members.data.some(
+      (m) => m.user.id === me.data.id && m.role === "admin",
+    ),
+  };
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_240px]">
@@ -61,6 +67,7 @@ export function IssueDetailPage() {
           slug={slug}
           issueNumber={issueNumber}
           pendingComments={composer.pending.filter((p) => !p.failed)}
+          viewer={viewer}
         />
         <Composer
           onSend={composer.send}

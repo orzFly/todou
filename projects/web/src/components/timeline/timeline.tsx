@@ -13,7 +13,10 @@ import {
   shouldFollowBottom,
   useTimeline,
 } from "@/api/timeline.ts";
-import { CommentItem } from "@/components/timeline/comment-item.tsx";
+import {
+  CommentItem,
+  type Viewer,
+} from "@/components/timeline/comment-item.tsx";
 import { EventRow } from "@/components/timeline/event-row.tsx";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -22,10 +25,12 @@ export function Timeline({
   slug,
   issueNumber,
   pendingComments,
+  viewer = null,
 }: {
   slug: string;
   issueNumber: number;
   pendingComments: Array<{ key: number; comment: TimelineComment }>;
+  viewer?: Viewer | null;
 }) {
   const timeline = useTimeline(slug, issueNumber);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -167,6 +172,7 @@ export function Timeline({
                     slug={slug}
                     issueNumber={issueNumber}
                     comment={item}
+                    viewer={viewer}
                   />
                 ) : item ? (
                   <EventRow event={item} />

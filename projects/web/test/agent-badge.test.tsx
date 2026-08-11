@@ -1,7 +1,19 @@
-import { render } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render as renderBare } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { describe, expect, it } from "vitest";
 import { CommentItem } from "../src/components/timeline/comment-item.tsx";
 import { EventRow } from "../src/components/timeline/event-row.tsx";
+
+// CommentItem mounts an edit mutation, which needs a query client.
+function render(ui: ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return renderBare(
+    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+  );
+}
 
 const user = {
   id: 2,
