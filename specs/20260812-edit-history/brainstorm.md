@@ -107,6 +107,8 @@ No new write endpoints — the existing PATCHes grow history capture:
 - `updateComment`: same only-on-real-change guard; insert the revision and
   set `edited_at` in one transaction. (Fixes today's behavior of stamping
   `edited_at` on no-op saves.)
+- No-op saves (identical body) still succeed and return the unchanged item;
+  they just record nothing.
 - `deleteComment`: also deletes the comment's revisions in the transaction.
 - New `services/revisions.ts` owns recording + listing; issue/comment
   services call into it.
