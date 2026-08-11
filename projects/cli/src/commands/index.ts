@@ -1,7 +1,20 @@
 import type { CommandClass } from "clipanion";
 import type { CliContext } from "../api-command.ts";
-import { IssueListCommand, IssueViewCommand } from "./issue.ts";
-import { LabelListCommand } from "./label.ts";
+import { AttachCommand } from "./attach.ts";
+import { CommentAddCommand } from "./comment.ts";
+import {
+  IssueCloseCommand,
+  IssueCreateCommand,
+  IssueEditCommand,
+  IssueListCommand,
+  IssueViewCommand,
+} from "./issue.ts";
+import {
+  LabelCreateCommand,
+  LabelDeleteCommand,
+  LabelEditCommand,
+  LabelListCommand,
+} from "./label.ts";
 import {
   ProjectLinkCommand,
   ProjectListCommand,
@@ -17,7 +30,15 @@ export const commands: Array<CommandClass<CliContext>> = [
   ProjectLinkCommand,
   ProjectUnlinkCommand,
   IssueListCommand,
+  IssueCreateCommand,
   IssueViewCommand,
+  IssueEditCommand,
+  IssueCloseCommand,
+  CommentAddCommand,
   LabelListCommand,
+  LabelCreateCommand,
+  LabelEditCommand,
+  LabelDeleteCommand,
   StatusListCommand,
+  AttachCommand,
 ];

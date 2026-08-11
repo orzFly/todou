@@ -1,15 +1,22 @@
 import type {
   Issue,
   IssueListItem,
+  IssueUpdateInput,
   TimelineItem,
   TodouClient,
 } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
+import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
 import { makePainter, type Painter, relativeTime, table } from "../format.ts";
 import { parseChoice, parsePositiveInt } from "../parse.ts";
-import { resolveAssignees, resolveLabels, resolveStatus } from "../resolve.ts";
+import {
+  resolveAssignees,
+  resolveClosedStatus,
+  resolveLabels,
+  resolveStatus,
+} from "../resolve.ts";
 
 function issueRow(issue: IssueListItem): string[] {
   return [
@@ -105,6 +112,148 @@ export class IssueViewCommand extends ProjectCommand {
     const paint = makePainter(this.context.stdout, this.context.env);
     this.output({ issue, timeline }, () => renderIssue(issue, timeline, paint));
   }
+}
+
+export class IssueCreateCommand extends ProjectCommand {
+  static paths = [["issue", "create"]];
+  static usage = Command.Usage({ description: "Create an issue" });
+
+  title = Option.String("--title", { required: true });
+  body = Option.String("--body");
+  bodyFile = Option.String("--body-file", {
+    description: "Body from a file, or - for stdin",
+  });
+  labels = Option.Array("--label", []);
+  assignees = Option.Array("--assignee", []);
+  status = Option.String("--status");
+
+  protected async run(client: TodouClient): Promise<void> {
+    const project = this.requireProject();
+    const body = await readBody({
+      body: this.body,
+      bodyFile: this.bodyFile,
+      stdin: this.context.stdin,
+      isTTY: isTTY(this.context.stdin),
+      env: this.context.env,
+    });
+    const issue = await client.createIssue(project, {
+      title: this.title,
+      body,
+      status_id: this.status
+        ? (await resolveStatus(client, project, this.status)).id
+        : undefined,
+      label_ids: (await resolveLabels(client, project, this.labels)).map(
+        (l) => l.id,
+      ),
+      assignee_ids: await resolveAssignees(client, project, this.assignees),
+    });
+    this.output(issue, () => `#${issue.number} created: ${issue.title}`);
+  }
+}
+
+export class IssueEditCommand extends ProjectCommand {
+  static paths = [["issue", "edit"]];
+  static usage = Command.Usage({
+    description: "Edit an issue's fields, labels, or assignees",
+  });
+
+  number = Option.String({ required: true });
+  title = Option.String("--title");
+  body = Option.String("--body");
+  bodyFile = Option.String("--body-file");
+  status = Option.String("--status");
+  addLabels = Option.Array("--add-label", []);
+  removeLabels = Option.Array("--remove-label", []);
+  addAssignees = Option.Array("--add-assignee", []);
+  removeAssignees = Option.Array("--remove-assignee", []);
+
+  protected async run(client: TodouClient): Promise<void> {
+    const project = this.requireProject();
+    const number = parsePositiveInt(this.number, "issue number");
+    const input: IssueUpdateInput = {};
+
+    if (this.title !== undefined) input.title = this.title;
+    if (this.body !== undefined || this.bodyFile !== undefined) {
+      input.body = await readBody({
+        body: this.body,
+        bodyFile: this.bodyFile,
+        stdin: this.context.stdin,
+        isTTY: false,
+        env: this.context.env,
+      });
+    }
+    if (this.status !== undefined) {
+      input.status_id = (await resolveStatus(client, project, this.status)).id;
+    }
+
+    // Label/assignee edits are read-modify-write: the API takes whole lists.
+    if (this.addLabels.length > 0 || this.removeLabels.length > 0) {
+      const current = (await client.getIssue(project, number)).labels.map(
+        (l) => l.id,
+      );
+      const add = (await resolveLabels(client, project, this.addLabels)).map(
+        (l) => l.id,
+      );
+      const remove = new Set(
+        (await resolveLabels(client, project, this.removeLabels)).map(
+          (l) => l.id,
+        ),
+      );
+      input.label_ids = [...new Set([...current, ...add])].filter(
+        (id) => !remove.has(id),
+      );
+    }
+    if (this.addAssignees.length > 0 || this.removeAssignees.length > 0) {
+      const current = (await client.getIssue(project, number)).assignees.map(
+        (a) => a.id,
+      );
+      const add = await resolveAssignees(client, project, this.addAssignees);
+      const remove = new Set(
+        await resolveAssignees(client, project, this.removeAssignees),
+      );
+      input.assignee_ids = [...new Set([...current, ...add])].filter(
+        (id) => !remove.has(id),
+      );
+    }
+
+    if (Object.keys(input).length === 0) {
+      throw new CliError("nothing to change", "pass at least one edit flag");
+    }
+    const issue = await client.updateIssue(project, number, input);
+    this.output(issue, () => `#${issue.number} updated`);
+  }
+}
+
+export class IssueCloseCommand extends ProjectCommand {
+  static paths = [["issue", "close"]];
+  static usage = Command.Usage({
+    description: "Move an issue to a closed status",
+  });
+
+  number = Option.String({ required: true });
+  status = Option.String("--status", {
+    description: "A specific closed status (default: first by position)",
+  });
+  comment = Option.String("--comment", {
+    description: "Leave a comment before closing",
+  });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const project = this.requireProject();
+    const number = parsePositiveInt(this.number, "issue number");
+    const target = await resolveClosedStatus(client, project, this.status);
+    if (this.comment !== undefined) {
+      await client.createComment(project, number, this.comment);
+    }
+    const issue = await client.updateIssue(project, number, {
+      status_id: target.id,
+    });
+    this.output(issue, () => `#${issue.number} closed (${target.name})`);
+  }
+}
+
+function isTTY(stream: unknown): boolean {
+  return Boolean((stream as { isTTY?: boolean })?.isTTY);
 }
 
 /** The whole stream, following next_cursor; --json gets items only. */
