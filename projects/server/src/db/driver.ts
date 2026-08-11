@@ -21,9 +21,25 @@ export type DbHandle = {
   close: () => Promise<void>;
 };
 
-const MIGRATIONS: Record<DbTier, string> = {
-  system: fileURLToPath(new URL("../../drizzle/system", import.meta.url)),
-  project: fileURLToPath(new URL("../../drizzle/project", import.meta.url)),
+// Each tier keeps its own journal table: in shared placement both tiers
+// live in one database, and a common journal would let one tier's newer
+// timestamps mask the other tier's pending migrations.
+const MIGRATIONS: Record<
+  DbTier,
+  { migrationsFolder: string; migrationsTable: string }
+> = {
+  system: {
+    migrationsFolder: fileURLToPath(
+      new URL("../../drizzle/system", import.meta.url),
+    ),
+    migrationsTable: "__drizzle_migrations_system",
+  },
+  project: {
+    migrationsFolder: fileURLToPath(
+      new URL("../../drizzle/project", import.meta.url),
+    ),
+    migrationsTable: "__drizzle_migrations_project",
+  },
 };
 
 export function dbKindOf(url: string): DbKind {
@@ -48,8 +64,7 @@ export async function openDb(url: string): Promise<DbHandle> {
       db: db as unknown as Db,
       kind,
       url,
-      migrate: (tier) =>
-        migratePglite(db, { migrationsFolder: MIGRATIONS[tier] }),
+      migrate: (tier) => migratePglite(db, MIGRATIONS[tier]),
       close: () => client.close(),
     };
   }
@@ -59,8 +74,7 @@ export async function openDb(url: string): Promise<DbHandle> {
     db: db as unknown as Db,
     kind,
     url,
-    migrate: (tier) =>
-      migrateNodePg(db, { migrationsFolder: MIGRATIONS[tier] }),
+    migrate: (tier) => migrateNodePg(db, MIGRATIONS[tier]),
     close: () => pool.end(),
   };
 }

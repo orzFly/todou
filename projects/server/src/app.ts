@@ -2,6 +2,7 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { type AppEnv, authMiddleware } from "./auth/middleware.ts";
 import type { AppContext } from "./bootstrap.ts";
 import { registerErrorHandler } from "./errors.ts";
+import { agentRoutes } from "./routes/agents.ts";
 import { attachmentRoutes } from "./routes/attachments.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { issueRoutes } from "./routes/issues.ts";
@@ -41,6 +42,7 @@ export function createApp(ctx: AppContext) {
   api.route("/auth", authRoutes(ctx));
   api.use("*", authMiddleware(ctx));
   api.route("/", meRoutes());
+  api.route("/agents", agentRoutes());
   api.route("/projects", projectRoutes());
   api.route("/projects", statusRoutes());
   api.route("/projects", labelRoutes());

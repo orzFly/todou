@@ -1,6 +1,7 @@
 export const TODOU = "todou";
 
 export * from "./events.ts";
+export * from "./schemas/agent.ts";
 export * from "./schemas/attachment.ts";
 export * from "./schemas/common.ts";
 export * from "./schemas/issue.ts";

@@ -29,6 +29,8 @@ export const users = pgTable(
     ),
     oidcSubject: text("oidc_subject"),
     isInstanceAdmin: boolean("is_instance_admin").notNull().default(false),
+    // Soft deactivation (used for agents): blocks all authentication.
+    disabledAt: timestamp("disabled_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("users_login_idx").on(t.login)],

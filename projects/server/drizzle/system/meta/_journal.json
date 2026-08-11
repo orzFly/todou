@@ -8,6 +8,13 @@
       "when": 1786436133408,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786437940527,
+      "tag": "0001_agent-disable",
+      "breakpoints": true
     }
   ]
 }

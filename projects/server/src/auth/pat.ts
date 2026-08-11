@@ -47,6 +47,7 @@ export async function verifyPat(
   const row = rows[0];
   if (!row) return null;
   if (row.token.expiresAt && row.token.expiresAt <= now) return null;
+  if (row.user.disabledAt) return null;
 
   const lastUsed = row.token.lastUsedAt?.getTime() ?? 0;
   if (now.getTime() - lastUsed > LAST_USED_THROTTLE_MS) {

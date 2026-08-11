@@ -33,6 +33,7 @@ export async function validateSession(
     .where(eq(sessions.tokenHash, hashToken(value)));
   const row = rows[0];
   if (!row) return null;
+  if (row.user.disabledAt) return null;
   const now = Date.now();
   if (row.session.expiresAt.getTime() <= now) {
     await db.delete(sessions).where(eq(sessions.id, row.session.id));
