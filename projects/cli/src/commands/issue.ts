@@ -321,7 +321,14 @@ function renderTimelineItem(item: TimelineItem, paint: Painter): string {
       .split("\n")
       .map((line) => `  ${line}`)
       .join("\n");
-    return `${paint("cyan", item.author.login)} commented ${when}:\n${body}`;
+    const edited = item.edited_at ? " (edited)" : "";
+    return `${paint("cyan", item.author.login)} commented${edited} ${when}:\n${body}`;
+  }
+  if (item.event_type === "title_changed") {
+    return paint(
+      "dim",
+      `${item.actor.login} renamed "${String(item.payload.from)}" → "${String(item.payload.to)}" ${when}`,
+    );
   }
   const detail = Object.entries(item.payload)
     .filter(([, v]) => typeof v === "string" || typeof v === "number")

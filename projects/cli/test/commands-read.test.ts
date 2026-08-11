@@ -206,6 +206,42 @@ describe("issue view", () => {
     expect(result.stdout).toContain("status_changed (from=Todo to=Done)");
   });
 
+  it("renders renames and edited markers", async () => {
+    const page = {
+      items: [
+        {
+          type: "comment",
+          id: 1,
+          author: me,
+          body: "first",
+          created_at: "2026-08-11T10:30:00Z",
+          edited_at: "2026-08-11T10:40:00Z",
+        },
+        {
+          type: "event",
+          id: 2,
+          event_type: "title_changed",
+          actor: me,
+          payload: { from: "Old potato", to: "Fix the potato" },
+          created_at: "2026-08-11T10:45:00Z",
+        },
+      ],
+      prev_cursor: null,
+      next_cursor: null,
+    };
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3", issue],
+      ["GET", "/api/projects/todou/issues/3/timeline", page],
+    ]);
+    const result = await runCli(["issue", "view", "3"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.stdout).toContain("commented (edited)");
+    expect(result.stdout).toContain('renamed "Old potato" → "Fix the potato"');
+    expect(result.stdout).not.toContain("title_changed (");
+  });
+
   it("rejects a non-numeric issue number", async () => {
     const { fetchImpl } = fakeFetch([]);
     const result = await runCli(["issue", "view", "abc"], {

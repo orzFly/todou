@@ -268,6 +268,46 @@ describe("comment add", () => {
   });
 });
 
+describe("comment edit", () => {
+  it("patches the body and reports the comment", async () => {
+    let patched: Record<string, unknown> | undefined;
+    const { fetchImpl } = fakeFetch([
+      [
+        "PATCH",
+        "/api/projects/todou/issues/7/comments/12",
+        (init: RequestInit) => {
+          patched = jsonBody(init);
+          return {
+            type: "comment",
+            id: 12,
+            author: me,
+            body: patched.body,
+            created_at: "2026-08-11T12:00:00Z",
+            edited_at: "2026-08-11T13:00:00Z",
+          };
+        },
+      ],
+    ]);
+    const result = await runCli(
+      ["comment", "edit", "7", "12", "--body", "fixed note"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(patched).toEqual({ body: "fixed note" });
+    expect(result.stdout).toBe("edited comment 12 on #7\n");
+  });
+
+  it("rejects a non-numeric comment id", async () => {
+    const { fetchImpl } = fakeFetch([]);
+    const result = await runCli(
+      ["comment", "edit", "7", "abc", "--body", "x"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("comment id");
+  });
+});
+
 describe("label create/edit/delete", () => {
   it("creates with an optional color", async () => {
     let posted: Record<string, unknown> | undefined;
