@@ -11,9 +11,11 @@ import {
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import type { IssueListItem, Status } from "@todou/shared";
+import { useEffect, useRef } from "react";
 import { boardColumnQuery, useBoardMove } from "@/api/board.ts";
 import { statusesQuery } from "@/api/queries.ts";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
+import { NewIssueDialog } from "@/components/issue/new-issue-dialog.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -27,6 +29,31 @@ export function BoardPage() {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
+  // The click fired after a drop would natively navigate the title link:
+  // dnd-kit only stops the click's propagation (React handlers never run,
+  // so the Link can't preventDefault), and an anchor's default action does
+  // not need propagation to complete. Window capture is the one spot that
+  // runs before dnd-kit's document-capture listener, so cancel it there.
+  const dragHappened = useRef(false);
+  useEffect(() => {
+    const reset = () => {
+      dragHappened.current = false;
+    };
+    const swallowPostDragClick = (event: MouseEvent) => {
+      if (dragHappened.current) {
+        dragHappened.current = false;
+        event.preventDefault();
+      }
+    };
+    window.addEventListener("pointerdown", reset, { capture: true });
+    window.addEventListener("click", swallowPostDragClick, { capture: true });
+    return () => {
+      window.removeEventListener("pointerdown", reset, { capture: true });
+      window.removeEventListener("click", swallowPostDragClick, {
+        capture: true,
+      });
+    };
+  }, []);
 
   function onDragEnd(event: DragEndEvent) {
     const over = event.over;
@@ -47,12 +74,22 @@ export function BoardPage() {
     <DndContext
       sensors={sensors}
       collisionDetection={closestCorners}
+      onDragStart={() => {
+        dragHappened.current = true;
+      }}
       onDragEnd={onDragEnd}
     >
-      <div className="flex gap-4 overflow-x-auto pb-4">
-        {statuses.data.map((status) => (
-          <BoardColumn key={status.id} slug={slug} status={status} />
-        ))}
+      {/* Negative margins escape the shell's centered max-w container so
+          the multi-column board can use the full viewport width. */}
+      <div className="mx-[calc(50%-50vw)] space-y-4 px-4">
+        <div className="flex justify-end">
+          <NewIssueDialog slug={slug} statuses={statuses.data} />
+        </div>
+        <div className="flex gap-4 overflow-x-auto pb-4">
+          {statuses.data.map((status) => (
+            <BoardColumn key={status.id} slug={slug} status={status} />
+          ))}
+        </div>
       </div>
     </DndContext>
   );
