@@ -8,6 +8,8 @@ import {
   IssueListQuery,
   IssueUpdateInput,
   ProjectSlug,
+  RevisionPage,
+  RevisionQuery,
   TimelineComment,
   TimelinePage,
   TimelineQuery,
@@ -24,6 +26,10 @@ import {
   listIssues,
   updateIssue,
 } from "../services/issues.ts";
+import {
+  listCommentRevisions,
+  listIssueRevisions,
+} from "../services/revisions.ts";
 import { getTimeline } from "../services/timeline.ts";
 
 const issueNumber = z.coerce.number().int().positive();
@@ -94,6 +100,22 @@ const patchCommentRoute = createRoute({
   summary: "Edit a comment (author or project admin)",
   request: { params: commentParams, body: jsonBody(CommentUpdateInput) },
   responses: { 200: { description: "Updated", ...jsonBody(TimelineComment) } },
+});
+
+const issueRevisionsRoute = createRoute({
+  method: "get",
+  path: "/{slug}/issues/{number}/revisions",
+  summary: "Issue body edit history, newest first, both sides paired",
+  request: { params: issueParams, query: RevisionQuery },
+  responses: { 200: { description: "Page", ...jsonBody(RevisionPage) } },
+});
+
+const commentRevisionsRoute = createRoute({
+  method: "get",
+  path: "/{slug}/issues/{number}/comments/{commentId}/revisions",
+  summary: "Comment edit history, newest first, both sides paired",
+  request: { params: commentParams, query: RevisionQuery },
+  responses: { 200: { description: "Page", ...jsonBody(RevisionPage) } },
 });
 
 const deleteCommentRoute = createRoute({
@@ -202,6 +224,35 @@ export function issueRoutes() {
         commentId,
         c.req.valid("json"),
         c.get("agentContext"),
+      ),
+      200,
+    );
+  });
+
+  app.openapi(issueRevisionsRoute, async (c) => {
+    const { slug, number } = c.req.valid("param");
+    return c.json(
+      await listIssueRevisions(
+        c.get("appCtx"),
+        c.get("user"),
+        slug,
+        number,
+        c.req.valid("query"),
+      ),
+      200,
+    );
+  });
+
+  app.openapi(commentRevisionsRoute, async (c) => {
+    const { slug, number, commentId } = c.req.valid("param");
+    return c.json(
+      await listCommentRevisions(
+        c.get("appCtx"),
+        c.get("user"),
+        slug,
+        number,
+        commentId,
+        c.req.valid("query"),
       ),
       200,
     );

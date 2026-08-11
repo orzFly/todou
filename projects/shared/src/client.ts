@@ -16,6 +16,7 @@ import type {
   Project,
   ProjectCreateInput,
   ProjectUpdateInput,
+  RevisionPage,
   Status,
   StatusCreateInput,
   StatusUpdateInput,
@@ -250,6 +251,25 @@ export class TodouClient {
     this.request<void>(
       "DELETE",
       `/projects/${slug}/issues/${number}/comments/${commentId}`,
+    );
+
+  // — edit history —
+  getIssueRevisions = (slug: string, number: number, query?: Query) =>
+    this.request<RevisionPage>(
+      "GET",
+      `/projects/${slug}/issues/${number}/revisions`,
+      { query },
+    );
+  getCommentRevisions = (
+    slug: string,
+    number: number,
+    commentId: number,
+    query?: Query,
+  ) =>
+    this.request<RevisionPage>(
+      "GET",
+      `/projects/${slug}/issues/${number}/comments/${commentId}/revisions`,
+      { query },
     );
 
   // — attachments —

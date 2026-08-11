@@ -45,6 +45,19 @@ describe("TodouClient", () => {
     expect(headers.authorization).toBe("Bearer todou_pat_x");
   });
 
+  it("builds revision history urls", async () => {
+    const { fetch, calls } = mockFetch(200, { items: [] });
+    const client = new TodouClient({ fetch });
+    await client.getIssueRevisions("todou", 7, { limit: 5 });
+    await client.getCommentRevisions("todou", 7, 42);
+    expect(calls[0]?.url).toBe(
+      "/api/projects/todou/issues/7/revisions?limit=5",
+    );
+    expect(calls[1]?.url).toBe(
+      "/api/projects/todou/issues/7/comments/42/revisions",
+    );
+  });
+
   it("throws TodouError with server error codes", async () => {
     const { fetch } = mockFetch(409, {
       error: { code: "conflict", message: "slug taken" },

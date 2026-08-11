@@ -1,7 +1,13 @@
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { revisions } from "../src/db/project-schema.ts";
-import { makeTestApp, PLACEMENTS, type TestApp } from "./helpers.ts";
+import { projectMembers, tokens, users } from "../src/db/system-schema.ts";
+import {
+  addUserWithToken,
+  makeTestApp,
+  PLACEMENTS,
+  type TestApp,
+} from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
@@ -135,6 +141,119 @@ describe.each(PLACEMENTS)("revisions capture (%s placement)", (placement) => {
 
     const rows = await revisionRows("comment", comment.id);
     expect(rows.map((r) => r.body)).toEqual(["first"]);
+  });
+
+  it("serves paired issue and comment history, newest first", async () => {
+    const issue = await createIssue({ title: "hist", body: "v1" });
+    await patchIssue(issue.number, { body: "v2" });
+    await patchIssue(issue.number, { body: "v3" });
+
+    const page = await json(
+      await t.app.request(
+        `/api/projects/${slug}/issues/${issue.number}/revisions`,
+        { headers: { cookie } },
+      ),
+    );
+    expect(
+      // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
+      page.items.map((r: any) => [r.body_before, r.body_after]),
+    ).toEqual([
+      ["v2", "v3"],
+      ["v1", "v2"],
+    ]);
+    expect(page.items[0].actor.login).toBe("user");
+
+    const comment = await addComment(issue.number, "c1");
+    await patchComment(issue.number, comment.id, "c2");
+    await patchComment(issue.number, comment.id, "c3");
+    const commentPage = await json(
+      await t.app.request(
+        `/api/projects/${slug}/issues/${issue.number}/comments/${comment.id}/revisions`,
+        { headers: { cookie } },
+      ),
+    );
+    expect(
+      // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
+      commentPage.items.map((r: any) => [r.body_before, r.body_after]),
+    ).toEqual([
+      ["c2", "c3"],
+      ["c1", "c2"],
+    ]);
+  });
+
+  it("limit truncation only drops older edits whole", async () => {
+    const issue = await createIssue({ title: "trunc", body: "v1" });
+    await patchIssue(issue.number, { body: "v2" });
+    await patchIssue(issue.number, { body: "v3" });
+
+    const page = await json(
+      await t.app.request(
+        `/api/projects/${slug}/issues/${issue.number}/revisions?limit=1`,
+        { headers: { cookie } },
+      ),
+    );
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0].body_before).toBe("v2");
+    expect(page.items[0].body_after).toBe("v3");
+  });
+
+  it("404s for a comment fetched via the wrong issue", async () => {
+    const withComment = await createIssue({ title: "has comment" });
+    const other = await createIssue({ title: "other" });
+    const comment = await addComment(withComment.number, "hello");
+
+    const res = await t.app.request(
+      `/api/projects/${slug}/issues/${other.number}/comments/${comment.id}/revisions`,
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("lets readers view history and ghosts deleted editors", async () => {
+    const editor = await addUserWithToken(t.ctx, `editor-${slug}`);
+    const reader = await addUserWithToken(t.ctx, `reader-${slug}`);
+    for (const [user, role] of [
+      [editor, "writer"],
+      [reader, "reader"],
+    ] as const) {
+      const put = await t.app.request(
+        `/api/projects/${slug}/members/${user.user.id}`,
+        {
+          method: "PUT",
+          headers: headers(),
+          body: JSON.stringify({ role }),
+        },
+      );
+      expect(put.status).toBe(204);
+    }
+
+    const issue = await createIssue({ title: "ghosted", body: "original" });
+    const patched = await t.app.request(
+      `/api/projects/${slug}/issues/${issue.number}`,
+      {
+        method: "PATCH",
+        headers: { ...editor.headers, "content-type": "application/json" },
+        body: JSON.stringify({ body: "edited by ghost-to-be" }),
+      },
+    );
+    expect(patched.status).toBe(200);
+
+    const system = t.ctx.router.system();
+    await system.delete(tokens).where(eq(tokens.userId, editor.user.id));
+    await system
+      .delete(projectMembers)
+      .where(eq(projectMembers.userId, editor.user.id));
+    await system.delete(users).where(eq(users.id, editor.user.id));
+
+    const page = await json(
+      await t.app.request(
+        `/api/projects/${slug}/issues/${issue.number}/revisions`,
+        { headers: reader.headers },
+      ),
+    );
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0].actor.login).toBe("ghost");
+    expect(page.items[0].body_before).toBe("original");
   });
 
   it("cascades revisions when a comment is deleted", async () => {
