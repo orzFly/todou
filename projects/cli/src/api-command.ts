@@ -1,5 +1,4 @@
-import { TodouClient, TodouError } from "@todou/shared";
-import { ConfigError } from "@todou/shared/config";
+import { TodouClient } from "@todou/shared";
 import { type BaseContext, Command, Option } from "clipanion";
 import { type CliConfig, loadCliConfig } from "./config.ts";
 import {
@@ -7,7 +6,7 @@ import {
   type ResolvedContext,
   resolveContext,
 } from "./context.ts";
-import { CliError } from "./errors.ts";
+import { CliError, reportError } from "./errors.ts";
 
 export type CliContext = BaseContext & {
   cwd: string;
@@ -69,25 +68,7 @@ export abstract class ApiCommand extends Command<CliContext> {
   }
 
   protected report(error: unknown): number {
-    const stderr = this.context.stderr;
-    if (error instanceof TodouError) {
-      stderr.write(`error: ${error.code} — ${error.message}\n`);
-    } else if (error instanceof CliError) {
-      stderr.write(`error: ${error.message}\n`);
-      if (error.hint) stderr.write(`${error.hint}\n`);
-    } else if (error instanceof ConfigError) {
-      stderr.write(`error: ${error.message}\n`);
-    } else if (error instanceof TypeError) {
-      // Undici surfaces connection failures as TypeError("fetch failed").
-      stderr.write(
-        `error: cannot reach ${this.ctx?.server ?? "the server"} — ${
-          (error.cause as Error | undefined)?.message ?? error.message
-        }\n`,
-      );
-    } else {
-      throw error;
-    }
-    return 1;
+    return reportError(error, this.context.stderr, this.ctx?.server);
   }
 
   /** stdout carries data only: the raw JSON under --json, prose otherwise. */

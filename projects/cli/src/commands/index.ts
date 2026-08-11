@@ -16,6 +16,7 @@ import {
   LabelEditCommand,
   LabelListCommand,
 } from "./label.ts";
+import { LoginCommand } from "./login.ts";
 import {
   ProjectLinkCommand,
   ProjectListCommand,
@@ -26,6 +27,7 @@ import { WhoamiCommand } from "./whoami.ts";
 
 /** Every registerable command; grows as command files land. */
 export const commands: Array<CommandClass<CliContext>> = [
+  LoginCommand,
   WhoamiCommand,
   ProjectListCommand,
   ProjectLinkCommand,
