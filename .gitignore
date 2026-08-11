@@ -7,3 +7,5 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
+data/
+/todou.toml
