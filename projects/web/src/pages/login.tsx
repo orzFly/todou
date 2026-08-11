@@ -1,9 +1,18 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { api } from "@/api/queries.ts";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+
+/** Only same-site paths may be resumed after login (no open redirects). */
+export function safeRedirect(value: unknown): string | undefined {
+  return typeof value === "string" &&
+    value.startsWith("/") &&
+    !value.startsWith("//")
+    ? value
+    : undefined;
+}
 
 /**
  * Login is always explicit, but in single mode it needs no input — this
@@ -13,13 +22,21 @@ import { Card, CardContent } from "@/components/ui/card";
 export function LoginPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const search = useSearch({ strict: false }) as Record<string, unknown>;
   const attempted = useRef(false);
 
   const login = useMutation({
     mutationFn: () => api.login(),
     onSuccess: (me) => {
       queryClient.setQueryData(["me"], me);
-      navigate({ to: "/projects" });
+      const redirect = safeRedirect(search.redirect);
+      if (redirect) {
+        // A plain href, not a typed route (it carries arbitrary search
+        // params like /cli-auth?port=…); a full navigation is fine here.
+        window.location.assign(redirect);
+      } else {
+        navigate({ to: "/projects" });
+      }
     },
   });
 

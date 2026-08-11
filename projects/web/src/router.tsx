@@ -5,6 +5,7 @@ import {
   createRouter,
   Navigate,
   Outlet,
+  useRouterState,
 } from "@tanstack/react-router";
 import { issueSearchSchema } from "@/api/issues.ts";
 import { meQuery } from "@/api/queries.ts";
@@ -13,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/sonner";
 import { AgentsSettingsPage } from "@/pages/agents-settings.tsx";
 import { BoardPage } from "@/pages/board.tsx";
+import { CliAuthPage } from "@/pages/cli-auth.tsx";
 import { IssueDetailPage } from "@/pages/issue-detail.tsx";
 import { IssueListPage } from "@/pages/issue-list.tsx";
 import { LoginPage } from "@/pages/login.tsx";
@@ -34,6 +36,8 @@ const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
   component: LoginPage,
+  validateSearch: (search): { redirect?: string } =>
+    typeof search.redirect === "string" ? { redirect: search.redirect } : {},
 });
 
 /** Everything below requires a session; 401 bounces to /login. */
@@ -45,6 +49,7 @@ const authedRoute = createRoute({
 
 function AuthedLayout() {
   const me = useQuery(meQuery);
+  const href = useRouterState({ select: (state) => state.location.href });
   if (me.isPending) {
     return (
       <div className="mx-auto max-w-6xl space-y-4 px-4 py-10">
@@ -55,7 +60,10 @@ function AuthedLayout() {
   }
   if (me.isError) {
     const status = (me.error as { status?: number }).status;
-    if (status === 401) return <Navigate to="/login" />;
+    if (status === 401) {
+      // Carry the interrupted location (e.g. /cli-auth?...) through login.
+      return <Navigate to="/login" search={{ redirect: href }} />;
+    }
     return (
       <div className="mx-auto max-w-lg px-4 py-20 text-center text-destructive">
         Failed to reach the todou server: {me.error.message}
@@ -124,6 +132,12 @@ const tokensSettingsRoute = createRoute({
   component: TokensSettingsPage,
 });
 
+const cliAuthRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/cli-auth",
+  component: CliAuthPage,
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   authedRoute.addChildren([
@@ -137,6 +151,7 @@ const routeTree = rootRoute.addChildren([
     ]),
     agentsSettingsRoute,
     tokensSettingsRoute,
+    cliAuthRoute,
   ]),
 ]);
 
