@@ -11,6 +11,7 @@ import { meQuery } from "@/api/queries.ts";
 import { AppShell } from "@/components/shell.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/sonner";
+import { IssueDetailPage } from "@/pages/issue-detail.tsx";
 import { IssueListPage } from "@/pages/issue-list.tsx";
 import { LoginPage } from "@/pages/login.tsx";
 import { ProjectLayout } from "@/pages/project-layout.tsx";
@@ -107,7 +108,7 @@ const projectBoardRoute = createRoute({
 const issueRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "issues/$number",
-  component: () => <ComingSoon what="Issue detail" />,
+  component: IssueDetailPage,
 });
 
 const projectSettingsRoute = createRoute({

@@ -1,0 +1,374 @@
+import {
+  useMutation,
+  useQueryClient,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
+import { useParams } from "@tanstack/react-router";
+import type { Issue, Status } from "@todou/shared";
+import { CheckIcon, PencilIcon, XIcon } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
+import { issueQuery, useIssueStatusMutation } from "@/api/issues.ts";
+import {
+  api,
+  labelsQuery,
+  membersQuery,
+  meQuery,
+  statusesQuery,
+} from "@/api/queries.ts";
+import { LabelChip } from "@/components/issue/label-chip.tsx";
+import { StatusPill } from "@/components/issue/status-pill.tsx";
+import { MarkdownView } from "@/components/shared/markdown-view.tsx";
+import { UserChip } from "@/components/shared/user-chip.tsx";
+import {
+  Composer,
+  useCommentComposer,
+} from "@/components/timeline/composer.tsx";
+import { Timeline } from "@/components/timeline/timeline.tsx";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
+
+export function IssueDetailPage() {
+  const { slug, number: numberParam } = useParams({
+    from: "/authed/projects/$slug/issues/$number",
+  });
+  const issueNumber = Number(numberParam);
+
+  const me = useSuspenseQuery(meQuery);
+  const issue = useSuspenseQuery(issueQuery(slug, issueNumber));
+  const statuses = useSuspenseQuery(statusesQuery(slug));
+  const labels = useSuspenseQuery(labelsQuery(slug));
+  const members = useSuspenseQuery(membersQuery(slug));
+
+  const composer = useCommentComposer(slug, issueNumber, me.data);
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-[1fr_240px]">
+      <div className="min-w-0 space-y-4">
+        <TitleBlock slug={slug} issue={issue.data} />
+        <BodyBlock slug={slug} issue={issue.data} />
+        <Separator />
+        <Timeline
+          slug={slug}
+          issueNumber={issueNumber}
+          pendingComments={composer.pending.filter((p) => !p.failed)}
+        />
+        <Composer
+          onSend={composer.send}
+          failed={composer.pending.filter((p) => p.failed)}
+          onRetry={composer.retry}
+        />
+      </div>
+      <Sidebar
+        slug={slug}
+        issue={issue.data}
+        statuses={statuses.data}
+        allLabels={labels.data}
+        members={members.data}
+      />
+    </div>
+  );
+}
+
+function TitleBlock({ slug, issue }: { slug: string; issue: Issue }) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(issue.title);
+  const queryClient = useQueryClient();
+  const rename = useMutation({
+    mutationFn: () => api.updateIssue(slug, issue.number, { title }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["issue", slug, issue.number],
+      });
+      queryClient.invalidateQueries({ queryKey: ["issues", slug] });
+      queryClient.invalidateQueries({
+        queryKey: ["timeline", slug, issue.number],
+      });
+      setEditing(false);
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  if (editing) {
+    return (
+      <form
+        className="flex items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          rename.mutate();
+        }}
+      >
+        <Input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          className="text-lg font-semibold"
+        />
+        <Button type="submit" size="icon-sm" aria-label="save title">
+          <CheckIcon className="size-4" />
+        </Button>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          aria-label="cancel"
+          onClick={() => {
+            setTitle(issue.title);
+            setEditing(false);
+          }}
+        >
+          <XIcon className="size-4" />
+        </Button>
+      </form>
+    );
+  }
+  return (
+    <div className="flex items-start justify-between gap-2">
+      <h1 className="text-2xl font-semibold">
+        {issue.title}{" "}
+        <span className="font-normal text-muted-foreground">
+          #{issue.number}
+        </span>
+      </h1>
+      <Button
+        size="icon-sm"
+        variant="ghost"
+        aria-label="edit title"
+        onClick={() => setEditing(true)}
+      >
+        <PencilIcon className="size-4" />
+      </Button>
+    </div>
+  );
+}
+
+function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
+  const [editing, setEditing] = useState(false);
+  const [body, setBody] = useState(issue.body);
+  const queryClient = useQueryClient();
+  const save = useMutation({
+    mutationFn: () => api.updateIssue(slug, issue.number, { body }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["issue", slug, issue.number],
+      });
+      setEditing(false);
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  return (
+    <div className="rounded-lg border">
+      <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
+        <UserChip user={issue.author} />
+        <span
+          className="text-xs text-muted-foreground"
+          title={issue.created_at}
+        >
+          {new Date(issue.created_at).toLocaleString()}
+        </span>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          className="ml-auto"
+          aria-label="edit body"
+          onClick={() => {
+            setBody(issue.body);
+            setEditing(!editing);
+          }}
+        >
+          <PencilIcon className="size-3.5" />
+        </Button>
+      </div>
+      <div className="px-3 py-2">
+        {editing ? (
+          <div className="space-y-2">
+            <Textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={8}
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setEditing(false)}
+              >
+                Cancel
+              </Button>
+              <Button size="sm" onClick={() => save.mutate()}>
+                Save
+              </Button>
+            </div>
+          </div>
+        ) : issue.body.trim() === "" ? (
+          <p className="text-sm text-muted-foreground italic">
+            No description.
+          </p>
+        ) : (
+          <MarkdownView>{issue.body}</MarkdownView>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Sidebar({
+  slug,
+  issue,
+  statuses,
+  allLabels,
+  members,
+}: {
+  slug: string;
+  issue: Issue;
+  statuses: Status[];
+  allLabels: Array<{ id: number; name: string; color: string }>;
+  members: Array<{ user: { id: number; login: string } }>;
+}) {
+  const queryClient = useQueryClient();
+  const statusMutation = useIssueStatusMutation(slug);
+  const patch = useMutation({
+    mutationFn: (input: { label_ids?: number[]; assignee_ids?: number[] }) =>
+      api.updateIssue(slug, issue.number, input),
+    onSettled: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["issue", slug, issue.number],
+      });
+      queryClient.invalidateQueries({ queryKey: ["issues", slug] });
+      queryClient.invalidateQueries({
+        queryKey: ["timeline", slug, issue.number],
+      });
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  return (
+    <aside className="space-y-5 text-sm">
+      <section className="space-y-2">
+        <h3 className="text-xs font-medium text-muted-foreground uppercase">
+          Status
+        </h3>
+        <DropdownMenu>
+          <DropdownMenuTrigger className="cursor-pointer">
+            <StatusPill status={issue.status} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            {statuses.map((s) => (
+              <DropdownMenuItem
+                key={s.id}
+                onSelect={() =>
+                  statusMutation.mutate({
+                    issueNumber: issue.number,
+                    status: s,
+                  })
+                }
+              >
+                <span className="w-4">
+                  {s.id === issue.status.id && <CheckIcon className="size-4" />}
+                </span>
+                {s.name}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </section>
+
+      <section className="space-y-2">
+        <h3 className="text-xs font-medium text-muted-foreground uppercase">
+          Labels
+        </h3>
+        <div className="flex flex-wrap gap-1">
+          {issue.labels.map((label) => (
+            <LabelChip key={label.id} label={label} />
+          ))}
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm">
+              Edit labels
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            {allLabels.length === 0 && (
+              <DropdownMenuItem disabled>No labels defined</DropdownMenuItem>
+            )}
+            {allLabels.map((label) => {
+              const active = issue.labels.some((l) => l.id === label.id);
+              return (
+                <DropdownMenuItem
+                  key={label.id}
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    const current = issue.labels.map((l) => l.id);
+                    patch.mutate({
+                      label_ids: active
+                        ? current.filter((id) => id !== label.id)
+                        : [...current, label.id],
+                    });
+                  }}
+                >
+                  <span className="w-4">
+                    {active && <CheckIcon className="size-4" />}
+                  </span>
+                  {label.name}
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </section>
+
+      <section className="space-y-2">
+        <h3 className="text-xs font-medium text-muted-foreground uppercase">
+          Assignees
+        </h3>
+        <div className="flex flex-wrap gap-2">
+          {issue.assignees.map((user) => (
+            <UserChip key={user.id} user={user} />
+          ))}
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm">
+              Edit assignees
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            {members.map((member) => {
+              const active = issue.assignees.some(
+                (a) => a.id === member.user.id,
+              );
+              return (
+                <DropdownMenuItem
+                  key={member.user.id}
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    const current = issue.assignees.map((a) => a.id);
+                    patch.mutate({
+                      assignee_ids: active
+                        ? current.filter((id) => id !== member.user.id)
+                        : [...current, member.user.id],
+                    });
+                  }}
+                >
+                  <span className="w-4">
+                    {active && <CheckIcon className="size-4" />}
+                  </span>
+                  {member.user.login}
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </section>
+    </aside>
+  );
+}

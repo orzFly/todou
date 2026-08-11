@@ -4,6 +4,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Tooltip,
   TooltipContent,
+  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
@@ -44,11 +45,13 @@ export function UserChip({
 
   if (user.kind !== "machine") return chip;
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>{chip}</TooltipTrigger>
-      <TooltipContent>
-        agent{user.owner ? ` · belongs to @${user.owner.login}` : ""}
-      </TooltipContent>
-    </Tooltip>
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>{chip}</TooltipTrigger>
+        <TooltipContent>
+          agent{user.owner ? ` · belongs to @${user.owner.login}` : ""}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
