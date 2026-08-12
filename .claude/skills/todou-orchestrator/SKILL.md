@@ -56,8 +56,11 @@ Task brief checklist (trim as appropriate):
 3. Local verification expectations (dev server on a free port, real-browser checks with screenshots, close any tabs it opened);
 4. Wrap-up: commit (**do not merge**) → move to Ready to Ship → post a summary comment (screenshots/attachments) → report in the terminal.
 
-Design-first cards (UI/approach decisions): state explicitly "post mockups/proposal to the issue first;
-no implementation until the user decides; keep the card In Progress".
+Design-first cards (UI/approach decisions): dispatch them **through the `/todou-brainstorm` skill** —
+put `/todou-brainstorm` on the first line of the task brief, followed by the card number and context.
+That skill owns the whole dialogue loop (questions on the issue, review gate, approval before any
+implementation). For smaller look-and-feel decisions that don't warrant the full loop, at minimum state:
+"post mockups/proposal to the issue first; no implementation until the user decides; keep the card In Progress".
 
 **Reuse rule**: reuse an agent only when the new task is *genuinely related* to its context (a follow-up
 on the same card, the same subsystem); rename the agent and tab to match the new card. Otherwise start
