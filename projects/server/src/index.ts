@@ -2,10 +2,17 @@ import { serve } from "@hono/node-server";
 import { Builtins, Cli, Command, Option } from "clipanion";
 import { createApp } from "./app.ts";
 import { bootstrap } from "./bootstrap.ts";
-import { loadConfig } from "./config.ts";
+import { loadConfig, resolveS3Settings } from "./config.ts";
 import { DbRouter } from "./db/router.ts";
 import { projects } from "./db/system-schema.ts";
 import { startHousekeeping } from "./services/housekeeping.ts";
+import {
+  copyMissing,
+  enumerateBlobKeys,
+  gcPendingUploads,
+} from "./services/storage-admin.ts";
+import { FsStorage } from "./storage/fs.ts";
+import { S3Storage } from "./storage/s3.ts";
 
 abstract class ConfiguredCommand extends Command {
   configPath = Option.String("--config", {
@@ -114,6 +121,116 @@ class MigrateCommand extends ConfiguredCommand {
   }
 }
 
+class StorageMigrateCommand extends ConfiguredCommand {
+  static paths = [["storage", "migrate"]];
+
+  static usage = Command.Usage({
+    description:
+      "Copy attachment and avatar blobs between the fs and s3 backends",
+    details:
+      "Copies every blob the databases know about (avatars + all project " +
+      "attachments) to the target backend. Idempotent: keys whose target " +
+      "size already matches are skipped, so an interrupted run can simply " +
+      "be re-run. The source is never deleted; rolling back is running " +
+      "the copy in the other direction and flipping storage.backend.",
+  });
+
+  to = Option.String("--to", {
+    required: true,
+    description: 'Target backend: "s3" (fs → s3) or "fs" (s3 → fs)',
+  });
+
+  dryRun = Option.Boolean("--dry-run", false, {
+    description: "List what would be copied without writing",
+  });
+
+  async execute(): Promise<number | undefined> {
+    if (this.to !== "s3" && this.to !== "fs") {
+      this.context.stderr.write('--to must be "s3" or "fs"\n');
+      return 1;
+    }
+    const config = this.loadConfig();
+    const fsEnd = new FsStorage(config.storage.path);
+    // Resolve the s3 end regardless of which backend currently serves.
+    const credentials = config.s3Credentials ?? resolveS3Settings(config);
+    const s3End = new S3Storage(config.storage.s3, credentials);
+    await s3End.checkBucket();
+    const [src, dst] =
+      this.to === "s3" ? [fsEnd, s3End] : ([s3End, fsEnd] as const);
+
+    const router = await DbRouter.open(config);
+    try {
+      const keys = await enumerateBlobKeys(router);
+      const report = await copyMissing(src, dst, keys, {
+        dryRun: this.dryRun,
+        log: (line) => this.context.stdout.write(`${line}\n`),
+      });
+      this.context.stdout.write(
+        `${this.dryRun ? "[dry-run] " : ""}--to ${this.to}: ` +
+          `${report.copied} copied, ${report.skipped} skipped, ` +
+          `${report.failed} failed (${keys.length} total)\n`,
+      );
+      return report.failed > 0 ? 1 : 0;
+    } finally {
+      await router.close();
+    }
+  }
+}
+
+class StorageGcCommand extends ConfiguredCommand {
+  static paths = [["storage", "gc"]];
+
+  static usage = Command.Usage({
+    description: "Reap expired direct uploads that were never completed",
+    details:
+      "Walks pending_uploads rows past expiry (plus --min-age hours of " +
+      "margin), deletes the orphaned objects of uncompleted rows, and " +
+      "drops the rows. Driven entirely by the database — the bucket is " +
+      "never listed.",
+  });
+
+  dryRun = Option.Boolean("--dry-run", false, {
+    description: "List what would be reaped without deleting",
+  });
+
+  minAge = Option.String("--min-age", "24", {
+    description: "Hours past expiry before a pending upload is reaped",
+  });
+
+  async execute(): Promise<number | undefined> {
+    const minAgeHours = Number(this.minAge);
+    if (!Number.isFinite(minAgeHours) || minAgeHours < 0) {
+      this.context.stderr.write("--min-age must be a non-negative number\n");
+      return 1;
+    }
+    const config = this.loadConfig();
+    if (config.storage.backend !== "s3" || !config.s3Credentials) {
+      this.context.stdout.write(
+        "storage.backend is not s3; no direct uploads to gc\n",
+      );
+      return 0;
+    }
+    const storage = new S3Storage(config.storage.s3, config.s3Credentials);
+    const router = await DbRouter.open(config);
+    try {
+      const report = await gcPendingUploads(router, storage, {
+        dryRun: this.dryRun,
+        minAgeHours,
+        log: (line) => this.context.stdout.write(`${line}\n`),
+      });
+      this.context.stdout.write(
+        this.dryRun
+          ? `[dry-run] would reap ${report.wouldDelete} pending upload(s)\n`
+          : `reaped ${report.droppedRows} pending upload(s), ` +
+              `deleted ${report.deletedObjects} orphan object(s)\n`,
+      );
+      return 0;
+    } finally {
+      await router.close();
+    }
+  }
+}
+
 const cli = new Cli({
   binaryLabel: "todou server",
   binaryName: "todou-server",
@@ -122,6 +239,8 @@ const cli = new Cli({
 
 cli.register(ServeCommand);
 cli.register(MigrateCommand);
+cli.register(StorageMigrateCommand);
+cli.register(StorageGcCommand);
 cli.register(Builtins.HelpCommand);
 cli.register(Builtins.VersionCommand);
 cli.runExit(process.argv.slice(2));

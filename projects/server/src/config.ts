@@ -335,28 +335,41 @@ export function loadConfig(options?: {
 
   let s3Credentials: Config["s3Credentials"] = null;
   if (config.storage.backend === "s3") {
-    const s3 = config.storage.s3;
-    for (const key of ["endpoint", "bucket"] as const) {
-      if (!s3[key]) {
-        throw new ConfigError(
-          `storage.s3.${key} is required when storage.backend is "s3"`,
-        );
-      }
-    }
-    for (const key of ["endpoint", "public_endpoint"] as const) {
-      if (s3[key] && !/^https?:\/\/.+/.test(s3[key])) {
-        throw new ConfigError(`storage.s3.${key} must be an http(s) URL`);
-      }
-      s3[key] = s3[key].replace(/\/+$/, "");
-    }
-    if (!s3.public_endpoint) s3.public_endpoint = s3.endpoint;
-    if (s3.key_prefix !== "" && !s3.key_prefix.endsWith("/")) {
-      s3.key_prefix += "/";
-    }
-    s3Credentials = resolveS3Credentials(s3, options?.env ?? process.env);
+    s3Credentials = resolveS3Settings(config, options?.env ?? process.env);
   }
 
   return { ...config, projectUrlFor, isTrustedPeer, s3Credentials };
+}
+
+/**
+ * Validate and normalize [storage.s3] in place, and resolve credentials.
+ * loadConfig runs this when the serving backend is s3; `storage migrate`
+ * calls it explicitly so an fs-serving deployment can still address the
+ * s3 end of a copy.
+ */
+export function resolveS3Settings(
+  config: Pick<z.infer<typeof ConfigSchema>, "storage">,
+  env: Record<string, string | undefined> = process.env,
+): S3Credentials {
+  const s3 = config.storage.s3;
+  for (const key of ["endpoint", "bucket"] as const) {
+    if (!s3[key]) {
+      throw new ConfigError(
+        `storage.s3.${key} is required to use the s3 backend`,
+      );
+    }
+  }
+  for (const key of ["endpoint", "public_endpoint"] as const) {
+    if (s3[key] && !/^https?:\/\/.+/.test(s3[key])) {
+      throw new ConfigError(`storage.s3.${key} must be an http(s) URL`);
+    }
+    s3[key] = s3[key].replace(/\/+$/, "");
+  }
+  if (!s3.public_endpoint) s3.public_endpoint = s3.endpoint;
+  if (s3.key_prefix !== "" && !s3.key_prefix.endsWith("/")) {
+    s3.key_prefix += "/";
+  }
+  return resolveS3Credentials(s3, env);
 }
 
 /**
