@@ -320,6 +320,36 @@
     animation: anchor-flash 2s ease-out both;
   }
 
+  /* Spec review view (#23): blocks carrying comments, and blocks changed
+     since the compare baseline (the ↑/↓ nav jumps between the latter). */
+  .spec-annotated {
+    border-left: 3px solid
+      color-mix(in oklab, var(--color-amber-500) 60%, transparent);
+    padding-left: 0.5rem;
+    background-color: color-mix(
+      in oklab,
+      var(--color-amber-500) 6%,
+      transparent
+    );
+  }
+  .spec-changed {
+    border-left: 3px solid
+      color-mix(in oklab, var(--color-emerald-500) 60%, transparent);
+    padding-left: 0.5rem;
+    background-color: color-mix(
+      in oklab,
+      var(--color-emerald-500) 6%,
+      transparent
+    );
+  }
+  .spec-annotated.spec-changed {
+    border-left-color: color-mix(
+      in oklab,
+      var(--color-amber-500) 60%,
+      var(--color-emerald-500)
+    );
+  }
+
   /* Code styling stays intentionally shallow: #31 swaps <pre>/<code>
      for pierre CodeView, and these rules must be trivial to delete. */
   .markdown-body code {

@@ -21,6 +21,17 @@ export const Issue = z.object({
    * Defaults on parse so clients tolerate servers predating #19.
    */
   open_questions: z.number().int().nonnegative().default(0),
+  /**
+   * Denormalized spec state (#23): current version, verdict of the current
+   * version's review, unresolved anchored comments. Null version/status =
+   * no spec. Defaults keep old servers parseable.
+   */
+  spec_version: z.number().int().positive().nullable().default(null),
+  spec_review_status: z
+    .enum(["unreviewed", "approved", "changes_requested"])
+    .nullable()
+    .default(null),
+  spec_unresolved_comments: z.number().int().nonnegative().default(0),
 });
 export type Issue = z.infer<typeof Issue>;
 

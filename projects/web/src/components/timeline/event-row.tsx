@@ -1,8 +1,11 @@
 import { Link } from "@tanstack/react-router";
 import type { TimelineEvent } from "@todou/shared";
 import {
+  BookOpenTextIcon,
+  CheckIcon,
   CircleDotIcon,
   CircleSlashIcon,
+  FileCheck2Icon,
   LinkIcon,
   ListChecksIcon,
   PaperclipIcon,
@@ -68,6 +71,33 @@ export function describeEvent(
       const count = answers?.length ?? 0;
       return `answered ${count} question${count === 1 ? "" : "s"}`;
     }
+    case "spec_pushed": {
+      const list = (v: unknown) => (Array.isArray(v) ? v.length : 0);
+      const parts = [
+        [list(payload.added), "added"],
+        [list(payload.changed), "changed"],
+        [list(payload.removed), "removed"],
+      ]
+        .filter(([n]) => (n as number) > 0)
+        .map(([n, word]) => `${n} ${word}`)
+        .join(", ");
+      const message =
+        typeof payload.message === "string" ? ` — ${payload.message}` : "";
+      return `pushed spec v${String(payload.version)} (${parts})${message}`;
+    }
+    case "spec_review": {
+      const verdict =
+        payload.verdict === "approve" ? "approved" : "requested changes on";
+      const count = Number(payload.annotation_count ?? 0);
+      const suffix =
+        count > 0 ? ` with ${count} comment${count === 1 ? "" : "s"}` : "";
+      return `${verdict} spec v${String(payload.version)}${suffix}`;
+    }
+    case "spec_comments_resolved": {
+      const ids = payload.comment_ids as unknown[] | undefined;
+      const count = ids?.length ?? 0;
+      return `resolved ${count} spec comment${count === 1 ? "" : "s"}`;
+    }
   }
 }
 
@@ -84,6 +114,9 @@ const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
   referenced: <LinkIcon className="size-3.5" />,
   attachment_added: <PaperclipIcon className="size-3.5" />,
   question_answered: <ListChecksIcon className="size-3.5 text-green-600" />,
+  spec_pushed: <BookOpenTextIcon className="size-3.5" />,
+  spec_review: <FileCheck2Icon className="size-3.5 text-amber-600" />,
+  spec_comments_resolved: <CheckIcon className="size-3.5 text-green-600" />,
 };
 
 /**

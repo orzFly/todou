@@ -10,6 +10,7 @@ import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { RevisionHistory } from "@/components/shared/revision-history.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { QuestionsCard } from "@/components/timeline/questions-card.tsx";
+import { SpecCommentAnchorCard } from "@/components/timeline/spec-comment-card.tsx";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
@@ -114,6 +115,18 @@ export function CommentItem({
         )}
       </div>
       <div className="px-3 py-2">
+        {/* Spec anchors render ABOVE the body: they are the context the
+            comment is about (GitHub review-comment layout, #23). */}
+        {!pending && comment.component?.type === "spec_comment" && (
+          <SpecCommentAnchorCard
+            slug={slug}
+            issueNumber={issueNumber}
+            commentId={comment.id}
+            component={comment.component}
+            resolvedAt={comment.resolved_at}
+            canResolve={viewer !== null}
+          />
+        )}
         {editing ? (
           <div className="space-y-2">
             <Textarea

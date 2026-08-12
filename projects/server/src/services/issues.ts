@@ -69,6 +69,9 @@ function toIssue(bundle: IssueBundle): Issue {
     updated_at: bundle.row.updatedAt.toISOString(),
     body_edited_at: bundle.row.bodyEditedAt?.toISOString() ?? null,
     open_questions: bundle.row.openQuestions,
+    spec_version: bundle.row.specVersion,
+    spec_review_status: bundle.row.specReviewStatus,
+    spec_unresolved_comments: bundle.row.specUnresolvedComments,
   };
 }
 

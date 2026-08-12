@@ -17,6 +17,9 @@ export const IssueEventType = z.enum([
   "referenced",
   "attachment_added",
   "question_answered",
+  "spec_pushed",
+  "spec_review",
+  "spec_comments_resolved",
 ]);
 export type IssueEventType = z.infer<typeof IssueEventType>;
 
@@ -32,6 +35,8 @@ export const TimelineComment = z.object({
   component: CommentComponent.nullable().default(null),
   created_at: Timestamp,
   edited_at: Timestamp.nullable(),
+  /** Spec-comment resolution stamp (#23); null for everything else. */
+  resolved_at: Timestamp.nullable().default(null),
   agent_context: AgentContext.nullable(),
 });
 export type TimelineComment = z.infer<typeof TimelineComment>;

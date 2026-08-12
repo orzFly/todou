@@ -35,6 +35,7 @@ async function toTimelineComment(
     component: row.component ?? null,
     created_at: row.createdAt.toISOString(),
     edited_at: row.editedAt?.toISOString() ?? null,
+    resolved_at: row.resolvedAt?.toISOString() ?? null,
     agent_context: row.agentContext ?? null,
   };
 }
@@ -254,6 +255,17 @@ export async function deleteComment(
   );
   let counterChanged = false;
   await db.transaction(async (tx) => {
+    // A still-unresolved spec comment gives its count back (#23); a
+    // resolved one already surrendered it at resolve time.
+    if (row.component?.type === "spec_comment" && row.resolvedAt === null) {
+      await tx
+        .update(issues)
+        .set({
+          specUnresolvedComments: sql`greatest(${issues.specUnresolvedComments} - 1, 0)`,
+        })
+        .where(eq(issues.id, row.issueId));
+      counterChanged = true;
+    }
     // A still-unanswered question comment gives its count back; an answered
     // one already surrendered it when the answer landed.
     const asked = questionCount(row.component);

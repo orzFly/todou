@@ -13,6 +13,7 @@ export const ChangeEntity = z.enum([
   "comment",
   "timeline",
   "attachment",
+  "spec",
 ]);
 export type ChangeEntity = z.infer<typeof ChangeEntity>;
 

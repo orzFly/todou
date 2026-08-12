@@ -29,6 +29,9 @@ const issue = (open_questions: number): IssueListItem => ({
   updated_at: "2026-08-11T00:00:00Z",
   body_edited_at: null,
   open_questions,
+  spec_version: null,
+  spec_review_status: null,
+  spec_unresolved_comments: 0,
 });
 
 /* RouterProvider mounts asynchronously — wait for the title first. */

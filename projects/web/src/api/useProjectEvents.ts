@@ -44,6 +44,17 @@ export function invalidationsFor(
             ["timeline", slug, event.issue_number],
             ["attachments", slug, event.issue_number],
           ];
+    case "spec":
+      // A push moves the "current" file set and the denormalized issue
+      // columns (version / review status) that feed list badges.
+      return event.issue_number === undefined
+        ? []
+        : [
+            ["spec", slug, event.issue_number],
+            ["spec-files", slug, event.issue_number, "current"],
+            ["issue", slug, event.issue_number],
+            ["issues", slug],
+          ];
     case "status":
       return [
         ["statuses", slug],
@@ -69,6 +80,8 @@ export function reconnectInvalidations(slug: string): QueryKeyLike[] {
     ["timeline", slug],
     ["questions", slug],
     ["attachments", slug],
+    ["spec", slug],
+    ["spec-files", slug],
     ["statuses", slug],
     ["labels", slug],
     ["members", slug],

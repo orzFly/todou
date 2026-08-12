@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Id, Timestamp } from "./common.ts";
+import { SpecCommentComponent } from "./spec.ts";
 import { UserRef } from "./user.ts";
 
 // Everything here is strictObject on purpose: agents hallucinate extra
@@ -72,8 +73,13 @@ export const CommentComponentInput = z.discriminatedUnion("type", [
 ]);
 export type CommentComponentInput = z.infer<typeof CommentComponentInput>;
 
+// Spec comments (#23) are stored-only on purpose: they exist in the stored
+// union but not in the input union, because their anchors must be validated
+// and quoted against a stored spec version — they are born exclusively
+// inside a review submission, never through a plain comment POST.
 export const CommentComponent = z.discriminatedUnion("type", [
   QuestionsComponent,
+  SpecCommentComponent,
 ]);
 export type CommentComponent = z.infer<typeof CommentComponent>;
 

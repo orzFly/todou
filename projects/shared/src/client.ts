@@ -23,6 +23,13 @@ import type {
   ProjectCreateInput,
   ProjectUpdateInput,
   RevisionPage,
+  SpecComments,
+  SpecFiles,
+  SpecInfo,
+  SpecPushInput,
+  SpecPushResult,
+  SpecReviewResult,
+  SpecReviewSubmitInput,
   Status,
   StatusCreateInput,
   StatusUpdateInput,
@@ -325,6 +332,43 @@ export class TodouClient {
       "POST",
       `/projects/${slug}/issues/${number}/comments/${commentId}/answers`,
       { json: input },
+    );
+
+  // — spec (#23) —
+  getSpec = (slug: string, number: number) =>
+    this.request<SpecInfo>("GET", `/projects/${slug}/issues/${number}/spec`);
+  getSpecFiles = (slug: string, number: number, version?: number) =>
+    this.request<SpecFiles>(
+      "GET",
+      `/projects/${slug}/issues/${number}/spec/files`,
+      { query: { version } },
+    );
+  pushSpec = (slug: string, number: number, input: SpecPushInput) =>
+    this.request<SpecPushResult>(
+      "POST",
+      `/projects/${slug}/issues/${number}/spec/push`,
+      { json: input },
+    );
+  submitSpecReview = (
+    slug: string,
+    number: number,
+    input: SpecReviewSubmitInput,
+  ) =>
+    this.request<SpecReviewResult>(
+      "POST",
+      `/projects/${slug}/issues/${number}/spec/reviews`,
+      { json: input },
+    );
+  getSpecComments = (slug: string, number: number) =>
+    this.request<SpecComments>(
+      "GET",
+      `/projects/${slug}/issues/${number}/spec/comments`,
+    );
+  resolveSpecComments = (slug: string, number: number, commentIds: number[]) =>
+    this.request<{ resolved: number[] }>(
+      "POST",
+      `/projects/${slug}/issues/${number}/spec/comments/resolve`,
+      { json: { comment_ids: commentIds } },
     );
 
   // — edit history —
