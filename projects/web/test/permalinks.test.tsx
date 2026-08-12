@@ -21,6 +21,7 @@ const author = {
   login: "alice",
   display_name: "Alice",
   kind: "human" as const,
+  avatar_url: null,
   owner: null,
 };
 
