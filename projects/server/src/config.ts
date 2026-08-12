@@ -30,7 +30,9 @@ const ConfigSchema = z.object({
           placement: z.enum(["shared", "dedicated"]).default("shared"),
           url_template: z.string().optional(),
           max_open: z.coerce.number().int().min(1).default(32),
-          workers: flexibleBool.default(false),
+          // Placement-dependent default, resolved in loadConfig: dedicated
+          // deployments get worker-hosted PGlite unless opted out.
+          workers: flexibleBool.optional(),
         })
         .prefault({}),
     })
@@ -164,6 +166,8 @@ export function loadConfig(options?: {
     }
     projectUrlFor = compileUrlTemplate(template);
   }
+  config.database.projects.workers ??=
+    config.database.projects.placement === "dedicated";
 
   return { ...config, projectUrlFor };
 }

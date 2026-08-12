@@ -15,7 +15,8 @@ const MAX_CONSECUTIVE_CRASHES = 3;
 /**
  * Main-thread proxy that satisfies the query surface drizzle-orm/pglite
  * uses (query / exec / transaction) while the real PGlite instance runs in
- * a worker thread. Enabled by `database.projects.workers = true`.
+ * a worker thread. Controlled by `database.projects.workers` (default on
+ * under dedicated placement).
  *
  * Crash policy: if the worker exits unexpectedly, every in-flight request
  * is rejected (never silently retried — writes are not idempotent) and a

@@ -47,7 +47,7 @@ describe("worker pglite crash handling", () => {
       rows: Array<{ n: number | string }>;
     };
     expect(Number(rows.rows[0]?.n)).toBe(1);
-  }, 20000);
+  });
 
   it("aborts a transaction cut down by a crash without committing it", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -70,7 +70,7 @@ describe("worker pglite crash handling", () => {
       rows: Array<{ n: number | string }>;
     };
     expect(Number(rows.rows[0]?.n)).toBe(1);
-  }, 20000);
+  });
 
   it("fails the handle instead of respawning an in-memory database", async () => {
     const client = open();
@@ -83,7 +83,7 @@ describe("worker pglite crash handling", () => {
     await expect(client.query("SELECT 1")).rejects.toThrow(
       /exited unexpectedly/,
     );
-  }, 20000);
+  });
 
   it("stops respawning after three consecutive crashes", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -96,7 +96,7 @@ describe("worker pglite crash handling", () => {
     await expect(client.query("SELECT 1")).rejects.toThrow(
       /crashed 3 times in a row/,
     );
-  }, 20000);
+  });
 
   it("resets the crash counter once a respawned worker serves a reply", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -116,7 +116,7 @@ describe("worker pglite crash handling", () => {
       rows: Array<{ one: number }>;
     };
     expect(rows.rows[0]?.one).toBe(1);
-  }, 30000);
+  });
 
   it("close() terminates for good instead of respawning", async () => {
     const client = open(freshDir());
@@ -125,5 +125,5 @@ describe("worker pglite crash handling", () => {
     // threadId is -1 once a worker has exited; a respawn would be live.
     expect(client.thread.threadId).toBe(-1);
     await expect(client.query("SELECT 1")).rejects.toThrow(/closed/);
-  }, 20000);
+  });
 });

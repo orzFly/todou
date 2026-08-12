@@ -157,7 +157,8 @@ placement = "shared"                     # project data lives in the system db
 # placement = "dedicated"                # …or route each project by template:
 # url_template = "pglite://./data/projects/${project.id}"
 # url_template = "postgres://${project.id > 100 ? 'pg-b' : 'pg-a'}/todou_${project.id}"
-# workers = true                         # host each PGlite project db in a worker thread
+# workers = false                        # opt out of worker-thread PGlite hosts
+#                                        # (they default to on under dedicated placement)
 ```
 
 `url_template` is compiled once at startup as a JS template literal with
@@ -166,14 +167,14 @@ go through the registry's `database_url` override column.
 
 #### Worker-hosted project databases
 
-With `workers = true`, each dedicated PGlite project database runs in its
-own `worker_threads` worker; a main-thread proxy forwards drizzle's query
-surface over a `MessagePort`. PGlite is single-connection WASM — hosted
-inline, every project's queries compute on the main thread, so total
-database throughput is capped at one core no matter how many projects are
-busy. Only file-backed project databases under dedicated placement are
-affected; the system database always runs inline, and `postgres://`
-targets ignore the flag.
+With `workers` enabled — the default under dedicated placement — each
+PGlite project database runs in its own `worker_threads` worker; a
+main-thread proxy forwards drizzle's query surface over a `MessagePort`.
+PGlite is single-connection WASM — hosted inline, every project's queries
+compute on the main thread, so total database throughput is capped at one
+core no matter how many projects are busy. Only PGlite project databases
+under dedicated placement are affected; the system database always runs
+inline, and `postgres://` targets ignore the flag.
 
 Trade-offs, measured with `pnpm --filter @todou/server bench:db` (32-core
 host; rerun it on yours):

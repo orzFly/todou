@@ -59,9 +59,9 @@ export function testConfig(
   if (overrides?.maxOpen) {
     lines.push(`max_open = ${overrides.maxOpen}`);
   }
-  if (overrides?.workers) {
-    lines.push("workers = true");
-  }
+  // Always explicit: the production default (workers on under dedicated
+  // placement) would otherwise put every dedicated suite in worker mode.
+  lines.push(`workers = ${overrides?.workers ?? false}`);
   if (overrides?.staticDir) {
     lines.unshift("[http]", `static_dir = '${overrides.staticDir}'`);
   }

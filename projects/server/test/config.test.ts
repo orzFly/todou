@@ -79,6 +79,34 @@ describe("loadConfig", () => {
     ).toThrow(/url_template is required/);
   });
 
+  it("defaults workers by placement: on for dedicated, off for shared", () => {
+    const shared = loadConfig({ tomlSource: "", env: {} });
+    expect(shared.database.projects.workers).toBe(false);
+
+    const dedicated = loadConfig({
+      tomlSource: [
+        "[database.projects]",
+        'placement = "dedicated"',
+        "url_template = 'pglite://./data/projects/${project.id}'",
+      ].join("\n"),
+      env: {},
+    });
+    expect(dedicated.database.projects.workers).toBe(true);
+  });
+
+  it("lets an explicit workers value override the placement default", () => {
+    const config = loadConfig({
+      tomlSource: [
+        "[database.projects]",
+        'placement = "dedicated"',
+        "url_template = 'pglite://./data/projects/${project.id}'",
+        "workers = false",
+      ].join("\n"),
+      env: {},
+    });
+    expect(config.database.projects.workers).toBe(false);
+  });
+
   it("compiles a dedicated template at load time", () => {
     const config = loadConfig({
       tomlSource: [
