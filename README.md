@@ -88,27 +88,39 @@ repo):
 
 | File | Runtime needed | Size |
 | --- | --- | --- |
-| `todou-linux-amd64` / `todou-linux-arm64` | none — self-contained | ~108–109 MB |
-| `todou-macos-arm64` | none — self-contained | ~70 MB |
-| `todou-windows-amd64.exe` | none — self-contained | ~81 MB |
-| `todou.js` | Node (any recent version already on `PATH`) | ~750 KB |
+| `todou-linux-amd64` / `todou-linux-arm64` | none (glibc) | ~108–109 MB |
+| `todou-macos-arm64` | none | ~70 MB |
+| `todou-windows-amd64.exe` | none | ~81 MB |
+| `todou.cjs` | Node (any recent version on `PATH`) | ~750 KB |
 
-The four executables are built with `deno compile` (cross-compiled from a
-single Linux machine); `todou.js` is an esbuild bundle for users who are
-size-sensitive and already have a Node runtime available — copy the one file
-anywhere and run `node todou.js ...`. Requires `deno` and `pnpm` on the build
-machine; no code changes are needed to keep either artifact working.
+The four executables are built with `deno compile`, cross-compiled from a
+single Linux machine — `deno` and `pnpm` are the only build prerequisites,
+and the CLI sources need no adaptation to stay compilable. `todou.cjs` is an
+esbuild bundle for size-sensitive users who already have Node: copy that one
+file anywhere and run it, either as `node todou.cjs …` or directly
+(`./todou.cjs`, it carries a shebang and the executable bit). The `.cjs`
+extension is deliberate — a `.js` bundle would be read as ESM and crash
+inside any project whose `package.json` sets `"type": "module"`.
+
+The Linux executables are dynamically linked against glibc, so they do not
+run on musl-based images (Alpine). Deno publishes no musl target; use a
+glibc base image (`debian-slim`, `ubuntu`, `*-slim` Node images) or ship
+`todou.cjs` there instead.
 
 macOS executables are only ad-hoc signed (not notarized): a `curl`/CI
 download runs fine, but a browser download gets Gatekeeper-quarantined — run
 `xattr -d com.apple.quarantine todou-macos-arm64` once before executing it.
 
+The build never mutates the workspace: the prod-only dependency tree that
+`deno compile` needs is staged in a scratch copy under `dist/.stage`, so
+your `node_modules` keeps its devDependencies throughout.
+
 There's no CI pipeline in this repo yet, so these artifacts are built and
 distributed manually for now. `scripts/build-cli.sh` is written to double as
-the future release job: one Linux runner installing prod deps, compiling all
-four `deno compile` targets, bundling `todou.js`, then archiving `dist/*`
+the future release job: one Linux runner bundling `todou.cjs`, staging the
+prod tree, compiling all four `deno compile` targets, then archiving `dist/*`
 (`.tar.xz` for the executables, since deno's runtime dominates the size and
-compresses well; `.js` as-is) onto a release.
+compresses well; `.cjs` as-is) onto a release.
 
 ### Production: one process, one port
 
