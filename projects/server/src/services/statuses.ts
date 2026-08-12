@@ -3,7 +3,7 @@ import type {
   StatusCreateInput,
   StatusUpdateInput,
 } from "@todou/shared";
-import { and, asc, count, eq } from "drizzle-orm";
+import { and, asc, count, eq, ne } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
@@ -20,6 +20,7 @@ export function toStatus(row: StatusRow): Status {
     category: row.category,
     color: row.color,
     position: row.position,
+    is_default: row.isDefault,
   };
 }
 
@@ -82,18 +83,37 @@ export async function updateStatus(
   if (input.name !== undefined) {
     await ensureNameFree(db, project.id, input.name, statusId);
   }
-  const updated = await db
-    .update(statuses)
-    .set({
-      ...(input.name === undefined ? {} : { name: input.name }),
-      ...(input.category === undefined ? {} : { category: input.category }),
-      ...(input.color === undefined ? {} : { color: input.color }),
-      ...(input.position === undefined ? {} : { position: input.position }),
-    })
-    .where(and(eq(statuses.id, statusId), eq(statuses.projectId, project.id)))
-    .returning();
-  const row = updated[0];
-  if (!row) throw new NotFoundError("status not found");
+  const row = await db.transaction(async (tx) => {
+    if (input.is_default === true) {
+      // Only one default per project: becoming it demotes the previous one.
+      await tx
+        .update(statuses)
+        .set({ isDefault: false })
+        .where(
+          and(
+            eq(statuses.projectId, project.id),
+            eq(statuses.isDefault, true),
+            ne(statuses.id, statusId),
+          ),
+        );
+    }
+    const updated = await tx
+      .update(statuses)
+      .set({
+        ...(input.name === undefined ? {} : { name: input.name }),
+        ...(input.category === undefined ? {} : { category: input.category }),
+        ...(input.color === undefined ? {} : { color: input.color }),
+        ...(input.position === undefined ? {} : { position: input.position }),
+        ...(input.is_default === undefined
+          ? {}
+          : { isDefault: input.is_default }),
+      })
+      .where(and(eq(statuses.id, statusId), eq(statuses.projectId, project.id)))
+      .returning();
+    const updatedRow = updated[0];
+    if (!updatedRow) throw new NotFoundError("status not found");
+    return updatedRow;
+  });
   ctx.bus.publish(project.id, {
     entity: "status",
     id: row.id,

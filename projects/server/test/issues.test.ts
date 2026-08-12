@@ -85,6 +85,36 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
     expect(timeline.items[0].event_type).toBe("opened");
   });
 
+  it("creates issues in the project default status when one is set", async () => {
+    const statuses = await statusesOf();
+    const progress = statuses.find(
+      (s: { name: string }) => s.name === "In Progress",
+    );
+    const done = statuses.find((s: { name: string }) => s.name === "Done");
+    const setDefault = (id: number, is_default: boolean) =>
+      t.app.request(`/api/projects/${slug}/statuses/${id}`, {
+        method: "PATCH",
+        headers: headers(),
+        body: JSON.stringify({ is_default }),
+      });
+
+    await setDefault(progress.id, true);
+    const defaulted = await createIssue({ title: "Lands in the default" });
+    expect(defaulted.status.name).toBe("In Progress");
+
+    // An explicit status_id still wins over the default.
+    const explicit = await createIssue({
+      title: "Explicit status",
+      status_id: done.id,
+    });
+    expect(explicit.status.name).toBe("Done");
+
+    // Clearing the default restores first-by-position behavior.
+    await setDefault(progress.id, false);
+    const fallback = await createIssue({ title: "Back to first" });
+    expect(fallback.status.name).toBe("Todo");
+  });
+
   it("allocates unique numbers under concurrent creation", async () => {
     const created = await Promise.all(
       Array.from({ length: 15 }, (_, i) =>

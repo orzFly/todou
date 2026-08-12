@@ -84,6 +84,7 @@ describe("patchIssueStatus (optimistic cache update)", () => {
     category: "open",
     color: "#123456",
     position: 0,
+    is_default: false,
   });
 
   const page: IssueListPage = {
@@ -133,6 +134,7 @@ describe("presentational chips", () => {
           category: "open",
           color: "#3b82f6",
           position: 1,
+          is_default: false,
         }}
       />,
     );

@@ -183,6 +183,23 @@ function StatusesSection({ slug }: { slug: string }) {
       ),
   });
 
+  const defaultStatus = statuses.data.find((s: Status) => s.is_default);
+  const setDefault = useMutation({
+    mutationFn: async (value: string) => {
+      if (value === "first") {
+        if (defaultStatus) {
+          await api.updateStatus(slug, defaultStatus.id, {
+            is_default: false,
+          });
+        }
+        return;
+      }
+      await api.updateStatus(slug, Number(value), { is_default: true });
+    },
+    onSuccess: invalidate,
+    onError: (error) => toast.error(error.message),
+  });
+
   function swap(index: number, direction: -1 | 1) {
     const a = statuses.data[index];
     const b = statuses.data[index + direction];
@@ -204,6 +221,11 @@ function StatusesSection({ slug }: { slug: string }) {
             <span className="text-xs text-muted-foreground">
               {status.category}
             </span>
+            {status.is_default && (
+              <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                default
+              </span>
+            )}
             <span className="ml-auto flex items-center gap-1">
               <Button
                 variant="ghost"
@@ -234,6 +256,28 @@ function StatusesSection({ slug }: { slug: string }) {
             </span>
           </div>
         ))}
+      </div>
+      <div className="flex items-center gap-2 text-sm">
+        <span className="text-muted-foreground">New issues default to:</span>
+        <Select
+          value={defaultStatus ? String(defaultStatus.id) : "first"}
+          onValueChange={(v) => setDefault.mutate(v)}
+        >
+          <SelectTrigger className="w-56" size="sm" aria-label="default status">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="first">
+              First status
+              {statuses.data[0] ? ` (${statuses.data[0].name})` : ""}
+            </SelectItem>
+            {statuses.data.map((status: Status) => (
+              <SelectItem key={status.id} value={String(status.id)}>
+                {status.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <form
         className="flex items-center gap-2"

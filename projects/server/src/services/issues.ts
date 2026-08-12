@@ -206,11 +206,16 @@ export async function createIssue(
 
   let statusId = input.status_id;
   if (statusId === undefined) {
+    // The project's default status wins; without one, first by position.
     const first = await db
       .select({ id: statuses.id })
       .from(statuses)
       .where(eq(statuses.projectId, project.id))
-      .orderBy(asc(statuses.position), asc(statuses.id))
+      .orderBy(
+        desc(statuses.isDefault),
+        asc(statuses.position),
+        asc(statuses.id),
+      )
       .limit(1);
     statusId = first[0]?.id;
     if (statusId === undefined) {

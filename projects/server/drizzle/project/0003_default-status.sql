@@ -1,0 +1,1 @@
+ALTER TABLE "statuses" ADD COLUMN "is_default" boolean DEFAULT false NOT NULL;

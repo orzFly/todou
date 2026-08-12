@@ -25,6 +25,11 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
+// Mirrors the server's choice when no status is sent with a new issue.
+export function pickDefaultStatus(statuses: Status[]): Status | undefined {
+  return statuses.find((s) => s.is_default) ?? statuses[0];
+}
+
 export function NewIssueDialog({
   slug,
   statuses,
@@ -103,7 +108,9 @@ export function NewIssueDialog({
             <Label>Status</Label>
             <Select value={statusId} onValueChange={setStatusId}>
               <SelectTrigger className="w-48">
-                <SelectValue placeholder={statuses[0]?.name ?? "Status"} />
+                <SelectValue
+                  placeholder={pickDefaultStatus(statuses)?.name ?? "Status"}
+                />
               </SelectTrigger>
               <SelectContent>
                 {statuses.map((s) => (

@@ -191,6 +191,55 @@ describe.each(PLACEMENTS)("projects domain (%s placement)", (placement) => {
     expect(blocked.status).toBe(409);
   });
 
+  it("keeps a single default status and clears it on demand", async () => {
+    const s = slug();
+    await createProject(s);
+    const listStatuses = async () =>
+      json(
+        await t.app.request(`/api/projects/${s}/statuses`, {
+          headers: { cookie },
+        }),
+      );
+    const patchStatus = (id: number, body: Record<string, unknown>) =>
+      t.app.request(`/api/projects/${s}/statuses/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify(body),
+      });
+
+    // Seeded projects start with no explicit default.
+    const seeded = await listStatuses();
+    expect(seeded.every((x: { is_default: boolean }) => !x.is_default)).toBe(
+      true,
+    );
+    const progress = seeded.find(
+      (x: { name: string }) => x.name === "In Progress",
+    );
+    const done = seeded.find((x: { name: string }) => x.name === "Done");
+
+    const set = await json(
+      await patchStatus(progress.id, {
+        is_default: true,
+      }),
+    );
+    expect(set.is_default).toBe(true);
+
+    // Promoting another status demotes the previous default.
+    await patchStatus(done.id, { is_default: true });
+    const switched = await listStatuses();
+    const defaults = switched.filter(
+      (x: { is_default: boolean }) => x.is_default,
+    );
+    expect(defaults).toHaveLength(1);
+    expect(defaults[0].name).toBe("Done");
+
+    await patchStatus(done.id, { is_default: false });
+    const cleared = await listStatuses();
+    expect(cleared.every((x: { is_default: boolean }) => !x.is_default)).toBe(
+      true,
+    );
+  });
+
   it("manages labels with per-project name uniqueness", async () => {
     const s = slug();
     await createProject(s);

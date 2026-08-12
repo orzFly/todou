@@ -320,6 +320,25 @@ describe("status/label list", () => {
     );
   });
 
+  it("marks the project's default status", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/statuses",
+        [{ ...statuses[0], is_default: true }, statuses[1]],
+      ],
+    ]);
+    const result = await runCli(["status", "list"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    const todoLine = result.stdout
+      .split("\n")
+      .find((line) => line.startsWith("Todo"));
+    expect(todoLine).toContain("default");
+    expect(result.stdout).not.toContain("Done  closed  #22c55e  default");
+  });
+
   it("prints labels", async () => {
     const { fetchImpl } = fakeFetch([
       ["GET", "/api/projects/todou/labels", labels],

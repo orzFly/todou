@@ -7,6 +7,7 @@
 import type { AgentContext } from "@todou/shared";
 import {
   bigint,
+  boolean,
   index,
   integer,
   jsonb,
@@ -40,6 +41,9 @@ export const statuses = pgTable(
     category: text("category", { enum: ["open", "closed"] }).notNull(),
     color: text("color").notNull().default("#6b7280"),
     position: integer("position").notNull(),
+    // At most one default per project (enforced by updateStatus). When none
+    // is set, new issues fall back to the first status by position.
+    isDefault: boolean("is_default").notNull().default(false),
   },
   (t) => [uniqueIndex("statuses_project_name_idx").on(t.projectId, t.name)],
 );

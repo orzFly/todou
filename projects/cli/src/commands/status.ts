@@ -14,7 +14,12 @@ export class StatusListCommand extends ProjectCommand {
         statuses
           .slice()
           .sort((a, b) => a.position - b.position)
-          .map((s) => [s.name, s.category, s.color]),
+          .map((s) => [
+            s.name,
+            s.category,
+            s.color,
+            s.is_default ? "default" : "",
+          ]),
       ),
     );
   }

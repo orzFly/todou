@@ -56,6 +56,7 @@ export const Status = z.object({
   category: StatusCategory,
   color: ColorHex,
   position: z.number().int(),
+  is_default: z.boolean(),
 });
 export type Status = z.infer<typeof Status>;
 
@@ -72,6 +73,7 @@ export const StatusUpdateInput = z.object({
   category: StatusCategory.optional(),
   color: ColorHex.optional(),
   position: z.number().int().optional(),
+  is_default: z.boolean().optional(),
 });
 export type StatusUpdateInput = z.infer<typeof StatusUpdateInput>;
 

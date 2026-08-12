@@ -16,6 +16,7 @@ const status = (id: number, name: string): Status => ({
   category: "open",
   color: "#000000",
   position: id,
+  is_default: false,
 });
 
 const page = (numbers: number[], s: Status): IssueListPage => ({
