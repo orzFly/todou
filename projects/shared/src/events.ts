@@ -4,6 +4,14 @@ import { Id } from "./schemas/common.ts";
 /** SSE event name used on the project change feed. */
 export const SSE_CHANGE_EVENT = "change";
 
+/**
+ * SSE heartbeat event name. A real event rather than an SSE comment because
+ * the browser EventSource API cannot observe comments, and clients rely on
+ * heartbeat arrival to detect silently dead connections (a proxy can hold a
+ * stream open long after the upstream died).
+ */
+export const SSE_PING_EVENT = "ping";
+
 export const ChangeEntity = z.enum([
   "project",
   "member",

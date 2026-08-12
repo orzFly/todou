@@ -1,5 +1,10 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
-import { type ChangeEvent, ProjectSlug, SSE_CHANGE_EVENT } from "@todou/shared";
+import {
+  type ChangeEvent,
+  ProjectSlug,
+  SSE_CHANGE_EVENT,
+  SSE_PING_EVENT,
+} from "@todou/shared";
 import { streamSSE } from "hono/streaming";
 import type { AppEnv } from "../auth/middleware.ts";
 import { requireProject } from "../services/access.ts";
@@ -44,6 +49,7 @@ export function sseRoutes() {
       // Lets clients (and tests) know the subscription is live.
       await stream.writeSSE({ event: "hello", data: "{}" });
 
+      let tick = 0;
       while (!stream.aborted) {
         while (queue.length > 0 && !stream.aborted) {
           const event = queue.shift() as ChangeEvent;
@@ -53,12 +59,21 @@ export function sseRoutes() {
           });
         }
         if (stream.aborted) break;
+        const iteration = ++tick;
         await Promise.race([
           new Promise<void>((resolve) => {
             wake = resolve;
           }),
-          // Heartbeat comment keeps proxies from idling the connection out.
-          stream.sleep(HEARTBEAT_MS).then(() => stream.write(": ping\n\n")),
+          // Heartbeat keeps proxies from idling the connection out. Sent as
+          // a real event, not an SSE comment: EventSource can't see comments,
+          // and the web client counts heartbeats to detect dead streams.
+          // Promise.race never cancels the loser, so a sleep that lost to a
+          // wake still resolves later — the tick guard keeps that stale
+          // branch from injecting an off-schedule ping.
+          stream.sleep(HEARTBEAT_MS).then(async () => {
+            if (tick === iteration && !stream.aborted)
+              await stream.writeSSE({ event: SSE_PING_EVENT, data: "{}" });
+          }),
         ]);
         wake = null;
       }

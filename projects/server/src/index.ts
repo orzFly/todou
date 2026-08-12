@@ -41,6 +41,12 @@ class ServeCommand extends ConfiguredCommand {
       const shutdown = () => {
         this.context.stdout.write("shutting down…\n");
         server.close(() => resolve());
+        // SSE streams never end on their own, and close() waits for every
+        // open connection: without destroying them the old process lingers
+        // as a zombie whose orphaned bus keeps heartbeating clients that
+        // will never see another change event. Killing the streams is what
+        // tells clients to reconnect to the new process.
+        if ("closeAllConnections" in server) server.closeAllConnections();
       };
       process.once("SIGINT", shutdown);
       process.once("SIGTERM", shutdown);

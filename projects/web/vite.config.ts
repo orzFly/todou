@@ -18,6 +18,19 @@ export default defineConfig({
         // on a non-default port.
         target: process.env.TODOU_API ?? "http://localhost:8637",
         changeOrigin: false,
+        configure(proxy) {
+          // http-proxy pipes the upstream response into ours, and pipe()
+          // does not propagate a premature upstream close — when the server
+          // dies mid-stream the browser keeps a silently dead connection
+          // (deadly for SSE: EventSource never notices, never reconnects).
+          // Destroy our side so clients see the drop, like they would in
+          // production behind a real reverse proxy.
+          proxy.on("proxyRes", (proxyRes, _req, res) => {
+            proxyRes.on("close", () => {
+              if (!res.writableEnded) res.destroy();
+            });
+          });
+        },
       },
     },
   },
