@@ -1,7 +1,6 @@
 ---
 name: todou-impl-plan
-description: Execute an approved todou spec plan — pull the spec set from the issue, follow plan.md step by step with a task list, and deliver through the worker flow (commit with a Spec line, Ready to Ship, summary comment).
-disable-model-invocation: true
+description: Execute an approved todou spec plan — pull the spec set from the issue, follow plan.md step by step with a task list, and deliver through the worker flow (commit with a Spec line, Ready to Ship, summary comment). Invoked by /todou-plan after the spec is approved, or directly when a card already has an approved spec.
 ---
 
 # todou implement plan
