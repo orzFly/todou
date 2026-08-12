@@ -71,6 +71,44 @@ describe("describeEvent", () => {
       describeEvent("attachment_added", { attachment: { filename: "a.txt" } }),
     ).toBe("attached a.txt");
   });
+
+  it("covers the spec vocabulary (#23)", () => {
+    expect(
+      describeEvent("spec_pushed", {
+        version: 3,
+        message: "address review",
+        added: ["extra.md"],
+        changed: ["design.md"],
+        removed: [],
+      }),
+    ).toBe("pushed spec v3 (1 added, 1 changed) — address review");
+    expect(
+      describeEvent("spec_pushed", {
+        version: 1,
+        message: null,
+        added: ["a.md", "b.md"],
+        changed: [],
+        removed: [],
+      }),
+    ).toBe("pushed spec v1 (2 added)");
+    expect(
+      describeEvent("spec_review", {
+        version: 3,
+        verdict: "approve",
+        annotation_count: 0,
+      }),
+    ).toBe("approved spec v3");
+    expect(
+      describeEvent("spec_review", {
+        version: 3,
+        verdict: "request_changes",
+        annotation_count: 2,
+      }),
+    ).toBe("requested changes on spec v3 with 2 comments");
+    expect(
+      describeEvent("spec_comments_resolved", { comment_ids: [4, 5] }),
+    ).toBe("resolved 2 spec comments");
+  });
 });
 
 describe("shouldFollowBottom", () => {

@@ -22,6 +22,7 @@ import { ProfileSettingsPage } from "@/pages/profile-settings.tsx";
 import { ProjectLayout } from "@/pages/project-layout.tsx";
 import { ProjectSettingsPage } from "@/pages/project-settings.tsx";
 import { ProjectsPage } from "@/pages/projects.tsx";
+import { parseSpecViewSearch, SpecViewPage } from "@/pages/spec-view.tsx";
 import { TokensSettingsPage } from "@/pages/tokens-settings.tsx";
 
 const rootRoute = createRootRoute({
@@ -127,6 +128,13 @@ const issueRoute = createRoute({
   component: IssueDetailPage,
 });
 
+const specViewRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "issues/$number/spec",
+  component: SpecViewPage,
+  validateSearch: parseSpecViewSearch,
+});
+
 const projectSettingsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "settings",
@@ -167,6 +175,7 @@ const routeTree = rootRoute.addChildren([
       projectBoardRoute,
       newIssueRoute,
       issueRoute,
+      specViewRoute,
       projectSettingsRoute,
     ]),
     profileSettingsRoute,

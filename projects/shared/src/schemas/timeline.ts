@@ -17,6 +17,9 @@ export const IssueEventType = z.enum([
   "referenced",
   "attachment_added",
   "question_answered",
+  "spec_pushed",
+  "spec_review",
+  "spec_comments_resolved",
 ]);
 export type IssueEventType = z.infer<typeof IssueEventType>;
 

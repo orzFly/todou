@@ -18,6 +18,7 @@ import {
 } from "@/api/queries.ts";
 import { AttachmentList } from "@/components/issue/attachment-list.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
+import { SpecBlock } from "@/components/issue/spec-block.tsx";
 import {
   StagedFileTray,
   StagedFileUploadButton,
@@ -69,6 +70,7 @@ export function IssueDetailPage() {
       <div className="min-w-0 space-y-4">
         <TitleBlock slug={slug} issue={issue.data} />
         <BodyBlock slug={slug} issue={issue.data} />
+        <SpecBlock slug={slug} issueNumber={issueNumber} />
         <AttachmentList slug={slug} issueNumber={issueNumber} />
         <Separator />
         <Timeline

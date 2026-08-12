@@ -81,6 +81,17 @@ export const issues = pgTable(
     // writers are comment create (+N), first answer (-N), and the delete
     // of a still-unanswered question comment (-N).
     openQuestions: integer("open_questions").notNull().default(0),
+    // Denormalized spec state (#23), same bounded-writer discipline: push
+    // bumps the version and resets the status, a review writes its verdict,
+    // resolve/delete of an anchored comment moves the count. NULL version
+    // and status = the issue has no spec.
+    specVersion: integer("spec_version"),
+    specReviewStatus: text("spec_review_status", {
+      enum: ["unreviewed", "approved", "changes_requested"],
+    }),
+    specUnresolvedComments: integer("spec_unresolved_comments")
+      .notNull()
+      .default(0),
   },
   (t) => [
     uniqueIndex("issues_project_number_idx").on(t.projectId, t.number),
@@ -131,6 +142,10 @@ export const comments = pgTable(
     agentContext: jsonb("agent_context").$type<AgentContext | null>(),
     createdAt: createdAt(),
     editedAt: timestamp("edited_at", { withTimezone: true }),
+    // Spec-comment resolution (#23). One-way: set once, never cleared —
+    // meaningful only for comments whose component is a spec anchor.
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedBy: bigint("resolved_by", { mode: "number" }),
   },
   (t) => [index("comments_issue_created_idx").on(t.issueId, t.createdAt)],
 );
@@ -158,6 +173,9 @@ export const issueEvents = pgTable(
         "referenced",
         "attachment_added",
         "question_answered",
+        "spec_pushed",
+        "spec_review",
+        "spec_comments_resolved",
       ],
     }).notNull(),
     payload: jsonb("payload").notNull().default({}),
@@ -193,6 +211,53 @@ export const revisions = pgTable(
       t.subjectId,
       t.id,
     ),
+  ],
+);
+
+// One row per `spec push` — the version list of an issue's spec (#23).
+// Versions are whole-set snapshots: reading v(N) never replays history.
+export const specVersions = pgTable(
+  "spec_versions",
+  {
+    id: id(),
+    projectId: projectId(),
+    issueId: bigint("issue_id", { mode: "number" })
+      .notNull()
+      .references(() => issues.id, { onDelete: "cascade" }),
+    // Per-issue counter (v1, v2, …). Uniqueness doubles as the concurrency
+    // backstop: two pushes racing to the same number cannot both land.
+    number: integer("number").notNull(),
+    authorId: bigint("author_id", { mode: "number" }).notNull(),
+    message: text("message"),
+    agentContext: jsonb("agent_context").$type<AgentContext | null>(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("spec_versions_issue_number_idx").on(
+      t.projectId,
+      t.issueId,
+      t.number,
+    ),
+  ],
+);
+
+// Full file snapshot per version; a file deleted in v(N) simply has no row
+// there. Unchanged bodies repeat across versions — acceptable at markdown
+// sizes (≤1MB × ≤64 files), and it keeps "file X at version N" one lookup.
+export const specVersionFiles = pgTable(
+  "spec_version_files",
+  {
+    id: id(),
+    projectId: projectId(),
+    versionId: bigint("version_id", { mode: "number" })
+      .notNull()
+      .references(() => specVersions.id, { onDelete: "cascade" }),
+    path: text("path").notNull(),
+    body: text("body").notNull(),
+    size: integer("size").notNull(),
+  },
+  (t) => [
+    uniqueIndex("spec_version_files_version_path_idx").on(t.versionId, t.path),
   ],
 );
 

@@ -28,6 +28,7 @@ import {
   QuestionListCommand,
   QuestionWaitCommand,
 } from "./question.ts";
+import { SpecPullCommand, SpecPushCommand, SpecStatusCommand } from "./spec.ts";
 import { StatusListCommand } from "./status.ts";
 import { WatchCommand } from "./watch.ts";
 import { WhoamiCommand } from "./whoami.ts";
@@ -50,6 +51,9 @@ export const commands: Array<CommandClass<CliContext>> = [
   QuestionListCommand,
   QuestionWaitCommand,
   QuestionAnswerCommand,
+  SpecPushCommand,
+  SpecPullCommand,
+  SpecStatusCommand,
   LabelListCommand,
   LabelCreateCommand,
   LabelEditCommand,

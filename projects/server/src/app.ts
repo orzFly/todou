@@ -13,6 +13,7 @@ import { issueRoutes } from "./routes/issues.ts";
 import { labelRoutes } from "./routes/labels.ts";
 import { meRoutes } from "./routes/me.ts";
 import { projectRoutes } from "./routes/projects.ts";
+import { specRoutes } from "./routes/spec.ts";
 import { sseRoutes } from "./routes/sse.ts";
 import { statusRoutes } from "./routes/statuses.ts";
 import { userRoutes } from "./routes/users.ts";
@@ -112,6 +113,7 @@ export function createApp(ctx: AppContext) {
   api.route("/projects", statusRoutes());
   api.route("/projects", labelRoutes());
   api.route("/projects", issueRoutes());
+  api.route("/projects", specRoutes());
   api.route("/projects", attachmentRoutes());
   api.route("/projects", sseRoutes());
 

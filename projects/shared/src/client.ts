@@ -23,6 +23,10 @@ import type {
   ProjectCreateInput,
   ProjectUpdateInput,
   RevisionPage,
+  SpecFiles,
+  SpecInfo,
+  SpecPushInput,
+  SpecPushResult,
   Status,
   StatusCreateInput,
   StatusUpdateInput,
@@ -324,6 +328,22 @@ export class TodouClient {
     this.request<TimelineEvent>(
       "POST",
       `/projects/${slug}/issues/${number}/comments/${commentId}/answers`,
+      { json: input },
+    );
+
+  // — spec (#23) —
+  getSpec = (slug: string, number: number) =>
+    this.request<SpecInfo>("GET", `/projects/${slug}/issues/${number}/spec`);
+  getSpecFiles = (slug: string, number: number, version?: number) =>
+    this.request<SpecFiles>(
+      "GET",
+      `/projects/${slug}/issues/${number}/spec/files`,
+      { query: { version } },
+    );
+  pushSpec = (slug: string, number: number, input: SpecPushInput) =>
+    this.request<SpecPushResult>(
+      "POST",
+      `/projects/${slug}/issues/${number}/spec/push`,
       { json: input },
     );
 

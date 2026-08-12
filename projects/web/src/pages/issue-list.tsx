@@ -12,6 +12,7 @@ import type {
   Status,
 } from "@todou/shared";
 import {
+  BookOpenTextIcon,
   CheckCircle2Icon,
   CheckIcon,
   CircleDotIcon,
@@ -268,6 +269,15 @@ function IssueRow({
           >
             <MessageCircleQuestionIcon className="size-3.5" />
             {issue.open_questions}
+          </span>
+        )}
+        {issue.spec_review_status === "unreviewed" && (
+          <span
+            className="ml-2 inline-flex items-center gap-1 rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 align-middle text-xs text-amber-700 dark:text-amber-400"
+            title={`spec v${issue.spec_version} is awaiting review`}
+          >
+            <BookOpenTextIcon className="size-3.5" />
+            spec
           </span>
         )}
       </TableCell>
