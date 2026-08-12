@@ -6,8 +6,14 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearch,
+} from "@tanstack/react-router";
 import type { SpecCommentItem, SpecFile, SpecInfo } from "@todou/shared";
+import { diffLines } from "diff";
 import {
   ArrowDownIcon,
   ArrowLeftIcon,
@@ -15,7 +21,6 @@ import {
   FileTextIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { diffLines } from "diff";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
@@ -28,20 +33,23 @@ import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   AnnotatedMarkdown,
   type DisplayedAnnotation,
-  StageCommentDialog,
 } from "@/components/spec/annotated-markdown.tsx";
 import { ReviewSubmitDialog } from "@/components/spec/review-submit.tsx";
+import {
+  type ComposerStaging,
+  SpecComposer,
+} from "@/components/spec/spec-composer.tsx";
 import {
   DiffstatBar,
   StatNumbers,
 } from "@/components/timeline/spec-version-card.tsx";
 import { Button } from "@/components/ui/button";
 import { changedLineRanges } from "@/lib/spec-changes.ts";
+import { useSpecReviewDrafts } from "@/lib/spec-drafts.ts";
 import {
   computeVersionStats,
   type SpecFileStat,
 } from "@/lib/spec-version-stats.ts";
-import { useSpecReviewDrafts } from "@/lib/spec-drafts.ts";
 import { cn } from "@/lib/utils.ts";
 
 export function SpecViewPage() {
@@ -72,13 +80,7 @@ export function SpecViewPage() {
 }
 
 /** A draft in the making: where it anchors and what it quotes. */
-type Staging = {
-  path: string;
-  version: number;
-  lineStart: number;
-  lineEnd: number;
-  quote: string;
-};
+type Staging = ComposerStaging;
 
 function quoteOf(body: string, start: number, end: number): string {
   return body
@@ -270,12 +272,16 @@ function SpecViewBody({
   // Comments that can hang inline on the viewed version of the selected
   // file; everything else (outdated, anchored to another version while an
   // old one is viewed) lands in the flat list below the document.
-  const { displayed, unplaced } = useMemo(() => {
+  const { displayed, unplaced, fileLevel } = useMemo(() => {
     const displayed: DisplayedAnnotation[] = [];
     const unplaced: SpecCommentItem[] = [];
+    const fileLevel: SpecCommentItem[] = [];
     for (const item of comments.data.items) {
       if (item.anchor.path !== selectedPath) continue;
-      if (item.anchor.version === version) {
+      if (item.anchor.line_start === null || item.anchor.line_end === null) {
+        // File-level comments (#61) sit above the document, not on a block.
+        fileLevel.push(item);
+      } else if (item.anchor.version === version) {
         displayed.push({
           key: `c${item.comment_id}`,
           kind: "comment",
@@ -303,6 +309,9 @@ function SpecViewBody({
     for (const draft of drafts.drafts) {
       if (draft.anchor.path !== selectedPath) continue;
       if (draft.anchor.version !== version) continue;
+      if (draft.anchor.line_start === null || draft.anchor.line_end === null) {
+        continue; // file-level drafts render in the file-level strip below
+      }
       displayed.push({
         key: draft.id,
         kind: "draft",
@@ -311,8 +320,15 @@ function SpecViewBody({
         end: draft.anchor.line_end,
       });
     }
-    return { displayed, unplaced };
+    return { displayed, unplaced, fileLevel };
   }, [comments.data, drafts.drafts, selectedPath, version]);
+
+  const fileLevelDrafts = drafts.drafts.filter(
+    (d) =>
+      d.anchor.path === selectedPath &&
+      d.anchor.version === version &&
+      d.anchor.line_start === null,
+  );
 
   const unresolvedByPath = useMemo(() => {
     const counts = new Map<string, number>();
@@ -409,6 +425,23 @@ function SpecViewBody({
           </>
         )}
         <span className="ml-auto" />
+        {compare === undefined && selected !== undefined && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              setStaging({
+                path: selected.path,
+                version,
+                lineStart: null,
+                lineEnd: null,
+                quote: "",
+              })
+            }
+          >
+            Comment file
+          </Button>
+        )}
         <Button size="sm" onClick={() => setFinishOpen(true)}>
           Finish review
           {drafts.drafts.length > 0 && ` (${drafts.drafts.length} staged)`}
@@ -470,6 +503,44 @@ function SpecViewBody({
             })}
           </aside>
           <main className="min-w-0 space-y-4" ref={mainRef}>
+            {(fileLevel.length > 0 || fileLevelDrafts.length > 0) && (
+              <div className="space-y-2 rounded-lg border px-4 py-3">
+                <h3 className="text-xs font-medium text-muted-foreground uppercase">
+                  File comments
+                </h3>
+                {fileLevel.map((item) => (
+                  <UnplacedComment
+                    key={item.comment_id}
+                    item={item}
+                    onResolve={(id) => resolve.mutate(id)}
+                    resolving={resolve.isPending}
+                  />
+                ))}
+                {fileLevelDrafts.map((draft) => (
+                  <div
+                    key={draft.id}
+                    className="rounded-md border border-indigo-500/40 p-2 text-sm"
+                  >
+                    <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+                      <span className="font-medium text-indigo-700 dark:text-indigo-400">
+                        draft
+                      </span>
+                      file comment
+                      <span className="ml-auto" />
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => drafts.remove(draft.id)}
+                      >
+                        Discard
+                      </Button>
+                    </div>
+                    <p className="whitespace-pre-wrap">{draft.body}</p>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="rounded-lg border px-5 py-4">
               {selected === undefined ? (
                 <p className="text-sm text-muted-foreground italic">
@@ -520,28 +591,27 @@ function SpecViewBody({
         </div>
       )}
 
-      <StageCommentDialog
-        open={staging !== null}
-        quote={staging?.quote ?? ""}
-        lineStart={staging?.lineStart ?? 1}
-        lineEnd={staging?.lineEnd ?? 1}
-        path={staging?.path ?? ""}
-        onCancel={() => setStaging(null)}
-        onSave={(body) => {
-          if (!staging) return;
-          drafts.add({
-            anchor: {
-              path: staging.path,
-              version: staging.version,
-              line_start: staging.lineStart,
-              line_end: staging.lineEnd,
-            },
-            quote: staging.quote,
-            body,
-          });
-          setStaging(null);
-        }}
-      />
+      {staging !== null && (
+        <SpecComposer
+          // A fresh anchor gets a fresh body.
+          key={`${staging.path}:${staging.lineStart}-${staging.lineEnd}:${staging.version}`}
+          staging={staging}
+          onCancel={() => setStaging(null)}
+          onStage={(body) => {
+            drafts.add({
+              anchor: {
+                path: staging.path,
+                version: staging.version,
+                line_start: staging.lineStart,
+                line_end: staging.lineEnd,
+              },
+              quote: staging.quote,
+              body,
+            });
+            setStaging(null);
+          }}
+        />
+      )}
 
       <ReviewSubmitDialog
         slug={slug}
@@ -578,9 +648,13 @@ function UnplacedComment({
       <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
         <UserChip user={item.author} />
         <span>
-          L{item.anchor.line_start}
-          {item.anchor.line_end !== item.anchor.line_start &&
-            `–${item.anchor.line_end}`}{" "}
+          {item.anchor.line_start === null
+            ? "file"
+            : `L${item.anchor.line_start}${
+                item.anchor.line_end !== item.anchor.line_start
+                  ? `–${item.anchor.line_end}`
+                  : ""
+              }`}{" "}
           · v{item.anchor.version}
         </span>
         {item.outdated && (
@@ -603,9 +677,11 @@ function UnplacedComment({
           <span className="text-green-700 dark:text-green-400">resolved</span>
         )}
       </div>
-      <div className="mb-1 rounded border-l-2 bg-muted/40 px-2 py-1 font-mono text-xs whitespace-pre-wrap text-muted-foreground">
-        {item.anchor.quote}
-      </div>
+      {item.anchor.quote !== "" && (
+        <div className="mb-1 rounded border-l-2 bg-muted/40 px-2 py-1 font-mono text-xs whitespace-pre-wrap text-muted-foreground">
+          {item.anchor.quote}
+        </div>
+      )}
       <p className="whitespace-pre-wrap">{item.body}</p>
     </div>
   );
@@ -759,7 +835,9 @@ function AnnotatedFileDiff({
             c.anchor.version === fromVersion
               ? ("deletions" as const)
               : ("additions" as const),
-          lineNumber: c.anchor.line_start,
+          // pierre's contract: lineNumber 0 renders a side-level annotation
+          // above the first hunk — exactly where file-level comments belong.
+          lineNumber: c.anchor.line_start ?? 0,
           metadata: c,
         })),
     [comments, fromVersion, toVersion],
@@ -789,9 +867,13 @@ function DiffAnnotation({ item }: { item: SpecCommentItem }) {
       <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
         <UserChip user={item.author} />
         <span>
-          L{item.anchor.line_start}
-          {item.anchor.line_end !== item.anchor.line_start &&
-            `–${item.anchor.line_end}`}{" "}
+          {item.anchor.line_start === null
+            ? "file"
+            : `L${item.anchor.line_start}${
+                item.anchor.line_end !== item.anchor.line_start
+                  ? `–${item.anchor.line_end}`
+                  : ""
+              }`}{" "}
           · v{item.anchor.version}
         </span>
         {item.resolved !== null && (

@@ -219,7 +219,10 @@ export class SpecCommentsCommand extends ProjectCommand {
         `${items.length} comment(s) · spec v${all.current_version}`,
       ];
       for (const item of items) {
-        const anchor = `${item.anchor.path}:${item.anchor.line_start}-${item.anchor.line_end}`;
+        const anchor =
+          item.anchor.line_start === null
+            ? `${item.anchor.path} (file)`
+            : `${item.anchor.path}:${item.anchor.line_start}-${item.anchor.line_end}`;
         const flags = [
           item.resolved === null
             ? "unresolved"

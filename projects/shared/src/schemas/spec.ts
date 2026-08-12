@@ -146,35 +146,43 @@ export type SpecReviewPayload = z.infer<typeof SpecReviewPayload>;
 
 // — inline comments (annotations) —
 
-const lineRange = {
-  /** Source line numbers of the anchored file, 1-based, inclusive. */
-  line_start: z.number().int().positive(),
-  line_end: z.number().int().positive(),
-};
-
-/** What a reviewer submits: where the comment hangs. */
+/**
+ * What a reviewer submits: where the comment hangs. Line numbers are
+ * 1-based inclusive source lines; omitting BOTH makes it a file-level
+ * comment (#61) — one line without the other is rejected.
+ */
 export const SpecCommentAnchorInput = z
   .strictObject({
     path: SpecFilePath,
     /** The version the reviewer was looking at when anchoring. */
     version: z.number().int().positive(),
-    ...lineRange,
+    line_start: z.number().int().positive().optional(),
+    line_end: z.number().int().positive().optional(),
   })
-  .refine((a) => a.line_end >= a.line_start, {
-    error: "line_end must be >= line_start",
+  .refine((a) => (a.line_start === undefined) === (a.line_end === undefined), {
+    error: "line_start and line_end come together (omit both for file-level)",
     path: ["line_end"],
-  });
+  })
+  .refine(
+    (a) =>
+      a.line_start === undefined ||
+      a.line_end === undefined ||
+      a.line_end >= a.line_start,
+    { error: "line_end must be >= line_start", path: ["line_end"] },
+  );
 export type SpecCommentAnchorInput = z.infer<typeof SpecCommentAnchorInput>;
 
 /**
  * Stored form: the server stamps `quote` (verbatim snapshot of the anchored
- * source lines) so timeline cards render without fetching the file — and so
- * a client cannot forge what the lines said.
+ * source lines; empty for file-level comments) so timeline cards render
+ * without fetching the file — and so a client cannot forge what the lines
+ * said. Null lines = file-level.
  */
 export const SpecCommentAnchor = z.strictObject({
   path: z.string(),
   version: z.number().int().positive(),
-  ...lineRange,
+  line_start: z.number().int().positive().nullable(),
+  line_end: z.number().int().positive().nullable(),
   quote: z.string(),
 });
 export type SpecCommentAnchor = z.infer<typeof SpecCommentAnchor>;

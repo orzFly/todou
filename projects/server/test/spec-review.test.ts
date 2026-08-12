@@ -474,4 +474,71 @@ describe("spec review loop #23", () => {
     );
     expect(res.status).toBe(422);
   });
+
+  it("file-level comments: no lines, empty quote, outdated only when the file goes", async () => {
+    const number = await createIssueWithSpec();
+    const badHalf = await review(number, {
+      version: 1,
+      verdict: "request_changes",
+      comments: [
+        {
+          anchor: { path: "design.md", version: 1, line_start: 2 },
+          body: "half an anchor",
+        },
+      ],
+    });
+    expect(badHalf.status).toBe(422);
+    expect((await json(badHalf)).error.message).toContain("file-level");
+
+    const submitted = await json(
+      await review(number, {
+        version: 1,
+        verdict: "request_changes",
+        comments: [
+          {
+            anchor: { path: "design.md", version: 1 },
+            body: "whole-file remark",
+          },
+        ],
+      }),
+    );
+    expect(submitted.comment_ids).toHaveLength(1);
+
+    let list = await json(
+      await t.app.request(
+        `/api/projects/${slug}/issues/${number}/spec/comments`,
+        { headers: headers() },
+      ),
+    );
+    const item = list.items.find(
+      (i: { body: string }) => i.body === "whole-file remark",
+    );
+    expect(item.anchor.line_start).toBeNull();
+    expect(item.anchor.quote).toBe("");
+    expect(item.outdated).toBe(false);
+    expect(item.current_line_start).toBeNull();
+
+    // Push a version WITHOUT the file: the file-level comment outdates.
+    const push = await t.app.request(
+      `/api/projects/${slug}/issues/${number}/spec/push`,
+      {
+        method: "POST",
+        headers: asAgent(),
+        body: JSON.stringify({
+          files: [{ path: "other.md", body: "replacement\n" }],
+        }),
+      },
+    );
+    expect(push.status).toBe(200);
+    list = await json(
+      await t.app.request(
+        `/api/projects/${slug}/issues/${number}/spec/comments`,
+        { headers: headers() },
+      ),
+    );
+    const after = list.items.find(
+      (i: { body: string }) => i.body === "whole-file remark",
+    );
+    expect(after.outdated).toBe(true);
+  });
 });
