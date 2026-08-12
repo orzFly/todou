@@ -19,6 +19,15 @@ export function sanitizeFilename(name: string): string {
   return cleaned === "" ? "attachment" : cleaned.slice(0, 200);
 }
 
+/**
+ * encodeURIComponent leaves ( ) ' ! * alone; parentheses would terminate
+ * a markdown `](…)` destination early, and these URLs get pasted into
+ * markdown bodies verbatim.
+ */
+function encodeNameSegment(name: string): string {
+  return encodeURIComponent(name).replaceAll("(", "%28").replaceAll(")", "%29");
+}
+
 async function toAttachment(
   ctx: AppContext,
   slug: string,
@@ -32,7 +41,7 @@ async function toAttachment(
     filename: row.filename,
     content_type: row.contentType,
     size: row.size,
-    url: `/api/projects/${slug}/attachments/${row.id}/download`,
+    url: `/api/projects/${slug}/attachments/${row.id}/download/${encodeNameSegment(row.filename)}`,
     uploader,
     created_at: row.createdAt.toISOString(),
   };

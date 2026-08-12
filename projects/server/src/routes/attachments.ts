@@ -1,6 +1,7 @@
 import { Readable } from "node:stream";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { Attachment, ProjectSlug } from "@todou/shared";
+import type { Context } from "hono";
 import type { AppEnv } from "../auth/middleware.ts";
 import { ValidationFailedError } from "../errors.ts";
 import {
@@ -65,6 +66,22 @@ const downloadRoute = createRoute({
   responses: { 200: { description: "File stream" } },
 });
 
+// The trailing name is cosmetic — a readable URL and a sensible save-as
+// default for clients that ignore content-disposition. Lookup is by id.
+const downloadNamedRoute = createRoute({
+  method: "get",
+  path: "/{slug}/attachments/{id}/download/{name}",
+  summary: "Download an attachment; the name segment is ignored (member)",
+  request: {
+    params: z.object({
+      slug: ProjectSlug,
+      id: z.coerce.number().int().positive(),
+      name: z.string(),
+    }),
+  },
+  responses: { 200: { description: "File stream" } },
+});
+
 export function attachmentRoutes() {
   const app = new OpenAPIHono<AppEnv>();
 
@@ -97,8 +114,11 @@ export function attachmentRoutes() {
     return c.json(list, 200);
   });
 
-  app.openapi(downloadRoute, async (c) => {
-    const { slug, id } = c.req.valid("param");
+  const streamDownload = async (
+    c: Context<AppEnv>,
+    slug: string,
+    id: number,
+  ) => {
     const ctx = c.get("appCtx");
     const { row } = await openAttachment(ctx, c.get("user"), slug, id);
     const { stream, size } = await ctx.storage.getStream(row.storageKey);
@@ -110,6 +130,16 @@ export function attachmentRoutes() {
       `attachment; filename="${row.filename.replaceAll('"', "_")}"`,
     );
     return c.body(Readable.toWeb(stream) as ReadableStream);
+  };
+
+  app.openapi(downloadRoute, (c) => {
+    const { slug, id } = c.req.valid("param");
+    return streamDownload(c, slug, id);
+  });
+
+  app.openapi(downloadNamedRoute, (c) => {
+    const { slug, id } = c.req.valid("param");
+    return streamDownload(c, slug, id);
   });
 
   return app;

@@ -2,7 +2,12 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Me, TimelineComment } from "@todou/shared";
 import { SendIcon } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
+import {
+  StagedImageTray,
+  useStagedImages,
+} from "@/components/issue/staged-images.tsx";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -71,16 +76,50 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
   return { pending, send, retry };
 }
 
+/** Draft text + freshly-uploaded image markers → one comment body. */
+export function withImageMarkers(body: string, markers: string[]): string {
+  return [body, markers.join("\n")].filter((part) => part !== "").join("\n\n");
+}
+
 export function Composer({
+  slug,
+  issueNumber,
   onSend,
   failed,
   onRetry,
 }: {
+  slug: string;
+  issueNumber: number;
   onSend: (body: string) => void;
   failed: PendingComment[];
   onRetry: (key: number) => void;
 }) {
   const [body, setBody] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const staging = useStagedImages();
+
+  async function submit() {
+    const trimmed = body.trim();
+    if (uploading) return;
+    if (trimmed === "" && staging.staged.length === 0) return;
+    let full = trimmed;
+    if (staging.staged.length > 0) {
+      setUploading(true);
+      try {
+        const markers = await staging.uploadAll(slug, issueNumber);
+        full = withImageMarkers(trimmed, markers);
+      } catch (error) {
+        // Draft and staged images stay put for another attempt.
+        toast.error(`Could not upload images: ${(error as Error).message}`);
+        return;
+      } finally {
+        setUploading(false);
+      }
+    }
+    onSend(full);
+    setBody("");
+    staging.clear();
+  }
 
   return (
     <div className="space-y-2">
@@ -99,32 +138,37 @@ export function Composer({
           </Button>
         </div>
       ))}
+      <StagedImageTray
+        staged={staging.staged}
+        onRemove={staging.remove}
+        disabled={uploading}
+      />
       <form
         className="flex items-end gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          const trimmed = body.trim();
-          if (trimmed === "") return;
-          onSend(trimmed);
-          setBody("");
+          void submit();
         }}
       >
         <Textarea
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          placeholder="Write a comment… (#N references other issues)"
+          placeholder="Write a comment… (#N references other issues; paste or drop images)"
           rows={3}
           // Sticky at the viewport bottom: an auto-growing draft must not
           // swallow the page, especially on small/mobile viewports.
           className="max-h-[40dvh] flex-1"
+          onPaste={staging.onPaste}
+          onDrop={staging.onDrop}
+          onDragOver={staging.onDragOver}
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
               e.currentTarget.form?.requestSubmit();
             }
           }}
         />
-        <Button type="submit" size="sm">
-          <SendIcon className="size-4" /> Comment
+        <Button type="submit" size="sm" disabled={uploading}>
+          <SendIcon className="size-4" /> {uploading ? "Uploading…" : "Comment"}
         </Button>
       </form>
     </div>

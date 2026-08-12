@@ -60,7 +60,9 @@ describe("attachments (fs backend)", () => {
     expect(res.status).toBe(201);
     const attachment = await json(res);
     expect(attachment.filename).toBe("notes.txt");
-    expect(attachment.url).toContain(`/projects/${slug}/attachments/`);
+    expect(attachment.url).toMatch(
+      new RegExp(`/projects/${slug}/attachments/\\d+/download/notes\\.txt$`),
+    );
 
     const download = await t.app.request(attachment.url, {
       headers: { cookie },
@@ -69,6 +71,22 @@ describe("attachments (fs backend)", () => {
     expect(await download.text()).toBe("potato bytes");
     expect(download.headers.get("content-type")).toContain("text/plain");
     expect(download.headers.get("content-disposition")).toContain("notes.txt");
+  });
+
+  it("downloads via the bare URL and via any cosmetic name", async () => {
+    const res = await upload("real-name.txt", "same bytes");
+    const attachment = await json(res);
+    const bare = attachment.url.replace(/\/download\/.*$/, "/download");
+
+    for (const url of [bare, `${bare}/anything_else.bin`]) {
+      const download = await t.app.request(url, { headers: { cookie } });
+      expect(download.status).toBe(200);
+      expect(await download.text()).toBe("same bytes");
+      // Save-as name comes from the stored filename, not the URL segment.
+      expect(download.headers.get("content-disposition")).toContain(
+        "real-name.txt",
+      );
+    }
   });
 
   it("adds an attachment_added timeline event", async () => {

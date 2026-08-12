@@ -1,0 +1,56 @@
+/**
+ * Attachment references in markdown are plain relative links to the
+ * download API — real URLs, so they keep working in any renderer that
+ * doesn't know about them. These helpers recognize and build that shape:
+ * /api/projects/<slug>/attachments/<id>/download[/<name>]
+ */
+
+export type AttachmentRef = {
+  slug: string;
+  id: number;
+  /** Decoded cosmetic name segment, when the URL carries one. */
+  name: string | null;
+};
+
+const ATTACHMENT_HREF =
+  /^\/api\/projects\/([a-z0-9][a-z0-9-]*)\/attachments\/(\d{1,9})\/download(?:\/([^/?#]+))?$/;
+
+export function parseAttachmentHref(
+  href: string | undefined,
+): AttachmentRef | null {
+  const match = href?.match(ATTACHMENT_HREF);
+  if (!match || match[1] === undefined || match[2] === undefined) return null;
+  let name: string | null = null;
+  if (match[3] !== undefined) {
+    try {
+      name = decodeURIComponent(match[3]);
+    } catch {
+      name = match[3];
+    }
+  }
+  return { slug: match[1], id: Number(match[2]), name };
+}
+
+export function attachmentHref(
+  slug: string,
+  id: number,
+  filename: string,
+): string {
+  return `/api/projects/${slug}/attachments/${id}/download/${encodeFilenameSegment(filename)}`;
+}
+
+/**
+ * encodeURIComponent leaves ( ) ' ! * alone; parentheses would terminate
+ * a markdown `](…)` destination early, so encode them too.
+ */
+export function encodeFilenameSegment(filename: string): string {
+  return encodeURIComponent(filename)
+    .replaceAll("(", "%28")
+    .replaceAll(")", "%29");
+}
+
+/** Markdown image marker for an uploaded attachment. */
+export function attachmentImageMarker(filename: string, url: string): string {
+  const alt = filename.replaceAll("[", "\\[").replaceAll("]", "\\]");
+  return `![${alt}](${url})`;
+}

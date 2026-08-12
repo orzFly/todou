@@ -1,19 +1,35 @@
 import { useQuery } from "@tanstack/react-query";
 import type { Attachment } from "@todou/shared";
 import { DownloadIcon, FileIcon, ImageIcon, PaperclipIcon } from "lucide-react";
-import { type MouseEvent, useState } from "react";
+import { type MouseEvent, type ReactNode, useState } from "react";
 import { attachmentsQuery } from "@/api/attachments.ts";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { attachmentHref } from "@/lib/attachment-refs.ts";
 
 const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|avif|svg)$/i;
 
-export function isPreviewableImage(attachment: Attachment): boolean {
-  if (attachment.content_type.startsWith("image/")) return true;
+/**
+ * Anything with a name and a URL can be previewed; content type and size
+ * are extras that markdown references may not know before the attachments
+ * query resolves.
+ */
+export type PreviewTarget = {
+  filename: string;
+  url: string;
+  content_type?: string;
+  size?: number;
+};
+
+export function isPreviewableImage(attachment: {
+  filename: string;
+  content_type?: string;
+}): boolean {
+  const type = attachment.content_type ?? "";
+  if (type.startsWith("image/")) return true;
   // Uploads that arrived without a real content type (the CLI sent
   // application/octet-stream until #27's hotfix) fall back to the filename.
   return (
-    (attachment.content_type === "" ||
-      attachment.content_type === "application/octet-stream") &&
+    (type === "" || type === "application/octet-stream") &&
     IMAGE_EXTENSION.test(attachment.filename)
   );
 }
@@ -39,7 +55,7 @@ function AttachmentPreviewDialog({
   attachment,
   onClose,
 }: {
-  attachment: Attachment | null;
+  attachment: PreviewTarget | null;
   onClose: () => void;
 }) {
   return (
@@ -62,7 +78,14 @@ function AttachmentPreviewDialog({
             />
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>
-                {attachment.content_type} · {formatSize(attachment.size)}
+                {[
+                  attachment.content_type,
+                  attachment.size !== undefined
+                    ? formatSize(attachment.size)
+                    : undefined,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </span>
               <a
                 href={attachment.url}
@@ -160,9 +183,7 @@ export function AttachmentEventLink({
   const attachments = useQuery(attachmentsQuery(slug, issueNumber));
   const [preview, setPreview] = useState<Attachment | null>(null);
   const attachment = attachments.data?.find((a) => a.id === attachmentId);
-  const url =
-    attachment?.url ??
-    `/api/projects/${slug}/attachments/${attachmentId}/download`;
+  const url = attachment?.url ?? attachmentHref(slug, attachmentId, filename);
 
   return (
     <>
@@ -182,6 +203,104 @@ export function AttachmentEventLink({
       >
         {filename}
       </a>
+      <AttachmentPreviewDialog
+        attachment={preview}
+        onClose={() => setPreview(null)}
+      />
+    </>
+  );
+}
+
+/**
+ * Rich attachment link for markdown bodies: `[text](…/download/name)`.
+ * Resolves the full attachment from the issue's query when it can; until
+ * then the URL and link text carry enough to stay a working download link.
+ */
+export function AttachmentRichLink({
+  slug,
+  issueNumber,
+  attachmentId,
+  href,
+  fallbackName,
+  children,
+}: {
+  slug: string;
+  issueNumber: number;
+  attachmentId: number;
+  href: string;
+  fallbackName: string;
+  children?: ReactNode;
+}) {
+  const attachments = useQuery(attachmentsQuery(slug, issueNumber));
+  const [preview, setPreview] = useState<PreviewTarget | null>(null);
+  const attachment = attachments.data?.find((a) => a.id === attachmentId);
+  const target: PreviewTarget = attachment ?? {
+    filename: fallbackName,
+    url: href,
+  };
+
+  return (
+    <>
+      <a
+        href={attachment?.url ?? href}
+        className="inline-flex items-center gap-1"
+        onClick={(e) => {
+          if (isPreviewableImage(target) && isPlainLeftClick(e)) {
+            e.preventDefault();
+            setPreview(target);
+          }
+        }}
+      >
+        {isPreviewableImage(target) ? (
+          <ImageIcon className="size-3.5 shrink-0" />
+        ) : (
+          <FileIcon className="size-3.5 shrink-0" />
+        )}
+        {children ?? attachment?.filename ?? fallbackName}
+      </a>
+      <AttachmentPreviewDialog
+        attachment={preview}
+        onClose={() => setPreview(null)}
+      />
+    </>
+  );
+}
+
+/**
+ * Inline embedded image for markdown bodies: `![alt](…/download/name)`.
+ * The download URL serves the bytes either way; this only adds the
+ * click-to-preview affordance on top of the plain <img>.
+ */
+export function AttachmentInlineImage({
+  slug,
+  issueNumber,
+  attachmentId,
+  src,
+  alt,
+}: {
+  slug: string;
+  issueNumber: number;
+  attachmentId: number;
+  src: string;
+  alt: string;
+}) {
+  const attachments = useQuery(attachmentsQuery(slug, issueNumber));
+  const [preview, setPreview] = useState<PreviewTarget | null>(null);
+  const attachment = attachments.data?.find((a) => a.id === attachmentId);
+  const target: PreviewTarget = attachment ?? {
+    filename: alt !== "" ? alt : "image",
+    url: src,
+  };
+
+  return (
+    <>
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: zoom is a mouse affordance; the preview dialog's links stay keyboard-reachable */}
+      <img
+        src={src}
+        alt={alt}
+        className="cursor-zoom-in"
+        onClick={() => setPreview(target)}
+      />
       <AttachmentPreviewDialog
         attachment={preview}
         onClose={() => setPreview(null)}

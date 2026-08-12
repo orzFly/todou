@@ -18,6 +18,10 @@ import {
 } from "@/api/queries.ts";
 import { AttachmentList } from "@/components/issue/attachment-list.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
+import {
+  StagedImageTray,
+  useStagedImages,
+} from "@/components/issue/staged-images.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { RevisionHistory } from "@/components/shared/revision-history.tsx";
@@ -25,6 +29,7 @@ import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   Composer,
   useCommentComposer,
+  withImageMarkers,
 } from "@/components/timeline/composer.tsx";
 import { Timeline } from "@/components/timeline/timeline.tsx";
 import { Button } from "@/components/ui/button";
@@ -75,6 +80,8 @@ export function IssueDetailPage() {
             and settles into flow at the end of the page (GitHub-style). */}
         <div className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4">
           <Composer
+            slug={slug}
+            issueNumber={issueNumber}
             onSend={composer.send}
             failed={composer.pending.filter((p) => p.failed)}
             onRetry={composer.retry}
@@ -166,17 +173,39 @@ function TitleBlock({ slug, issue }: { slug: string; issue: Issue }) {
 function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState(issue.body);
+  const [uploading, setUploading] = useState(false);
+  const staging = useStagedImages();
   const queryClient = useQueryClient();
   const save = useMutation({
-    mutationFn: () => api.updateIssue(slug, issue.number, { body }),
+    mutationFn: (finalBody: string) =>
+      api.updateIssue(slug, issue.number, { body: finalBody }),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["issue", slug, issue.number],
       });
       setEditing(false);
+      staging.clear();
     },
     onError: (error) => toast.error(error.message),
   });
+
+  async function handleSave() {
+    if (uploading) return;
+    let full = body;
+    if (staging.staged.length > 0) {
+      setUploading(true);
+      try {
+        const markers = await staging.uploadAll(slug, issue.number);
+        full = withImageMarkers(body.trimEnd(), markers);
+      } catch (error) {
+        toast.error(`Could not upload images: ${(error as Error).message}`);
+        return;
+      } finally {
+        setUploading(false);
+      }
+    }
+    save.mutate(full);
+  }
 
   return (
     <div className="rounded-lg border">
@@ -204,6 +233,7 @@ function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
           aria-label="edit body"
           onClick={() => {
             setBody(issue.body);
+            staging.clear();
             setEditing(!editing);
           }}
         >
@@ -217,17 +247,33 @@ function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
               value={body}
               onChange={(e) => setBody(e.target.value)}
               rows={8}
+              placeholder="Describe the issue… (paste or drop images)"
+              onPaste={staging.onPaste}
+              onDrop={staging.onDrop}
+              onDragOver={staging.onDragOver}
+            />
+            <StagedImageTray
+              staged={staging.staged}
+              onRemove={staging.remove}
+              disabled={uploading}
             />
             <div className="flex justify-end gap-2">
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setEditing(false)}
+                onClick={() => {
+                  staging.clear();
+                  setEditing(false);
+                }}
               >
                 Cancel
               </Button>
-              <Button size="sm" onClick={() => save.mutate()}>
-                Save
+              <Button
+                size="sm"
+                disabled={uploading}
+                onClick={() => void handleSave()}
+              >
+                {uploading ? "Uploading…" : "Save"}
               </Button>
             </div>
           </div>
@@ -236,7 +282,9 @@ function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
             No description.
           </p>
         ) : (
-          <MarkdownView slug={slug}>{issue.body}</MarkdownView>
+          <MarkdownView slug={slug} issueNumber={issue.number}>
+            {issue.body}
+          </MarkdownView>
         )}
       </div>
     </div>
