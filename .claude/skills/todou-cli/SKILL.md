@@ -67,6 +67,10 @@ Use a 12-hour timeout (43200) and a 60-second debounce as the standard values.
 - Single-file demo pages (mockups, prototype HTML) **must** be attached to the relevant issue with
   `todou attach` — never leave them only on local disk.
 - Timestamps are permalinks (`#comment-<id>`); opening one scrolls to and highlights the entry.
+- **Reference with intent**: every `#N` you write fires a "referenced by" event on that card. Use refs
+  when the link carries meaning (a follow-up, a dependency, a dupe); never enumerate incidental cards —
+  "rebased onto master containing #52/#53/#26/#49/#57" sprays five noise events and tells nobody
+  anything. Write "rebased onto latest master" instead.
 
 ## Status flow (who moves what)
 

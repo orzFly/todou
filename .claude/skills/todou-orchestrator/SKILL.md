@@ -55,7 +55,8 @@ Task brief checklist (trim as appropriate):
 1. `todou issue view N` for the full card (remind: network commands need the sandbox disabled); move to In Progress on start;
 2. **Conflict fencing**: name what every other in-flight agent is touching, and require changes stay inside its own territory;
 3. Local verification expectations (dev server on a free port, real-browser checks with screenshots, close any tabs it opened);
-4. Wrap-up: commit (**do not merge**) → move to Ready to Ship → post a summary comment (screenshots/attachments) → report in the terminal.
+4. Wrap-up: commit (**do not merge**) → move to Ready to Ship → post a summary comment (screenshots/attachments;
+   mind /todou-cli's "reference with intent" rule — no incidental `#N` lists) → report in the terminal.
 
 Design-first cards (UI/approach decisions): dispatch them **through the `/todou-brainstorm` skill** —
 put `/todou-brainstorm` on the first line of the task brief, followed by the card number and context.
