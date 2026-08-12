@@ -129,6 +129,43 @@
     }
 }
 
+/* #40 agent badge: deterministic per-session blurred-blob background.
+   Hues and blob anchors arrive as inline --agent-* custom properties
+   (hash of session_id, see agent-badge.tsx); L/C are clamped per theme so
+   text contrast is hue-independent — measured worst-stop ≥ 10.2:1 light /
+   7.9:1 dark for this 10px text. Deliberately unlayered: must override the
+   text-secondary-foreground utility from the Badge secondary variant. */
+.agent-session-badge {
+    --agent-badge-l: 0.92;
+    --agent-badge-c: 0.088;
+    --agent-badge-dl: 0.02;
+    position: relative;
+    isolation: isolate;
+    color: oklch(0.28 0.015 var(--agent-h1, 0));
+}
+.dark .agent-session-badge {
+    --agent-badge-l: 0.36;
+    --agent-badge-c: 0.105;
+    --agent-badge-dl: 0.03;
+    color: oklch(0.96 0.01 var(--agent-h1, 0));
+}
+.agent-session-badge > * {
+    position: relative;
+    z-index: 1;
+}
+.agent-session-badge::before {
+    content: "";
+    position: absolute;
+    inset: -35%; /* oversize so the blur has no hard edges inside the pill */
+    filter: blur(5px);
+    background:
+        radial-gradient(90% 130% at var(--agent-bx1, 30%) var(--agent-by1, 20%),
+            oklch(var(--agent-badge-l) var(--agent-badge-c) var(--agent-h2, 120)) 0%, transparent 70%),
+        radial-gradient(90% 130% at var(--agent-bx2, 70%) var(--agent-by2, 80%),
+            oklch(calc(var(--agent-badge-l) + var(--agent-badge-dl)) calc(var(--agent-badge-c) * 0.85) var(--agent-h3, 240)) 0%, transparent 70%),
+        oklch(calc(var(--agent-badge-l) - var(--agent-badge-dl)) calc(var(--agent-badge-c) * 0.85) var(--agent-h1, 0));
+}
+
 @layer components {
   /* GitHub-flavoured markdown typography (#32). One plain-CSS block —
      theme tokens make it track light/dark for free, and element swaps in
