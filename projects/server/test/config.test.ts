@@ -265,3 +265,132 @@ describe("compileUrlTemplate", () => {
     ).toThrow(ConfigError);
   });
 });
+
+describe("storage.s3 config", () => {
+  const S3_BASE = [
+    "[storage]",
+    'backend = "s3"',
+    "[storage.s3]",
+    'endpoint = "http://127.0.0.1:9000"',
+    'bucket = "todou-test"',
+    'access_key_id = "ak"',
+    'secret_access_key = "sk"',
+  ];
+
+  it("stays inert on the default fs backend", () => {
+    const config = loadConfig({ tomlSource: "", env: {} });
+    expect(config.storage.backend).toBe("fs");
+    expect(config.s3Credentials).toBeNull();
+  });
+
+  it("parses a full s3 block with defaults filled in", () => {
+    const config = loadConfig({ tomlSource: S3_BASE.join("\n"), env: {} });
+    expect(config.storage.s3.region).toBe("us-east-1");
+    expect(config.storage.s3.force_path_style).toBe(true);
+    expect(config.storage.s3.presign_expiry_seconds).toBe(300);
+    expect(config.storage.s3.upload_expiry_seconds).toBe(3600);
+    expect(config.storage.s3.request_timeout_ms).toBe(30_000);
+    expect(config.storage.s3.retries).toBe(3);
+  });
+
+  it("requires endpoint and bucket when backend is s3", () => {
+    for (const missing of ["endpoint", "bucket"]) {
+      const toml = S3_BASE.filter((l) => !l.startsWith(missing)).join("\n");
+      expect(() => loadConfig({ tomlSource: toml, env: {} })).toThrow(
+        new RegExp(`storage\\.s3\\.${missing} is required`),
+      );
+    }
+  });
+
+  it("rejects a non-http endpoint", () => {
+    const toml = S3_BASE.map((l) =>
+      l.startsWith("endpoint") ? 'endpoint = "ftp://oops"' : l,
+    ).join("\n");
+    expect(() => loadConfig({ tomlSource: toml, env: {} })).toThrow(
+      ConfigError,
+    );
+  });
+
+  it("defaults public_endpoint to endpoint, trimming trailing slashes", () => {
+    const toml = S3_BASE.map((l) =>
+      l.startsWith("endpoint") ? 'endpoint = "http://127.0.0.1:9000//"' : l,
+    ).join("\n");
+    const config = loadConfig({ tomlSource: toml, env: {} });
+    expect(config.storage.s3.endpoint).toBe("http://127.0.0.1:9000");
+    expect(config.storage.s3.public_endpoint).toBe("http://127.0.0.1:9000");
+  });
+
+  it("keeps an explicit public_endpoint", () => {
+    const toml = [...S3_BASE, 'public_endpoint = "https://files.example.com"'];
+    const config = loadConfig({ tomlSource: toml.join("\n"), env: {} });
+    expect(config.storage.s3.public_endpoint).toBe(
+      "https://files.example.com",
+    );
+  });
+
+  it("normalizes a key_prefix to end with a slash", () => {
+    const toml = [...S3_BASE, 'key_prefix = "todou/prod"'];
+    const config = loadConfig({ tomlSource: toml.join("\n"), env: {} });
+    expect(config.storage.s3.key_prefix).toBe("todou/prod/");
+  });
+
+  it("labels TOML credentials as config", () => {
+    const config = loadConfig({ tomlSource: S3_BASE.join("\n"), env: {} });
+    expect(config.s3Credentials).toEqual({
+      accessKeyId: "ak",
+      secretAccessKey: "sk",
+      source: "config",
+    });
+  });
+
+  it("lets TODOU_STORAGE_S3_* env win over TOML and labels it", () => {
+    const config = loadConfig({
+      tomlSource: S3_BASE.join("\n"),
+      env: {
+        TODOU_STORAGE_S3_ACCESS_KEY_ID: "env-ak",
+        TODOU_STORAGE_S3_SECRET_ACCESS_KEY: "env-sk",
+      },
+    });
+    expect(config.s3Credentials).toEqual({
+      accessKeyId: "env-ak",
+      secretAccessKey: "env-sk",
+      source: "env:TODOU_*",
+    });
+  });
+
+  it("falls back to AWS_* env, carrying the session token", () => {
+    const toml = S3_BASE.filter((l) => !l.startsWith("access_key_id")).filter(
+      (l) => !l.startsWith("secret_access_key"),
+    );
+    const config = loadConfig({
+      tomlSource: toml.join("\n"),
+      env: {
+        AWS_ACCESS_KEY_ID: "aws-ak",
+        AWS_SECRET_ACCESS_KEY: "aws-sk",
+        AWS_SESSION_TOKEN: "aws-st",
+      },
+    });
+    expect(config.s3Credentials).toEqual({
+      accessKeyId: "aws-ak",
+      secretAccessKey: "aws-sk",
+      sessionToken: "aws-st",
+      source: "env:AWS_*",
+    });
+  });
+
+  it("rejects s3 backend with no resolvable credentials", () => {
+    const toml = S3_BASE.filter((l) => !l.startsWith("access_key_id")).filter(
+      (l) => !l.startsWith("secret_access_key"),
+    );
+    expect(() => loadConfig({ tomlSource: toml.join("\n"), env: {} })).toThrow(
+      /credentials missing/,
+    );
+  });
+
+  it("half-configured TOML credentials fall through to the error", () => {
+    const toml = S3_BASE.filter((l) => !l.startsWith("secret_access_key"));
+    expect(() => loadConfig({ tomlSource: toml.join("\n"), env: {} })).toThrow(
+      /credentials missing/,
+    );
+  });
+});
