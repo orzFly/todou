@@ -6,6 +6,9 @@ import { describe, expect, it } from "vitest";
 import {
   flattenTimeline,
   latestNextCursor,
+  mergeFolded,
+  needsHead,
+  remainingCount,
   shouldFollowBottom,
 } from "../src/api/timeline.ts";
 import { CommentItem } from "../src/components/timeline/comment-item.tsx";
@@ -125,6 +128,7 @@ describe("timeline paging helpers", () => {
     ids: number[],
     next: string | null,
     prev: string | null = null,
+    total = ids.length,
   ): TimelinePage => ({
     items: ids.map((id) => ({
       type: "comment",
@@ -139,6 +143,7 @@ describe("timeline paging helpers", () => {
     })),
     prev_cursor: prev,
     next_cursor: next,
+    total_count: total,
   });
 
   it("finds the newest non-null next cursor across pages", () => {
@@ -150,6 +155,34 @@ describe("timeline paging helpers", () => {
   it("flattens pages with dedup (SSE poll overlap)", () => {
     const items = flattenTimeline([page([1, 2], "A"), page([2, 3], "B")]);
     expect(items.map((i) => i.id)).toEqual([1, 2, 3]);
+  });
+
+  it("enables the head query only when the tail missed the start", () => {
+    expect(needsHead(undefined)).toBe(false);
+    expect(needsHead(page([1, 2], "A", null))).toBe(false);
+    expect(needsHead(page([5, 6], "A", "P"))).toBe(true);
+  });
+
+  it("merges the fold sides with cross-seam dedup", () => {
+    const { above, below } = mergeFolded(
+      [page([1, 2], "A"), page([3, 4], "B")],
+      [page([4, 5, 6], "C")],
+    );
+    expect(above.map((i) => i.id)).toEqual([1, 2, 3, 4]);
+    expect(below.map((i) => i.id)).toEqual([5, 6]);
+  });
+
+  it("counts the folded remainder and clamps stale totals", () => {
+    const disjoint = mergeFolded([page([1, 2], "A")], [page([7, 8], "C")]);
+    expect(remainingCount(8, disjoint.above, disjoint.below)).toBe(4);
+
+    // Fully overlapping sides (small issue): nothing remains.
+    const overlap = mergeFolded([page([1, 2, 3], "A")], [page([1, 2, 3], "C")]);
+    expect(remainingCount(3, overlap.above, overlap.below)).toBe(0);
+
+    // A total that lags behind what is already rendered must clamp to 0
+    // instead of re-folding the seam.
+    expect(remainingCount(3, disjoint.above, disjoint.below)).toBe(0);
   });
 });
 

@@ -62,6 +62,11 @@ export const TimelinePage = z.object({
   items: z.array(TimelineItem),
   prev_cursor: Cursor.nullable(),
   next_cursor: Cursor.nullable(),
+  /**
+   * Total items matching the same types/exclude_actor filters, independent
+   * of the cursor window — lets clients size the folded middle (#30).
+   */
+  total_count: z.number().int().nonnegative(),
 });
 export type TimelinePage = z.infer<typeof TimelinePage>;
 

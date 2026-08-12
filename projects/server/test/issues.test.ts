@@ -677,6 +677,7 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
     expect(lastPage.items).toHaveLength(3);
     expect(lastPage.items.at(-1).body).toBe("comment 7");
     expect(lastPage.prev_cursor).not.toBeNull();
+    expect(lastPage.total_count).toBe(8);
 
     // Walk backward.
     const older = await timelineOf(
@@ -684,6 +685,7 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
       `?before=${lastPage.prev_cursor}&limit=3`,
     );
     expect(older.items.at(-1).body).toBe("comment 4");
+    expect(older.total_count).toBe(8);
 
     // Walk forward from the older page's end — must reconnect seamlessly.
     const forward = await timelineOf(
@@ -692,11 +694,45 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
     );
     expect(forward.items[0].body).toBe("comment 5");
     expect(forward.items).toHaveLength(3);
+    expect(forward.total_count).toBe(8);
 
     // Beginning is reachable and flagged.
     const start = await timelineOf(issue.number, "?limit=4");
     expect(start.prev_cursor).toBeNull();
     expect(start.items[0].event_type).toBe("opened");
+    expect(start.total_count).toBe(8);
+  });
+
+  it("total_count follows the types filter, not the cursor window", async () => {
+    const issue = await createIssue({ title: "Counted thread" });
+    for (let i = 1; i <= 3; i++) {
+      await t.app.request(
+        `/api/projects/${slug}/issues/${issue.number}/comments`,
+        {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({ body: `counted ${i}` }),
+        },
+      );
+    }
+
+    const commentsOnly = await timelineOf(
+      issue.number,
+      "?types=comment&limit=1",
+    );
+    expect(commentsOnly.items).toHaveLength(1);
+    expect(commentsOnly.total_count).toBe(3);
+
+    await t.app.request(
+      `/api/projects/${slug}/issues/${issue.number}/comments`,
+      {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ body: "counted 4" }),
+      },
+    );
+    const again = await timelineOf(issue.number, "?types=comment&limit=1");
+    expect(again.total_count).toBe(4);
   });
 
   it("readers cannot write issues or comments", async () => {

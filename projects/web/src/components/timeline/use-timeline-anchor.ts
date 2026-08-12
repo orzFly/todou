@@ -5,10 +5,12 @@ import {
   parseTimelineAnchor,
 } from "@/lib/timeline-anchors.ts";
 
-type TimelineQueryLike = {
-  hasPreviousPage: boolean;
-  isFetchingPreviousPage: boolean;
-  fetchPreviousPage: (opts?: { cancelRefetch?: boolean }) => unknown;
+/** What the anchor needs from the folded timeline (#30). */
+export type GapExpansion = {
+  /** Items still folded between head and tail (0 = nothing left to load). */
+  remaining: number;
+  isExpanding: boolean;
+  expand: () => void;
 };
 
 /** One-shot highlight; restartable when the same anchor is re-targeted. */
@@ -26,25 +28,23 @@ function flash(el: HTMLElement) {
 
 /**
  * Drive `#comment-<id>` / `#event-<id>` anchors (#38): once the target is
- * rendered, center it and flash a highlight; while it isn't, keep loading
- * older timeline pages (newest page loads first, so a permalink target is
- * usually further up).
- *
- * 「#30 seam」 When the timeline stops rendering everything (head/tail
- * with a folded middle), replace the fetch-older loop below with "expand
- * the chunk containing the target" — the anchor → element contract
- * (anchorElementId) and the scroll+flash step stay as they are.
+ * rendered, center it and flash a highlight; while it isn't, expand the
+ * folded middle (#30) one chunk at a time from the gap's head side until
+ * the target's chunk is in. The anchor → element contract (anchorElementId)
+ * and the scroll+flash step stay as they were.
  *
  * Returns whether an anchor is being targeted, so the caller can skip its
  * default scroll-to-bottom.
  */
-export function useTimelineAnchor(timeline: TimelineQueryLike): boolean {
+export function useTimelineAnchor(gap: GapExpansion): boolean {
   const hash = useRouterState({ select: (s) => s.location.hash });
   const target = parseTimelineAnchor(hash ?? "");
   const doneFor = useRef<string | null>(null);
+  // The remaining count as of the last expansion this target triggered.
+  const stall = useRef<{ key: string; remaining: number } | null>(null);
 
   // Deliberately dependency-free: every render re-checks whether the
-  // target exists yet — item prepends, fetch settles, and hash changes
+  // target exists yet — chunk inserts, fetch settles, and hash changes
   // all surface as renders, and the guards make re-runs cheap.
   useEffect(() => {
     if (!target) return;
@@ -57,11 +57,19 @@ export function useTimelineAnchor(timeline: TimelineQueryLike): boolean {
       // covers the target.
       el.scrollIntoView({ block: "center" });
       flash(el);
-    } else if (timeline.hasPreviousPage && !timeline.isFetchingPreviousPage) {
-      // A dead anchor (deleted comment, foreign event id) degrades to
-      // loading the full timeline and staying at the top — acceptable
-      // until #30 bounds it.
-      timeline.fetchPreviousPage({ cancelRefetch: false });
+    } else if (gap.remaining > 0 && !gap.isExpanding) {
+      // A dead anchor (deleted comment, foreign event id) expands at most
+      // the whole gap — bounded, unlike the pre-#30 load-everything walk.
+      // Stop early if an expansion failed to shrink the gap (server
+      // anomaly); anything else would loop forever.
+      if (
+        stall.current?.key === key &&
+        stall.current.remaining === gap.remaining
+      ) {
+        return;
+      }
+      stall.current = { key, remaining: gap.remaining };
+      gap.expand();
     }
   });
 

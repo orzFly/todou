@@ -9,7 +9,18 @@ import type {
 } from "@todou/shared";
 import { TimelineFilterType } from "@todou/shared";
 import type { SQL } from "drizzle-orm";
-import { and, asc, desc, eq, gt, inArray, lt, ne, or } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  inArray,
+  lt,
+  ne,
+  or,
+} from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -218,6 +229,25 @@ export async function getTimeline(
     filterConditions(query);
   commentConditions.push(eq(comments.issueId, issue.id));
   eventConditions.push(eq(issueEvents.issueId, issue.id));
+
+  // Counted before the cursor predicates join the condition arrays:
+  // total_count spans the whole filtered timeline, not the cursor window.
+  const [commentTotal, eventTotal] = [
+    wantComments
+      ? await db
+          .select({ n: count() })
+          .from(comments)
+          .where(and(...commentConditions))
+      : [{ n: 0 }],
+    wantEvents
+      ? await db
+          .select({ n: count() })
+          .from(issueEvents)
+          .where(and(...eventConditions))
+      : [{ n: 0 }],
+  ];
+  const total_count = (commentTotal[0]?.n ?? 0) + (eventTotal[0]?.n ?? 0);
+
   if (cursor) {
     const c1 = beyond(
       comments.createdAt,
@@ -292,7 +322,7 @@ export async function getTimeline(
     first && !atBeginning ? encodeCursor(cursorOf(first)) : null;
   const next_cursor = last ? encodeCursor(cursorOf(last)) : null;
 
-  return { items, prev_cursor, next_cursor };
+  return { items, prev_cursor, next_cursor, total_count };
 }
 
 /**
