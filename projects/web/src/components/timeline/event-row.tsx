@@ -13,7 +13,9 @@ import {
 import type { ReactNode } from "react";
 import { AttachmentEventLink } from "@/components/issue/attachment-list.tsx";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
+import { IssueLink } from "@/components/shared/issue-link.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
+import { splitIssueRefs } from "@/lib/issue-refs.ts";
 
 type Payload = Record<string, unknown>;
 
@@ -75,12 +77,26 @@ const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
   attachment_added: <PaperclipIcon className="size-3.5" />,
 };
 
+/** Replace #N tokens with issue links; the rest stays literal text. */
+function linkifyIssueRefs(text: string, slug: string): ReactNode[] {
+  return splitIssueRefs(text).map((segment, i) =>
+    segment.type === "ref" ? (
+      // Index keys are safe: the segments of one action string never reorder.
+      // biome-ignore lint/suspicious/noArrayIndexKey: static list
+      <IssueLink key={i} slug={slug} number={segment.number} />
+    ) : (
+      segment.value
+    ),
+  );
+}
+
 export function EventRow({
   event,
   slug,
   issueNumber,
 }: {
   event: TimelineEvent;
+  /** Enables #N → issue link rendering; omit where there is no project. */
   slug?: string;
   issueNumber?: number;
 }) {
@@ -116,8 +132,10 @@ export function EventRow({
               filename={attached.filename ?? "a file"}
             />
           </>
-        ) : (
+        ) : slug === undefined ? (
           action
+        ) : (
+          linkifyIssueRefs(action, slug)
         )}
       </span>
       <span

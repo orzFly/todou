@@ -410,6 +410,9 @@ export async function listIssues(
   const conditions = await issueFilterConditions(db, project.id, query);
   if (conditions === null) return { items: [], next_cursor: null };
 
+  if (query.numbers !== undefined) {
+    conditions.push(inArray(issues.number, query.numbers));
+  }
   if (query.category !== undefined) {
     const catStatuses = await db
       .select({ id: statuses.id })

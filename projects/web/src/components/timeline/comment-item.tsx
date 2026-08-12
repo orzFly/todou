@@ -116,7 +116,7 @@ export function CommentItem({
             </div>
           </div>
         ) : (
-          <MarkdownView>{comment.body}</MarkdownView>
+          <MarkdownView slug={slug}>{comment.body}</MarkdownView>
         )}
       </div>
     </div>

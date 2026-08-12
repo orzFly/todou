@@ -236,7 +236,7 @@ function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
             No description.
           </p>
         ) : (
-          <MarkdownView>{issue.body}</MarkdownView>
+          <MarkdownView slug={slug}>{issue.body}</MarkdownView>
         )}
       </div>
     </div>

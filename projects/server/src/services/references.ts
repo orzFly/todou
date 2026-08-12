@@ -4,13 +4,42 @@ import type { Db } from "../db/driver.ts";
 import { issueEvents, issues } from "../db/project-schema.ts";
 
 /**
- * Extract #N issue references from markdown. Plain-regex by design: refs
- * inside code blocks are false-positived — an accepted trade-off recorded
- * in the spec (an AST pass can replace this if it becomes noisy).
+ * Blank out fenced code blocks and inline code spans so their contents
+ * never yield references. Line-based on purpose: 4-space-indented code
+ * blocks are indistinguishable from list continuations without a full
+ * markdown parser, so they remain an accepted false-positive source.
  */
+export function stripMarkdownCode(text: string): string {
+  const kept: string[] = [];
+  let fence: { char: string; len: number } | null = null;
+  for (const line of text.split("\n")) {
+    const open = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (open?.[1] !== undefined) {
+      const char = open[1][0] as string;
+      const len = open[1].length;
+      if (fence === null) {
+        fence = { char, len };
+        continue;
+      }
+      // A closing fence must repeat the opening char at least as long.
+      if (char === fence.char && len >= fence.len) {
+        fence = null;
+        continue;
+      }
+    }
+    if (fence === null) kept.push(line);
+  }
+  // Inline spans open and close with equal-length backtick runs; the
+  // space keeps the run from gluing its neighbours into a word.
+  return kept.join("\n").replace(/(`+)[^`][\s\S]*?\1/g, " ");
+}
+
+/** Extract #N issue references from markdown, ignoring code segments. */
 export function extractIssueRefs(text: string): number[] {
   const found = new Set<number>();
-  for (const match of text.matchAll(/(?:^|\W)#(\d{1,9})\b/g)) {
+  for (const match of stripMarkdownCode(text).matchAll(
+    /(?:^|\W)#(\d{1,9})\b/g,
+  )) {
     found.add(Number(match[1]));
   }
   return [...found];

@@ -20,6 +20,22 @@ describe("extractIssueRefs", () => {
   it("matches at start of text", () => {
     expect(extractIssueRefs("#7 first")).toEqual([7]);
   });
+  it("ignores refs inside fenced code blocks", () => {
+    expect(
+      extractIssueRefs("before #1\n```\ninside #2\n```\nafter #3"),
+    ).toEqual([1, 3]);
+  });
+  it("ignores refs inside tilde fences and unclosed fences", () => {
+    expect(extractIssueRefs("~~~txt\n#4\n~~~\n#5")).toEqual([5]);
+    expect(extractIssueRefs("```\n#6 never closed")).toEqual([]);
+  });
+  it("requires the closing fence to be at least as long", () => {
+    expect(extractIssueRefs("````\n```\nstill code #8\n````\n#9")).toEqual([9]);
+  });
+  it("ignores refs inside inline code", () => {
+    expect(extractIssueRefs("fix `#10` but keep #11")).toEqual([11]);
+    expect(extractIssueRefs("``a `#12` b`` and #13")).toEqual([13]);
+  });
 });
 
 describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
@@ -113,6 +129,20 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
     await setDefault(progress.id, false);
     const fallback = await createIssue({ title: "Back to first" });
     expect(fallback.status.name).toBe("Todo");
+  });
+
+  it("filters the list by exact numbers", async () => {
+    const a = await createIssue({ title: "Ref target A" });
+    const b = await createIssue({ title: "Ref target B" });
+    const page = await json(
+      await t.app.request(
+        `/api/projects/${slug}/issues?numbers=${a.number},${b.number},999999`,
+        { headers: { cookie } },
+      ),
+    );
+    expect(page.items.map((i: { number: number }) => i.number).sort()).toEqual(
+      [a.number, b.number].sort(),
+    );
   });
 
   it("allocates unique numbers under concurrent creation", async () => {

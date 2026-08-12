@@ -54,6 +54,8 @@ const csvIds = z
 
 /** Query-string filters for the issue list (all values arrive as strings). */
 export const IssueListQuery = z.object({
+  /** Exact issue numbers — lets clients batch-resolve #N references. */
+  numbers: csvIds.optional(),
   status: csvIds.optional(),
   label: csvIds.optional(),
   assignee: z.coerce.number().int().positive().optional(),
