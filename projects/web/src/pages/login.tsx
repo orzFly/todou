@@ -1,7 +1,7 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
-import { api } from "@/api/queries.ts";
+import { api, authModeQuery } from "@/api/queries.ts";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -14,22 +14,50 @@ export function safeRedirect(value: unknown): string | undefined {
     : undefined;
 }
 
+/** Human-readable face of the oidc callback's ?error= codes. */
+export function oidcErrorText(code: string): string {
+  switch (code) {
+    case "state_mismatch":
+      return "The sign-in attempt expired or was tampered with. Try again.";
+    case "exchange_failed":
+      return "The identity provider rejected the sign-in. Try again, and check the server logs if it persists.";
+    case "claim_missing":
+      return "The identity provider sent no usable username. Check the login_claim configuration.";
+    case "provision_denied":
+      return "Signed in, but no account exists here for that identity (and auto-creation is off).";
+    case "login_conflict":
+      return "Signed in, but the username is already taken by a different account here.";
+    default:
+      return "Sign-in failed. Try again.";
+  }
+}
+
+export function oidcLoginUrl(redirect: string | undefined): string {
+  const url = new URL("/api/auth/login", window.location.origin);
+  if (redirect) url.searchParams.set("redirect", redirect);
+  return url.toString();
+}
+
 /**
- * Login is always explicit, but in single mode it needs no input — this
- * page immediately exchanges nothing for a session and moves on, so the
- * user never really sees it unless the server is unreachable.
+ * Login is always explicit, but never interactive: single mode exchanges
+ * nothing for a session, oidc navigates to the IdP. The page only really
+ * shows itself on errors — or in forward mode, where reaching it at all
+ * means the proxy did not do its job.
  */
 export function LoginPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const search = useSearch({ strict: false }) as Record<string, unknown>;
   const attempted = useRef(false);
+  const mode = useQuery(authModeQuery);
+
+  const redirect = safeRedirect(search.redirect);
+  const oidcError = typeof search.error === "string" ? search.error : null;
 
   const login = useMutation({
     mutationFn: () => api.login(),
     onSuccess: (me) => {
       queryClient.setQueryData(["me"], me);
-      const redirect = safeRedirect(search.redirect);
       if (redirect) {
         // A plain href, not a typed route (it carries arbitrary search
         // params like /cli-auth?port=…); a full navigation is fine here.
@@ -40,12 +68,16 @@ export function LoginPage() {
     },
   });
 
+  const modeName = mode.data?.mode;
   useEffect(() => {
-    if (!attempted.current) {
-      attempted.current = true;
+    if (attempted.current || modeName === undefined) return;
+    attempted.current = true;
+    if (modeName === "single") {
       login.mutate();
+    } else if (modeName === "oidc" && !oidcError) {
+      window.location.assign(oidcLoginUrl(redirect));
     }
-  }, [login.mutate]);
+  }, [modeName, oidcError, redirect, login.mutate]);
 
   return (
     <div className="flex min-h-dvh items-center justify-center bg-background">
@@ -54,7 +86,31 @@ export function LoginPage() {
           <span className="text-4xl" aria-hidden>
             🥔
           </span>
-          {login.isError ? (
+          {mode.isError ? (
+            <>
+              <p className="text-center text-sm text-destructive">
+                Could not reach the server: {mode.error.message}
+              </p>
+              <Button onClick={() => mode.refetch()}>Try again</Button>
+            </>
+          ) : modeName === "forward" ? (
+            <p className="text-center text-sm text-destructive">
+              The reverse proxy did not send an identity header. Check the
+              forward-auth setup (auth.forward.user_header and
+              http.trusted_proxies).
+            </p>
+          ) : modeName === "oidc" && oidcError ? (
+            <>
+              <p className="text-center text-sm text-destructive">
+                {oidcErrorText(oidcError)}
+              </p>
+              <Button
+                onClick={() => window.location.assign(oidcLoginUrl(redirect))}
+              >
+                Try again
+              </Button>
+            </>
+          ) : login.isError ? (
             <>
               <p className="text-center text-sm text-destructive">
                 Could not sign in: {login.error.message}

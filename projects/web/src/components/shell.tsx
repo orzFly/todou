@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import type { Me } from "@todou/shared";
 import type { ReactNode } from "react";
-import { api, projectQuery } from "@/api/queries.ts";
+import { api, authModeQuery, projectQuery } from "@/api/queries.ts";
 import { ProjectNav } from "@/components/project-nav.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { ThemeMenu } from "@/components/theme-menu.tsx";
@@ -26,6 +26,11 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
       navigate({ to: "/login" });
     },
   });
+
+  // In forward mode the login state belongs to the reverse proxy — a local
+  // "log out" would do nothing and come back signed in.
+  const authMode = useQuery(authModeQuery);
+  const canLogout = authMode.data?.mode !== "forward";
 
   // Present on every route under /projects/$slug; the header morphs into a
   // breadcrumb with the project nav there (#62).
@@ -86,10 +91,14 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
                 <DropdownMenuItem asChild>
                   <Link to="/settings/tokens">Personal tokens</Link>
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => logout.mutate()}>
-                  Log out
-                </DropdownMenuItem>
+                {canLogout && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onSelect={() => logout.mutate()}>
+                      Log out
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
