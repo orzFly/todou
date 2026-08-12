@@ -1,10 +1,11 @@
 import { and, eq } from "drizzle-orm";
-import type { Config } from "./config.ts";
+import { type Config, ConfigError } from "./config.ts";
 import type { Db } from "./db/driver.ts";
 import { DbRouter } from "./db/router.ts";
 import { users } from "./db/system-schema.ts";
 import { EventBus } from "./events/bus.ts";
 import { FsStorage } from "./storage/fs.ts";
+import { S3Storage } from "./storage/s3.ts";
 import type { StorageBackend } from "./storage/types.ts";
 
 export const BUILTIN_LOGIN = "user";
@@ -34,9 +35,27 @@ export async function bootstrap(config: Config): Promise<AppContext> {
     config,
     router,
     bus: new EventBus(),
-    storage: new FsStorage(config.storage.path),
+    storage: await makeStorage(config),
     shutdown: new AbortController(),
   };
+}
+
+async function makeStorage(config: Config): Promise<StorageBackend> {
+  if (config.storage.backend !== "s3") {
+    return new FsStorage(config.storage.path);
+  }
+  if (!config.s3Credentials) {
+    // loadConfig resolves credentials whenever backend is s3; reaching this
+    // means a hand-built Config skipped it.
+    throw new ConfigError("storage.backend is s3 but no credentials resolved");
+  }
+  const storage = new S3Storage(config.storage.s3, config.s3Credentials);
+  await storage.checkBucket();
+  console.log(
+    `storage: s3 bucket "${config.storage.s3.bucket}" at ${config.storage.s3.endpoint} ` +
+      `(credentials from ${config.s3Credentials.source})`,
+  );
+  return storage;
 }
 
 /** Single-user mode signs everyone in as this seeded account. */

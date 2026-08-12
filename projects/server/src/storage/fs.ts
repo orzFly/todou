@@ -42,7 +42,15 @@ export class FsStorage implements StorageBackend {
     await rm(this.#resolve(key), { force: true });
   }
 
-  async urlFor(_key: string): Promise<string | null> {
+  async head(key: string): Promise<{ size: number } | null> {
+    try {
+      return { size: (await stat(this.#resolve(key))).size };
+    } catch {
+      return null;
+    }
+  }
+
+  async urlFor(): Promise<string | null> {
     return null;
   }
 }
