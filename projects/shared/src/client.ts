@@ -1,4 +1,5 @@
 import type {
+  ActivityPage,
   Agent,
   AgentCreateInput,
   AgentUpdateInput,
@@ -242,6 +243,19 @@ export class TodouClient {
       `/projects/${slug}/issues/${number}/timeline`,
       { query: query ? { ...query, last: query.last ? 1 : undefined } : {} },
     );
+  getActivity = (
+    slug: string,
+    query?: {
+      after?: string;
+      last?: boolean;
+      limit?: number;
+      types?: string;
+      exclude_actor?: number;
+    },
+  ) =>
+    this.request<ActivityPage>("GET", `/projects/${slug}/activity`, {
+      query: query ? { ...query, last: query.last ? 1 : undefined } : {},
+    });
   createComment = (slug: string, number: number, body: string) =>
     this.request<TimelineComment>(
       "POST",

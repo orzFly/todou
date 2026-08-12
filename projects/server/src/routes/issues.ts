@@ -1,5 +1,7 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
+  ActivityPage,
+  ActivityQuery,
   CommentCreateInput,
   CommentUpdateInput,
   Issue,
@@ -33,7 +35,7 @@ import {
   listCommentRevisions,
   listIssueRevisions,
 } from "../services/revisions.ts";
-import { getTimeline } from "../services/timeline.ts";
+import { getProjectActivity, getTimeline } from "../services/timeline.ts";
 
 const issueNumber = z.coerce.number().int().positive();
 const slugParam = z.object({ slug: ProjectSlug });
@@ -95,6 +97,15 @@ const timelineRoute = createRoute({
   summary: "Merged comments × events stream with bidirectional cursors",
   request: { params: issueParams, query: TimelineQuery },
   responses: { 200: { description: "Page", ...jsonBody(TimelinePage) } },
+});
+
+const activityRoute = createRoute({
+  method: "get",
+  path: "/{slug}/activity",
+  summary:
+    "Project-wide activity stream (forward cursor poll across all issues)",
+  request: { params: slugParam, query: ActivityQuery },
+  responses: { 200: { description: "Page", ...jsonBody(ActivityPage) } },
 });
 
 const createCommentRoute = createRoute({
@@ -221,6 +232,18 @@ export function issueRoutes() {
       200,
     );
   });
+
+  app.openapi(activityRoute, async (c) =>
+    c.json(
+      await getProjectActivity(
+        c.get("appCtx"),
+        c.get("user"),
+        c.req.valid("param").slug,
+        c.req.valid("query"),
+      ),
+      200,
+    ),
+  );
 
   app.openapi(createCommentRoute, async (c) => {
     const { slug, number } = c.req.valid("param");

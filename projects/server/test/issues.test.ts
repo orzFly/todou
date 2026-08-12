@@ -238,6 +238,82 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
     expect(bad.status).toBe(422);
   });
 
+  it("streams project-wide activity tagged with issue numbers", async () => {
+    const a = await createIssue({ title: "Activity A" });
+    const b = await createIssue({ title: "Activity B" });
+    const me = await json(
+      await t.app.request("/api/me", { headers: { cookie } }),
+    );
+    const carol = await addUserWithToken(t.ctx, `carol-${placement}`);
+    await t.app.request(`/api/projects/${slug}/members/${carol.user.id}`, {
+      method: "PUT",
+      headers: headers(),
+      body: JSON.stringify({ role: "writer" }),
+    });
+
+    const activity = async (qs: string) =>
+      json(
+        await t.app.request(`/api/projects/${slug}/activity${qs}`, {
+          headers: { cookie },
+        }),
+      );
+
+    // Bootstrap a "now" cursor, then generate cross-issue activity.
+    const tail = await activity("?last=1&limit=1");
+    expect(tail.next_cursor).toBeTruthy();
+
+    await t.app.request(`/api/projects/${slug}/issues/${a.number}/comments`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...carol.headers },
+      body: JSON.stringify({ body: "hi from carol" }),
+    });
+    const statuses = await statusesOf();
+    const progress = statuses.find(
+      (s: { name: string }) => s.name === "In Progress",
+    );
+    await t.app.request(`/api/projects/${slug}/issues/${b.number}`, {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify({ status_id: progress.id }),
+    });
+
+    const all = await activity(`?after=${tail.next_cursor}`);
+    expect(
+      all.items.map((i: { type: string; issue_number: number }) => [
+        i.type,
+        i.issue_number,
+      ]),
+    ).toEqual([
+      ["comment", a.number],
+      ["event", b.number],
+    ]);
+
+    // "Anyone but me" — the orchestrator/unread filter.
+    const foreign = await activity(
+      `?after=${tail.next_cursor}&exclude_actor=${me.id}`,
+    );
+    expect(
+      foreign.items.map((i: { issue_number: number }) => i.issue_number),
+    ).toEqual([a.number]);
+
+    // Type filters work the same as on the issue timeline.
+    const events = await activity(
+      `?after=${tail.next_cursor}&types=status_changed`,
+    );
+    expect(
+      events.items.map((i: { issue_number: number }) => i.issue_number),
+    ).toEqual([b.number]);
+
+    // Issue-timeline cursors are interchangeable with activity cursors.
+    const issueTail = await timelineOf(a.number, "?last=1&limit=1");
+    const viaTimelineCursor = await activity(`?after=${issueTail.next_cursor}`);
+    expect(
+      viaTimelineCursor.items.map(
+        (i: { issue_number: number }) => i.issue_number,
+      ),
+    ).toEqual([b.number]);
+  });
+
   it("records status transitions as closed/reopened/status_changed", async () => {
     const statuses = await statusesOf();
     const done = statuses.find((s: { name: string }) => s.name === "Done");

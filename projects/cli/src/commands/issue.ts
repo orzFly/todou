@@ -18,9 +18,12 @@ import {
   resolveLabels,
   resolveStatus,
 } from "../resolve.ts";
+import { markSeen, refreshUnread } from "../unread.ts";
+import { normalizeTypes, runWatchLoop } from "../watch-loop.ts";
 
-function issueRow(issue: IssueListItem): string[] {
+function issueRow(issue: IssueListItem, unread: Set<number>): string[] {
   return [
+    unread.has(issue.number) ? "●" : "",
     `#${issue.number}`,
     issue.title,
     issue.status.name,
@@ -53,6 +56,9 @@ export class IssueListCommand extends ProjectCommand {
     description: "created | updated | number",
   });
   order = Option.String("--order", "desc", { description: "asc | desc" });
+  unread = Option.Boolean("--unread", false, {
+    description: "Only issues with unread activity by other users",
+  });
 
   protected async run(client: TodouClient): Promise<void> {
     const project = this.requireProject();
@@ -87,10 +93,22 @@ export class IssueListCommand extends ProjectCommand {
       limit: this.limit ? parsePositiveInt(this.limit, "--limit") : undefined,
     });
 
-    this.output(page, () => {
-      if (page.items.length === 0) return "no issues";
-      const body = table(page.items.map(issueRow));
-      return page.next_cursor
+    const unread = await refreshUnread(
+      client,
+      this.ctx.server ?? "",
+      project,
+      this.context.env,
+    );
+    const shown = this.unread
+      ? { ...page, items: page.items.filter((i) => unread.has(i.number)) }
+      : page;
+
+    this.output(shown, () => {
+      if (shown.items.length === 0) {
+        return this.unread ? "no unread issues" : "no issues";
+      }
+      const body = table(shown.items.map((i) => issueRow(i, unread)));
+      return shown.next_cursor
         ? `${body}\n… more available (raise --limit)`
         : body;
     });
@@ -121,6 +139,14 @@ export class IssueViewCommand extends ProjectCommand {
     const paint = makePainter(this.context.stdout, this.context.env);
     this.output({ issue, timeline, next_cursor: cursor ?? null }, () =>
       renderIssue(issue, timeline, cursor, paint),
+    );
+    // Viewing marks the issue read for the local unread markers (#35).
+    markSeen(
+      this.ctx.server ?? "",
+      project,
+      number,
+      timeline.at(-1)?.created_at,
+      this.context.env,
     );
   }
 }
@@ -191,31 +217,25 @@ export class IssueWatchCommand extends ProjectCommand {
 
     // Baseline before the loop: the newest entry regardless of filter, so
     // "from now" never replays history. Also 404s early on a bad number.
-    let cursor =
+    const baseline =
       this.since ?? (await tailCursor(client, project, number)) ?? undefined;
-    const deadline = Date.now() + timeoutSec * 1000;
     const paint = makePainter(this.context.stdout, this.context.env);
 
-    for (;;) {
-      const page = await drainTimeline(client, project, number, {
-        after: cursor,
-        types,
-        excludeActor,
-      });
-      cursor = page.cursor ?? cursor;
-
-      if (page.items.length > 0) {
-        this.output({ items: page.items, next_cursor: cursor ?? null }, () =>
+    return runWatchLoop<TimelineItem>({
+      poll: this.poll,
+      timeoutSec,
+      intervalSec,
+      baseline,
+      drain: (after) =>
+        drainTimeline(client, project, number, { after, types, excludeActor }),
+      onItems: (items, cursor) =>
+        this.output({ items, next_cursor: cursor ?? null }, () =>
           [
-            ...page.items.map((item) => renderTimelineItem(item, paint)),
+            ...items.map((item) => renderTimelineItem(item, paint)),
             paint("dim", `cursor: ${cursor}`),
           ].join("\n"),
-        );
-        return 0;
-      }
-
-      const remaining = deadline - Date.now();
-      if (this.poll || remaining <= 0) {
+        ),
+      onEmpty: (cursor) =>
         this.output({ items: [], next_cursor: cursor ?? null }, () =>
           [
             this.poll
@@ -225,31 +245,9 @@ export class IssueWatchCommand extends ProjectCommand {
               ? []
               : [paint("dim", `cursor: ${cursor}`)]),
           ].join("\n"),
-        );
-        return 3;
-      }
-      await sleep(Math.min(intervalSec * 1000, remaining));
-    }
+        ),
+    });
   }
-}
-
-function normalizeTypes(raw: string): string {
-  const parts = raw
-    .split(",")
-    .map((p) => p.trim())
-    .filter((p) => p !== "");
-  if (parts.length === 0) {
-    throw new CliError("--type must name at least one type");
-  }
-  for (const part of parts) {
-    if (!TimelineFilterType.safeParse(part).success) {
-      throw new CliError(
-        `unknown --type "${part}"`,
-        `valid types: ${TimelineFilterType.options.join(", ")}`,
-      );
-    }
-  }
-  return parts.join(",");
 }
 
 /** Cursor of the newest timeline entry (undefined on an empty timeline). */
@@ -263,10 +261,6 @@ async function tailCursor(
     limit: 1,
   });
   return page.next_cursor ?? undefined;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export class IssueCreateCommand extends ProjectCommand {
@@ -486,7 +480,7 @@ function renderIssue(
   return lines.join("\n");
 }
 
-function renderTimelineItem(item: TimelineItem, paint: Painter): string {
+export function renderTimelineItem(item: TimelineItem, paint: Painter): string {
   const when = relativeTime(item.created_at);
   if (item.type === "comment") {
     const body = item.body

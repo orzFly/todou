@@ -78,9 +78,13 @@ export async function runCli(
     stdout,
     stderr,
     colorDepth: 1,
-    // Real user config must never leak into tests, so XDG always points
-    // somewhere that does not exist unless the test overrides it.
-    env: { XDG_CONFIG_HOME: "/nonexistent-todou-xdg", ...options.env },
+    // Real user config/state must never leak into tests, so XDG always
+    // points somewhere that does not exist unless the test overrides it.
+    env: {
+      XDG_CONFIG_HOME: "/nonexistent-todou-xdg",
+      XDG_STATE_HOME: "/nonexistent-todou-xdg",
+      ...options.env,
+    },
     cwd: options.cwd ?? "/",
     fetchImpl: options.fetchImpl,
   });

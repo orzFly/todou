@@ -77,6 +77,32 @@ export const TimelineQuery = z.object({
 });
 export type TimelineQuery = z.infer<typeof TimelineQuery>;
 
+/** Timeline entries annotated with their issue, for project-wide polling. */
+export const ActivityItem = z.discriminatedUnion("type", [
+  TimelineComment.extend({ issue_number: Id }),
+  TimelineEvent.extend({ issue_number: Id }),
+]);
+export type ActivityItem = z.infer<typeof ActivityItem>;
+
+export const ActivityPage = z.object({
+  items: z.array(ActivityItem),
+  next_cursor: Cursor.nullable(),
+});
+export type ActivityPage = z.infer<typeof ActivityPage>;
+
+/** Forward-only: `after` polls onward, `last` bootstraps a "now" cursor. */
+export const ActivityQuery = z.object({
+  after: Cursor.optional(),
+  last: z.preprocess(
+    (v) => (typeof v === "string" ? v === "1" || v === "true" : v),
+    z.boolean().default(false),
+  ),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  types: z.string().optional(),
+  exclude_actor: z.coerce.number().int().positive().optional(),
+});
+export type ActivityQuery = z.infer<typeof ActivityQuery>;
+
 export const CommentCreateInput = z.object({
   body: z.string().min(1).max(65536),
 });

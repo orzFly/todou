@@ -24,6 +24,7 @@ import {
   ProjectUnlinkCommand,
 } from "./project.ts";
 import { StatusListCommand } from "./status.ts";
+import { WatchCommand } from "./watch.ts";
 import { WhoamiCommand } from "./whoami.ts";
 
 /** Every registerable command; grows as command files land. */
@@ -46,6 +47,7 @@ export const commands: Array<CommandClass<CliContext>> = [
   LabelEditCommand,
   LabelDeleteCommand,
   StatusListCommand,
+  WatchCommand,
   AttachCommand,
   ApiPassthroughCommand,
 ];
