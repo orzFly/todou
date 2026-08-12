@@ -104,19 +104,29 @@ function SpecViewBody({
   const selected = files.data.files.find((f) => f.path === selectedPath);
   const params = { slug, number: String(issueNumber) };
 
-  // Re-review aid: highlight what changed since the previous version.
+  // Re-review aid: highlight what changed since the previous version. The
+  // baseline snapshot also feeds the sidebar diff stats and the new-file
+  // detection (#61), so it loads whenever a previous version exists.
   const highlightEnabled = version > 1 && showChanges && compare === undefined;
   const baseline = useQuery({
     ...specFilesQuery(slug, issueNumber, version - 1),
-    enabled: highlightEnabled,
+    enabled: version > 1,
   });
+  // A file with no baseline counterpart is brand new: highlighting every
+  // block tells the reviewer nothing (#61) — render it normally and say
+  // "new file" instead.
+  const isNewFile =
+    version > 1 &&
+    baseline.data !== undefined &&
+    selected !== undefined &&
+    !baseline.data.files.some((f) => f.path === selected.path);
   const changedRanges = useMemo(() => {
     if (!highlightEnabled || selected === undefined || !baseline.data) {
       return [];
     }
-    const old =
-      baseline.data.files.find((f) => f.path === selected.path)?.body ?? "";
-    return changedLineRanges(old, selected.body);
+    const old = baseline.data.files.find((f) => f.path === selected.path);
+    if (old === undefined) return [];
+    return changedLineRanges(old.body, selected.body);
   }, [highlightEnabled, selected, baseline.data]);
 
   const jumpChange = (direction: 1 | -1) => {
@@ -258,7 +268,12 @@ function SpecViewBody({
             diff v{version - 1}…v{version}
           </Link>
         )}
-        {version > 1 && compare === undefined && (
+        {isNewFile && compare === undefined && (
+          <span className="rounded-full border border-emerald-600/60 bg-emerald-600/10 px-2.5 py-0.5 text-xs text-emerald-700 dark:text-emerald-400">
+            new in v{version}
+          </span>
+        )}
+        {version > 1 && compare === undefined && !isNewFile && (
           <>
             <button
               type="button"
