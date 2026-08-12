@@ -6,7 +6,7 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { Link, useParams, useSearch } from "@tanstack/react-router";
+import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import type { SpecCommentItem, SpecFile, SpecInfo } from "@todou/shared";
 import {
   ArrowDownIcon,
@@ -129,28 +129,88 @@ function SpecViewBody({
     return changedLineRanges(old.body, selected.body);
   }, [highlightEnabled, selected, baseline.data]);
 
-  const jumpChange = (direction: 1 | -1) => {
-    const root = mainRef.current;
-    if (!root) return;
-    const els = [...root.querySelectorAll<HTMLElement>(".spec-changed")];
-    if (els.length === 0) return;
-    const pivot = window.scrollY + window.innerHeight / 3;
-    const tops = els.map(
-      (el) => el.getBoundingClientRect().top + window.scrollY,
-    );
-    const index =
-      direction === 1
-        ? tops.findIndex((top) => top > pivot + 4)
-        : tops.findLastIndex((top) => top < pivot - 4);
-    const target =
-      els[index >= 0 ? index : direction === 1 ? 0 : els.length - 1];
-    if (!target) return;
+  // Files of the viewed version that differ from the baseline (new or
+  // modified), in sidebar order — the rail the change navigation rides
+  // across file boundaries (#61).
+  const changedFiles = useMemo(() => {
+    if (version <= 1 || !baseline.data) return [];
+    const before = new Map(baseline.data.files.map((f) => [f.path, f.body]));
+    return files.data.files
+      .filter((f) => before.get(f.path) !== f.body)
+      .map((f) => f.path);
+  }, [version, baseline.data, files.data.files]);
+
+  const flashTo = (target: HTMLElement) => {
     target.scrollIntoView({ block: "center", behavior: "smooth" });
     // Same flash as timeline anchors (#38): remove → reflow → re-add.
     target.classList.remove("anchor-flash");
     void target.offsetWidth;
     target.classList.add("anchor-flash");
   };
+
+  /**
+   * Element centers against the viewport center, not tops against an
+   * arbitrary pivot: scrollIntoView({block:"center"}) leaves the current
+   * target's center ≈ the viewport's, so it excludes itself from both
+   * directions — the old top-vs-⅓-height comparison kept re-finding the
+   * element it had just centered and the navigation jammed (#61).
+   */
+  const jumpWithin = (direction: 1 | -1): boolean => {
+    const root = mainRef.current;
+    if (!root) return false;
+    const els = [...root.querySelectorAll<HTMLElement>(".spec-changed")];
+    if (els.length === 0) return false;
+    const viewportCenter = window.scrollY + window.innerHeight / 2;
+    const centers = els.map((el) => {
+      const rect = el.getBoundingClientRect();
+      return rect.top + window.scrollY + rect.height / 2;
+    });
+    const index =
+      direction === 1
+        ? centers.findIndex((c) => c > viewportCenter + 8)
+        : centers.findLastIndex((c) => c < viewportCenter - 8);
+    const target = index >= 0 ? els[index] : undefined;
+    if (!target) return false;
+    flashTo(target);
+    return true;
+  };
+
+  // Set before a cross-file hop; consumed once the new file's changed
+  // blocks are stamped, landing on its first (next) or last (prev) change.
+  const pendingJumpRef = useRef<1 | -1 | null>(null);
+  const navigate = useNavigate();
+  const jumpChange = (direction: 1 | -1) => {
+    if (jumpWithin(direction)) return;
+    if (selectedPath === undefined || changedFiles.length === 0) return;
+    const position = changedFiles.indexOf(selectedPath);
+    const nextPath =
+      position === -1
+        ? direction === 1
+          ? changedFiles[0]
+          : changedFiles.at(-1)
+        : changedFiles[position + direction];
+    if (nextPath === undefined || nextPath === selectedPath) return;
+    pendingJumpRef.current = direction;
+    void navigate({
+      to: "/projects/$slug/issues/$number/spec",
+      params,
+      search: { file: nextPath, v: search.v },
+    });
+  };
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: changedRanges signals that the new file's highlights are stamped
+  useEffect(() => {
+    const direction = pendingJumpRef.current;
+    if (direction === null) return;
+    pendingJumpRef.current = null;
+    const root = mainRef.current;
+    if (!root) return;
+    const els = [...root.querySelectorAll<HTMLElement>(".spec-changed")];
+    const target = direction === 1 ? els[0] : els[els.length - 1];
+    if (target) flashTo(target);
+    // A file with no highlighted blocks (e.g. brand new) starts at the top.
+    else root.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [selectedPath, changedRanges]);
 
   const queryClient = useQueryClient();
   const resolve = useMutation({
