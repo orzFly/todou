@@ -5,10 +5,16 @@ import { PencilIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
+import {
+  StagedFileTray,
+  StagedFileUploadButton,
+  useStagedFiles,
+} from "@/components/issue/staged-files.tsx";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { RevisionHistory } from "@/components/shared/revision-history.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
+import { withAttachmentMarkers } from "@/components/timeline/composer.tsx";
 import { QuestionsCard } from "@/components/timeline/questions-card.tsx";
 import { SpecCommentAnchorCard } from "@/components/timeline/spec-comment-card.tsx";
 import { Button } from "@/components/ui/button";
@@ -41,17 +47,39 @@ export function CommentItem({
 }) {
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState(comment.body);
+  const [uploading, setUploading] = useState(false);
+  const staging = useStagedFiles();
   const queryClient = useQueryClient();
   const save = useMutation({
-    mutationFn: () => api.updateComment(slug, issueNumber, comment.id, body),
+    mutationFn: (finalBody: string) =>
+      api.updateComment(slug, issueNumber, comment.id, finalBody),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["timeline", slug, issueNumber],
       });
       setEditing(false);
+      staging.clear();
     },
     onError: (error) => toast.error(error.message),
   });
+
+  async function handleSave() {
+    if (uploading) return;
+    let full = body;
+    if (staging.staged.length > 0) {
+      setUploading(true);
+      try {
+        const markers = await staging.uploadAll(slug, issueNumber);
+        full = withAttachmentMarkers(body.trimEnd(), markers);
+      } catch (error) {
+        toast.error(`Could not upload files: ${(error as Error).message}`);
+        return;
+      } finally {
+        setUploading(false);
+      }
+    }
+    save.mutate(full);
+  }
 
   return (
     <div
@@ -107,6 +135,7 @@ export function CommentItem({
             aria-label="edit comment"
             onClick={() => {
               setBody(comment.body);
+              staging.clear();
               setEditing(!editing);
             }}
           >
@@ -133,17 +162,39 @@ export function CommentItem({
               value={body}
               onChange={(e) => setBody(e.target.value)}
               rows={5}
+              placeholder="Edit comment… (paste or drop files)"
+              onPaste={staging.onPaste}
+              onDrop={staging.onDrop}
+              onDragOver={staging.onDragOver}
+            />
+            <StagedFileTray
+              staged={staging.staged}
+              onRemove={staging.remove}
+              disabled={uploading}
             />
             <div className="flex justify-end gap-2">
+              <StagedFileUploadButton
+                onFiles={staging.stage}
+                disabled={uploading}
+                label="Attach files"
+                className="mr-auto"
+              />
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setEditing(false)}
+                onClick={() => {
+                  staging.clear();
+                  setEditing(false);
+                }}
               >
                 Cancel
               </Button>
-              <Button size="sm" onClick={() => save.mutate()}>
-                Save
+              <Button
+                size="sm"
+                disabled={uploading}
+                onClick={() => void handleSave()}
+              >
+                {uploading ? "Uploading…" : "Save"}
               </Button>
             </div>
           </div>
