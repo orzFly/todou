@@ -17,6 +17,12 @@ export type AppContext = {
   router: DbRouter;
   bus: EventBus;
   storage: StorageBackend;
+  /**
+   * Aborted once when the process is asked to stop. Long-lived responses
+   * (SSE) end themselves on this signal so `server.close()` can complete
+   * instead of waiting on connections that never finish (#56).
+   */
+  shutdown: AbortController;
 };
 
 export async function bootstrap(config: Config): Promise<AppContext> {
@@ -29,6 +35,7 @@ export async function bootstrap(config: Config): Promise<AppContext> {
     router,
     bus: new EventBus(),
     storage: new FsStorage(config.storage.path),
+    shutdown: new AbortController(),
   };
 }
 

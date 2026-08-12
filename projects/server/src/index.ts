@@ -17,6 +17,14 @@ abstract class ConfiguredCommand extends Command {
   }
 }
 
+// In-flight requests get this long to finish after a stop signal before
+// their connections are severed; clients retry/reconnect (#26, #41).
+const DRAIN_GRACE_MS = 1_000;
+// If shutdown wedges anyway (a stuck database close, an unforeseen open
+// handle), exit by force well before systemd's stop timeout escalates to
+// SIGKILL — that escalation is a ~90s outage per deploy (#56).
+const FORCED_EXIT_MS = 5_000;
+
 class ServeCommand extends ConfiguredCommand {
   static paths = [["serve"], Command.Default];
 
@@ -40,19 +48,25 @@ class ServeCommand extends ConfiguredCommand {
     const stopHousekeeping = startHousekeeping(context.router.system());
 
     await new Promise<void>((resolve) => {
-      const shutdown = () => {
+      const beginShutdown = () => {
         this.context.stdout.write("shutting down…\n");
         stopHousekeeping();
+        // SSE streams end at the app layer (they never finish on their
+        // own, and close() waits for every open connection); their clients
+        // are told to reconnect — to the restarted process — by the
+        // stream ending.
+        context.shutdown.abort();
         server.close(() => resolve());
-        // SSE streams never end on their own, and close() waits for every
-        // open connection: without destroying them the old process lingers
-        // as a zombie whose orphaned bus keeps heartbeating clients that
-        // will never see another change event. Killing the streams is what
-        // tells clients to reconnect to the new process.
-        if ("closeAllConnections" in server) server.closeAllConnections();
+        setTimeout(() => {
+          if ("closeAllConnections" in server) server.closeAllConnections();
+        }, DRAIN_GRACE_MS).unref();
+        setTimeout(() => {
+          this.context.stderr.write("shutdown stalled; forcing exit\n");
+          process.exit(1);
+        }, FORCED_EXIT_MS).unref();
       };
-      process.once("SIGINT", shutdown);
-      process.once("SIGTERM", shutdown);
+      process.once("SIGINT", beginShutdown);
+      process.once("SIGTERM", beginShutdown);
     });
     await context.router.close();
     return 0;

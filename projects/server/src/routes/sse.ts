@@ -41,41 +41,51 @@ export function sseRoutes() {
         queue.push(event);
         wake?.();
       });
-      stream.onAbort(() => {
-        unsubscribe();
-        wake?.();
-      });
+      // Process shutdown must end the stream from the server side: SSE
+      // responses never finish on their own, and every one of them would
+      // otherwise hold `server.close()` open until it is severed (#56).
+      const shutdown = ctx.shutdown.signal;
+      const onShutdown = () => wake?.();
+      shutdown.addEventListener("abort", onShutdown);
+      stream.onAbort(() => wake?.());
 
-      // Lets clients (and tests) know the subscription is live.
-      await stream.writeSSE({ event: "hello", data: "{}" });
+      try {
+        // Lets clients (and tests) know the subscription is live.
+        await stream.writeSSE({ event: "hello", data: "{}" });
 
-      let tick = 0;
-      while (!stream.aborted) {
-        while (queue.length > 0 && !stream.aborted) {
-          const event = queue.shift() as ChangeEvent;
-          await stream.writeSSE({
-            event: SSE_CHANGE_EVENT,
-            data: JSON.stringify(event),
-          });
-        }
-        if (stream.aborted) break;
-        const iteration = ++tick;
-        await Promise.race([
-          new Promise<void>((resolve) => {
-            wake = resolve;
-          }),
+        while (!stream.aborted && !shutdown.aborted) {
+          while (queue.length > 0 && !stream.aborted) {
+            const event = queue.shift() as ChangeEvent;
+            await stream.writeSSE({
+              event: SSE_CHANGE_EVENT,
+              data: JSON.stringify(event),
+            });
+          }
+          if (stream.aborted || shutdown.aborted) break;
           // Heartbeat keeps proxies from idling the connection out. Sent as
           // a real event, not an SSE comment: EventSource can't see comments,
           // and the web client counts heartbeats to detect dead streams.
-          // Promise.race never cancels the loser, so a sleep that lost to a
-          // wake still resolves later — the tick guard keeps that stale
-          // branch from injecting an off-schedule ping.
-          stream.sleep(HEARTBEAT_MS).then(async () => {
-            if (tick === iteration && !stream.aborted)
-              await stream.writeSSE({ event: SSE_PING_EVENT, data: "{}" });
-          }),
-        ]);
-        wake = null;
+          // One promise, one timer, cleared every iteration: an uncancelled
+          // sleep would keep the event loop (and thus the process, during
+          // shutdown) alive for up to HEARTBEAT_MS after the stream ends.
+          let pingDue = false;
+          let heartbeat: ReturnType<typeof setTimeout> | undefined;
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+            heartbeat = setTimeout(() => {
+              pingDue = true;
+              resolve();
+            }, HEARTBEAT_MS);
+          });
+          clearTimeout(heartbeat);
+          wake = null;
+          if (pingDue && !stream.aborted && !shutdown.aborted) {
+            await stream.writeSSE({ event: SSE_PING_EVENT, data: "{}" });
+          }
+        }
+      } finally {
+        unsubscribe();
+        shutdown.removeEventListener("abort", onShutdown);
       }
     });
   });

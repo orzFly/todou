@@ -125,3 +125,38 @@ describe("SSE + OpenAPI", () => {
     controller.abort();
   });
 });
+
+describe("SSE shutdown", () => {
+  it("ends live streams and unsubscribes when the app shuts down", async () => {
+    const t = await makeTestApp();
+    const cookie = await t.login();
+    await t.app.request("/api/projects", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ slug: "dying", name: "Dying" }),
+    });
+
+    const res = await t.app.request("/api/projects/dying/events", {
+      headers: { cookie },
+    });
+    expect(res.status).toBe(200);
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (!buffer.includes("event: hello")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("stream ended early");
+      buffer += decoder.decode(value, { stream: true });
+    }
+    expect(t.ctx.bus.subscriberCount(1)).toBe(1);
+
+    t.ctx.shutdown.abort();
+    for (;;) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+    expect(t.ctx.bus.subscriberCount(1)).toBe(0);
+
+    await t.cleanup();
+  });
+});

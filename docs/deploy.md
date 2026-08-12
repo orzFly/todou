@@ -80,6 +80,7 @@ WorkingDirectory=%h/todou-data
 ExecStart=%h/.local/share/mise/shims/node %h/todou/projects/server/src/index.ts serve --config %h/todou-data/config.toml
 Restart=on-failure
 RestartSec=2
+TimeoutStopSec=10
 Environment=NODE_ENV=production
 
 [Install]
@@ -87,6 +88,12 @@ WantedBy=default.target
 ```
 
 Calling the mise **shim** directly means the unit needs no shell activation.
+
+On SIGTERM the server ends its SSE streams, drains in-flight requests for
+up to a second, and force-exits itself after five — so a stop normally
+completes in well under a second. `TimeoutStopSec=10` caps the outage if
+that ever regresses; without it, systemd's default gives a hung stop ~90s
+of 502s per deploy before the SIGKILL.
 
 ```bash
 systemctl --user daemon-reload
