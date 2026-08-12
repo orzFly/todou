@@ -13,6 +13,7 @@ import {
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import {
   StagedFileTray,
+  StagedFileUploadButton,
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -135,6 +136,12 @@ export function NewIssuePage() {
           />
         </div>
         <div className="flex justify-end gap-2">
+          <StagedFileUploadButton
+            onFiles={staging.stage}
+            disabled={submitting}
+            label="Attach files"
+            className="mr-auto"
+          />
           <Button
             type="button"
             variant="ghost"

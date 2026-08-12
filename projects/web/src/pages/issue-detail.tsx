@@ -20,6 +20,7 @@ import { AttachmentList } from "@/components/issue/attachment-list.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import {
   StagedFileTray,
+  StagedFileUploadButton,
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
@@ -258,6 +259,12 @@ function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
               disabled={uploading}
             />
             <div className="flex justify-end gap-2">
+              <StagedFileUploadButton
+                onFiles={staging.stage}
+                disabled={uploading}
+                label="Attach files"
+                className="mr-auto"
+              />
               <Button
                 variant="ghost"
                 size="sm"

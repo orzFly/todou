@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import type { Attachment } from "@todou/shared";
-import { FileIcon, XIcon } from "lucide-react";
+import { FileIcon, PaperclipIcon, XIcon } from "lucide-react";
 import {
   type ClipboardEvent,
   type DragEvent,
@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { api } from "@/api/queries.ts";
+import { Button } from "@/components/ui/button";
 import { formatSize, isPreviewableImage } from "@/lib/attachment-preview.ts";
 import {
   attachmentImageMarker,
@@ -153,6 +154,54 @@ export function useStagedFiles() {
     onDrop,
     onDragOver,
   };
+}
+
+/**
+ * File-picker entry to the staging tray. Paste and drag-drop cover
+ * desktop, but touch devices have neither — a tappable button is the
+ * only way to attach from a phone, so every editor renders one.
+ */
+export function StagedFileUploadButton({
+  onFiles,
+  disabled = false,
+  label,
+  className,
+}: {
+  onFiles: (files: FileList) => void;
+  disabled?: boolean;
+  /** Visible text next to the paperclip; icon-only when omitted. */
+  label?: string;
+  className?: string;
+}) {
+  const fileInput = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <input
+        ref={fileInput}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files !== null) onFiles(e.target.files);
+          // Same file re-picked after a remove must fire change again.
+          e.target.value = "";
+        }}
+      />
+      <Button
+        type="button"
+        variant="ghost"
+        size={label === undefined ? "icon-sm" : "sm"}
+        disabled={disabled}
+        aria-label="Attach files"
+        title={label === undefined ? "Attach files" : undefined}
+        className={className}
+        onClick={() => fileInput.current?.click()}
+      >
+        <PaperclipIcon className="size-3.5" />
+        {label}
+      </Button>
+    </>
+  );
 }
 
 /** Thumbnail/chip strip for staged files, with per-file remove. */

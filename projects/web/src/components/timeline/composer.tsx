@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import {
   StagedFileTray,
+  StagedFileUploadButton,
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
 import { Button } from "@/components/ui/button";
@@ -168,6 +169,7 @@ export function Composer({
             }
           }}
         />
+        <StagedFileUploadButton onFiles={staging.stage} disabled={uploading} />
         <Button type="submit" size="sm" disabled={uploading}>
           <SendIcon className="size-4" /> {uploading ? "Uploading…" : "Comment"}
         </Button>
