@@ -8,7 +8,6 @@ import {
   type MouseEvent as ReactMouseEvent,
   useCallback,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -20,7 +19,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Textarea } from "@/components/ui/textarea";
 import {
   CODE_CONTENT_START_ATTR,
   parseSourceLoc,

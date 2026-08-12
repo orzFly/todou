@@ -1,3 +1,4 @@
+import type { Question } from "@todou/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { makeTestApp, PLACEMENTS, type TestApp } from "./helpers.ts";
 
@@ -107,7 +108,7 @@ describe.each(PLACEMENTS)("questions #19 (%s placement)", (placement) => {
     const comment = await json(res);
     expect(comment.component.type).toBe("questions");
     // Explicit key kept, missing key auto-filled by position.
-    expect(comment.component.questions.map((q: any) => q.key)).toEqual([
+    expect(comment.component.questions.map((q: Question) => q.key)).toEqual([
       "schema",
       "q2",
     ]);
