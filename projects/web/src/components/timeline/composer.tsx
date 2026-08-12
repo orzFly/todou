@@ -55,6 +55,7 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
           id: -1 - key,
           author: me,
           body,
+          component: null,
           created_at: new Date().toISOString(),
           edited_at: null,
           agent_context: null,

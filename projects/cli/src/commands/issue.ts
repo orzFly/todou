@@ -13,6 +13,11 @@ import { CliError } from "../errors.ts";
 import { makePainter, type Painter, relativeTime, table } from "../format.ts";
 import { parseChoice, parsePositiveInt, parseSeconds } from "../parse.ts";
 import {
+  decodeAnswerEvent,
+  renderAnswerRecords,
+  renderQuestions,
+} from "../questions.ts";
+import {
   resolveAssignees,
   resolveClosedStatus,
   resolveLabels,
@@ -511,7 +516,21 @@ export function renderTimelineItem(item: TimelineItem, paint: Painter): string {
       .map((line) => `  ${line}`)
       .join("\n");
     const edited = item.edited_at ? " (edited)" : "";
-    return `${paint("cyan", item.author.login)} commented${edited} ${when}:\n${body}`;
+    const questions =
+      item.component?.type === "questions"
+        ? `\n${renderQuestions(item.component, paint).join("\n")}\n  ${paint(
+            "dim",
+            `(answer: web, or \`todou question answer <issue> ${item.id}\`)`,
+          )}`
+        : "";
+    return `${paint("cyan", item.author.login)} commented${edited} ${when}:\n${body}${questions}`;
+  }
+  const answered = item.type === "event" ? decodeAnswerEvent(item) : null;
+  if (answered !== null) {
+    return [
+      `${paint("cyan", item.actor.login)} answered comment ${answered.comment_id} ${when}:`,
+      ...renderAnswerRecords(answered.answers, paint),
+    ].join("\n");
   }
   if (item.event_type === "title_changed") {
     return paint(

@@ -16,6 +16,11 @@ export const Issue = z.object({
   updated_at: Timestamp,
   /** Last body-changing edit; null when the body was never edited. */
   body_edited_at: Timestamp.nullable(),
+  /**
+   * Unanswered questions across all question comments (#19, feeds #46).
+   * Defaults on parse so clients tolerate servers predating #19.
+   */
+  open_questions: z.number().int().nonnegative().default(0),
 });
 export type Issue = z.infer<typeof Issue>;
 

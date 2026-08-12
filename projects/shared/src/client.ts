@@ -3,11 +3,14 @@ import type {
   Agent,
   AgentCreateInput,
   AgentUpdateInput,
+  AnswersSubmitInput,
   Attachment,
+  CommentComponentInput,
   Issue,
   IssueCounts,
   IssueCreateInput,
   IssueListPage,
+  IssueQuestions,
   IssueUpdateInput,
   Label,
   LabelCreateInput,
@@ -24,6 +27,7 @@ import type {
   StatusCreateInput,
   StatusUpdateInput,
   TimelineComment,
+  TimelineEvent,
   TimelinePage,
   TokenCreated,
   TokenCreateInput,
@@ -272,11 +276,16 @@ export class TodouClient {
     this.request<ActivityPage>("GET", `/projects/${slug}/activity`, {
       query: query ? { ...query, last: query.last ? 1 : undefined } : {},
     });
-  createComment = (slug: string, number: number, body: string) =>
+  createComment = (
+    slug: string,
+    number: number,
+    body: string,
+    component?: CommentComponentInput,
+  ) =>
     this.request<TimelineComment>(
       "POST",
       `/projects/${slug}/issues/${number}/comments`,
-      { json: { body } },
+      { json: component === undefined ? { body } : { body, component } },
     );
   getComment = (slug: string, number: number, commentId: number) =>
     this.request<TimelineComment>(
@@ -298,6 +307,24 @@ export class TodouClient {
     this.request<void>(
       "DELETE",
       `/projects/${slug}/issues/${number}/comments/${commentId}`,
+    );
+
+  // — questions (#19) —
+  getIssueQuestions = (slug: string, number: number) =>
+    this.request<IssueQuestions>(
+      "GET",
+      `/projects/${slug}/issues/${number}/questions`,
+    );
+  submitAnswers = (
+    slug: string,
+    number: number,
+    commentId: number,
+    input: AnswersSubmitInput,
+  ) =>
+    this.request<TimelineEvent>(
+      "POST",
+      `/projects/${slug}/issues/${number}/comments/${commentId}/answers`,
+      { json: input },
     );
 
   // — edit history —

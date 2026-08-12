@@ -4,7 +4,7 @@
 // schema works in both placements and multiple projects may safely share
 // one target database. References to users are LOGICAL ids into the system
 // database — no foreign keys are possible across databases.
-import type { AgentContext } from "@todou/shared";
+import type { AgentContext, CommentComponent } from "@todou/shared";
 import {
   bigint,
   boolean,
@@ -76,6 +76,11 @@ export const issues = pgTable(
       .notNull()
       .defaultNow(),
     bodyEditedAt: timestamp("body_edited_at", { withTimezone: true }),
+    // Denormalized unanswered-question count (#19). Safe against drift:
+    // components are immutable and answer events append-only, so the only
+    // writers are comment create (+N), first answer (-N), and the delete
+    // of a still-unanswered question comment (-N).
+    openQuestions: integer("open_questions").notNull().default(0),
   },
   (t) => [
     uniqueIndex("issues_project_number_idx").on(t.projectId, t.number),
@@ -118,6 +123,9 @@ export const comments = pgTable(
       .references(() => issues.id, { onDelete: "cascade" }),
     authorId: bigint("author_id", { mode: "number" }).notNull(),
     body: text("body").notNull(),
+    // Structured slot rendered after the body ({type:"questions",…}, #19).
+    // Immutable once written — updateComment never touches it.
+    component: jsonb("component").$type<CommentComponent | null>(),
     // Self-reported client provenance (e.g. Claude Code session/model);
     // never authoritative — authorship stays author_id.
     agentContext: jsonb("agent_context").$type<AgentContext | null>(),
@@ -149,6 +157,7 @@ export const issueEvents = pgTable(
         "unassigned",
         "referenced",
         "attachment_added",
+        "question_answered",
       ],
     }).notNull(),
     payload: jsonb("payload").notNull().default({}),

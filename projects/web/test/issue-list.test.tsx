@@ -107,6 +107,7 @@ describe("patchIssueStatus (optimistic cache update)", () => {
         created_at: "2026-08-11T00:00:00Z",
         updated_at: "2026-08-11T00:00:00Z",
         body_edited_at: null,
+        open_questions: 0,
       },
     ],
     next_cursor: null,

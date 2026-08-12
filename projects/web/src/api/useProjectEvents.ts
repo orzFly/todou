@@ -28,9 +28,14 @@ export function invalidationsFor(
           ];
     case "comment":
     case "timeline":
+      // Question components and their answers ride the timeline, so the
+      // per-issue question status (#19) goes stale with it.
       return event.issue_number === undefined
         ? []
-        : [["timeline", slug, event.issue_number]];
+        : [
+            ["timeline", slug, event.issue_number],
+            ["questions", slug, event.issue_number],
+          ];
     case "attachment":
       return event.issue_number === undefined
         ? []
@@ -62,6 +67,7 @@ export function reconnectInvalidations(slug: string): QueryKeyLike[] {
     ["issues", slug],
     ["issue", slug],
     ["timeline", slug],
+    ["questions", slug],
     ["attachments", slug],
     ["statuses", slug],
     ["labels", slug],

@@ -9,6 +9,7 @@ import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { RevisionHistory } from "@/components/shared/revision-history.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
+import { QuestionsCard } from "@/components/timeline/questions-card.tsx";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
@@ -137,6 +138,16 @@ export function CommentItem({
           <MarkdownView slug={slug} issueNumber={issueNumber}>
             {comment.body}
           </MarkdownView>
+        )}
+        {/* The component slot renders after the body and is immutable, so
+            it stays put while the body above is edited. */}
+        {!pending && !editing && comment.component?.type === "questions" && (
+          <QuestionsCard
+            slug={slug}
+            issueNumber={issueNumber}
+            commentId={comment.id}
+            component={comment.component}
+          />
         )}
       </div>
     </div>

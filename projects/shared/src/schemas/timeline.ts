@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AgentContext } from "./agent-context.ts";
 import { Cursor, Id, Timestamp } from "./common.ts";
+import { CommentComponent, CommentComponentInput } from "./component.ts";
 import { UserRef } from "./user.ts";
 
 export const IssueEventType = z.enum([
@@ -15,6 +16,7 @@ export const IssueEventType = z.enum([
   "unassigned",
   "referenced",
   "attachment_added",
+  "question_answered",
 ]);
 export type IssueEventType = z.infer<typeof IssueEventType>;
 
@@ -23,6 +25,11 @@ export const TimelineComment = z.object({
   id: Id,
   author: UserRef,
   body: z.string(),
+  /**
+   * Structured payload rendered after the body; immutable once created.
+   * Defaults on parse so clients tolerate servers predating #19.
+   */
+  component: CommentComponent.nullable().default(null),
   created_at: Timestamp,
   edited_at: Timestamp.nullable(),
   agent_context: AgentContext.nullable(),
@@ -103,12 +110,17 @@ export const ActivityQuery = z.object({
 });
 export type ActivityQuery = z.infer<typeof ActivityQuery>;
 
-export const CommentCreateInput = z.object({
+// Strict on purpose: components are immutable, so the update input simply
+// has no `component` key — with a loose schema a PATCH carrying one would
+// be silently dropped, which reads as "my edit worked". Unknown keys must
+// error and name themselves instead.
+export const CommentCreateInput = z.strictObject({
   body: z.string().min(1).max(65536),
+  component: CommentComponentInput.optional(),
 });
 export type CommentCreateInput = z.infer<typeof CommentCreateInput>;
 
-export const CommentUpdateInput = z.object({
+export const CommentUpdateInput = z.strictObject({
   body: z.string().min(1).max(65536),
 });
 export type CommentUpdateInput = z.infer<typeof CommentUpdateInput>;

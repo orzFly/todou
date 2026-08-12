@@ -23,6 +23,11 @@ import {
   ProjectListCommand,
   ProjectUnlinkCommand,
 } from "./project.ts";
+import {
+  QuestionAnswerCommand,
+  QuestionListCommand,
+  QuestionWaitCommand,
+} from "./question.ts";
 import { StatusListCommand } from "./status.ts";
 import { WatchCommand } from "./watch.ts";
 import { WhoamiCommand } from "./whoami.ts";
@@ -42,6 +47,9 @@ export const commands: Array<CommandClass<CliContext>> = [
   IssueCloseCommand,
   CommentAddCommand,
   CommentEditCommand,
+  QuestionListCommand,
+  QuestionWaitCommand,
+  QuestionAnswerCommand,
   LabelListCommand,
   LabelCreateCommand,
   LabelEditCommand,

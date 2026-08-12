@@ -26,6 +26,7 @@ function comment(agentContext: unknown) {
     author: user,
     body: "hello",
     created_at: "2026-08-11T00:00:00Z",
+    component: null,
     edited_at: null,
     // biome-ignore lint/suspicious/noExplicitAny: test fixture
     agent_context: agentContext as any,

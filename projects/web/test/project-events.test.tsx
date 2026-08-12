@@ -22,13 +22,16 @@ describe("invalidationsFor (SSE → query keys)", () => {
     ]);
   });
 
-  it("maps timeline events to that issue's timeline only", () => {
+  it("maps timeline events to that issue's timeline and questions", () => {
     expect(
       invalidationsFor(
         { entity: "timeline", id: 5, action: "created", issue_number: 7 },
         "todou",
       ),
-    ).toEqual([["timeline", "todou", 7]]);
+    ).toEqual([
+      ["timeline", "todou", 7],
+      ["questions", "todou", 7],
+    ]);
   });
 
   it("maps config entities to their lists plus issues", () => {

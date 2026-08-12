@@ -92,6 +92,7 @@ function toItem(m: Raw, refs: Map<number, UserRef>): TimelineItem {
         id: m.row.id,
         author: refs.get(m.row.authorId) ?? ghost(m.row.authorId),
         body: m.row.body,
+        component: m.row.component ?? null,
         created_at: m.row.createdAt.toISOString(),
         edited_at: m.row.editedAt?.toISOString() ?? null,
         agent_context: m.row.agentContext ?? null,

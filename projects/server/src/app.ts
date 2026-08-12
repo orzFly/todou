@@ -1,6 +1,7 @@
 import { serveStatic } from "@hono/node-server/serve-static";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { createMiddleware } from "hono/factory";
+import { z } from "zod";
 import { type AppEnv, authMiddleware } from "./auth/middleware.ts";
 import type { AppContext } from "./bootstrap.ts";
 import { registerErrorHandler } from "./errors.ts";
@@ -16,7 +17,12 @@ import { sseRoutes } from "./routes/sse.ts";
 import { statusRoutes } from "./routes/statuses.ts";
 import { userRoutes } from "./routes/users.ts";
 
-/** Zod validation failures become uniform 422 error bodies. */
+/**
+ * Zod validation failures become uniform 422 error bodies. The message is
+ * the prettified error, not a generic "invalid request": strict component
+ * schemas (#19) reject hallucinated extra fields, and the offending path
+ * must reach the CLI user verbatim.
+ */
 // biome-ignore lint/suspicious/noExplicitAny: hook signature is generic
 const defaultHook = (result: any, c: any) => {
   if (!result.success) {
@@ -24,7 +30,7 @@ const defaultHook = (result: any, c: any) => {
       {
         error: {
           code: "validation_failed",
-          message: "invalid request",
+          message: z.prettifyError(result.error),
           details: result.error.issues,
         },
       },

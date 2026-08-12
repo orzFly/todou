@@ -4,6 +4,7 @@ import {
   CircleDotIcon,
   CircleSlashIcon,
   LinkIcon,
+  ListChecksIcon,
   PaperclipIcon,
   PencilIcon,
   RefreshCwIcon,
@@ -17,7 +18,7 @@ import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { splitIssueRefs } from "@/lib/issue-refs.ts";
-import { eventAnchor } from "@/lib/timeline-anchors.ts";
+import { commentAnchor, eventAnchor } from "@/lib/timeline-anchors.ts";
 
 type Payload = Record<string, unknown>;
 
@@ -62,6 +63,11 @@ export function describeEvent(
         | undefined;
       return `attached ${attachment?.filename ?? "a file"}`;
     }
+    case "question_answered": {
+      const answers = payload.answers as unknown[] | undefined;
+      const count = answers?.length ?? 0;
+      return `answered ${count} question${count === 1 ? "" : "s"}`;
+    }
   }
 }
 
@@ -77,6 +83,7 @@ const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
   unassigned: <UserMinusIcon className="size-3.5" />,
   referenced: <LinkIcon className="size-3.5" />,
   attachment_added: <PaperclipIcon className="size-3.5" />,
+  question_answered: <ListChecksIcon className="size-3.5 text-green-600" />,
 };
 
 /**
@@ -134,6 +141,14 @@ export function EventRow({
     typeof event.payload.by_comment === "number"
       ? event.payload.by_comment
       : undefined;
+  // "answered N questions" deep-links back to the question comment.
+  const answeredCommentId =
+    event.event_type === "question_answered" &&
+    typeof event.payload.comment_id === "number" &&
+    slug !== undefined &&
+    issueNumber !== undefined
+      ? event.payload.comment_id
+      : undefined;
   return (
     <div
       id={eventAnchor(event.id)}
@@ -158,6 +173,16 @@ export function EventRow({
               filename={attached.filename ?? "a file"}
             />
           </>
+        ) : answeredCommentId !== undefined && slug && issueNumber ? (
+          <Link
+            to="/projects/$slug/issues/$number"
+            params={{ slug, number: String(issueNumber) }}
+            hash={commentAnchor(answeredCommentId)}
+            hashScrollIntoView={false}
+            className="hover:underline"
+          >
+            {action}
+          </Link>
         ) : slug === undefined ? (
           action
         ) : (

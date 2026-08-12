@@ -15,6 +15,7 @@ import {
   CheckCircle2Icon,
   CheckIcon,
   CircleDotIcon,
+  MessageCircleQuestionIcon,
   PlusIcon,
   TagIcon,
 } from "lucide-react";
@@ -260,6 +261,15 @@ function IssueRow({
         >
           {issue.title}
         </Link>
+        {issue.open_questions > 0 && (
+          <span
+            className="ml-2 inline-flex items-center gap-1 rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 align-middle text-xs text-amber-700 dark:text-amber-400"
+            title={`${issue.open_questions} unanswered question(s)`}
+          >
+            <MessageCircleQuestionIcon className="size-3.5" />
+            {issue.open_questions}
+          </span>
+        )}
       </TableCell>
       <TableCell>
         <DropdownMenu>

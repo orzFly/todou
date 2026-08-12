@@ -2,6 +2,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
   ActivityPage,
   ActivityQuery,
+  AnswersSubmitInput,
   CommentCreateInput,
   CommentUpdateInput,
   Issue,
@@ -10,11 +11,13 @@ import {
   IssueCreateInput,
   IssueListPage,
   IssueListQuery,
+  IssueQuestions,
   IssueUpdateInput,
   ProjectSlug,
   RevisionPage,
   RevisionQuery,
   TimelineComment,
+  TimelineEvent,
   TimelinePage,
   TimelineQuery,
 } from "@todou/shared";
@@ -32,6 +35,7 @@ import {
   listIssues,
   updateIssue,
 } from "../services/issues.ts";
+import { listIssueQuestions, submitAnswers } from "../services/questions.ts";
 import {
   listCommentRevisions,
   listIssueRevisions,
@@ -147,6 +151,28 @@ const commentRevisionsRoute = createRoute({
   summary: "Comment edit history, newest first, both sides paired",
   request: { params: commentParams, query: RevisionQuery },
   responses: { 200: { description: "Page", ...jsonBody(RevisionPage) } },
+});
+
+const issueQuestionsRoute = createRoute({
+  method: "get",
+  path: "/{slug}/issues/{number}/questions",
+  summary:
+    "Question comments of an issue with their answer status (#19); powers " +
+    "`todou question list/wait` and the web answer cards",
+  request: { params: issueParams },
+  responses: { 200: { description: "Status", ...jsonBody(IssueQuestions) } },
+});
+
+const submitAnswersRoute = createRoute({
+  method: "post",
+  path: "/{slug}/issues/{number}/comments/{commentId}/answers",
+  summary:
+    "Answer every question of a comment atomically (writer); one answer " +
+    "per comment, ever — answers cannot be edited",
+  request: { params: commentParams, body: jsonBody(AnswersSubmitInput) },
+  responses: {
+    201: { description: "Answered", ...jsonBody(TimelineEvent) },
+  },
 });
 
 const deleteCommentRoute = createRoute({
@@ -319,6 +345,30 @@ export function issueRoutes() {
         c.req.valid("query"),
       ),
       200,
+    );
+  });
+
+  app.openapi(issueQuestionsRoute, async (c) => {
+    const { slug, number } = c.req.valid("param");
+    return c.json(
+      await listIssueQuestions(c.get("appCtx"), c.get("user"), slug, number),
+      200,
+    );
+  });
+
+  app.openapi(submitAnswersRoute, async (c) => {
+    const { slug, number, commentId } = c.req.valid("param");
+    return c.json(
+      await submitAnswers(
+        c.get("appCtx"),
+        c.get("user"),
+        slug,
+        number,
+        commentId,
+        c.req.valid("json"),
+        c.get("agentContext"),
+      ),
+      201,
     );
   });
 

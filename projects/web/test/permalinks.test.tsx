@@ -43,6 +43,7 @@ const refItem = (number: number, title: string): IssueListItem => ({
   created_at: "2026-08-12T00:00:00Z",
   updated_at: "2026-08-12T00:00:00Z",
   body_edited_at: null,
+  open_questions: 0,
 });
 
 const commentOf = (id: number): TimelineComment => ({
@@ -51,6 +52,7 @@ const commentOf = (id: number): TimelineComment => ({
   author,
   body: "hi",
   created_at: "2026-08-12T00:00:00Z",
+  component: null,
   edited_at: null,
   agent_context: null,
 });

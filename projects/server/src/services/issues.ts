@@ -68,6 +68,7 @@ function toIssue(bundle: IssueBundle): Issue {
     created_at: bundle.row.createdAt.toISOString(),
     updated_at: bundle.row.updatedAt.toISOString(),
     body_edited_at: bundle.row.bodyEditedAt?.toISOString() ?? null,
+    open_questions: bundle.row.openQuestions,
   };
 }
 

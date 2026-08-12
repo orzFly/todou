@@ -5,13 +5,15 @@ import type {
   CommentUpdateInput,
   TimelineComment,
 } from "@todou/shared";
-import { and, eq } from "drizzle-orm";
+import { QuestionAnsweredPayload } from "@todou/shared";
+import { and, eq, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
-import { comments, issues } from "../db/project-schema.ts";
+import { comments, issueEvents, issues } from "../db/project-schema.ts";
 import { ForbiddenError, NotFoundError } from "../errors.ts";
 import { requireProject, routeInfoOf } from "./access.ts";
+import { canonicalizeComponent, questionCount } from "./questions.ts";
 import { recordReferences } from "./references.ts";
 import { deleteRevisionsFor, recordRevision } from "./revisions.ts";
 import { getUserRefs } from "./users.ts";
@@ -30,6 +32,7 @@ async function toTimelineComment(
     id: row.id,
     author,
     body: row.body,
+    component: row.component ?? null,
     created_at: row.createdAt.toISOString(),
     edited_at: row.editedAt?.toISOString() ?? null,
     agent_context: row.agentContext ?? null,
@@ -58,6 +61,11 @@ export async function createComment(
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(db, project.id, issueNumber);
 
+  const component =
+    input.component === undefined
+      ? null
+      : canonicalizeComponent(input.component);
+
   const events: ChangeEvent[] = [];
   const row = await db.transaction(async (tx) => {
     const inserted = await tx
@@ -67,11 +75,27 @@ export async function createComment(
         issueId: issue.id,
         authorId: actor.id,
         body: input.body,
+        component,
         agentContext,
       })
       .returning();
     const comment = inserted[0];
     if (!comment) throw new Error("comment insert returned no row");
+
+    const asked = questionCount(component);
+    if (asked > 0) {
+      await tx
+        .update(issues)
+        .set({ openQuestions: sql`${issues.openQuestions} + ${asked}` })
+        .where(eq(issues.id, issue.id));
+      // Counter changed → issue list badges must refresh.
+      events.push({
+        entity: "issue",
+        id: issue.id,
+        action: "updated",
+        issue_number: issueNumber,
+      });
+    }
 
     events.push({
       entity: "timeline",
@@ -228,7 +252,36 @@ export async function deleteComment(
     issueNumber,
     commentId,
   );
+  let counterChanged = false;
   await db.transaction(async (tx) => {
+    // A still-unanswered question comment gives its count back; an answered
+    // one already surrendered it when the answer landed.
+    const asked = questionCount(row.component);
+    if (asked > 0) {
+      const answered = (
+        await tx
+          .select({ payload: issueEvents.payload })
+          .from(issueEvents)
+          .where(
+            and(
+              eq(issueEvents.issueId, row.issueId),
+              eq(issueEvents.type, "question_answered"),
+            ),
+          )
+      ).some((e) => {
+        const parsed = QuestionAnsweredPayload.safeParse(e.payload);
+        return parsed.success && parsed.data.comment_id === row.id;
+      });
+      if (!answered) {
+        await tx
+          .update(issues)
+          .set({
+            openQuestions: sql`greatest(${issues.openQuestions} - ${asked}, 0)`,
+          })
+          .where(eq(issues.id, row.issueId));
+        counterChanged = true;
+      }
+    }
     await tx.delete(comments).where(eq(comments.id, row.id));
     await deleteRevisionsFor(tx, projectId, "comment", row.id);
   });
@@ -238,4 +291,12 @@ export async function deleteComment(
     action: "deleted",
     issue_number: issueNumber,
   });
+  if (counterChanged) {
+    ctx.bus.publish(projectId, {
+      entity: "issue",
+      id: row.issueId,
+      action: "updated",
+      issue_number: issueNumber,
+    });
+  }
 }
