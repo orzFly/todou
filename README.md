@@ -91,14 +91,16 @@ repo):
 | `todou-linux-amd64` / `todou-linux-arm64` | none (glibc) | ~108–109 MB |
 | `todou-macos-arm64` | none | ~70 MB |
 | `todou-windows-amd64.exe` | none | ~81 MB |
-| `todou.cjs` | Node (any recent version on `PATH`) | ~750 KB |
+| `todou.cjs` | Node ≥ 20.12 on `PATH` | ~750 KB |
 
 The four executables are built with `deno compile`, cross-compiled from a
 single Linux machine — `deno` and `pnpm` are the only build prerequisites,
 and the CLI sources need no adaptation to stay compilable. `todou.cjs` is an
 esbuild bundle for size-sensitive users who already have Node: copy that one
 file anywhere and run it, either as `node todou.cjs …` or directly
-(`./todou.cjs`, it carries a shebang and the executable bit). The `.cjs`
+(`./todou.cjs`, it carries a shebang and the executable bit). Node 20.12 is
+a hard floor (`util.styleText`), and older versions fail deceptively: piped
+and `--json` output work fine, then interactive TTY use crashes. The `.cjs`
 extension is deliberate — a `.js` bundle would be read as ESM and crash
 inside any project whose `package.json` sets `"type": "module"`.
 
