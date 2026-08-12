@@ -106,7 +106,10 @@ describe("S3Storage against fake S3", () => {
 
   it("enforces the signed content-length on presigned PUTs", async () => {
     const { url } = await storage.presignPut("aa/bb/sized", 9);
-    const wrong = await fetch(url, { method: "PUT", body: "far too many bytes" });
+    const wrong = await fetch(url, {
+      method: "PUT",
+      body: "far too many bytes",
+    });
     expect(wrong.status).toBe(403);
     expect(fake.objects.has("aa/bb/sized")).toBe(false);
 

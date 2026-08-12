@@ -80,7 +80,10 @@ describe("storage migrate primitives", () => {
       expect(res.status).toBe(201);
     }
     const avatar = new FormData();
-    avatar.set("file", new File(["png-ish bytes"], "a.png", { type: "image/png" }));
+    avatar.set(
+      "file",
+      new File(["png-ish bytes"], "a.png", { type: "image/png" }),
+    );
     const res = await t.app.request("/api/me/avatar", {
       method: "POST",
       headers: { cookie },

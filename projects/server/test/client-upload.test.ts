@@ -16,7 +16,7 @@ function wireClient(t: TestApp, cookie: string, fake?: FakeS3): Wired {
   const apiCalls: string[] = [];
   const client = new TodouClient({
     baseUrl: "http://todou.test",
-    fetch: (input, init) => {
+    fetch: async (input, init) => {
       const url = typeof input === "string" ? input : (input as Request).url;
       if (fake && url.startsWith(fake.url)) return fetch(input as never, init);
       apiCalls.push(new URL(url).pathname);
@@ -155,13 +155,13 @@ describe("TodouClient.uploadAttachment (fs backend)", () => {
     const apiCalls: string[] = [];
     const client = new TodouClient({
       baseUrl: "http://todou.test",
-      fetch: (input, init) => {
+      fetch: async (input, init) => {
         const url = typeof input === "string" ? input : (input as Request).url;
         const path = new URL(url).pathname;
         apiCalls.push(path);
         // An older server has no direct-uploads route: plain-text 404.
         if (path.endsWith("/direct-uploads")) {
-          return Promise.resolve(new Response("404 Not Found", { status: 404 }));
+          return new Response("404 Not Found", { status: 404 });
         }
         return t.app.request(url.replace("http://todou.test", ""), {
           ...init,

@@ -111,7 +111,11 @@ const ConfigSchema = z.object({
             .int()
             .positive()
             .default(3600),
-          request_timeout_ms: z.coerce.number().int().positive().default(30_000),
+          request_timeout_ms: z.coerce
+            .number()
+            .int()
+            .positive()
+            .default(30_000),
           retries: z.coerce.number().int().min(0).default(3),
         })
         .prefault({}),

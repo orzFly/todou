@@ -323,9 +323,7 @@ describe("storage.s3 config", () => {
   it("keeps an explicit public_endpoint", () => {
     const toml = [...S3_BASE, 'public_endpoint = "https://files.example.com"'];
     const config = loadConfig({ tomlSource: toml.join("\n"), env: {} });
-    expect(config.storage.s3.public_endpoint).toBe(
-      "https://files.example.com",
-    );
+    expect(config.storage.s3.public_endpoint).toBe("https://files.example.com");
   });
 
   it("normalizes a key_prefix to end with a slash", () => {

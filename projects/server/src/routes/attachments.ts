@@ -267,7 +267,11 @@ export function attachmentRoutes() {
     return streamAttachment(c, row, "attachment");
   };
 
-  const viewAttachment = async (c: Context<AppEnv>, slug: string, id: number) => {
+  const viewAttachment = async (
+    c: Context<AppEnv>,
+    slug: string,
+    id: number,
+  ) => {
     const ctx = c.get("appCtx");
     const { row } = await openAttachment(ctx, c.get("user"), slug, id);
     return streamAttachment(c, row, "inline");

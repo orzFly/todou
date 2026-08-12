@@ -105,7 +105,11 @@ export async function gcPendingUploads(
   storage: StorageBackend,
   opts: { dryRun: boolean; minAgeHours: number; log: (line: string) => void },
 ): Promise<GcReport> {
-  const report: GcReport = { deletedObjects: 0, droppedRows: 0, wouldDelete: 0 };
+  const report: GcReport = {
+    deletedObjects: 0,
+    droppedRows: 0,
+    wouldDelete: 0,
+  };
   const cutoff = new Date(Date.now() - opts.minAgeHours * 3600 * 1000);
 
   const projectRows = await router

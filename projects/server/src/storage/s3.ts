@@ -81,7 +81,11 @@ export class S3Storage implements StorageBackend {
   async #call(
     op: string,
     key: string,
-    init: { method: string; body?: Uint8Array; headers?: Record<string, string> },
+    init: {
+      method: string;
+      body?: Uint8Array;
+      headers?: Record<string, string>;
+    },
   ): Promise<Response> {
     const url = this.#objectUrl(key, this.#settings.endpoint);
     let lastFailure = "";
@@ -114,7 +118,10 @@ export class S3Storage implements StorageBackend {
       await new Promise((r) => setTimeout(r, delay + Math.random() * 100));
     }
     console.error(`s3 ${op} failed for ${key}: ${lastFailure}`);
-    throw new UpstreamError(`storage ${op} failed`, { op, upstream: lastFailure });
+    throw new UpstreamError(`storage ${op} failed`, {
+      op,
+      upstream: lastFailure,
+    });
   }
 
   async put(key: string, data: Uint8Array): Promise<void> {
@@ -136,7 +143,9 @@ export class S3Storage implements StorageBackend {
     const res = await this.#call("get", key, { method: "GET" });
     if (!res.body) throw new UpstreamError("storage get returned no body");
     return {
-      stream: Readable.fromWeb(res.body as import("node:stream/web").ReadableStream),
+      stream: Readable.fromWeb(
+        res.body as import("node:stream/web").ReadableStream,
+      ),
       size: Number(res.headers.get("content-length") ?? 0),
     };
   }

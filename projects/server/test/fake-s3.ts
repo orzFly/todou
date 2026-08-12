@@ -71,7 +71,9 @@ export async function startFakeS3(bucket = "test-bucket"): Promise<FakeS3> {
             const actual = createHash("sha256").update(body).digest("base64");
             if (actual !== declared) {
               res.writeHead(400, { "content-type": "application/xml" });
-              res.end("<Error><Code>XAmzContentChecksumMismatch</Code></Error>");
+              res.end(
+                "<Error><Code>XAmzContentChecksumMismatch</Code></Error>",
+              );
               return;
             }
           }
@@ -148,7 +150,8 @@ function verifySigV4(
 ): { status: number; code: string } | null {
   const query = url.searchParams;
   const isQueryAuth = query.has("X-Amz-Signature");
-  const authHeader = typeof headers.authorization === "string" ? headers.authorization : "";
+  const authHeader =
+    typeof headers.authorization === "string" ? headers.authorization : "";
   if (!isQueryAuth && !authHeader.startsWith("AWS4-HMAC-SHA256 ")) {
     return { status: 403, code: "AccessDenied" };
   }
@@ -162,7 +165,10 @@ function verifySigV4(
   if (isQueryAuth) {
     signature = query.get("X-Amz-Signature") ?? "";
     signedHeaderNames = (query.get("X-Amz-SignedHeaders") ?? "").split(";");
-    credentialScope = (query.get("X-Amz-Credential") ?? "").split("/").slice(1).join("/");
+    credentialScope = (query.get("X-Amz-Credential") ?? "")
+      .split("/")
+      .slice(1)
+      .join("/");
     amzDate = query.get("X-Amz-Date") ?? "";
     payloadHash = "UNSIGNED-PAYLOAD";
     const expires = Number(query.get("X-Amz-Expires") ?? 0);
@@ -229,9 +235,7 @@ function verifySigV4(
   for (const part of [date, region, service, "aws4_request"]) {
     key = createHmac("sha256", key).update(part).digest();
   }
-  const expected = createHmac("sha256", key)
-    .update(stringToSign)
-    .digest("hex");
+  const expected = createHmac("sha256", key).update(stringToSign).digest("hex");
 
   return expected === signature
     ? null

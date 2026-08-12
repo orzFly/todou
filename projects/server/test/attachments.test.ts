@@ -251,9 +251,7 @@ describe("direct uploads (fs backend)", () => {
       { method: "POST", headers: { cookie } },
     );
     expect(complete.status).toBe(409);
-    expect((await json(complete)).error.code).toBe(
-      "direct_upload_unavailable",
-    );
+    expect((await json(complete)).error.code).toBe("direct_upload_unavailable");
   });
 });
 
@@ -392,10 +390,9 @@ describe("attachments (s3 backend)", () => {
     expect(attachment.url).toContain("/download/direct.txt");
 
     const list = await json(
-      await t.app.request(
-        `/api/projects/${slug}/attachments?issue_number=1`,
-        { headers: { cookie } },
-      ),
+      await t.app.request(`/api/projects/${slug}/attachments?issue_number=1`, {
+        headers: { cookie },
+      }),
     );
     expect(
       list.some((a: { filename: string }) => a.filename === "direct.txt"),
