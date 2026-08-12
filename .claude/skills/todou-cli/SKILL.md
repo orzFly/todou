@@ -70,7 +70,8 @@ Use a 12-hour timeout (43200) and a 60-second debounce as the standard values.
 - **Reference with intent**: every `#N` you write fires a "referenced by" event on that card. Use refs
   when the link carries meaning (a follow-up, a dependency, a dupe); never enumerate incidental cards —
   "rebased onto master containing #52/#53/#26/#49/#57" sprays five noise events and tells nobody
-  anything. Write "rebased onto latest master" instead.
+  anything. Write "rebased onto latest master" instead. And **never self-reference**: inside issue 36,
+  `#36` is pure noise — write "this card" / "本卡".
 
 ## Status flow (who moves what)
 
