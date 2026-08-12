@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>#40 agent badge mockups — session-hash tri-color</title>
+<style>
+  /* Geist Variable to match the app; falls back to system-ui when offline. */
+  @font-face {
+    font-family: "Geist Variable";
+    src: url("https://cdn.jsdelivr.net/fontsource/fonts/geist:vf@latest/latin-wght-normal.woff2") format("woff2-variations");
+    font-weight: 100 900;
+    font-display: swap;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    font-family: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+    background: oklch(0.97 0 0);
+  }
+
+  /* Minimal token set mirroring projects/web/src/styles.css */
+  .panel {
+    --background: oklch(1 0 0);
+    --card: oklch(1 0 0);
+    --foreground: oklch(0.145 0 0);
+    --muted-foreground: oklch(0.556 0 0);
+    --border: oklch(0.922 0 0);
+    background: var(--background);
+    color: var(--foreground);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 24px;
+    width: fit-content;
+  }
+  .panel.dark {
+    --background: oklch(0.145 0 0);
+    --card: oklch(0.205 0 0);
+    --foreground: oklch(0.985 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --border: oklch(1 0 0 / 10%);
+  }
+
+  .panel h2 { margin: 0 0 4px; font-size: 15px; }
+  .panel .subtitle { margin: 0 0 16px; font-size: 11px; color: var(--muted-foreground); }
+
+  table { border-collapse: collapse; }
+  th, td { padding: 7px 10px; text-align: left; vertical-align: middle; }
+  thead th {
+    font-size: 10px; font-weight: 500; color: var(--muted-foreground);
+    border-bottom: 1px solid var(--border);
+  }
+  thead .sid { font-family: ui-monospace, monospace; font-size: 9.5px; display: block; }
+  thead .note { font-weight: 400; opacity: 0.75; }
+  tbody th {
+    font-size: 11px; font-weight: 500; white-space: nowrap; padding-right: 18px;
+    text-align: left;
+  }
+  tbody th small { display: block; font-weight: 400; font-size: 9.5px; color: var(--muted-foreground); }
+  tbody tr.group-start th, tbody tr.group-start td { border-top: 1px solid var(--border); }
+
+  /* Badge geometry copied from ui/badge.tsx + agent-badge.tsx:
+     h-5, rounded-4xl (0.625rem*2.6), px-1.5, text-[10px], font-normal */
+  .badge {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 1.625rem;
+    font-size: 10px;
+    font-weight: 400;
+    white-space: nowrap;
+    overflow: hidden;
+    isolation: isolate;
+  }
+  .badge > span { position: relative; z-index: 1; }
+  .badge .blobs {
+    position: absolute;
+    inset: -35%;              /* oversize so the blur has no hard edges */
+    filter: blur(5px);
+    z-index: 0;
+  }
+
+  .cell { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+  .contrast { font-size: 9px; font-family: ui-monospace, monospace; color: var(--muted-foreground); }
+  .contrast .fail { color: oklch(0.577 0.245 27.325); font-weight: 700; }
+
+  /* In-context preview strip */
+  .context-strip {
+    margin-top: 14px; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--card);
+    font-size: 12px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .context-strip .row { display: flex; align-items: center; gap: 8px; }
+  .context-strip .meta { color: var(--muted-foreground); font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+/* ---------- deterministic hash: FNV-1a 32-bit over the whole session id ----------
+   Avalanche matters here: ids differing in one char must land on unrelated colors. */
+function fnv1a(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+/* Second independent 32-bit stream (FNV over reversed string) so strategies that
+   need >32 bits of hue entropy don't reuse correlated bits. */
+function fnv1aRev(str) {
+  return fnv1a(str.split("").reverse().join("") + "#2");
+}
+
+/* ---------- color strategies ----------
+   All strategies emit exactly 3 oklch() strings. L and C are clamped per theme so
+   text contrast is hue-independent (OKLCH keeps perceived lightness constant). */
+const THEME = {
+  light: { L: 0.92, C: 0.088, dL: 0.02, text: "oklch(0.28 0.015 0)", textFor: h => `oklch(0.28 0.015 ${h})` },
+  dark:  { L: 0.36, C: 0.105, dL: 0.03, text: "oklch(0.96 0.01 0)",  textFor: h => `oklch(0.96 0.01 ${h})` },
+};
+
+function stops(hues, t) {
+  return hues.map((h, i) => {
+    const hh = ((h % 360) + 360) % 360;
+    const L = t.L + (i - 1) * t.dL;      // slight per-stop lightness ramp for depth
+    const C = t.C * (i === 1 ? 1.0 : 0.85);
+    return `oklch(${L.toFixed(3)} ${C.toFixed(3)} ${hh.toFixed(1)})`;
+  });
+}
+
+const STRATEGIES = [
+  {
+    key: "triad",
+    label: "三等分色相（triad）",
+    detail: "基础色相 = hash % 360，三色相隔 120°",
+    colors(id, t) {
+      const base = fnv1a(id) % 360;
+      return { hues: [base, base + 120, base + 240], stops: stops([base, base + 120, base + 240], t), baseHue: base };
+    },
+  },
+  {
+    key: "analogous",
+    label: "邻近色相（analogous ±48°）",
+    detail: "基础色相 = hash % 360，三色 = 基色 ±48°，整体呈单一色调",
+    colors(id, t) {
+      const base = fnv1a(id) % 360;
+      return { hues: [base - 48, base, base + 48], stops: stops([base - 48, base, base + 48], t), baseHue: base };
+    },
+  },
+  {
+    key: "free",
+    label: "三段独立色相（free trio）",
+    detail: "hash 的三段 10bit 各自映射到 0–360°，三色互不相关",
+    colors(id, t) {
+      const h1 = fnv1a(id), h2 = fnv1aRev(id);
+      const hues = [
+        (h1 & 1023) * 360 / 1024,
+        ((h1 >>> 10) & 1023) * 360 / 1024,
+        ((h2 >>> 4) & 1023) * 360 / 1024,
+      ];
+      return { hues, stops: stops(hues, t), baseHue: hues[0] };
+    },
+  },
+];
+
+/* ---------- background styles ---------- */
+const STYLES = [
+  {
+    key: "gradient",
+    label: "线性渐变",
+    apply(el, c, id) {
+      const angle = 60 + (fnv1a(id) >>> 16) % 240;   // hash-fixed angle: extra per-session identity
+      el.style.background = `linear-gradient(${angle}deg, ${c.stops[0]}, ${c.stops[1]}, ${c.stops[2]})`;
+    },
+  },
+  {
+    key: "blobs",
+    label: "模糊斑块",
+    apply(el, c, id) {
+      const h = fnv1aRev(id);
+      const px = 20 + (h & 63);            // hash-fixed blob anchors
+      const py = 20 + ((h >>> 6) & 63);
+      const blobs = document.createElement("i");
+      blobs.className = "blobs";
+      blobs.style.background = [
+        `radial-gradient(90% 130% at ${px}% ${py > 50 ? 15 : 85}%, ${c.stops[1]} 0%, transparent 70%)`,
+        `radial-gradient(90% 130% at ${100 - px}% ${py}%, ${c.stops[2]} 0%, transparent 70%)`,
+        c.stops[0],
+      ].join(", ");
+      el.prepend(blobs);
+    },
+  },
+];
+
+/* ---------- session samples (incl. near-identical prefixes + no-model fallback) ---------- */
+const SESSIONS = [
+  { id: "0198a3c2-7f41-4b2e-9d3a-1c5e8b2a9f10", model: "claude-fable-5",  note: "样例 A" },
+  { id: "0198a3c2-7f41-4b2e-9d3a-1c5e8b2a9f11", model: "claude-fable-5",  note: "A′ 仅末位不同" },
+  { id: "0198a3c2-7f41-4b2e-8d3a-1c5e8b2a9f10", model: "claude-opus-5",   note: "A″ 仅中段一位不同" },
+  { id: "b7e9d4f6-2a81-47c3-9e5f-8d1a6c4b2e97", model: "claude-sonnet-5", note: "样例 B" },
+  { id: "3f2a8c1d-9b64-4e07-a2d8-5c7e1f9a3b46", model: "claude-fable-5",  note: "样例 C" },
+  { id: "7c4e1a9b-5d28-4f6a-b3e9-2a8d6c1f4e73", model: null,              note: "无 model → 显示 harness" },
+];
+const HARNESS = "claude-code";
+
+/* ---------- WCAG contrast, measured through canvas so oklch resolves to real sRGB ---------- */
+const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+function toRGB(css) {
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, 1, 1);
+  ctx.fillStyle = css; ctx.fillRect(0, 0, 1, 1);
+  return ctx.getImageData(0, 0, 1, 1).data;
+}
+function luminance(rgb) {
+  const f = v => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+}
+function ratio(a, b) {
+  const [hi, lo] = [Math.max(a, b), Math.min(a, b)];
+  return (hi + 0.05) / (lo + 0.05);
+}
+/* Text sits on a mix of the three stops; the worst single stop bounds the real
+   minimum closely, so report min(text vs each stop). */
+function minContrast(textCss, stopCsss) {
+  const tl = luminance(toRGB(textCss));
+  return Math.min(...stopCsss.map(s => ratio(tl, luminance(toRGB(s)))));
+}
+
+/* ---------- render ---------- */
+function shortId(id) { return id.slice(0, 8) + "…" + id.slice(-4); }
+
+function makeBadge(session, strategy, style, t) {
+  const c = strategy.colors(session.id, t);
+  const badge = document.createElement("span");
+  badge.className = "badge";
+  const textCss = t.textFor(c.baseHue);
+  badge.style.color = textCss;
+  const label = document.createElement("span");
+  label.textContent = session.model ?? HARNESS;
+  badge.appendChild(label);
+  style.apply(badge, c, session.id);
+  return { badge, contrast: minContrast(textCss, c.stops) };
+}
+
+function renderPanel(themeKey) {
+  const t = THEME[themeKey];
+  const panel = document.createElement("section");
+  panel.className = "panel" + (themeKey === "dark" ? " dark" : "");
+  panel.id = "panel-" + themeKey;
+  panel.innerHTML = `
+    <h2>${themeKey === "dark" ? "深色主题（.dark tokens）" : "浅色主题"} — 背景 ${themeKey === "dark" ? "oklch(0.145 0 0)" : "oklch(1 0 0)"}</h2>
+    <p class="subtitle">色停 L=${t.L} C=${t.C}（OKLCH 定亮度 → 对比度与色相无关）· 数字 = 文字 vs 三色停的最差 WCAG 对比度，✓ ≥ 4.5:1 (AA)</p>`;
+
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  thead.innerHTML = "<tr><th></th>" + SESSIONS.map(s =>
+    `<th><span class="sid">${shortId(s.id)}</span><span class="note">${s.note}</span></th>`).join("") + "</tr>";
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  let panelMin = Infinity;
+  for (const style of STYLES) {
+    STRATEGIES.forEach((strategy, si) => {
+      const tr = document.createElement("tr");
+      if (si === 0) tr.className = "group-start";
+      const th = document.createElement("th");
+      th.innerHTML = `${style.label} · ${strategy.label}<small>${strategy.detail}</small>`;
+      tr.appendChild(th);
+      for (const session of SESSIONS) {
+        const td = document.createElement("td");
+        const cell = document.createElement("div");
+        cell.className = "cell";
+        const { badge, contrast } = makeBadge(session, strategy, style, t);
+        panelMin = Math.min(panelMin, contrast);
+        const note = document.createElement("span");
+        note.className = "contrast";
+        note.innerHTML = contrast >= 4.5
+          ? `${contrast.toFixed(1)}:1 ✓`
+          : `<span class="fail">${contrast.toFixed(1)}:1 ✗</span>`;
+        cell.append(badge, note);
+        td.appendChild(cell);
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    });
+  }
+  table.appendChild(tbody);
+  panel.appendChild(table);
+
+  /* 3× magnified strip: gradient-vs-blob texture is invisible at 20px, visible here */
+  const zoom = document.createElement("div");
+  zoom.className = "context-strip";
+  for (const style of STYLES) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    meta.textContent = `3× 放大 · ${style.label}（样例 A / B / C 质感对比）`;
+    row.appendChild(meta);
+    for (const session of [SESSIONS[0], SESSIONS[3], SESSIONS[4]]) {
+      const wrap = document.createElement("span");
+      wrap.style.cssText = "display:inline-block; width:270px; height:60px;";
+      const { badge } = makeBadge(session, STRATEGIES[1], style, t);
+      badge.style.transform = "scale(3)";
+      badge.style.transformOrigin = "left center";
+      badge.style.marginTop = "20px";
+      wrap.appendChild(badge);
+      row.appendChild(wrap);
+    }
+    zoom.appendChild(row);
+  }
+  panel.appendChild(zoom);
+
+  /* in-context preview: badge inline in a fake timeline row */
+  const strip = document.createElement("div");
+  strip.className = "context-strip";
+  for (const style of STYLES) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    meta.textContent = `claude-agent commented · 3m ago —（${style.label}·邻近色相）`;
+    row.appendChild(meta);
+    for (const session of SESSIONS.slice(0, 3)) {
+      row.appendChild(makeBadge(session, STRATEGIES[1], style, t).badge);
+    }
+    strip.appendChild(row);
+  }
+  panel.appendChild(strip);
+
+  const sum = panel.querySelector(".subtitle");
+  sum.textContent += ` · 本面板最低对比度 ${panelMin.toFixed(2)}:1`;
+  return panel;
+}
+
+const root = document.getElementById("root");
+root.appendChild(renderPanel("light"));
+root.appendChild(renderPanel("dark"));
+</script>
+</body>
+</html>
