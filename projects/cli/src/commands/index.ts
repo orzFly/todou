@@ -9,6 +9,7 @@ import {
   IssueEditCommand,
   IssueListCommand,
   IssueViewCommand,
+  IssueWatchCommand,
 } from "./issue.ts";
 import {
   LabelCreateCommand,
@@ -35,6 +36,7 @@ export const commands: Array<CommandClass<CliContext>> = [
   IssueListCommand,
   IssueCreateCommand,
   IssueViewCommand,
+  IssueWatchCommand,
   IssueEditCommand,
   IssueCloseCommand,
   CommentAddCommand,

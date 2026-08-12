@@ -187,9 +187,12 @@ describe("issue view", () => {
     const parsed = JSON.parse(result.stdout) as {
       issue: { number: number };
       timeline: unknown[];
+      next_cursor: string | null;
     };
     expect(parsed.issue.number).toBe(3);
     expect(parsed.timeline).toHaveLength(2);
+    // The tail cursor rides along so a follow-up watch can --since it.
+    expect(parsed.next_cursor).toBe("c1");
   });
 
   it("renders body, comments, and events for humans", async () => {
@@ -303,6 +306,160 @@ describe("issue view", () => {
     );
     expect(elsewhere.exitCode).toBe(1);
     expect(elsewhere.stderr).toContain("active server");
+  });
+});
+
+describe("issue watch", () => {
+  const newComment = {
+    type: "comment",
+    id: 9,
+    author: me,
+    body: "fresh news",
+    created_at: "2026-08-11T12:00:00Z",
+    edited_at: null,
+  };
+  const pageWith = (items: unknown[], next: string | null) => ({
+    items,
+    prev_cursor: null,
+    next_cursor: next,
+  });
+
+  it("--poll returns new entries and the advanced cursor (exit 0)", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues/3/timeline",
+        (_init: RequestInit, url: URL) =>
+          url.searchParams.get("after") === "c0"
+            ? pageWith([newComment], "c1")
+            : pageWith([], null),
+      ],
+    ]);
+    const result = await runCli(
+      ["issue", "watch", "3", "--poll", "--since", "c0", "--json"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      items: Array<{ body: string }>;
+      next_cursor: string;
+    };
+    expect(parsed.items.map((i) => i.body)).toEqual(["fresh news"]);
+    expect(parsed.next_cursor).toBe("c1");
+  });
+
+  it("--poll with nothing new echoes the cursor and exits 3", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3/timeline", pageWith([], null)],
+    ]);
+    const result = await runCli(
+      ["issue", "watch", "3", "--poll", "--since", "c0", "--json"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(3);
+    const parsed = JSON.parse(result.stdout) as { next_cursor: string };
+    expect(parsed.next_cursor).toBe("c0");
+  });
+
+  it("without --since it baselines at now, then blocks until news", async () => {
+    let forwardPolls = 0;
+    const { fetchImpl, calls } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues/3/timeline",
+        (_init: RequestInit, url: URL) => {
+          if (url.searchParams.get("last") === "1") {
+            return pageWith([{ ...newComment, id: 1, body: "old" }], "tail");
+          }
+          if (url.searchParams.get("after") === "tail") {
+            forwardPolls += 1;
+            return forwardPolls >= 3
+              ? pageWith([newComment], "c2")
+              : pageWith([], null);
+          }
+          return pageWith([], null);
+        },
+      ],
+    ]);
+    const result = await runCli(
+      ["issue", "watch", "3", "--interval", "0.05", "--timeout", "5", "--json"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      items: Array<{ body: string }>;
+      next_cursor: string;
+    };
+    // History before the baseline is never replayed.
+    expect(parsed.items.map((i) => i.body)).toEqual(["fresh news"]);
+    expect(parsed.next_cursor).toBe("c2");
+    expect(calls.some((c) => c.url.includes("last=1"))).toBe(true);
+  });
+
+  it("times out with exit 3 when nothing happens", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3/timeline", pageWith([], null)],
+    ]);
+    const result = await runCli(
+      [
+        "issue",
+        "watch",
+        "3",
+        "--since",
+        "c0",
+        "--timeout",
+        "0.2",
+        "--interval",
+        "0.05",
+      ],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(3);
+    expect(result.stdout).toContain("no new activity");
+    expect(result.stdout).toContain("cursor: c0");
+  });
+
+  it("passes --type through and resolves --exclude-actor me", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      ["GET", "/api/me", me],
+      [
+        "GET",
+        "/api/projects/todou/issues/3/timeline",
+        (_init: RequestInit, url: URL) =>
+          url.searchParams.get("after") === "c0"
+            ? pageWith([newComment], "c1")
+            : pageWith([], null),
+      ],
+    ]);
+    const result = await runCli(
+      [
+        "issue",
+        "watch",
+        "3",
+        "--poll",
+        "--since",
+        "c0",
+        "--type",
+        "comment,status_changed",
+        "--exclude-actor",
+        "me",
+      ],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    const timelineCall = calls.find((c) => c.url.includes("/timeline"));
+    expect(timelineCall?.url).toContain("types=comment%2Cstatus_changed");
+    expect(timelineCall?.url).toContain("exclude_actor=2");
+  });
+
+  it("rejects unknown --type values before calling the server", async () => {
+    const { fetchImpl } = fakeFetch([]);
+    const result = await runCli(
+      ["issue", "watch", "3", "--poll", "--type", "bogus"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('unknown --type "bogus"');
   });
 });
 

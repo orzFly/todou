@@ -9,6 +9,17 @@ export function parsePositiveInt(value: string, what: string): number {
   return n;
 }
 
+/** Positive seconds; fractions allowed so tests and tight loops can go sub-second. */
+export function parseSeconds(value: string, what: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new CliError(
+      `${what} must be a positive number of seconds, got "${value}"`,
+    );
+  }
+  return n;
+}
+
 export function parseChoice<const T extends readonly string[]>(
   value: string,
   choices: T,

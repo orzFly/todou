@@ -5,12 +5,13 @@ import type {
   TimelineItem,
   TodouClient,
 } from "@todou/shared";
+import { TimelineFilterType } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
 import { makePainter, type Painter, relativeTime, table } from "../format.ts";
-import { parseChoice, parsePositiveInt } from "../parse.ts";
+import { parseChoice, parsePositiveInt, parseSeconds } from "../parse.ts";
 import {
   resolveAssignees,
   resolveClosedStatus,
@@ -112,10 +113,160 @@ export class IssueViewCommand extends ProjectCommand {
   protected async run(client: TodouClient): Promise<void> {
     const { project, number } = this.resolveIssueRef(this.number);
     const issue = await client.getIssue(project, number);
-    const timeline = await fullTimeline(client, project, number);
+    const { items: timeline, cursor } = await drainTimeline(
+      client,
+      project,
+      number,
+    );
     const paint = makePainter(this.context.stdout, this.context.env);
-    this.output({ issue, timeline }, () => renderIssue(issue, timeline, paint));
+    this.output({ issue, timeline, next_cursor: cursor ?? null }, () =>
+      renderIssue(issue, timeline, cursor, paint),
+    );
   }
+}
+
+export class IssueWatchCommand extends ProjectCommand {
+  static paths = [["issue", "watch"]];
+  static usage = Command.Usage({
+    description: "Wait for new timeline activity on an issue",
+    details: `
+      Prints timeline entries that appear after \`--since <cursor>\` (cursors
+      come from \`issue view --json\`, this command's own output, or a prior
+      watch). Without \`--since\`, watching starts at "now" and history is
+      skipped.
+
+      Blocks until something new arrives or \`--timeout\` elapses; \`--poll\`
+      checks once and returns immediately. Exit codes are loop-friendly:
+      0 = new entries were printed, 3 = nothing new (timeout or empty poll),
+      1 = error. \`--json\` emits \`{ items, next_cursor }\`; feed next_cursor
+      back into \`--since\` to never miss or repeat an entry.
+    `,
+    examples: [
+      [
+        "Wait up to 5 minutes for anything new",
+        "todou issue watch 33 --timeout 300",
+      ],
+      [
+        "One-shot poll for new comments since a cursor",
+        'todou issue watch 33 --poll --since "$CURSOR" --type comment',
+      ],
+      ["Bootstrap a cursor at now", "todou issue watch 33 --poll --json"],
+    ],
+  });
+
+  number = Option.String({ required: true });
+  since = Option.String("--since", {
+    description: "Only entries after this cursor (default: now)",
+  });
+  poll = Option.Boolean("--poll", false, {
+    description: "Check once and exit instead of blocking",
+  });
+  timeout = Option.String("--timeout", {
+    description: "Give up after this many seconds (default 60)",
+  });
+  interval = Option.String("--interval", {
+    description: "Seconds between server polls (default 2)",
+  });
+  types = Option.String("--type", {
+    description: `Comma-separated filter: ${TimelineFilterType.options.join(", ")}`,
+  });
+  excludeActor = Option.String("--exclude-actor", {
+    description: 'Ignore entries by this login ("me" = the current token)',
+  });
+
+  protected async run(client: TodouClient): Promise<number> {
+    const { project, number } = this.resolveIssueRef(this.number);
+    const types =
+      this.types === undefined ? undefined : normalizeTypes(this.types);
+    const excludeActor =
+      this.excludeActor === undefined
+        ? undefined
+        : (await resolveAssignees(client, project, [this.excludeActor]))[0];
+    const timeoutSec =
+      this.timeout === undefined ? 60 : parseSeconds(this.timeout, "--timeout");
+    const intervalSec =
+      this.interval === undefined
+        ? 2
+        : parseSeconds(this.interval, "--interval");
+
+    // Baseline before the loop: the newest entry regardless of filter, so
+    // "from now" never replays history. Also 404s early on a bad number.
+    let cursor =
+      this.since ?? (await tailCursor(client, project, number)) ?? undefined;
+    const deadline = Date.now() + timeoutSec * 1000;
+    const paint = makePainter(this.context.stdout, this.context.env);
+
+    for (;;) {
+      const page = await drainTimeline(client, project, number, {
+        after: cursor,
+        types,
+        excludeActor,
+      });
+      cursor = page.cursor ?? cursor;
+
+      if (page.items.length > 0) {
+        this.output({ items: page.items, next_cursor: cursor ?? null }, () =>
+          [
+            ...page.items.map((item) => renderTimelineItem(item, paint)),
+            paint("dim", `cursor: ${cursor}`),
+          ].join("\n"),
+        );
+        return 0;
+      }
+
+      const remaining = deadline - Date.now();
+      if (this.poll || remaining <= 0) {
+        this.output({ items: [], next_cursor: cursor ?? null }, () =>
+          [
+            this.poll
+              ? "no new activity"
+              : `no new activity within ${timeoutSec}s`,
+            ...(cursor === undefined
+              ? []
+              : [paint("dim", `cursor: ${cursor}`)]),
+          ].join("\n"),
+        );
+        return 3;
+      }
+      await sleep(Math.min(intervalSec * 1000, remaining));
+    }
+  }
+}
+
+function normalizeTypes(raw: string): string {
+  const parts = raw
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p !== "");
+  if (parts.length === 0) {
+    throw new CliError("--type must name at least one type");
+  }
+  for (const part of parts) {
+    if (!TimelineFilterType.safeParse(part).success) {
+      throw new CliError(
+        `unknown --type "${part}"`,
+        `valid types: ${TimelineFilterType.options.join(", ")}`,
+      );
+    }
+  }
+  return parts.join(",");
+}
+
+/** Cursor of the newest timeline entry (undefined on an empty timeline). */
+async function tailCursor(
+  client: TodouClient,
+  project: string,
+  number: number,
+): Promise<string | undefined> {
+  const page = await client.getTimeline(project, number, {
+    last: true,
+    limit: 1,
+  });
+  return page.next_cursor ?? undefined;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export class IssueCreateCommand extends ProjectCommand {
@@ -262,28 +413,38 @@ function isTTY(stream: unknown): boolean {
   return Boolean((stream as { isTTY?: boolean })?.isTTY);
 }
 
-/** The whole stream, following next_cursor; --json gets items only. */
-export async function fullTimeline(
+/**
+ * Follows next_cursor forward until the stream is drained. `cursor` lands on
+ * the newest entry seen (or stays at `opts.after` when nothing was new), so
+ * callers can hand it straight back to `--since`.
+ */
+export async function drainTimeline(
   client: TodouClient,
   project: string,
   number: number,
-): Promise<TimelineItem[]> {
+  opts: { after?: string; types?: string; excludeActor?: number } = {},
+): Promise<{ items: TimelineItem[]; cursor: string | undefined }> {
   const items: TimelineItem[] = [];
-  let after: string | undefined;
+  let cursor = opts.after;
+  let after = opts.after;
   do {
     const page = await client.getTimeline(project, number, {
       after,
+      types: opts.types,
+      exclude_actor: opts.excludeActor,
       limit: 100,
     });
     items.push(...page.items);
     after = page.next_cursor ?? undefined;
+    if (after !== undefined) cursor = after;
   } while (after);
-  return items;
+  return { items, cursor };
 }
 
 function renderIssue(
   issue: Issue,
   timeline: TimelineItem[],
+  cursor: string | undefined,
   paint: Painter,
 ): string {
   const lines: string[] = [];
@@ -315,6 +476,12 @@ function renderIssue(
     for (const item of timeline) {
       lines.push(renderTimelineItem(item, paint));
     }
+  }
+  if (cursor !== undefined) {
+    lines.push(
+      "",
+      paint("dim", `cursor: ${cursor} (issue watch --since <cursor>)`),
+    );
   }
   return lines.join("\n");
 }

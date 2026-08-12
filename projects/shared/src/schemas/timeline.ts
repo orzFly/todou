@@ -53,6 +53,13 @@ export const TimelinePage = z.object({
 });
 export type TimelinePage = z.infer<typeof TimelinePage>;
 
+/** What a timeline `types` filter may select: comments or any event type. */
+export const TimelineFilterType = z.enum([
+  "comment",
+  ...IssueEventType.options,
+]);
+export type TimelineFilterType = z.infer<typeof TimelineFilterType>;
+
 export const TimelineQuery = z.object({
   before: Cursor.optional(),
   after: Cursor.optional(),
@@ -61,6 +68,12 @@ export const TimelineQuery = z.object({
     z.boolean().default(false),
   ),
   limit: z.coerce.number().int().min(1).max(100).default(50),
+  // Comma-separated TimelineFilterType list; element validation happens
+  // server-side so the error can name the offending entry.
+  types: z.string().optional(),
+  // Drop entries authored by this user id — lets a watching agent ignore
+  // its own writes and (with #35) powers "unread by others" semantics.
+  exclude_actor: z.coerce.number().int().positive().optional(),
 });
 export type TimelineQuery = z.infer<typeof TimelineQuery>;
 

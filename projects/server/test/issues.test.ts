@@ -155,6 +155,89 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
     expect(new Set(numbers).size).toBe(numbers.length);
   });
 
+  it("polls the timeline forward with types and actor filters", async () => {
+    const issue = await createIssue({ title: "Watched potato" });
+    const me = await json(
+      await t.app.request("/api/me", { headers: { cookie } }),
+    );
+    const bob = await addUserWithToken(t.ctx, `watcher-${placement}`);
+    await t.app.request(`/api/projects/${slug}/members/${bob.user.id}`, {
+      method: "PUT",
+      headers: headers(),
+      body: JSON.stringify({ role: "writer" }),
+    });
+
+    // Baseline: cursor of the newest entry (the opened event).
+    const tail = await timelineOf(issue.number, "?last=1&limit=1");
+    expect(tail.next_cursor).toBeTruthy();
+
+    const comment = (who: Record<string, string>, body: string) =>
+      t.app.request(`/api/projects/${slug}/issues/${issue.number}/comments`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...who },
+        body: JSON.stringify({ body }),
+      });
+    await comment({ cookie }, "mine");
+    await comment(bob.headers, "from bob");
+    const statuses = await statusesOf();
+    const done = statuses.find((s: { name: string }) => s.name === "Done");
+    await t.app.request(`/api/projects/${slug}/issues/${issue.number}`, {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify({ status_id: done.id }),
+    });
+
+    // Everything after the baseline, in order.
+    const all = await timelineOf(issue.number, `?after=${tail.next_cursor}`);
+    expect(all.items.map((i: { type: string }) => i.type)).toEqual([
+      "comment",
+      "comment",
+      "event",
+    ]);
+
+    // types= keeps only the named kinds.
+    const onlyComments = await timelineOf(
+      issue.number,
+      `?after=${tail.next_cursor}&types=comment`,
+    );
+    expect(onlyComments.items.map((i: { body: string }) => i.body)).toEqual([
+      "mine",
+      "from bob",
+    ]);
+
+    // exclude_actor drops my own writes: bob's comment survives, and the
+    // returned cursor resumes cleanly after another foreign comment lands.
+    const foreign = await timelineOf(
+      issue.number,
+      `?after=${tail.next_cursor}&types=comment&exclude_actor=${me.id}`,
+    );
+    expect(foreign.items.map((i: { body: string }) => i.body)).toEqual([
+      "from bob",
+    ]);
+    await comment(bob.headers, "bob again");
+    const resumed = await timelineOf(
+      issue.number,
+      `?after=${foreign.next_cursor}&types=comment&exclude_actor=${me.id}`,
+    );
+    expect(resumed.items.map((i: { body: string }) => i.body)).toEqual([
+      "bob again",
+    ]);
+
+    // Nothing new → empty page, null cursor (caller keeps its own).
+    const drained = await timelineOf(
+      issue.number,
+      `?after=${resumed.next_cursor}`,
+    );
+    expect(drained.items).toEqual([]);
+    expect(drained.next_cursor).toBeNull();
+
+    const bad = await t.app.request(
+      `/api/projects/${slug}/issues/${issue.number}/timeline?types=bogus`,
+      { headers: { cookie } },
+    );
+    expect(bad.status).toBe(422);
+  });
+
   it("records status transitions as closed/reopened/status_changed", async () => {
     const statuses = await statusesOf();
     const done = statuses.find((s: { name: string }) => s.name === "Done");

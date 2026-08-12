@@ -228,7 +228,14 @@ export class TodouClient {
   getTimeline = (
     slug: string,
     number: number,
-    query?: { before?: string; after?: string; last?: boolean; limit?: number },
+    query?: {
+      before?: string;
+      after?: string;
+      last?: boolean;
+      limit?: number;
+      types?: string;
+      exclude_actor?: number;
+    },
   ) =>
     this.request<TimelinePage>(
       "GET",

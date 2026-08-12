@@ -31,7 +31,9 @@ export abstract class ApiCommand extends Command<CliContext> {
   protected config!: CliConfig;
   protected ctx!: ResolvedContext;
 
-  protected abstract run(client: TodouClient): Promise<void>;
+  /** May return a non-zero exit code for "no error, but nothing happened". */
+  // biome-ignore lint/suspicious/noConfusingVoidType: `undefined` would force every void-returning command to change its signature
+  protected abstract run(client: TodouClient): Promise<number | void>;
 
   /** Overridden by ProjectCommand; the base has no -p flag. */
   protected projectFlag(): string | undefined {
@@ -64,7 +66,7 @@ export abstract class ApiCommand extends Command<CliContext> {
         );
       }
       const agentContext = detectAgentContext(this.context.env);
-      await this.run(
+      const code = await this.run(
         new TodouClient({
           baseUrl: this.ctx.server,
           token: this.ctx.token,
@@ -74,7 +76,7 @@ export abstract class ApiCommand extends Command<CliContext> {
           fetch: this.context.fetchImpl,
         }),
       );
-      return 0;
+      return typeof code === "number" ? code : 0;
     } catch (error) {
       return this.report(error);
     }

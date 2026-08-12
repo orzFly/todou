@@ -1,11 +1,13 @@
 import type {
+  IssueEventType,
   TimelineItem,
   TimelinePage,
   TimelineQuery,
   UserRef,
 } from "@todou/shared";
+import { TimelineFilterType } from "@todou/shared";
 import type { SQL } from "drizzle-orm";
-import { and, asc, desc, eq, gt, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt, ne, or } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -40,6 +42,22 @@ function decodeCursor(raw: string): Cursor {
   } catch {
     throw new ValidationFailedError("malformed cursor");
   }
+}
+
+/** Comma-separated `types` filter → validated set (null = no filter). */
+function parseTypes(raw: string | undefined): Set<TimelineFilterType> | null {
+  if (raw === undefined || raw === "") return null;
+  const set = new Set<TimelineFilterType>();
+  for (const part of raw.split(",")) {
+    const parsed = TimelineFilterType.safeParse(part.trim());
+    if (!parsed.success) {
+      throw new ValidationFailedError(
+        `unknown timeline type "${part.trim()}" (expected one of: ${TimelineFilterType.options.join(", ")})`,
+      );
+    }
+    set.add(parsed.data);
+  }
+  return set;
 }
 
 type Raw =
@@ -118,8 +136,26 @@ export async function getTimeline(
   const cursor = cursorRaw === undefined ? null : decodeCursor(cursorRaw);
   const forward = !backward;
 
+  // The filter narrows each table's query; a filtered-out table is skipped
+  // entirely. Cursors still order the merged stream, so a poll that matches
+  // nothing simply returns an empty page and the caller keeps its cursor.
+  const typeFilter = parseTypes(query.types);
+  const wantComments = typeFilter === null || typeFilter.has("comment");
+  const eventTypes =
+    typeFilter === null
+      ? null
+      : ([...typeFilter].filter((t) => t !== "comment") as IssueEventType[]);
+  const wantEvents = eventTypes === null || eventTypes.length > 0;
+
   const commentConditions = [eq(comments.issueId, issue.id)];
   const eventConditions = [eq(issueEvents.issueId, issue.id)];
+  if (eventTypes !== null && eventTypes.length > 0) {
+    eventConditions.push(inArray(issueEvents.type, eventTypes));
+  }
+  if (query.exclude_actor !== undefined) {
+    commentConditions.push(ne(comments.authorId, query.exclude_actor));
+    eventConditions.push(ne(issueEvents.actorId, query.exclude_actor));
+  }
   if (cursor) {
     const c1 = beyond(
       comments.createdAt,
@@ -148,18 +184,22 @@ export async function getTimeline(
     : [asc(issueEvents.createdAt), asc(issueEvents.id)];
 
   const [commentRows, eventRows] = [
-    await db
-      .select()
-      .from(comments)
-      .where(and(...commentConditions))
-      .orderBy(...commentOrder)
-      .limit(fetch),
-    await db
-      .select()
-      .from(issueEvents)
-      .where(and(...eventConditions))
-      .orderBy(...eventOrder)
-      .limit(fetch),
+    wantComments
+      ? await db
+          .select()
+          .from(comments)
+          .where(and(...commentConditions))
+          .orderBy(...commentOrder)
+          .limit(fetch)
+      : [],
+    wantEvents
+      ? await db
+          .select()
+          .from(issueEvents)
+          .where(and(...eventConditions))
+          .orderBy(...eventOrder)
+          .limit(fetch)
+      : [],
   ];
 
   let merged: Raw[] = [
