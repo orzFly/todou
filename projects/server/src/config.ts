@@ -179,7 +179,10 @@ const ENV_MAP: Array<[string, string[]]> = [
   ["TODOU_AUTH_FORWARD_EMAIL_HEADER", ["auth", "forward", "email_header"]],
   ["TODOU_AUTH_FORWARD_AUTO_CREATE", ["auth", "forward", "auto_create"]],
   ["TODOU_DATABASE_POOL_MAX", ["database", "pool", "max"]],
-  ["TODOU_DATABASE_POOL_IDLE_TIMEOUT_MS", ["database", "pool", "idle_timeout_ms"]],
+  [
+    "TODOU_DATABASE_POOL_IDLE_TIMEOUT_MS",
+    ["database", "pool", "idle_timeout_ms"],
+  ],
   [
     "TODOU_DATABASE_POOL_CONNECTION_TIMEOUT_MS",
     ["database", "pool", "connection_timeout_ms"],

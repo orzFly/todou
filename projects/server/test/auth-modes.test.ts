@@ -143,8 +143,11 @@ describe("forward mode", () => {
 });
 
 describe("session cookie Secure attribute", () => {
-  const login = (t: TestApp, env: unknown, headers: Record<string, string> = {}) =>
-    t.app.request("/api/auth/login", { method: "POST", headers }, env);
+  const login = (
+    t: TestApp,
+    env: unknown,
+    headers: Record<string, string> = {},
+  ) => t.app.request("/api/auth/login", { method: "POST", headers }, env);
 
   it("auto mode: Secure only when a trusted proxy says https", async () => {
     const t = await makeTestApp();

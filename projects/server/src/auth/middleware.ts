@@ -3,7 +3,7 @@ import { getCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
 import type { AppContext } from "../bootstrap.ts";
 import { UnauthorizedError } from "../errors.ts";
-import { isTrustedRequest } from "../http/proxy.ts";
+import { isTrustedRequest, type RequestLike } from "../http/proxy.ts";
 import { type UserRow, verifyPat } from "./pat.ts";
 import { normalizeLogin, provisionUser } from "./provision.ts";
 import { SESSION_COOKIE, validateSession } from "./session.ts";
@@ -60,10 +60,7 @@ export function authMiddleware(ctx: AppContext) {
  * 401s stay distinguishable on purpose: "which side is misconfigured" is
  * the first question a forward-auth deployment debugs.
  */
-async function forwardUser(
-  c: { req: { header: (name: string) => string | undefined }; env: unknown },
-  ctx: AppContext,
-): Promise<UserRow> {
+async function forwardUser(c: RequestLike, ctx: AppContext): Promise<UserRow> {
   const forward = ctx.config.auth.forward;
   // user_header presence is enforced by loadConfig in forward mode.
   const userHeader = forward.user_header as string;

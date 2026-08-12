@@ -65,6 +65,23 @@ PGlite auto-migrates on open, so there is nothing to run for a fresh install.
 For PostgreSQL, set `database.system` to a `postgres://` URL and apply
 migrations explicitly with `todou-server migrate`.
 
+### PostgreSQL pool sizing
+
+Every `postgres://` target gets its own `pg.Pool`, tunable in one place
+(defaults shown — they are pg's own):
+
+```toml
+[database.pool]
+max = 10                    # connections per pool
+idle_timeout_ms = 10000
+connection_timeout_ms = 0   # 0 = wait forever
+```
+
+Under `dedicated` placement each open project database is a separate pool,
+so the theoretical connection ceiling is `database.projects.max_open ×
+pool.max` (plus one pool for the system database). Work backwards from the
+PostgreSQL server's `max_connections` when raising either knob.
+
 ## The unit
 
 `~/.config/systemd/user/todou.service`:
@@ -131,8 +148,98 @@ loginctl show-user todou | grep Linger           # expect Linger=yes
 
 Forward everything on one origin to `:8637` — do not split `/api` from the
 static files, or the session cookie and SSE stream stop being same-origin.
-The session cookie is `HttpOnly; SameSite=Lax` and carries no `Secure` flag,
-so it works over both HTTP and HTTPS.
+
+Have the proxy set `X-Forwarded-Proto` (and `X-Forwarded-Host` if it
+rewrites hosts). Forwarded headers are only believed when the TCP peer
+matches `http.trusted_proxies`, which defaults to loopback:
+
+```toml
+[http]
+trusted_proxies = ["127.0.0.1/32", "::1/128"]   # add your proxy's address/CIDR
+public_origin = "https://todou.example"          # optional; see oidc below
+```
+
+The session cookie is `HttpOnly; SameSite=Lax`; its `Secure` flag follows
+the request — set automatically when a trusted proxy says
+`X-Forwarded-Proto: https`, absent over plain HTTP, so one deployment can
+serve both a TLS domain and localhost. Pin it with `[auth] cookie_secure =
+true|false` if a proxy setup confuses the detection.
 
 For SSE (`/api/projects/:slug/events`), response buffering must be off.
 Traefik and Caddy stream by default; nginx needs `proxy_buffering off`.
+
+## Auth modes
+
+`auth.mode` picks how HUMANS sign in — exactly one per deployment. Bearer
+PATs (agents, the CLI) work identically in every mode and may hit the
+backend port directly, bypassing any auth proxy. `GET /api/auth/mode` is
+public; the web login page branches on it.
+
+### `single` (default)
+
+Zero-input login as the built-in `user` account. What this document
+described so far; nothing to configure.
+
+### `oidc`
+
+Authorization-code + PKCE against any OpenID Connect provider
+(Keycloak, Authelia, Authentik, Google, …); the callback creates the same
+30-day sliding DB session single mode uses.
+
+```toml
+[auth]
+mode = "oidc"
+
+[auth.oidc]
+issuer = "https://auth.example.com"
+client_id = "todou"
+client_secret = "…"                  # or TODOU_AUTH_OIDC_CLIENT_SECRET
+# scopes = "openid profile email"    # defaults
+# login_claim = "preferred_username"
+# auto_create = true
+```
+
+Register the client with redirect URI `<origin>/api/auth/callback`. The
+origin comes from `http.public_origin` when set, otherwise it is derived
+per request from (trusted) forwarded headers — set it explicitly when the
+IdP is strict about redirect URIs and you want no surprises.
+
+Login maps the `login_claim` value to a todou login (lowercased; must be
+lowercase letters, digits, dashes). Unknown identities are auto-created
+when `auto_create` is on; a matching existing login that was never bound
+to an IdP subject is adopted instead — including the single-mode builtin
+account, which is the migration path: rename the builtin user's login to
+your IdP username BEFORE switching modes, and your first oidc login
+inherits the full history. The first created human becomes instance admin.
+Switching back to single mode seeds a fresh builtin account; it does not
+un-adopt.
+
+### `forward`
+
+Trust an authenticating reverse proxy (Authelia forward-auth,
+oauth2-proxy, Tailscale serve, …) to assert the user on every request via
+a header. No sessions, no cookies; logout lives in the proxy, and the web
+UI hides its logout button.
+
+```toml
+[auth]
+mode = "forward"
+
+[auth.forward]
+user_header = "Remote-User"          # Authelia; oauth2-proxy: "X-Auth-Request-User"
+# name_header = "Remote-Name"        # optional, read only when creating the user
+# email_header = "Remote-Email"
+# auto_create = true
+```
+
+Two hard requirements, both enforced:
+
+- the request must come from a peer in `http.trusted_proxies`, and
+- **the proxy must strip/overwrite the identity header on every route** —
+  a client that can reach the backend port directly, or a proxy that
+  passes the header through, is an impersonation hole. The 401 messages
+  distinguish "untrusted peer" from "header missing" to keep this
+  debuggable.
+
+Provisioning follows the same rules as oidc (auto-create, login adoption,
+first-human-is-admin), keyed by the header value as the login.

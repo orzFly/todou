@@ -19,7 +19,11 @@ export type StubIssuer = {
 
 export async function startStubIssuer(clientId: string): Promise<StubIssuer> {
   const { publicKey, privateKey } = await generateKeyPair("RS256");
-  const jwk = { ...(await exportJWK(publicKey)), kid: "stub-key", alg: "RS256" };
+  const jwk = {
+    ...(await exportJWK(publicKey)),
+    kid: "stub-key",
+    alg: "RS256",
+  };
 
   const stub: Omit<StubIssuer, "close" | "origin"> = {
     idTokenClaims: {},

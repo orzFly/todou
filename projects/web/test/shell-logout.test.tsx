@@ -1,5 +1,5 @@
-import type { Me } from "@todou/shared";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
+import type { Me } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import { AppShell } from "../src/components/shell.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";

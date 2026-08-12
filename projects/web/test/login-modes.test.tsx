@@ -50,9 +50,7 @@ function clientWithMode(mode: "single" | "oidc" | "forward"): QueryClient {
 }
 
 // One stub for the whole file: happy-dom would otherwise try to navigate.
-const assign = vi
-  .spyOn(window.location, "assign")
-  .mockImplementation(() => {});
+const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
 
 afterEach(() => {
   assign.mockClear();

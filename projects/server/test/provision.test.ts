@@ -1,14 +1,14 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ensureBuiltinUser } from "../src/bootstrap.ts";
-import type { Db } from "../src/db/driver.ts";
-import type { DbRouter } from "../src/db/router.ts";
-import { users } from "../src/db/system-schema.ts";
 import {
   normalizeLogin,
   ProvisionError,
   provisionUser,
 } from "../src/auth/provision.ts";
+import { ensureBuiltinUser } from "../src/bootstrap.ts";
+import type { Db } from "../src/db/driver.ts";
+import type { DbRouter } from "../src/db/router.ts";
+import { users } from "../src/db/system-schema.ts";
 import { makeRouter } from "./helpers.ts";
 
 let router: DbRouter;
@@ -32,7 +32,9 @@ async function insertUser(
       ...values,
     })
     .returning();
-  return rows[0]!;
+  const row = rows[0];
+  if (!row) throw new Error("user insert returned no row");
+  return row;
 }
 
 describe("normalizeLogin", () => {
@@ -76,9 +78,9 @@ describe("provisionUser", () => {
 
   it("adopts the builtin account: the single→oidc migration path", async () => {
     await ensureBuiltinUser(db);
-    const builtin = (
-      await db.select().from(users).where(eq(users.login, "user"))
-    )[0]!;
+    const seeded = await db.select().from(users).where(eq(users.login, "user"));
+    const builtin = seeded[0];
+    if (!builtin) throw new Error("builtin user was not seeded");
     expect(builtin.isInstanceAdmin).toBe(true);
 
     const row = await provisionUser(

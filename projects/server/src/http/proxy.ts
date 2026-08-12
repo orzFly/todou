@@ -47,7 +47,10 @@ function familyOf(addr: string): "ipv4" | "ipv6" | null {
 /** node reports IPv4 peers of dual-stack sockets as "::ffff:1.2.3.4". */
 function normalizeMapped(addr: string): string {
   const lower = addr.toLowerCase();
-  if (lower.startsWith("::ffff:") && isIP(lower.slice("::ffff:".length)) === 4) {
+  if (
+    lower.startsWith("::ffff:") &&
+    isIP(lower.slice("::ffff:".length)) === 4
+  ) {
     return lower.slice("::ffff:".length);
   }
   return addr;

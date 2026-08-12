@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { sessionCookieAttrs } from "../auth/cookies.ts";
 import type { AppEnv } from "../auth/middleware.ts";
+import { oidcCallback, oidcLoginRedirect } from "../auth/oidc.ts";
 import {
   createSession,
   destroySession,
@@ -13,7 +14,6 @@ import { type AppContext, BUILTIN_SUBJECT } from "../bootstrap.ts";
 import { users } from "../db/system-schema.ts";
 import { DomainError, UnauthorizedError } from "../errors.ts";
 import { ownerRefOf, toMe } from "../services/users.ts";
-import { oidcCallback, oidcLoginRedirect } from "../auth/oidc.ts";
 
 const modeRoute = createRoute({
   method: "get",

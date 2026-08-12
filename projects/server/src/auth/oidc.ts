@@ -115,13 +115,18 @@ export async function oidcLoginRedirect(
     code_challenge_method: "S256",
   });
 
-  setCookie(c, TRANSIENT_COOKIE, encodeTransient({ state, verifier, redirect }), {
-    httpOnly: true,
-    sameSite: "Lax",
-    secure: cookieSecure(c, ctx.config),
-    path: TRANSIENT_PATH,
-    maxAge: TRANSIENT_MAX_AGE_S,
-  });
+  setCookie(
+    c,
+    TRANSIENT_COOKIE,
+    encodeTransient({ state, verifier, redirect }),
+    {
+      httpOnly: true,
+      sameSite: "Lax",
+      secure: cookieSecure(c, ctx.config),
+      path: TRANSIENT_PATH,
+      maxAge: TRANSIENT_MAX_AGE_S,
+    },
+  );
   return c.redirect(authUrl.toString(), 302);
 }
 
@@ -129,8 +134,7 @@ export async function oidcCallback(
   c: AnyContext,
   ctx: AppContext,
 ): Promise<Response> {
-  const fail = (code: OidcErrorCode) =>
-    c.redirect(`/login?error=${code}`, 302);
+  const fail = (code: OidcErrorCode) => c.redirect(`/login?error=${code}`, 302);
 
   const transientRaw = getCookie(c, TRANSIENT_COOKIE);
   deleteCookie(c, TRANSIENT_COOKIE, { path: TRANSIENT_PATH });

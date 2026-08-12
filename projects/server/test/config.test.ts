@@ -145,10 +145,7 @@ describe("loadConfig", () => {
       tomlSource: "",
       env: { TODOU_HTTP_TRUSTED_PROXIES: "10.0.0.0/8, 192.168.1.1" },
     });
-    expect(fromEnv.http.trusted_proxies).toEqual([
-      "10.0.0.0/8",
-      "192.168.1.1",
-    ]);
+    expect(fromEnv.http.trusted_proxies).toEqual(["10.0.0.0/8", "192.168.1.1"]);
     expect(fromEnv.isTrustedPeer("10.20.30.40")).toBe(true);
     expect(fromEnv.isTrustedPeer("127.0.0.1")).toBe(false);
   });

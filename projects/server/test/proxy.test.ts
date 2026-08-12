@@ -12,10 +12,7 @@ function fakeRequest(options: {
   headers?: Record<string, string>;
 }) {
   const headers = new Map(
-    Object.entries(options.headers ?? {}).map(([k, v]) => [
-      k.toLowerCase(),
-      v,
-    ]),
+    Object.entries(options.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]),
   );
   return {
     req: {
@@ -73,7 +70,12 @@ describe("remoteAddrOf", () => {
 
   it("degrades to null without a node socket (tests, other adapters)", () => {
     expect(remoteAddrOf(fakeRequest({}))).toBeNull();
-    expect(remoteAddrOf({ req: { header: () => undefined }, env: undefined })).toBeNull();
+    expect(
+      remoteAddrOf({
+        req: { header: () => undefined, url: "http://x.example/" },
+        env: undefined,
+      }),
+    ).toBeNull();
   });
 });
 
@@ -108,7 +110,9 @@ describe("requestProto", () => {
 
 describe("requestOrigin", () => {
   it("prefers a configured public_origin over everything", () => {
-    const config = configWith('[http]\npublic_origin = "https://todou.example"');
+    const config = configWith(
+      '[http]\npublic_origin = "https://todou.example"',
+    );
     const c = fakeRequest({
       remoteAddress: "127.0.0.1",
       headers: { Host: "internal:8637", "X-Forwarded-Host": "evil.example" },

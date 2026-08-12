@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { makeTestApp, type TestApp } from "./helpers.ts";
-import { startStubIssuer, type StubIssuer } from "./stub-issuer.ts";
+import { type StubIssuer, startStubIssuer } from "./stub-issuer.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
@@ -57,10 +57,7 @@ async function startLogin(redirect = "/projects") {
   return { location, cookie };
 }
 
-async function completeCallback(options?: {
-  state?: string;
-  cookie?: string;
-}) {
+async function completeCallback(options?: { state?: string; cookie?: string }) {
   const { location, cookie } = await startLogin();
   const state = options?.state ?? location.searchParams.get("state") ?? "";
   return t.app.request(
@@ -217,9 +214,7 @@ describe("oidc provisioning denials", () => {
         )}`,
         { headers: { cookie } },
       );
-      expect(res.headers.get("location")).toBe(
-        "/login?error=provision_denied",
-      );
+      expect(res.headers.get("location")).toBe("/login?error=provision_denied");
     } finally {
       await strict.cleanup();
     }
