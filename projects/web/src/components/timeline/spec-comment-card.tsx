@@ -56,8 +56,11 @@ export function SpecCommentAnchorCard({
     onError: (error) => toast.error(error.message),
   });
 
-  const lines =
-    anchor.line_end === anchor.line_start
+  // Null lines = file-level comment (#61): no quote and no line context.
+  const fileLevel = anchor.line_start === null || anchor.line_end === null;
+  const lines = fileLevel
+    ? "file"
+    : anchor.line_end === anchor.line_start
       ? `L${anchor.line_start}`
       : `L${anchor.line_start}–${anchor.line_end}`;
 
@@ -99,27 +102,29 @@ export function SpecCommentAnchorCard({
           view in doc →
         </Link>
       </div>
-      <button
-        type="button"
-        className="block w-full cursor-pointer text-left"
-        title={expanded ? "collapse context" : "expand surrounding context"}
-        onClick={() => setExpanded(!expanded)}
-      >
-        {expanded && context.data ? (
-          <ExpandedContext
-            fileBody={
-              context.data.files.find((f) => f.path === anchor.path)?.body
-            }
-            lineStart={anchor.line_start}
-            lineEnd={anchor.line_end}
-            quote={anchor.quote}
-          />
-        ) : (
-          <pre className="max-h-40 overflow-auto bg-background px-3 py-2 font-mono text-xs whitespace-pre-wrap text-muted-foreground">
-            {anchor.quote}
-          </pre>
-        )}
-      </button>
+      {!fileLevel && anchor.line_start !== null && anchor.line_end !== null && (
+        <button
+          type="button"
+          className="block w-full cursor-pointer text-left"
+          title={expanded ? "collapse context" : "expand surrounding context"}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded && context.data ? (
+            <ExpandedContext
+              fileBody={
+                context.data.files.find((f) => f.path === anchor.path)?.body
+              }
+              lineStart={anchor.line_start}
+              lineEnd={anchor.line_end}
+              quote={anchor.quote}
+            />
+          ) : (
+            <pre className="max-h-40 overflow-auto bg-background px-3 py-2 font-mono text-xs whitespace-pre-wrap text-muted-foreground">
+              {anchor.quote}
+            </pre>
+          )}
+        </button>
+      )}
     </div>
   );
 }

@@ -568,9 +568,11 @@ export function renderTimelineItem(item: TimelineItem, paint: Painter): string {
     if (item.component?.type === "spec_comment") {
       const anchor = item.component.anchor;
       const lines =
-        anchor.line_end === anchor.line_start
-          ? `L${anchor.line_start}`
-          : `L${anchor.line_start}-${anchor.line_end}`;
+        anchor.line_start === null
+          ? "file"
+          : anchor.line_end === anchor.line_start
+            ? `L${anchor.line_start}`
+            : `L${anchor.line_start}-${anchor.line_end}`;
       const resolved = item.resolved_at === null ? "unresolved" : "resolved";
       const quote = anchor.quote
         .split("\n")

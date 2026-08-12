@@ -428,20 +428,28 @@ export async function submitSpecReview(
           `anchor ${comment.anchor.path} does not exist in v${comment.anchor.version}`,
         );
       }
-      const lineCount = body.split("\n").length;
-      if (comment.anchor.line_end > lineCount) {
-        throw new ValidationFailedError(
-          `anchor ${comment.anchor.path}:${comment.anchor.line_start}-${comment.anchor.line_end} exceeds the file (${lineCount} lines in v${comment.anchor.version})`,
-        );
+      // Undefined lines = file-level comment (#61): nothing to range-check
+      // and nothing to quote — the anchor is the file itself.
+      const lineStart = comment.anchor.line_start ?? null;
+      const lineEnd = comment.anchor.line_end ?? null;
+      if (lineStart !== null && lineEnd !== null) {
+        const lineCount = body.split("\n").length;
+        if (lineEnd > lineCount) {
+          throw new ValidationFailedError(
+            `anchor ${comment.anchor.path}:${lineStart}-${lineEnd} exceeds the file (${lineCount} lines in v${comment.anchor.version})`,
+          );
+        }
       }
       anchored.push({
         anchor: {
-          ...comment.anchor,
-          quote: quoteLines(
-            body,
-            comment.anchor.line_start,
-            comment.anchor.line_end,
-          ),
+          path: comment.anchor.path,
+          version: comment.anchor.version,
+          line_start: lineStart,
+          line_end: lineEnd,
+          quote:
+            lineStart !== null && lineEnd !== null
+              ? quoteLines(body, lineStart, lineEnd)
+              : "",
         },
         body: comment.body,
       });
@@ -696,7 +704,11 @@ export async function listSpecComments(
     };
     const currentBody = currentFiles.get(anchor.path);
     if (currentBody !== undefined) {
-      if (anchor.version === current.number) {
+      if (anchor.line_start === null || anchor.line_end === null) {
+        // File-level comments (#61) stay live as long as the file exists;
+        // there are no lines to remap or to outdate.
+        outdated = false;
+      } else if (anchor.version === current.number) {
         outdated = false;
         mapped = { start: anchor.line_start, end: anchor.line_end };
       } else {

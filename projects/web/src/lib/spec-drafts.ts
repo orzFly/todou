@@ -13,8 +13,9 @@ const Draft = z.object({
   anchor: z.object({
     path: z.string(),
     version: z.number().int().positive(),
-    line_start: z.number().int().positive(),
-    line_end: z.number().int().positive(),
+    // Null = file-level comment (#61).
+    line_start: z.number().int().positive().nullable(),
+    line_end: z.number().int().positive().nullable(),
   }),
   /** Client-side display copy; the server re-quotes authoritatively. */
   quote: z.string(),

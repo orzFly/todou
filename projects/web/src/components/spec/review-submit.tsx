@@ -45,7 +45,21 @@ export function ReviewSubmitDialog({
         version: currentVersion,
         verdict: picked,
         ...(summary.trim() === "" ? {} : { body: summary }),
-        comments: drafts.map((d) => ({ anchor: d.anchor, body: d.body })),
+        comments: drafts.map((d) => ({
+          // Strict input schema: file-level anchors OMIT the line keys
+          // rather than sending nulls (#61).
+          anchor: {
+            path: d.anchor.path,
+            version: d.anchor.version,
+            ...(d.anchor.line_start !== null && d.anchor.line_end !== null
+              ? {
+                  line_start: d.anchor.line_start,
+                  line_end: d.anchor.line_end,
+                }
+              : {}),
+          },
+          body: d.body,
+        })),
       }),
     onSuccess: (result) => {
       toast.success(
@@ -87,10 +101,15 @@ export function ReviewSubmitDialog({
             {drafts.map((draft) => (
               <li key={draft.id} className="rounded border px-2 py-1">
                 <span className="font-mono">
-                  {draft.anchor.path}:{draft.anchor.line_start}
-                  {draft.anchor.line_end !== draft.anchor.line_start &&
-                    `–${draft.anchor.line_end}`}{" "}
-                  (v{draft.anchor.version})
+                  {draft.anchor.path}
+                  {draft.anchor.line_start !== null &&
+                    `:${draft.anchor.line_start}${
+                      draft.anchor.line_end !== draft.anchor.line_start
+                        ? `–${draft.anchor.line_end}`
+                        : ""
+                    }`}{" "}
+                  (v{draft.anchor.version}
+                  {draft.anchor.line_start === null && ", file"})
                 </span>{" "}
                 <span className="text-muted-foreground">
                   {draft.body.split("\n")[0]}

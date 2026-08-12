@@ -16,12 +16,6 @@ import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -406,69 +400,5 @@ function AnnotationChip({
         )}
       </PopoverContent>
     </Popover>
-  );
-}
-
-/** Dialog collecting the body of a new staged comment. */
-export function StageCommentDialog({
-  open,
-  quote,
-  lineStart,
-  lineEnd,
-  path,
-  onCancel,
-  onSave,
-}: {
-  open: boolean;
-  quote: string;
-  lineStart: number;
-  lineEnd: number;
-  path: string;
-  onCancel: () => void;
-  onSave: (body: string) => void;
-}) {
-  const [body, setBody] = useState("");
-  const quoteLines = useMemo(() => quote.split("\n").slice(0, 8), [quote]);
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(isOpen) => {
-        if (!isOpen) onCancel();
-      }}
-    >
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="text-sm font-medium">
-            Comment on {path} · L{lineStart}
-            {lineEnd !== lineStart && `–${lineEnd}`}
-          </DialogTitle>
-        </DialogHeader>
-        <div className="rounded-md border border-l-2 border-l-primary bg-muted/40 px-3 py-2 font-mono text-xs whitespace-pre-wrap text-muted-foreground">
-          {quoteLines.join("\n")}
-        </div>
-        <Textarea
-          autoFocus
-          rows={4}
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder="Comment (markdown)… staged locally until you finish the review"
-        />
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button
-            size="sm"
-            disabled={body.trim() === ""}
-            onClick={() => {
-              onSave(body);
-              setBody("");
-            }}
-          >
-            Stage comment
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 }
