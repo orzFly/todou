@@ -24,7 +24,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
-import { SpecStatusBadge } from "@/components/issue/spec-block.tsx";
+import { SpecStatusBadge } from "@/components/issue/spec-entry.tsx";
 import {
   PIERRE_THEME,
   PIERRE_THEME_TYPE,

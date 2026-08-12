@@ -8,14 +8,9 @@ import {
   UnfoldHorizontalIcon,
 } from "lucide-react";
 import { useState } from "react";
-import { api } from "@/api/queries.ts";
-import { specCommentsQuery } from "@/api/spec.ts";
+import { specCommentsQuery, specVersionStatsQuery } from "@/api/spec.ts";
 import { Button } from "@/components/ui/button";
-import {
-  computeVersionStats,
-  diffstatCells,
-  type SpecFileStat,
-} from "@/lib/spec-version-stats.ts";
+import { diffstatCells, type SpecFileStat } from "@/lib/spec-version-stats.ts";
 import { cn } from "@/lib/utils.ts";
 
 const CHANGE_BADGE: Record<
@@ -67,28 +62,7 @@ function SpecVersionCardBody({
   const version = payload.version;
   const params = { slug, number: String(issueNumber) };
 
-  const stats = useQuery({
-    // Version snapshots are immutable, so computed stats never go stale.
-    queryKey: ["spec-version-stats", slug, issueNumber, version],
-    staleTime: Number.POSITIVE_INFINITY,
-    queryFn: async (): Promise<SpecFileStat[]> => {
-      const [{ diffLines }, after, before] = await Promise.all([
-        // jsdiff stays out of the main bundle; the card only pays for it
-        // once a spec_pushed event is actually on screen.
-        import("diff"),
-        api.getSpecFiles(slug, issueNumber, version),
-        version > 1
-          ? api.getSpecFiles(slug, issueNumber, version - 1)
-          : Promise.resolve(null),
-      ]);
-      return computeVersionStats(
-        payload,
-        new Map(before?.files.map((f) => [f.path, f.body]) ?? []),
-        new Map(after.files.map((f) => [f.path, f.body])),
-        diffLines,
-      );
-    },
-  });
+  const stats = useQuery(specVersionStatsQuery(slug, issueNumber, payload));
   const byPath = new Map(stats.data?.map((s) => [s.path, s]) ?? []);
   const totals = (stats.data ?? []).reduce(
     (acc, s) => ({ plus: acc.plus + s.plus, minus: acc.minus + s.minus }),

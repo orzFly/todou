@@ -18,7 +18,10 @@ import {
 } from "@/api/queries.ts";
 import { AttachmentList } from "@/components/issue/attachment-list.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
-import { SpecBlock } from "@/components/issue/spec-block.tsx";
+import {
+  SpecEntryRow,
+  SpecSidebarSection,
+} from "@/components/issue/spec-entry.tsx";
 import {
   StagedFileTray,
   StagedFileUploadButton,
@@ -70,7 +73,7 @@ export function IssueDetailPage() {
       <div className="min-w-0 space-y-4">
         <TitleBlock slug={slug} issue={issue.data} />
         <BodyBlock slug={slug} issue={issue.data} />
-        <SpecBlock slug={slug} issueNumber={issueNumber} />
+        <SpecEntryRow slug={slug} issueNumber={issueNumber} />
         <AttachmentList slug={slug} issueNumber={issueNumber} />
         <Separator />
         <Timeline
@@ -331,7 +334,10 @@ function Sidebar({
   });
 
   return (
-    <aside className="space-y-5 text-sm">
+    // Sticky on large screens (#63): the sidebar keeps Status and the
+    // Latest spec section in view while the timeline scrolls; when taller
+    // than the viewport it scrolls internally.
+    <aside className="space-y-5 text-sm lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:self-start lg:overflow-y-auto">
       <section className="space-y-2">
         <h3 className="text-xs font-medium text-muted-foreground uppercase">
           Status
@@ -449,6 +455,9 @@ function Sidebar({
           </DropdownMenuContent>
         </DropdownMenu>
       </section>
+
+      {/* Placement per the #63 verdict: after Assignees, verdict-free. */}
+      <SpecSidebarSection slug={slug} issueNumber={issue.number} />
     </aside>
   );
 }
