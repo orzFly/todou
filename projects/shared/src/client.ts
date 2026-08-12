@@ -5,6 +5,7 @@ import type {
   AgentUpdateInput,
   AnswersSubmitInput,
   Attachment,
+  AuthMode,
   CommentComponentInput,
   Issue,
   IssueCounts,
@@ -150,6 +151,7 @@ export class TodouClient {
   }
 
   // — auth / me —
+  authMode = () => this.request<AuthMode>("GET", "/auth/mode");
   login = () => this.request<Me>("POST", "/auth/login");
   logout = () => this.request<void>("POST", "/auth/logout");
   me = () => this.request<Me>("GET", "/me");

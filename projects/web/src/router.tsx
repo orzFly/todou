@@ -40,8 +40,13 @@ const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
   component: LoginPage,
-  validateSearch: (search): { redirect?: string } =>
-    typeof search.redirect === "string" ? { redirect: search.redirect } : {},
+  validateSearch: (search): { redirect?: string; error?: string } => ({
+    ...(typeof search.redirect === "string"
+      ? { redirect: search.redirect }
+      : {}),
+    // The oidc callback reports its failures as /login?error=<code>.
+    ...(typeof search.error === "string" ? { error: search.error } : {}),
+  }),
 });
 
 /** Everything below requires a session; 401 bounces to /login. */

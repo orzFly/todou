@@ -55,10 +55,128 @@ describe("loadConfig", () => {
     expect(config.http.static_dir).toBe("/srv/todou/dist");
   });
 
-  it("rejects unimplemented auth modes", () => {
+  it("requires issuer, client_id, and client_secret for oidc mode", () => {
+    const base = [
+      "[auth]",
+      'mode = "oidc"',
+      "[auth.oidc]",
+      'issuer = "https://auth.example.com"',
+      'client_id = "todou"',
+      'client_secret = "s3cret"',
+    ];
     expect(() =>
-      loadConfig({ tomlSource: '[auth]\nmode = "oidc"', env: {} }),
-    ).toThrow(ConfigError);
+      loadConfig({ tomlSource: base.join("\n"), env: {} }),
+    ).not.toThrow();
+    for (const missing of ["issuer", "client_id", "client_secret"]) {
+      const lines = base.filter((l) => !l.startsWith(missing));
+      expect(() =>
+        loadConfig({ tomlSource: lines.join("\n"), env: {} }),
+      ).toThrow(new RegExp(`auth\\.oidc\\.${missing} is required`));
+    }
+  });
+
+  it("fills oidc defaults for scopes, login_claim, and auto_create", () => {
+    const config = loadConfig({ tomlSource: "", env: {} });
+    expect(config.auth.oidc.scopes).toBe("openid profile email");
+    expect(config.auth.oidc.login_claim).toBe("preferred_username");
+    expect(config.auth.oidc.auto_create).toBe(true);
+    expect(config.auth.forward.auto_create).toBe(true);
+  });
+
+  it("requires user_header for forward mode", () => {
+    expect(() =>
+      loadConfig({ tomlSource: '[auth]\nmode = "forward"', env: {} }),
+    ).toThrow(/user_header is required/);
+    const config = loadConfig({
+      tomlSource: [
+        "[auth]",
+        'mode = "forward"',
+        "[auth.forward]",
+        'user_header = "Remote-User"',
+      ].join("\n"),
+      env: {},
+    });
+    expect(config.auth.forward.user_header).toBe("Remote-User");
+  });
+
+  it("leaves cookie_secure a tri-state (absent = per request)", () => {
+    expect(
+      loadConfig({ tomlSource: "", env: {} }).auth.cookie_secure,
+    ).toBeUndefined();
+    expect(
+      loadConfig({ tomlSource: "[auth]\ncookie_secure = false", env: {} }).auth
+        .cookie_secure,
+    ).toBe(false);
+    expect(
+      loadConfig({ tomlSource: "", env: { TODOU_AUTH_COOKIE_SECURE: "1" } })
+        .auth.cookie_secure,
+    ).toBe(true);
+  });
+
+  it("normalises public_origin and rejects non-origin shapes", () => {
+    const config = loadConfig({
+      tomlSource: '[http]\npublic_origin = "https://todou.example/"',
+      env: {},
+    });
+    expect(config.http.public_origin).toBe("https://todou.example");
+    for (const bad of [
+      "todou.example",
+      "ftp://todou.example",
+      "https://todou.example/app",
+      "https://todou.example/?x=1",
+      "https://user:pw@todou.example",
+    ]) {
+      expect(() =>
+        loadConfig({
+          tomlSource: `[http]\npublic_origin = "${bad}"`,
+          env: {},
+        }),
+      ).toThrow(/public_origin/);
+    }
+  });
+
+  it("defaults trusted_proxies to loopback and splits the ENV form", () => {
+    const config = loadConfig({ tomlSource: "", env: {} });
+    expect(config.http.trusted_proxies).toEqual(["127.0.0.1/32", "::1/128"]);
+    expect(config.isTrustedPeer("127.0.0.1")).toBe(true);
+    expect(config.isTrustedPeer("10.0.0.1")).toBe(false);
+
+    const fromEnv = loadConfig({
+      tomlSource: "",
+      env: { TODOU_HTTP_TRUSTED_PROXIES: "10.0.0.0/8, 192.168.1.1" },
+    });
+    expect(fromEnv.http.trusted_proxies).toEqual(["10.0.0.0/8", "192.168.1.1"]);
+    expect(fromEnv.isTrustedPeer("10.20.30.40")).toBe(true);
+    expect(fromEnv.isTrustedPeer("127.0.0.1")).toBe(false);
+  });
+
+  it("rejects malformed trusted_proxies entries at startup", () => {
+    for (const bad of ["proxy.internal", "10.0.0.0/33", "10.0.0.0/8/x"]) {
+      expect(() =>
+        loadConfig({
+          tomlSource: `[http]\ntrusted_proxies = ["${bad}"]`,
+          env: {},
+        }),
+      ).toThrow(ConfigError);
+    }
+  });
+
+  it("fills database.pool defaults and reads overrides from ENV", () => {
+    const config = loadConfig({ tomlSource: "", env: {} });
+    expect(config.database.pool).toEqual({
+      max: 10,
+      idle_timeout_ms: 10_000,
+      connection_timeout_ms: 0,
+    });
+    const tuned = loadConfig({
+      tomlSource: "",
+      env: {
+        TODOU_DATABASE_POOL_MAX: "25",
+        TODOU_DATABASE_POOL_CONNECTION_TIMEOUT_MS: "3000",
+      },
+    });
+    expect(tuned.database.pool.max).toBe(25);
+    expect(tuned.database.pool.connection_timeout_ms).toBe(3000);
   });
 
   it("rejects non-database system URLs", () => {

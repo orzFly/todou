@@ -26,6 +26,9 @@ function fakeServer() {
         status,
         headers: { "content-type": "application/json" },
       });
+    if (url.pathname === "/api/auth/mode") {
+      return reply(200, { mode: "single" });
+    }
     if (url.pathname === "/api/auth/login" && init?.method === "POST") {
       loggedIn = true;
       return reply(200, me);

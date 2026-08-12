@@ -20,7 +20,9 @@ export class DbRouter {
   }
 
   static async open(config: Config): Promise<DbRouter> {
-    const system = await openDb(config.database.system);
+    const system = await openDb(config.database.system, {
+      pool: config.database.pool,
+    });
     if (shouldAutoMigrate(config, system.kind)) {
       await system.migrate("system");
       // Shared placement keeps project-tier tables in the system database.
@@ -69,6 +71,7 @@ export class DbRouter {
 
     const handle = await openDb(url, {
       workerHost: this.#config.database.projects.workers,
+      pool: this.#config.database.pool,
     });
     if (
       shouldAutoMigrate(this.#config, handle.kind) &&

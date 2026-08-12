@@ -24,6 +24,13 @@ export const meQuery = queryOptions({
   retry: false,
 });
 
+// The mode is fixed for the server's lifetime; never refetch mid-session.
+export const authModeQuery = queryOptions({
+  queryKey: ["auth-mode"],
+  queryFn: () => api.authMode(),
+  staleTime: Number.POSITIVE_INFINITY,
+});
+
 export const projectsQuery = queryOptions({
   queryKey: ["projects"],
   queryFn: () => api.listProjects(),
