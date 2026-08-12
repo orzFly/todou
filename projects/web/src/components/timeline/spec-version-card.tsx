@@ -277,7 +277,7 @@ function SpecVersionCardBody({
   );
 }
 
-function StatNumbers({ stat }: { stat: SpecFileStat }) {
+export function StatNumbers({ stat }: { stat: SpecFileStat }) {
   return (
     <span className="font-mono group-hover:underline">
       {stat.plus > 0 && <span className="text-green-600">+{stat.plus}</span>}
@@ -290,7 +290,7 @@ function StatNumbers({ stat }: { stat: SpecFileStat }) {
   );
 }
 
-function DiffstatBar({ stat }: { stat: SpecFileStat }) {
+export function DiffstatBar({ stat }: { stat: SpecFileStat }) {
   return (
     <span className="inline-flex gap-[1.5px]" aria-hidden>
       {diffstatCells(stat.plus, stat.minus).map((cell, i) => (

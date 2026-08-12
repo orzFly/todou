@@ -15,6 +15,7 @@ import {
   FileTextIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { diffLines } from "diff";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
@@ -30,8 +31,16 @@ import {
   StageCommentDialog,
 } from "@/components/spec/annotated-markdown.tsx";
 import { ReviewSubmitDialog } from "@/components/spec/review-submit.tsx";
+import {
+  DiffstatBar,
+  StatNumbers,
+} from "@/components/timeline/spec-version-card.tsx";
 import { Button } from "@/components/ui/button";
 import { changedLineRanges } from "@/lib/spec-changes.ts";
+import {
+  computeVersionStats,
+  type SpecFileStat,
+} from "@/lib/spec-version-stats.ts";
 import { useSpecReviewDrafts } from "@/lib/spec-drafts.ts";
 import { cn } from "@/lib/utils.ts";
 
@@ -138,6 +147,35 @@ function SpecViewBody({
     return files.data.files
       .filter((f) => before.get(f.path) !== f.body)
       .map((f) => f.path);
+  }, [version, baseline.data, files.data.files]);
+
+  // Sidebar diff stats vs the baseline, same visuals as the #59 version
+  // card. Removed files have no sidebar row to annotate — the version
+  // card in the timeline still accounts for them.
+  const sidebarStats = useMemo(() => {
+    if (version <= 1 || !baseline.data) {
+      return new Map<string, SpecFileStat>();
+    }
+    const before = new Map(baseline.data.files.map((f) => [f.path, f.body]));
+    const after = new Map(files.data.files.map((f) => [f.path, f.body]));
+    const stats = computeVersionStats(
+      {
+        added: files.data.files
+          .filter((f) => !before.has(f.path))
+          .map((f) => f.path),
+        changed: files.data.files
+          .filter((f) => {
+            const old = before.get(f.path);
+            return old !== undefined && old !== f.body;
+          })
+          .map((f) => f.path),
+        removed: [],
+      },
+      before,
+      after,
+      diffLines,
+    );
+    return new Map(stats.map((s) => [s.path, s]));
   }, [version, baseline.data, files.data.files]);
 
   const flashTo = (target: HTMLElement) => {
@@ -410,11 +448,23 @@ function SpecViewBody({
                   <span className="truncate font-mono text-xs">
                     {file.path}
                   </span>
-                  {unresolved > 0 && (
-                    <span className="ml-auto rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 text-xs text-amber-700 dark:text-amber-400">
-                      {unresolved}
-                    </span>
-                  )}
+                  <span className="ml-auto inline-flex shrink-0 items-center gap-1.5">
+                    {unresolved > 0 && (
+                      <span className="rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 text-xs text-amber-700 dark:text-amber-400">
+                        {unresolved}
+                      </span>
+                    )}
+                    {(() => {
+                      const stat = sidebarStats.get(file.path);
+                      if (!stat) return null;
+                      return (
+                        <span className="inline-flex items-center gap-1.5 text-[11px]">
+                          <StatNumbers stat={stat} />
+                          <DiffstatBar stat={stat} />
+                        </span>
+                      );
+                    })()}
+                  </span>
                 </Link>
               );
             })}
