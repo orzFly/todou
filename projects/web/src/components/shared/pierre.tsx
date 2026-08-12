@@ -23,12 +23,12 @@ export const PIERRE_THEME = {
 } as const;
 
 /**
- * pierre follows prefers-color-scheme by default, but the app is light-only
- * for now (.dark tokens exist and nothing ever sets the class), so a dark
- * OS would get dark code islands on light pages. Pin light until the app
- * grows a real theme toggle — then wire this to it.
+ * "system" makes pierre inject no color-scheme pin of its own; the actual
+ * scheme is forced from the outer tree by the `diffs-container` rules in
+ * styles.css, which follow the app theme (#36). Options objects that
+ * captured this value at module scope stay correct for the same reason.
  */
-export const PIERRE_THEME_TYPE = "light" as const;
+export const PIERRE_THEME_TYPE = "system" as const;
 
 // Module-scope per the library's props-stability guidance.
 const SNIPPET_OPTIONS = {

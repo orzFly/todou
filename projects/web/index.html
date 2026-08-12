@@ -25,6 +25,23 @@
       }
     </script>
     <title>todou 🥔</title>
+    <script>
+      // Paint guard: apply the persisted theme before the bundle loads so a
+      // dark-theme reload never flashes white. lib/theme.ts owns these keys;
+      // the resolved kind is stored separately so this stays slug-agnostic.
+      (() => {
+        try {
+          const theme = localStorage.getItem("todou-theme");
+          const kind = localStorage.getItem("todou-theme-kind");
+          const dark = kind
+            ? kind === "dark"
+            : window.matchMedia("(prefers-color-scheme: dark)").matches;
+          if (dark) document.documentElement.classList.add("dark");
+          if (theme && theme !== "system")
+            document.documentElement.dataset.theme = theme;
+        } catch {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
