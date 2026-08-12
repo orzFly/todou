@@ -5,6 +5,7 @@ import {
   loadTomlConfig,
 } from "@todou/shared/config";
 import { z } from "zod";
+import { compileTrustedProxies } from "./http/proxy.ts";
 
 export { ConfigError };
 
@@ -12,13 +13,45 @@ const ConfigSchema = z.object({
   auth: z
     .object({
       mode: z.enum(["single", "oidc", "forward"]).default("single"),
+      // Tri-state: absent = per request (https carries Secure, http does not).
+      cookie_secure: flexibleBool.optional(),
+      oidc: z
+        .object({
+          issuer: z.string().optional(),
+          client_id: z.string().optional(),
+          client_secret: z.string().optional(),
+          scopes: z.string().default("openid profile email"),
+          login_claim: z.string().default("preferred_username"),
+          auto_create: flexibleBool.default(true),
+        })
+        .prefault({}),
+      forward: z
+        .object({
+          user_header: z.string().optional(),
+          name_header: z.string().optional(),
+          email_header: z.string().optional(),
+          auto_create: flexibleBool.default(true),
+        })
+        .prefault({}),
     })
-    .default({ mode: "single" }),
+    .prefault({}),
   http: z
     .object({
       port: z.coerce.number().int().min(1).max(65535).default(8637),
       static_dir: z.string().optional(),
       compression: flexibleBool.default(true),
+      public_origin: z.string().optional(),
+      trusted_proxies: z.preprocess(
+        // ENV delivers one comma-separated string; TOML delivers an array.
+        (v) =>
+          typeof v === "string"
+            ? v
+                .split(",")
+                .map((s) => s.trim())
+                .filter((s) => s !== "")
+            : v,
+        z.array(z.string()).default(["127.0.0.1/32", "::1/128"]),
+      ),
     })
     .prefault({}),
   database: z
@@ -35,6 +68,15 @@ const ConfigSchema = z.object({
           workers: flexibleBool.optional(),
         })
         .prefault({}),
+      // Applied to every postgres:// pool (system and dedicated project
+      // databases); pglite ignores it. Defaults mirror pg's own.
+      pool: z
+        .object({
+          max: z.coerce.number().int().min(1).default(10),
+          idle_timeout_ms: z.coerce.number().int().min(0).default(10_000),
+          connection_timeout_ms: z.coerce.number().int().min(0).default(0),
+        })
+        .prefault({}),
     })
     .prefault({}),
   storage: z
@@ -48,6 +90,8 @@ const ConfigSchema = z.object({
 
 export type Config = z.infer<typeof ConfigSchema> & {
   projectUrlFor: ((project: ProjectRouteInfo) => string) | null;
+  /** Compiled from http.trusted_proxies at load, like projectUrlFor. */
+  isTrustedPeer: (addr: string) => boolean;
 };
 
 export type ProjectRouteInfo = {
@@ -121,6 +165,25 @@ const ENV_MAP: Array<[string, string[]]> = [
   ["TODOU_STORAGE_BACKEND", ["storage", "backend"]],
   ["TODOU_STORAGE_PATH", ["storage", "path"]],
   ["TODOU_STORAGE_MAX_UPLOAD_MB", ["storage", "max_upload_mb"]],
+  ["TODOU_HTTP_PUBLIC_ORIGIN", ["http", "public_origin"]],
+  ["TODOU_HTTP_TRUSTED_PROXIES", ["http", "trusted_proxies"]],
+  ["TODOU_AUTH_COOKIE_SECURE", ["auth", "cookie_secure"]],
+  ["TODOU_AUTH_OIDC_ISSUER", ["auth", "oidc", "issuer"]],
+  ["TODOU_AUTH_OIDC_CLIENT_ID", ["auth", "oidc", "client_id"]],
+  ["TODOU_AUTH_OIDC_CLIENT_SECRET", ["auth", "oidc", "client_secret"]],
+  ["TODOU_AUTH_OIDC_SCOPES", ["auth", "oidc", "scopes"]],
+  ["TODOU_AUTH_OIDC_LOGIN_CLAIM", ["auth", "oidc", "login_claim"]],
+  ["TODOU_AUTH_OIDC_AUTO_CREATE", ["auth", "oidc", "auto_create"]],
+  ["TODOU_AUTH_FORWARD_USER_HEADER", ["auth", "forward", "user_header"]],
+  ["TODOU_AUTH_FORWARD_NAME_HEADER", ["auth", "forward", "name_header"]],
+  ["TODOU_AUTH_FORWARD_EMAIL_HEADER", ["auth", "forward", "email_header"]],
+  ["TODOU_AUTH_FORWARD_AUTO_CREATE", ["auth", "forward", "auto_create"]],
+  ["TODOU_DATABASE_POOL_MAX", ["database", "pool", "max"]],
+  ["TODOU_DATABASE_POOL_IDLE_TIMEOUT_MS", ["database", "pool", "idle_timeout_ms"]],
+  [
+    "TODOU_DATABASE_POOL_CONNECTION_TIMEOUT_MS",
+    ["database", "pool", "connection_timeout_ms"],
+  ],
 ];
 
 export function loadConfig(options?: {
@@ -145,10 +208,40 @@ export function loadConfig(options?: {
     config.http.static_dir = resolve(config.http.static_dir);
   }
 
-  if (config.auth.mode !== "single") {
+  if (config.auth.mode === "oidc") {
+    for (const key of ["issuer", "client_id", "client_secret"] as const) {
+      if (!config.auth.oidc[key]) {
+        throw new ConfigError(
+          `auth.oidc.${key} is required when auth.mode is "oidc"`,
+        );
+      }
+    }
+  }
+  if (config.auth.mode === "forward" && !config.auth.forward.user_header) {
     throw new ConfigError(
-      `auth.mode="${config.auth.mode}" is not implemented yet (only "single")`,
+      'auth.forward.user_header is required when auth.mode is "forward"',
     );
+  }
+  if (config.http.public_origin !== undefined) {
+    let parsed: URL;
+    try {
+      parsed = new URL(config.http.public_origin);
+    } catch {
+      throw new ConfigError("http.public_origin must be an http(s) origin");
+    }
+    if (
+      !/^https?:$/.test(parsed.protocol) ||
+      parsed.pathname !== "/" ||
+      parsed.search !== "" ||
+      parsed.hash !== "" ||
+      parsed.username !== "" ||
+      parsed.password !== ""
+    ) {
+      throw new ConfigError(
+        "http.public_origin must be a bare http(s) origin (no path, query, or credentials)",
+      );
+    }
+    config.http.public_origin = parsed.origin;
   }
   if (!isValidDbUrl(config.database.system)) {
     throw new ConfigError(
@@ -169,5 +262,8 @@ export function loadConfig(options?: {
   config.database.projects.workers ??=
     config.database.projects.placement === "dedicated";
 
-  return { ...config, projectUrlFor };
+  // Bad entries surface at startup, not on first proxied request.
+  const isTrustedPeer = compileTrustedProxies(config.http.trusted_proxies);
+
+  return { ...config, projectUrlFor, isTrustedPeer };
 }
