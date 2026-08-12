@@ -1,6 +1,7 @@
 import type { AgentContext } from "@todou/shared";
 import { Bot } from "lucide-react";
 import type { CSSProperties } from "react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
@@ -54,7 +55,10 @@ function HarnessIcon({ agent }: { agent: string }) {
   return <Bot aria-hidden data-testid="harness-icon-bot" />;
 }
 
-/** Small provenance marker for timeline items written by an agent. */
+/**
+ * Small provenance marker for timeline items written by an agent.
+ * With a session id the badge is a button that copies the resume command.
+ */
 export function AgentContextBadge({
   context,
   className,
@@ -64,20 +68,55 @@ export function AgentContextBadge({
 }) {
   if (!context) return null;
   const sessionId = context.session_id;
+  const content = (
+    <>
+      <HarnessIcon agent={context.agent} />
+      <span className="min-w-0 truncate">{context.model ?? context.agent}</span>
+    </>
+  );
+  const baseClass = cn(
+    "min-w-0 px-1.5 py-0 text-[10px] font-normal",
+    className,
+  );
+
+  if (!sessionId) {
+    return (
+      <Badge
+        variant="secondary"
+        className={baseClass}
+        title={context.agent}
+        data-testid="agent-context-badge"
+      >
+        {content}
+      </Badge>
+    );
+  }
+
+  const resumeCommand = `claude --resume ${sessionId}`;
   return (
     <Badge
       variant="secondary"
-      className={cn(
-        "min-w-0 px-1.5 py-0 text-[10px] font-normal",
-        sessionId && "agent-session-badge",
-        className,
-      )}
-      style={sessionId ? sessionStyle(sessionId) : undefined}
-      title={context.agent + (sessionId ? ` · session ${sessionId}` : "")}
-      data-testid="agent-context-badge"
+      asChild
+      className={cn(baseClass, "agent-session-badge cursor-pointer")}
     >
-      <HarnessIcon agent={context.agent} />
-      <span className="min-w-0 truncate">{context.model ?? context.agent}</span>
+      <button
+        type="button"
+        style={sessionStyle(sessionId)}
+        title={`${context.agent} · session ${sessionId} — click to copy the resume command`}
+        onClick={async (e) => {
+          // The badge sits inside timeline rows with their own click targets.
+          e.stopPropagation();
+          try {
+            await navigator.clipboard.writeText(resumeCommand);
+            toast.success(`Copied "${resumeCommand}"`);
+          } catch {
+            toast.error("Clipboard is unavailable in this browser");
+          }
+        }}
+        data-testid="agent-context-badge"
+      >
+        {content}
+      </button>
     </Badge>
   );
 }
