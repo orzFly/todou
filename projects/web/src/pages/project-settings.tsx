@@ -428,7 +428,8 @@ function ColorPicker({
             onChange={(e) => setHex(e.target.value)}
             placeholder="#8b5cf6"
             aria-label={`custom hex for ${name}`}
-            className="h-7 w-24 font-mono text-xs"
+            // text-base below md: sub-16px inputs trigger iOS focus auto-zoom.
+            className="h-7 w-24 font-mono text-base md:text-xs"
           />
           <Button
             type="submit"

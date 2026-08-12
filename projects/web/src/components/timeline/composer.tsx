@@ -147,7 +147,7 @@ export function Composer({
         disabled={uploading}
       />
       <form
-        className="flex items-end gap-2"
+        className="flex flex-col gap-2 sm:flex-row sm:items-end"
         onSubmit={(e) => {
           e.preventDefault();
           void submit();
@@ -160,7 +160,7 @@ export function Composer({
           rows={3}
           // Sticky at the viewport bottom: an auto-growing draft must not
           // swallow the page, especially on small/mobile viewports.
-          className="max-h-[40dvh] flex-1"
+          className="max-h-[40dvh] sm:flex-1"
           onPaste={staging.onPaste}
           onDrop={staging.onDrop}
           onDragOver={staging.onDragOver}
@@ -170,10 +170,20 @@ export function Composer({
             }
           }}
         />
-        <StagedFileUploadButton onFiles={staging.stage} disabled={uploading} />
-        <Button type="submit" size="sm" disabled={uploading}>
-          <SendIcon className="size-4" /> {uploading ? "Uploading…" : "Comment"}
-        </Button>
+        {/* Phones: the textarea gets the whole row; the buttons drop to
+            their own row below (attach left, submit right — the same row
+            layout as the issue-body and new-issue editors). ≥sm the
+            wrapper dissolves and everything shares one row as before. */}
+        <div className="flex items-center justify-between gap-2 sm:contents">
+          <StagedFileUploadButton
+            onFiles={staging.stage}
+            disabled={uploading}
+          />
+          <Button type="submit" size="sm" disabled={uploading}>
+            <SendIcon className="size-4" />{" "}
+            {uploading ? "Uploading…" : "Comment"}
+          </Button>
+        </div>
       </form>
     </div>
   );

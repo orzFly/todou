@@ -327,7 +327,8 @@ function QuestionForm({
             ? "Why not? (optional, markdown)"
             : "Other / additional thoughts… (optional, markdown; combines with selections)"
         }
-        className="min-h-8 text-sm"
+        // text-base below md: sub-16px inputs trigger iOS focus auto-zoom.
+        className="min-h-8 text-base md:text-sm"
       />
     </fieldset>
   );
