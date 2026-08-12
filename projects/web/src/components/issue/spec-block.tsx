@@ -1,7 +1,13 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import type { SpecInfo, SpecReviewStatus } from "@todou/shared";
+import type {
+  SpecInfo,
+  SpecReviewStatus,
+  SpecReviewVerdict,
+} from "@todou/shared";
 import { BookOpenTextIcon, FileTextIcon } from "lucide-react";
+import { toast } from "sonner";
+import { api } from "@/api/queries.ts";
 import { specQuery } from "@/api/spec.ts";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils.ts";
@@ -70,6 +76,33 @@ function SpecBlockBody({
   issueNumber: number;
   spec: SpecInfo;
 }) {
+  const queryClient = useQueryClient();
+  const quickReview = useMutation({
+    // The no-annotations fast path; staged inline comments submit from the
+    // full spec view instead.
+    mutationFn: (verdict: SpecReviewVerdict) =>
+      api.submitSpecReview(slug, issueNumber, {
+        version: spec.current_version,
+        verdict,
+        comments: [],
+      }),
+    onSuccess: (result) => {
+      toast.success(
+        result.verdict === "approve"
+          ? `Approved spec v${result.version}`
+          : `Requested changes on spec v${result.version}`,
+      );
+      for (const key of [
+        ["spec", slug, issueNumber],
+        ["timeline", slug, issueNumber],
+        ["issue", slug, issueNumber],
+        ["issues", slug],
+      ]) {
+        queryClient.invalidateQueries({ queryKey: key });
+      }
+    },
+    onError: (error) => toast.error(error.message),
+  });
   return (
     <div className="rounded-lg border">
       <div className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
@@ -85,7 +118,29 @@ function SpecBlockBody({
             {spec.unresolved_comments === 1 ? "" : "s"}
           </span>
         )}
-        <Button asChild size="sm" variant="outline" className="ml-auto">
+        <span className="ml-auto" />
+        {spec.review_status === "unreviewed" && (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-red-500/60 text-red-700 dark:text-red-400"
+              disabled={quickReview.isPending}
+              onClick={() => quickReview.mutate("request_changes")}
+            >
+              Request changes
+            </Button>
+            <Button
+              size="sm"
+              className="bg-green-700 text-white hover:bg-green-800"
+              disabled={quickReview.isPending}
+              onClick={() => quickReview.mutate("approve")}
+            >
+              Approve
+            </Button>
+          </>
+        )}
+        <Button asChild size="sm" variant="outline">
           <Link
             to="/projects/$slug/issues/$number/spec"
             params={{ slug, number: String(issueNumber) }}

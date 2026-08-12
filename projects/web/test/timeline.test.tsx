@@ -134,6 +134,7 @@ describe("timeline paging helpers", () => {
       component: null,
       created_at: "2026-08-11T00:00:00Z",
       edited_at: null,
+      resolved_at: null,
       agent_context: null,
     })),
     prev_cursor: prev,
@@ -166,6 +167,7 @@ describe("timeline rendering", () => {
           component: null,
           created_at: "2026-08-11T00:00:00Z",
           edited_at: null,
+          resolved_at: null,
           agent_context: null,
         }}
       />,

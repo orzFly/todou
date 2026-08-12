@@ -95,6 +95,7 @@ function toItem(m: Raw, refs: Map<number, UserRef>): TimelineItem {
         component: m.row.component ?? null,
         created_at: m.row.createdAt.toISOString(),
         edited_at: m.row.editedAt?.toISOString() ?? null,
+        resolved_at: m.row.resolvedAt?.toISOString() ?? null,
         agent_context: m.row.agentContext ?? null,
       }
     : {

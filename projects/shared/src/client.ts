@@ -23,10 +23,13 @@ import type {
   ProjectCreateInput,
   ProjectUpdateInput,
   RevisionPage,
+  SpecComments,
   SpecFiles,
   SpecInfo,
   SpecPushInput,
   SpecPushResult,
+  SpecReviewResult,
+  SpecReviewSubmitInput,
   Status,
   StatusCreateInput,
   StatusUpdateInput,
@@ -345,6 +348,27 @@ export class TodouClient {
       "POST",
       `/projects/${slug}/issues/${number}/spec/push`,
       { json: input },
+    );
+  submitSpecReview = (
+    slug: string,
+    number: number,
+    input: SpecReviewSubmitInput,
+  ) =>
+    this.request<SpecReviewResult>(
+      "POST",
+      `/projects/${slug}/issues/${number}/spec/reviews`,
+      { json: input },
+    );
+  getSpecComments = (slug: string, number: number) =>
+    this.request<SpecComments>(
+      "GET",
+      `/projects/${slug}/issues/${number}/spec/comments`,
+    );
+  resolveSpecComments = (slug: string, number: number, commentIds: number[]) =>
+    this.request<{ resolved: number[] }>(
+      "POST",
+      `/projects/${slug}/issues/${number}/spec/comments/resolve`,
+      { json: { comment_ids: commentIds } },
     );
 
   // — edit history —

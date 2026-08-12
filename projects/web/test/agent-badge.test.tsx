@@ -28,6 +28,7 @@ function comment(agentContext: unknown) {
     created_at: "2026-08-11T00:00:00Z",
     component: null,
     edited_at: null,
+    resolved_at: null,
     // biome-ignore lint/suspicious/noExplicitAny: test fixture
     agent_context: agentContext as any,
   };

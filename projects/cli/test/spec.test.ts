@@ -201,3 +201,173 @@ describe("spec status", () => {
     expect(run.stdout).toContain("address review");
   });
 });
+
+describe("spec comments", () => {
+  const COMMENTS = {
+    current_version: 2,
+    items: [
+      {
+        comment_id: 412,
+        author: { id: 1, login: "user" },
+        created_at: "2026-08-12T06:10:00.000Z",
+        body: "Which diff library?",
+        anchor: {
+          path: "design.md",
+          version: 1,
+          line_start: 3,
+          line_end: 4,
+          quote: "Anchors point at…\nResolve is one-way.",
+        },
+        resolved: null,
+        outdated: true,
+        current_line_start: null,
+        current_line_end: null,
+      },
+      {
+        comment_id: 415,
+        author: { id: 1, login: "user" },
+        created_at: "2026-08-12T06:11:00.000Z",
+        body: "Louder in the intro.",
+        anchor: {
+          path: "notes/phases.md",
+          version: 2,
+          line_start: 5,
+          line_end: 5,
+          quote: "Phase one ships push.",
+        },
+        resolved: {
+          by: { id: 2, login: "claude-agent" },
+          at: "2026-08-12T07:00:00.000Z",
+        },
+        outdated: false,
+        current_line_start: 5,
+        current_line_end: 5,
+      },
+    ],
+  };
+
+  it("renders anchors, quotes, and resolution flags", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/proj/issues/23/spec/comments", COMMENTS],
+    ]);
+    const run = await runCli(["spec", "comments", "23"], {
+      fetchImpl,
+      env: ENV,
+    });
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toContain(
+      "#412 design.md:3-4 (v1) by user · unresolved, outdated",
+    );
+    expect(run.stdout).toContain("  > Anchors point at…");
+    expect(run.stdout).toContain(
+      "#415 notes/phases.md:5-5 (v2) by user · resolved by claude-agent",
+    );
+  });
+
+  it("--unresolved and --file filter locally", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/proj/issues/23/spec/comments", COMMENTS],
+    ]);
+    const run = await runCli(
+      ["spec", "comments", "23", "--unresolved", "--json"],
+      { fetchImpl, env: ENV },
+    );
+    const data = JSON.parse(run.stdout);
+    expect(data.items).toHaveLength(1);
+    expect(data.items[0].comment_id).toBe(412);
+
+    const byFile = await runCli(
+      ["spec", "comments", "23", "--file", "notes/phases.md", "--json"],
+      { fetchImpl, env: ENV },
+    );
+    expect(
+      JSON.parse(byFile.stdout).items.map(
+        (i: { comment_id: number }) => i.comment_id,
+      ),
+    ).toEqual([415]);
+  });
+});
+
+describe("spec resolve", () => {
+  it("posts every id in one request", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      [
+        "POST",
+        "/api/projects/proj/issues/23/spec/comments/resolve",
+        { resolved: [412, 415] },
+      ],
+    ]);
+    const run = await runCli(["spec", "resolve", "23", "412", "#415"], {
+      fetchImpl,
+      env: ENV,
+    });
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toContain("resolved 2 comment(s)");
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
+      comment_ids: [412, 415],
+    });
+  });
+
+  it("rejects non-numeric ids before any request", async () => {
+    const { fetchImpl, calls } = fakeFetch([]);
+    const run = await runCli(["spec", "resolve", "23", "nope"], {
+      fetchImpl,
+      env: ENV,
+    });
+    expect(run.exitCode).toBe(1);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("spec review", () => {
+  it("requires exactly one verdict", async () => {
+    const both = await runCli(
+      ["spec", "review", "23", "--approve", "--request-changes"],
+      { env: ENV },
+    );
+    expect(both.exitCode).toBe(1);
+    expect(both.stderr).toContain("exactly one verdict");
+    const neither = await runCli(["spec", "review", "23"], { env: ENV });
+    expect(neither.exitCode).toBe(1);
+  });
+
+  it("fetches the current version and submits the verdict", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/proj/issues/23/spec",
+        {
+          current_version: 3,
+          review_status: "unreviewed",
+          unresolved_comments: 0,
+          files: [],
+          versions: [],
+        },
+      ],
+      [
+        "POST",
+        "/api/projects/proj/issues/23/spec/reviews",
+        {
+          event_id: 99,
+          version: 3,
+          verdict: "request_changes",
+          summary_comment_id: 88,
+          comment_ids: [],
+        },
+      ],
+    ]);
+    const run = await runCli(
+      ["spec", "review", "23", "--request-changes", "--body", "rework §2"],
+      { fetchImpl, env: ENV },
+    );
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toContain("requested changes on spec v3");
+    const posted = JSON.parse(String(calls[1]?.init.body));
+    expect(posted).toMatchObject({
+      version: 3,
+      verdict: "request_changes",
+      body: "rework §2",
+      comments: [],
+    });
+  });
+});

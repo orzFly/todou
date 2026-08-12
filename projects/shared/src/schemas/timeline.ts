@@ -35,6 +35,8 @@ export const TimelineComment = z.object({
   component: CommentComponent.nullable().default(null),
   created_at: Timestamp,
   edited_at: Timestamp.nullable(),
+  /** Spec-comment resolution stamp (#23); null for everything else. */
+  resolved_at: Timestamp.nullable().default(null),
   agent_context: AgentContext.nullable(),
 });
 export type TimelineComment = z.infer<typeof TimelineComment>;

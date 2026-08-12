@@ -1,14 +1,25 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
   ProjectSlug,
+  SpecComments,
+  SpecCommentsResolveInput,
   SpecFiles,
   SpecFilesQuery,
   SpecInfo,
   SpecPushInput,
   SpecPushResult,
+  SpecReviewResult,
+  SpecReviewSubmitInput,
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
-import { getSpecFiles, getSpecInfo, pushSpec } from "../services/spec.ts";
+import {
+  getSpecFiles,
+  getSpecInfo,
+  listSpecComments,
+  pushSpec,
+  resolveSpecComments,
+  submitSpecReview,
+} from "../services/spec.ts";
 
 const issueParams = z.object({
   slug: ProjectSlug,
@@ -44,6 +55,41 @@ const specPushRoute = createRoute({
   responses: { 200: { description: "Result", ...jsonBody(SpecPushResult) } },
 });
 
+const specReviewRoute = createRoute({
+  method: "post",
+  path: "/{slug}/issues/{number}/spec/reviews",
+  summary:
+    "Submit one atomic review: verdict + optional summary + staged inline " +
+    "comments (writer; the pusher of the reviewed version is rejected)",
+  request: { params: issueParams, body: jsonBody(SpecReviewSubmitInput) },
+  responses: {
+    201: { description: "Review", ...jsonBody(SpecReviewResult) },
+  },
+});
+
+const specCommentsRoute = createRoute({
+  method: "get",
+  path: "/{slug}/issues/{number}/spec/comments",
+  summary:
+    "Inline spec comments with resolution state and anchors remapped onto " +
+    "the current version (outdated when the anchored lines changed)",
+  request: { params: issueParams },
+  responses: { 200: { description: "Comments", ...jsonBody(SpecComments) } },
+});
+
+const specResolveRoute = createRoute({
+  method: "post",
+  path: "/{slug}/issues/{number}/spec/comments/resolve",
+  summary: "Resolve inline spec comments (writer); one-way, one event",
+  request: { params: issueParams, body: jsonBody(SpecCommentsResolveInput) },
+  responses: {
+    200: {
+      description: "Resolved",
+      ...jsonBody(z.object({ resolved: z.array(z.number()) })),
+    },
+  },
+});
+
 export function specRoutes() {
   const app = new OpenAPIHono<AppEnv>();
 
@@ -73,6 +119,44 @@ export function specRoutes() {
     const { slug, number } = c.req.valid("param");
     return c.json(
       await pushSpec(
+        c.get("appCtx"),
+        c.get("user"),
+        slug,
+        number,
+        c.req.valid("json"),
+        c.get("agentContext"),
+      ),
+      200,
+    );
+  });
+
+  app.openapi(specReviewRoute, async (c) => {
+    const { slug, number } = c.req.valid("param");
+    return c.json(
+      await submitSpecReview(
+        c.get("appCtx"),
+        c.get("user"),
+        slug,
+        number,
+        c.req.valid("json"),
+        c.get("agentContext"),
+      ),
+      201,
+    );
+  });
+
+  app.openapi(specCommentsRoute, async (c) => {
+    const { slug, number } = c.req.valid("param");
+    return c.json(
+      await listSpecComments(c.get("appCtx"), c.get("user"), slug, number),
+      200,
+    );
+  });
+
+  app.openapi(specResolveRoute, async (c) => {
+    const { slug, number } = c.req.valid("param");
+    return c.json(
+      await resolveSpecComments(
         c.get("appCtx"),
         c.get("user"),
         slug,

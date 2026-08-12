@@ -143,3 +143,126 @@ export const SpecReviewPayload = z.strictObject({
   annotation_count: z.number().int().nonnegative(),
 });
 export type SpecReviewPayload = z.infer<typeof SpecReviewPayload>;
+
+// — inline comments (annotations) —
+
+const lineRange = {
+  /** Source line numbers of the anchored file, 1-based, inclusive. */
+  line_start: z.number().int().positive(),
+  line_end: z.number().int().positive(),
+};
+
+/** What a reviewer submits: where the comment hangs. */
+export const SpecCommentAnchorInput = z
+  .strictObject({
+    path: SpecFilePath,
+    /** The version the reviewer was looking at when anchoring. */
+    version: z.number().int().positive(),
+    ...lineRange,
+  })
+  .refine((a) => a.line_end >= a.line_start, {
+    error: "line_end must be >= line_start",
+    path: ["line_end"],
+  });
+export type SpecCommentAnchorInput = z.infer<typeof SpecCommentAnchorInput>;
+
+/**
+ * Stored form: the server stamps `quote` (verbatim snapshot of the anchored
+ * source lines) so timeline cards render without fetching the file — and so
+ * a client cannot forge what the lines said.
+ */
+export const SpecCommentAnchor = z.strictObject({
+  path: z.string(),
+  version: z.number().int().positive(),
+  ...lineRange,
+  quote: z.string(),
+});
+export type SpecCommentAnchor = z.infer<typeof SpecCommentAnchor>;
+
+/**
+ * Comment-component member for spec annotations. Never client-creatable
+ * (CommentComponentInput deliberately excludes it): rows are born only
+ * inside a review submission, where the anchor is validated against the
+ * stored version.
+ */
+export const SpecCommentComponent = z.strictObject({
+  type: z.literal("spec_comment"),
+  anchor: SpecCommentAnchor,
+});
+export type SpecCommentComponent = z.infer<typeof SpecCommentComponent>;
+
+// — review submission —
+
+export const SpecReviewCommentInput = z.strictObject({
+  anchor: SpecCommentAnchorInput,
+  /** Markdown. */
+  body: z.string().min(1).max(65536),
+});
+export type SpecReviewCommentInput = z.infer<typeof SpecReviewCommentInput>;
+
+/**
+ * One atomic review: verdict + optional summary + every staged inline
+ * comment. `version` must equal the current version — reviewing yesterday's
+ * spec conflicts instead of silently signing off the wrong thing.
+ */
+export const SpecReviewSubmitInput = z.strictObject({
+  version: z.number().int().positive(),
+  verdict: SpecReviewVerdict,
+  /** Markdown; becomes a regular summary comment when non-empty. */
+  body: z.string().min(1).max(65536).optional(),
+  comments: z.array(SpecReviewCommentInput).max(100).default([]),
+});
+export type SpecReviewSubmitInput = z.infer<typeof SpecReviewSubmitInput>;
+
+export const SpecReviewResult = z.object({
+  event_id: Id,
+  version: z.number().int().positive(),
+  verdict: SpecReviewVerdict,
+  summary_comment_id: Id.nullable(),
+  comment_ids: z.array(Id),
+});
+export type SpecReviewResult = z.infer<typeof SpecReviewResult>;
+
+// — resolve —
+
+export const SpecCommentsResolveInput = z.strictObject({
+  comment_ids: z.array(Id).min(1).max(100),
+});
+export type SpecCommentsResolveInput = z.infer<typeof SpecCommentsResolveInput>;
+
+/** Payload of the `spec_comments_resolved` timeline event. */
+export const SpecCommentsResolvedPayload = z.strictObject({
+  comment_ids: z.array(Id),
+  paths: z.array(z.string()),
+});
+export type SpecCommentsResolvedPayload = z.infer<
+  typeof SpecCommentsResolvedPayload
+>;
+
+// — structured listing (GET …/spec/comments, `todou spec comments`) —
+
+export const SpecCommentItem = z.object({
+  comment_id: Id,
+  author: UserRef,
+  created_at: Timestamp,
+  /** Markdown body of the comment. */
+  body: z.string(),
+  anchor: SpecCommentAnchor,
+  resolved: z.object({ by: UserRef, at: Timestamp }).nullable(),
+  /**
+   * True when the anchored lines were touched (or the file removed) between
+   * the anchored version and the current one — the comment refers to text
+   * that no longer reads the same.
+   */
+  outdated: z.boolean(),
+  /** Anchor remapped onto the current version; null when outdated. */
+  current_line_start: z.number().int().positive().nullable(),
+  current_line_end: z.number().int().positive().nullable(),
+});
+export type SpecCommentItem = z.infer<typeof SpecCommentItem>;
+
+export const SpecComments = z.object({
+  current_version: z.number().int().positive(),
+  items: z.array(SpecCommentItem),
+});
+export type SpecComments = z.infer<typeof SpecComments>;

@@ -12,6 +12,7 @@ import { SpecPushInput } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { z } from "zod";
 import { ProjectCommand } from "../api-command.ts";
+import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
 
 /**
@@ -174,6 +175,169 @@ export class SpecPullCommand extends ProjectCommand {
         `pulled spec v${spec.version} (${spec.files.length} files) into ${this.dir}`,
         ...spec.files.map((f) => `  ${f.path}`),
       ].join("\n"),
+    );
+  }
+}
+
+export class SpecCommentsCommand extends ProjectCommand {
+  static paths = [["spec", "comments"]];
+  static usage = Command.Usage({
+    description: "List inline spec comments with anchors and resolution",
+    details:
+      "Anchors are remapped onto the current version; a comment whose " +
+      "anchored lines changed since (or whose file is gone) shows as " +
+      "outdated. Agents addressing a review typically loop over " +
+      "`--unresolved --json` and `spec resolve` each item once addressed.",
+    examples: [
+      [
+        "Unresolved comments as JSON",
+        "$0 spec comments 23 --unresolved --json",
+      ],
+    ],
+  });
+
+  number = Option.String({ required: true });
+  unresolved = Option.Boolean("--unresolved", false, {
+    description: "Only comments not yet resolved",
+  });
+  file = Option.String("--file", {
+    description: "Only comments anchored to this path",
+  });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const { project, number } = this.resolveIssueRef(this.number);
+    const all = await client.getSpecComments(project, number);
+    const items = all.items.filter(
+      (item) =>
+        (!this.unresolved || item.resolved === null) &&
+        (this.file === undefined || item.anchor.path === this.file),
+    );
+    const data = { current_version: all.current_version, items };
+    this.output(data, () => {
+      if (items.length === 0) return "no matching spec comments";
+      const lines: string[] = [
+        `${items.length} comment(s) · spec v${all.current_version}`,
+      ];
+      for (const item of items) {
+        const anchor = `${item.anchor.path}:${item.anchor.line_start}-${item.anchor.line_end}`;
+        const flags = [
+          item.resolved === null
+            ? "unresolved"
+            : `resolved by ${item.resolved.by.login}`,
+          ...(item.outdated ? ["outdated"] : []),
+        ].join(", ");
+        lines.push(
+          `#${item.comment_id} ${anchor} (v${item.anchor.version}) by ${item.author.login} · ${flags}`,
+        );
+        for (const quoted of item.anchor.quote.split("\n")) {
+          lines.push(`  > ${quoted}`);
+        }
+        for (const bodyLine of item.body.trimEnd().split("\n")) {
+          lines.push(`  ${bodyLine}`);
+        }
+      }
+      return lines.join("\n");
+    });
+  }
+}
+
+export class SpecResolveCommand extends ProjectCommand {
+  static paths = [["spec", "resolve"]];
+  static usage = Command.Usage({
+    description: "Resolve inline spec comments (one-way)",
+    details:
+      "Marks every given comment id resolved in one shot — a single " +
+      "`spec_comments_resolved` timeline event, however many ids. " +
+      "Resolution cannot be undone; a disputed resolve is answered with a " +
+      "new comment on the next review round.",
+    examples: [["Resolve two comments", "$0 spec resolve 23 412 415"]],
+  });
+
+  number = Option.String({ required: true });
+  commentIds = Option.Rest({ required: 1 });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const { project, number } = this.resolveIssueRef(this.number);
+    const ids = this.commentIds.map((raw) => {
+      const id = Number(raw.replace(/^#/, ""));
+      if (!Number.isInteger(id) || id <= 0) {
+        throw new CliError(`"${raw}" is not a comment id`);
+      }
+      return id;
+    });
+    const result = await client.resolveSpecComments(project, number, ids);
+    this.output(result, () => `resolved ${result.resolved.length} comment(s)`);
+  }
+}
+
+export class SpecReviewCommand extends ProjectCommand {
+  static paths = [["spec", "review"]];
+  static usage = Command.Usage({
+    description: "Submit a review verdict from the command line",
+    details:
+      "Exactly one of `--approve` / `--request-changes` is required; the " +
+      "optional body becomes a summary comment. Inline comments are a web " +
+      "affordance — the CLI submits verdict and summary only. `--version` " +
+      "defaults to the current version; either way the server rejects a " +
+      "verdict on anything but the latest (and the pusher of that version " +
+      "reviewing it).",
+    examples: [
+      [
+        "Request changes with a note",
+        '$0 spec review 23 --request-changes --body "rework §2"',
+      ],
+    ],
+  });
+
+  number = Option.String({ required: true });
+  approve = Option.Boolean("--approve", false, {
+    description: "Verdict: approve",
+  });
+  requestChanges = Option.Boolean("--request-changes", false, {
+    description: "Verdict: request changes",
+  });
+  body = Option.String("--body", {
+    description: "Summary comment (markdown)",
+  });
+  bodyFile = Option.String("--body-file", {
+    description: "Summary from a file, or - for stdin",
+  });
+  version = Option.String("--version", {
+    description: "Version being reviewed (default: current)",
+  });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const { project, number } = this.resolveIssueRef(this.number);
+    if (this.approve === this.requestChanges) {
+      throw new CliError(
+        "pick exactly one verdict",
+        "pass --approve or --request-changes",
+      );
+    }
+    let body: string | undefined;
+    if (this.body !== undefined || this.bodyFile !== undefined) {
+      body = await readBody({
+        body: this.body,
+        bodyFile: this.bodyFile,
+        stdin: this.context.stdin,
+        isTTY: false,
+        env: this.context.env,
+      });
+    }
+    const version =
+      this.version === undefined
+        ? (await client.getSpec(project, number)).current_version
+        : Number(this.version);
+    const result = await client.submitSpecReview(project, number, {
+      version,
+      verdict: this.approve ? "approve" : "request_changes",
+      ...(body === undefined ? {} : { body }),
+      comments: [],
+    });
+    this.output(
+      result,
+      () =>
+        `${result.verdict === "approve" ? "approved" : "requested changes on"} spec v${result.version}`,
     );
   }
 }

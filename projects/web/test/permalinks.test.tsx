@@ -57,6 +57,7 @@ const commentOf = (id: number): TimelineComment => ({
   created_at: "2026-08-12T00:00:00Z",
   component: null,
   edited_at: null,
+  resolved_at: null,
   agent_context: null,
 });
 

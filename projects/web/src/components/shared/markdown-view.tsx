@@ -86,6 +86,7 @@ export function MarkdownView({
   slug,
   issueNumber,
   embedded = false,
+  rehypePlugins,
 }: {
   children: string;
   /** Enables #N → issue link rendering; omit where there is no project. */
@@ -102,6 +103,11 @@ export function MarkdownView({
    * that keeps a document embedding itself from recursing forever.
    */
   embedded?: boolean;
+  /**
+   * Extra rehype plugins (e.g. source-line stamping for spec annotation,
+   * #23). Pass a stable reference — this goes straight to react-markdown.
+   */
+  rehypePlugins?: ComponentProps<typeof Markdown>["rehypePlugins"];
 }) {
   return (
     // Typography lives in styles.css (.markdown-body, GitHub-style).
@@ -110,6 +116,7 @@ export function MarkdownView({
         remarkPlugins={
           slug === undefined ? [remarkGfm] : [remarkGfm, remarkIssueRefs]
         }
+        rehypePlugins={rehypePlugins}
         components={{
           pre: MarkdownPre,
           ...(slug === undefined

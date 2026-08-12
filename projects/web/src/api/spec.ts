@@ -28,3 +28,9 @@ export const specFilesQuery = (
     queryFn: () => api.getSpecFiles(slug, issueNumber, version),
     staleTime: version === undefined ? 5_000 : Number.POSITIVE_INFINITY,
   });
+
+export const specCommentsQuery = (slug: string, issueNumber: number) =>
+  queryOptions({
+    queryKey: ["spec", slug, issueNumber, "comments"],
+    queryFn: () => api.getSpecComments(slug, issueNumber),
+  });
