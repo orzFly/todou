@@ -94,6 +94,125 @@ describe("detectAgentContext", () => {
     ).toBe("claude-from-env");
   });
 
+  it("scans past a single line larger than one chunk (#42 shape)", () => {
+    // An image Read appends a ~400 KB base64 tool_result line; when the
+    // current turn's assistant entry is not yet flushed, that line is the
+    // effective tail and must not shield older assistant entries.
+    const hugeToolResult = JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", content: "A".repeat(400 * 1024) }],
+      },
+    });
+    writeTranscript("-proj-a", [
+      assistantLine("claude-fable-5"),
+      hugeToolResult,
+      JSON.stringify({ type: "last-prompt" }),
+      JSON.stringify({ type: "ai-title" }),
+      JSON.stringify({ type: "permission-mode" }),
+    ]);
+    expect(
+      detectAgentContext({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID }, home)
+        ?.model,
+    ).toBe("claude-fable-5");
+  });
+
+  it("reassembles an assistant line that spans chunk boundaries", () => {
+    // Multi-byte characters straddle the 256 KB boundaries; decoding per
+    // chunk instead of per line would corrupt them and lose the entry.
+    const hugeAssistant = JSON.stringify({
+      type: "assistant",
+      message: { model: "claude-fable-5", content: "模".repeat(220 * 1024) },
+    });
+    writeTranscript("-proj-a", [
+      userLine,
+      hugeAssistant,
+      '{"type":"assistant","message":{"model":',
+    ]);
+    expect(
+      detectAgentContext({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID }, home)
+        ?.model,
+    ).toBe("claude-fable-5");
+  });
+
+  it("skips <synthetic> placeholder entries from API-error turns", () => {
+    writeTranscript("-proj-a", [
+      assistantLine("claude-fable-5"),
+      userLine,
+      assistantLine("<synthetic>"),
+    ]);
+    expect(
+      detectAgentContext({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID }, home)
+        ?.model,
+    ).toBe("claude-fable-5");
+
+    writeTranscript("-proj-a", [userLine, assistantLine("<synthetic>")]);
+    expect(
+      detectAgentContext(
+        { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID },
+        home,
+      ),
+    ).toEqual({ agent: "claude-code", session_id: SID });
+    expect(
+      detectAgentContext(
+        {
+          CLAUDECODE: "1",
+          CLAUDE_CODE_SESSION_ID: SID,
+          CLAUDE_MODEL: "claude-from-env",
+        },
+        home,
+      )?.model,
+    ).toBe("claude-from-env");
+  });
+
+  it("gives up past the 16 MB scan cap and falls back to CLAUDE_MODEL", () => {
+    const padding = JSON.stringify({
+      type: "user",
+      message: { role: "user", content: "x".repeat(1024) },
+    });
+    writeTranscript("-proj-a", [
+      assistantLine("claude-buried"),
+      ...Array.from({ length: 17 * 1024 }, () => padding),
+    ]);
+    expect(
+      detectAgentContext(
+        {
+          CLAUDECODE: "1",
+          CLAUDE_CODE_SESSION_ID: SID,
+          CLAUDE_MODEL: "claude-from-env",
+        },
+        home,
+      )?.model,
+    ).toBe("claude-from-env");
+  });
+
+  it("survives an empty transcript and a lone half-written line", () => {
+    writeTranscript("-proj-a", [""]);
+    expect(
+      detectAgentContext(
+        { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID },
+        home,
+      ),
+    ).toEqual({ agent: "claude-code", session_id: SID });
+
+    writeTranscript("-proj-a", ['{"type":"assistant","message":{"model":"tru']);
+    expect(
+      detectAgentContext(
+        { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID },
+        home,
+      ),
+    ).toEqual({ agent: "claude-code", session_id: SID });
+  });
+
+  it("finds a model on the very first line of a small transcript", () => {
+    writeTranscript("-proj-a", [assistantLine("claude-first"), userLine]);
+    expect(
+      detectAgentContext({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SID }, home)
+        ?.model,
+    ).toBe("claude-first");
+  });
+
   it("rejects path-shaped session ids", () => {
     expect(
       detectAgentContext(

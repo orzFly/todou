@@ -4,7 +4,12 @@ import { join } from "node:path";
 import type { AgentContext } from "@todou/shared";
 import type { Env } from "./config.ts";
 
-const TAIL_BYTES = 256 * 1024;
+const CHUNK_BYTES = 256 * 1024;
+// A single image Read appends a ~400 KB base64 tool_result line, and the
+// current turn's assistant entry is not always flushed yet (#42) — so the
+// newest assistant entry can sit megabytes behind EOF. 16 MB bounds the
+// worst-case I/O per command.
+const MAX_SCAN_BYTES = 16 * 1024 * 1024;
 
 /**
  * Provenance of the invoking agent, currently detecting only Claude Code.
@@ -52,26 +57,38 @@ function modelFromTranscript(
       join(home, ".claude", "projects", "*", `${sessionId}.jsonl`),
     )[0];
     if (!file) return undefined;
-    // Unofficial format (Claude Code disclaims transcript stability):
-    // newest assistant entry wins, everything unparseable is skipped.
-    const lines = readTail(file, TAIL_BYTES).split("\n");
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i] as string;
-      if (!line.includes('"model"')) continue;
-      try {
-        const entry = JSON.parse(line) as {
-          type?: string;
-          message?: { model?: unknown };
-        };
-        if (
-          entry.type === "assistant" &&
-          typeof entry.message?.model === "string"
-        ) {
-          return entry.message.model;
+    const size = statSync(file).size;
+    const floor = Math.max(0, size - MAX_SCAN_BYTES);
+    const fd = openSync(file, "r");
+    try {
+      let end = size;
+      // Head fragment of a line that continues past the chunk boundary.
+      // Kept as bytes: decoding per chunk would corrupt a multi-byte
+      // character straddling the boundary.
+      let carry: Buffer = Buffer.alloc(0);
+      while (end > floor) {
+        const start = Math.max(floor, end - CHUNK_BYTES);
+        const chunk = readAt(fd, start, end - start);
+        const window = carry.length ? Buffer.concat([chunk, carry]) : chunk;
+        const firstNewline = window.indexOf(0x0a);
+        if (firstNewline === -1) {
+          // One line spans the whole window; keep accumulating backwards.
+          carry = window;
+        } else {
+          const lines = window.toString("utf8", firstNewline + 1).split("\n");
+          for (let i = lines.length - 1; i >= 0; i--) {
+            const model = modelFromLine(lines[i] as string);
+            if (model) return model;
+          }
+          carry = window.subarray(0, firstNewline);
         }
-      } catch {
-        // Truncated first line after the tail cut, or a foreign format.
+        end = start;
       }
+      // Only at the true start of the file is the leftover fragment a
+      // complete line; below the scan floor its beginning is missing.
+      if (floor === 0) return modelFromLine(carry.toString("utf8"));
+    } finally {
+      closeSync(fd);
     }
   } catch {
     // Unreadable transcript is never an error.
@@ -79,15 +96,39 @@ function modelFromTranscript(
   return undefined;
 }
 
-function readTail(path: string, maxBytes: number): string {
-  const size = statSync(path).size;
-  const start = Math.max(0, size - maxBytes);
-  const fd = openSync(path, "r");
+/**
+ * Unofficial format (Claude Code disclaims transcript stability): the
+ * newest assistant entry wins, everything unparseable is skipped.
+ */
+function modelFromLine(line: string): string | undefined {
+  if (!line.includes('"model"')) return undefined;
   try {
-    const buffer = Buffer.alloc(size - start);
-    readSync(fd, buffer, 0, buffer.length, start);
-    return buffer.toString("utf8");
-  } finally {
-    closeSync(fd);
+    const entry = JSON.parse(line) as {
+      type?: string;
+      message?: { model?: unknown };
+    };
+    if (
+      entry.type === "assistant" &&
+      typeof entry.message?.model === "string" &&
+      // API-error turns log a placeholder entry with model "<synthetic>" —
+      // an angle-bracketed value is never a real model id (#42).
+      !entry.message.model.startsWith("<")
+    ) {
+      return entry.message.model;
+    }
+  } catch {
+    // Half-written last line, a chunk-boundary fragment, or a foreign format.
   }
+  return undefined;
+}
+
+function readAt(fd: number, position: number, length: number): Buffer {
+  const buffer = Buffer.alloc(length);
+  let filled = 0;
+  while (filled < length) {
+    const n = readSync(fd, buffer, filled, length - filled, position + filled);
+    if (n === 0) break; // the file shrank underneath us
+    filled += n;
+  }
+  return filled === length ? buffer : buffer.subarray(0, filled);
 }
