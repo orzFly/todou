@@ -215,6 +215,62 @@ describe("watch (project-level)", () => {
     expect(result.stdout).toContain("cursor: a1");
   });
 
+  it("--debounce batches a cross-issue burst into one wake-up", async () => {
+    let a1Calls = 0;
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/me", me],
+      [
+        "GET",
+        "/api/projects/todou/activity",
+        (_init: RequestInit, url: URL) => {
+          const after = url.searchParams.get("after");
+          if (after === "a0") return page([webComment], "a1");
+          if (after === "a1") {
+            a1Calls += 1;
+            return a1Calls === 1
+              ? page([], null)
+              : page(
+                  [
+                    {
+                      ...webComment,
+                      id: 10,
+                      body: "second card",
+                      issue_number: 4,
+                    },
+                  ],
+                  "a2",
+                );
+          }
+          return page([], null);
+        },
+      ],
+    ]);
+    const result = await runCli(
+      [
+        "watch",
+        "-p",
+        "todou",
+        "--since",
+        "a0",
+        "--debounce",
+        "0.4",
+        "--interval",
+        "0.05",
+        "--timeout",
+        "5",
+        "--json",
+      ],
+      { fetchImpl, env: loggedInEnv() },
+    );
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      items: Array<{ issue_number: number }>;
+      next_cursor: string;
+    };
+    expect(parsed.items.map((i) => i.issue_number)).toEqual([3, 4]);
+    expect(parsed.next_cursor).toBe("a2");
+  });
+
   it("--any-actor skips /me and the actor filter; bootstrap uses last=1", async () => {
     const { fetchImpl, calls } = fakeFetch([
       [

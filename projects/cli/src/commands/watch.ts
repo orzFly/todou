@@ -23,6 +23,13 @@ export class WatchCommand extends ProjectCommand {
       empty poll), 1 = error. \`--json\` emits \`{ items, next_cursor }\`
       where each item carries \`issue_number\`; feed next_cursor back into
       \`--since\` to never miss or repeat an entry.
+
+      \`--debounce N\` batches a burst into one wake-up: after the first new
+      entry, keep collecting for a fixed N seconds (measured from that first
+      entry, never extended), then return everything at once. \`--timeout\`
+      only bounds the quiet phase, so a watch that catches news right before
+      the deadline still gets its full window; \`--poll\` ignores
+      \`--debounce\`. Off by default — first news returns immediately.
     `,
     examples: [
       [
@@ -34,6 +41,10 @@ export class WatchCommand extends ProjectCommand {
         'todou watch --poll --since "$CURSOR" --type comment',
       ],
       ["Bootstrap a cursor at now", "todou watch --poll --json"],
+      [
+        "Sentinel: one wake-up per burst of edits",
+        "todou watch -p todou --timeout 3300 --debounce 45 --json",
+      ],
     ],
   });
 
@@ -48,6 +59,10 @@ export class WatchCommand extends ProjectCommand {
   });
   interval = Option.String("--interval", {
     description: "Seconds between server polls (default 2)",
+  });
+  debounce = Option.String("--debounce", {
+    description:
+      "Batch entries for this many seconds after the first one (default: return immediately)",
   });
   types = Option.String("--type", {
     description: `Comma-separated filter: ${TimelineFilterType.options.join(", ")}`,
@@ -66,6 +81,10 @@ export class WatchCommand extends ProjectCommand {
       this.interval === undefined
         ? 2
         : parseSeconds(this.interval, "--interval");
+    const debounceSec =
+      this.debounce === undefined
+        ? undefined
+        : parseSeconds(this.debounce, "--debounce");
     const excludeActor = this.anyActor ? undefined : (await client.me()).id;
 
     const baseline =
@@ -79,6 +98,7 @@ export class WatchCommand extends ProjectCommand {
       poll: this.poll,
       timeoutSec,
       intervalSec,
+      debounceSec,
       baseline,
       drain: (after) =>
         drainActivity(client, project, { after, types, excludeActor }),

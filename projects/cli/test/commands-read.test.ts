@@ -419,6 +419,139 @@ describe("issue watch", () => {
     expect(result.stdout).toContain("cursor: c0");
   });
 
+  it("--debounce batches entries arriving inside the window", async () => {
+    let c1Calls = 0;
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues/3/timeline",
+        (_init: RequestInit, url: URL) => {
+          const after = url.searchParams.get("after");
+          if (after === "c0") return pageWith([newComment], "c1");
+          if (after === "c1") {
+            c1Calls += 1;
+            // Quiet at first; a second entry lands during the window.
+            return c1Calls === 1
+              ? pageWith([], null)
+              : pageWith([{ ...newComment, id: 10, body: "late news" }], "c2");
+          }
+          return pageWith([], null);
+        },
+      ],
+    ]);
+    const started = Date.now();
+    const result = await runCli(
+      [
+        "issue",
+        "watch",
+        "3",
+        "--since",
+        "c0",
+        "--debounce",
+        "0.4",
+        "--interval",
+        "0.05",
+        "--timeout",
+        "5",
+        "--json",
+      ],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      items: Array<{ body: string }>;
+      next_cursor: string;
+    };
+    expect(parsed.items.map((i) => i.body)).toEqual([
+      "fresh news",
+      "late news",
+    ]);
+    expect(parsed.next_cursor).toBe("c2");
+    // The window is honored: no early return on the first entry.
+    expect(Date.now() - started).toBeGreaterThanOrEqual(350);
+  });
+
+  it("--debounce window is fixed, so sustained activity still returns", async () => {
+    let n = 0;
+    let pending = true;
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues/3/timeline",
+        () => {
+          // Every drain finds one fresh entry: item page, then empty page.
+          if (pending) {
+            pending = false;
+            n += 1;
+            return pageWith(
+              [{ ...newComment, id: n, body: `burst ${n}` }],
+              `b${n}`,
+            );
+          }
+          pending = true;
+          return pageWith([], null);
+        },
+      ],
+    ]);
+    const result = await runCli(
+      [
+        "issue",
+        "watch",
+        "3",
+        "--since",
+        "b0",
+        "--debounce",
+        "0.3",
+        "--interval",
+        "0.05",
+        "--timeout",
+        "5",
+        "--json",
+      ],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      items: unknown[];
+      next_cursor: string;
+    };
+    expect(parsed.items.length).toBeGreaterThanOrEqual(2);
+    expect(parsed.next_cursor).toBe(`b${n}`);
+  });
+
+  it("--poll ignores --debounce and returns immediately", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues/3/timeline",
+        (_init: RequestInit, url: URL) =>
+          url.searchParams.get("after") === "c0"
+            ? pageWith([newComment], "c1")
+            : pageWith([], null),
+      ],
+    ]);
+    const started = Date.now();
+    const result = await runCli(
+      [
+        "issue",
+        "watch",
+        "3",
+        "--poll",
+        "--since",
+        "c0",
+        "--debounce",
+        "5",
+        "--json",
+      ],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(
+      (JSON.parse(result.stdout) as { items: unknown[] }).items,
+    ).toHaveLength(1);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
   it("passes --type through and resolves --exclude-actor me", async () => {
     const { fetchImpl, calls } = fakeFetch([
       ["GET", "/api/me", me],

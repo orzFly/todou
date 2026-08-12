@@ -166,6 +166,13 @@ export class IssueWatchCommand extends ProjectCommand {
       0 = new entries were printed, 3 = nothing new (timeout or empty poll),
       1 = error. \`--json\` emits \`{ items, next_cursor }\`; feed next_cursor
       back into \`--since\` to never miss or repeat an entry.
+
+      \`--debounce N\` batches a burst into one wake-up: after the first new
+      entry, keep collecting for a fixed N seconds (measured from that first
+      entry, never extended), then return everything at once. \`--timeout\`
+      only bounds the quiet phase, so a watch that catches news right before
+      the deadline still gets its full window; \`--poll\` ignores
+      \`--debounce\`. Off by default — first news returns immediately.
     `,
     examples: [
       [
@@ -177,6 +184,10 @@ export class IssueWatchCommand extends ProjectCommand {
         'todou issue watch 33 --poll --since "$CURSOR" --type comment',
       ],
       ["Bootstrap a cursor at now", "todou issue watch 33 --poll --json"],
+      [
+        "Batch a burst of edits into one wake-up",
+        "todou issue watch 33 --timeout 3300 --debounce 45 --json",
+      ],
     ],
   });
 
@@ -192,6 +203,10 @@ export class IssueWatchCommand extends ProjectCommand {
   });
   interval = Option.String("--interval", {
     description: "Seconds between server polls (default 2)",
+  });
+  debounce = Option.String("--debounce", {
+    description:
+      "Batch entries for this many seconds after the first one (default: return immediately)",
   });
   types = Option.String("--type", {
     description: `Comma-separated filter: ${TimelineFilterType.options.join(", ")}`,
@@ -214,6 +229,10 @@ export class IssueWatchCommand extends ProjectCommand {
       this.interval === undefined
         ? 2
         : parseSeconds(this.interval, "--interval");
+    const debounceSec =
+      this.debounce === undefined
+        ? undefined
+        : parseSeconds(this.debounce, "--debounce");
 
     // Baseline before the loop: the newest entry regardless of filter, so
     // "from now" never replays history. Also 404s early on a bad number.
@@ -225,6 +244,7 @@ export class IssueWatchCommand extends ProjectCommand {
       poll: this.poll,
       timeoutSec,
       intervalSec,
+      debounceSec,
       baseline,
       drain: (after) =>
         drainTimeline(client, project, number, { after, types, excludeActor }),

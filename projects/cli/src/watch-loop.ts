@@ -29,11 +29,18 @@ export function sleep(ms: number): Promise<void> {
  * The shared poll-until-news loop behind `issue watch` and `watch`.
  * Returns the process exit code: 0 when entries were delivered, 3 when the
  * poll came back empty or the timeout elapsed (loop-friendly "no news").
+ *
+ * `timeoutSec` bounds the quiet phase only; once the first entry arrives,
+ * `debounceSec` (when set) takes over and keeps batching for that fixed
+ * window before emitting, so the process may outlive the timeout by up to
+ * the debounce duration.
  */
 export async function runWatchLoop<T>(opts: {
   poll: boolean;
   timeoutSec: number;
   intervalSec: number;
+  /** Batch window after the first entry; undefined = emit immediately. */
+  debounceSec?: number;
   baseline: string | undefined;
   drain: (
     after: string | undefined,
@@ -43,17 +50,37 @@ export async function runWatchLoop<T>(opts: {
 }): Promise<number> {
   let cursor = opts.baseline;
   const deadline = Date.now() + opts.timeoutSec * 1000;
-  for (;;) {
-    // Cursors are absolute stream positions and only advance once a drain
-    // has returned, so re-draining with the held cursor after a failure
-    // loses nothing and repeats nothing.
-    // TODO: back off and retry transient failures (network, 5xx) here
-    // instead of aborting the command; give up only after several
-    // consecutive failures, keeping 4xx fatal.
+
+  // Cursors are absolute stream positions and only advance once a drain
+  // has returned, so re-draining with the held cursor after a failure
+  // loses nothing and repeats nothing.
+  // TODO: back off and retry transient failures (network, 5xx) here
+  // instead of aborting the command; give up only after several
+  // consecutive failures, keeping 4xx fatal. Both the quiet-phase and the
+  // debounce loops drain through this closure, so this is the one seam.
+  const drainOnce = async (): Promise<T[]> => {
     const page = await opts.drain(cursor);
     cursor = page.cursor ?? cursor;
-    if (page.items.length > 0) {
-      opts.onItems(page.items, cursor);
+    return page.items;
+  };
+
+  for (;;) {
+    const items = await drainOnce();
+    if (items.length > 0) {
+      if (opts.debounceSec !== undefined && !opts.poll) {
+        // The window is fixed from the first entry — later entries do not
+        // reset it — so sustained activity cannot defer the return forever.
+        // Entries landing after it closes stay beyond `cursor` for the
+        // caller's next watch.
+        const windowEnd = Date.now() + opts.debounceSec * 1000;
+        for (;;) {
+          const remaining = windowEnd - Date.now();
+          if (remaining <= 0) break;
+          await sleep(Math.min(opts.intervalSec * 1000, remaining));
+          items.push(...(await drainOnce()));
+        }
+      }
+      opts.onItems(items, cursor);
       return 0;
     }
     const remaining = deadline - Date.now();
