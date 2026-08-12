@@ -24,7 +24,12 @@ import {
   resolveStatus,
 } from "../resolve.ts";
 import { markSeen, refreshUnread } from "../unread.ts";
-import { normalizeTypes, runWatchLoop } from "../watch-loop.ts";
+import {
+  normalizeTypes,
+  retryTransient,
+  runWatchLoop,
+  watchRetryOptions,
+} from "../watch-loop.ts";
 
 function issueRow(issue: IssueListItem, unread: Set<number>): string[] {
   return [
@@ -169,8 +174,16 @@ export class IssueWatchCommand extends ProjectCommand {
       Blocks until something new arrives or \`--timeout\` elapses; \`--poll\`
       checks once and returns immediately. Exit codes are loop-friendly:
       0 = new entries were printed, 3 = nothing new (timeout or empty poll),
-      1 = error. \`--json\` emits \`{ items, next_cursor }\`; feed next_cursor
-      back into \`--since\` to never miss or repeat an entry.
+      1 = error, 4 = gave up on a network outage (see below). \`--json\`
+      emits \`{ items, next_cursor }\`; feed next_cursor back into
+      \`--since\` to never miss or repeat an entry.
+
+      Transient failures (connection refused/reset, timeouts, 5xx) are
+      retried with exponential backoff and jitter: a blocking watch keeps
+      retrying for at least ~2 minutes (14 consecutive failures — enough
+      to ride out a slow deploy restart); \`--poll\` fails fast after 3.
+      Exhausting the budget exits 4 — unlike 1, just rerun with the same
+      \`--since\` cursor and nothing is missed or repeated.
 
       \`--debounce N\` batches a burst into one wake-up: keep collecting
       until N seconds after the newest entry of the first batch *happened*
@@ -224,12 +237,19 @@ export class IssueWatchCommand extends ProjectCommand {
 
   protected async run(client: TodouClient): Promise<number> {
     const { project, number } = this.resolveIssueRef(this.number);
+    const retry = watchRetryOptions(this.poll, (line) => this.note(line));
     const types =
       this.types === undefined ? undefined : normalizeTypes(this.types);
+    const excludeActorFlag = this.excludeActor;
     const excludeActor =
-      this.excludeActor === undefined
+      excludeActorFlag === undefined
         ? undefined
-        : (await resolveAssignees(client, project, [this.excludeActor]))[0];
+        : (
+            await retryTransient(
+              () => resolveAssignees(client, project, [excludeActorFlag]),
+              retry,
+            )
+          )[0];
     const timeoutSec =
       this.timeout === undefined ? 60 : parseSeconds(this.timeout, "--timeout");
     const intervalSec =
@@ -244,7 +264,12 @@ export class IssueWatchCommand extends ProjectCommand {
     // Baseline before the loop: the newest entry regardless of filter, so
     // "from now" never replays history. Also 404s early on a bad number.
     const baseline =
-      this.since ?? (await tailCursor(client, project, number)) ?? undefined;
+      this.since ??
+      (await retryTransient(
+        () => tailCursor(client, project, number),
+        retry,
+      )) ??
+      undefined;
     const paint = makePainter(this.context.stdout, this.context.env);
 
     return runWatchLoop<TimelineItem>({
@@ -253,6 +278,7 @@ export class IssueWatchCommand extends ProjectCommand {
       intervalSec,
       debounceSec,
       baseline,
+      retry,
       drain: (after) =>
         drainTimeline(client, project, number, { after, types, excludeActor }),
       onItems: (items, cursor) =>

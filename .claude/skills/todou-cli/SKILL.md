@@ -44,7 +44,9 @@ todou watch -p <proj> --since <cursor> --timeout 43200 --debounce 60 --json  # w
 Use a 12-hour timeout (43200) and a 60-second debounce as the standard values.
 
 - Exit codes: **0 = new entries** (stdout is `{items, next_cursor}`), **3 = timeout with nothing new**
-  (normal, not an error), 1 = error.
+  (normal, not an error), 1 = fatal error, **4 = gave up on a network outage** after automatic retries
+  (a blocking watch retries transient failures — 5xx, refused, reset — for 2+ minutes first; `--poll`
+  fails fast after 3 attempts). On exit 4 just rerun with the same cursor; nothing is lost.
 - Cursors are interchangeable project-wide: `issue view`, watch output, and `--poll` all produce them.
   They survive process restarts, and events during an outage are all delivered on reconnect, without duplicates.
 - Get a "now" cursor: `todou watch -p <proj> --poll --json` (exit 3 with empty items is expected).

@@ -1,5 +1,5 @@
-import { TimelineFilterType } from "@todou/shared";
-import { CliError } from "./errors.ts";
+import { TimelineFilterType, TodouError } from "@todou/shared";
+import { CliError, RetriesExhaustedError } from "./errors.ts";
 
 /** Validates a comma-separated --type list, returning it normalized. */
 export function normalizeTypes(raw: string): string {
@@ -26,6 +26,99 @@ export function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Errors worth retrying: the request may succeed verbatim a moment later.
+ * 5xx/408/429 are server-side or throttling hiccups; undici surfaces every
+ * connection-level failure (refused, DNS, reset, mid-body termination) as a
+ * TypeError. Everything else — 4xx, parse errors, bugs — is fatal.
+ */
+export function isTransientError(error: unknown): boolean {
+  if (error instanceof TodouError) {
+    return error.status >= 500 || error.status === 408 || error.status === 429;
+  }
+  return error instanceof TypeError;
+}
+
+function describeError(error: unknown): string {
+  if (error instanceof TodouError) {
+    return error.message === String(error.status)
+      ? `HTTP ${error.status}`
+      : `HTTP ${error.status} — ${error.message}`;
+  }
+  if (error instanceof TypeError) {
+    return (error.cause as Error | undefined)?.message ?? error.message;
+  }
+  return String(error);
+}
+
+export type RetryOptions = {
+  /** Consecutive transient failures tolerated before giving up. */
+  maxAttempts: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+  /** Progress line per retry, for stderr. */
+  onRetry?: (line: string) => void;
+  /** Test seams. */
+  sleep?: (ms: number) => Promise<void>;
+  random?: () => number;
+};
+
+/**
+ * The retry budgets behind watch/poll commands. A blocking watch is a
+ * sentinel: it must ride out a full deploy restart, and on dogfood the
+ * server today ignores SIGTERM, so systemd's 90s stop timeout makes every
+ * restart a ~92s outage. 14 attempts guarantee ≥135s of retrying even at
+ * the jitter floor (~200s typical) before giving up with exit code 4.
+ * `--poll` callers expect promptness, so a blip gets two quick retries and
+ * a real outage fails fast.
+ */
+export function watchRetryOptions(
+  poll: boolean,
+  onRetry?: (line: string) => void,
+): RetryOptions {
+  return poll
+    ? { maxAttempts: 3, baseDelayMs: 500, maxDelayMs: 1000, onRetry }
+    : { maxAttempts: 14, baseDelayMs: 1000, maxDelayMs: 30_000, onRetry };
+}
+
+/**
+ * Runs `fn`, retrying transient failures with exponential backoff and
+ * jitter (delay drawn from [cap/2, cap), cap doubling up to maxDelayMs).
+ * Non-transient errors pass through untouched; the `maxAttempts`th
+ * consecutive failure throws RetriesExhaustedError (exit code 4).
+ */
+export async function retryTransient<T>(
+  fn: () => Promise<T>,
+  opts: RetryOptions,
+): Promise<T> {
+  const wait = opts.sleep ?? sleep;
+  const random = opts.random ?? Math.random;
+  let failures = 0;
+  for (;;) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (!isTransientError(error)) throw error;
+      failures += 1;
+      if (failures >= opts.maxAttempts) {
+        throw new RetriesExhaustedError(
+          `giving up after ${failures} consecutive network failures — last: ${describeError(error)}`,
+          "rerun with the same cursor to resume without losing entries (exit code 4 = transient outage, not a usage error)",
+        );
+      }
+      const cap = Math.min(
+        opts.maxDelayMs,
+        opts.baseDelayMs * 2 ** (failures - 1),
+      );
+      const delayMs = cap / 2 + random() * (cap / 2);
+      opts.onRetry?.(
+        `transient failure ${failures}/${opts.maxAttempts} (${describeError(error)}); retrying in ${(delayMs / 1000).toFixed(1)}s`,
+      );
+      await wait(delayMs);
+    }
+  }
+}
+
+/**
  * The shared poll-until-news loop behind `issue watch` and `watch`.
  * Returns the process exit code: 0 when entries were delivered, 3 when the
  * poll came back empty or the timeout elapsed (loop-friendly "no news").
@@ -49,19 +142,22 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
   ) => Promise<{ items: T[]; cursor: string | undefined }>;
   onItems: (items: T[], cursor: string | undefined) => void;
   onEmpty: (cursor: string | undefined) => void;
+  /** Overrides the poll-derived transient-failure budget. */
+  retry?: RetryOptions;
 }): Promise<number> {
   let cursor = opts.baseline;
   const deadline = Date.now() + opts.timeoutSec * 1000;
+  const retry = opts.retry ?? watchRetryOptions(opts.poll);
 
   // Cursors are absolute stream positions and only advance once a drain
   // has returned, so re-draining with the held cursor after a failure
-  // loses nothing and repeats nothing.
-  // TODO: back off and retry transient failures (network, 5xx) here
-  // instead of aborting the command; give up only after several
-  // consecutive failures, keeping 4xx fatal. Both the quiet-phase and the
-  // debounce loops drain through this closure, so this is the one seam.
+  // loses nothing and repeats nothing. That makes retryTransient safe at
+  // this one seam, which both the quiet-phase and the debounce loops drain
+  // through; a success resets the consecutive-failure count. Retry sleeps
+  // may overrun the quiet-phase deadline or the debounce window — that only
+  // delays the verdict, and beats a false "no news" exit while unreachable.
   const drainOnce = async (): Promise<T[]> => {
-    const page = await opts.drain(cursor);
+    const page = await retryTransient(() => opts.drain(cursor), retry);
     cursor = page.cursor ?? cursor;
     return page.items;
   };

@@ -19,7 +19,11 @@ import {
   renderAnswerRecords,
   renderQuestions,
 } from "../questions.ts";
-import { runWatchLoop } from "../watch-loop.ts";
+import {
+  retryTransient,
+  runWatchLoop,
+  watchRetryOptions,
+} from "../watch-loop.ts";
 import { drainTimeline } from "./issue.ts";
 
 /** The wait/answer output once a comment's questions are resolved. */
@@ -121,7 +125,8 @@ export class QuestionWaitCommand extends ProjectCommand {
 
       Exit codes follow \`issue watch\`: 0 = answers delivered (printed,
       decoded, as JSON under \`--json\`), 3 = timeout with no answer,
-      1 = error.
+      1 = error, 4 = gave up on a network outage after automatic retries
+      (rerun the same command; nothing is lost).
     `,
     examples: [
       [
@@ -146,6 +151,7 @@ export class QuestionWaitCommand extends ProjectCommand {
   protected async run(client: TodouClient): Promise<number> {
     const { project, number } = this.resolveIssueRef(this.number);
     const commentId = parsePositiveInt(this.commentId, "comment id");
+    const retry = watchRetryOptions(this.poll, (line) => this.note(line));
     const timeoutSec =
       this.timeout === undefined ? 60 : parseSeconds(this.timeout, "--timeout");
     const intervalSec =
@@ -158,9 +164,16 @@ export class QuestionWaitCommand extends ProjectCommand {
     // is seen by the check; one landing after it lies beyond the cursor and
     // is caught by the loop. No gap either way.
     const baseline =
-      (await client.getTimeline(project, number, { last: true, limit: 1 }))
-        .next_cursor ?? undefined;
-    const item = await findQuestionComment(client, project, number, commentId);
+      (
+        await retryTransient(
+          () => client.getTimeline(project, number, { last: true, limit: 1 }),
+          retry,
+        )
+      ).next_cursor ?? undefined;
+    const item = await retryTransient(
+      () => findQuestionComment(client, project, number, commentId),
+      retry,
+    );
     if (item.answer) {
       const result: AnswerResult = {
         comment_id: commentId,
@@ -178,6 +191,7 @@ export class QuestionWaitCommand extends ProjectCommand {
       timeoutSec,
       intervalSec,
       baseline,
+      retry,
       drain: async (after) => {
         const page = await drainTimeline(client, project, number, {
           after,

@@ -4,7 +4,12 @@ import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { makePainter } from "../format.ts";
 import { parseSeconds } from "../parse.ts";
-import { normalizeTypes, runWatchLoop } from "../watch-loop.ts";
+import {
+  normalizeTypes,
+  retryTransient,
+  runWatchLoop,
+  watchRetryOptions,
+} from "../watch-loop.ts";
 import { renderTimelineItem } from "./issue.ts";
 
 export class WatchCommand extends ProjectCommand {
@@ -20,9 +25,17 @@ export class WatchCommand extends ProjectCommand {
       watch\` cursors of the same project.
 
       Exit codes: 0 = new entries were printed, 3 = nothing new (timeout or
-      empty poll), 1 = error. \`--json\` emits \`{ items, next_cursor }\`
-      where each item carries \`issue_number\`; feed next_cursor back into
-      \`--since\` to never miss or repeat an entry.
+      empty poll), 1 = error, 4 = gave up on a network outage (see below).
+      \`--json\` emits \`{ items, next_cursor }\` where each item carries
+      \`issue_number\`; feed next_cursor back into \`--since\` to never miss
+      or repeat an entry.
+
+      Transient failures (connection refused/reset, timeouts, 5xx) are
+      retried with exponential backoff and jitter: a blocking watch keeps
+      retrying for at least ~2 minutes (14 consecutive failures — enough
+      to ride out a slow deploy restart); \`--poll\` fails fast after 3.
+      Exhausting the budget exits 4 — unlike 1, just rerun with the same
+      \`--since\` cursor and nothing is missed or repeated.
 
       \`--debounce N\` batches a burst into one wake-up: keep collecting
       until N seconds after the newest entry of the first batch *happened*
@@ -75,6 +88,7 @@ export class WatchCommand extends ProjectCommand {
 
   protected async run(client: TodouClient): Promise<number> {
     const project = this.requireProject();
+    const retry = watchRetryOptions(this.poll, (line) => this.note(line));
     const types =
       this.types === undefined ? undefined : normalizeTypes(this.types);
     const timeoutSec =
@@ -87,12 +101,18 @@ export class WatchCommand extends ProjectCommand {
       this.debounce === undefined
         ? undefined
         : parseSeconds(this.debounce, "--debounce");
-    const excludeActor = this.anyActor ? undefined : (await client.me()).id;
+    const excludeActor = this.anyActor
+      ? undefined
+      : (await retryTransient(() => client.me(), retry)).id;
 
     const baseline =
       this.since ??
-      (await client.getActivity(project, { last: true, limit: 1 }))
-        .next_cursor ??
+      (
+        await retryTransient(
+          () => client.getActivity(project, { last: true, limit: 1 }),
+          retry,
+        )
+      ).next_cursor ??
       undefined;
     const paint = makePainter(this.context.stdout, this.context.env);
 
@@ -102,6 +122,7 @@ export class WatchCommand extends ProjectCommand {
       intervalSec,
       debounceSec,
       baseline,
+      retry,
       drain: (after) =>
         drainActivity(client, project, { after, types, excludeActor }),
       onItems: (items, cursor) =>

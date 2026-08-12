@@ -21,8 +21,9 @@ Keep one running in the background (run_in_background):
 todou watch -p <proj> --since <cursor> --timeout 43200 --debounce 60 --json
 ```
 
-Every exit wakes you (exit 0 = events, exit 3 = idle tick). **Handle the items, then immediately
-restart with next_cursor.** Standard reactions:
+Every exit wakes you (exit 0 = events, exit 3 = idle tick, exit 4 = the watch already retried a
+network outage for 2+ minutes and gave up — restart it with the same cursor, no events are lost).
+**Handle the items, then immediately restart with next_cursor.** Standard reactions:
 
 | Event | Reaction |
 |---|---|
