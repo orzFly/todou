@@ -142,6 +142,12 @@ export async function oidcCallback(
   const publicUrl = new URL(callbackUri(c, ctx.config));
   publicUrl.search = new URL(c.req.url).search;
 
+  // Checked here rather than diagnosed out of the grant error: the
+  // distinction matters for humans (stale bookmark vs broken IdP).
+  if (publicUrl.searchParams.get("state") !== transient.state) {
+    return fail("state_mismatch");
+  }
+
   let tokens: oidc.TokenEndpointResponse & oidc.TokenEndpointResponseHelpers;
   try {
     const idp = await getIdp(ctx.config);
@@ -150,13 +156,8 @@ export async function oidcCallback(
       expectedState: transient.state,
     });
   } catch (cause) {
-    // openid-client reports a state mismatch as an error too, but the
-    // distinction matters for humans: stale bookmark vs broken IdP.
-    const message = String(cause);
-    console.error("oidc code exchange failed:", message);
-    return fail(
-      message.includes("state") ? "state_mismatch" : "exchange_failed",
-    );
+    console.error("oidc code exchange failed:", String(cause));
+    return fail("exchange_failed");
   }
 
   const claims = tokens.claims();
