@@ -3,6 +3,7 @@ import { TimelineFilterType } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { makePainter } from "../format.ts";
+import { drainPaged } from "../paginate.ts";
 import { parseSeconds } from "../parse.ts";
 import {
   normalizeTypes,
@@ -156,19 +157,12 @@ async function drainActivity(
   project: string,
   opts: { after?: string; types?: string; excludeActor?: number },
 ): Promise<{ items: ActivityItem[]; cursor: string | undefined }> {
-  const items: ActivityItem[] = [];
-  let cursor = opts.after;
-  let after = opts.after;
-  do {
-    const page = await client.getActivity(project, {
+  return drainPaged("activity", opts.after, (after) =>
+    client.getActivity(project, {
       after,
       types: opts.types,
       exclude_actor: opts.excludeActor,
       limit: 100,
-    });
-    items.push(...page.items);
-    after = page.next_cursor ?? undefined;
-    if (after !== undefined) cursor = after;
-  } while (after);
-  return { items, cursor };
+    }),
+  );
 }

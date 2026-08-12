@@ -11,6 +11,7 @@ import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
 import { makePainter, type Painter, relativeTime, table } from "../format.ts";
+import { drainPaged } from "../paginate.ts";
 import { parseChoice, parsePositiveInt, parseSeconds } from "../parse.ts";
 import {
   decodeAnswerEvent,
@@ -460,34 +461,21 @@ function isTTY(stream: unknown): boolean {
   return Boolean((stream as { isTTY?: boolean })?.isTTY);
 }
 
-/**
- * Follows next_cursor forward until the stream is drained. `cursor` lands on
- * the newest entry seen (or stays at `opts.after` when nothing was new), so
- * callers can hand it straight back to `--since`. A failure mid-drain
- * surfaces before the caller's cursor moves, so retrying from the same
- * position re-reads this attempt's pages — nothing is lost or repeated.
- */
+/** Forward-drains one issue's timeline (cursor semantics: see drainPaged). */
 export async function drainTimeline(
   client: TodouClient,
   project: string,
   number: number,
   opts: { after?: string; types?: string; excludeActor?: number } = {},
 ): Promise<{ items: TimelineItem[]; cursor: string | undefined }> {
-  const items: TimelineItem[] = [];
-  let cursor = opts.after;
-  let after = opts.after;
-  do {
-    const page = await client.getTimeline(project, number, {
+  return drainPaged("timeline", opts.after, (after) =>
+    client.getTimeline(project, number, {
       after,
       types: opts.types,
       exclude_actor: opts.excludeActor,
       limit: 100,
-    });
-    items.push(...page.items);
-    after = page.next_cursor ?? undefined;
-    if (after !== undefined) cursor = after;
-  } while (after);
-  return { items, cursor };
+    }),
+  );
 }
 
 function renderIssue(
