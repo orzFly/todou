@@ -18,6 +18,7 @@ const ConfigSchema = z.object({
     .object({
       port: z.coerce.number().int().min(1).max(65535).default(8637),
       static_dir: z.string().optional(),
+      compression: flexibleBool.default(true),
     })
     .prefault({}),
   database: z
@@ -105,6 +106,7 @@ const ENV_MAP: Array<[string, string[]]> = [
   ["TODOU_AUTH_MODE", ["auth", "mode"]],
   ["TODOU_HTTP_PORT", ["http", "port"]],
   ["TODOU_HTTP_STATIC_DIR", ["http", "static_dir"]],
+  ["TODOU_HTTP_COMPRESSION", ["http", "compression"]],
   ["TODOU_DATABASE_SYSTEM", ["database", "system"]],
   ["TODOU_DATABASE_AUTO_MIGRATE", ["database", "auto_migrate"]],
   ["TODOU_DATABASE_PROJECTS_PLACEMENT", ["database", "projects", "placement"]],

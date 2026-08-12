@@ -6,6 +6,7 @@ import { type AppEnv, authMiddleware } from "./auth/middleware.ts";
 import type { AppContext } from "./bootstrap.ts";
 import { registerErrorHandler } from "./errors.ts";
 import { agentContextMiddleware } from "./middleware/agent-context.ts";
+import { compressMiddleware } from "./middleware/compress.ts";
 import { agentRoutes } from "./routes/agents.ts";
 import { attachmentRoutes } from "./routes/attachments.ts";
 import { authRoutes } from "./routes/auth.ts";
@@ -86,6 +87,9 @@ export function createApp(ctx: AppContext) {
     c.set("appCtx", ctx);
     await next();
   });
+  if (ctx.config.http.compression) {
+    app.use("*", compressMiddleware());
+  }
 
   // basePath (rather than a prefixed mount) so the generated OpenAPI
   // document carries the /api prefix in its paths.
