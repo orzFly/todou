@@ -19,6 +19,10 @@ import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
 import { SpecStatusBadge } from "@/components/issue/spec-block.tsx";
+import {
+  PIERRE_THEME,
+  PIERRE_THEME_TYPE,
+} from "@/components/shared/pierre.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   AnnotatedMarkdown,
@@ -482,9 +486,13 @@ function UnplacedComment({
 }
 
 // Module-scope per the library's props-stability guidance; interaction
-// callbacks are merged per file pair below.
+// callbacks are merged per file pair below. Theme constants follow the
+// shared pierre setup (#31); the direct MultiFileDiff import is fine here
+// because this whole page is route-lazy — pierre never reaches the main
+// bundle through it.
 const DIFF_THEME = {
-  theme: { dark: "pierre-dark", light: "pierre-light" },
+  theme: PIERRE_THEME,
+  themeType: PIERRE_THEME_TYPE,
   diffStyle: "unified",
 } as const;
 

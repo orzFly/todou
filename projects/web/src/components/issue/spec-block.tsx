@@ -5,10 +5,11 @@ import type {
   SpecReviewStatus,
   SpecReviewVerdict,
 } from "@todou/shared";
-import { BookOpenTextIcon, FileTextIcon } from "lucide-react";
+import { BookOpenTextIcon, MessageSquarePlusIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
-import { specQuery } from "@/api/spec.ts";
+import { specFilesQuery, specQuery } from "@/api/spec.ts";
+import { DocumentCard } from "@/components/shared/document-card.tsx";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils.ts";
 
@@ -48,10 +49,10 @@ export function SpecStatusBadge({
 }
 
 /**
- * Spec overview between the issue body and the timeline: file list, version,
- * review state, and the door into the full spec view. The file entries stay
- * deliberately plain — #31 is building the generic embedded-document card,
- * and this block adopts it once that lands.
+ * Spec overview between the issue body and the timeline: the current
+ * version's documents as embedded cards (#31's DocumentCard — capped
+ * height, expand dialog), version, review state, and the door into the
+ * full review view.
  */
 export function SpecBlock({
   slug,
@@ -149,24 +150,67 @@ function SpecBlockBody({
           </Link>
         </Button>
       </div>
-      <ul className="grid gap-x-4 px-3 py-2 sm:grid-cols-2">
+      <SpecFileCards slug={slug} issueNumber={issueNumber} spec={spec} />
+    </div>
+  );
+}
+
+function SpecFileCards({
+  slug,
+  issueNumber,
+  spec,
+}: {
+  slug: string;
+  issueNumber: number;
+  spec: SpecInfo;
+}) {
+  const files = useQuery(specFilesQuery(slug, issueNumber));
+  if (!files.data) {
+    // Bodies still in flight: hold the space with the plain file names so
+    // the block never jumps from empty to cards.
+    return (
+      <ul className="px-3 py-2">
         {spec.files.map((file) => (
-          <li key={file.path}>
-            <Link
-              to="/projects/$slug/issues/$number/spec"
-              params={{ slug, number: String(issueNumber) }}
-              search={{ file: file.path }}
-              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted"
-            >
-              <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
-              <span className="truncate font-mono text-xs">{file.path}</span>
-              <span className="ml-auto shrink-0 text-xs text-muted-foreground/70">
-                {(file.size / 1024).toFixed(1)} KB
-              </span>
-            </Link>
+          <li
+            key={file.path}
+            className="px-2 py-1 font-mono text-xs text-muted-foreground"
+          >
+            {file.path}
           </li>
         ))}
       </ul>
+    );
+  }
+  return (
+    <div className="px-3 py-1">
+      {files.data.files.map((file) => (
+        <DocumentCard
+          key={file.path}
+          filename={file.path}
+          text={file.body}
+          slug={slug}
+          issueNumber={issueNumber}
+          meta={`${(file.size / 1024).toFixed(1)} KB`}
+          collapsedClassName="max-h-56"
+          headerActions={
+            <Button
+              asChild
+              size="icon-sm"
+              variant="ghost"
+              className="text-muted-foreground"
+            >
+              <Link
+                to="/projects/$slug/issues/$number/spec"
+                params={{ slug, number: String(issueNumber) }}
+                search={{ file: file.path }}
+                aria-label={`review ${file.path}`}
+              >
+                <MessageSquarePlusIcon className="size-3.5" />
+              </Link>
+            </Button>
+          }
+        />
+      ))}
     </div>
   );
 }
