@@ -17,6 +17,7 @@ import {
   type Viewer,
 } from "@/components/timeline/comment-item.tsx";
 import { EventRow } from "@/components/timeline/event-row.tsx";
+import { SpecVersionCard } from "@/components/timeline/spec-version-card.tsx";
 import { useTimelineAnchor } from "@/components/timeline/use-timeline-anchor.ts";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -171,7 +172,16 @@ export function Timeline({
               viewer={viewer}
             />
           ) : (
-            <EventRow event={item} slug={slug} issueNumber={issueNumber} />
+            <>
+              <EventRow event={item} slug={slug} issueNumber={issueNumber} />
+              {item.event_type === "spec_pushed" && (
+                <SpecVersionCard
+                  slug={slug}
+                  issueNumber={issueNumber}
+                  payload={item.payload}
+                />
+              )}
+            </>
           )}
         </div>
       ))}

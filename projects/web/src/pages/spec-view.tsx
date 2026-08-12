@@ -14,7 +14,7 @@ import {
   ArrowUpIcon,
   FileTextIcon,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
@@ -311,6 +311,7 @@ function SpecViewBody({
           toVersion={version}
           comments={comments.data.items}
           onStage={setStaging}
+          focusPath={search.file}
         />
       ) : (
         <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
@@ -505,6 +506,7 @@ function SpecDiff({
   toVersion,
   comments,
   onStage,
+  focusPath,
 }: {
   slug: string;
   issueNumber: number;
@@ -513,8 +515,20 @@ function SpecDiff({
   toVersion: number;
   comments: SpecCommentItem[];
   onStage: (staging: Staging) => void;
+  /** Scroll this file's diff into view — the version card's per-file link (#59). */
+  focusPath?: string;
 }) {
   const from = useSuspenseQuery(specFilesQuery(slug, issueNumber, fromVersion));
+  const focusRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focusPath === undefined) return;
+    const el = focusRef.current;
+    if (!el) return;
+    el.scrollIntoView({ block: "start" });
+    el.classList.remove("anchor-flash");
+    void el.offsetWidth;
+    el.classList.add("anchor-flash");
+  }, [focusPath]);
   const pairs = useMemo(() => {
     const before = new Map(from.data.files.map((f) => [f.path, f.body]));
     const after = new Map(toFiles.map((f) => [f.path, f.body]));
@@ -542,16 +556,21 @@ function SpecDiff({
         {fromVersion}, new side to v{toVersion}).
       </p>
       {pairs.map((pair) => (
-        <AnnotatedFileDiff
+        <div
           key={pair.path}
-          path={pair.path}
-          oldBody={pair.oldBody}
-          newBody={pair.newBody}
-          fromVersion={fromVersion}
-          toVersion={toVersion}
-          comments={comments.filter((c) => c.anchor.path === pair.path)}
-          onStage={onStage}
-        />
+          ref={pair.path === focusPath ? focusRef : undefined}
+          className="scroll-mt-4"
+        >
+          <AnnotatedFileDiff
+            path={pair.path}
+            oldBody={pair.oldBody}
+            newBody={pair.newBody}
+            fromVersion={fromVersion}
+            toVersion={toVersion}
+            comments={comments.filter((c) => c.anchor.path === pair.path)}
+            onStage={onStage}
+          />
+        </div>
       ))}
     </div>
   );
