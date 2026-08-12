@@ -20,7 +20,15 @@ export function ProjectLayout() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h1 className="text-xl font-semibold">{project.data.name}</h1>
+          <h1 className="text-xl font-semibold">
+            <Link
+              to="/projects/$slug"
+              params={{ slug }}
+              className="hover:underline"
+            >
+              {project.data.name}
+            </Link>
+          </h1>
           {project.data.description && (
             <p className="text-sm text-muted-foreground">
               {project.data.description}
