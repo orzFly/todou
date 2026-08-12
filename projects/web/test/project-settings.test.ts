@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   normalizeHexColor,
-  STATUS_COLORS,
+  PRESET_COLORS,
 } from "../src/pages/project-settings.tsx";
 
 describe("normalizeHexColor", () => {
@@ -24,14 +24,14 @@ describe("normalizeHexColor", () => {
   });
 });
 
-describe("STATUS_COLORS presets", () => {
+describe("PRESET_COLORS presets", () => {
   it("are already canonical so the server's ColorHex accepts them", () => {
-    for (const color of STATUS_COLORS) {
+    for (const color of PRESET_COLORS) {
       expect(normalizeHexColor(color)).toBe(color);
     }
   });
 
   it("have no duplicates", () => {
-    expect(new Set(STATUS_COLORS).size).toBe(STATUS_COLORS.length);
+    expect(new Set(PRESET_COLORS).size).toBe(PRESET_COLORS.length);
   });
 });

@@ -55,8 +55,8 @@ import {
 
 const ROLES: MemberRole[] = ["admin", "writer", "reader"];
 
-/** Preset swatches offered in the status color popover. */
-export const STATUS_COLORS = [
+/** Preset swatches offered in the color popover (statuses and labels). */
+export const PRESET_COLORS = [
   "#6b7280",
   "#ef4444",
   "#f97316",
@@ -253,8 +253,9 @@ function StatusesSection({ slug }: { slug: string }) {
               </span>
             )}
             <span className="ml-auto flex items-center gap-1">
-              <StatusColorPicker
-                status={status}
+              <ColorPicker
+                name={status.name}
+                color={status.color}
                 onPick={(color) =>
                   patch.mutate({ id: status.id, input: { color } })
                 }
@@ -350,19 +351,21 @@ function StatusesSection({ slug }: { slug: string }) {
   );
 }
 
-function StatusColorPicker({
-  status,
+function ColorPicker({
+  name,
+  color,
   onPick,
 }: {
-  status: Status;
+  name: string;
+  color: string;
   onPick: (color: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [hex, setHex] = useState(status.color);
+  const [hex, setHex] = useState(color);
   const normalized = normalizeHexColor(hex);
 
-  const pick = (color: string) => {
-    onPick(color);
+  const pick = (picked: string) => {
+    onPick(picked);
     setOpen(false);
   };
 
@@ -371,35 +374,36 @@ function StatusColorPicker({
       open={open}
       onOpenChange={(isOpen) => {
         setOpen(isOpen);
-        if (isOpen) setHex(status.color);
+        if (isOpen) setHex(color);
       }}
     >
       <PopoverTrigger asChild>
         <Button
+          type="button"
           variant="ghost"
           size="icon-sm"
-          aria-label={`change ${status.name} color`}
+          aria-label={`change ${name} color`}
           title="Change color"
         >
           <span
             className="size-4 rounded-full border"
-            style={{ backgroundColor: status.color }}
+            style={{ backgroundColor: color }}
             aria-hidden
           />
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-auto p-2">
         <div className="grid grid-cols-6 gap-1.5">
-          {STATUS_COLORS.map((color) => (
+          {PRESET_COLORS.map((preset) => (
             <button
-              key={color}
+              key={preset}
               type="button"
-              aria-label={`set ${status.name} color ${color}`}
+              aria-label={`set ${name} color ${preset}`}
               className="flex size-6 cursor-pointer items-center justify-center rounded-full border transition-transform hover:scale-110"
-              style={{ backgroundColor: color }}
-              onClick={() => pick(color)}
+              style={{ backgroundColor: preset }}
+              onClick={() => pick(preset)}
             >
-              {color === status.color.toLowerCase() && (
+              {preset === color.toLowerCase() && (
                 <CheckIcon className="size-3.5 text-white drop-shadow" />
               )}
             </button>
@@ -414,16 +418,16 @@ function StatusColorPicker({
         >
           <input
             type="color"
-            value={normalized ?? status.color}
+            value={normalized ?? color}
             onChange={(e) => setHex(e.target.value)}
-            aria-label={`custom color for ${status.name}`}
+            aria-label={`custom color for ${name}`}
             className="size-7 shrink-0 cursor-pointer rounded border"
           />
           <Input
             value={hex}
             onChange={(e) => setHex(e.target.value)}
             placeholder="#8b5cf6"
-            aria-label={`custom hex for ${status.name}`}
+            aria-label={`custom hex for ${name}`}
             className="h-7 w-24 font-mono text-xs"
           />
           <Button
@@ -461,6 +465,12 @@ function LabelsSection({ slug }: { slug: string }) {
     onSuccess: invalidate,
     onError: (error) => toast.error(error.message),
   });
+  const recolor = useMutation({
+    mutationFn: (vars: { id: number; color: string }) =>
+      api.updateLabel(slug, vars.id, { color: vars.color }),
+    onSuccess: invalidate,
+    onError: (error) => toast.error(error.message),
+  });
 
   return (
     <section className="space-y-3">
@@ -469,6 +479,13 @@ function LabelsSection({ slug }: { slug: string }) {
         {labels.data.map((label) => (
           <span key={label.id} className="inline-flex items-center gap-1">
             <LabelChip label={label} />
+            <ColorPicker
+              name={label.name}
+              color={label.color}
+              onPick={(picked) =>
+                recolor.mutate({ id: label.id, color: picked })
+              }
+            />
             <Button
               variant="ghost"
               size="icon-sm"
@@ -496,13 +513,7 @@ function LabelsSection({ slug }: { slug: string }) {
           placeholder="New label name"
           className="w-48"
         />
-        <input
-          type="color"
-          value={color}
-          onChange={(e) => setColor(e.target.value)}
-          aria-label="label color"
-          className="size-8 cursor-pointer rounded border"
-        />
+        <ColorPicker name="new label" color={color} onPick={setColor} />
         <Button type="submit" size="sm">
           <PlusIcon className="size-3.5" /> Add
         </Button>
