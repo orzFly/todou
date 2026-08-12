@@ -165,7 +165,7 @@ export function Timeline({
               viewer={viewer}
             />
           ) : (
-            <EventRow event={item} />
+            <EventRow event={item} slug={slug} issueNumber={issueNumber} />
           )}
         </div>
       ))}

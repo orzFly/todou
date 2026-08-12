@@ -37,6 +37,7 @@ export function invalidationsFor(
         : [
             ["issue", slug, event.issue_number],
             ["timeline", slug, event.issue_number],
+            ["attachments", slug, event.issue_number],
           ];
     case "status":
       return [
@@ -61,6 +62,7 @@ export function reconnectInvalidations(slug: string): QueryKeyLike[] {
     ["issues", slug],
     ["issue", slug],
     ["timeline", slug],
+    ["attachments", slug],
     ["statuses", slug],
     ["labels", slug],
     ["members", slug],

@@ -16,6 +16,7 @@ import {
   meQuery,
   statusesQuery,
 } from "@/api/queries.ts";
+import { AttachmentList } from "@/components/issue/attachment-list.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
@@ -62,6 +63,7 @@ export function IssueDetailPage() {
       <div className="min-w-0 space-y-4">
         <TitleBlock slug={slug} issue={issue.data} />
         <BodyBlock slug={slug} issue={issue.data} />
+        <AttachmentList slug={slug} issueNumber={issueNumber} />
         <Separator />
         <Timeline
           slug={slug}

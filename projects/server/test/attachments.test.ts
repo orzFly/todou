@@ -86,6 +86,30 @@ describe("attachments (fs backend)", () => {
     ).toBe(true);
   });
 
+  it("lists an issue's attachments", async () => {
+    const res = await upload("listed.txt", "hello");
+    expect(res.status).toBe(201);
+    const listRes = await t.app.request(
+      `/api/projects/${slug}/attachments?issue_number=1`,
+      { headers: { cookie } },
+    );
+    expect(listRes.status).toBe(200);
+    const list = await json(listRes);
+    expect(Array.isArray(list)).toBe(true);
+    const listed = list.find(
+      (a: { filename: string }) => a.filename === "listed.txt",
+    );
+    expect(listed).toBeDefined();
+    expect(listed.url).toContain(`/projects/${slug}/attachments/`);
+    expect(listed.uploader.login).toBeDefined();
+
+    const missing = await t.app.request(
+      `/api/projects/${slug}/attachments?issue_number=999`,
+      { headers: { cookie } },
+    );
+    expect(missing.status).toBe(404);
+  });
+
   it("rejects uploads above the configured limit", async () => {
     // Limit is 0.001 MB ≈ 1048 bytes.
     const res = await upload("big.txt", "x".repeat(5000));

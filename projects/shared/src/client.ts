@@ -278,6 +278,10 @@ export class TodouClient {
     );
 
   // — attachments —
+  listAttachments = (slug: string, issueNumber: number) =>
+    this.request<Attachment[]>("GET", `/projects/${slug}/attachments`, {
+      query: { issue_number: issueNumber },
+    });
   uploadAttachment = (slug: string, issueNumber: number, file: File) => {
     const form = new FormData();
     form.set("file", file);

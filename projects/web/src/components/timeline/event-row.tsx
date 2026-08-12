@@ -11,6 +11,7 @@ import {
   UserPlusIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { AttachmentEventLink } from "@/components/issue/attachment-list.tsx";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 
@@ -74,8 +75,26 @@ const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
   attachment_added: <PaperclipIcon className="size-3.5" />,
 };
 
-export function EventRow({ event }: { event: TimelineEvent }) {
+export function EventRow({
+  event,
+  slug,
+  issueNumber,
+}: {
+  event: TimelineEvent;
+  slug?: string;
+  issueNumber?: number;
+}) {
   const action = describeEvent(event.event_type, event.payload);
+  // Linkable "attached …" needs the issue's attachment query for the
+  // preview modal, so it only upgrades when the context props are there.
+  const attached =
+    event.event_type === "attachment_added" &&
+    slug !== undefined &&
+    issueNumber !== undefined
+      ? (event.payload.attachment as
+          | { id?: number; filename?: string }
+          | undefined)
+      : undefined;
   return (
     <div className="flex items-center gap-2 py-1.5 pl-1 text-sm text-muted-foreground">
       <span className="shrink-0 text-muted-foreground/70">
@@ -87,7 +106,19 @@ export function EventRow({ event }: { event: TimelineEvent }) {
       />
       <AgentContextBadge context={event.agent_context} />
       <span className="min-w-0 flex-1 truncate" title={action}>
-        {action}
+        {attached?.id !== undefined && slug && issueNumber ? (
+          <>
+            attached{" "}
+            <AttachmentEventLink
+              slug={slug}
+              issueNumber={issueNumber}
+              attachmentId={attached.id}
+              filename={attached.filename ?? "a file"}
+            />
+          </>
+        ) : (
+          action
+        )}
       </span>
       <span
         className="shrink-0 text-xs text-muted-foreground/70"

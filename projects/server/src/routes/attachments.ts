@@ -3,7 +3,11 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { Attachment, ProjectSlug } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
 import { ValidationFailedError } from "../errors.ts";
-import { openAttachment, uploadAttachment } from "../services/attachments.ts";
+import {
+  listIssueAttachments,
+  openAttachment,
+  uploadAttachment,
+} from "../services/attachments.ts";
 
 const uploadRoute = createRoute({
   method: "post",
@@ -28,6 +32,22 @@ const uploadRoute = createRoute({
     201: {
       description: "Uploaded",
       content: { "application/json": { schema: Attachment } },
+    },
+  },
+});
+
+const listRoute = createRoute({
+  method: "get",
+  path: "/{slug}/attachments",
+  summary: "List an issue's attachments (member)",
+  request: {
+    params: z.object({ slug: ProjectSlug }),
+    query: z.object({ issue_number: z.coerce.number().int().positive() }),
+  },
+  responses: {
+    200: {
+      description: "Attachments",
+      content: { "application/json": { schema: z.array(Attachment) } },
     },
   },
 });
@@ -63,6 +83,18 @@ export function attachmentRoutes() {
       c.get("agentContext"),
     );
     return c.json(attachment, 201);
+  });
+
+  app.openapi(listRoute, async (c) => {
+    const { slug } = c.req.valid("param");
+    const { issue_number } = c.req.valid("query");
+    const list = await listIssueAttachments(
+      c.get("appCtx"),
+      c.get("user"),
+      slug,
+      issue_number,
+    );
+    return c.json(list, 200);
   });
 
   app.openapi(downloadRoute, async (c) => {
