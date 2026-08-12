@@ -3,6 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // iOS Safari auto-zooms when a focused control renders below 16px —
+      // and it judges the *effective* size, so Page Zoom < 100% re-triggers
+      // it no matter what font-size the CSS asks for. Since iOS 10 Safari
+      // ignores maximum-scale for user pinch zoom but still honors it for
+      // that focus auto-zoom, so this kills the zoom without hurting zoom
+      // accessibility. Never ship it to other engines: Android Chrome
+      // enforces maximum-scale for pinch too (WCAG 1.4.4 failure). iPadOS
+      // reports a Mac UA, hence the maxTouchPoints probe.
+      if (
+        /iPhone|iPod|iPad/.test(navigator.userAgent) ||
+        (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+      ) {
+        document
+          .querySelector("meta[name=viewport]")
+          .setAttribute(
+            "content",
+            "width=device-width, initial-scale=1.0, maximum-scale=1",
+          );
+      }
+    </script>
     <title>todou 🥔</title>
   </head>
   <body>
