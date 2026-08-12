@@ -5,12 +5,9 @@ import {
   AttachmentInlineImage,
   AttachmentRichLink,
 } from "@/components/issue/attachment-list.tsx";
-import { IssueLink } from "@/components/shared/issue-link.tsx";
+import { MarkdownLink } from "@/components/shared/issue-link.tsx";
 import { parseAttachmentHref } from "@/lib/attachment-refs.ts";
 import { remarkIssueRefs } from "@/lib/remark-issue-refs.ts";
-
-/** The href shape remarkIssueRefs emits for #N tokens. */
-const ISSUE_REF_HREF = /^#issue-(\d{1,9})$/;
 
 export function MarkdownView({
   children,
@@ -37,14 +34,10 @@ export function MarkdownView({
           slug === undefined
             ? undefined
             : {
-                a: ({
-                  node: _node,
-                  ...props
-                }: ComponentProps<"a"> & { node?: unknown }) => {
-                  const match = props.href?.match(ISSUE_REF_HREF);
-                  if (match?.[1] !== undefined) {
-                    return <IssueLink slug={slug} number={Number(match[1])} />;
-                  }
+                // Attachment refs need the issue context and win first;
+                // everything else (issue refs, permalinks, plain links)
+                // is MarkdownLink's business.
+                a: (props) => {
                   if (issueNumber !== undefined) {
                     const ref = parseAttachmentHref(props.href);
                     if (ref !== null && ref.slug === slug) {
@@ -61,7 +54,7 @@ export function MarkdownView({
                       );
                     }
                   }
-                  return <a {...props} />;
+                  return <MarkdownLink slug={slug} {...props} />;
                 },
                 img: ({
                   node: _node,

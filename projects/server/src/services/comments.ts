@@ -103,6 +103,27 @@ export async function createComment(
   return toTimelineComment(ctx, row);
 }
 
+/** Fetch one comment by id, scoped to its issue (permalink resolution). */
+export async function getComment(
+  ctx: AppContext,
+  actor: UserRow,
+  slug: string,
+  issueNumber: number,
+  commentId: number,
+): Promise<TimelineComment> {
+  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const db = await ctx.router.forProject(routeInfoOf(project));
+  const issue = await loadIssue(db, project.id, issueNumber);
+
+  const rows = await db
+    .select()
+    .from(comments)
+    .where(and(eq(comments.id, commentId), eq(comments.issueId, issue.id)));
+  const row = rows[0];
+  if (!row) throw new NotFoundError("comment not found");
+  return toTimelineComment(ctx, row);
+}
+
 async function loadCommentForWrite(
   ctx: AppContext,
   actor: UserRow,

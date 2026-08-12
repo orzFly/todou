@@ -275,6 +275,11 @@
     max-width: 100%;
   }
 
+  /* Timeline permalink target (#38): a short flash that fades out. */
+  .anchor-flash {
+    animation: anchor-flash 2s ease-out both;
+  }
+
   /* Code styling stays intentionally shallow: #31 swaps <pre>/<code>
      for pierre CodeView, and these rules must be trivial to delete. */
   .markdown-body code {
@@ -294,5 +299,17 @@
     padding: 0;
     border-radius: 0;
     background-color: transparent;
+  }
+}
+
+@keyframes anchor-flash {
+  0%,
+  40% {
+    background-color: color-mix(in oklab, var(--primary) 10%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--primary) 40%, transparent);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 2px transparent;
   }
 }

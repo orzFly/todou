@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import type { TimelineEvent } from "@todou/shared";
 import {
   CircleDotIcon,
@@ -16,6 +17,7 @@ import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { splitIssueRefs } from "@/lib/issue-refs.ts";
+import { eventAnchor } from "@/lib/timeline-anchors.ts";
 
 type Payload = Record<string, unknown>;
 
@@ -77,13 +79,27 @@ const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
   attachment_added: <PaperclipIcon className="size-3.5" />,
 };
 
-/** Replace #N tokens with issue links; the rest stays literal text. */
-function linkifyIssueRefs(text: string, slug: string): ReactNode[] {
+/**
+ * Replace #N tokens with issue links; the rest stays literal text.
+ * `commentId` deep-links every ref to that comment's anchor — only
+ * `referenced` events provide it, and they contain exactly one ref.
+ */
+function linkifyIssueRefs(
+  text: string,
+  slug: string,
+  commentId?: number,
+): ReactNode[] {
   return splitIssueRefs(text).map((segment, i) =>
     segment.type === "ref" ? (
-      // Index keys are safe: the segments of one action string never reorder.
-      // biome-ignore lint/suspicious/noArrayIndexKey: static list
-      <IssueLink key={i} slug={slug} number={segment.number} />
+      <IssueLink
+        // Index keys are safe: the segments of one action string never
+        // reorder.
+        // biome-ignore lint/suspicious/noArrayIndexKey: static list
+        key={i}
+        slug={slug}
+        number={segment.number}
+        commentId={commentId}
+      />
     ) : (
       segment.value
     ),
@@ -111,8 +127,18 @@ export function EventRow({
           | { id?: number; filename?: string }
           | undefined)
       : undefined;
+  // "referenced by #N" deep-links to the referencing comment when the
+  // event recorded one; older events without by_comment link the issue.
+  const refCommentId =
+    event.event_type === "referenced" &&
+    typeof event.payload.by_comment === "number"
+      ? event.payload.by_comment
+      : undefined;
   return (
-    <div className="flex items-center gap-2 py-1.5 pl-1 text-sm text-muted-foreground">
+    <div
+      id={eventAnchor(event.id)}
+      className="flex items-center gap-2 py-1.5 pl-1 text-sm text-muted-foreground"
+    >
       <span className="shrink-0 text-muted-foreground/70">
         {ICONS[event.event_type]}
       </span>
@@ -135,15 +161,28 @@ export function EventRow({
         ) : slug === undefined ? (
           action
         ) : (
-          linkifyIssueRefs(action, slug)
+          linkifyIssueRefs(action, slug, refCommentId)
         )}
       </span>
-      <span
-        className="shrink-0 text-xs text-muted-foreground/70"
-        title={event.created_at}
-      >
-        {new Date(event.created_at).toLocaleString()}
-      </span>
+      {slug !== undefined && issueNumber !== undefined ? (
+        <Link
+          to="/projects/$slug/issues/$number"
+          params={{ slug, number: String(issueNumber) }}
+          hash={eventAnchor(event.id)}
+          hashScrollIntoView={false}
+          className="shrink-0 text-xs text-muted-foreground/70 hover:underline"
+          title={event.created_at}
+        >
+          {new Date(event.created_at).toLocaleString()}
+        </Link>
+      ) : (
+        <span
+          className="shrink-0 text-xs text-muted-foreground/70"
+          title={event.created_at}
+        >
+          {new Date(event.created_at).toLocaleString()}
+        </span>
+      )}
     </div>
   );
 }

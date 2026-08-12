@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render as renderBare } from "@testing-library/react";
+import { render as renderBare, waitFor } from "@testing-library/react";
 import type { TimelinePage, UserRef } from "@todou/shared";
 import type { ReactElement } from "react";
 import { describe, expect, it } from "vitest";
@@ -13,6 +13,7 @@ import {
   describeEvent,
   EventRow,
 } from "../src/components/timeline/event-row.tsx";
+import { renderWithProviders as renderWithRouter } from "./render.tsx";
 
 // CommentItem mounts an edit mutation, which needs a query client.
 function render(ui: ReactElement) {
@@ -111,8 +112,8 @@ describe("timeline paging helpers", () => {
 });
 
 describe("timeline rendering", () => {
-  it("renders comments with markdown bodies", () => {
-    const { getByText } = render(
+  it("renders comments with markdown bodies", async () => {
+    const { getByText } = renderWithRouter(
       <CommentItem
         slug="p"
         issueNumber={1}
@@ -127,7 +128,7 @@ describe("timeline rendering", () => {
         }}
       />,
     );
-    expect(getByText("bold potato")).toBeTruthy();
+    await waitFor(() => expect(getByText("bold potato")).toBeTruthy());
   });
 
   it("renders agent actors with their badge in event rows", () => {

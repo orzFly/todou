@@ -262,6 +262,11 @@ export class TodouClient {
       `/projects/${slug}/issues/${number}/comments`,
       { json: { body } },
     );
+  getComment = (slug: string, number: number, commentId: number) =>
+    this.request<TimelineComment>(
+      "GET",
+      `/projects/${slug}/issues/${number}/comments/${commentId}`,
+    );
   updateComment = (
     slug: string,
     number: number,

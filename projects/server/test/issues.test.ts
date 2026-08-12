@@ -461,6 +461,38 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
     expect(ref.payload.by_comment).toBe(comment.id);
   });
 
+  it("fetches a single comment by id, scoped to its issue", async () => {
+    const issue = await createIssue({ title: "Permalink host" });
+    const other = await createIssue({ title: "Permalink other" });
+    const comment = await json(
+      await t.app.request(
+        `/api/projects/${slug}/issues/${issue.number}/comments`,
+        {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({ body: "anchor me" }),
+        },
+      ),
+    );
+
+    const res = await t.app.request(
+      `/api/projects/${slug}/issues/${issue.number}/comments/${comment.id}`,
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(200);
+    const fetched = await json(res);
+    expect(fetched.id).toBe(comment.id);
+    expect(fetched.body).toBe("anchor me");
+    expect(fetched.author.login).toBeTruthy();
+
+    // The wrong issue number must not leak another issue's comment.
+    const cross = await t.app.request(
+      `/api/projects/${slug}/issues/${other.number}/comments/${comment.id}`,
+      { headers: { cookie } },
+    );
+    expect(cross.status).toBe(404);
+  });
+
   it("edits and deletes comments with author/admin guard", async () => {
     const issue = await createIssue({ title: "Comment perms" });
     const comment = await json(

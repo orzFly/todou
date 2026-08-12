@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import type { TimelineComment } from "@todou/shared";
 import { PencilIcon } from "lucide-react";
 import { useState } from "react";
@@ -10,6 +11,7 @@ import { RevisionHistory } from "@/components/shared/revision-history.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { commentAnchor } from "@/lib/timeline-anchors.ts";
 
 export type Viewer = { id: number; isAdmin: boolean };
 
@@ -51,18 +53,34 @@ export function CommentItem({
 
   return (
     <div
+      // Anchor target for #comment-<id> permalinks; pending comments have
+      // no server id yet, so they never claim an anchor.
+      id={pending ? undefined : commentAnchor(comment.id)}
       className={`rounded-lg border ${pending ? "opacity-60" : ""}`}
       data-comment-id={comment.id}
     >
       <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
         <UserChip user={comment.author} />
         <AgentContextBadge context={comment.agent_context} />
-        <span
-          className="shrink-0 text-xs whitespace-nowrap text-muted-foreground"
-          title={comment.created_at}
-        >
-          {new Date(comment.created_at).toLocaleString()}
-        </span>
+        {pending ? (
+          <span
+            className="shrink-0 text-xs whitespace-nowrap text-muted-foreground"
+            title={comment.created_at}
+          >
+            {new Date(comment.created_at).toLocaleString()}
+          </span>
+        ) : (
+          <Link
+            to="/projects/$slug/issues/$number"
+            params={{ slug, number: String(issueNumber) }}
+            hash={commentAnchor(comment.id)}
+            hashScrollIntoView={false}
+            className="shrink-0 text-xs whitespace-nowrap text-muted-foreground hover:underline"
+            title={comment.created_at}
+          >
+            {new Date(comment.created_at).toLocaleString()}
+          </Link>
+        )}
         {comment.edited_at && (
           <RevisionHistory
             label="comment"

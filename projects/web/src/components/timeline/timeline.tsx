@@ -17,6 +17,7 @@ import {
   type Viewer,
 } from "@/components/timeline/comment-item.tsx";
 import { EventRow } from "@/components/timeline/event-row.tsx";
+import { useTimelineAnchor } from "@/components/timeline/use-timeline-anchor.ts";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -48,13 +49,18 @@ export function Timeline({
     window.scrollTo(0, document.documentElement.scrollHeight);
   }, []);
 
-  // Initial position: bottom of the newest page (chat-style).
+  // A #comment-/#event- anchor takes over positioning (scroll + flash,
+  // loading older pages as needed) — see use-timeline-anchor.ts.
+  const anchorActive = useTimelineAnchor(timeline);
+
+  // Initial position: bottom of the newest page (chat-style), unless an
+  // anchor target owns the viewport.
   useLayoutEffect(() => {
     if (!didInitialScroll.current && totalCount > 0) {
       didInitialScroll.current = true;
-      scrollToBottom();
+      if (!anchorActive) scrollToBottom();
     }
-  }, [totalCount, scrollToBottom]);
+  }, [totalCount, scrollToBottom, anchorActive]);
 
   // After prepending older items, keep the viewport anchored. Consume the
   // saved height only once the backward fetch settles — the fetching-state

@@ -76,3 +76,27 @@ export const issueRefQuery = (slug: string, number: number) =>
     // the source of truth, so trade freshness for fewer refetch bursts.
     staleTime: 60_000,
   });
+
+/**
+ * Comment lookup for rich permalinks ("comment by @user"). Unbatched on
+ * purpose: pasted comment permalinks are rare enough that a request per
+ * distinct comment is fine, and the per-id cache still dedupes repeats.
+ */
+export const commentRefQuery = (
+  slug: string,
+  issueNumber: number,
+  commentId: number,
+) =>
+  queryOptions({
+    queryKey: ["comment-ref", slug, issueNumber, commentId],
+    queryFn: async () => {
+      try {
+        return await api.getComment(slug, issueNumber, commentId);
+      } catch (error) {
+        // Deleted comments must not break the surrounding rich link.
+        if ((error as { status?: number }).status === 404) return null;
+        throw error;
+      }
+    },
+    staleTime: 60_000,
+  });

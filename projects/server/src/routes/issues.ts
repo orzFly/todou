@@ -22,6 +22,7 @@ import type { AppEnv } from "../auth/middleware.ts";
 import {
   createComment,
   deleteComment,
+  getComment,
   updateComment,
 } from "../services/comments.ts";
 import {
@@ -114,6 +115,14 @@ const createCommentRoute = createRoute({
   summary: "Comment on an issue (writer)",
   request: { params: issueParams, body: jsonBody(CommentCreateInput) },
   responses: { 201: { description: "Created", ...jsonBody(TimelineComment) } },
+});
+
+const getCommentRoute = createRoute({
+  method: "get",
+  path: "/{slug}/issues/{number}/comments/{commentId}",
+  summary: "Fetch one comment (permalink resolution)",
+  request: { params: commentParams },
+  responses: { 200: { description: "Comment", ...jsonBody(TimelineComment) } },
 });
 
 const patchCommentRoute = createRoute({
@@ -257,6 +266,14 @@ export function issueRoutes() {
         c.get("agentContext"),
       ),
       201,
+    );
+  });
+
+  app.openapi(getCommentRoute, async (c) => {
+    const { slug, number, commentId } = c.req.valid("param");
+    return c.json(
+      await getComment(c.get("appCtx"), c.get("user"), slug, number, commentId),
+      200,
     );
   });
 

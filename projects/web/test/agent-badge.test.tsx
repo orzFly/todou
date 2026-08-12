@@ -1,19 +1,10 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render as renderBare } from "@testing-library/react";
-import type { ReactElement } from "react";
+import { waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { CommentItem } from "../src/components/timeline/comment-item.tsx";
 import { EventRow } from "../src/components/timeline/event-row.tsx";
-
-// CommentItem mounts an edit mutation, which needs a query client.
-function render(ui: ReactElement) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-  return renderBare(
-    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
-  );
-}
+// CommentItem needs a query client (edit mutation) and a router (the
+// timestamp permalink Link).
+import { renderWithProviders as render } from "./render.tsx";
 
 const user = {
   id: 2,
@@ -37,7 +28,7 @@ function comment(agentContext: unknown) {
 }
 
 describe("AgentContextBadge in the timeline", () => {
-  it("shows agent · model with the session in the tooltip", () => {
+  it("shows agent · model with the session in the tooltip", async () => {
     const { getByTestId } = render(
       <CommentItem
         slug="p"
@@ -49,12 +40,12 @@ describe("AgentContextBadge in the timeline", () => {
         })}
       />,
     );
-    const badge = getByTestId("agent-context-badge");
+    const badge = await waitFor(() => getByTestId("agent-context-badge"));
     expect(badge.textContent).toBe("claude-code · claude-fable-5");
     expect(badge.getAttribute("title")).toBe("session sess-123");
   });
 
-  it("degrades to the agent name alone", () => {
+  it("degrades to the agent name alone", async () => {
     const { getByTestId } = render(
       <CommentItem
         slug="p"
@@ -62,19 +53,20 @@ describe("AgentContextBadge in the timeline", () => {
         comment={comment({ agent: "claude-code" })}
       />,
     );
-    const badge = getByTestId("agent-context-badge");
+    const badge = await waitFor(() => getByTestId("agent-context-badge"));
     expect(badge.textContent).toBe("claude-code");
     expect(badge.getAttribute("title")).toBeNull();
   });
 
-  it("renders nothing without agent context", () => {
-    const { queryByTestId } = render(
+  it("renders nothing without agent context", async () => {
+    const { queryByTestId, getByText } = render(
       <CommentItem slug="p" issueNumber={1} comment={comment(null)} />,
     );
+    await waitFor(() => getByText("hello"));
     expect(queryByTestId("agent-context-badge")).toBeNull();
   });
 
-  it("also marks event rows", () => {
+  it("also marks event rows", async () => {
     const { getByTestId } = render(
       <EventRow
         event={{
@@ -88,8 +80,10 @@ describe("AgentContextBadge in the timeline", () => {
         }}
       />,
     );
-    expect(getByTestId("agent-context-badge").textContent).toBe(
-      "claude-code · claude-fable-5",
+    await waitFor(() =>
+      expect(getByTestId("agent-context-badge").textContent).toBe(
+        "claude-code · claude-fable-5",
+      ),
     );
   });
 });
