@@ -13,6 +13,11 @@ import {
   isTextDocument,
 } from "@/lib/attachment-preview.ts";
 import { parseAttachmentHref } from "@/lib/attachment-refs.ts";
+import {
+  CODE_CONTENT_START_ATTR,
+  parseSourceLoc,
+  SOURCE_LINE_ATTR,
+} from "@/lib/rehype-source-lines.ts";
 import { remarkIssueRefs } from "@/lib/remark-issue-refs.ts";
 
 /** The slice of hast react-markdown hands to component overrides. */
@@ -72,13 +77,28 @@ function parseFence(node: unknown): { text: string; tag?: string } | null {
 function MarkdownPre({
   node,
   children,
+  source,
   ...props
-}: ComponentProps<"pre"> & { node?: unknown }) {
+}: ComponentProps<"pre"> & { node?: unknown; source: string }) {
   const fence = parseFence(node);
   if (fence === null) return <pre {...props}>{children}</pre>;
-  return (
+  const block = (
     <CodeBlock filename={fenceFilename(fence.tag)} contents={fence.text} />
   );
+  // The pre → CodeBlock swap must not drop the source-line stamp the spec
+  // review view anchors selections to (#52). A wrapper re-carries it, plus
+  // where the code content starts: the stamped range opens on the ```
+  // marker for fenced blocks but on the first code line for indented ones.
+  const stamp = (props as Record<string, unknown>)[SOURCE_LINE_ATTR];
+  const loc = typeof stamp === "string" ? parseSourceLoc(stamp) : null;
+  if (loc === null) return block;
+  const opening = source.split("\n")[loc.start - 1]?.trimStart() ?? "";
+  const fenced = opening.startsWith("```") || opening.startsWith("~~~");
+  const wrapperProps = {
+    [SOURCE_LINE_ATTR]: stamp,
+    [CODE_CONTENT_START_ATTR]: loc.start + (fenced ? 1 : 0),
+  };
+  return <div {...wrapperProps}>{block}</div>;
 }
 
 export function MarkdownView({
@@ -118,7 +138,7 @@ export function MarkdownView({
         }
         rehypePlugins={rehypePlugins}
         components={{
-          pre: MarkdownPre,
+          pre: (props) => <MarkdownPre {...props} source={children} />,
           ...(slug === undefined
             ? undefined
             : {

@@ -22,6 +22,15 @@ const BLOCK_TAGS = new Set([
 
 export const SOURCE_LINE_ATTR = "data-loc";
 
+/**
+ * Where a code block's contents begin in the source (#52). The stamped
+ * range starts at the ``` marker for fenced blocks but at the first code
+ * line for indented ones; the renderer records the resolved start so
+ * selection anchoring can map pierre's per-line rows back to source lines
+ * without re-deriving markdown syntax.
+ */
+export const CODE_CONTENT_START_ATTR = "data-loc-content-start";
+
 /** `data-loc="start-end"` → 1-based inclusive source line range. */
 export function parseSourceLoc(
   value: string | null | undefined,

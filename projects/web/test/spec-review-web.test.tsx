@@ -7,7 +7,10 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
-import { blockForLine } from "../src/components/spec/annotated-markdown.tsx";
+import {
+  anchorRangeForNode,
+  blockForLine,
+} from "../src/components/spec/annotated-markdown.tsx";
 import { ReviewSubmitDialog } from "../src/components/spec/review-submit.tsx";
 import { SpecCommentAnchorCard } from "../src/components/timeline/spec-comment-card.tsx";
 import {
@@ -21,6 +24,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
   localStorage.clear();
 });
+
+// Fences render through the lazily-imported pierre CodeView (#31); pin it
+// to a plain pre>code so the DOM is deterministic no matter when the lazy
+// chunk would resolve.
+vi.mock("@pierre/diffs/react", () => ({
+  CodeView: ({ items }: { items: Array<{ file: { contents: string } }> }) => (
+    <pre>
+      <code>{items.map((item) => item.file.contents).join("\n")}</code>
+    </pre>
+  ),
+  MultiFileDiff: () => null,
+}));
 
 describe("rehypeSourceLines", () => {
   it("stamps block elements with their markdown source lines", () => {
@@ -41,6 +56,65 @@ describe("rehypeSourceLines", () => {
     expect(parseSourceLoc("3-7")).toEqual({ start: 3, end: 7 });
     expect(parseSourceLoc("x")).toBeNull();
     expect(parseSourceLoc(null)).toBeNull();
+  });
+
+  it("keeps the stamp when a fence swaps to CodeBlock (#52)", () => {
+    const md = "intro\n\n```ts\nconst a = 1;\nconst b = 2;\n```\n";
+    const view = render(
+      <MarkdownView rehypePlugins={[rehypeSourceLines]}>{md}</MarkdownView>,
+    );
+    // The fence spans source lines 3-6; its contents begin after the ```.
+    const wrapper = view.container.querySelector("[data-loc='3-6']");
+    expect(wrapper).not.toBeNull();
+    expect(wrapper?.getAttribute("data-loc-content-start")).toBe("4");
+  });
+});
+
+describe("anchorRangeForNode", () => {
+  it("resolves a plain stamped block to its whole range", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<p data-loc="3-5">hello</p>`;
+    const text = host.querySelector("p")?.firstChild;
+    expect(text && anchorRangeForNode(text)).toEqual({ start: 3, end: 5 });
+  });
+
+  it("returns null outside any stamped block", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<p>unstamped</p>`;
+    const text = host.querySelector("p")?.firstChild;
+    expect(text && anchorRangeForNode(text)).toBeNull();
+  });
+
+  it("narrows to the exact source line on a pierre row, across the shadow root", () => {
+    const wrapper = document.createElement("div");
+    wrapper.setAttribute("data-loc", "3-6");
+    wrapper.setAttribute("data-loc-content-start", "4");
+    const pierreHost = document.createElement("diffs-container");
+    wrapper.append(pierreHost);
+    const shadow = pierreHost.attachShadow({ mode: "open" });
+    shadow.innerHTML = `
+      <div data-line="1"><span>const a = 1;</span></div>
+      <div data-line="2"><span>const b = 2;</span></div>`;
+    const inSecondRow = shadow.querySelector(
+      "[data-line='2'] span",
+    )?.firstChild;
+    // Content line 2 of a fence opening on line 3 → source line 5.
+    expect(inSecondRow && anchorRangeForNode(inSecondRow)).toEqual({
+      start: 5,
+      end: 5,
+    });
+  });
+
+  it("clamps rows past the stamped end (unclosed fence)", () => {
+    const wrapper = document.createElement("div");
+    wrapper.setAttribute("data-loc", "3-4");
+    wrapper.setAttribute("data-loc-content-start", "4");
+    const pierreHost = document.createElement("diffs-container");
+    wrapper.append(pierreHost);
+    const shadow = pierreHost.attachShadow({ mode: "open" });
+    shadow.innerHTML = `<div data-line="9"><span>tail</span></div>`;
+    const node = shadow.querySelector("span")?.firstChild;
+    expect(node && anchorRangeForNode(node)).toEqual({ start: 4, end: 4 });
   });
 });
 

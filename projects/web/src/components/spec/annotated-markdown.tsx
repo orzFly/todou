@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  CODE_CONTENT_START_ATTR,
   parseSourceLoc,
   rehypeSourceLines,
   SOURCE_LINE_ATTR,
@@ -52,6 +53,60 @@ type PendingSelection = {
   lineStart: number;
   lineEnd: number;
 };
+
+/**
+ * Source-line range for the block a selection endpoint sits in (#52).
+ * pierre renders code blocks inside an open shadow root, so the walk hops
+ * shadow boundaries host by host until a stamped ancestor appears. When
+ * the endpoint is on one of pierre's line rows (`data-line`, 1-based
+ * within the code contents), the whole-block range narrows down to that
+ * exact source line via the stamped content start.
+ */
+export function anchorRangeForNode(
+  node: Node,
+): { start: number; end: number } | null {
+  let el: Element | null =
+    node instanceof Element ? node : (node.parentElement ?? null);
+  let row: Element | null = null;
+  while (el !== null) {
+    row ??= el.closest("[data-line]");
+    const stamped = el.closest(`[${SOURCE_LINE_ATTR}]`);
+    if (stamped !== null) {
+      const loc = parseSourceLoc(stamped.getAttribute(SOURCE_LINE_ATTR));
+      if (loc === null) return null;
+      if (row !== null) {
+        const contentStart = Number(
+          stamped.getAttribute(CODE_CONTENT_START_ATTR),
+        );
+        const rowLine = Number(row.getAttribute("data-line"));
+        if (
+          Number.isInteger(contentStart) &&
+          Number.isInteger(rowLine) &&
+          rowLine >= 1
+        ) {
+          // Clamp: an unclosed fence can stamp an end before start+rows.
+          const line = Math.min(contentStart + rowLine - 1, loc.end);
+          return { start: line, end: line };
+        }
+      }
+      return loc;
+    }
+    const root = el.getRootNode();
+    el = root instanceof ShadowRoot ? root.host : null;
+  }
+  return null;
+}
+
+/** `container.contains` that sees through open shadow roots. */
+function composedContains(container: Element, node: Node): boolean {
+  let current: Node | null = node;
+  while (current !== null) {
+    if (container.contains(current)) return true;
+    const root = current.getRootNode();
+    current = root instanceof ShadowRoot ? root.host : null;
+  }
+  return false;
+}
 
 /** First block (document order) whose source range contains `line`. */
 export function blockForLine(
@@ -170,15 +225,14 @@ export function AnnotatedMarkdown({
       return;
     }
     const range = selection.getRangeAt(0);
-    if (!container.contains(range.commonAncestorContainer)) return;
-    const blockOf = (node: Node): { start: number; end: number } | null => {
-      const el = node instanceof Element ? node : (node.parentElement ?? null);
-      return parseSourceLoc(
-        el?.closest(`[${SOURCE_LINE_ATTR}]`)?.getAttribute(SOURCE_LINE_ATTR),
-      );
-    };
-    const from = blockOf(range.startContainer);
-    const to = blockOf(range.endContainer);
+    // Chrome re-targets getRangeAt endpoints to the shadow host while
+    // anchor/focus keep pointing inside the open shadow root — prefer
+    // those (direction doesn't matter, min/max below absorbs it).
+    const startNode = selection.anchorNode ?? range.startContainer;
+    const endNode = selection.focusNode ?? range.endContainer;
+    if (!composedContains(container, startNode)) return;
+    const from = anchorRangeForNode(startNode);
+    const to = anchorRangeForNode(endNode);
     if (!from || !to) {
       setPending(null);
       return;
