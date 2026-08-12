@@ -80,6 +80,36 @@ todou login https://todou.example --profile claude-code
 any endpoint the CLI doesn't wrap yet. See
 [docs/claude-code.md](docs/claude-code.md) for the Claude Code integration.
 
+#### Standalone builds
+
+`pnpm run build:cli` (or `scripts/build-cli.sh` directly) produces
+dependency-free CLI artifacts in `dist/` (git-ignored, not published to the
+repo):
+
+| File | Runtime needed | Size |
+| --- | --- | --- |
+| `todou-linux-amd64` / `todou-linux-arm64` | none — self-contained | ~108–109 MB |
+| `todou-macos-arm64` | none — self-contained | ~70 MB |
+| `todou-windows-amd64.exe` | none — self-contained | ~81 MB |
+| `todou.js` | Node (any recent version already on `PATH`) | ~750 KB |
+
+The four executables are built with `deno compile` (cross-compiled from a
+single Linux machine); `todou.js` is an esbuild bundle for users who are
+size-sensitive and already have a Node runtime available — copy the one file
+anywhere and run `node todou.js ...`. Requires `deno` and `pnpm` on the build
+machine; no code changes are needed to keep either artifact working.
+
+macOS executables are only ad-hoc signed (not notarized): a `curl`/CI
+download runs fine, but a browser download gets Gatekeeper-quarantined — run
+`xattr -d com.apple.quarantine todou-macos-arm64` once before executing it.
+
+There's no CI pipeline in this repo yet, so these artifacts are built and
+distributed manually for now. `scripts/build-cli.sh` is written to double as
+the future release job: one Linux runner installing prod deps, compiling all
+four `deno compile` targets, bundling `todou.js`, then archiving `dist/*`
+(`.tar.xz` for the executables, since deno's runtime dominates the size and
+compresses well; `.js` as-is) onto a release.
+
 ### Production: one process, one port
 
 Point `http.static_dir` at the built web app and the server serves it

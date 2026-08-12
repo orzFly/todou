@@ -8,6 +8,7 @@
     "fmt": "biome check --write .",
     "lint": "biome check .",
     "build": "pnpm -r build",
+    "build:cli": "scripts/build-cli.sh",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test"
   },
