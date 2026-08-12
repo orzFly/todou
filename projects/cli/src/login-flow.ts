@@ -57,17 +57,28 @@ export function waitForCallback(options: {
   });
 }
 
+/**
+ * On win32, `cmd /c start` would truncate the URL at the first `&` (an
+ * unquoted `&` is a command separator to cmd); rundll32 receives the URL as
+ * a plain argument with no shell parsing at all.
+ */
+export function browserCommand(
+  url: string,
+  platform: NodeJS.Platform,
+): [string, string[]] {
+  return platform === "darwin"
+    ? ["open", [url]]
+    : platform === "win32"
+      ? ["rundll32", ["url.dll,FileProtocolHandler", url]]
+      : ["xdg-open", [url]];
+}
+
 /** Best-effort; the auth URL is always printed as the fallback. */
 export function openBrowser(
   url: string,
   platform: NodeJS.Platform = process.platform,
 ): void {
-  const [cmd, args]: [string, string[]] =
-    platform === "darwin"
-      ? ["open", [url]]
-      : platform === "win32"
-        ? ["cmd", ["/c", "start", "", url]]
-        : ["xdg-open", [url]];
+  const [cmd, args] = browserCommand(url, platform);
   try {
     const child = spawn(cmd, args, { stdio: "ignore", detached: true });
     child.on("error", () => {});

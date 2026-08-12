@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { loadCliConfig } from "../src/config.ts";
 import { CliError } from "../src/errors.ts";
-import { waitForCallback } from "../src/login-flow.ts";
+import { browserCommand, waitForCallback } from "../src/login-flow.ts";
 import { fakeFetch, runCli } from "./harness.ts";
 
 const me = {
@@ -41,6 +41,22 @@ describe("waitForCallback", () => {
     await expect(
       waitForCallback({ state: "s", timeoutMs: 50, onListening: () => {} }),
     ).rejects.toThrow(CliError);
+  });
+});
+
+describe("browserCommand", () => {
+  const url = "https://todou.example/cli-auth?port=1663&state=abc&name=cli+%40+x";
+
+  it("keeps the full URL as one argument on every platform", () => {
+    for (const platform of ["darwin", "win32", "linux"] as const) {
+      const [, args] = browserCommand(url, platform);
+      expect(args).toContain(url);
+    }
+  });
+
+  it("does not route through cmd on win32 (cmd splits unquoted & )", () => {
+    const [cmd] = browserCommand(url, "win32");
+    expect(cmd).toBe("rundll32");
   });
 });
 
