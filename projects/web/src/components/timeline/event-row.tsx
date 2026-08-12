@@ -149,20 +149,28 @@ export function EventRow({
     issueNumber !== undefined
       ? event.payload.comment_id
       : undefined;
+  // Below sm the row is plain inline flow — the whole event wraps like a
+  // sentence (GitHub mobile), because truncate + title tooltip is unreadable
+  // without hover. From sm up it keeps the #25 single-line grid. The {" "}
+  // separators only exist for the inline mode: whitespace-only flex items
+  // are never rendered, so the sm layout still spaces purely via gap.
   return (
     <div
       id={eventAnchor(event.id)}
-      className="flex items-center gap-2 py-1.5 pl-1 text-sm text-muted-foreground"
+      className="py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-center sm:gap-2"
     >
-      <span className="shrink-0 text-muted-foreground/70">
+      <span className="inline-flex shrink-0 align-middle text-muted-foreground/70">
         {ICONS[event.event_type]}
-      </span>
+      </span>{" "}
       <UserChip
         user={event.actor}
         nameClassName="font-medium text-foreground/80"
-      />
-      <AgentContextBadge context={event.agent_context} />
-      <span className="min-w-0 flex-1 truncate" title={action}>
+      />{" "}
+      <AgentContextBadge
+        context={event.agent_context}
+        className="align-middle"
+      />{" "}
+      <span className="min-w-0 flex-1 sm:truncate" title={action}>
         {attached?.id !== undefined && slug && issueNumber ? (
           <>
             attached{" "}
@@ -188,21 +196,21 @@ export function EventRow({
         ) : (
           linkifyIssueRefs(action, slug, refCommentId)
         )}
-      </span>
+      </span>{" "}
       {slug !== undefined && issueNumber !== undefined ? (
         <Link
           to="/projects/$slug/issues/$number"
           params={{ slug, number: String(issueNumber) }}
           hash={eventAnchor(event.id)}
           hashScrollIntoView={false}
-          className="shrink-0 text-xs text-muted-foreground/70 hover:underline"
+          className="shrink-0 text-xs whitespace-nowrap text-muted-foreground/70 hover:underline"
           title={event.created_at}
         >
           {new Date(event.created_at).toLocaleString()}
         </Link>
       ) : (
         <span
-          className="shrink-0 text-xs text-muted-foreground/70"
+          className="shrink-0 text-xs whitespace-nowrap text-muted-foreground/70"
           title={event.created_at}
         >
           {new Date(event.created_at).toLocaleString()}
