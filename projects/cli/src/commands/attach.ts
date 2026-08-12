@@ -1,9 +1,39 @@
 import { openAsBlob } from "node:fs";
-import { basename } from "node:path";
+import { basename, extname } from "node:path";
 import type { Attachment, TodouClient } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { CliError } from "../errors.ts";
+
+// openAsBlob never fills in a type, and the server stores whatever it gets —
+// without this, every upload lands as application/octet-stream and the web
+// UI cannot offer inline previews.
+const MIME_BY_EXTENSION: Record<string, string> = {
+  ".avif": "image/avif",
+  ".csv": "text/csv",
+  ".gif": "image/gif",
+  ".htm": "text/html",
+  ".html": "text/html",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".json": "application/json",
+  ".log": "text/plain",
+  ".md": "text/markdown",
+  ".mp4": "video/mp4",
+  ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".txt": "text/plain",
+  ".webm": "video/webm",
+  ".webp": "image/webp",
+  ".zip": "application/zip",
+};
+
+export function mimeTypeFor(path: string): string {
+  return (
+    MIME_BY_EXTENSION[extname(path).toLowerCase()] ?? "application/octet-stream"
+  );
+}
 
 export class AttachCommand extends ProjectCommand {
   static paths = [["attach"]];
@@ -26,7 +56,9 @@ export class AttachCommand extends ProjectCommand {
       } catch (cause) {
         throw new CliError(`cannot read ${path}: ${String(cause)}`);
       }
-      const file = new File([blob], basename(path), { type: blob.type });
+      const file = new File([blob], basename(path), {
+        type: blob.type || mimeTypeFor(path),
+      });
       uploaded.push(await client.uploadAttachment(project, number, file));
       this.note(`uploaded ${basename(path)}`);
     }

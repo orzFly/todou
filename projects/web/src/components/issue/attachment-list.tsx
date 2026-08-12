@@ -5,8 +5,17 @@ import { type MouseEvent, useState } from "react";
 import { attachmentsQuery } from "@/api/attachments.ts";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
+const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|avif|svg)$/i;
+
 export function isPreviewableImage(attachment: Attachment): boolean {
-  return attachment.content_type.startsWith("image/");
+  if (attachment.content_type.startsWith("image/")) return true;
+  // Uploads that arrived without a real content type (the CLI sent
+  // application/octet-stream until #27's hotfix) fall back to the filename.
+  return (
+    (attachment.content_type === "" ||
+      attachment.content_type === "application/octet-stream") &&
+    IMAGE_EXTENSION.test(attachment.filename)
+  );
 }
 
 export function formatSize(bytes: number): string {

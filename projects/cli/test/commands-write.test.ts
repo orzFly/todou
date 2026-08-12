@@ -434,7 +434,11 @@ describe("attach", () => {
   it("uploads each file as multipart form data", async () => {
     const file = join(dir, "note.txt");
     writeFileSync(file, "attachment payload");
-    const seen: Array<{ filename: string; issueNumber: string }> = [];
+    const seen: Array<{
+      filename: string;
+      issueNumber: string;
+      type: string;
+    }> = [];
     const { fetchImpl } = fakeFetch([
       [
         "POST",
@@ -445,6 +449,7 @@ describe("attach", () => {
           seen.push({
             filename: upload.name,
             issueNumber: String(form.get("issue_number")),
+            type: upload.type,
           });
           return {
             id: seen.length,
@@ -463,7 +468,9 @@ describe("attach", () => {
       env: loggedInEnv("todou"),
     });
     expect(result.exitCode).toBe(0);
-    expect(seen).toEqual([{ filename: "note.txt", issueNumber: "3" }]);
+    expect(seen).toEqual([
+      { filename: "note.txt", issueNumber: "3", type: "text/plain" },
+    ]);
     expect(result.stdout).toBe("note.txt → /attachments/note.txt\n");
   });
 
