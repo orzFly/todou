@@ -1,7 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { fakeFetch, loggedInEnv, runCli } from "./harness.ts";
 
 const me = {
@@ -39,7 +36,10 @@ const listItem = (number: number, title: string) => ({
   body_edited_at: null,
 });
 const issuePage = {
-  items: [listItem(3, "Fix the potato"), listItem(4, "Water the field")],
+  items: [
+    { ...listItem(3, "Fix the potato"), unread: true },
+    { ...listItem(4, "Water the field"), unread: false },
+  ],
   next_cursor: null,
 };
 const webComment = {
@@ -56,46 +56,27 @@ const page = (items: unknown[], next: string | null) => ({
   next_cursor: next,
 });
 
-describe("unread markers (local state)", () => {
-  const stateDir = mkdtempSync(join(tmpdir(), "todou-state-"));
-  afterAll(() => rmSync(stateDir, { recursive: true, force: true }));
-  const env = { ...loggedInEnv("todou"), XDG_STATE_HOME: stateDir };
+describe("unread markers (server state)", () => {
+  const env = loggedInEnv("todou");
 
-  it("first run bootstraps the frontier without marking history", async () => {
+  // fakeFetch throws on unregistered routes, so these tests passing with
+  // only /issues mocked also proves list no longer scans /activity or /me.
+  it("renders ● from the list response's unread field", async () => {
     const { fetchImpl } = fakeFetch([
       ["GET", "/api/projects/todou/issues", issuePage],
-      [
-        "GET",
-        "/api/projects/todou/activity",
-        (_init: RequestInit, url: URL) => {
-          expect(url.searchParams.get("last")).toBe("1");
-          return page([], "f0");
-        },
-      ],
     ]);
     const result = await runCli(["issue", "list"], { fetchImpl, env });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).not.toContain("●");
-  });
-
-  it("marks issues with foreign activity, and --unread filters to them", async () => {
-    const activity = (_init: RequestInit, url: URL) => {
-      expect(url.searchParams.get("exclude_actor")).toBe("2");
-      return url.searchParams.get("after") === "f0"
-        ? page([webComment], "f1")
-        : page([], null);
-    };
-    const { fetchImpl } = fakeFetch([
-      ["GET", "/api/projects/todou/issues", issuePage],
-      ["GET", "/api/me", me],
-      ["GET", "/api/projects/todou/activity", activity],
-    ]);
-    const marked = await runCli(["issue", "list"], { fetchImpl, env });
-    const line3 = marked.stdout.split("\n").find((l) => l.includes("#3"));
-    const line4 = marked.stdout.split("\n").find((l) => l.includes("#4"));
+    const line3 = result.stdout.split("\n").find((l) => l.includes("#3"));
+    const line4 = result.stdout.split("\n").find((l) => l.includes("#4"));
     expect(line3).toContain("●");
     expect(line4).not.toContain("●");
+  });
 
+  it("--unread filters to unread items", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/issues", issuePage],
+    ]);
     const filtered = await runCli(["issue", "list", "--unread", "--json"], {
       fetchImpl,
       env,
@@ -106,8 +87,9 @@ describe("unread markers (local state)", () => {
     expect(parsed.items.map((i) => i.number)).toEqual([3]);
   });
 
-  it("issue view marks the issue read", async () => {
+  it("issue view advances the read position to the newest shown entry", async () => {
     const issue = { ...listItem(3, "Fix the potato"), body: "" };
+    let putBody: unknown;
     const { fetchImpl } = fakeFetch([
       ["GET", "/api/projects/todou/issues/3", issue],
       [
@@ -118,51 +100,77 @@ describe("unread markers (local state)", () => {
             ? page([], null)
             : { items: [webComment], prev_cursor: null, next_cursor: "t1" },
       ],
+      [
+        "PUT",
+        "/api/projects/todou/issues/3/read",
+        (init: RequestInit) => {
+          putBody = JSON.parse(String(init.body));
+          return { __status: 204 };
+        },
+      ],
     ]);
     const viewed = await runCli(["issue", "view", "3"], { fetchImpl, env });
     expect(viewed.exitCode).toBe(0);
-
-    // Re-scanning the same foreign entry must not resurrect the marker:
-    // its created_at is not newer than what the view recorded.
-    const { fetchImpl: listFetch } = fakeFetch([
-      ["GET", "/api/projects/todou/issues", issuePage],
-      ["GET", "/api/me", me],
-      [
-        "GET",
-        "/api/projects/todou/activity",
-        (_init: RequestInit, url: URL) =>
-          url.searchParams.get("after") === "f1"
-            ? page([webComment], "f2")
-            : page([], null),
-      ],
-    ]);
-    const after = await runCli(["issue", "list"], {
-      fetchImpl: listFetch,
-      env,
-    });
-    expect(after.stdout).not.toContain("●");
-
-    const unread = await runCli(["issue", "list", "--unread"], {
-      fetchImpl: fakeFetch([
-        ["GET", "/api/projects/todou/issues", issuePage],
-        ["GET", "/api/me", me],
-        ["GET", "/api/projects/todou/activity", page([], null)],
-      ]).fetchImpl,
-      env,
-    });
-    expect(unread.stdout).toBe("no unread issues\n");
+    expect(putBody).toEqual({ up_to: webComment.created_at });
   });
 
-  it("degrades silently when the server has no /activity", async () => {
+  it("issue view on an empty timeline marks read at server-now", async () => {
+    const issue = { ...listItem(3, "Fix the potato"), body: "" };
+    let putBody: unknown;
     const { fetchImpl } = fakeFetch([
-      ["GET", "/api/projects/todou/issues", issuePage],
+      ["GET", "/api/projects/todou/issues/3", issue],
+      ["GET", "/api/projects/todou/issues/3/timeline", page([], null)],
+      [
+        "PUT",
+        "/api/projects/todou/issues/3/read",
+        (init: RequestInit) => {
+          putBody = JSON.parse(String(init.body));
+          return { __status: 204 };
+        },
+      ],
     ]);
-    const result = await runCli(["issue", "list"], {
+    const viewed = await runCli(["issue", "view", "3"], { fetchImpl, env });
+    expect(viewed.exitCode).toBe(0);
+    expect(putBody).toEqual({});
+  });
+
+  it("degrades silently on servers without read state", async () => {
+    // Pre-#46 list rows carry no unread field at all.
+    const oldPage = {
+      items: [listItem(3, "Fix the potato"), listItem(4, "Water the field")],
+      next_cursor: null,
+    };
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/issues", oldPage],
+    ]);
+    const listed = await runCli(["issue", "list"], { fetchImpl, env });
+    expect(listed.exitCode).toBe(0);
+    expect(listed.stdout).not.toContain("●");
+    const filtered = await runCli(["issue", "list", "--unread"], {
       fetchImpl,
-      env: loggedInEnv("todou"),
+      env,
     });
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("#3");
+    expect(filtered.stdout).toBe("no unread issues\n");
+
+    const issue = { ...listItem(3, "Fix the potato"), body: "" };
+    const { fetchImpl: viewFetch } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3", issue],
+      ["GET", "/api/projects/todou/issues/3/timeline", page([], null)],
+      [
+        "PUT",
+        "/api/projects/todou/issues/3/read",
+        {
+          __status: 404,
+          body: { error: { code: "not_found", message: "no such route" } },
+        },
+      ],
+    ]);
+    const viewed = await runCli(["issue", "view", "3"], {
+      fetchImpl: viewFetch,
+      env,
+    });
+    expect(viewed.exitCode).toBe(0);
+    expect(viewed.stdout).toContain("#3 Fix the potato");
   });
 });
 

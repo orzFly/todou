@@ -23,7 +23,6 @@ import {
   resolveLabels,
   resolveStatus,
 } from "../resolve.ts";
-import { markSeen, refreshUnread } from "../unread.ts";
 import {
   normalizeTypes,
   retryTransient,
@@ -31,9 +30,10 @@ import {
   watchRetryOptions,
 } from "../watch-loop.ts";
 
-function issueRow(issue: IssueListItem, unread: Set<number>): string[] {
+function issueRow(issue: IssueListItem): string[] {
   return [
-    unread.has(issue.number) ? "●" : "",
+    // Old servers omit the field entirely; undefined reads as "not unread".
+    issue.unread ? "●" : "",
     `#${issue.number}`,
     issue.title,
     issue.status.name,
@@ -103,21 +103,15 @@ export class IssueListCommand extends ProjectCommand {
       limit: this.limit ? parsePositiveInt(this.limit, "--limit") : undefined,
     });
 
-    const unread = await refreshUnread(
-      client,
-      this.ctx.server ?? "",
-      project,
-      this.context.env,
-    );
     const shown = this.unread
-      ? { ...page, items: page.items.filter((i) => unread.has(i.number)) }
+      ? { ...page, items: page.items.filter((i) => i.unread) }
       : page;
 
     this.output(shown, () => {
       if (shown.items.length === 0) {
         return this.unread ? "no unread issues" : "no issues";
       }
-      const body = table(shown.items.map((i) => issueRow(i, unread)));
+      const body = table(shown.items.map((i) => issueRow(i)));
       return shown.next_cursor
         ? `${body}\n… more available (raise --limit)`
         : body;
@@ -150,14 +144,20 @@ export class IssueViewCommand extends ProjectCommand {
     this.output({ issue, timeline, next_cursor: cursor ?? null }, () =>
       renderIssue(issue, timeline, cursor, paint),
     );
-    // Viewing marks the issue read for the local unread markers (#35).
-    markSeen(
-      this.ctx.server ?? "",
-      project,
-      number,
-      timeline.at(-1)?.created_at,
-      this.context.env,
-    );
+    // Viewing advances the server-side read position (#46), pinned to the
+    // newest entry actually shown so anything landing after the fetch stays
+    // unread. After the output on purpose, and best-effort: an old server
+    // (404) or a network blip must never fail the view itself.
+    const tail = timeline.at(-1)?.created_at;
+    try {
+      await client.markIssueRead(
+        project,
+        number,
+        tail === undefined ? {} : { up_to: tail },
+      );
+    } catch {
+      // Markers refresh on the next successful view.
+    }
   }
 }
 
