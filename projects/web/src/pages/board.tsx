@@ -13,7 +13,11 @@ import {
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import type { IssueListItem, Status } from "@todou/shared";
-import { MessageCircleQuestionIcon, PlusIcon } from "lucide-react";
+import {
+  BookOpenTextIcon,
+  MessageCircleQuestionIcon,
+  PlusIcon,
+} from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { boardColumnQuery, useBoardMove } from "@/api/board.ts";
 import { statusesQuery } from "@/api/queries.ts";
@@ -260,6 +264,15 @@ export function BoardCardContent({
           >
             <MessageCircleQuestionIcon className="size-3.5" />
             {issue.open_questions}
+          </span>
+        )}
+        {issue.spec_review_status === "unreviewed" && (
+          <span
+            className="inline-flex items-center gap-1 rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700 dark:text-amber-400"
+            title={`spec v${issue.spec_version} is awaiting review`}
+          >
+            <BookOpenTextIcon className="size-3.5" />
+            spec
           </span>
         )}
         {issue.labels.map((label) => (

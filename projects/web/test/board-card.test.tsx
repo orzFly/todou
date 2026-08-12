@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import { BoardCardContent } from "../src/pages/board.tsx";
 import { renderWithProviders } from "./render.tsx";
 
-const issue = (open_questions: number): IssueListItem => ({
+const issue = (
+  open_questions: number,
+  spec?: Pick<IssueListItem, "spec_version" | "spec_review_status">,
+): IssueListItem => ({
   id: 10,
   number: 1,
   title: "issue 1",
@@ -29,8 +32,8 @@ const issue = (open_questions: number): IssueListItem => ({
   updated_at: "2026-08-11T00:00:00Z",
   body_edited_at: null,
   open_questions,
-  spec_version: null,
-  spec_review_status: null,
+  spec_version: spec?.spec_version ?? null,
+  spec_review_status: spec?.spec_review_status ?? null,
   spec_unresolved_comments: 0,
 });
 
@@ -51,5 +54,36 @@ describe("BoardCardContent question badge", () => {
     );
     await view.findByText("issue 1");
     expect(view.queryByTitle(/unanswered/)).toBeNull();
+  });
+});
+
+describe("BoardCardContent spec badge (#53)", () => {
+  it("shows the awaiting-review badge for an unreviewed spec", async () => {
+    const view = renderWithProviders(
+      <BoardCardContent
+        slug="p"
+        issue={issue(0, { spec_version: 3, spec_review_status: "unreviewed" })}
+      />,
+    );
+    await view.findByText("issue 1");
+    const badge = view.getByTitle("spec v3 is awaiting review");
+    expect(badge.textContent).toContain("spec");
+  });
+
+  it("stays quiet once reviewed or without a spec", async () => {
+    const reviewed = renderWithProviders(
+      <BoardCardContent
+        slug="p"
+        issue={issue(0, { spec_version: 3, spec_review_status: "approved" })}
+      />,
+    );
+    await reviewed.findByText("issue 1");
+    expect(reviewed.queryByTitle(/awaiting review/)).toBeNull();
+
+    const noSpec = renderWithProviders(
+      <BoardCardContent slug="p" issue={issue(0)} />,
+    );
+    await noSpec.findByText("issue 1");
+    expect(noSpec.queryByTitle(/awaiting review/)).toBeNull();
   });
 });
