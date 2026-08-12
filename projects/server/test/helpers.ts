@@ -29,6 +29,8 @@ export type ConfigOverrides = {
   maxUploadMb?: number;
   workers?: boolean;
   staticDir?: string;
+  /** Raw TOML prepended to the generated document (auth sections etc.). */
+  extraToml?: string;
 };
 
 export function testConfig(
@@ -64,6 +66,9 @@ export function testConfig(
   lines.push(`workers = ${overrides?.workers ?? false}`);
   if (overrides?.staticDir) {
     lines.unshift("[http]", `static_dir = '${overrides.staticDir}'`);
+  }
+  if (overrides?.extraToml) {
+    lines.unshift(overrides.extraToml);
   }
   return loadConfig({ tomlSource: lines.join("\n"), env: {} });
 }

@@ -58,7 +58,7 @@ function normalizeMapped(addr: string): string {
  * pass plain objects and non-node adapters degrade to "no peer address".
  */
 export type RequestLike = {
-  req: { header: (name: string) => string | undefined };
+  req: { header: (name: string) => string | undefined; url: string };
   env: unknown;
 };
 
@@ -104,11 +104,10 @@ export function requestOrigin(c: RequestLike, config: Config): string {
     ? c.req.header("x-forwarded-host")
     : undefined;
   const host =
-    forwardedHost !== undefined ? firstToken(forwardedHost) : c.req.header("host");
-  if (!host) {
-    throw new Error(
-      "cannot derive the request origin (no Host header); set http.public_origin",
-    );
-  }
+    (forwardedHost !== undefined ? firstToken(forwardedHost) : undefined) ??
+    c.req.header("host") ??
+    // Synthetic requests (tests, non-node adapters) carry the host only in
+    // the URL.
+    new URL(c.req.url).host;
   return `${requestProto(c, config)}://${host}`;
 }

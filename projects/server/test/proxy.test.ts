@@ -18,7 +18,10 @@ function fakeRequest(options: {
     ]),
   );
   return {
-    req: { header: (name: string) => headers.get(name.toLowerCase()) },
+    req: {
+      header: (name: string) => headers.get(name.toLowerCase()),
+      url: "http://fallback.example/api/x",
+    },
     env:
       options.remoteAddress === undefined
         ? {}
@@ -133,5 +136,12 @@ describe("requestOrigin", () => {
       headers: { Host: "internal:8637", "X-Forwarded-Host": "evil.example" },
     });
     expect(requestOrigin(untrusted, config)).toBe("http://internal:8637");
+  });
+
+  it("falls back to the request URL host when no Host header exists", () => {
+    const config = configWith("");
+    expect(requestOrigin(fakeRequest({}), config)).toBe(
+      "http://fallback.example",
+    );
   });
 });

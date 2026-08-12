@@ -4,6 +4,7 @@ export * from "./client.ts";
 export * from "./events.ts";
 export * from "./schemas/agent.ts";
 export * from "./schemas/agent-context.ts";
+export * from "./schemas/auth.ts";
 export * from "./schemas/attachment.ts";
 export * from "./schemas/common.ts";
 export * from "./schemas/component.ts";
