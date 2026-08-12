@@ -4,7 +4,14 @@ import {
   MessageSquarePlusIcon,
   MessageSquareTextIcon,
 } from "lucide-react";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  type MouseEvent as ReactMouseEvent,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
@@ -216,7 +223,16 @@ export function AnnotatedMarkdown({
     return () => window.removeEventListener("resize", layout);
   }, [layout]);
 
-  const onMouseUp = useCallback(() => {
+  const onMouseUp = useCallback((event: ReactMouseEvent) => {
+    // Presses on the annotation UI itself (floating button, chips) bubble
+    // through here too; deriving state from them would clear `pending`
+    // and unmount the button before its click can fire (#60).
+    if (
+      event.target instanceof Element &&
+      event.target.closest("[data-annotation-ui]") !== null
+    ) {
+      return;
+    }
     const container = containerRef.current;
     if (!container) return;
     const selection = window.getSelection();
@@ -277,6 +293,12 @@ export function AnnotatedMarkdown({
           size="sm"
           className="absolute right-0 z-10 shadow-md"
           style={{ top: pending.top }}
+          data-annotation-ui=""
+          // The browser's default pointer/mouse-down would collapse the
+          // text selection under the button (and move focus) before click
+          // fires — the selection must outlive the press (#60).
+          onPointerDown={(e) => e.preventDefault()}
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => {
             onStage({ lineStart: pending.lineStart, lineEnd: pending.lineEnd });
             setPending(null);
@@ -307,6 +329,7 @@ function AnnotationChip({
   return (
     <Popover>
       <PopoverTrigger
+        data-annotation-ui=""
         className={`absolute right-0 inline-flex cursor-pointer items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs shadow-sm ${
           draftCount > 0
             ? "border-indigo-500/60 bg-indigo-500/10 text-indigo-700 dark:text-indigo-400"

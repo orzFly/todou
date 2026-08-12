@@ -1,4 +1,4 @@
-import type { ComponentProps, ReactNode } from "react";
+import { type ComponentProps, type ReactNode, useMemo } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AttachmentDocumentEmbed } from "@/components/issue/attachment-embed.tsx";
@@ -129,6 +129,116 @@ export function MarkdownView({
    */
   rehypePlugins?: ComponentProps<typeof Markdown>["rehypePlugins"];
 }) {
+  // The override map must be referentially stable across re-renders: every
+  // entry is an anonymous component, and a fresh map makes React treat each
+  // one as a NEW component type, unmounting and rebuilding those DOM
+  // subtrees on every parent render. Rebuilt text nodes silently collapse
+  // any live text selection — which broke spec annotation (#60): the
+  // floating comment button's own appearance re-rendered the document and
+  // destroyed the selection it was offering to annotate.
+  const components: ComponentProps<typeof Markdown>["components"] = useMemo(
+    () => ({
+      pre: (props) => <MarkdownPre {...props} source={children} />,
+      ...(slug === undefined
+        ? undefined
+        : {
+            // A document card is block content, which HTML forbids
+            // inside <p>; paragraphs that carry an embed swap to a
+            // <div> (same typography via .markdown-paragraph).
+            p: ({
+              node,
+              children,
+              ...props
+            }: ComponentProps<"p"> & { node?: unknown }): ReactNode => {
+              const carriesEmbed =
+                issueNumber !== undefined &&
+                !embedded &&
+                ((node as HastNode | undefined)?.children ?? []).some((child) =>
+                  isEmbedImgNode(child, slug),
+                );
+              if (carriesEmbed) {
+                return (
+                  <div className="markdown-paragraph" {...props}>
+                    {children}
+                  </div>
+                );
+              }
+              return <p {...props}>{children}</p>;
+            },
+            // Attachment refs need the issue context and win first;
+            // everything else (issue refs, permalinks, plain links)
+            // is MarkdownLink's business.
+            a: (props): ReactNode => {
+              if (issueNumber !== undefined) {
+                const ref = parseAttachmentHref(props.href);
+                if (ref !== null && ref.slug === slug) {
+                  return (
+                    <AttachmentRichLink
+                      slug={slug}
+                      issueNumber={issueNumber}
+                      attachmentId={ref.id}
+                      href={props.href ?? ""}
+                      fallbackName={ref.name ?? "attachment"}
+                    >
+                      {props.children}
+                    </AttachmentRichLink>
+                  );
+                }
+              }
+              return <MarkdownLink slug={slug} {...props} />;
+            },
+            img: ({
+              node: _node,
+              ...props
+            }: ComponentProps<"img"> & { node?: unknown }): ReactNode => {
+              if (issueNumber !== undefined) {
+                const ref = parseAttachmentHref(props.src);
+                if (ref !== null && ref.slug === slug) {
+                  const name = ref.name ?? "";
+                  // Image syntax on a text attachment embeds it as a
+                  // document card (the text twin of an inline image).
+                  // Images keep winning ties like .svg, which is both.
+                  if (isTextEmbedName(name)) {
+                    if (embedded) {
+                      return (
+                        <AttachmentRichLink
+                          slug={slug}
+                          issueNumber={issueNumber}
+                          attachmentId={ref.id}
+                          href={props.src ?? ""}
+                          fallbackName={name}
+                        />
+                      );
+                    }
+                    return (
+                      <AttachmentDocumentEmbed
+                        slug={slug}
+                        issueNumber={issueNumber}
+                        attachmentId={ref.id}
+                        href={props.src ?? ""}
+                        fallbackName={name}
+                      />
+                    );
+                  }
+                  return (
+                    <AttachmentInlineImage
+                      slug={slug}
+                      issueNumber={issueNumber}
+                      attachmentId={ref.id}
+                      src={props.src ?? ""}
+                      alt={props.alt ?? ref.name ?? ""}
+                    />
+                  );
+                }
+              }
+              // biome-ignore lint/a11y/useAltText: alt is forwarded via props when the markdown provides one
+              return <img {...props} />;
+            },
+          }),
+    }),
+    [children, slug, issueNumber, embedded],
+  );
+
   return (
     // Typography lives in styles.css (.markdown-body, GitHub-style).
     <div className="markdown-body">
@@ -137,105 +247,7 @@ export function MarkdownView({
           slug === undefined ? [remarkGfm] : [remarkGfm, remarkIssueRefs]
         }
         rehypePlugins={rehypePlugins}
-        components={{
-          pre: (props) => <MarkdownPre {...props} source={children} />,
-          ...(slug === undefined
-            ? undefined
-            : {
-                // A document card is block content, which HTML forbids
-                // inside <p>; paragraphs that carry an embed swap to a
-                // <div> (same typography via .markdown-paragraph).
-                p: ({
-                  node,
-                  children,
-                  ...props
-                }: ComponentProps<"p"> & { node?: unknown }): ReactNode => {
-                  const carriesEmbed =
-                    issueNumber !== undefined &&
-                    !embedded &&
-                    ((node as HastNode | undefined)?.children ?? []).some(
-                      (child) => isEmbedImgNode(child, slug),
-                    );
-                  if (carriesEmbed) {
-                    return (
-                      <div className="markdown-paragraph" {...props}>
-                        {children}
-                      </div>
-                    );
-                  }
-                  return <p {...props}>{children}</p>;
-                },
-                // Attachment refs need the issue context and win first;
-                // everything else (issue refs, permalinks, plain links)
-                // is MarkdownLink's business.
-                a: (props): ReactNode => {
-                  if (issueNumber !== undefined) {
-                    const ref = parseAttachmentHref(props.href);
-                    if (ref !== null && ref.slug === slug) {
-                      return (
-                        <AttachmentRichLink
-                          slug={slug}
-                          issueNumber={issueNumber}
-                          attachmentId={ref.id}
-                          href={props.href ?? ""}
-                          fallbackName={ref.name ?? "attachment"}
-                        >
-                          {props.children}
-                        </AttachmentRichLink>
-                      );
-                    }
-                  }
-                  return <MarkdownLink slug={slug} {...props} />;
-                },
-                img: ({
-                  node: _node,
-                  ...props
-                }: ComponentProps<"img"> & { node?: unknown }): ReactNode => {
-                  if (issueNumber !== undefined) {
-                    const ref = parseAttachmentHref(props.src);
-                    if (ref !== null && ref.slug === slug) {
-                      const name = ref.name ?? "";
-                      // Image syntax on a text attachment embeds it as a
-                      // document card (the text twin of an inline image).
-                      // Images keep winning ties like .svg, which is both.
-                      if (isTextEmbedName(name)) {
-                        if (embedded) {
-                          return (
-                            <AttachmentRichLink
-                              slug={slug}
-                              issueNumber={issueNumber}
-                              attachmentId={ref.id}
-                              href={props.src ?? ""}
-                              fallbackName={name}
-                            />
-                          );
-                        }
-                        return (
-                          <AttachmentDocumentEmbed
-                            slug={slug}
-                            issueNumber={issueNumber}
-                            attachmentId={ref.id}
-                            href={props.src ?? ""}
-                            fallbackName={name}
-                          />
-                        );
-                      }
-                      return (
-                        <AttachmentInlineImage
-                          slug={slug}
-                          issueNumber={issueNumber}
-                          attachmentId={ref.id}
-                          src={props.src ?? ""}
-                          alt={props.alt ?? ref.name ?? ""}
-                        />
-                      );
-                    }
-                  }
-                  // biome-ignore lint/a11y/useAltText: alt is forwarded via props when the markdown provides one
-                  return <img {...props} />;
-                },
-              }),
-        }}
+        components={components}
       >
         {children}
       </Markdown>
