@@ -13,7 +13,7 @@ import {
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import type { IssueListItem, Status } from "@todou/shared";
-import { PlusIcon } from "lucide-react";
+import { MessageCircleQuestionIcon, PlusIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { boardColumnQuery, useBoardMove } from "@/api/board.ts";
 import { statusesQuery } from "@/api/queries.ts";
@@ -233,7 +233,7 @@ function BoardCard({
   );
 }
 
-function BoardCardContent({
+export function BoardCardContent({
   slug,
   issue,
 }: {
@@ -249,8 +249,19 @@ function BoardCardContent({
       >
         {issue.title}
       </Link>
+      {/* Meta row hosts the question badge; the card's top-right corner
+          stays free for the per-issue unread dot planned in #46. */}
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
         <span className="text-xs text-muted-foreground">#{issue.number}</span>
+        {issue.open_questions > 0 && (
+          <span
+            className="inline-flex items-center gap-1 rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700 dark:text-amber-400"
+            title={`${issue.open_questions} unanswered question(s)`}
+          >
+            <MessageCircleQuestionIcon className="size-3.5" />
+            {issue.open_questions}
+          </span>
+        )}
         {issue.labels.map((label) => (
           <LabelChip key={label.id} label={label} />
         ))}
