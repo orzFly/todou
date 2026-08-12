@@ -17,6 +17,7 @@ import { CliAuthPage } from "@/pages/cli-auth.tsx";
 import { IssueDetailPage } from "@/pages/issue-detail.tsx";
 import { IssueListPage } from "@/pages/issue-list.tsx";
 import { LoginPage } from "@/pages/login.tsx";
+import { NewIssuePage } from "@/pages/new-issue.tsx";
 import { ProjectLayout } from "@/pages/project-layout.tsx";
 import { ProjectSettingsPage } from "@/pages/project-settings.tsx";
 import { ProjectsPage } from "@/pages/projects.tsx";
@@ -112,6 +113,13 @@ const projectBoardRoute = createRoute({
   component: BoardPage,
 });
 
+// Registered before issues/$number so the static segment wins the match.
+const newIssueRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "issues/new",
+  component: NewIssuePage,
+});
+
 const issueRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "issues/$number",
@@ -150,6 +158,7 @@ const routeTree = rootRoute.addChildren([
     projectRoute.addChildren([
       projectIndexRoute,
       projectBoardRoute,
+      newIssueRoute,
       issueRoute,
       projectSettingsRoute,
     ]),

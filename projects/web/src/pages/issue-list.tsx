@@ -15,6 +15,7 @@ import {
   CheckCircle2Icon,
   CheckIcon,
   CircleDotIcon,
+  PlusIcon,
   TagIcon,
 } from "lucide-react";
 import { useState } from "react";
@@ -35,7 +36,6 @@ import {
 } from "@/api/queries.ts";
 import { FilterBar } from "@/components/issue/filter-bar.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
-import { NewIssueDialog } from "@/components/issue/new-issue-dialog.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
@@ -93,7 +93,11 @@ export function IssueListPage() {
           members={members.data}
           onChange={setSearch}
         />
-        <NewIssueDialog slug={slug} statuses={statuses.data} />
+        <Button size="sm" asChild>
+          <Link to="/projects/$slug/issues/new" params={{ slug }}>
+            <PlusIcon /> New issue
+          </Link>
+        </Button>
       </div>
       <IssueTable
         slug={slug}

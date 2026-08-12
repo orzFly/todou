@@ -13,13 +13,14 @@ import {
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import type { IssueListItem, Status } from "@todou/shared";
+import { PlusIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { boardColumnQuery, useBoardMove } from "@/api/board.ts";
 import { statusesQuery } from "@/api/queries.ts";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
-import { NewIssueDialog } from "@/components/issue/new-issue-dialog.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -128,7 +129,11 @@ export function BoardPage() {
         className="mx-[calc(50%-50vw)] -mb-6 flex flex-col gap-4 px-4 pb-4"
       >
         <div className="flex shrink-0 justify-end">
-          <NewIssueDialog slug={slug} statuses={statuses.data} />
+          <Button size="sm" asChild>
+            <Link to="/projects/$slug/issues/new" params={{ slug }}>
+              <PlusIcon /> New issue
+            </Link>
+          </Button>
         </div>
         <div className="flex min-h-0 flex-1 gap-4 overflow-x-auto">
           {statuses.data.map((status) => (

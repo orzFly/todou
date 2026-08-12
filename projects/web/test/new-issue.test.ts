@@ -1,6 +1,6 @@
 import type { Status } from "@todou/shared";
 import { describe, expect, it } from "vitest";
-import { pickDefaultStatus } from "../src/components/issue/new-issue-dialog.tsx";
+import { pickDefaultStatus } from "../src/pages/new-issue.tsx";
 
 const status = (id: number, name: string, is_default = false): Status => ({
   id,
