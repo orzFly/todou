@@ -65,8 +65,8 @@ export async function openDb(
     // PGlite fails obscurely on first query when the data directory's
     // parents don't exist yet.
     if (!isMemory) await mkdir(target, { recursive: true });
-    // EXPERIMENTAL worker host: PGlite lives in a worker thread and the
-    // proxy satisfies drizzle's query surface, so per-project databases
+    // Worker host: PGlite lives in a worker thread and the proxy
+    // satisfies drizzle's query surface, so per-project databases
     // execute on separate cores.
     const client = opts?.workerHost
       ? (new WorkerPgliteClient(

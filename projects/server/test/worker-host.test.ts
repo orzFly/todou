@@ -6,11 +6,11 @@ import { makeTestApp, type TestApp } from "./helpers.ts";
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
 
 /**
- * Spike validation for the experimental worker-thread PGlite host
- * (database.projects.workers = true): the full API flow must behave
- * identically to the inline host, including drizzle transactions.
+ * The worker-thread PGlite host (database.projects.workers = true): the
+ * full API flow must behave identically to the inline host, including
+ * drizzle transactions.
  */
-describe("worker-hosted pglite (experimental)", () => {
+describe("worker-hosted pglite", () => {
   let t: TestApp;
   let cookie: string;
   const headers = () => ({ "content-type": "application/json", cookie });

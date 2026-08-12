@@ -157,12 +157,42 @@ placement = "shared"                     # project data lives in the system db
 # placement = "dedicated"                # …or route each project by template:
 # url_template = "pglite://./data/projects/${project.id}"
 # url_template = "postgres://${project.id > 100 ? 'pg-b' : 'pg-a'}/todou_${project.id}"
-# workers = true                         # experimental: worker-thread PGlite hosts
+# workers = true                         # host each PGlite project db in a worker thread
 ```
 
 `url_template` is compiled once at startup as a JS template literal with
 `project = {id, slug}` in scope — keep it deterministic; per-project moves
 go through the registry's `database_url` override column.
+
+#### Worker-hosted project databases
+
+With `workers = true`, each dedicated PGlite project database runs in its
+own `worker_threads` worker; a main-thread proxy forwards drizzle's query
+surface over a `MessagePort`. PGlite is single-connection WASM — hosted
+inline, every project's queries compute on the main thread, so total
+database throughput is capped at one core no matter how many projects are
+busy. Only file-backed project databases under dedicated placement are
+affected; the system database always runs inline, and `postgres://`
+targets ignore the flag.
+
+Trade-offs, measured with `pnpm --filter @todou/server bench:db` (32-core
+host; rerun it on yours):
+
+- The proxy hop costs ~0.2 ms per query. That is visible only on
+  sub-millisecond single-client writes (~30% lower throughput); reads and
+  heavier queries are at parity even with a single project.
+- With several busy project databases, throughput scales with cores
+  instead of plateauing: at 8 projects, 3.7× on writes, 4.5× on aggregate
+  reads, and heavy ~100 ms queries keep a flat p50 where inline latency
+  grows linearly with the number of busy projects.
+- Each worker adds a thread and V8 isolate on top of the WASM heap the
+  PGlite instance needs in either mode — budget roughly one thread per
+  open handle, bounded by `max_open`.
+- If a worker crashes, in-flight queries on that database fail (they are
+  never retried automatically) and a fresh worker reopens the data
+  directory, recovering committed data; other projects never notice.
+  After three consecutive crashes without a successful query in between,
+  the handle stops respawning and fails fast instead.
 
 `todou-server migrate` applies pending migrations to the system database
 and every project database (pglite auto-migrates on open by default;
