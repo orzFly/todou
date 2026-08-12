@@ -24,6 +24,7 @@ const refItem = (number: number, title: string): IssueListItem => ({
     category: "open",
     color: "#bf8700",
     position: 2,
+    is_default: false,
   },
   author: {
     id: 1,
