@@ -31,6 +31,8 @@ export type ConfigOverrides = {
   staticDir?: string;
   /** Raw TOML prepended to the generated document (auth sections etc.). */
   extraToml?: string;
+  /** Point storage at a fake S3 (see fake-s3.ts); backend flips to "s3". */
+  s3?: { endpoint: string; publicEndpoint?: string; keyPrefix?: string };
 };
 
 export function testConfig(
@@ -41,6 +43,7 @@ export function testConfig(
   const storageDir = mkdtempSync(join(tmpdir(), "todou-storage-"));
   const lines = [
     "[storage]",
+    `backend = '${overrides?.s3 ? "s3" : "fs"}'`,
     `path = '${storageDir}'`,
     `max_upload_mb = ${overrides?.maxUploadMb ?? 20}`,
     "[database]",
@@ -69,6 +72,23 @@ export function testConfig(
   }
   if (overrides?.extraToml) {
     lines.unshift(overrides.extraToml);
+  }
+  if (overrides?.s3) {
+    lines.push(
+      "[storage.s3]",
+      `endpoint = '${overrides.s3.endpoint}'`,
+      "bucket = 'test-bucket'",
+      "access_key_id = 'test-ak'",
+      "secret_access_key = 'test-sk'",
+      "retries = 2",
+      "request_timeout_ms = 2000",
+    );
+    if (overrides.s3.publicEndpoint) {
+      lines.push(`public_endpoint = '${overrides.s3.publicEndpoint}'`);
+    }
+    if (overrides.s3.keyPrefix) {
+      lines.push(`key_prefix = '${overrides.s3.keyPrefix}'`);
+    }
   }
   return loadConfig({ tomlSource: lines.join("\n"), env: {} });
 }

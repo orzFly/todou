@@ -243,3 +243,92 @@ Two hard requirements, both enforced:
 
 Provisioning follows the same rules as oidc (auto-create, login adoption,
 first-human-is-admin), keyed by the header value as the login.
+
+## S3 attachment storage
+
+Attachments and avatars default to local disk (`[storage] path`). Setting
+`backend = "s3"` moves the blobs to any S3-compatible store (MinIO, AWS
+S3, R2). Public URLs never change — the API still serves
+`/api/projects/<slug>/attachments/<id>/download/<name>` and friends — but
+downloads answer with a 302 to a short-lived presigned URL, and browsers
+upload straight to the store via a presigned PUT (the multipart API stays
+as the fallback and keeps old CLI binaries working).
+
+```toml
+[storage]
+backend = "s3"
+# path stays meaningful: it is the fs end of `storage migrate`.
+path = "./data/attachments"
+
+[storage.s3]
+endpoint = "http://127.0.0.1:9000"     # server-side operations
+# Browsers must reach this one; presigned signatures are host-bound.
+# Empty = same as endpoint.
+public_endpoint = "https://files.example.com"
+region = "us-east-1"
+bucket = "todou-attachments"
+# key_prefix = "todou/"                # namespace inside a shared bucket
+# force_path_style = true              # default; AWS virtual-host: false
+access_key_id = ""                     # or TODOU_STORAGE_S3_ACCESS_KEY_ID,
+secret_access_key = ""                 # or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
+# presign_expiry_seconds = 300         # download redirects
+# upload_expiry_seconds = 3600         # direct-upload PUT window
+# request_timeout_ms = 30000
+# retries = 3
+```
+
+Credentials resolve in order: `TODOU_STORAGE_S3_*` environment >
+`todou.toml` > standard `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
+(+ `AWS_SESSION_TOKEN`). The startup log names the source; the server
+refuses to boot if the bucket is unreachable.
+
+Two operational requirements:
+
+- **Bucket CORS.** Direct uploads (PUT) and the web app's text previews
+  (GET after the 302) are cross-origin requests from the browser. MinIO's
+  default configuration already reflects any origin. On AWS, attach a
+  CORS policy to the bucket, e.g.:
+
+  ```json
+  [{ "AllowedMethods": ["GET", "PUT"],
+     "AllowedOrigins": ["https://todou.example"],
+     "AllowedHeaders": ["*"], "ExposeHeaders": ["ETag"] }]
+  ```
+
+  A missing CORS policy is not an outage: clients fall back to the
+  multipart upload API automatically, and plain link/image downloads
+  (top-level navigations) don't need CORS at all.
+
+- **Keep `public_endpoint` on its own origin**, not a path under the API
+  host. HTML attachments are served through the sandboxed `/view` route
+  either way, but a separate origin removes the whole class of
+  same-origin confusion.
+
+### Migrating existing attachments
+
+```sh
+todou-server storage migrate --to s3 --dry-run   # inventory, writes nothing
+todou-server storage migrate --to s3             # idempotent, resumable
+# … verify the counts, then flip backend = "s3" and restart …
+```
+
+The copy walks the databases (avatars + every project's attachments), so
+it never lists the bucket; keys already present with the right size are
+skipped, which makes interrupted runs safely re-runnable. The source is
+never deleted. Rolling back is the same command with `--to fs` (to pick
+up anything uploaded to s3 since the switch) plus flipping
+`backend = "fs"` back.
+
+### Reaping abandoned direct uploads
+
+A direct upload that is requested but never completed leaves an object
+with no attachment row. Every issued upload is recorded in the database,
+so cleanup is database-driven:
+
+```sh
+todou-server storage gc --dry-run    # list what would be reaped
+todou-server storage gc              # delete orphans older than expiry+24h
+```
+
+Run it ad hoc or from a timer; `--min-age <hours>` widens the safety
+margin past the presign expiry.

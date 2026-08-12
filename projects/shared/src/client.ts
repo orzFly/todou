@@ -7,6 +7,7 @@ import type {
   Attachment,
   AuthMode,
   CommentComponentInput,
+  DirectUploadTicket,
   Issue,
   IssueCounts,
   IssueCreateInput,
@@ -402,13 +403,93 @@ export class TodouClient {
     this.request<Attachment[]>("GET", `/projects/${slug}/attachments`, {
       query: { issue_number: issueNumber },
     });
-  uploadAttachment = (slug: string, issueNumber: number, file: File) => {
+  uploadAttachment = async (
+    slug: string,
+    issueNumber: number,
+    file: File,
+  ): Promise<Attachment> => {
+    if (!this.#directUploadUnavailable) {
+      const direct = await this.#tryDirectUpload(slug, issueNumber, file);
+      if (direct) return direct;
+    }
     const form = new FormData();
     form.set("file", file);
     form.set("issue_number", String(issueNumber));
     return this.request<Attachment>("POST", `/projects/${slug}/attachments`, {
       form,
     });
+  };
+
+  /** Remembered per client: the backend said it cannot presign. */
+  #directUploadUnavailable = false;
+
+  /**
+   * Direct-upload path (s3 backends): presigned ticket → PUT straight to
+   * the store → register. Returns null to signal "use multipart instead":
+   * definitive unavailability (dedicated 409 code, or the 404 of an older
+   * server without the endpoint) is remembered; a failure of just this
+   * attempt (store unreachable, ticket expired) is not — the abandoned
+   * ticket is the server gc's to reap. Anything else (validation, missing
+   * issue, permissions) would fail multipart identically, so it surfaces.
+   */
+  #tryDirectUpload = async (
+    slug: string,
+    issueNumber: number,
+    file: File,
+  ): Promise<Attachment | null> => {
+    const sha256 = await this.#sha256(file);
+    let ticket: DirectUploadTicket;
+    try {
+      ticket = await this.request<DirectUploadTicket>(
+        "POST",
+        `/projects/${slug}/attachments/direct-uploads`,
+        {
+          json: {
+            issue_number: issueNumber,
+            filename: file.name,
+            content_type: file.type || "application/octet-stream",
+            size: file.size,
+            ...(sha256 ? { sha256 } : {}),
+          },
+        },
+      );
+    } catch (err) {
+      if (
+        err instanceof TodouError &&
+        (err.code === "direct_upload_unavailable" ||
+          (err.status === 404 && err.code === "unknown"))
+      ) {
+        this.#directUploadUnavailable = true;
+        return null;
+      }
+      throw err;
+    }
+    try {
+      const put = await this.#fetch(ticket.url, {
+        method: "PUT",
+        body: file,
+        headers: ticket.headers,
+      });
+      if (!put.ok) return null;
+      return await this.request<Attachment>(
+        "POST",
+        `/projects/${slug}/attachments/direct-uploads/${ticket.upload_id}/complete`,
+      );
+    } catch {
+      return null;
+    }
+  };
+
+  /** base64 SHA-256 when the runtime offers WebCrypto; else omitted. */
+  #sha256 = async (file: File): Promise<string | undefined> => {
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle) return undefined;
+    try {
+      const digest = await subtle.digest("SHA-256", await file.arrayBuffer());
+      return btoa(String.fromCharCode(...new Uint8Array(digest)));
+    } catch {
+      return undefined;
+    }
   };
 
   /** EventSource URL for the project change feed. */

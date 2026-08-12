@@ -9,6 +9,11 @@ export type StorageBackend = {
   put(key: string, data: Uint8Array): Promise<void>;
   getStream(key: string): Promise<{ stream: Readable; size: number }>;
   delete(key: string): Promise<void>;
+  /** Size probe; null when the blob does not exist. */
+  head(key: string): Promise<{ size: number } | null>;
   /** Direct-access URL if the backend supports it (s3 presign); else null. */
-  urlFor(key: string): Promise<string | null>;
+  urlFor(
+    key: string,
+    opts?: { filename?: string; contentType?: string },
+  ): Promise<string | null>;
 };

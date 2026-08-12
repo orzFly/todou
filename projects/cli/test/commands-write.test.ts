@@ -442,6 +442,16 @@ describe("attach", () => {
     const { fetchImpl } = fakeFetch([
       [
         "POST",
+        "/api/projects/todou/attachments/direct-uploads",
+        // The stub plays an fs-backend server: the client probes once,
+        // hears the dedicated code, and falls back to multipart.
+        {
+          __status: 409,
+          body: { error: { code: "direct_upload_unavailable" } },
+        },
+      ],
+      [
+        "POST",
         "/api/projects/todou/attachments",
         (init: RequestInit) => {
           const form = init.body as FormData;
@@ -488,6 +498,16 @@ describe("attach", () => {
     const file = join(dir, "ref.txt");
     writeFileSync(file, "x");
     const { fetchImpl } = fakeFetch([
+      [
+        "POST",
+        "/api/projects/todou/attachments/direct-uploads",
+        // The stub plays an fs-backend server: the client probes once,
+        // hears the dedicated code, and falls back to multipart.
+        {
+          __status: 409,
+          body: { error: { code: "direct_upload_unavailable" } },
+        },
+      ],
       [
         "POST",
         "/api/projects/todou/attachments",

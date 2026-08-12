@@ -81,9 +81,44 @@ const ConfigSchema = z.object({
     .prefault({}),
   storage: z
     .object({
-      backend: z.enum(["fs"]).default("fs"),
+      backend: z.enum(["fs", "s3"]).default("fs"),
       path: z.string().default("./data/attachments"),
       max_upload_mb: z.coerce.number().positive().default(20),
+      s3: z
+        .object({
+          endpoint: z.string().default(""),
+          // Presign target. Signatures are host-bound, so URLs handed to
+          // browsers must be signed for the endpoint browsers actually
+          // reach; empty falls back to `endpoint`.
+          public_endpoint: z.string().default(""),
+          region: z.string().default("us-east-1"),
+          bucket: z.string().default(""),
+          key_prefix: z.string().default(""),
+          // Self-hosted stores (MinIO) generally lack the wildcard DNS
+          // that virtual-host style needs.
+          force_path_style: flexibleBool.default(true),
+          access_key_id: z.string().default(""),
+          secret_access_key: z.string().default(""),
+          presign_expiry_seconds: z.coerce
+            .number()
+            .int()
+            .positive()
+            .default(300),
+          // PUT presigns get a longer window: expiry is checked when the
+          // upload starts, and slow links need room before that.
+          upload_expiry_seconds: z.coerce
+            .number()
+            .int()
+            .positive()
+            .default(3600),
+          request_timeout_ms: z.coerce
+            .number()
+            .int()
+            .positive()
+            .default(30_000),
+          retries: z.coerce.number().int().min(0).default(3),
+        })
+        .prefault({}),
     })
     .prefault({}),
 });
@@ -92,6 +127,16 @@ export type Config = z.infer<typeof ConfigSchema> & {
   projectUrlFor: ((project: ProjectRouteInfo) => string) | null;
   /** Compiled from http.trusted_proxies at load, like projectUrlFor. */
   isTrustedPeer: (addr: string) => boolean;
+  /** Resolved at load; null unless storage.backend is "s3". */
+  s3Credentials: S3Credentials | null;
+};
+
+export type S3Credentials = {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+  /** Which of the three sources supplied the key pair — safe to log. */
+  source: "config" | "env:TODOU_*" | "env:AWS_*";
 };
 
 export type ProjectRouteInfo = {
@@ -187,6 +232,30 @@ const ENV_MAP: Array<[string, string[]]> = [
     "TODOU_DATABASE_POOL_CONNECTION_TIMEOUT_MS",
     ["database", "pool", "connection_timeout_ms"],
   ],
+  ["TODOU_STORAGE_S3_ENDPOINT", ["storage", "s3", "endpoint"]],
+  ["TODOU_STORAGE_S3_PUBLIC_ENDPOINT", ["storage", "s3", "public_endpoint"]],
+  ["TODOU_STORAGE_S3_REGION", ["storage", "s3", "region"]],
+  ["TODOU_STORAGE_S3_BUCKET", ["storage", "s3", "bucket"]],
+  ["TODOU_STORAGE_S3_KEY_PREFIX", ["storage", "s3", "key_prefix"]],
+  ["TODOU_STORAGE_S3_FORCE_PATH_STYLE", ["storage", "s3", "force_path_style"]],
+  ["TODOU_STORAGE_S3_ACCESS_KEY_ID", ["storage", "s3", "access_key_id"]],
+  [
+    "TODOU_STORAGE_S3_SECRET_ACCESS_KEY",
+    ["storage", "s3", "secret_access_key"],
+  ],
+  [
+    "TODOU_STORAGE_S3_PRESIGN_EXPIRY_SECONDS",
+    ["storage", "s3", "presign_expiry_seconds"],
+  ],
+  [
+    "TODOU_STORAGE_S3_UPLOAD_EXPIRY_SECONDS",
+    ["storage", "s3", "upload_expiry_seconds"],
+  ],
+  [
+    "TODOU_STORAGE_S3_REQUEST_TIMEOUT_MS",
+    ["storage", "s3", "request_timeout_ms"],
+  ],
+  ["TODOU_STORAGE_S3_RETRIES", ["storage", "s3", "retries"]],
 ];
 
 export function loadConfig(options?: {
@@ -268,5 +337,77 @@ export function loadConfig(options?: {
   // Bad entries surface at startup, not on first proxied request.
   const isTrustedPeer = compileTrustedProxies(config.http.trusted_proxies);
 
-  return { ...config, projectUrlFor, isTrustedPeer };
+  let s3Credentials: Config["s3Credentials"] = null;
+  if (config.storage.backend === "s3") {
+    s3Credentials = resolveS3Settings(config, options?.env ?? process.env);
+  }
+
+  return { ...config, projectUrlFor, isTrustedPeer, s3Credentials };
+}
+
+/**
+ * Validate and normalize [storage.s3] in place, and resolve credentials.
+ * loadConfig runs this when the serving backend is s3; `storage migrate`
+ * calls it explicitly so an fs-serving deployment can still address the
+ * s3 end of a copy.
+ */
+export function resolveS3Settings(
+  config: Pick<z.infer<typeof ConfigSchema>, "storage">,
+  env: Record<string, string | undefined> = process.env,
+): S3Credentials {
+  const s3 = config.storage.s3;
+  for (const key of ["endpoint", "bucket"] as const) {
+    if (!s3[key]) {
+      throw new ConfigError(
+        `storage.s3.${key} is required to use the s3 backend`,
+      );
+    }
+  }
+  for (const key of ["endpoint", "public_endpoint"] as const) {
+    if (s3[key] && !/^https?:\/\/.+/.test(s3[key])) {
+      throw new ConfigError(`storage.s3.${key} must be an http(s) URL`);
+    }
+    s3[key] = s3[key].replace(/\/+$/, "");
+  }
+  if (!s3.public_endpoint) s3.public_endpoint = s3.endpoint;
+  if (s3.key_prefix !== "" && !s3.key_prefix.endsWith("/")) {
+    s3.key_prefix += "/";
+  }
+  return resolveS3Credentials(s3, env);
+}
+
+/**
+ * TODOU_STORAGE_S3_* env already beats TOML via ENV_MAP; what's left to
+ * decide is the fallback to the standard AWS variables, so key-manager
+ * tooling (vault agents, CI secrets) works without renaming. The session
+ * token only ever rides along with the AWS_* pair — mixing it into
+ * explicitly configured credentials would sign with mismatched halves.
+ */
+function resolveS3Credentials(
+  s3: { access_key_id: string; secret_access_key: string },
+  env: Record<string, string | undefined>,
+): S3Credentials {
+  if (s3.access_key_id && s3.secret_access_key) {
+    const fromEnv =
+      env.TODOU_STORAGE_S3_ACCESS_KEY_ID !== undefined ||
+      env.TODOU_STORAGE_S3_SECRET_ACCESS_KEY !== undefined;
+    return {
+      accessKeyId: s3.access_key_id,
+      secretAccessKey: s3.secret_access_key,
+      source: fromEnv ? "env:TODOU_*" : "config",
+    };
+  }
+  if (env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY) {
+    return {
+      accessKeyId: env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+      ...(env.AWS_SESSION_TOKEN ? { sessionToken: env.AWS_SESSION_TOKEN } : {}),
+      source: "env:AWS_*",
+    };
+  }
+  throw new ConfigError(
+    "storage.s3 credentials missing: set storage.s3.access_key_id/" +
+      "secret_access_key (TOML or TODOU_STORAGE_S3_*), or provide " +
+      "AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY in the environment",
+  );
 }

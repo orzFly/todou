@@ -1,14 +1,23 @@
 import { Readable } from "node:stream";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
-import { Attachment, ProjectSlug } from "@todou/shared";
+import {
+  Attachment,
+  DirectUploadRequest,
+  DirectUploadTicket,
+  ProjectSlug,
+} from "@todou/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../auth/middleware.ts";
 import { ValidationFailedError } from "../errors.ts";
 import {
+  completeDirectUpload,
   listIssueAttachments,
   openAttachment,
+  requestDirectUpload,
   uploadAttachment,
 } from "../services/attachments.ts";
+
+type AttachmentRow = Awaited<ReturnType<typeof openAttachment>>["row"];
 
 const uploadRoute = createRoute({
   method: "post",
@@ -53,6 +62,42 @@ const listRoute = createRoute({
   },
 });
 
+const directUploadRoute = createRoute({
+  method: "post",
+  path: "/{slug}/attachments/direct-uploads",
+  summary: "Request a presigned direct upload (writer, s3 backend only)",
+  request: {
+    params: z.object({ slug: ProjectSlug }),
+    body: {
+      content: { "application/json": { schema: DirectUploadRequest } },
+    },
+  },
+  responses: {
+    201: {
+      description: "Upload ticket",
+      content: { "application/json": { schema: DirectUploadTicket } },
+    },
+  },
+});
+
+const directUploadCompleteRoute = createRoute({
+  method: "post",
+  path: "/{slug}/attachments/direct-uploads/{upload_id}/complete",
+  summary: "Register a finished direct upload (writer, s3 backend only)",
+  request: {
+    params: z.object({
+      slug: ProjectSlug,
+      upload_id: z.coerce.number().int().positive(),
+    }),
+  },
+  responses: {
+    201: {
+      description: "Registered",
+      content: { "application/json": { schema: Attachment } },
+    },
+  },
+});
+
 const downloadRoute = createRoute({
   method: "get",
   path: "/{slug}/attachments/{id}/download",
@@ -63,7 +108,10 @@ const downloadRoute = createRoute({
       id: z.coerce.number().int().positive(),
     }),
   },
-  responses: { 200: { description: "File stream" } },
+  responses: {
+    200: { description: "File stream" },
+    302: { description: "Redirect to a presigned URL (s3 backend)" },
+  },
 });
 
 // The trailing name is cosmetic — a readable URL and a sensible save-as
@@ -79,7 +127,10 @@ const downloadNamedRoute = createRoute({
       name: z.string(),
     }),
   },
-  responses: { 200: { description: "File stream" } },
+  responses: {
+    200: { description: "File stream" },
+    302: { description: "Redirect to a presigned URL (s3 backend)" },
+  },
 });
 
 const viewRoute = createRoute({
@@ -143,14 +194,35 @@ export function attachmentRoutes() {
     return c.json(list, 200);
   });
 
+  app.openapi(directUploadRoute, async (c) => {
+    const { slug } = c.req.valid("param");
+    const ticket = await requestDirectUpload(
+      c.get("appCtx"),
+      c.get("user"),
+      slug,
+      c.req.valid("json"),
+    );
+    return c.json(ticket, 201);
+  });
+
+  app.openapi(directUploadCompleteRoute, async (c) => {
+    const { slug, upload_id } = c.req.valid("param");
+    const attachment = await completeDirectUpload(
+      c.get("appCtx"),
+      c.get("user"),
+      slug,
+      upload_id,
+      c.get("agentContext"),
+    );
+    return c.json(attachment, 201);
+  });
+
   const streamAttachment = async (
     c: Context<AppEnv>,
-    slug: string,
-    id: number,
+    row: AttachmentRow,
     disposition: "attachment" | "inline",
   ) => {
     const ctx = c.get("appCtx");
-    const { row } = await openAttachment(ctx, c.get("user"), slug, id);
     const { stream, size } = await ctx.storage.getStream(row.storageKey);
 
     c.header("content-type", row.contentType);
@@ -172,24 +244,57 @@ export function attachmentRoutes() {
     return c.body(Readable.toWeb(stream) as ReadableStream);
   };
 
+  // Downloads 302 to a presigned URL when the backend offers one; filename
+  // and type semantics travel as response-* presign parameters. Views stay
+  // server-streamed on every backend — the CSP sandbox header cannot follow
+  // a redirect.
+  const downloadAttachment = async (
+    c: Context<AppEnv>,
+    slug: string,
+    id: number,
+  ) => {
+    const ctx = c.get("appCtx");
+    const { row } = await openAttachment(ctx, c.get("user"), slug, id);
+    const url = await ctx.storage.urlFor(row.storageKey, {
+      filename: row.filename,
+      contentType: row.contentType,
+    });
+    if (url !== null) {
+      // The redirect target expires; caching the 302 would outlive it.
+      c.header("cache-control", "no-store");
+      return c.redirect(url, 302);
+    }
+    return streamAttachment(c, row, "attachment");
+  };
+
+  const viewAttachment = async (
+    c: Context<AppEnv>,
+    slug: string,
+    id: number,
+  ) => {
+    const ctx = c.get("appCtx");
+    const { row } = await openAttachment(ctx, c.get("user"), slug, id);
+    return streamAttachment(c, row, "inline");
+  };
+
   app.openapi(downloadRoute, (c) => {
     const { slug, id } = c.req.valid("param");
-    return streamAttachment(c, slug, id, "attachment");
+    return downloadAttachment(c, slug, id);
   });
 
   app.openapi(downloadNamedRoute, (c) => {
     const { slug, id } = c.req.valid("param");
-    return streamAttachment(c, slug, id, "attachment");
+    return downloadAttachment(c, slug, id);
   });
 
   app.openapi(viewRoute, (c) => {
     const { slug, id } = c.req.valid("param");
-    return streamAttachment(c, slug, id, "inline");
+    return viewAttachment(c, slug, id);
   });
 
   app.openapi(viewNamedRoute, (c) => {
     const { slug, id } = c.req.valid("param");
-    return streamAttachment(c, slug, id, "inline");
+    return viewAttachment(c, slug, id);
   });
 
   return app;
