@@ -282,6 +282,34 @@ export const attachments = pgTable(
   ],
 );
 
+// Direct-upload bookkeeping (#3): a row is written when a presigned PUT is
+// issued and marked completed when the attachment row lands. Rows are the
+// ONLY inventory of maybe-orphaned objects — gc walks this table instead of
+// listing the bucket, which is what keeps gc O(pending), not O(bucket).
+export const pendingUploads = pgTable(
+  "pending_uploads",
+  {
+    id: id(),
+    projectId: projectId(),
+    issueId: bigint("issue_id", { mode: "number" })
+      .notNull()
+      .references(() => issues.id, { onDelete: "cascade" }),
+    uploaderId: bigint("uploader_id", { mode: "number" }).notNull(),
+    filename: text("filename").notNull(),
+    contentType: text("content_type").notNull(),
+    declaredSize: bigint("declared_size", { mode: "number" }).notNull(),
+    sha256: text("sha256"),
+    storageKey: text("storage_key").notNull(),
+    createdAt: createdAt(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("pending_uploads_storage_key_idx").on(t.storageKey),
+    index("pending_uploads_expires_idx").on(t.expiresAt),
+  ],
+);
+
 // Per-user read positions (#46). Unread is computed at read time from these
 // plus the activity tables — deliberately NOT denormalized onto issues: the
 // flag is per-viewer and comments are deletable, so live computation stays

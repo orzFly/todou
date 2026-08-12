@@ -50,6 +50,13 @@
       "when": 1786548833619,
       "tag": "0006_reads",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786576927816,
+      "tag": "0007_pending_uploads",
+      "breakpoints": true
     }
   ]
 }
