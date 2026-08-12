@@ -1,7 +1,7 @@
 import type { Label, Status, TodouClient } from "@todou/shared";
 import { CliError } from "./errors.ts";
 
-function byName<T extends { name: string }>(
+export function byName<T extends { name: string }>(
   items: T[],
   name: string,
   kind: string,

@@ -29,6 +29,10 @@ todou issue close 16 --comment "done"
 todou comment add -p <proj> 16 --body-file f  # long bodies: --body-file /dev/stdin <<'EOF'
 todou attach -p <proj> 16 file.png ...        # mime inferred from the extension
 todou status list -p <proj>
+todou status init -p <proj>                   # create whichever canonical statuses are missing
+todou status create -p <proj> --name X --category open|closed [--color '#hex'] [--before Y|--after Y]
+todou status edit X [--name N] [--category C] [--color '#hex'] [--before Y|--after Y] [--default]
+todou status delete X                         # refused (409) while issues still use it
 ```
 
 Forgiving forms (gh habits all work): `issue show` = `view`, `issue comment` = `comment add`,
@@ -70,7 +74,9 @@ Use a 12-hour timeout (43200) and a 60-second debounce as the standard values.
 Backlog → Todo → Next → In Progress → Ready to Ship → Shipped → Done
 ```
 
-(If a project lacks these statuses, create them in this order; Ready to Ship / Shipped are open-category.)
+(If a project lacks some of these statuses, run `todou status init -p <proj>` — it creates the missing
+ones in canonical order with the standard categories/colors, and pins Todo as the default; one-off
+tweaks go through `status create/edit/delete`.)
 
 - **Worker agents**: move the card to In Progress when starting; move it to Ready to Ship when development
   is complete (commits on their own branch, not merged), and post a summary comment.

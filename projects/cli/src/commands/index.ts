@@ -36,7 +36,13 @@ import {
   SpecReviewCommand,
   SpecStatusCommand,
 } from "./spec.ts";
-import { StatusListCommand } from "./status.ts";
+import {
+  StatusCreateCommand,
+  StatusDeleteCommand,
+  StatusEditCommand,
+  StatusInitCommand,
+  StatusListCommand,
+} from "./status.ts";
 import { WatchCommand } from "./watch.ts";
 import { WhoamiCommand } from "./whoami.ts";
 
@@ -69,6 +75,10 @@ export const commands: Array<CommandClass<CliContext>> = [
   LabelEditCommand,
   LabelDeleteCommand,
   StatusListCommand,
+  StatusCreateCommand,
+  StatusEditCommand,
+  StatusDeleteCommand,
+  StatusInitCommand,
   WatchCommand,
   AttachCommand,
   ApiPassthroughCommand,
