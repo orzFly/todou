@@ -58,8 +58,9 @@ Task brief checklist (trim as appropriate):
 
 Design-first cards (UI/approach decisions): dispatch them **through the `/todou-brainstorm` skill** —
 put `/todou-brainstorm` on the first line of the task brief, followed by the card number and context.
-That skill owns the whole dialogue loop (questions on the issue, review gate, approval before any
-implementation). For smaller look-and-feel decisions that don't warrant the full loop, at minimum state:
+That skill owns the whole dialogue loop (questions on the issue, spec review gate, approval before any
+implementation), and hands off to `/todou-plan` → `/todou-impl-plan` for the plan-review-implement
+chain. For smaller look-and-feel decisions that don't warrant the full loop, at minimum state:
 "post mockups/proposal to the issue first; no implementation until the user decides; keep the card In Progress".
 
 **Reuse rule**: reuse an agent only when the new task is *genuinely related* to its context (a follow-up
@@ -110,7 +111,7 @@ procedure can be delegated to a subagent; you only check the results:
 
 - You only push cards to Shipped; **Done always belongs to the user**. Clean up resources only after the user's Done.
 - Need a user decision? Post an options comment on the card and let the watch bring the answer — never AskUserQuestion (see /todou-cli).
-- Problems found in passing, or needs the user mentions aloud, become cards **immediately** (`#N` references auto-link) — never keep them in your head.
+- Problems found in passing, or needs the user mentions aloud, become cards **immediately** (`#N` references auto-link) — never keep them in your head. When the request arrived outside the tracker (terminal, chat), **quote the user's original words verbatim in the card body** — that quote is the only trace the tracker will ever have.
 - After the user says "take a break / no new work": the sentinel, relaying, and shepherding of already-dispatched
   tasks continue as normal — you just don't start new work.
 

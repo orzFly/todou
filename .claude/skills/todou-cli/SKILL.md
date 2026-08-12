@@ -22,6 +22,8 @@ project, deploy command) live in the host project's CLAUDE.md / memory; `<proj>`
 todou issue list -p <proj> [--open|--closed|--status X|--unread|-q text]
 todou issue view 16 -p <proj>       # prints a cursor at the end, for watch --since
 todou issue create -p <proj> --title T [--body-file f] [--status Next]
+#   ^ when filing on behalf of the user, quote their original words verbatim
+#     in the body (if any) — off-tracker requests have no other trace
 todou issue edit 16 --status "In Progress"    # status/title/labels/assignees
 todou issue close 16 --comment "done"
 todou comment add -p <proj> 16 --body-file f  # long bodies: --body-file /dev/stdin <<'EOF'
@@ -73,11 +75,45 @@ Backlog → Todo → Next → In Progress → Ready to Ship → Shipped → Done
 - **The orchestrator**: moves cards to Shipped after merge + deploy.
 - **Only the user** moves a card to Done, after verifying. Never do this on the user's behalf.
 
-## Asking the user questions
+## Asking the user questions (native questions component)
 
-Do not use AskUserQuestion or external review tools. Compose the question as a comment with
-**numbered options** (include your recommendation and reasoning, so the user can reply with a couple of
-characters), post it on the relevant issue, then block on
-`issue watch <n> --since <cursor> --timeout 43200`; on timeout re-poll a cursor and wait again —
-never guess with sleep. One comment may carry 2–3 tightly related small questions.
-(Once the questions component is available, switch to `comment add --questions` + `question wait`.)
+Do not use AskUserQuestion or external review tools — post questions on the issue and wait:
+
+```bash
+cat > q.json <<'EOF'
+[{"header": "Storage", "question": "Where should X live?",
+  "options": [{"label": "Reuse mechanism A", "description": "pros/cons…"},
+              {"label": "New entity"}],
+  "multiple": false}]
+EOF
+todou comment add -p <proj> 16 --body-file ctx.md --questions q.json --json   # note the comment id
+todou question wait 16 <commentId> -p <proj> --timeout 43200 --json           # blocks until answered
+```
+
+- All text fields are markdown; validation is **strict** — unknown/extra fields fail with the path named.
+- Users answer once, all questions in the comment together; "decline to answer" is a built-in exclusive
+  choice; options and free-text "other" can coexist. Answers arrive decoded in the wait output.
+- `question list <n> --unanswered` shows what's still open; `question answer` is the CLI answering side.
+- Exit codes follow the watch convention (0 answered / 3 timeout — re-wait / 1 error).
+- One comment may carry 2–3 tightly related questions, each with your recommendation and reasoning.
+
+## Spec documents (plans, proposals, reviewable docs)
+
+A spec set is a group of versioned markdown files attached to an issue — the tracker-native
+replacement for specs/ directories and external review tools. Documents are written in a scratch
+dir and pushed; **git never carries them**.
+
+```bash
+todou spec push <n> <dir> -p <proj> --message "v2" [--if-version <v>]  # upload/iterate a version
+todou spec pull <n> <dir> -p <proj> [--version <v>] [--prune]          # fetch a version
+todou spec status <n> -p <proj> --json                                  # versions + review verdict
+todou spec comments <n> --unresolved --json                             # inline annotations (file+anchor)
+todou spec resolve <n> <commentIds…>                                    # mark annotations addressed
+todou spec review <n> --approve | --request-changes [--body …]          # submit a verdict
+```
+
+- Review state is computed, never stored: a verdict counts only against the **latest** version, and
+  the pusher of a version cannot review it.
+- Wait for the user's verdict with `issue watch <n> --type spec_review --since <cursor>`.
+- Annotations remap across versions (resolved/outdated tracked automatically).
+- The plan workflow on top of this lives in `/todou-plan` and `/todou-impl-plan`.

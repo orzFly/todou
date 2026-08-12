@@ -99,20 +99,20 @@ You MUST create a task for each of these items and complete them in order:
 
 **Documentation:**
 
-- Write the user's original requirements to `<tmpdir>/proposal.md` — everything the user told you,
-  plus the questions you asked and the user's answers, recorded verbatim like a transcript, without
-  adding your own judgment.
-  - When recording a question and its options, reproduce them exactly as they appeared in your issue
-    comment — same question text, same option labels and descriptions. Do not summarize or omit details.
+- Write the user's original requirements to `<tmpdir>/proposal.md` — **excluding anything already
+  recorded on the tracker**: the card body, comments, and question answers live in the timeline and
+  are referenced (`#N`, permalinks), never copied. Record verbatim, transcript-style and without
+  judgment, only what has no tracker trace (requirements stated in the terminal/chat or other
+  outside channels).
   - **Keep proposal.md up to date.** New information from the user during planning or execution goes in.
     Corrections modify the relevant sections directly — never append conflicting or wishy-washy entries.
     This counts as an explicitly requested modification of the recorded requirements, so it is allowed.
   - The meaning of any review annotations the user leaves gets recorded into proposal.md as well.
 - Write the validated design (spec) to `<tmpdir>/brainstorm.md`
 - Use the elements-of-style:writing-clearly-and-concisely skill if available
-- **Do not commit these documents to git.** Attach both files to the issue with `todou attach` —
-  the tracker carries the design. (Once spec support lands in todou, switch to pushing them as
-  proper spec documents.)
+- **Do not commit these documents to git.** Push them to the issue as a spec set:
+  `todou spec push <n> <tmpdir> -p <proj> --message "brainstorm v1"` — the tracker carries the design
+  (see the spec section of /todou-cli).
 
 **Spec Self-Review:**
 After writing the spec document, look at it with fresh eyes:
@@ -126,22 +126,25 @@ Fix issues inline. No need to re-review — just fix and move on.
 
 **Review Gate:**
 
-After the self-review passes, post the final proposal as one complete comment on the issue (versioned,
-e.g. "v2, supersedes the previous"), attach brainstorm.md / proposal.md, then wait for the review:
+After the self-review passes, push the spec set and post a short pointer comment summarizing what
+changed, then wait for the review verdict:
 
 ```bash
-todou issue watch <n> -p <proj> --since <cursor> --timeout 43200 --json
+todou spec push <n> <tmpdir> -p <proj> --message "brainstorm v2"
+cursor=$(todou watch -p <proj> --poll --json | jq -r .next_cursor)
+todou issue watch <n> -p <proj> --type spec_review --since "$cursor" --timeout 43200 --json
 ```
 
-- User leaves comments/annotations → revise the documents, sync proposal.md, re-attach and post the
-  new version, wait again; repeat until there are no new comments.
-- User approves (often just "looks good / go ahead") → proceed.
-- User acknowledges without clear approval → state that the spec review is complete and ask whether
-  to proceed to implementation planning.
+- **request-changes** or inline annotations → `todou spec comments <n> --unresolved --json`, revise the
+  documents, sync proposal.md, `todou spec resolve` the addressed ones, push the next version, wait
+  again; repeat until approved.
+- **approve** → proceed.
+- User replies in plain comments instead of a verdict → treat it as feedback, revise, and point them
+  at the review controls in your next comment.
 
 **Implementation:**
 
-- Invoke the todou-plan skill to create a detailed implementation plan (until it exists, file-based-plan).
+- Invoke the todou-plan skill to create a detailed implementation plan.
 - Do NOT invoke any other skill. That is the only next step.
 - After approval, implementation is normally continued by **the same agent in the same worktree** —
   you are now the person who understands this design best.
