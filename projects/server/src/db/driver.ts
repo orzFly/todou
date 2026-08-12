@@ -52,9 +52,15 @@ export function dbKindOf(url: string): DbKind {
   throw new Error(`unsupported database URL: ${url}`);
 }
 
+export type PoolOptions = {
+  max: number;
+  idle_timeout_ms: number;
+  connection_timeout_ms: number;
+};
+
 export async function openDb(
   url: string,
-  opts?: { workerHost?: boolean },
+  opts?: { workerHost?: boolean; pool?: PoolOptions },
 ): Promise<DbHandle> {
   const kind = dbKindOf(url);
   if (kind === "pglite") {
@@ -84,7 +90,12 @@ export async function openDb(
       close: () => client.close(),
     };
   }
-  const pool = new pg.Pool({ connectionString: url });
+  const pool = new pg.Pool({
+    connectionString: url,
+    max: opts?.pool?.max,
+    idleTimeoutMillis: opts?.pool?.idle_timeout_ms,
+    connectionTimeoutMillis: opts?.pool?.connection_timeout_ms,
+  });
   const db = drizzleNodePg(pool);
   return {
     db: db as unknown as Db,
