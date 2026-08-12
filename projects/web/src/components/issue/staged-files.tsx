@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import type { Attachment } from "@todou/shared";
-import { XIcon } from "lucide-react";
+import { FileIcon, XIcon } from "lucide-react";
 import {
   type ClipboardEvent,
   type DragEvent,
@@ -9,12 +9,20 @@ import {
   useState,
 } from "react";
 import { api } from "@/api/queries.ts";
-import { attachmentImageMarker } from "@/lib/attachment-refs.ts";
+import {
+  formatSize,
+  isPreviewableImage,
+} from "@/components/issue/attachment-list.tsx";
+import {
+  attachmentImageMarker,
+  attachmentLinkMarker,
+} from "@/lib/attachment-refs.ts";
 
-export type StagedImage = {
+export type StagedFile = {
   key: number;
   file: File;
-  previewUrl: string;
+  /** Object URL for image thumbnails; non-images have none. */
+  previewUrl: string | null;
   /**
    * Set once a submit attempt got this file to the server. A later retry
    * (after another file in the batch failed) must not upload it again.
@@ -25,36 +33,39 @@ export type StagedImage = {
 let stagedKey = 0;
 
 /**
- * Local staging for pasted/dropped editor images: previewable and
- * removable, but nothing touches the server until uploadAll() at submit
- * time — abandoning the draft leaves no orphaned attachments.
+ * Local staging for pasted/dropped editor files (any type): previewable
+ * and removable, but nothing touches the server until uploadAll() at
+ * submit time — abandoning the draft leaves no orphaned attachments.
+ * Size limits are the server's call; its 422 message is surfaced per file.
  */
-export function useStagedImages() {
-  const [staged, setStaged] = useState<StagedImage[]>([]);
+export function useStagedFiles() {
+  const [staged, setStaged] = useState<StagedFile[]>([]);
   const queryClient = useQueryClient();
   const stagedRef = useRef(staged);
   stagedRef.current = staged;
 
   // Object URLs survive React state; reclaim them if the editor unmounts
-  // with staged images still around.
+  // with staged files still around.
   useEffect(
     () => () => {
       for (const item of stagedRef.current) {
-        URL.revokeObjectURL(item.previewUrl);
+        if (item.previewUrl !== null) URL.revokeObjectURL(item.previewUrl);
       }
     },
     [],
   );
 
   function stage(files: Iterable<File>): boolean {
-    const images = [...files].filter((f) => f.type.startsWith("image/"));
-    if (images.length === 0) return false;
+    const list = [...files];
+    if (list.length === 0) return false;
     setStaged((prev) => [
       ...prev,
-      ...images.map((file) => ({
+      ...list.map((file) => ({
         key: stagedKey++,
         file,
-        previewUrl: URL.createObjectURL(file),
+        previewUrl: file.type.startsWith("image/")
+          ? URL.createObjectURL(file)
+          : null,
       })),
     ]);
     return true;
@@ -63,22 +74,25 @@ export function useStagedImages() {
   function remove(key: number) {
     setStaged((prev) => {
       const hit = prev.find((p) => p.key === key);
-      if (hit) URL.revokeObjectURL(hit.previewUrl);
+      if (hit?.previewUrl) URL.revokeObjectURL(hit.previewUrl);
       return prev.filter((p) => p.key !== key);
     });
   }
 
   function clear() {
     setStaged((prev) => {
-      for (const item of prev) URL.revokeObjectURL(item.previewUrl);
+      for (const item of prev) {
+        if (item.previewUrl !== null) URL.revokeObjectURL(item.previewUrl);
+      }
       return [];
     });
   }
 
   /**
-   * Upload every staged image and return one markdown marker per image.
-   * Throws on the first failure; already-uploaded items keep their mark
-   * so a retry only re-sends what is missing.
+   * Upload every staged file and return one markdown marker per file —
+   * ![…](…) for images (inline embed), […](…) for the rest (rich link).
+   * Throws on the first failure, naming the file; already-uploaded items
+   * keep their mark so a retry only re-sends what is missing.
    */
   async function uploadAll(
     slug: string,
@@ -90,13 +104,21 @@ export function useStagedImages() {
       for (const item of stagedRef.current) {
         let uploaded = item.uploaded;
         if (!uploaded) {
-          uploaded = await api.uploadAttachment(slug, issueNumber, item.file);
+          try {
+            uploaded = await api.uploadAttachment(slug, issueNumber, item.file);
+          } catch (error) {
+            throw new Error(`${item.file.name}: ${(error as Error).message}`);
+          }
           touchedServer = true;
           setStaged((prev) =>
             prev.map((p) => (p.key === item.key ? { ...p, uploaded } : p)),
           );
         }
-        markers.push(attachmentImageMarker(uploaded.filename, uploaded.url));
+        markers.push(
+          isPreviewableImage(uploaded)
+            ? attachmentImageMarker(uploaded.filename, uploaded.url)
+            : attachmentLinkMarker(uploaded.filename, uploaded.url),
+        );
       }
     } finally {
       if (touchedServer) {
@@ -136,27 +158,42 @@ export function useStagedImages() {
   };
 }
 
-/** Thumbnail strip for staged images, with per-image remove. */
-export function StagedImageTray({
+/** Thumbnail/chip strip for staged files, with per-file remove. */
+export function StagedFileTray({
   staged,
   onRemove,
   disabled = false,
 }: {
-  staged: StagedImage[];
+  staged: StagedFile[];
   onRemove: (key: number) => void;
   disabled?: boolean;
 }) {
   if (staged.length === 0) return null;
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap items-end gap-2">
       {staged.map((item) => (
         <div key={item.key} className="group relative">
-          <img
-            src={item.previewUrl}
-            alt={item.file.name}
-            title={item.file.name}
-            className="h-16 w-16 rounded-md border object-cover"
-          />
+          {item.previewUrl !== null ? (
+            <img
+              src={item.previewUrl}
+              alt={item.file.name}
+              title={item.file.name}
+              className="h-16 w-16 rounded-md border object-cover"
+            />
+          ) : (
+            <div
+              title={item.file.name}
+              className="flex h-16 max-w-48 min-w-32 flex-col justify-center gap-0.5 rounded-md border px-2.5 text-xs"
+            >
+              <span className="flex items-center gap-1 font-medium">
+                <FileIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="truncate">{item.file.name}</span>
+              </span>
+              <span className="pl-4.5 text-muted-foreground">
+                {formatSize(item.file.size)}
+              </span>
+            </div>
+          )}
           <button
             type="button"
             aria-label={`remove ${item.file.name}`}

@@ -49,8 +49,16 @@ export function encodeFilenameSegment(filename: string): string {
     .replaceAll(")", "%29");
 }
 
-/** Markdown image marker for an uploaded attachment. */
+/** Markdown image marker for an uploaded attachment — embeds inline. */
 export function attachmentImageMarker(filename: string, url: string): string {
-  const alt = filename.replaceAll("[", "\\[").replaceAll("]", "\\]");
-  return `![${alt}](${url})`;
+  return `![${escapeLinkText(filename)}](${url})`;
+}
+
+/** Markdown link marker for a non-image attachment — renders as a rich link. */
+export function attachmentLinkMarker(filename: string, url: string): string {
+  return `[${escapeLinkText(filename)}](${url})`;
+}
+
+function escapeLinkText(text: string): string {
+  return text.replaceAll("[", "\\[").replaceAll("]", "\\]");
 }

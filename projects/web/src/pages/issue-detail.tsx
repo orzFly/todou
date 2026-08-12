@@ -19,9 +19,9 @@ import {
 import { AttachmentList } from "@/components/issue/attachment-list.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import {
-  StagedImageTray,
-  useStagedImages,
-} from "@/components/issue/staged-images.tsx";
+  StagedFileTray,
+  useStagedFiles,
+} from "@/components/issue/staged-files.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { RevisionHistory } from "@/components/shared/revision-history.tsx";
@@ -29,7 +29,7 @@ import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   Composer,
   useCommentComposer,
-  withImageMarkers,
+  withAttachmentMarkers,
 } from "@/components/timeline/composer.tsx";
 import { Timeline } from "@/components/timeline/timeline.tsx";
 import { Button } from "@/components/ui/button";
@@ -174,7 +174,7 @@ function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState(issue.body);
   const [uploading, setUploading] = useState(false);
-  const staging = useStagedImages();
+  const staging = useStagedFiles();
   const queryClient = useQueryClient();
   const save = useMutation({
     mutationFn: (finalBody: string) =>
@@ -196,9 +196,9 @@ function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
       setUploading(true);
       try {
         const markers = await staging.uploadAll(slug, issue.number);
-        full = withImageMarkers(body.trimEnd(), markers);
+        full = withAttachmentMarkers(body.trimEnd(), markers);
       } catch (error) {
-        toast.error(`Could not upload images: ${(error as Error).message}`);
+        toast.error(`Could not upload files: ${(error as Error).message}`);
         return;
       } finally {
         setUploading(false);
@@ -247,12 +247,12 @@ function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
               value={body}
               onChange={(e) => setBody(e.target.value)}
               rows={8}
-              placeholder="Describe the issue… (paste or drop images)"
+              placeholder="Describe the issue… (paste or drop files)"
               onPaste={staging.onPaste}
               onDrop={staging.onDrop}
               onDragOver={staging.onDragOver}
             />
-            <StagedImageTray
+            <StagedFileTray
               staged={staging.staged}
               onRemove={staging.remove}
               disabled={uploading}

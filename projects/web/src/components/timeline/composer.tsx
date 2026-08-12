@@ -5,9 +5,9 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import {
-  StagedImageTray,
-  useStagedImages,
-} from "@/components/issue/staged-images.tsx";
+  StagedFileTray,
+  useStagedFiles,
+} from "@/components/issue/staged-files.tsx";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -76,8 +76,8 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
   return { pending, send, retry };
 }
 
-/** Draft text + freshly-uploaded image markers → one comment body. */
-export function withImageMarkers(body: string, markers: string[]): string {
+/** Draft text + freshly-uploaded attachment markers → one comment body. */
+export function withAttachmentMarkers(body: string, markers: string[]): string {
   return [body, markers.join("\n")].filter((part) => part !== "").join("\n\n");
 }
 
@@ -96,7 +96,7 @@ export function Composer({
 }) {
   const [body, setBody] = useState("");
   const [uploading, setUploading] = useState(false);
-  const staging = useStagedImages();
+  const staging = useStagedFiles();
 
   async function submit() {
     const trimmed = body.trim();
@@ -107,10 +107,10 @@ export function Composer({
       setUploading(true);
       try {
         const markers = await staging.uploadAll(slug, issueNumber);
-        full = withImageMarkers(trimmed, markers);
+        full = withAttachmentMarkers(trimmed, markers);
       } catch (error) {
         // Draft and staged images stay put for another attempt.
-        toast.error(`Could not upload images: ${(error as Error).message}`);
+        toast.error(`Could not upload files: ${(error as Error).message}`);
         return;
       } finally {
         setUploading(false);
@@ -138,7 +138,7 @@ export function Composer({
           </Button>
         </div>
       ))}
-      <StagedImageTray
+      <StagedFileTray
         staged={staging.staged}
         onRemove={staging.remove}
         disabled={uploading}
@@ -153,7 +153,7 @@ export function Composer({
         <Textarea
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          placeholder="Write a comment… (#N references other issues; paste or drop images)"
+          placeholder="Write a comment… (#N references other issues; paste or drop files)"
           rows={3}
           // Sticky at the viewport bottom: an auto-growing draft must not
           // swallow the page, especially on small/mobile viewports.
