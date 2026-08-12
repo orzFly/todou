@@ -2,6 +2,8 @@ import {
   closestCorners,
   DndContext,
   type DragEndEvent,
+  DragOverlay,
+  type DragStartEvent,
   PointerSensor,
   useDraggable,
   useDroppable,
@@ -11,7 +13,7 @@ import {
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import type { IssueListItem, Status } from "@todou/shared";
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { boardColumnQuery, useBoardMove } from "@/api/board.ts";
 import { statusesQuery } from "@/api/queries.ts";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
@@ -21,10 +23,17 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
+type CardDragData = {
+  issueNumber: number;
+  fromStatusId: number;
+  issue: IssueListItem;
+};
+
 export function BoardPage() {
   const { slug } = useParams({ from: "/authed/projects/$slug" });
   const statuses = useSuspenseQuery(statusesQuery(slug));
   const move = useBoardMove(slug);
+  const [activeIssue, setActiveIssue] = useState<IssueListItem | null>(null);
   // Require a small drag distance so plain clicks still navigate.
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -55,11 +64,43 @@ export function BoardPage() {
     };
   }, []);
 
+  // Size the canvas to the viewport space below it so the page itself never
+  // scrolls and each column scrolls on its own. The offset above the canvas
+  // (header, project title, tabs) isn't knowable in CSS, so measure it.
+  const canvasRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const fitCanvas = () => {
+      const top = canvas.getBoundingClientRect().top;
+      // Floor so a cramped window degrades to a scrolling page instead of
+      // crushing the columns to nothing.
+      const height = Math.max(window.innerHeight - top, 240);
+      canvas.style.height = `${height}px`;
+    };
+    fitCanvas();
+    window.addEventListener("resize", fitCanvas);
+    // Re-measure when content above the canvas reflows (e.g. the project
+    // description wrapping differently). Writing the same height back does
+    // not re-trigger the observer, so this settles instead of looping.
+    const observer = new ResizeObserver(fitCanvas);
+    observer.observe(document.body);
+    return () => {
+      window.removeEventListener("resize", fitCanvas);
+      observer.disconnect();
+    };
+  }, []);
+
+  function onDragStart(event: DragStartEvent) {
+    dragHappened.current = true;
+    const data = event.active.data.current as CardDragData | undefined;
+    setActiveIssue(data?.issue ?? null);
+  }
+
   function onDragEnd(event: DragEndEvent) {
+    setActiveIssue(null);
     const over = event.over;
-    const data = event.active.data.current as
-      | { issueNumber: number; fromStatusId: number }
-      | undefined;
+    const data = event.active.data.current as CardDragData | undefined;
     if (!over || !data) return;
     const toStatus = statuses.data.find((s) => s.id === Number(over.id));
     if (!toStatus || toStatus.id === data.fromStatusId) return;
@@ -74,23 +115,37 @@ export function BoardPage() {
     <DndContext
       sensors={sensors}
       collisionDetection={closestCorners}
-      onDragStart={() => {
-        dragHappened.current = true;
-      }}
+      onDragStart={onDragStart}
       onDragEnd={onDragEnd}
+      onDragCancel={() => setActiveIssue(null)}
     >
-      {/* Negative margins escape the shell's centered max-w container so
-          the multi-column board can use the full viewport width. */}
-      <div className="mx-[calc(50%-50vw)] space-y-4 px-4">
-        <div className="flex justify-end">
+      {/* Negative horizontal margins escape the shell's centered max-w
+          container so the multi-column board can use the full viewport
+          width; -mb-6 swallows the shell's bottom padding so the measured
+          height lands exactly on the viewport edge. */}
+      <div
+        ref={canvasRef}
+        className="mx-[calc(50%-50vw)] -mb-6 flex flex-col gap-4 px-4 pb-4"
+      >
+        <div className="flex shrink-0 justify-end">
           <NewIssueDialog slug={slug} statuses={statuses.data} />
         </div>
-        <div className="flex gap-4 overflow-x-auto pb-4">
+        <div className="flex min-h-0 flex-1 gap-4 overflow-x-auto">
           {statuses.data.map((status) => (
             <BoardColumn key={status.id} slug={slug} status={status} />
           ))}
         </div>
       </div>
+      {/* The dragged card is rendered in an overlay because the original
+          sits inside a column scroll container that would clip it as soon
+          as it crosses the column edge. */}
+      <DragOverlay>
+        {activeIssue && (
+          <div className="cursor-grabbing rounded-md border bg-background p-2.5 shadow-lg">
+            <BoardCardContent slug={slug} issue={activeIssue} />
+          </div>
+        )}
+      </DragOverlay>
     </DndContext>
   );
 }
@@ -108,7 +163,7 @@ function BoardColumn({ slug, status }: { slug: string; status: Status }) {
       )}
       data-testid={`column-${status.name}`}
     >
-      <div className="flex items-center gap-2 border-b px-3 py-2">
+      <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
         <span
           className="size-2.5 rounded-full"
           style={{ backgroundColor: status.color }}
@@ -120,7 +175,7 @@ function BoardColumn({ slug, status }: { slug: string; status: Status }) {
         </Badge>
         <span className="text-xs text-muted-foreground">{status.category}</span>
       </div>
-      <div className="flex min-h-24 flex-col gap-2 p-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
         {column.isPending && <Skeleton className="h-20 w-full" />}
         {column.data?.items.map((issue) => (
           <BoardCard
@@ -149,27 +204,39 @@ function BoardCard({
   issue: IssueListItem;
   statusId: number;
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } =
-    useDraggable({
-      id: `issue-${issue.number}`,
-      data: { issueNumber: issue.number, fromStatusId: statusId },
-    });
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `issue-${issue.number}`,
+    data: {
+      issueNumber: issue.number,
+      fromStatusId: statusId,
+      issue,
+    } satisfies CardDragData,
+  });
 
   return (
     <div
       ref={setNodeRef}
       {...attributes}
       {...listeners}
-      style={
-        transform
-          ? { transform: `translate(${transform.x}px, ${transform.y}px)` }
-          : undefined
-      }
       className={cn(
         "cursor-grab rounded-md border bg-background p-2.5 shadow-xs",
-        isDragging && "z-10 opacity-80 shadow-lg",
+        isDragging && "opacity-30",
       )}
     >
+      <BoardCardContent slug={slug} issue={issue} />
+    </div>
+  );
+}
+
+function BoardCardContent({
+  slug,
+  issue,
+}: {
+  slug: string;
+  issue: IssueListItem;
+}) {
+  return (
+    <>
       <Link
         to="/projects/$slug/issues/$number"
         params={{ slug, number: String(issue.number) }}
@@ -188,6 +255,6 @@ function BoardCard({
           ))}
         </span>
       </div>
-    </div>
+    </>
   );
 }
