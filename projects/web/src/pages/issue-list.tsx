@@ -236,7 +236,8 @@ function IssueTable({
   );
 }
 
-function IssueRow({
+/** Exported for tests (like BoardCardContent). */
+export function IssueRow({
   slug,
   issue,
   statuses,
@@ -253,7 +254,18 @@ function IssueRow({
 }) {
   return (
     <TableRow>
-      <TableCell className="text-muted-foreground">#{issue.number}</TableCell>
+      <TableCell className="text-muted-foreground">
+        {/* Fixed-width slot (the CLI's ● column) so numbers never shift. */}
+        <span className="mr-1.5 inline-block size-2 align-middle">
+          {issue.unread && (
+            <span
+              className="block size-2 rounded-full bg-blue-500 dark:bg-blue-400"
+              title="new activity since you last viewed"
+            />
+          )}
+        </span>
+        #{issue.number}
+      </TableCell>
       <TableCell>
         <Link
           to="/projects/$slug/issues/$number"

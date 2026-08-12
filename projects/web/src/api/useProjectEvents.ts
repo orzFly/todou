@@ -30,12 +30,14 @@ export function invalidationsFor(
     case "comment":
     case "timeline":
       // Question components and their answers ride the timeline, so the
-      // per-issue question status (#19) goes stale with it.
+      // per-issue question status (#19) goes stale with it — as do the
+      // unread markers (#46), which travel in the list payload.
       return event.issue_number === undefined
         ? []
         : [
             ["timeline", slug, event.issue_number],
             ["questions", slug, event.issue_number],
+            ["issues", slug],
           ];
     case "attachment":
       return event.issue_number === undefined

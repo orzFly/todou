@@ -40,6 +40,7 @@ import { projectMembers } from "../db/system-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
 import { type ProjectRow, requireProject, routeInfoOf } from "./access.ts";
 import { toLabel } from "./labels.ts";
+import { unreadIssueIds } from "./reads.ts";
 import { recordReferences } from "./references.ts";
 import { recordRevision } from "./revisions.ts";
 import { toStatus } from "./statuses.ts";
@@ -72,6 +73,8 @@ function toIssue(bundle: IssueBundle): Issue {
     spec_version: bundle.row.specVersion,
     spec_review_status: bundle.row.specReviewStatus,
     spec_unresolved_comments: bundle.row.specUnresolvedComments,
+    // Per-viewer field; only listIssues overrides it (#46).
+    unread: false,
   };
 }
 
@@ -465,7 +468,19 @@ export async function listIssues(
       : null;
 
   const bundles = await bundleIssues(ctx, db, project.id, page);
-  return { items: bundles.map(toIssue), next_cursor };
+  const unread = await unreadIssueIds(
+    db,
+    project.id,
+    actor.id,
+    page.map((r) => r.id),
+  );
+  return {
+    items: bundles.map((b) => ({
+      ...toIssue(b),
+      unread: unread.has(b.row.id),
+    })),
+    next_cursor,
+  };
 }
 
 export async function countIssuesByCategory(

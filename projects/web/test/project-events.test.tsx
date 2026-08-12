@@ -24,7 +24,7 @@ describe("invalidationsFor (SSE → query keys)", () => {
     ]);
   });
 
-  it("maps timeline events to that issue's timeline and questions", () => {
+  it("maps timeline events to that issue's timeline, questions, and the list", () => {
     expect(
       invalidationsFor(
         { entity: "timeline", id: 5, action: "created", issue_number: 7 },
@@ -33,6 +33,8 @@ describe("invalidationsFor (SSE → query keys)", () => {
     ).toEqual([
       ["timeline", "todou", 7],
       ["questions", "todou", 7],
+      // Unread markers (#46) ride the list payload.
+      ["issues", "todou"],
     ]);
   });
 

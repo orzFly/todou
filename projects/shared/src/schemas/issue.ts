@@ -32,6 +32,13 @@ export const Issue = z.object({
     .nullable()
     .default(null),
   spec_unresolved_comments: z.number().int().nonnegative().default(0),
+  /**
+   * Per-viewer: whether this issue has activity by someone other than the
+   * requesting user, newer than their last-seen position (#46). Computed
+   * only for list responses; every other path returns the default false.
+   * Defaults on parse so clients tolerate older servers.
+   */
+  unread: z.boolean().default(false),
 });
 export type Issue = z.infer<typeof Issue>;
 
@@ -62,6 +69,13 @@ export const IssueUpdateInput = z.object({
   label_ids: z.array(Id).optional(),
 });
 export type IssueUpdateInput = z.infer<typeof IssueUpdateInput>;
+
+/** Body of PUT /issues/{n}/read — advance the caller's last-seen position. */
+export const IssueReadInput = z.strictObject({
+  /** Position to advance to (never regresses); omitted = server now(). */
+  up_to: Timestamp.optional(),
+});
+export type IssueReadInput = z.infer<typeof IssueReadInput>;
 
 const csvIds = z
   .string()

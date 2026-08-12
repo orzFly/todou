@@ -1,7 +1,9 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
+  IssueReadInput,
   Me,
   MeUpdateInput,
+  ProjectSlug,
   TokenCreated,
   TokenCreateInput,
   TokenListItem,
@@ -9,6 +11,7 @@ import {
 import type { AppEnv } from "../auth/middleware.ts";
 import { ForbiddenError, ValidationFailedError } from "../errors.ts";
 import { deleteAvatar, setAvatar, updateProfile } from "../services/profile.ts";
+import { markIssueRead } from "../services/reads.ts";
 import { issueToken, listTokens, revokeToken } from "../services/tokens.ts";
 import { ownerRefOf, toMe } from "../services/users.ts";
 
@@ -107,6 +110,26 @@ const createTokenRoute = createRoute({
   },
 });
 
+// Lives here rather than routes/issues.ts because read positions are the
+// caller's private per-user state, like everything else under /me — the
+// issue in the path is just what the position points at. (This file mounts
+// at the API root, so the full /projects path works from here.)
+const markIssueReadRoute = createRoute({
+  method: "put",
+  path: "/projects/{slug}/issues/{number}/read",
+  summary:
+    "Advance my last-seen position on an issue (never regresses; " +
+    "feeds the unread markers in list responses)",
+  request: {
+    params: z.object({
+      slug: ProjectSlug,
+      number: z.coerce.number().int().positive(),
+    }),
+    body: { content: { "application/json": { schema: IssueReadInput } } },
+  },
+  responses: { 204: { description: "Position advanced" } },
+});
+
 const revokeTokenRoute = createRoute({
   method: "delete",
   path: "/me/tokens/{id}",
@@ -166,6 +189,18 @@ export function meRoutes() {
     const db = c.get("appCtx").router.system();
     const input = c.req.valid("json");
     return c.json(await issueToken(db, c.get("user").id, input), 201);
+  });
+
+  app.openapi(markIssueReadRoute, async (c) => {
+    const { slug, number } = c.req.valid("param");
+    await markIssueRead(
+      c.get("appCtx"),
+      c.get("user"),
+      slug,
+      number,
+      c.req.valid("json"),
+    );
+    return c.body(null, 204);
   });
 
   app.openapi(revokeTokenRoute, async (c) => {

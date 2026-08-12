@@ -35,6 +35,7 @@ const issue = (
   spec_version: spec?.spec_version ?? null,
   spec_review_status: spec?.spec_review_status ?? null,
   spec_unresolved_comments: 0,
+  unread: false,
 });
 
 /* RouterProvider mounts asynchronously — wait for the title first. */
@@ -54,6 +55,24 @@ describe("BoardCardContent question badge", () => {
     );
     await view.findByText("issue 1");
     expect(view.queryByTitle(/unanswered/)).toBeNull();
+  });
+});
+
+describe("BoardCardContent unread dot (#46)", () => {
+  it("marks a card with foreign activity since last view", async () => {
+    const view = renderWithProviders(
+      <BoardCardContent slug="p" issue={{ ...issue(0), unread: true }} />,
+    );
+    await view.findByText("issue 1");
+    expect(view.getByTitle("new activity since you last viewed")).toBeTruthy();
+  });
+
+  it("stays quiet when the card is read", async () => {
+    const view = renderWithProviders(
+      <BoardCardContent slug="p" issue={issue(0)} />,
+    );
+    await view.findByText("issue 1");
+    expect(view.queryByTitle("new activity since you last viewed")).toBeNull();
   });
 });
 

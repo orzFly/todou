@@ -281,3 +281,38 @@ export const attachments = pgTable(
     index("attachments_issue_idx").on(t.issueId),
   ],
 );
+
+// Per-user read positions (#46). Unread is computed at read time from these
+// plus the activity tables — deliberately NOT denormalized onto issues: the
+// flag is per-viewer and comments are deletable, so live computation stays
+// correct with no counter discipline (contrast open_questions above).
+export const issueReads = pgTable(
+  "issue_reads",
+  {
+    id: id(),
+    projectId: projectId(),
+    issueId: bigint("issue_id", { mode: "number" })
+      .notNull()
+      .references(() => issues.id, { onDelete: "cascade" }),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [uniqueIndex("issue_reads_issue_user_idx").on(t.issueId, t.userId)],
+);
+
+// A user's unread epoch in a project, created lazily on their first unread
+// computation: anything older is treated as read, so enabling the feature
+// (or joining a project) never lights up history — same bootstrap semantics
+// as the CLI's local state (#35).
+export const readFrontiers = pgTable(
+  "read_frontiers",
+  {
+    id: id(),
+    projectId: projectId(),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    frontierAt: timestamp("frontier_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("read_frontiers_project_user_idx").on(t.projectId, t.userId),
+  ],
+);

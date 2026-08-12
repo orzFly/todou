@@ -55,6 +55,7 @@ const refItem = (number: number, title: string): IssueListItem => ({
   spec_version: null,
   spec_review_status: null,
   spec_unresolved_comments: 0,
+  unread: false,
 });
 
 /**

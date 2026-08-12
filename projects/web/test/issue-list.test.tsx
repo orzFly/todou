@@ -111,6 +111,7 @@ describe("patchIssueStatus (optimistic cache update)", () => {
         spec_version: null,
         spec_review_status: null,
         spec_unresolved_comments: 0,
+        unread: false,
       },
     ],
     next_cursor: null,

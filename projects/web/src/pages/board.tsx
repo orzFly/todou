@@ -245,16 +245,25 @@ export function BoardCardContent({
   issue: IssueListItem;
 }) {
   return (
-    <>
+    <div className="relative">
+      {issue.unread && (
+        <span
+          className="absolute top-0 right-0 size-2 rounded-full bg-blue-500 dark:bg-blue-400"
+          title="new activity since you last viewed"
+        />
+      )}
       <Link
         to="/projects/$slug/issues/$number"
         params={{ slug, number: String(issue.number) }}
-        className="block text-sm font-medium hover:underline"
+        className={cn(
+          "block text-sm font-medium hover:underline",
+          issue.unread && "pr-4",
+        )}
       >
         {issue.title}
       </Link>
       {/* Meta row hosts the question badge; the card's top-right corner
-          stays free for the per-issue unread dot planned in #46. */}
+          belongs to the unread dot above (#46). */}
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
         <span className="text-xs text-muted-foreground">#{issue.number}</span>
         {issue.open_questions > 0 && (
@@ -284,6 +293,6 @@ export function BoardCardContent({
           ))}
         </span>
       </div>
-    </>
+    </div>
   );
 }

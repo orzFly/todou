@@ -11,6 +11,7 @@ import type {
   IssueCreateInput,
   IssueListPage,
   IssueQuestions,
+  IssueReadInput,
   IssueUpdateInput,
   Label,
   LabelCreateInput,
@@ -249,6 +250,10 @@ export class TodouClient {
     this.request<Issue>("GET", `/projects/${slug}/issues/${number}`);
   updateIssue = (slug: string, number: number, input: IssueUpdateInput) =>
     this.request<Issue>("PATCH", `/projects/${slug}/issues/${number}`, {
+      json: input,
+    });
+  markIssueRead = (slug: string, number: number, input: IssueReadInput = {}) =>
+    this.request<void>("PUT", `/projects/${slug}/issues/${number}/read`, {
       json: input,
     });
 

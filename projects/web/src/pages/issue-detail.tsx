@@ -18,6 +18,7 @@ import {
 } from "@/api/queries.ts";
 import { AttachmentList } from "@/components/issue/attachment-list.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
+import { MarkReadOnView } from "@/components/issue/mark-read-on-view.tsx";
 import {
   SpecEntryRow,
   SpecSidebarSection,
@@ -70,6 +71,7 @@ export function IssueDetailPage() {
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_240px]">
+      <MarkReadOnView slug={slug} number={issueNumber} />
       <div className="min-w-0 space-y-4">
         <TitleBlock slug={slug} issue={issue.data} />
         <BodyBlock slug={slug} issue={issue.data} />
