@@ -1,8 +1,9 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import type { Me } from "@todou/shared";
 import type { ReactNode } from "react";
-import { api } from "@/api/queries.ts";
+import { api, projectQuery } from "@/api/queries.ts";
+import { ProjectNav } from "@/components/project-nav.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,17 +26,45 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
     },
   });
 
+  // Present on every route under /projects/$slug; the header morphs into a
+  // breadcrumb with the project nav there (#62).
+  const { slug } = useParams({ strict: false });
+  const project = useQuery({
+    ...projectQuery(slug ?? ""),
+    enabled: slug != null,
+  });
+
   return (
     <div className="min-h-dvh bg-background">
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
-          <Link
-            to="/projects"
-            className="flex items-center gap-2 font-semibold"
-          >
-            <span aria-hidden>🥔</span>
-            <span>todou</span>
-          </Link>
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-2 px-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <Link
+              to="/projects"
+              className="flex shrink-0 items-center gap-2 font-semibold"
+            >
+              <span aria-hidden>🥔</span>
+              {slug == null && <span>todou</span>}
+            </Link>
+            {slug != null && (
+              <>
+                <span aria-hidden className="text-muted-foreground/50">
+                  /
+                </span>
+                <Link
+                  to="/projects/$slug"
+                  params={{ slug }}
+                  className="truncate font-semibold hover:underline"
+                >
+                  {project.data?.name ?? slug}
+                </Link>
+                <ProjectNav
+                  slug={slug}
+                  className="ml-2 hidden shrink-0 sm:flex"
+                />
+              </>
+            )}
+          </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm">
@@ -61,6 +90,12 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+        {slug != null && (
+          <ProjectNav
+            slug={slug}
+            className="mx-auto max-w-6xl px-4 pb-2 sm:hidden"
+          />
+        )}
       </header>
       <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
     </div>

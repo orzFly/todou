@@ -10,6 +10,7 @@ import {
 import { issueSearchSchema } from "@/api/issues.ts";
 import { meQuery } from "@/api/queries.ts";
 import { AppShell } from "@/components/shell.tsx";
+import { TitleController } from "@/components/title-controller.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/sonner";
 import { AgentsSettingsPage } from "@/pages/agents-settings.tsx";
@@ -28,6 +29,7 @@ import { TokensSettingsPage } from "@/pages/tokens-settings.tsx";
 const rootRoute = createRootRoute({
   component: () => (
     <>
+      <TitleController />
       <Outlet />
       <Toaster position="bottom-right" />
     </>
