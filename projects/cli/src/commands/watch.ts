@@ -24,9 +24,11 @@ export class WatchCommand extends ProjectCommand {
       where each item carries \`issue_number\`; feed next_cursor back into
       \`--since\` to never miss or repeat an entry.
 
-      \`--debounce N\` batches a burst into one wake-up: after the first new
-      entry, keep collecting for a fixed N seconds (measured from that first
-      entry, never extended), then return everything at once. \`--timeout\`
+      \`--debounce N\` batches a burst into one wake-up: keep collecting
+      until N seconds after the newest entry of the first batch *happened*
+      (its \`created_at\`, never extended), then return everything at once.
+      Live entries get the full window; a resume whose \`--since\` back-fills
+      old history is already past it and returns immediately. \`--timeout\`
       only bounds the quiet phase, so a watch that catches news right before
       the deadline still gets its full window; \`--poll\` ignores
       \`--debounce\`. Off by default — first news returns immediately.
@@ -62,7 +64,7 @@ export class WatchCommand extends ProjectCommand {
   });
   debounce = Option.String("--debounce", {
     description:
-      "Batch entries for this many seconds after the first one (default: return immediately)",
+      "Batch entries until this many seconds after the newest one happened (default: return immediately)",
   });
   types = Option.String("--type", {
     description: `Comma-separated filter: ${TimelineFilterType.options.join(", ")}`,

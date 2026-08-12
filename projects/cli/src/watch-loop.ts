@@ -30,16 +30,18 @@ export function sleep(ms: number): Promise<void> {
  * Returns the process exit code: 0 when entries were delivered, 3 when the
  * poll came back empty or the timeout elapsed (loop-friendly "no news").
  *
- * `timeoutSec` bounds the quiet phase only; once the first entry arrives,
- * `debounceSec` (when set) takes over and keeps batching for that fixed
- * window before emitting, so the process may outlive the timeout by up to
- * the debounce duration.
+ * `timeoutSec` bounds the quiet phase only; once the first entries arrive,
+ * `debounceSec` (when set) takes over and keeps batching until the window
+ * closes, so the process may outlive the timeout by up to the debounce
+ * duration. The window is measured from when the newest entry of the first
+ * batch *happened* (`created_at`), not from when this watcher saw it, so a
+ * resume that back-fills old history returns immediately.
  */
-export async function runWatchLoop<T>(opts: {
+export async function runWatchLoop<T extends { created_at: string }>(opts: {
   poll: boolean;
   timeoutSec: number;
   intervalSec: number;
-  /** Batch window after the first entry; undefined = emit immediately. */
+  /** Batch window after the first batch's newest `created_at`; undefined = emit immediately. */
   debounceSec?: number;
   baseline: string | undefined;
   drain: (
@@ -68,11 +70,21 @@ export async function runWatchLoop<T>(opts: {
     const items = await drainOnce();
     if (items.length > 0) {
       if (opts.debounceSec !== undefined && !opts.poll) {
-        // The window is fixed from the first entry — later entries do not
-        // reset it — so sustained activity cannot defer the return forever.
-        // Entries landing after it closes stay beyond `cursor` for the
-        // caller's next watch.
-        const windowEnd = Date.now() + opts.debounceSec * 1000;
+        // The window is anchored on when the newest entry of this first
+        // batch happened, not on when the watcher saw it (#50): resuming
+        // with an old cursor over already-quiet history returns at once
+        // instead of idling out a full window, while live entries
+        // (created_at ≈ now) still get the whole window. The anchor is
+        // clamped to now — server clock skew or an unparsable timestamp
+        // (NaN → 0) must never stretch the wait — and never moves once
+        // set, so sustained activity cannot defer the return forever.
+        // Entries landing after the window closes stay beyond `cursor`
+        // for the caller's next watch.
+        const newest = Math.max(
+          ...items.map((item) => Date.parse(item.created_at) || 0),
+        );
+        const windowEnd =
+          Math.min(Date.now(), newest) + opts.debounceSec * 1000;
         for (;;) {
           const remaining = windowEnd - Date.now();
           if (remaining <= 0) break;

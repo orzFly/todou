@@ -420,6 +420,11 @@ describe("issue watch", () => {
   });
 
   it("--debounce batches entries arriving inside the window", async () => {
+    // Live entry: created_at ≈ first sight, so the full window applies.
+    const liveComment = {
+      ...newComment,
+      created_at: new Date().toISOString(),
+    };
     let c1Calls = 0;
     const { fetchImpl } = fakeFetch([
       [
@@ -427,13 +432,13 @@ describe("issue watch", () => {
         "/api/projects/todou/issues/3/timeline",
         (_init: RequestInit, url: URL) => {
           const after = url.searchParams.get("after");
-          if (after === "c0") return pageWith([newComment], "c1");
+          if (after === "c0") return pageWith([liveComment], "c1");
           if (after === "c1") {
             c1Calls += 1;
             // Quiet at first; a second entry lands during the window.
             return c1Calls === 1
               ? pageWith([], null)
-              : pageWith([{ ...newComment, id: 10, body: "late news" }], "c2");
+              : pageWith([{ ...liveComment, id: 10, body: "late news" }], "c2");
           }
           return pageWith([], null);
         },
@@ -484,7 +489,14 @@ describe("issue watch", () => {
             pending = false;
             n += 1;
             return pageWith(
-              [{ ...newComment, id: n, body: `burst ${n}` }],
+              [
+                {
+                  ...newComment,
+                  id: n,
+                  body: `burst ${n}`,
+                  created_at: new Date().toISOString(),
+                },
+              ],
               `b${n}`,
             );
           }
@@ -517,6 +529,122 @@ describe("issue watch", () => {
     };
     expect(parsed.items.length).toBeGreaterThanOrEqual(2);
     expect(parsed.next_cursor).toBe(`b${n}`);
+  });
+
+  it("--debounce returns at once when a resume back-fills an aged batch", async () => {
+    const staleComment = {
+      ...newComment,
+      created_at: new Date(Date.now() - 60_000).toISOString(),
+    };
+    let c1Calls = 0;
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues/3/timeline",
+        (_init: RequestInit, url: URL) => {
+          const after = url.searchParams.get("after");
+          if (after === "c0") return pageWith([staleComment], "c1");
+          if (after === "c1") c1Calls += 1;
+          return pageWith([], null);
+        },
+      ],
+    ]);
+    const started = Date.now();
+    const result = await runCli(
+      [
+        "issue",
+        "watch",
+        "3",
+        "--since",
+        "c0",
+        "--debounce",
+        "5",
+        "--interval",
+        "0.05",
+        "--timeout",
+        "5",
+        "--json",
+      ],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    // The window (created_at + 5s) ended long before the watch saw the
+    // entry, so it is delivered without idle waiting or re-polling.
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(c1Calls).toBe(1);
+    const parsed = JSON.parse(result.stdout) as {
+      items: Array<{ body: string }>;
+      next_cursor: string;
+    };
+    expect(parsed.items.map((i) => i.body)).toEqual(["fresh news"]);
+    expect(parsed.next_cursor).toBe("c1");
+  });
+
+  it("--debounce waits only the remainder of a partially aged window", async () => {
+    const agedComment = {
+      ...newComment,
+      created_at: new Date(Date.now() - 1_000).toISOString(),
+    };
+    let c1Calls = 0;
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues/3/timeline",
+        (_init: RequestInit, url: URL) => {
+          const after = url.searchParams.get("after");
+          if (after === "c0") return pageWith([agedComment], "c1");
+          if (after === "c1") {
+            c1Calls += 1;
+            return c1Calls === 1
+              ? pageWith([], null)
+              : pageWith(
+                  [
+                    {
+                      ...newComment,
+                      id: 10,
+                      body: "late news",
+                      created_at: new Date().toISOString(),
+                    },
+                  ],
+                  "c2",
+                );
+          }
+          return pageWith([], null);
+        },
+      ],
+    ]);
+    const started = Date.now();
+    const result = await runCli(
+      [
+        "issue",
+        "watch",
+        "3",
+        "--since",
+        "c0",
+        "--debounce",
+        "2",
+        "--interval",
+        "0.05",
+        "--timeout",
+        "5",
+        "--json",
+      ],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      items: Array<{ body: string }>;
+      next_cursor: string;
+    };
+    // Still inside the window, so collection continues...
+    expect(parsed.items.map((i) => i.body)).toEqual([
+      "fresh news",
+      "late news",
+    ]);
+    expect(parsed.next_cursor).toBe("c2");
+    // ...but ~1s of the 2s window was spent before the watch saw the
+    // entry: only the remainder is waited, not a fresh window.
+    expect(Date.now() - started).toBeLessThan(1700);
   });
 
   it("--poll ignores --debounce and returns immediately", async () => {

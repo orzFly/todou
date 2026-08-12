@@ -216,6 +216,11 @@ describe("watch (project-level)", () => {
   });
 
   it("--debounce batches a cross-issue burst into one wake-up", async () => {
+    // Live entries: created_at ≈ first sight, so the full window applies.
+    const liveComment = {
+      ...webComment,
+      created_at: new Date().toISOString(),
+    };
     let a1Calls = 0;
     const { fetchImpl } = fakeFetch([
       ["GET", "/api/me", me],
@@ -224,7 +229,7 @@ describe("watch (project-level)", () => {
         "/api/projects/todou/activity",
         (_init: RequestInit, url: URL) => {
           const after = url.searchParams.get("after");
-          if (after === "a0") return page([webComment], "a1");
+          if (after === "a0") return page([liveComment], "a1");
           if (after === "a1") {
             a1Calls += 1;
             return a1Calls === 1
@@ -232,7 +237,7 @@ describe("watch (project-level)", () => {
               : page(
                   [
                     {
-                      ...webComment,
+                      ...liveComment,
                       id: 10,
                       body: "second card",
                       issue_number: 4,
