@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Config } from "./config.ts";
 import type { Db } from "./db/driver.ts";
 import { DbRouter } from "./db/router.ts";
@@ -8,6 +8,9 @@ import { FsStorage } from "./storage/fs.ts";
 import type { StorageBackend } from "./storage/types.ts";
 
 export const BUILTIN_LOGIN = "user";
+// The built-in account is tracked by this oidc_subject sentinel, not by its
+// login — logins are user-editable and single-mode auth must survive a rename.
+export const BUILTIN_SUBJECT = "builtin";
 
 export type AppContext = {
   config: Config;
@@ -31,16 +34,32 @@ export async function bootstrap(config: Config): Promise<AppContext> {
 
 /** Single-user mode signs everyone in as this seeded account. */
 export async function ensureBuiltinUser(db: Db): Promise<void> {
-  const existing = await db
+  const bySubject = await db
     .select({ id: users.id })
     .from(users)
-    .where(eq(users.login, BUILTIN_LOGIN));
-  if (existing.length === 0) {
-    await db.insert(users).values({
-      kind: "human",
-      login: BUILTIN_LOGIN,
-      displayName: "User",
-      isInstanceAdmin: true,
-    });
+    .where(eq(users.oidcSubject, BUILTIN_SUBJECT));
+  if (bySubject.length > 0) return;
+
+  // Databases seeded before profile editing carry no subject marker —
+  // adopt the account by its original login instead of duplicating it.
+  const byLogin = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.login, BUILTIN_LOGIN), eq(users.kind, "human")));
+  const existing = byLogin[0];
+  if (existing) {
+    await db
+      .update(users)
+      .set({ oidcSubject: BUILTIN_SUBJECT })
+      .where(eq(users.id, existing.id));
+    return;
   }
+
+  await db.insert(users).values({
+    kind: "human",
+    login: BUILTIN_LOGIN,
+    displayName: "User",
+    oidcSubject: BUILTIN_SUBJECT,
+    isInstanceAdmin: true,
+  });
 }

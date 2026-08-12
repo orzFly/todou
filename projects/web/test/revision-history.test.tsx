@@ -8,6 +8,7 @@ const revision = {
     login: "user",
     display_name: "User",
     kind: "human" as const,
+    avatar_url: null,
     owner: null,
   },
   created_at: "2026-08-12T10:00:00Z",

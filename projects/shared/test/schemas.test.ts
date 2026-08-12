@@ -65,6 +65,7 @@ describe("TimelineItem", () => {
     login: "user",
     display_name: "User",
     kind: "human",
+    avatar_url: null,
     owner: null,
   };
 
@@ -132,6 +133,7 @@ describe("AgentContext on timeline items", () => {
       login: "claude",
       display_name: "Claude",
       kind: "machine",
+      avatar_url: null,
       owner: null,
     },
     body: "hi",

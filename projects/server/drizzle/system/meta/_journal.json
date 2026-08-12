@@ -15,6 +15,13 @@
       "when": 1786437940527,
       "tag": "0001_agent-disable",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786497656464,
+      "tag": "0002_avatars",
+      "breakpoints": true
     }
   ]
 }

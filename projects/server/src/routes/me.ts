@@ -1,11 +1,14 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
   Me,
+  MeUpdateInput,
   TokenCreated,
   TokenCreateInput,
   TokenListItem,
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
+import { ForbiddenError, ValidationFailedError } from "../errors.ts";
+import { deleteAvatar, setAvatar, updateProfile } from "../services/profile.ts";
 import { issueToken, listTokens, revokeToken } from "../services/tokens.ts";
 import { ownerRefOf, toMe } from "../services/users.ts";
 
@@ -16,6 +19,60 @@ const meRoute = createRoute({
   responses: {
     200: {
       description: "Current user",
+      content: { "application/json": { schema: Me } },
+    },
+  },
+});
+
+const patchMeRoute = createRoute({
+  method: "patch",
+  path: "/me",
+  summary:
+    "Edit my profile. Machine users may change their display name but not " +
+    "their login — that stays with the owner (PATCH /agents/{id}).",
+  request: {
+    body: { content: { "application/json": { schema: MeUpdateInput } } },
+  },
+  responses: {
+    200: {
+      description: "Updated profile",
+      content: { "application/json": { schema: Me } },
+    },
+  },
+});
+
+const avatarBody = {
+  content: {
+    "multipart/form-data": {
+      schema: z.object({
+        file: z
+          .custom<File>((v: unknown) => v instanceof File, "file required")
+          .openapi({ type: "string", format: "binary" }),
+      }),
+    },
+  },
+};
+
+const uploadMyAvatarRoute = createRoute({
+  method: "post",
+  path: "/me/avatar",
+  summary: "Upload my avatar (png/jpeg/webp/gif, multipart)",
+  request: { body: avatarBody },
+  responses: {
+    200: {
+      description: "Updated profile",
+      content: { "application/json": { schema: Me } },
+    },
+  },
+});
+
+const deleteMyAvatarRoute = createRoute({
+  method: "delete",
+  path: "/me/avatar",
+  summary: "Remove my avatar and go back to the initials fallback",
+  responses: {
+    200: {
+      description: "Updated profile",
       content: { "application/json": { schema: Me } },
     },
   },
@@ -67,6 +124,37 @@ export function meRoutes() {
     const user = c.get("user");
     const db = c.get("appCtx").router.system();
     return c.json(toMe(user, await ownerRefOf(db, user)), 200);
+  });
+
+  app.openapi(patchMeRoute, async (c) => {
+    const ctx = c.get("appCtx");
+    const user = c.get("user");
+    const input = c.req.valid("json");
+    if (
+      user.kind === "machine" &&
+      input.login !== undefined &&
+      input.login !== user.login
+    ) {
+      throw new ForbiddenError("an agent's login is managed by its owner");
+    }
+    const row = await updateProfile(ctx, user, input);
+    return c.json(toMe(row, await ownerRefOf(ctx.router.system(), row)), 200);
+  });
+
+  app.openapi(uploadMyAvatarRoute, async (c) => {
+    const ctx = c.get("appCtx");
+    const form = c.req.valid("form");
+    if (!(form.file instanceof File)) {
+      throw new ValidationFailedError("file part is required");
+    }
+    const row = await setAvatar(ctx, c.get("user"), form.file);
+    return c.json(toMe(row, await ownerRefOf(ctx.router.system(), row)), 200);
+  });
+
+  app.openapi(deleteMyAvatarRoute, async (c) => {
+    const ctx = c.get("appCtx");
+    const row = await deleteAvatar(ctx, c.get("user"));
+    return c.json(toMe(row, await ownerRefOf(ctx.router.system(), row)), 200);
   });
 
   app.openapi(listTokensRoute, async (c) => {

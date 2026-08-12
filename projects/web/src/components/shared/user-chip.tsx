@@ -1,6 +1,6 @@
 import type { UserRef } from "@todou/shared";
 import { BotIcon } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Tooltip,
   TooltipContent,
@@ -8,6 +8,15 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+
+export function initialsOf(displayName: string): string {
+  return displayName
+    .split(/\s+/)
+    .map((p) => p[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
 
 /**
  * Uniform user rendering across the app. Machine users get a bot badge and
@@ -22,17 +31,13 @@ export function UserChip({
   compact?: boolean;
   nameClassName?: string;
 }) {
-  const initials = user.display_name
-    .split(/\s+/)
-    .map((p) => p[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
+  const initials = initialsOf(user.display_name);
 
   const chip = (
     <span className="inline-flex shrink-0 items-center gap-1.5">
       <span className="relative inline-flex">
         <Avatar className="size-5">
+          {user.avatar_url && <AvatarImage src={user.avatar_url} alt="" />}
           <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
         </Avatar>
         {user.kind === "machine" && (

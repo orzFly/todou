@@ -14,6 +14,7 @@ import { meRoutes } from "./routes/me.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { sseRoutes } from "./routes/sse.ts";
 import { statusRoutes } from "./routes/statuses.ts";
+import { userRoutes } from "./routes/users.ts";
 
 /** Zod validation failures become uniform 422 error bodies. */
 // biome-ignore lint/suspicious/noExplicitAny: hook signature is generic
@@ -99,6 +100,7 @@ export function createApp(ctx: AppContext) {
   api.use("*", authMiddleware(ctx));
   api.use("*", agentContextMiddleware());
   api.route("/", meRoutes());
+  api.route("/", userRoutes());
   api.route("/agents", agentRoutes());
   api.route("/projects", projectRoutes());
   api.route("/projects", statusRoutes());

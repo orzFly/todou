@@ -7,6 +7,7 @@ const author: UserRef = {
   login: "user",
   display_name: "User",
   kind: "human",
+  avatar_url: null,
   owner: null,
 };
 

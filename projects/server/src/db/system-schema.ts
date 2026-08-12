@@ -28,6 +28,10 @@ export const users = pgTable(
       (): AnyPgColumn => users.id,
     ),
     oidcSubject: text("oidc_subject"),
+    // Storage key of the uploaded avatar blob; null = initials fallback.
+    // A fresh key per upload doubles as the cache-busting version.
+    avatarKey: text("avatar_key"),
+    avatarContentType: text("avatar_content_type"),
     isInstanceAdmin: boolean("is_instance_admin").notNull().default(false),
     // Soft deactivation (used for agents): blocks all authentication.
     disabledAt: timestamp("disabled_at", { withTimezone: true }),

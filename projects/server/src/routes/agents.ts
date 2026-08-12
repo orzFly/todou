@@ -9,14 +9,17 @@ import {
   TokenListItem,
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
+import { ValidationFailedError } from "../errors.ts";
 import {
   createAgent,
+  deleteAgentAvatar,
   disableAgent,
   enableAgent,
   issueAgentToken,
   listAgents,
   listAgentTokens,
   revokeAgentToken,
+  setAgentAvatar,
   updateAgent,
 } from "../services/agents.ts";
 
@@ -48,8 +51,37 @@ const listAgentsRoute = createRoute({
 const patchAgentRoute = createRoute({
   method: "patch",
   path: "/{id}",
-  summary: "Rename an agent (owner or instance admin)",
+  summary: "Edit an agent's login or display name (owner or instance admin)",
   request: { params: idParam, body: jsonBody(AgentUpdateInput) },
+  responses: { 200: { description: "Updated", ...jsonBody(Agent) } },
+});
+
+const agentAvatarRoute = createRoute({
+  method: "post",
+  path: "/{id}/avatar",
+  summary: "Upload an agent's avatar (owner or instance admin, multipart)",
+  request: {
+    params: idParam,
+    body: {
+      content: {
+        "multipart/form-data": {
+          schema: z.object({
+            file: z
+              .custom<File>((v: unknown) => v instanceof File, "file required")
+              .openapi({ type: "string", format: "binary" }),
+          }),
+        },
+      },
+    },
+  },
+  responses: { 200: { description: "Updated", ...jsonBody(Agent) } },
+});
+
+const deleteAgentAvatarRoute = createRoute({
+  method: "delete",
+  path: "/{id}/avatar",
+  summary: "Remove an agent's avatar (owner or instance admin)",
+  request: { params: idParam },
   responses: { 200: { description: "Updated", ...jsonBody(Agent) } },
 });
 
@@ -130,6 +162,33 @@ export function agentRoutes() {
         c.get("user"),
         c.req.valid("param").id,
         c.req.valid("json"),
+      ),
+      200,
+    ),
+  );
+
+  app.openapi(agentAvatarRoute, async (c) => {
+    const form = c.req.valid("form");
+    if (!(form.file instanceof File)) {
+      throw new ValidationFailedError("file part is required");
+    }
+    return c.json(
+      await setAgentAvatar(
+        c.get("appCtx"),
+        c.get("user"),
+        c.req.valid("param").id,
+        form.file,
+      ),
+      200,
+    );
+  });
+
+  app.openapi(deleteAgentAvatarRoute, async (c) =>
+    c.json(
+      await deleteAgentAvatar(
+        c.get("appCtx"),
+        c.get("user"),
+        c.req.valid("param").id,
       ),
       200,
     ),

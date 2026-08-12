@@ -18,6 +18,7 @@ import { IssueDetailPage } from "@/pages/issue-detail.tsx";
 import { IssueListPage } from "@/pages/issue-list.tsx";
 import { LoginPage } from "@/pages/login.tsx";
 import { NewIssuePage } from "@/pages/new-issue.tsx";
+import { ProfileSettingsPage } from "@/pages/profile-settings.tsx";
 import { ProjectLayout } from "@/pages/project-layout.tsx";
 import { ProjectSettingsPage } from "@/pages/project-settings.tsx";
 import { ProjectsPage } from "@/pages/projects.tsx";
@@ -132,6 +133,12 @@ const projectSettingsRoute = createRoute({
   component: ProjectSettingsPage,
 });
 
+const profileSettingsRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/settings/profile",
+  component: ProfileSettingsPage,
+});
+
 const agentsSettingsRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/settings/agents",
@@ -162,6 +169,7 @@ const routeTree = rootRoute.addChildren([
       issueRoute,
       projectSettingsRoute,
     ]),
+    profileSettingsRoute,
     agentsSettingsRoute,
     tokensSettingsRoute,
     cliAuthRoute,

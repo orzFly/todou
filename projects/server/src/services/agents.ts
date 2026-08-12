@@ -11,6 +11,7 @@ import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import { tokens, users } from "../db/system-schema.ts";
 import { ConflictError, ForbiddenError, NotFoundError } from "../errors.ts";
+import { deleteAvatar, setAvatar, updateProfile } from "./profile.ts";
 import { issueToken, listTokens, revokeToken } from "./tokens.ts";
 import { ownerRefOf, toMe } from "./users.ts";
 
@@ -101,19 +102,27 @@ export async function updateAgent(
   input: AgentUpdateInput,
 ): Promise<Agent> {
   const agent = await loadManagedAgent(ctx, actor, agentId);
-  const updated = await ctx.router
-    .system()
-    .update(users)
-    .set({
-      ...(input.display_name === undefined
-        ? {}
-        : { displayName: input.display_name }),
-    })
-    .where(eq(users.id, agent.id))
-    .returning();
-  const row = updated[0];
-  if (!row) throw new Error("agent update returned no row");
+  const row = await updateProfile(ctx, agent, input);
   return toAgent(ctx, row);
+}
+
+export async function setAgentAvatar(
+  ctx: AppContext,
+  actor: UserRow,
+  agentId: number,
+  file: File,
+): Promise<Agent> {
+  const agent = await loadManagedAgent(ctx, actor, agentId);
+  return toAgent(ctx, await setAvatar(ctx, agent, file));
+}
+
+export async function deleteAgentAvatar(
+  ctx: AppContext,
+  actor: UserRow,
+  agentId: number,
+): Promise<Agent> {
+  const agent = await loadManagedAgent(ctx, actor, agentId);
+  return toAgent(ctx, await deleteAvatar(ctx, agent));
 }
 
 /** Soft-disable: blocks all authentication and revokes every active PAT. */

@@ -99,6 +99,7 @@ describe("patchIssueStatus (optimistic cache update)", () => {
           login: "user",
           display_name: "User",
           kind: "human",
+          avatar_url: null,
           owner: null,
         },
         assignees: [],

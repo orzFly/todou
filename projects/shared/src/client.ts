@@ -15,6 +15,7 @@ import type {
   Me,
   Member,
   MemberRole,
+  MeUpdateInput,
   Project,
   ProjectCreateInput,
   ProjectUpdateInput,
@@ -140,6 +141,14 @@ export class TodouClient {
   login = () => this.request<Me>("POST", "/auth/login");
   logout = () => this.request<void>("POST", "/auth/logout");
   me = () => this.request<Me>("GET", "/me");
+  updateMe = (input: MeUpdateInput) =>
+    this.request<Me>("PATCH", "/me", { json: input });
+  uploadMyAvatar = (file: File) => {
+    const form = new FormData();
+    form.set("file", file);
+    return this.request<Me>("POST", "/me/avatar", { form });
+  };
+  deleteMyAvatar = () => this.request<Me>("DELETE", "/me/avatar");
   createMyToken = (input: TokenCreateInput) =>
     this.request<TokenCreated>("POST", "/me/tokens", { json: input });
   listMyTokens = () => this.request<TokenListItem[]>("GET", "/me/tokens");
@@ -153,6 +162,13 @@ export class TodouClient {
     this.request<Agent[]>("GET", "/agents", { query: { owner } });
   updateAgent = (id: number, input: AgentUpdateInput) =>
     this.request<Agent>("PATCH", `/agents/${id}`, { json: input });
+  uploadAgentAvatar = (id: number, file: File) => {
+    const form = new FormData();
+    form.set("file", file);
+    return this.request<Agent>("POST", `/agents/${id}/avatar`, { form });
+  };
+  deleteAgentAvatar = (id: number) =>
+    this.request<Agent>("DELETE", `/agents/${id}/avatar`);
   disableAgent = (id: number) => this.request<void>("DELETE", `/agents/${id}`);
   enableAgent = (id: number) =>
     this.request<Agent>("POST", `/agents/${id}/enable`);

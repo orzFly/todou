@@ -30,6 +30,7 @@ const user: UserRef = {
   login: "user",
   display_name: "User",
   kind: "human",
+  avatar_url: null,
   owner: null,
 };
 
@@ -38,6 +39,7 @@ const bot: UserRef = {
   login: "worker-bot",
   display_name: "Worker Bot",
   kind: "machine",
+  avatar_url: null,
   owner: { id: 1, login: "user" },
 };
 

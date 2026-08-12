@@ -8,7 +8,7 @@ import {
   destroySession,
   SESSION_COOKIE,
 } from "../auth/session.ts";
-import { type AppContext, BUILTIN_LOGIN } from "../bootstrap.ts";
+import { type AppContext, BUILTIN_SUBJECT } from "../bootstrap.ts";
 import { users } from "../db/system-schema.ts";
 import { UnauthorizedError } from "../errors.ts";
 import { ownerRefOf, toMe } from "../services/users.ts";
@@ -44,7 +44,7 @@ export function authRoutes(ctx: AppContext) {
     const rows = await db
       .select()
       .from(users)
-      .where(eq(users.login, BUILTIN_LOGIN));
+      .where(eq(users.oidcSubject, BUILTIN_SUBJECT));
     const user = rows[0];
     if (!user) throw new UnauthorizedError("built-in user missing");
 

@@ -46,6 +46,9 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
               <DropdownMenuLabel>{me.display_name}</DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
+                <Link to="/settings/profile">Profile</Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
                 <Link to="/settings/agents">Agents</Link>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>

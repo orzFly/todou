@@ -12,6 +12,7 @@ const attachment = (filename: string, content_type: string) => ({
     login: "claude-agent",
     display_name: "claude-agent",
     kind: "machine" as const,
+    avatar_url: null,
     owner: null,
   },
   created_at: "2026-08-12T00:00:00Z",

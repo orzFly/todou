@@ -121,6 +121,7 @@ async function bundleIssues(
     login: "ghost",
     display_name: "Deleted user",
     kind: "human",
+    avatar_url: null,
     owner: null,
   });
 

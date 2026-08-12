@@ -4,11 +4,18 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import type { Agent, TokenCreated } from "@todou/shared";
-import { KeyIcon, PlusIcon, PowerIcon, PowerOffIcon } from "lucide-react";
+import type { Agent, AgentUpdateInput, TokenCreated } from "@todou/shared";
+import {
+  KeyIcon,
+  PencilIcon,
+  PlusIcon,
+  PowerIcon,
+  PowerOffIcon,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { agentsQuery, api } from "@/api/queries.ts";
+import { AvatarEditor } from "@/components/shared/avatar-editor.tsx";
 import { TokenReveal } from "@/components/shared/token-reveal.tsx";
 import { TokenTable } from "@/components/shared/token-table.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -112,6 +119,7 @@ function AgentRow({ agent }: { agent: Agent }) {
       </TableCell>
       <TableCell>
         <div className="flex justify-end gap-2">
+          <EditAgentDialog agent={agent} />
           {disabled ? (
             <Button variant="outline" size="sm" onClick={() => enable.mutate()}>
               <PowerIcon className="size-3.5" /> Enable
@@ -131,6 +139,121 @@ function AgentRow({ agent }: { agent: Agent }) {
         </div>
       </TableCell>
     </TableRow>
+  );
+}
+
+function EditAgentDialog({ agent }: { agent: Agent }) {
+  const [open, setOpen] = useState(false);
+  const [login, setLogin] = useState(agent.login);
+  const [displayName, setDisplayName] = useState(agent.display_name);
+  const queryClient = useQueryClient();
+
+  // The agent's identity is denormalized into issue/timeline payloads
+  // everywhere — drop the whole cache instead of chasing keys.
+  const applyUpdate = () => queryClient.invalidateQueries();
+
+  const save = useMutation({
+    mutationFn: () => {
+      const patch: AgentUpdateInput = {};
+      if (login !== agent.login) patch.login = login;
+      if (displayName !== agent.display_name) {
+        patch.display_name = displayName;
+      }
+      return api.updateAgent(agent.id, patch);
+    },
+    onSuccess: () => {
+      applyUpdate();
+      setOpen(false);
+      toast.success("Agent profile updated.");
+    },
+    onError: (error) => toast.error(error.message),
+  });
+  const upload = useMutation({
+    mutationFn: (file: File) => api.uploadAgentAvatar(agent.id, file),
+    onSuccess: () => {
+      applyUpdate();
+      toast.success("Avatar updated.");
+    },
+    onError: (error) => toast.error(error.message),
+  });
+  const removeAvatar = useMutation({
+    mutationFn: () => api.deleteAgentAvatar(agent.id),
+    onSuccess: () => {
+      applyUpdate();
+      toast.success("Avatar removed.");
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const dirty = login !== agent.login || displayName !== agent.display_name;
+
+  function reset(next: boolean) {
+    setOpen(next);
+    if (next) {
+      setLogin(agent.login);
+      setDisplayName(agent.display_name);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={reset}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          <PencilIcon className="size-3.5" /> Edit
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit {agent.login}</DialogTitle>
+          <DialogDescription>
+            Renames apply everywhere immediately; scripts using the old login by
+            hand (e.g. --assignee) need updating.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <AvatarEditor
+            user={agent}
+            onUpload={(file) => upload.mutate(file)}
+            onRemove={() => removeAvatar.mutate()}
+            pending={upload.isPending || removeAvatar.isPending}
+          />
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (dirty) save.mutate();
+            }}
+          >
+            <div className="space-y-2">
+              <Label htmlFor="agent-edit-login">Login</Label>
+              <Input
+                id="agent-edit-login"
+                value={login}
+                onChange={(e) => setLogin(e.target.value)}
+                pattern="[a-z0-9][a-z0-9-]*"
+                maxLength={64}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="agent-edit-display">Display name</Label>
+              <Input
+                id="agent-edit-display"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                maxLength={200}
+                required
+              />
+            </div>
+            <DialogFooter>
+              <Button type="submit" disabled={!dirty || save.isPending}>
+                Save changes
+              </Button>
+            </DialogFooter>
+          </form>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

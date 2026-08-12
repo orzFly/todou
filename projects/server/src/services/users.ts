@@ -6,12 +6,21 @@ import { users } from "../db/system-schema.ts";
 
 type OwnerRef = { id: number; login: string } | null;
 
+function avatarUrlOf(row: UserRow): string | null {
+  if (!row.avatarKey) return null;
+  // Each upload gets a fresh storage key, so its tail works as a cache
+  // buster: the URL changes exactly when the image does.
+  const version = row.avatarKey.split("/").pop()?.slice(0, 8) ?? "0";
+  return `/api/users/${row.id}/avatar?v=${version}`;
+}
+
 export function toUserRef(row: UserRow, owner: OwnerRef): UserRef {
   return {
     id: row.id,
     login: row.login,
     display_name: row.displayName,
     kind: row.kind,
+    avatar_url: avatarUrlOf(row),
     owner,
   };
 }
@@ -77,6 +86,7 @@ export async function getUserRefs(
         login: "ghost",
         display_name: "Deleted user",
         kind: "human",
+        avatar_url: null,
         owner: null,
       });
     }
