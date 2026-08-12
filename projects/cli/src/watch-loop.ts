@@ -44,6 +44,12 @@ export async function runWatchLoop<T>(opts: {
   let cursor = opts.baseline;
   const deadline = Date.now() + opts.timeoutSec * 1000;
   for (;;) {
+    // Cursors are absolute stream positions and only advance once a drain
+    // has returned, so re-draining with the held cursor after a failure
+    // loses nothing and repeats nothing.
+    // TODO: back off and retry transient failures (network, 5xx) here
+    // instead of aborting the command; give up only after several
+    // consecutive failures, keeping 4xx fatal.
     const page = await opts.drain(cursor);
     cursor = page.cursor ?? cursor;
     if (page.items.length > 0) {

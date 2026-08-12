@@ -410,7 +410,9 @@ function isTTY(stream: unknown): boolean {
 /**
  * Follows next_cursor forward until the stream is drained. `cursor` lands on
  * the newest entry seen (or stays at `opts.after` when nothing was new), so
- * callers can hand it straight back to `--since`.
+ * callers can hand it straight back to `--since`. A failure mid-drain
+ * surfaces before the caller's cursor moves, so retrying from the same
+ * position re-reads this attempt's pages — nothing is lost or repeated.
  */
 export async function drainTimeline(
   client: TodouClient,
