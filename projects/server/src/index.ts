@@ -5,6 +5,7 @@ import { bootstrap } from "./bootstrap.ts";
 import { loadConfig } from "./config.ts";
 import { DbRouter } from "./db/router.ts";
 import { projects } from "./db/system-schema.ts";
+import { startHousekeeping } from "./services/housekeeping.ts";
 
 abstract class ConfiguredCommand extends Command {
   configPath = Option.String("--config", {
@@ -36,10 +37,12 @@ class ServeCommand extends ConfiguredCommand {
     const server = serve({ fetch: app.fetch, port }, (info) => {
       this.context.stdout.write(`todou server listening on :${info.port} 🥔\n`);
     });
+    const stopHousekeeping = startHousekeeping(context.router.system());
 
     await new Promise<void>((resolve) => {
       const shutdown = () => {
         this.context.stdout.write("shutting down…\n");
+        stopHousekeeping();
         server.close(() => resolve());
         // SSE streams never end on their own, and close() waits for every
         // open connection: without destroying them the old process lingers

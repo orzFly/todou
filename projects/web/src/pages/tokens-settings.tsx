@@ -9,6 +9,10 @@ import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
+import {
+  expiresAtFrom,
+  TokenExpirySelect,
+} from "@/components/shared/token-expiry-select.tsx";
 import { TokenReveal } from "@/components/shared/token-reveal.tsx";
 import { TokenTable } from "@/components/shared/token-table.tsx";
 import { Button } from "@/components/ui/button";
@@ -30,16 +34,19 @@ export const myTokensQuery = queryOptions({
 export function TokensSettingsPage() {
   const tokens = useSuspenseQuery(myTokensQuery);
   const [name, setName] = useState("");
+  const [expiry, setExpiry] = useState("never");
   const [created, setCreated] = useState<TokenCreated | null>(null);
   const queryClient = useQueryClient();
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["my-tokens"] });
 
   const issue = useMutation({
-    mutationFn: () => api.createMyToken({ name }),
+    mutationFn: () =>
+      api.createMyToken({ name, expires_at: expiresAtFrom(expiry) }),
     onSuccess: (token) => {
       setCreated(token);
       setName("");
+      setExpiry("never");
       invalidate();
     },
     onError: (error) => toast.error(error.message),
@@ -74,6 +81,7 @@ export function TokensSettingsPage() {
           className="w-56"
           required
         />
+        <TokenExpirySelect value={expiry} onChange={setExpiry} />
         <Button type="submit" size="sm" disabled={issue.isPending}>
           <PlusIcon className="size-3.5" /> Issue token
         </Button>

@@ -16,6 +16,10 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { agentsQuery, api } from "@/api/queries.ts";
 import { AvatarEditor } from "@/components/shared/avatar-editor.tsx";
+import {
+  expiresAtFrom,
+  TokenExpirySelect,
+} from "@/components/shared/token-expiry-select.tsx";
 import { TokenReveal } from "@/components/shared/token-reveal.tsx";
 import { TokenTable } from "@/components/shared/token-table.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -330,6 +334,7 @@ function CreateAgentDialog() {
 export function AgentTokensDialog({ agent }: { agent: Agent }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  const [expiry, setExpiry] = useState("never");
   const [created, setCreated] = useState<TokenCreated | null>(null);
   const queryClient = useQueryClient();
 
@@ -342,10 +347,15 @@ export function AgentTokensDialog({ agent }: { agent: Agent }) {
     queryClient.invalidateQueries({ queryKey: ["agent-tokens", agent.id] });
 
   const issue = useMutation({
-    mutationFn: () => api.issueAgentToken(agent.id, { name }),
+    mutationFn: () =>
+      api.issueAgentToken(agent.id, {
+        name,
+        expires_at: expiresAtFrom(expiry),
+      }),
     onSuccess: (token) => {
       setCreated(token);
       setName("");
+      setExpiry("never");
       invalidate();
     },
     onError: (error) => toast.error(error.message),
@@ -362,6 +372,7 @@ export function AgentTokensDialog({ agent }: { agent: Agent }) {
       // The plaintext exists only inside this dialog — closing forgets it.
       setCreated(null);
       setName("");
+      setExpiry("never");
     }
   }
 
@@ -413,6 +424,7 @@ export function AgentTokensDialog({ agent }: { agent: Agent }) {
             className="w-56"
             required
           />
+          <TokenExpirySelect value={expiry} onChange={setExpiry} />
           <Button type="submit" size="sm" disabled={issue.isPending}>
             <PlusIcon className="size-3.5" /> Issue
           </Button>
