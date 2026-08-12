@@ -183,7 +183,10 @@
     margin-bottom: 0;
   }
 
+  /* .markdown-paragraph is a <p> stand-in for paragraphs carrying a
+     document-card embed — block content HTML forbids inside real <p>. */
   .markdown-body p,
+  .markdown-body .markdown-paragraph,
   .markdown-body blockquote,
   .markdown-body ul,
   .markdown-body ol,

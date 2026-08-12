@@ -1,61 +1,74 @@
 import { useQuery } from "@tanstack/react-query";
 import type { Attachment } from "@todou/shared";
-import { DownloadIcon, FileIcon, ImageIcon, PaperclipIcon } from "lucide-react";
+import {
+  DownloadIcon,
+  FileIcon,
+  FileTextIcon,
+  ImageIcon,
+  PaperclipIcon,
+} from "lucide-react";
 import { type MouseEvent, type ReactNode, useState } from "react";
-import { attachmentsQuery } from "@/api/attachments.ts";
+import { attachmentsQuery, attachmentTextQuery } from "@/api/attachments.ts";
+import { DocumentView } from "@/components/shared/document-card.tsx";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import {
+  formatSize,
+  isTextDocument,
+  type PreviewTarget,
+  previewKind,
+} from "@/lib/attachment-preview.ts";
 import { attachmentHref } from "@/lib/attachment-refs.ts";
-
-const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|avif|svg)$/i;
-
-/**
- * Anything with a name and a URL can be previewed; content type and size
- * are extras that markdown references may not know before the attachments
- * query resolves.
- */
-export type PreviewTarget = {
-  filename: string;
-  url: string;
-  content_type?: string;
-  size?: number;
-};
-
-export function isPreviewableImage(attachment: {
-  filename: string;
-  content_type?: string;
-}): boolean {
-  const type = attachment.content_type ?? "";
-  if (type.startsWith("image/")) return true;
-  // Uploads that arrived without a real content type (the CLI sent
-  // application/octet-stream until #27's hotfix) fall back to the filename.
-  return (
-    (type === "" || type === "application/octet-stream") &&
-    IMAGE_EXTENSION.test(attachment.filename)
-  );
-}
-
-export function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB"];
-  let value = bytes / 1024;
-  let i = 0;
-  while (value >= 1024 && i < units.length - 1) {
-    value /= 1024;
-    i++;
-  }
-  return `${value >= 10 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
-}
 
 /** Modifier-clicks (new tab, forced download) keep native link behavior. */
 function isPlainLeftClick(e: MouseEvent): boolean {
   return !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
 }
 
+function AttachmentTextBody({
+  target,
+  slug,
+  issueNumber,
+}: {
+  target: PreviewTarget;
+  slug: string;
+  issueNumber: number;
+}) {
+  const text = useQuery(attachmentTextQuery(target.url));
+  if (text.isPending) {
+    return (
+      <p className="py-8 text-center text-sm text-muted-foreground">
+        Loading {target.filename}…
+      </p>
+    );
+  }
+  if (text.isError) {
+    return (
+      <p className="py-8 text-center text-sm text-destructive">
+        Failed to load {target.filename}: {text.error.message}
+      </p>
+    );
+  }
+  return (
+    <div className="max-h-[75vh] overflow-auto">
+      <DocumentView
+        filename={target.filename}
+        text={text.data}
+        slug={slug}
+        issueNumber={issueNumber}
+      />
+    </div>
+  );
+}
+
 function AttachmentPreviewDialog({
   attachment,
+  slug,
+  issueNumber,
   onClose,
 }: {
   attachment: PreviewTarget | null;
+  slug: string;
+  issueNumber: number;
   onClose: () => void;
 }) {
   return (
@@ -71,11 +84,19 @@ function AttachmentPreviewDialog({
             <DialogTitle className="truncate pr-8">
               {attachment.filename}
             </DialogTitle>
-            <img
-              src={attachment.url}
-              alt={attachment.filename}
-              className="mx-auto max-h-[75vh] rounded-md object-contain"
-            />
+            {previewKind(attachment) === "text" ? (
+              <AttachmentTextBody
+                target={attachment}
+                slug={slug}
+                issueNumber={issueNumber}
+              />
+            ) : (
+              <img
+                src={attachment.url}
+                alt={attachment.filename}
+                className="mx-auto max-h-[75vh] rounded-md object-contain"
+              />
+            )}
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>
                 {[
@@ -103,11 +124,20 @@ function AttachmentPreviewDialog({
   );
 }
 
+function attachmentIcon(attachment: {
+  filename: string;
+  content_type?: string;
+}) {
+  if (previewKind(attachment) === "image") return ImageIcon;
+  if (isTextDocument(attachment)) return FileTextIcon;
+  return FileIcon;
+}
+
 /**
  * Attachment list for an issue. Every row is a real link to the download
- * API (so copy-link/middle-click keep working); a plain click on an image
- * is hijacked into an in-page preview modal, anything else falls through
- * to the browser download.
+ * API (so copy-link/middle-click keep working); a plain click on anything
+ * previewable (image or in-limit text) is hijacked into an in-page modal,
+ * anything else falls through to the browser download.
  */
 export function AttachmentList({
   slug,
@@ -129,35 +159,36 @@ export function AttachmentList({
         <span className="text-muted-foreground">{items.length}</span>
       </div>
       <ul className="divide-y">
-        {items.map((attachment) => (
-          <li key={attachment.id}>
-            <a
-              href={attachment.url}
-              className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/40"
-              onClick={(e) => {
-                if (isPreviewableImage(attachment) && isPlainLeftClick(e)) {
-                  e.preventDefault();
-                  setPreview(attachment);
-                }
-              }}
-            >
-              {isPreviewableImage(attachment) ? (
-                <ImageIcon className="size-4 shrink-0 text-muted-foreground" />
-              ) : (
-                <FileIcon className="size-4 shrink-0 text-muted-foreground" />
-              )}
-              <span className="truncate font-medium hover:underline">
-                {attachment.filename}
-              </span>
-              <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                {formatSize(attachment.size)}
-              </span>
-            </a>
-          </li>
-        ))}
+        {items.map((attachment) => {
+          const Icon = attachmentIcon(attachment);
+          return (
+            <li key={attachment.id}>
+              <a
+                href={attachment.url}
+                className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/40"
+                onClick={(e) => {
+                  if (previewKind(attachment) !== null && isPlainLeftClick(e)) {
+                    e.preventDefault();
+                    setPreview(attachment);
+                  }
+                }}
+              >
+                <Icon className="size-4 shrink-0 text-muted-foreground" />
+                <span className="truncate font-medium hover:underline">
+                  {attachment.filename}
+                </span>
+                <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                  {formatSize(attachment.size)}
+                </span>
+              </a>
+            </li>
+          );
+        })}
       </ul>
       <AttachmentPreviewDialog
         attachment={preview}
+        slug={slug}
+        issueNumber={issueNumber}
         onClose={() => setPreview(null)}
       />
     </section>
@@ -193,7 +224,7 @@ export function AttachmentEventLink({
         onClick={(e) => {
           if (
             attachment &&
-            isPreviewableImage(attachment) &&
+            previewKind(attachment) !== null &&
             isPlainLeftClick(e)
           ) {
             e.preventDefault();
@@ -205,6 +236,8 @@ export function AttachmentEventLink({
       </a>
       <AttachmentPreviewDialog
         attachment={preview}
+        slug={slug}
+        issueNumber={issueNumber}
         onClose={() => setPreview(null)}
       />
     </>
@@ -238,6 +271,7 @@ export function AttachmentRichLink({
     filename: fallbackName,
     url: href,
   };
+  const Icon = attachmentIcon(target);
 
   return (
     <>
@@ -245,21 +279,19 @@ export function AttachmentRichLink({
         href={attachment?.url ?? href}
         className="inline-flex items-center gap-1"
         onClick={(e) => {
-          if (isPreviewableImage(target) && isPlainLeftClick(e)) {
+          if (previewKind(target) !== null && isPlainLeftClick(e)) {
             e.preventDefault();
             setPreview(target);
           }
         }}
       >
-        {isPreviewableImage(target) ? (
-          <ImageIcon className="size-3.5 shrink-0" />
-        ) : (
-          <FileIcon className="size-3.5 shrink-0" />
-        )}
+        <Icon className="size-3.5 shrink-0" />
         {children ?? attachment?.filename ?? fallbackName}
       </a>
       <AttachmentPreviewDialog
         attachment={preview}
+        slug={slug}
+        issueNumber={issueNumber}
         onClose={() => setPreview(null)}
       />
     </>
@@ -303,6 +335,8 @@ export function AttachmentInlineImage({
       />
       <AttachmentPreviewDialog
         attachment={preview}
+        slug={slug}
+        issueNumber={issueNumber}
         onClose={() => setPreview(null)}
       />
     </>

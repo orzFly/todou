@@ -9,10 +9,7 @@ import {
   useState,
 } from "react";
 import { api } from "@/api/queries.ts";
-import {
-  formatSize,
-  isPreviewableImage,
-} from "@/components/issue/attachment-list.tsx";
+import { formatSize, isPreviewableImage } from "@/lib/attachment-preview.ts";
 import {
   attachmentImageMarker,
   attachmentLinkMarker,

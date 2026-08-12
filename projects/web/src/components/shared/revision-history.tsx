@@ -1,8 +1,12 @@
-import { MultiFileDiff } from "@pierre/diffs/react";
 import { useQuery } from "@tanstack/react-query";
 import type { Revision, RevisionPage } from "@todou/shared";
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
+import {
+  LazyMultiFileDiff,
+  PIERRE_THEME,
+  PIERRE_THEME_TYPE,
+} from "@/components/shared/pierre.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   Dialog,
@@ -18,7 +22,8 @@ import {
 
 // Module-scope per the library's props-stability guidance.
 const DIFF_OPTIONS = {
-  theme: { dark: "pierre-dark", light: "pierre-light" },
+  theme: PIERRE_THEME,
+  themeType: PIERRE_THEME_TYPE,
   diffStyle: "unified",
 } as const;
 
@@ -137,11 +142,19 @@ function RevisionDiff({
   );
   return (
     <div className="max-h-[70vh] overflow-auto rounded-md">
-      <MultiFileDiff
-        oldFile={oldFile}
-        newFile={newFile}
-        options={DIFF_OPTIONS}
-      />
+      <Suspense
+        fallback={
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            Loading diff…
+          </p>
+        }
+      >
+        <LazyMultiFileDiff
+          oldFile={oldFile}
+          newFile={newFile}
+          options={DIFF_OPTIONS}
+        />
+      </Suspense>
     </div>
   );
 }
