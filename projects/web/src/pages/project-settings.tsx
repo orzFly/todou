@@ -4,8 +4,20 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
-import type { Member, MemberRole, Status } from "@todou/shared";
-import { ArrowDownIcon, ArrowUpIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import type {
+  Member,
+  MemberRole,
+  Status,
+  StatusUpdateInput,
+} from "@todou/shared";
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  CheckIcon,
+  PinIcon,
+  PlusIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import {
@@ -20,6 +32,11 @@ import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -37,6 +54,32 @@ import {
 } from "@/components/ui/table";
 
 const ROLES: MemberRole[] = ["admin", "writer", "reader"];
+
+/** Preset swatches offered in the status color popover. */
+export const STATUS_COLORS = [
+  "#6b7280",
+  "#ef4444",
+  "#f97316",
+  "#f59e0b",
+  "#eab308",
+  "#22c55e",
+  "#10b981",
+  "#14b8a6",
+  "#0ea5e9",
+  "#3b82f6",
+  "#8b5cf6",
+  "#ec4899",
+];
+
+/** Lenient hand-typed hex → canonical #rrggbb, or null when unparseable. */
+export function normalizeHexColor(input: string): string | null {
+  const raw = input.trim().replace(/^#/, "").toLowerCase();
+  if (/^[0-9a-f]{6}$/.test(raw)) return `#${raw}`;
+  if (/^[0-9a-f]{3}$/.test(raw)) {
+    return `#${raw.replaceAll(/./g, (c) => c + c)}`;
+  }
+  return null;
+}
 
 export function ProjectSettingsPage() {
   const { slug } = useParams({ from: "/authed/projects/$slug" });
@@ -167,8 +210,8 @@ function StatusesSection({ slug }: { slug: string }) {
     onError: (error) => toast.error(error.message),
   });
   const patch = useMutation({
-    mutationFn: (vars: { id: number; position: number }) =>
-      api.updateStatus(slug, vars.id, { position: vars.position }),
+    mutationFn: (vars: { id: number; input: StatusUpdateInput }) =>
+      api.updateStatus(slug, vars.id, vars.input),
     onSuccess: invalidate,
     onError: (error) => toast.error(error.message),
   });
@@ -183,29 +226,12 @@ function StatusesSection({ slug }: { slug: string }) {
       ),
   });
 
-  const defaultStatus = statuses.data.find((s: Status) => s.is_default);
-  const setDefault = useMutation({
-    mutationFn: async (value: string) => {
-      if (value === "first") {
-        if (defaultStatus) {
-          await api.updateStatus(slug, defaultStatus.id, {
-            is_default: false,
-          });
-        }
-        return;
-      }
-      await api.updateStatus(slug, Number(value), { is_default: true });
-    },
-    onSuccess: invalidate,
-    onError: (error) => toast.error(error.message),
-  });
-
   function swap(index: number, direction: -1 | 1) {
     const a = statuses.data[index];
     const b = statuses.data[index + direction];
     if (!a || !b) return;
-    patch.mutate({ id: a.id, position: b.position });
-    patch.mutate({ id: b.id, position: a.position });
+    patch.mutate({ id: a.id, input: { position: b.position } });
+    patch.mutate({ id: b.id, input: { position: a.position } });
   }
 
   return (
@@ -227,6 +253,40 @@ function StatusesSection({ slug }: { slug: string }) {
               </span>
             )}
             <span className="ml-auto flex items-center gap-1">
+              <StatusColorPicker
+                status={status}
+                onPick={(color) =>
+                  patch.mutate({ id: status.id, input: { color } })
+                }
+              />
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={
+                  status.is_default
+                    ? `clear default status`
+                    : `make ${status.name} the default status`
+                }
+                title={
+                  status.is_default
+                    ? "Clear default — new issues go to the first status"
+                    : "New issues default to this status"
+                }
+                onClick={() =>
+                  patch.mutate({
+                    id: status.id,
+                    input: { is_default: !status.is_default },
+                  })
+                }
+              >
+                <PinIcon
+                  className={
+                    status.is_default
+                      ? "size-4 fill-primary text-primary"
+                      : "size-4 text-muted-foreground"
+                  }
+                />
+              </Button>
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -256,28 +316,6 @@ function StatusesSection({ slug }: { slug: string }) {
             </span>
           </div>
         ))}
-      </div>
-      <div className="flex items-center gap-2 text-sm">
-        <span className="text-muted-foreground">New issues default to:</span>
-        <Select
-          value={defaultStatus ? String(defaultStatus.id) : "first"}
-          onValueChange={(v) => setDefault.mutate(v)}
-        >
-          <SelectTrigger className="w-56" size="sm" aria-label="default status">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="first">
-              First status
-              {statuses.data[0] ? ` (${statuses.data[0].name})` : ""}
-            </SelectItem>
-            {statuses.data.map((status: Status) => (
-              <SelectItem key={status.id} value={String(status.id)}>
-                {status.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       </div>
       <form
         className="flex items-center gap-2"
@@ -309,6 +347,96 @@ function StatusesSection({ slug }: { slug: string }) {
         </Button>
       </form>
     </section>
+  );
+}
+
+function StatusColorPicker({
+  status,
+  onPick,
+}: {
+  status: Status;
+  onPick: (color: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [hex, setHex] = useState(status.color);
+  const normalized = normalizeHexColor(hex);
+
+  const pick = (color: string) => {
+    onPick(color);
+    setOpen(false);
+  };
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(isOpen) => {
+        setOpen(isOpen);
+        if (isOpen) setHex(status.color);
+      }}
+    >
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={`change ${status.name} color`}
+          title="Change color"
+        >
+          <span
+            className="size-4 rounded-full border"
+            style={{ backgroundColor: status.color }}
+            aria-hidden
+          />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-2">
+        <div className="grid grid-cols-6 gap-1.5">
+          {STATUS_COLORS.map((color) => (
+            <button
+              key={color}
+              type="button"
+              aria-label={`set ${status.name} color ${color}`}
+              className="flex size-6 cursor-pointer items-center justify-center rounded-full border transition-transform hover:scale-110"
+              style={{ backgroundColor: color }}
+              onClick={() => pick(color)}
+            >
+              {color === status.color.toLowerCase() && (
+                <CheckIcon className="size-3.5 text-white drop-shadow" />
+              )}
+            </button>
+          ))}
+        </div>
+        <form
+          className="mt-2 flex items-center gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (normalized) pick(normalized);
+          }}
+        >
+          <input
+            type="color"
+            value={normalized ?? status.color}
+            onChange={(e) => setHex(e.target.value)}
+            aria-label={`custom color for ${status.name}`}
+            className="size-7 shrink-0 cursor-pointer rounded border"
+          />
+          <Input
+            value={hex}
+            onChange={(e) => setHex(e.target.value)}
+            placeholder="#8b5cf6"
+            aria-label={`custom hex for ${status.name}`}
+            className="h-7 w-24 font-mono text-xs"
+          />
+          <Button
+            type="submit"
+            size="sm"
+            variant="outline"
+            disabled={!normalized}
+          >
+            Set
+          </Button>
+        </form>
+      </PopoverContent>
+    </Popover>
   );
 }
 
