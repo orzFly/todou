@@ -26,6 +26,7 @@ const user = {
   login: "claude-agent",
   display_name: "Claude @ Bot One",
   kind: "machine" as const,
+  avatar_url: null,
   owner: { id: 1, login: "user" },
 };
 
