@@ -25,6 +25,7 @@ import {
   rehypeSourceLines,
   SOURCE_LINE_ATTR,
 } from "@/lib/rehype-source-lines.ts";
+import { type LineRange, rangesIntersect } from "@/lib/spec-changes.ts";
 import type { SpecReviewDraft } from "@/lib/spec-drafts.ts";
 
 // Stable array — MarkdownView passes it straight to react-markdown.
@@ -78,6 +79,7 @@ export function AnnotatedMarkdown({
   issueNumber,
   body,
   annotations,
+  changedRanges = [],
   onStage,
   onRemoveDraft,
   onResolve,
@@ -87,6 +89,8 @@ export function AnnotatedMarkdown({
   issueNumber: number;
   body: string;
   annotations: DisplayedAnnotation[];
+  /** Lines changed since the compare baseline — green highlight + ↑↓ nav. */
+  changedRanges?: LineRange[];
   /** Stage a draft for the given source line range of the viewed version. */
   onStage: (range: { lineStart: number; lineEnd: number }) => void;
   onRemoveDraft: (id: string) => void;
@@ -116,7 +120,15 @@ export function AnnotatedMarkdown({
       if (index < 0) continue;
       grouped.set(index, [...(grouped.get(index) ?? []), annotation]);
     }
-    for (const block of blocks) block.el.classList.remove("spec-annotated");
+    for (const block of blocks) {
+      block.el.classList.remove("spec-annotated");
+      block.el.classList.toggle(
+        "spec-changed",
+        changedRanges.some((range) =>
+          rangesIntersect(range, { start: block.start, end: block.end }),
+        ),
+      );
+    }
     const next: Chip[] = [];
     for (const [index, items] of grouped) {
       const block = blocks[index];
@@ -141,7 +153,7 @@ export function AnnotatedMarkdown({
         );
       return same ? prev : next;
     });
-  }, [annotations]);
+  }, [annotations, changedRanges]);
 
   useLayoutEffect(() => {
     layout();

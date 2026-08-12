@@ -2,13 +2,19 @@ import type { SelectedLineRange } from "@pierre/diffs";
 import { MultiFileDiff } from "@pierre/diffs/react";
 import {
   useMutation,
+  useQuery,
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { Link, useParams, useSearch } from "@tanstack/react-router";
 import type { SpecCommentItem, SpecFile, SpecInfo } from "@todou/shared";
-import { ArrowLeftIcon, FileTextIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+  ArrowDownIcon,
+  ArrowLeftIcon,
+  ArrowUpIcon,
+  FileTextIcon,
+} from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
@@ -21,31 +27,9 @@ import {
 } from "@/components/spec/annotated-markdown.tsx";
 import { ReviewSubmitDialog } from "@/components/spec/review-submit.tsx";
 import { Button } from "@/components/ui/button";
+import { changedLineRanges } from "@/lib/spec-changes.ts";
 import { useSpecReviewDrafts } from "@/lib/spec-drafts.ts";
 import { cn } from "@/lib/utils.ts";
-
-export type SpecViewSearch = {
-  /** Selected file path; defaults to the first file of the version. */
-  file?: string;
-  /** Viewed version; defaults to the current one. */
-  v?: number;
-  /** When set, show the diff `compare → v` instead of the rendered file. */
-  compare?: number;
-};
-
-export function parseSpecViewSearch(
-  search: Record<string, unknown>,
-): SpecViewSearch {
-  const num = (v: unknown): number | undefined => {
-    const n = Number(v);
-    return Number.isInteger(n) && n > 0 ? n : undefined;
-  };
-  return {
-    file: typeof search.file === "string" ? search.file : undefined,
-    v: num(search.v),
-    compare: num(search.compare),
-  };
-}
 
 export function SpecViewPage() {
   const { slug, number: numberParam } = useParams({
@@ -109,10 +93,50 @@ function SpecViewBody({
   const drafts = useSpecReviewDrafts(slug, issueNumber);
   const [staging, setStaging] = useState<Staging | null>(null);
   const [finishOpen, setFinishOpen] = useState(false);
+  const [showChanges, setShowChanges] = useState(true);
+  const mainRef = useRef<HTMLDivElement>(null);
 
   const selectedPath = search.file ?? files.data.files[0]?.path;
   const selected = files.data.files.find((f) => f.path === selectedPath);
   const params = { slug, number: String(issueNumber) };
+
+  // Re-review aid: highlight what changed since the previous version.
+  const highlightEnabled = version > 1 && showChanges && compare === undefined;
+  const baseline = useQuery({
+    ...specFilesQuery(slug, issueNumber, version - 1),
+    enabled: highlightEnabled,
+  });
+  const changedRanges = useMemo(() => {
+    if (!highlightEnabled || selected === undefined || !baseline.data) {
+      return [];
+    }
+    const old =
+      baseline.data.files.find((f) => f.path === selected.path)?.body ?? "";
+    return changedLineRanges(old, selected.body);
+  }, [highlightEnabled, selected, baseline.data]);
+
+  const jumpChange = (direction: 1 | -1) => {
+    const root = mainRef.current;
+    if (!root) return;
+    const els = [...root.querySelectorAll<HTMLElement>(".spec-changed")];
+    if (els.length === 0) return;
+    const pivot = window.scrollY + window.innerHeight / 3;
+    const tops = els.map(
+      (el) => el.getBoundingClientRect().top + window.scrollY,
+    );
+    const index =
+      direction === 1
+        ? tops.findIndex((top) => top > pivot + 4)
+        : tops.findLastIndex((top) => top < pivot - 4);
+    const target =
+      els[index >= 0 ? index : direction === 1 ? 0 : els.length - 1];
+    if (!target) return;
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    // Same flash as timeline anchors (#38): remove → reflow → re-add.
+    target.classList.remove("anchor-flash");
+    void target.offsetWidth;
+    target.classList.add("anchor-flash");
+  };
 
   const queryClient = useQueryClient();
   const resolve = useMutation({
@@ -230,6 +254,43 @@ function SpecViewBody({
             diff v{version - 1}…v{version}
           </Link>
         )}
+        {version > 1 && compare === undefined && (
+          <>
+            <button
+              type="button"
+              onClick={() => setShowChanges(!showChanges)}
+              className={cn(
+                "cursor-pointer rounded-full border px-2.5 py-0.5 text-xs",
+                showChanges
+                  ? "border-emerald-600/60 bg-emerald-600/10 text-emerald-700 dark:text-emerald-400"
+                  : "text-muted-foreground hover:border-foreground/50",
+              )}
+              title={`Highlight blocks changed since v${version - 1}`}
+            >
+              changes since v{version - 1}
+            </button>
+            {highlightEnabled && (
+              <>
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label="previous change"
+                  onClick={() => jumpChange(-1)}
+                >
+                  <ArrowUpIcon className="size-4" />
+                </Button>
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label="next change"
+                  onClick={() => jumpChange(1)}
+                >
+                  <ArrowDownIcon className="size-4" />
+                </Button>
+              </>
+            )}
+          </>
+        )}
         <span className="ml-auto" />
         <Button size="sm" onClick={() => setFinishOpen(true)}>
           Finish review
@@ -278,7 +339,7 @@ function SpecViewBody({
               );
             })}
           </aside>
-          <main className="min-w-0 space-y-4">
+          <main className="min-w-0 space-y-4" ref={mainRef}>
             <div className="rounded-lg border px-5 py-4">
               {selected === undefined ? (
                 <p className="text-sm text-muted-foreground italic">
@@ -290,6 +351,7 @@ function SpecViewBody({
                   issueNumber={issueNumber}
                   body={selected.body}
                   annotations={displayed}
+                  changedRanges={changedRanges}
                   onStage={(range) =>
                     setStaging({
                       path: selected.path,

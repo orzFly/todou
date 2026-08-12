@@ -196,3 +196,21 @@ describe("ReviewSubmitDialog", () => {
     });
   });
 });
+
+describe("changedLineRanges", () => {
+  it("marks insertions and rewrites in new-version coordinates", async () => {
+    const { changedLineRanges } = await import("../src/lib/spec-changes.ts");
+    const oldBody = "a\nb\nc\nd\n";
+    expect(changedLineRanges(oldBody, oldBody)).toEqual([]);
+    // Rewrite line 2 → remove+add pair lands on new line 2.
+    expect(changedLineRanges(oldBody, "a\nB\nc\nd\n")).toEqual([
+      { start: 2, end: 2 },
+    ]);
+    // Two inserted header lines.
+    expect(changedLineRanges(oldBody, "h1\nh2\na\nb\nc\nd\n")).toEqual([
+      { start: 1, end: 2 },
+    ]);
+    // Everything new.
+    expect(changedLineRanges("", "x\ny\n")).toEqual([{ start: 1, end: 2 }]);
+  });
+});

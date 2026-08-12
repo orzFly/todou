@@ -491,6 +491,20 @@ function renderIssue(
       `opened by ${issue.author.login} ${relativeTime(issue.created_at)} · updated ${relativeTime(issue.updated_at)}`,
     ),
   );
+  if (issue.spec_version !== null) {
+    const status = {
+      unreviewed: "awaiting review",
+      approved: "approved",
+      changes_requested: "changes requested",
+    }[issue.spec_review_status ?? "unreviewed"];
+    const unresolved =
+      issue.spec_unresolved_comments > 0
+        ? ` · ${issue.spec_unresolved_comments} unresolved comment(s)`
+        : "";
+    lines.push(
+      `spec: v${issue.spec_version} · ${status}${unresolved} (todou spec status/pull/comments)`,
+    );
+  }
   if (issue.body.trim() !== "") {
     lines.push("", issue.body.trimEnd());
   }
@@ -525,6 +539,19 @@ export function renderTimelineItem(item: TimelineItem, paint: Painter): string {
             `(answer: web, or \`todou question answer <issue> ${item.id}\`)`,
           )}`
         : "";
+    if (item.component?.type === "spec_comment") {
+      const anchor = item.component.anchor;
+      const lines =
+        anchor.line_end === anchor.line_start
+          ? `L${anchor.line_start}`
+          : `L${anchor.line_start}-${anchor.line_end}`;
+      const resolved = item.resolved_at === null ? "unresolved" : "resolved";
+      const quote = anchor.quote
+        .split("\n")
+        .map((line) => paint("dim", `  > ${line}`))
+        .join("\n");
+      return `${paint("cyan", item.author.login)} commented on ${anchor.path}:${lines} (v${anchor.version}, ${resolved})${edited} ${when}:\n${quote}\n${body}`;
+    }
     return `${paint("cyan", item.author.login)} commented${edited} ${when}:\n${body}${questions}`;
   }
   const answered = item.type === "event" ? decodeAnswerEvent(item) : null;

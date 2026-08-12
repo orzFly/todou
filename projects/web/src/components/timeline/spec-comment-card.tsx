@@ -1,10 +1,15 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { SpecCommentComponent } from "@todou/shared";
 import { CheckIcon, FileTextIcon } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
+import { specFilesQuery } from "@/api/spec.ts";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils.ts";
+
+const CONTEXT_LINES = 8;
 
 /**
  * Anchor header of a spec comment in the timeline: file, lines, version,
@@ -28,6 +33,13 @@ export function SpecCommentAnchorCard({
   canResolve: boolean;
 }) {
   const anchor = component.anchor;
+  // Click-to-expand context (#23): fetch the anchored version lazily and
+  // widen the quote by a few lines either side, anchored range highlighted.
+  const [expanded, setExpanded] = useState(false);
+  const context = useQuery({
+    ...specFilesQuery(slug, issueNumber, anchor.version),
+    enabled: expanded,
+  });
   const queryClient = useQueryClient();
   const resolve = useMutation({
     mutationFn: () => api.resolveSpecComments(slug, issueNumber, [commentId]),
@@ -87,9 +99,76 @@ export function SpecCommentAnchorCard({
           view in doc →
         </Link>
       </div>
-      <pre className="max-h-40 overflow-auto bg-background px-3 py-2 font-mono text-xs whitespace-pre-wrap text-muted-foreground">
-        {anchor.quote}
+      <button
+        type="button"
+        className="block w-full cursor-pointer text-left"
+        title={expanded ? "collapse context" : "expand surrounding context"}
+        onClick={() => setExpanded(!expanded)}
+      >
+        {expanded && context.data ? (
+          <ExpandedContext
+            fileBody={
+              context.data.files.find((f) => f.path === anchor.path)?.body
+            }
+            lineStart={anchor.line_start}
+            lineEnd={anchor.line_end}
+            quote={anchor.quote}
+          />
+        ) : (
+          <pre className="max-h-40 overflow-auto bg-background px-3 py-2 font-mono text-xs whitespace-pre-wrap text-muted-foreground">
+            {anchor.quote}
+          </pre>
+        )}
+      </button>
+    </div>
+  );
+}
+
+function ExpandedContext({
+  fileBody,
+  lineStart,
+  lineEnd,
+  quote,
+}: {
+  fileBody: string | undefined;
+  lineStart: number;
+  lineEnd: number;
+  quote: string;
+}) {
+  if (fileBody === undefined) {
+    // The file vanished from that version snapshot (should not happen —
+    // anchors are validated) — fall back to the stored quote.
+    return (
+      <pre className="bg-background px-3 py-2 font-mono text-xs whitespace-pre-wrap text-muted-foreground">
+        {quote}
       </pre>
+    );
+  }
+  const lines = fileBody.split("\n");
+  const from = Math.max(1, lineStart - CONTEXT_LINES);
+  const to = Math.min(lines.length, lineEnd + CONTEXT_LINES);
+  return (
+    <div className="max-h-96 overflow-auto bg-background px-3 py-2 font-mono text-xs">
+      {lines.slice(from - 1, to).map((line, i) => {
+        const number = from + i;
+        const anchored = number >= lineStart && number <= lineEnd;
+        return (
+          <div
+            key={number}
+            className={cn(
+              "flex whitespace-pre-wrap",
+              anchored
+                ? "bg-amber-500/10 text-foreground"
+                : "text-muted-foreground",
+            )}
+          >
+            <span className="w-10 shrink-0 pr-2 text-right text-muted-foreground/50 select-none">
+              {number}
+            </span>
+            <span className="min-w-0 flex-1">{line || " "}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
