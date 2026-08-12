@@ -83,18 +83,31 @@ export function isMarkdownDocument(attachment: {
   );
 }
 
+/** HTML gets the sandboxed reader (#58) instead of a source view. */
+export function isHtmlDocument(attachment: {
+  filename: string;
+  content_type?: string;
+}): boolean {
+  const type = attachment.content_type ?? "";
+  if (type === "text/html" || type === "application/xhtml+xml") return true;
+  return hasGenericType(type) && /\.(html?|xhtml)$/i.test(attachment.filename);
+}
+
 /**
- * What a plain click on this attachment opens: an image lightbox, a text
- * preview, or nothing (native download). Text needs a known in-limit size —
- * an unresolved markdown reference stays a download link until the
- * attachments query fills in the numbers.
+ * What a plain click on this attachment opens: an image lightbox, the
+ * sandboxed HTML reader, a text preview, or nothing (native download).
+ * Text needs a known in-limit size — an unresolved markdown reference
+ * stays a download link until the attachments query fills in the numbers.
+ * HTML has no size cap: the browser streams it into the iframe instead of
+ * this tab highlighting it.
  */
 export function previewKind(target: {
   filename: string;
   content_type?: string;
   size?: number;
-}): "image" | "text" | null {
+}): "image" | "html" | "text" | null {
   if (isPreviewableImage(target)) return "image";
+  if (isHtmlDocument(target)) return "html";
   if (
     isTextDocument(target) &&
     target.size !== undefined &&

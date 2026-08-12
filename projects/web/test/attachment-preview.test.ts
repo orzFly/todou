@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  isHtmlDocument,
   isMarkdownDocument,
   isPreviewableImage,
   isTextDocument,
   previewKind,
   TEXT_PREVIEW_MAX_BYTES,
 } from "@/lib/attachment-preview.ts";
+import { viewHrefFromDownload } from "@/lib/attachment-refs.ts";
 
 const attachment = (filename: string, content_type: string, size = 1) => ({
   id: 1,
@@ -89,6 +91,48 @@ describe("isMarkdownDocument", () => {
     expect(isMarkdownDocument(attachment("notes.txt", "text/plain"))).toBe(
       false,
     );
+  });
+});
+
+describe("isHtmlDocument / html previews (#58)", () => {
+  it("matches by content type or extension", () => {
+    expect(isHtmlDocument(attachment("demo.html", "text/html"))).toBe(true);
+    expect(isHtmlDocument(attachment("page", "application/xhtml+xml"))).toBe(
+      true,
+    );
+    expect(
+      isHtmlDocument(attachment("demo.htm", "application/octet-stream")),
+    ).toBe(true);
+    // A real non-HTML type wins over the extension.
+    expect(isHtmlDocument(attachment("fake.html", "application/zip"))).toBe(
+      false,
+    );
+  });
+
+  it("routes html to the reader, with no size cap", () => {
+    expect(previewKind(attachment("demo.html", "text/html"))).toBe("html");
+    expect(
+      previewKind(
+        attachment("big.html", "text/html", TEXT_PREVIEW_MAX_BYTES * 10),
+      ),
+    ).toBe("html");
+    // Images still win the tie (an svg is both).
+    expect(previewKind(attachment("logo.svg", "image/svg+xml"))).toBe("image");
+  });
+
+  it("maps download URLs onto the inline-view route", () => {
+    expect(
+      viewHrefFromDownload("/api/projects/p/attachments/7/download/a.html"),
+    ).toBe("/api/projects/p/attachments/7/view/a.html");
+    expect(viewHrefFromDownload("/api/projects/p/attachments/7/download")).toBe(
+      "/api/projects/p/attachments/7/view",
+    );
+    // Only the path segment swaps, never a filename that contains the word.
+    expect(
+      viewHrefFromDownload(
+        "/api/projects/p/attachments/7/download/download.html",
+      ),
+    ).toBe("/api/projects/p/attachments/7/view/download.html");
   });
 });
 

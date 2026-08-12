@@ -82,6 +82,35 @@ const downloadNamedRoute = createRoute({
   responses: { 200: { description: "File stream" } },
 });
 
+const viewRoute = createRoute({
+  method: "get",
+  path: "/{slug}/attachments/{id}/view",
+  summary: "Render an attachment inline, CSP-sandboxed (member)",
+  request: {
+    params: z.object({
+      slug: ProjectSlug,
+      id: z.coerce.number().int().positive(),
+    }),
+  },
+  responses: { 200: { description: "Inline file stream" } },
+});
+
+const viewNamedRoute = createRoute({
+  method: "get",
+  path: "/{slug}/attachments/{id}/view/{name}",
+  summary:
+    "Render an attachment inline, CSP-sandboxed; the name segment is " +
+    "ignored (member)",
+  request: {
+    params: z.object({
+      slug: ProjectSlug,
+      id: z.coerce.number().int().positive(),
+      name: z.string(),
+    }),
+  },
+  responses: { 200: { description: "Inline file stream" } },
+});
+
 export function attachmentRoutes() {
   const app = new OpenAPIHono<AppEnv>();
 
@@ -114,10 +143,11 @@ export function attachmentRoutes() {
     return c.json(list, 200);
   });
 
-  const streamDownload = async (
+  const streamAttachment = async (
     c: Context<AppEnv>,
     slug: string,
     id: number,
+    disposition: "attachment" | "inline",
   ) => {
     const ctx = c.get("appCtx");
     const { row } = await openAttachment(ctx, c.get("user"), slug, id);
@@ -127,19 +157,39 @@ export function attachmentRoutes() {
     c.header("content-length", String(size));
     c.header(
       "content-disposition",
-      `attachment; filename="${row.filename.replaceAll('"', "_")}"`,
+      `${disposition}; filename="${row.filename.replaceAll('"', "_")}"`,
     );
+    if (disposition === "inline") {
+      // Attachments are user-supplied and share the API's origin. The CSP
+      // sandbox (no allow-same-origin) gives the document an opaque origin
+      // even when this URL is opened as a top-level tab, so its scripts can
+      // run but cannot use the viewer's cookies against the API. The web
+      // client's <iframe sandbox> is the first fence; this one holds when
+      // the URL is visited directly.
+      c.header("content-security-policy", "sandbox allow-scripts");
+      c.header("x-content-type-options", "nosniff");
+    }
     return c.body(Readable.toWeb(stream) as ReadableStream);
   };
 
   app.openapi(downloadRoute, (c) => {
     const { slug, id } = c.req.valid("param");
-    return streamDownload(c, slug, id);
+    return streamAttachment(c, slug, id, "attachment");
   });
 
   app.openapi(downloadNamedRoute, (c) => {
     const { slug, id } = c.req.valid("param");
-    return streamDownload(c, slug, id);
+    return streamAttachment(c, slug, id, "attachment");
+  });
+
+  app.openapi(viewRoute, (c) => {
+    const { slug, id } = c.req.valid("param");
+    return streamAttachment(c, slug, id, "inline");
+  });
+
+  app.openapi(viewNamedRoute, (c) => {
+    const { slug, id } = c.req.valid("param");
+    return streamAttachment(c, slug, id, "inline");
   });
 
   return app;

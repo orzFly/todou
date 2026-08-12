@@ -3,10 +3,13 @@ import {
   FileCode2Icon,
   FileTextIcon,
   Maximize2Icon,
+  MaximizeIcon,
+  MinimizeIcon,
 } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { CodeBlock } from "@/components/shared/pierre.tsx";
+import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
@@ -82,6 +85,7 @@ export function DocumentCard({
   collapsedClassName?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [maximized, setMaximized] = useState(false);
   const outerRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const [overflowing, setOverflowing] = useState(false);
@@ -171,12 +175,43 @@ export function DocumentCard({
       <Dialog
         open={expanded}
         onOpenChange={(open) => {
-          if (!open) setExpanded(false);
+          if (!open) {
+            setExpanded(false);
+            setMaximized(false);
+          }
         }}
       >
-        <DialogContent className="sm:max-w-4xl" aria-describedby={undefined}>
-          <DialogTitle className="truncate pr-8">{filename}</DialogTitle>
-          <div className="max-h-[75vh] overflow-auto">
+        <DialogContent
+          className={cn(
+            "flex flex-col bg-background",
+            // Maximized: fill the viewport (clearing the centering
+            // translate) but stay a modal — Esc still closes it.
+            // sm:max-w-none beats the dialog's built-in sm:max-w-sm cap.
+            maximized
+              ? "top-0 left-0 h-full w-full max-w-none translate-x-0 translate-y-0 rounded-none sm:max-w-none"
+              : "sm:max-w-4xl",
+          )}
+          aria-describedby={undefined}
+        >
+          <div className="flex items-center gap-1 pr-8">
+            <DialogTitle className="min-w-0 flex-1 truncate">
+              {filename}
+            </DialogTitle>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={maximized ? "restore size" : "maximize"}
+              onClick={() => setMaximized((m) => !m)}
+            >
+              {maximized ? <MinimizeIcon /> : <MaximizeIcon />}
+            </Button>
+          </div>
+          <div
+            className={cn(
+              "min-h-0 overflow-auto",
+              maximized ? "flex-1" : "max-h-[75vh]",
+            )}
+          >
             <DocumentView
               filename={filename}
               text={text}

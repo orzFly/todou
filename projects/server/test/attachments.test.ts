@@ -89,6 +89,44 @@ describe("attachments (fs backend)", () => {
     }
   });
 
+  it("serves the view route inline with a CSP sandbox (#58)", async () => {
+    const res = await upload("demo.html", "<script>alert(1)</script>");
+    const attachment = await json(res);
+    const viewUrl = attachment.url.replace("/download/", "/view/");
+
+    for (const url of [viewUrl, viewUrl.replace(/\/view\/.*$/, "/view")]) {
+      const view = await t.app.request(url, { headers: { cookie } });
+      expect(view.status).toBe(200);
+      expect(await view.text()).toBe("<script>alert(1)</script>");
+      expect(view.headers.get("content-disposition")).toContain("inline");
+      expect(view.headers.get("content-disposition")).toContain("demo.html");
+      // The document must never run with the API's origin: opaque origin
+      // even when the URL is opened as a top-level tab.
+      expect(view.headers.get("content-security-policy")).toBe(
+        "sandbox allow-scripts",
+      );
+      expect(view.headers.get("x-content-type-options")).toBe("nosniff");
+    }
+
+    // The download twin stays a plain attachment with no sandbox headers.
+    const download = await t.app.request(attachment.url, {
+      headers: { cookie },
+    });
+    expect(download.headers.get("content-disposition")).toContain("attachment");
+    expect(download.headers.get("content-security-policy")).toBeNull();
+  });
+
+  it("requires membership on the view route like download", async () => {
+    const res = await upload("secret.html", "<p>hi</p>");
+    const attachment = await json(res);
+    const viewUrl = attachment.url.replace("/download/", "/view/");
+    const outsider = await addUserWithToken(t.ctx, "outsider-58");
+    const denied = await t.app.request(viewUrl, {
+      headers: outsider.headers,
+    });
+    expect(denied.status).toBe(404);
+  });
+
   it("adds an attachment_added timeline event", async () => {
     await upload("evidence.txt", "x");
     const timeline = await json(

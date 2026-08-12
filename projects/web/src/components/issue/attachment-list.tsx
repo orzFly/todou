@@ -1,18 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
-import type { Attachment } from "@todou/shared";
 import {
-  DownloadIcon,
+  AppWindowIcon,
   FileIcon,
   FileTextIcon,
   ImageIcon,
   PaperclipIcon,
 } from "lucide-react";
 import { type MouseEvent, type ReactNode, useState } from "react";
-import { attachmentsQuery, attachmentTextQuery } from "@/api/attachments.ts";
-import { DocumentView } from "@/components/shared/document-card.tsx";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { attachmentsQuery } from "@/api/attachments.ts";
+import {
+  AttachmentViewerDialog,
+  type ViewerState,
+  viewerStateFor,
+} from "@/components/issue/attachment-viewer.tsx";
 import {
   formatSize,
+  isHtmlDocument,
   isTextDocument,
   type PreviewTarget,
   previewKind,
@@ -24,111 +27,12 @@ function isPlainLeftClick(e: MouseEvent): boolean {
   return !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
 }
 
-function AttachmentTextBody({
-  target,
-  slug,
-  issueNumber,
-}: {
-  target: PreviewTarget;
-  slug: string;
-  issueNumber: number;
-}) {
-  const text = useQuery(attachmentTextQuery(target.url));
-  if (text.isPending) {
-    return (
-      <p className="py-8 text-center text-sm text-muted-foreground">
-        Loading {target.filename}…
-      </p>
-    );
-  }
-  if (text.isError) {
-    return (
-      <p className="py-8 text-center text-sm text-destructive">
-        Failed to load {target.filename}: {text.error.message}
-      </p>
-    );
-  }
-  return (
-    <div className="max-h-[75vh] overflow-auto">
-      <DocumentView
-        filename={target.filename}
-        text={text.data}
-        slug={slug}
-        issueNumber={issueNumber}
-      />
-    </div>
-  );
-}
-
-function AttachmentPreviewDialog({
-  attachment,
-  slug,
-  issueNumber,
-  onClose,
-}: {
-  attachment: PreviewTarget | null;
-  slug: string;
-  issueNumber: number;
-  onClose: () => void;
-}) {
-  return (
-    <Dialog
-      open={attachment !== null}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <DialogContent className="sm:max-w-4xl" aria-describedby={undefined}>
-        {attachment && (
-          <>
-            <DialogTitle className="truncate pr-8">
-              {attachment.filename}
-            </DialogTitle>
-            {previewKind(attachment) === "text" ? (
-              <AttachmentTextBody
-                target={attachment}
-                slug={slug}
-                issueNumber={issueNumber}
-              />
-            ) : (
-              <img
-                src={attachment.url}
-                alt={attachment.filename}
-                className="mx-auto max-h-[75vh] rounded-md object-contain"
-              />
-            )}
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>
-                {[
-                  attachment.content_type,
-                  attachment.size !== undefined
-                    ? formatSize(attachment.size)
-                    : undefined,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </span>
-              <a
-                href={attachment.url}
-                download={attachment.filename}
-                className="inline-flex items-center gap-1 font-medium hover:underline"
-              >
-                <DownloadIcon className="size-3.5" />
-                Download
-              </a>
-            </div>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function attachmentIcon(attachment: {
   filename: string;
   content_type?: string;
 }) {
   if (previewKind(attachment) === "image") return ImageIcon;
+  if (isHtmlDocument(attachment)) return AppWindowIcon;
   if (isTextDocument(attachment)) return FileTextIcon;
   return FileIcon;
 }
@@ -136,8 +40,9 @@ function attachmentIcon(attachment: {
 /**
  * Attachment list for an issue. Every row is a real link to the download
  * API (so copy-link/middle-click keep working); a plain click on anything
- * previewable (image or in-limit text) is hijacked into an in-page modal,
- * anything else falls through to the browser download.
+ * previewable (image, HTML, in-limit text) is hijacked into the viewer,
+ * anything else falls through to the browser download. The viewer pages
+ * across the whole list (#58).
  */
 export function AttachmentList({
   slug,
@@ -147,7 +52,7 @@ export function AttachmentList({
   issueNumber: number;
 }) {
   const attachments = useQuery(attachmentsQuery(slug, issueNumber));
-  const [preview, setPreview] = useState<Attachment | null>(null);
+  const [viewer, setViewer] = useState<ViewerState | null>(null);
   const items = attachments.data ?? [];
   if (items.length === 0) return null;
 
@@ -159,7 +64,7 @@ export function AttachmentList({
         <span className="text-muted-foreground">{items.length}</span>
       </div>
       <ul className="divide-y">
-        {items.map((attachment) => {
+        {items.map((attachment, index) => {
           const Icon = attachmentIcon(attachment);
           return (
             <li key={attachment.id}>
@@ -169,7 +74,7 @@ export function AttachmentList({
                 onClick={(e) => {
                   if (previewKind(attachment) !== null && isPlainLeftClick(e)) {
                     e.preventDefault();
-                    setPreview(attachment);
+                    setViewer({ items, index });
                   }
                 }}
               >
@@ -185,11 +90,14 @@ export function AttachmentList({
           );
         })}
       </ul>
-      <AttachmentPreviewDialog
-        attachment={preview}
+      <AttachmentViewerDialog
+        state={viewer}
+        onNavigate={(index) =>
+          setViewer((prev) => (prev === null ? prev : { ...prev, index }))
+        }
+        onClose={() => setViewer(null)}
         slug={slug}
         issueNumber={issueNumber}
-        onClose={() => setPreview(null)}
       />
     </section>
   );
@@ -212,7 +120,7 @@ export function AttachmentEventLink({
   filename: string;
 }) {
   const attachments = useQuery(attachmentsQuery(slug, issueNumber));
-  const [preview, setPreview] = useState<Attachment | null>(null);
+  const [viewer, setViewer] = useState<ViewerState | null>(null);
   const attachment = attachments.data?.find((a) => a.id === attachmentId);
   const url = attachment?.url ?? attachmentHref(slug, attachmentId, filename);
 
@@ -228,17 +136,26 @@ export function AttachmentEventLink({
             isPlainLeftClick(e)
           ) {
             e.preventDefault();
-            setPreview(attachment);
+            setViewer(
+              viewerStateFor(
+                attachments.data ?? [],
+                attachments.data?.findIndex((a) => a.id === attachmentId) ?? -1,
+                attachment,
+              ),
+            );
           }
         }}
       >
         {filename}
       </a>
-      <AttachmentPreviewDialog
-        attachment={preview}
+      <AttachmentViewerDialog
+        state={viewer}
+        onNavigate={(index) =>
+          setViewer((prev) => (prev === null ? prev : { ...prev, index }))
+        }
+        onClose={() => setViewer(null)}
         slug={slug}
         issueNumber={issueNumber}
-        onClose={() => setPreview(null)}
       />
     </>
   );
@@ -265,7 +182,7 @@ export function AttachmentRichLink({
   children?: ReactNode;
 }) {
   const attachments = useQuery(attachmentsQuery(slug, issueNumber));
-  const [preview, setPreview] = useState<PreviewTarget | null>(null);
+  const [viewer, setViewer] = useState<ViewerState | null>(null);
   const attachment = attachments.data?.find((a) => a.id === attachmentId);
   const target: PreviewTarget = attachment ?? {
     filename: fallbackName,
@@ -281,18 +198,27 @@ export function AttachmentRichLink({
         onClick={(e) => {
           if (previewKind(target) !== null && isPlainLeftClick(e)) {
             e.preventDefault();
-            setPreview(target);
+            setViewer(
+              viewerStateFor(
+                attachments.data ?? [],
+                attachments.data?.findIndex((a) => a.id === attachmentId) ?? -1,
+                target,
+              ),
+            );
           }
         }}
       >
         <Icon className="size-3.5 shrink-0" />
         {children ?? attachment?.filename ?? fallbackName}
       </a>
-      <AttachmentPreviewDialog
-        attachment={preview}
+      <AttachmentViewerDialog
+        state={viewer}
+        onNavigate={(index) =>
+          setViewer((prev) => (prev === null ? prev : { ...prev, index }))
+        }
+        onClose={() => setViewer(null)}
         slug={slug}
         issueNumber={issueNumber}
-        onClose={() => setPreview(null)}
       />
     </>
   );
@@ -301,7 +227,7 @@ export function AttachmentRichLink({
 /**
  * Inline embedded image for markdown bodies: `![alt](…/download/name)`.
  * The download URL serves the bytes either way; this only adds the
- * click-to-preview affordance on top of the plain <img>.
+ * click-to-view affordance on top of the plain <img>.
  */
 export function AttachmentInlineImage({
   slug,
@@ -317,7 +243,7 @@ export function AttachmentInlineImage({
   alt: string;
 }) {
   const attachments = useQuery(attachmentsQuery(slug, issueNumber));
-  const [preview, setPreview] = useState<PreviewTarget | null>(null);
+  const [viewer, setViewer] = useState<ViewerState | null>(null);
   const attachment = attachments.data?.find((a) => a.id === attachmentId);
   const target: PreviewTarget = attachment ?? {
     filename: alt !== "" ? alt : "image",
@@ -326,18 +252,29 @@ export function AttachmentInlineImage({
 
   return (
     <>
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: zoom is a mouse affordance; the preview dialog's links stay keyboard-reachable */}
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: zoom is a mouse affordance; the viewer dialog's links stay keyboard-reachable */}
       <img
         src={src}
         alt={alt}
         className="cursor-zoom-in"
-        onClick={() => setPreview(target)}
+        onClick={() =>
+          setViewer(
+            viewerStateFor(
+              attachments.data ?? [],
+              attachments.data?.findIndex((a) => a.id === attachmentId) ?? -1,
+              target,
+            ),
+          )
+        }
       />
-      <AttachmentPreviewDialog
-        attachment={preview}
+      <AttachmentViewerDialog
+        state={viewer}
+        onNavigate={(index) =>
+          setViewer((prev) => (prev === null ? prev : { ...prev, index }))
+        }
+        onClose={() => setViewer(null)}
         slug={slug}
         issueNumber={issueNumber}
-        onClose={() => setPreview(null)}
       />
     </>
   );
