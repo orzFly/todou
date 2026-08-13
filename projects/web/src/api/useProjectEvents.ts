@@ -97,6 +97,32 @@ export function invalidationsFor(
 }
 
 /**
+ * The inbox badge (T-97) is user-scoped and cross-project, so it stays out
+ * of invalidationsFor's per-project map — but the stream we are already
+ * subscribed to is the fastest signal available for the project in view. Its
+ * own change signal is a 30s poll of /activity, which is what left the badge
+ * trailing the list by up to half a minute (T-112). Activity in projects the
+ * user is *not* looking at still waits for that poll.
+ *
+ * Only entities that can move a row in or out: comments and timeline entries
+ * (unread counts, questions), spec pushes and reviews (pending review), and
+ * issue updates — closing one retires both pending reasons (T-111). Events
+ * carry no actor, so the user's own writes refetch too; the server answer is
+ * authoritative either way, and one coalescing window collapses a burst.
+ */
+export function inboxInvalidations(event: ChangeEvent): Invalidation[] {
+  switch (event.entity) {
+    case "issue":
+    case "comment":
+    case "timeline":
+    case "spec":
+      return [refetch(["inbox"])];
+    default:
+      return [];
+  }
+}
+
+/**
  * Shape test for `contains`: an issue-list-like page holding the row.
  * The counts cache shares the ["issues", slug] prefix but has no items,
  * so it falls through to false and is only marked stale.
@@ -144,6 +170,9 @@ export function reconnectInvalidations(slug: string): QueryKeyLike[] {
     ["labels", slug],
     ["members", slug],
     ["project", slug],
+    // Not project-scoped, but a drop may have swallowed the events that
+    // would have refreshed it (T-112).
+    ["inbox"],
   ];
 }
 
@@ -248,7 +277,10 @@ export function useProjectEvents(slug: string) {
         } catch {
           return;
         }
-        enqueue(invalidationsFor(event, slug));
+        enqueue([
+          ...invalidationsFor(event, slug),
+          ...inboxInvalidations(event),
+        ]);
       });
       es.addEventListener(SSE_PING_EVENT, armStallTimer);
       es.onopen = () => {
