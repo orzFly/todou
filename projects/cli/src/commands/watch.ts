@@ -1,10 +1,11 @@
 import type { ActivityItem, TodouClient } from "@todou/shared";
-import { TimelineFilterType } from "@todou/shared";
+import { formatRef, TimelineFilterType } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { makePainter } from "../format.ts";
 import { drainPaged } from "../paginate.ts";
 import { parseSeconds } from "../parse.ts";
+import { fetchRefPrefix } from "../resolve.ts";
 import {
   normalizeTypes,
   retryTransient,
@@ -116,6 +117,7 @@ export class WatchCommand extends ProjectCommand {
       ).next_cursor ??
       undefined;
     const paint = makePainter(this.context.stdout, this.context.env);
+    const refPrefix = this.json ? null : await fetchRefPrefix(client, project);
 
     return runWatchLoop<ActivityItem>({
       poll: this.poll,
@@ -131,7 +133,11 @@ export class WatchCommand extends ProjectCommand {
           [
             ...items.map(
               (item) =>
-                `${paint("bold", `#${item.issue_number}`)} ${renderTimelineItem(item, paint)}`,
+                `${paint("bold", formatRef(refPrefix, item.issue_number))} ${renderTimelineItem(
+                  item,
+                  paint,
+                  { issueNumber: item.issue_number, refPrefix },
+                )}`,
             ),
             paint("dim", `cursor: ${cursor}`),
           ].join("\n"),

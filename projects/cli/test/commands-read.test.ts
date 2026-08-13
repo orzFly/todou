@@ -156,7 +156,10 @@ describe("issue view", () => {
           id: 2,
           event_type: "status_changed",
           actor: me,
-          payload: { from: "Todo", to: "Done" },
+          payload: {
+            from: { id: 1, name: "Todo" },
+            to: { id: 2, name: "Done" },
+          },
           created_at: "2026-08-11T10:45:00Z",
         },
       ],
@@ -206,7 +209,78 @@ describe("issue view", () => {
     });
     expect(result.stdout).toContain("#3 Fix the potato");
     expect(result.stdout).toContain("It sprouted.");
-    expect(result.stdout).toContain("status_changed (from=Todo to=Done)");
+    expect(result.stdout).toContain("status_changed (Todo → Done)");
+  });
+
+  it("spells out event payloads and appends spec command hints", async () => {
+    const event = (id: number, event_type: string, payload: unknown) => ({
+      type: "event",
+      id,
+      event_type,
+      actor: me,
+      payload,
+      created_at: "2026-08-11T10:45:00Z",
+    });
+    const page = {
+      items: [
+        event(1, "label_added", {
+          label: { id: 7, name: "bug", color: "#ef4444" },
+        }),
+        event(2, "assigned", { user: { id: 2, login: "claude" } }),
+        event(3, "referenced", { by_issue: 9, by_comment: 41 }),
+        event(4, "attachment_added", {
+          attachment: { id: 5, filename: "shot.png", size: 123 },
+        }),
+        event(5, "spec_pushed", {
+          version: 2,
+          message: "tighten scope",
+          added: ["plan.md"],
+          changed: ["design.md", "api.md"],
+          removed: [],
+        }),
+        event(6, "spec_review", {
+          version: 2,
+          verdict: "request_changes",
+          comment_id: null,
+          annotation_count: 4,
+        }),
+        event(7, "spec_comments_resolved", {
+          comment_ids: [11, 12],
+          paths: ["design.md"],
+        }),
+        event(8, "closed", { from: null, to: { id: 2, name: "Done" } }),
+      ],
+      prev_cursor: null,
+      next_cursor: null,
+    };
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3", issue],
+      ["GET", "/api/projects/todou/issues/3/timeline", page],
+      [
+        "GET",
+        "/api/projects/todou/references/config",
+        { format: { prefix: "T", history: [] }, autolinks: [] },
+      ],
+    ]);
+    const result = await runCli(["issue", "view", "3"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("label_added (bug)");
+    expect(result.stdout).toContain("assigned (@claude)");
+    expect(result.stdout).toContain("referenced (by T-9)");
+    expect(result.stdout).toContain("attachment_added (shot.png)");
+    expect(result.stdout).toContain(
+      "spec_pushed (v2: 1 added, 2 changed — tighten scope · use `todou spec pull 3 <dir>` to view)",
+    );
+    expect(result.stdout).toContain(
+      "spec_review (v2 changes requested, 4 annotation(s) · use `todou spec comments 3 --unresolved` to view)",
+    );
+    expect(result.stdout).toContain(
+      "spec_comments_resolved (2 annotation(s) on design.md)",
+    );
+    expect(result.stdout).toContain("closed (? → Done)");
   });
 
   it("renders renames and edited markers", async () => {

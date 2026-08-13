@@ -2,10 +2,16 @@ import type {
   Issue,
   IssueListItem,
   IssueUpdateInput,
+  TimelineEvent,
   TimelineItem,
   TodouClient,
 } from "@todou/shared";
-import { formatRef, TimelineFilterType } from "@todou/shared";
+import {
+  formatRef,
+  SpecPushedPayload,
+  SpecReviewPayload,
+  TimelineFilterType,
+} from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
@@ -278,6 +284,7 @@ export class IssueWatchCommand extends ProjectCommand {
       )) ??
       undefined;
     const paint = makePainter(this.context.stdout, this.context.env);
+    const refPrefix = this.json ? null : await fetchRefPrefix(client, project);
 
     return runWatchLoop<TimelineItem>({
       poll: this.poll,
@@ -291,7 +298,12 @@ export class IssueWatchCommand extends ProjectCommand {
       onItems: (items, cursor) =>
         this.output({ items, next_cursor: cursor ?? null }, () =>
           [
-            ...items.map((item) => renderTimelineItem(item, paint)),
+            ...items.map((item) =>
+              renderTimelineItem(item, paint, {
+                issueNumber: number,
+                refPrefix,
+              }),
+            ),
             paint("dim", `cursor: ${cursor}`),
           ].join("\n"),
         ),
@@ -543,7 +555,12 @@ function renderIssue(
   if (timeline.length > 0) {
     lines.push("", paint("dim", "── timeline ──"));
     for (const item of timeline) {
-      lines.push(renderTimelineItem(item, paint));
+      lines.push(
+        renderTimelineItem(item, paint, {
+          issueNumber: issue.number,
+          refPrefix,
+        }),
+      );
     }
   }
   if (cursor !== undefined) {
@@ -555,7 +572,17 @@ function renderIssue(
   return lines.join("\n");
 }
 
-export function renderTimelineItem(item: TimelineItem, paint: Painter): string {
+/** Where the item is being shown from, for refs and command hints. */
+type TimelineRenderContext = {
+  issueNumber: number;
+  refPrefix: string | null;
+};
+
+export function renderTimelineItem(
+  item: TimelineItem,
+  paint: Painter,
+  ctx: TimelineRenderContext,
+): string {
   const when = relativeTime(item.created_at);
   if (item.type === "comment") {
     const body = item.body
@@ -568,7 +595,7 @@ export function renderTimelineItem(item: TimelineItem, paint: Painter): string {
       item.component?.type === "questions"
         ? `\n${renderQuestions(item.component, paint).join("\n")}\n  ${paint(
             "dim",
-            `(answer: web, or \`todou question answer <issue> ${item.id}\`)`,
+            `(answer: web, or \`todou question answer ${ctx.issueNumber} ${item.id}\`)`,
           )}`
         : "";
     if (item.component?.type === "spec_comment") {
@@ -601,12 +628,97 @@ export function renderTimelineItem(item: TimelineItem, paint: Painter): string {
       `${item.actor.login} renamed "${String(item.payload.from)}" → "${String(item.payload.to)}" ${when}`,
     );
   }
-  const detail = Object.entries(item.payload)
-    .filter(([, v]) => typeof v === "string" || typeof v === "number")
-    .map(([k, v]) => `${k}=${String(v)}`)
-    .join(" ");
+  const detail = eventDetail(item, ctx);
   return paint(
     "dim",
     `${item.actor.login} ${item.event_type}${detail ? ` (${detail})` : ""} ${when}`,
   );
+}
+
+/**
+ * The parenthetical after an event's type: what actually changed, plus a
+ * follow-up command for spec events. Payloads are untyped over the wire,
+ * so a shape this code does not recognize falls back to the scalar dump
+ * instead of crashing on a newer server.
+ */
+function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
+  const payload = event.payload;
+  switch (event.event_type) {
+    case "closed":
+    case "reopened":
+    case "status_changed": {
+      if (payload.from === undefined && payload.to === undefined) {
+        return scalarDetail(payload);
+      }
+      return `${nested(payload.from, "name")} → ${nested(payload.to, "name")}`;
+    }
+    case "label_added":
+    case "label_removed":
+      return nested(payload.label, "name");
+    case "assigned":
+    case "unassigned":
+      return `@${nested(payload.user, "login")}`;
+    case "referenced":
+      return typeof payload.by_issue === "number"
+        ? `by ${formatRef(ctx.refPrefix, payload.by_issue)}`
+        : scalarDetail(payload);
+    case "attachment_added":
+      return payload.attachment === undefined
+        ? scalarDetail(payload)
+        : nested(payload.attachment, "filename");
+    case "spec_pushed": {
+      const spec = SpecPushedPayload.safeParse(payload);
+      if (!spec.success) return scalarDetail(payload);
+      const files = (
+        [
+          [spec.data.added.length, "added"],
+          [spec.data.changed.length, "changed"],
+          [spec.data.removed.length, "removed"],
+        ] as const
+      )
+        .filter(([n]) => n > 0)
+        .map(([n, word]) => `${n} ${word}`)
+        .join(", ");
+      const message =
+        spec.data.message === null ? "" : ` — ${spec.data.message}`;
+      return `v${spec.data.version}${files ? `: ${files}` : ""}${message} · use \`todou spec pull ${ctx.issueNumber} <dir>\` to view`;
+    }
+    case "spec_review": {
+      const review = SpecReviewPayload.safeParse(payload);
+      if (!review.success) return scalarDetail(payload);
+      const { version, verdict, annotation_count } = review.data;
+      const outcome = verdict === "approve" ? "approved" : "changes requested";
+      const notes =
+        annotation_count > 0 ? `, ${annotation_count} annotation(s)` : "";
+      const hint =
+        verdict === "approve"
+          ? `use \`todou spec pull ${ctx.issueNumber} <dir>\` to view`
+          : `use \`todou spec comments ${ctx.issueNumber} --unresolved\` to view`;
+      return `v${version} ${outcome}${notes} · ${hint}`;
+    }
+    case "spec_comments_resolved": {
+      if (!Array.isArray(payload.comment_ids)) return scalarDetail(payload);
+      const paths = Array.isArray(payload.paths)
+        ? payload.paths.filter((p): p is string => typeof p === "string")
+        : [];
+      const where = paths.length > 0 ? ` on ${paths.join(", ")}` : "";
+      return `${payload.comment_ids.length} annotation(s)${where}`;
+    }
+    default:
+      return scalarDetail(payload);
+  }
+}
+
+/** A string field off a nested payload object; "?" mirrors the web's fallback. */
+function nested(v: unknown, key: "name" | "login" | "filename"): string {
+  return typeof v === "object" && v !== null && key in v
+    ? String((v as Record<string, unknown>)[key])
+    : "?";
+}
+
+function scalarDetail(payload: Record<string, unknown>): string {
+  return Object.entries(payload)
+    .filter(([, v]) => typeof v === "string" || typeof v === "number")
+    .map(([k, v]) => `${k}=${String(v)}`)
+    .join(" ");
 }
