@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "description": "A to-do list app — reads as To-Do, sounds like 土豆 🥔",
   "private": true,
+  "license": "BSD-3-Clause",
+  "repository": "github:orzFly/todou",
   "type": "module",
   "scripts": {
     "fmt": "biome check --write .",

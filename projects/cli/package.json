@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "todou client CLI, for humans and agents",
   "private": true,
+  "license": "BSD-3-Clause",
   "type": "module",
   "bin": {
     "todou": "src/index.ts"
