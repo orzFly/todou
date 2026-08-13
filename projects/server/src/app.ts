@@ -28,7 +28,7 @@ import { userRoutes } from "./routes/users.ts";
 /**
  * Zod validation failures become uniform 422 error bodies. The message is
  * the prettified error, not a generic "invalid request": strict component
- * schemas (#19) reject hallucinated extra fields, and the offending path
+ * schemas (T-19) reject hallucinated extra fields, and the offending path
  * must reach the CLI user verbatim.
  */
 // biome-ignore lint/suspicious/noExplicitAny: hook signature is generic
@@ -101,7 +101,7 @@ export function createApp(ctx: AppContext) {
   // document carries the /api prefix in its paths.
   const api = new OpenAPIHono<AppEnv>({ defaultHook }).basePath("/api");
   // Body limits come before every route — including the unauthenticated
-  // /auth ones — so nothing buffers an oversized request (#70). The scoped
+  // /auth ones — so nothing buffers an oversized request (T-70). The scoped
   // upload limits must register ahead of the API-wide JSON limit, which
   // would otherwise cut legitimate uploads off first.
   api.use("/projects/:slug/attachments", uploadBodyLimit(ctx.config));

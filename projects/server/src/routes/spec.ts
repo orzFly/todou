@@ -32,7 +32,7 @@ const jsonBody = <T extends z.ZodType>(schema: T) => ({
 const specInfoRoute = createRoute({
   method: "get",
   path: "/{slug}/issues/{number}/spec",
-  summary: "Spec overview: versions, current files, review state (#23)",
+  summary: "Spec overview: versions, current files, review state (T-23)",
   request: { params: issueParams },
   responses: { 200: { description: "Spec", ...jsonBody(SpecInfo) } },
 });

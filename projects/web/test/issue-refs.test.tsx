@@ -14,7 +14,7 @@ import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { EventRow } from "../src/components/timeline/event-row.tsx";
 import { splitIssueRefs } from "../src/lib/issue-refs.ts";
 
-// Fences render through the lazily-imported pierre CodeView (#31); pin it
+// Fences render through the lazily-imported pierre CodeView (T-31); pin it
 // to a plain pre>code so the DOM is deterministic no matter when the lazy
 // chunk would resolve.
 vi.mock("@pierre/diffs/react", () => ({

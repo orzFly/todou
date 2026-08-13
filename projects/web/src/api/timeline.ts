@@ -23,7 +23,7 @@ export function latestNextCursor(pages: TimelinePage[]): string | null {
 }
 
 /**
- * The newest window of the timeline (#30 splits the old single query into
+ * The newest window of the timeline (T-30 splits the old single query into
  * tail + head around a folded middle). Initial page is the newest one;
  * SSE invalidations refetch it and pick up appended items.
  */

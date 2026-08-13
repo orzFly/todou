@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "todou shared schemas, types, and API client",
   "private": true,
+  "license": "BSD-3-Clause",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",

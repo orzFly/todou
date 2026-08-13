@@ -12,11 +12,11 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
-/** Below this the search box is noise (#76 design §3). */
+/** Below this the search box is noise (T-76 design §3). */
 const SEARCH_THRESHOLD = 8;
 
 /**
- * Navbar project switcher (#76). The project name keeps its link behavior;
+ * Navbar project switcher (T-76). The project name keeps its link behavior;
  * this chevron alone opens the picker. A hand-rolled listbox (highlight via
  * aria-activedescendant, focus pinned on one element) instead of radix
  * DropdownMenu, whose typeahead would fight the embedded search input.

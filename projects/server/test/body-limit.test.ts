@@ -8,7 +8,7 @@ const MB = 1024 * 1024;
 
 /**
  * A chunked body that records how much the server actually pulled. The
- * counter is the regression evidence for #70: the harm was unbounded
+ * counter is the regression evidence for T-70: the harm was unbounded
  * buffering, so the assertion has to be about bytes read, not the status
  * code — a 413 sent only after the whole body arrived would still OOM.
  */

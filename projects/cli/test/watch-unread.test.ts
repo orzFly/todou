@@ -73,7 +73,7 @@ describe("unread markers (server state)", () => {
     expect(line4).not.toContain("●");
   });
 
-  it("renders ● (+N) when the server reports unread comments (#77)", async () => {
+  it("renders ● (+N) when the server reports unread comments (T-77)", async () => {
     const countedPage = {
       items: [
         { ...listItem(3, "Fix the potato"), unread: true, unread_comments: 3 },
@@ -162,7 +162,7 @@ describe("unread markers (server state)", () => {
   });
 
   it("degrades silently on servers without read state", async () => {
-    // Pre-#46 list rows carry no unread field at all.
+    // Pre-T-46 list rows carry no unread field at all.
     const oldPage = {
       items: [listItem(3, "Fix the potato"), listItem(4, "Water the field")],
       next_cursor: null,

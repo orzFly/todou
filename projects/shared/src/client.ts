@@ -346,7 +346,7 @@ export class TodouClient {
       `/projects/${slug}/issues/${number}/comments/${commentId}`,
     );
 
-  // — questions (#19) —
+  // — questions (T-19) —
   getIssueQuestions = (slug: string, number: number) =>
     this.request<IssueQuestions>(
       "GET",
@@ -364,7 +364,7 @@ export class TodouClient {
       { json: input },
     );
 
-  // — spec (#23) —
+  // — spec (T-23) —
   getSpec = (slug: string, number: number) =>
     this.request<SpecInfo>("GET", `/projects/${slug}/issues/${number}/spec`);
   getSpecFiles = (slug: string, number: number, version?: number) =>

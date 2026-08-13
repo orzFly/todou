@@ -342,7 +342,7 @@ function Sidebar({
   });
 
   return (
-    // Sticky on large screens (#63): the sidebar keeps Status and the
+    // Sticky on large screens (T-63): the sidebar keeps Status and the
     // Latest spec section in view while the timeline scrolls; when taller
     // than the viewport it scrolls internally.
     <aside className="space-y-5 text-sm lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:self-start lg:overflow-y-auto">
@@ -464,7 +464,7 @@ function Sidebar({
         </DropdownMenu>
       </section>
 
-      {/* Placement per the #63 verdict: after Assignees, verdict-free. */}
+      {/* Placement per the T-63 verdict: after Assignees, verdict-free. */}
       <SpecSidebarSection slug={slug} issueNumber={issue.number} />
     </aside>
   );

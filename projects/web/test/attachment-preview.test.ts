@@ -94,7 +94,7 @@ describe("isMarkdownDocument", () => {
   });
 });
 
-describe("isHtmlDocument / html previews (#58)", () => {
+describe("isHtmlDocument / html previews (T-58)", () => {
   it("matches by content type or extension", () => {
     expect(isHtmlDocument(attachment("demo.html", "text/html"))).toBe(true);
     expect(isHtmlDocument(attachment("page", "application/xhtml+xml"))).toBe(
@@ -147,7 +147,7 @@ describe("previewKind", () => {
     ).toBe(null);
   });
 
-  it("keeps oversized text download-only (#31: no page-freezing renders)", () => {
+  it("keeps oversized text download-only (T-31: no page-freezing renders)", () => {
     expect(
       previewKind(
         attachment("huge.log", "text/plain", TEXT_PREVIEW_MAX_BYTES + 1),

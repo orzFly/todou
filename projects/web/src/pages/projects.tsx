@@ -31,7 +31,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 export function ProjectsPage() {
   const projects = useSuspenseQuery(projectsQuery);
-  // Same frecency order as the navbar switcher (#76).
+  // Same frecency order as the navbar switcher (T-76).
   const ordered = useProjectOrder(projects.data);
 
   return (

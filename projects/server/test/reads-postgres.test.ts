@@ -11,7 +11,7 @@ const json = (res: Response): Promise<any> => res.json() as Promise<any>;
  * postgres stores microseconds in `comments.created_at` — and `last_seen_at`
  * comes from a millisecond JS Date, so a comment landing later in the same
  * millisecond is only unread if the threshold compares at full precision
- * in SQL (#77). Runs only when TODOU_TEST_POSTGRES_URL points at a live
+ * in SQL (T-77). Runs only when TODOU_TEST_POSTGRES_URL points at a live
  * server, e.g.
  *
  *   TODOU_TEST_POSTGRES_URL=postgres://postgres:pg@127.0.0.1:54329/postgres \

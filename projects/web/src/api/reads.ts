@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/queries.ts";
 
 /**
- * Advance my last-seen position on an issue (#46). Best-effort by design:
+ * Advance my last-seen position on an issue (T-46). Best-effort by design:
  * failures only warn — read state must never block the page, and the next
  * visit retries naturally.
  */

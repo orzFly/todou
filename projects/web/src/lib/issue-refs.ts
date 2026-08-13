@@ -2,7 +2,7 @@
  * Reference tokenizer, mirroring the server's extraction regexes
  * (projects/server/src/services/references.ts) so a ref that records a
  * `referenced` event is exactly a ref that renders as a link. The config
- * is per-content (#80): `internalPrefix` is the format in force when the
+ * is per-content (T-80): `internalPrefix` is the format in force when the
  * content was CREATED, `autolinks` are the project's current rules.
  * Internal tokens are consumed first, so an autolink claiming "#" never
  * sees the `#N` tokens of content written while "#" was internal.

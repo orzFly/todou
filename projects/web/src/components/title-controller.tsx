@@ -48,7 +48,7 @@ function titleFor(
 }
 
 /**
- * Keeps document.title in step with the route (#62). Centralized here (not
+ * Keeps document.title in step with the route (T-62). Centralized here (not
  * per-page) so every route is covered from one table, and reads through the
  * same query cache the pages render from — SSE-driven renames of issues or
  * projects reach the browser tab with no extra fetches.

@@ -33,7 +33,7 @@ describe("invalidationsFor (SSE → query keys)", () => {
     ).toEqual([
       ["timeline", "todou", 7],
       ["questions", "todou", 7],
-      // Unread markers (#46) ride the list payload.
+      // Unread markers (T-46) ride the list payload.
       ["issues", "todou"],
     ]);
   });

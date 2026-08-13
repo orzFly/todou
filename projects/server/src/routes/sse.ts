@@ -43,7 +43,7 @@ export function sseRoutes() {
       });
       // Process shutdown must end the stream from the server side: SSE
       // responses never finish on their own, and every one of them would
-      // otherwise hold `server.close()` open until it is severed (#56).
+      // otherwise hold `server.close()` open until it is severed (T-56).
       const shutdown = ctx.shutdown.signal;
       const onShutdown = () => wake?.();
       shutdown.addEventListener("abort", onShutdown);

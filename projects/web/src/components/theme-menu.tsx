@@ -22,7 +22,7 @@ function Swatch({ surface, accent }: { surface: string; accent: string }) {
   );
 }
 
-/** Theme picker in the floating header (#36): system + every named theme. */
+/** Theme picker in the floating header (T-36): system + every named theme. */
 export function ThemeMenu() {
   const pref = useThemePref();
   const TriggerIcon =

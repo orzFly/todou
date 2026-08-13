@@ -59,7 +59,7 @@ describe("BoardCardContent question badge", () => {
   });
 });
 
-describe("BoardCardContent unread marker (#46, #77)", () => {
+describe("BoardCardContent unread marker (T-46, T-77)", () => {
   it("marks a card with event-only activity with the ring", async () => {
     const view = renderWithProviders(
       <BoardCardContent slug="p" issue={{ ...issue(0), unread: true }} />,
@@ -92,7 +92,7 @@ describe("BoardCardContent unread marker (#46, #77)", () => {
   });
 });
 
-describe("BoardCardContent spec badge (#53)", () => {
+describe("BoardCardContent spec badge (T-53)", () => {
   it("shows the awaiting-review badge for an unreviewed spec", async () => {
     const view = renderWithProviders(
       <BoardCardContent

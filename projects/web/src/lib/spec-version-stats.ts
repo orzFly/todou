@@ -1,6 +1,6 @@
 import type { SpecPushedPayload } from "@todou/shared";
 
-// Per-file git-stats for a spec version card (#59). Line counts are
+// Per-file git-stats for a spec version card (T-59). Line counts are
 // derived on demand from the immutable version snapshots — the
 // spec_pushed payload stays stats-free, so cards grow under events that
 // predate this feature too.

@@ -1,7 +1,7 @@
 import type { Project } from "@todou/shared";
 
 /**
- * Frecency ordering for projects (#76): visits recorded per browser in
+ * Frecency ordering for projects (T-76): visits recorded per browser in
  * localStorage, scored with exponential decay so busy projects float up and
  * stale ones sink. Newly created projects get a fast-decaying bonus derived
  * from server data alone, so they surface even on browsers with no history.

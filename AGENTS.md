@@ -1,29 +1,7 @@
 # todou
 
-## Issue labels
-
-Triage every issue on two dimensions plus one flag. `area:` says where the work lands, and this
-project's vocabulary is:
-
-| Label | Covers |
-|---|---|
-| `area:web` | `projects/web` |
-| `area:cli` | `projects/cli` |
-| `area:server` | `projects/server` |
-| `area:shared` | `projects/shared` |
-| `area:docs` | `docs/`, README, deployment docs |
-| `area:infra` | Deployment, CI, test infrastructure, repo tooling |
-
-Several `area:` labels on one card are normal when the work really spans packages. Exactly one
-`kind:` — `bug`, `feature`, or `chore`. `needs-brainstorm` only when a design round must precede
-implementation.
-
-No `priority:` or `status:` labels: the status column already carries both.
-
-## Environment
-
-- Ignore `.envrc`, `.mise.toml`, and similar environment manager configs. Do not run `direnv`, `mise`, or equivalent commands.
-- If `pnpm` commands fail (e.g. toolchain not found), ask the user how to proceed.
+Rules for anyone — human or agent — working in this repository. Hard rules
+first, project vocabulary last.
 
 ## Sanitization
 
@@ -85,3 +63,28 @@ scratch directory and on the tracker; it never enters the repository, not even a
    Co-Authored-By: GLM 5 <noreply@zhipuai.cn>
    Co-Authored-By: GPT 5.3 Codex <noreply@openai.com>
    ```
+
+## Environment
+
+- Ignore `.envrc`, `.mise.toml`, and similar environment manager configs. Do not run `direnv`, `mise`, or equivalent commands.
+- If `pnpm` commands fail (e.g. toolchain not found), ask the user how to proceed.
+
+## Issue labels
+
+Triage every issue on two dimensions plus one flag. `area:` says where the work lands, and this
+project's vocabulary is:
+
+| Label | Covers |
+|---|---|
+| `area:web` | `projects/web` |
+| `area:cli` | `projects/cli` |
+| `area:server` | `projects/server` |
+| `area:shared` | `projects/shared` |
+| `area:docs` | `docs/`, README, deployment docs |
+| `area:infra` | Deployment, CI, test infrastructure, repo tooling |
+
+Several `area:` labels on one card are normal when the work really spans packages. Exactly one
+`kind:` — `bug`, `feature`, or `chore`. `needs-brainstorm` only when a design round must precede
+implementation.
+
+No `priority:` or `status:` labels: the status column already carries both.

@@ -9,7 +9,7 @@ const V1 = [
   { path: "notes/phases.md", body: "# Phases\n\nOne.\n" },
 ];
 
-describe.each(PLACEMENTS)("spec #23 (%s placement)", (placement) => {
+describe.each(PLACEMENTS)("spec T-23 (%s placement)", (placement) => {
   let t: TestApp;
   let cookie: string;
   let slug: string;
@@ -77,7 +77,7 @@ describe.each(PLACEMENTS)("spec #23 (%s placement)", (placement) => {
     expect(info.versions).toHaveLength(1);
     expect(info.versions[0]).toMatchObject({ number: 1, message: "initial" });
 
-    // The denormalized columns feed list/board badges (#47 surface).
+    // The denormalized columns feed list/board badges (T-47 surface).
     const issue = await json(
       await t.app.request(`/api/projects/${slug}/issues/${number}`, {
         headers: headers(),
@@ -191,7 +191,7 @@ describe.each(PLACEMENTS)("spec #23 (%s placement)", (placement) => {
       const res = await push(number, { files });
       expect(res.status).toBe(422);
     }
-    // Extra fields fail loudly with the path named (#19 convention).
+    // Extra fields fail loudly with the path named (T-19 convention).
     const res = await push(number, { files: V1, extra: true });
     expect(res.status).toBe(422);
     expect((await json(res)).error.message).toContain("extra");

@@ -18,7 +18,7 @@ export const MAX_DRAIN_PAGES = 1000;
  * are applied in SQL, so an empty page never hides more rows). A server that
  * breaks that promise — a cursor that does not advance, or an empty page
  * that still carries one — used to spin this loop forever and OOM the
- * process (#68: ~3M identical requests, ~4 GB RSS in 97s). Both anomalies
+ * process (T-68: ~3M identical requests, ~4 GB RSS in 97s). Both anomalies
  * now end the drain; a stalled page's items are dropped because they sit at
  * or before the cursor we already handed out, so emitting them would break
  * the never-repeat guarantee. MAX_DRAIN_PAGES bounds the remaining case of

@@ -35,7 +35,7 @@ export async function sweepAuthRows(
 
 /**
  * Run the auth sweep now and then on an interval. Returns a stop function —
- * the serve shutdown path must call it (see #56's graceful-shutdown hook).
+ * the serve shutdown path must call it (see T-56's graceful-shutdown hook).
  * The timer is unref'd so a missed stop can never hold the process open.
  */
 export function startHousekeeping(

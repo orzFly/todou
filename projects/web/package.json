@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "todou web frontend",
   "private": true,
+  "license": "BSD-3-Clause",
   "type": "module",
   "scripts": {
     "dev": "vite",

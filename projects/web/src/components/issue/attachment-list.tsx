@@ -42,7 +42,7 @@ function attachmentIcon(attachment: {
  * API (so copy-link/middle-click keep working); a plain click on anything
  * previewable (image, HTML, in-limit text) is hijacked into the viewer,
  * anything else falls through to the browser download. The viewer pages
- * across the whole list (#58).
+ * across the whole list (T-58).
  */
 export function AttachmentList({
   slug,

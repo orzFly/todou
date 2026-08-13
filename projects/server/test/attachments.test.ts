@@ -91,7 +91,7 @@ describe("attachments (fs backend)", () => {
     }
   });
 
-  it("serves the view route inline with a CSP sandbox (#58)", async () => {
+  it("serves the view route inline with a CSP sandbox (T-58)", async () => {
     const res = await upload("demo.html", "<script>alert(1)</script>");
     const attachment = await json(res);
     const viewUrl = attachment.url.replace("/download/", "/view/");

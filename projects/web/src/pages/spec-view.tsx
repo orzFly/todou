@@ -125,14 +125,14 @@ function SpecViewBody({
 
   // Re-review aid: highlight what changed since the previous version. The
   // baseline snapshot also feeds the sidebar diff stats and the new-file
-  // detection (#61), so it loads whenever a previous version exists.
+  // detection (T-61), so it loads whenever a previous version exists.
   const highlightEnabled = version > 1 && showChanges && compare === undefined;
   const baseline = useQuery({
     ...specFilesQuery(slug, issueNumber, version - 1),
     enabled: version > 1,
   });
   // A file with no baseline counterpart is brand new: highlighting every
-  // block tells the reviewer nothing (#61) — render it normally and say
+  // block tells the reviewer nothing (T-61) — render it normally and say
   // "new file" instead.
   const isNewFile =
     version > 1 &&
@@ -150,7 +150,7 @@ function SpecViewBody({
 
   // Files of the viewed version that differ from the baseline (new or
   // modified), in sidebar order — the rail the change navigation rides
-  // across file boundaries (#61).
+  // across file boundaries (T-61).
   const changedFiles = useMemo(() => {
     if (version <= 1 || !baseline.data) return [];
     const before = new Map(baseline.data.files.map((f) => [f.path, f.body]));
@@ -159,7 +159,7 @@ function SpecViewBody({
       .map((f) => f.path);
   }, [version, baseline.data, files.data.files]);
 
-  // Sidebar diff stats vs the baseline, same visuals as the #59 version
+  // Sidebar diff stats vs the baseline, same visuals as the T-59 version
   // card. Removed files have no sidebar row to annotate — the version
   // card in the timeline still accounts for them.
   const sidebarStats = useMemo(() => {
@@ -190,7 +190,7 @@ function SpecViewBody({
 
   const flashTo = (target: HTMLElement) => {
     target.scrollIntoView({ block: "center", behavior: "smooth" });
-    // Same flash as timeline anchors (#38): remove → reflow → re-add.
+    // Same flash as timeline anchors (T-38): remove → reflow → re-add.
     target.classList.remove("anchor-flash");
     void target.offsetWidth;
     target.classList.add("anchor-flash");
@@ -201,7 +201,7 @@ function SpecViewBody({
    * arbitrary pivot: scrollIntoView({block:"center"}) leaves the current
    * target's center ≈ the viewport's, so it excludes itself from both
    * directions — the old top-vs-⅓-height comparison kept re-finding the
-   * element it had just centered and the navigation jammed (#61).
+   * element it had just centered and the navigation jammed (T-61).
    */
   const jumpWithin = (direction: 1 | -1): boolean => {
     const root = mainRef.current;
@@ -287,7 +287,7 @@ function SpecViewBody({
     for (const item of comments.data.items) {
       if (item.anchor.path !== selectedPath) continue;
       if (item.anchor.line_start === null || item.anchor.line_end === null) {
-        // File-level comments (#61) sit above the document, not on a block.
+        // File-level comments (T-61) sit above the document, not on a block.
         fileLevel.push(item);
       } else if (item.anchor.version === version) {
         displayed.push({
@@ -701,7 +701,7 @@ function UnplacedComment({
 
 // Module-scope per the library's props-stability guidance; interaction
 // callbacks are merged per file pair below. Theme constants follow the
-// shared pierre setup (#31); the direct MultiFileDiff import is fine here
+// shared pierre setup (T-31); the direct MultiFileDiff import is fine here
 // because this whole page is route-lazy — pierre never reaches the main
 // bundle through it.
 const DIFF_THEME = {
@@ -728,7 +728,7 @@ function SpecDiff({
   toVersion: number;
   comments: SpecCommentItem[];
   onStage: (staging: Staging) => void;
-  /** Scroll this file's diff into view — the version card's per-file link (#59). */
+  /** Scroll this file's diff into view — the version card's per-file link (T-59). */
   focusPath?: string;
 }) {
   const from = useSuspenseQuery(specFilesQuery(slug, issueNumber, fromVersion));

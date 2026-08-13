@@ -257,7 +257,7 @@ export async function deleteComment(
   );
   let counterChanged = false;
   await db.transaction(async (tx) => {
-    // A still-unresolved spec comment gives its count back (#23); a
+    // A still-unresolved spec comment gives its count back (T-23); a
     // resolved one already surrendered it at resolve time.
     if (row.component?.type === "spec_comment" && row.resolvedAt === null) {
       await tx

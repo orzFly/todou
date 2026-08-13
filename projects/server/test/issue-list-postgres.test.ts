@@ -42,7 +42,7 @@ describe.skipIf(!PG_URL)("issue list cursors on real postgres", () => {
       );
       seen.push(...page.items.map((i: { number: number }) => i.number));
       if (page.next_cursor === null) return seen;
-      // The #73 failure shape: with `limit` ≤ the millisecond bucket size
+      // The T-73 failure shape: with `limit` ≤ the millisecond bucket size
       // the next page reproduces its own input cursor, forever.
       expect(page.next_cursor).not.toBe(cursor);
       cursor = page.next_cursor;

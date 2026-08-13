@@ -303,7 +303,7 @@ export class StatusInitCommand extends ProjectCommand {
     }
 
     // Without an explicit default, new issues fall back to the first status
-    // by position (#14) — which init just changed by putting Backlog ahead
+    // by position (T-14) — which init just changed by putting Backlog ahead
     // of Todo. Pin Todo so the effective default stays put.
     let defaulted: Status | undefined;
     if (!board.some((s) => s.is_default)) {

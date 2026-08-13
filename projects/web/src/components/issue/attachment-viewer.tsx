@@ -82,7 +82,7 @@ function DownloadOnlyPane({ target }: { target: PreviewTarget }) {
 }
 
 /**
- * The attachment viewer (#58): one dialog for images, sandboxed HTML,
+ * The attachment viewer (T-58): one dialog for images, sandboxed HTML,
  * text/markdown, and download-only fallbacks. A post's attachments page
  * with ‹ › / arrow keys (controls live in the title bar, never floated
  * over the content), and every kind offers native fullscreen.
@@ -101,7 +101,7 @@ export function AttachmentViewerDialog({
   issueNumber: number;
 }) {
   // "Maximize" fills the browser window without entering system fullscreen
-  // (the form the reviewer picked on #58); the dialog stays a modal.
+  // (the form the reviewer picked on T-58); the dialog stays a modal.
   const [maximized, setMaximized] = useState(false);
 
   const target = state?.items[state.index];

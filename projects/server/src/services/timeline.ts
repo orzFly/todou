@@ -193,7 +193,7 @@ function compareRaw(a: Raw, b: Raw): number {
  * in timeline order"; backward is the mirror image.
  *
  * Cursor timestamps come in two precisions: microseconds from current
- * servers, milliseconds from servers before the #69 fix (and from any
+ * servers, milliseconds from servers before the T-69 fix (and from any
  * PGlite-era cursor an agent still has persisted). A millisecond `t`
  * cannot order rows inside its own millisecond, so for those cursors the
  * whole [t, t+1ms) window counts as "equal timestamp" and the (kind, id)

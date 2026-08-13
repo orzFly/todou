@@ -76,7 +76,7 @@ function toIssue(bundle: IssueBundle): Issue {
     spec_version: bundle.row.specVersion,
     spec_review_status: bundle.row.specReviewStatus,
     spec_unresolved_comments: bundle.row.specUnresolvedComments,
-    // Per-viewer fields; only listIssues overrides them (#46, #77).
+    // Per-viewer fields; only listIssues overrides them (T-46, T-77).
     unread: false,
     unread_comments: 0,
   };

@@ -37,7 +37,7 @@ export function stripMarkdownCode(text: string): string {
 /**
  * Extract internal issue references from markdown, ignoring code
  * segments. `prefix` selects the format the content was WRITTEN under
- * (#80 time-cutoff rule): null = `#N`, 'T' = `T-N`. The web tokenizer
+ * (T-80 time-cutoff rule): null = `#N`, 'T' = `T-N`. The web tokenizer
  * (projects/web/src/lib/issue-refs.ts) mirrors these regexes.
  */
 export function extractIssueRefs(

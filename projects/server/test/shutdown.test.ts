@@ -10,7 +10,7 @@ const SERVER_DIR = fileURLToPath(new URL("..", import.meta.url));
 
 // Generous next to the healthy exit time (tens of ms), tight next to the
 // failure modes this guards against: the 28s heartbeat-timer linger and the
-// pre-#26 infinite hang that systemd SIGKILLed after ~90s of outage (#56).
+// pre-T-26 infinite hang that systemd SIGKILLed after ~90s of outage (T-56).
 const EXIT_BUDGET_MS = 3_000;
 
 type RunningServer = {
@@ -67,7 +67,7 @@ async function readUntilHello(
   }
 }
 
-describe("serve shutdown (#56)", () => {
+describe("serve shutdown (T-56)", () => {
   let server: RunningServer | undefined;
 
   afterEach(() => {

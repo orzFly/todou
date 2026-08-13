@@ -41,7 +41,7 @@ export type IssueRef = {
 const ISSUE_URL_PATH = /^\/projects\/([^/]+)\/issues\/([^/]+)\/?$/;
 
 /**
- * A project's prefixed reference form (#80), e.g. "T-76" or "FOOBAR-8".
+ * A project's prefixed reference form (T-80), e.g. "T-76" or "FOOBAR-8".
  * Deliberately loose: any well-formed prefix is accepted without checking
  * the project's configured one — the positional already names its project,
  * so the number is unambiguous and validating would cost a network call.

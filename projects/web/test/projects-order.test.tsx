@@ -82,7 +82,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("ProjectsPage ordering (#76)", () => {
+describe("ProjectsPage ordering (T-76)", () => {
   it("renders cards in frecency order, never-visited trailing newest-first", async () => {
     recordVisit(1, "busy", Date.now() - 1000);
     renderProjects([

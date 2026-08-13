@@ -17,12 +17,12 @@ export const Issue = z.object({
   /** Last body-changing edit; null when the body was never edited. */
   body_edited_at: Timestamp.nullable(),
   /**
-   * Unanswered questions across all question comments (#19, feeds #46).
-   * Defaults on parse so clients tolerate servers predating #19.
+   * Unanswered questions across all question comments (T-19, feeds T-46).
+   * Defaults on parse so clients tolerate servers predating T-19.
    */
   open_questions: z.number().int().nonnegative().default(0),
   /**
-   * Denormalized spec state (#23): current version, verdict of the current
+   * Denormalized spec state (T-23): current version, verdict of the current
    * version's review, unresolved anchored comments. Null version/status =
    * no spec. Defaults keep old servers parseable.
    */
@@ -34,14 +34,14 @@ export const Issue = z.object({
   spec_unresolved_comments: z.number().int().nonnegative().default(0),
   /**
    * Per-viewer: whether this issue has activity by someone other than the
-   * requesting user, newer than their last-seen position (#46). Computed
+   * requesting user, newer than their last-seen position (T-46). Computed
    * only for list responses; every other path returns the default false.
    * Defaults on parse so clients tolerate older servers.
    */
   unread: z.boolean().default(false),
   /**
    * Per-viewer: comments (any component kind) by someone other than the
-   * requesting user, newer than their last-seen position (#77; same
+   * requesting user, newer than their last-seen position (T-77; same
    * threshold as `unread`). Events don't count. Exact value — display
    * capping is the client's business. Computed only for list responses;
    * every other path returns the default 0. Defaults on parse so clients

@@ -55,7 +55,7 @@ const renderRow = (unread: boolean, unreadComments = 0) =>
     </Table>,
   );
 
-describe("IssueRow unread marker (#46, #77)", () => {
+describe("IssueRow unread marker (T-46, T-77)", () => {
   it("shows the ring next to the number for event-only activity", async () => {
     const view = renderRow(true);
     await view.findByText("issue 1");

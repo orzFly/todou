@@ -25,7 +25,7 @@ function subscribeToStorage(callback: () => void) {
 
 /**
  * Frecency ordering shared by the project switcher and the projects home
- * (#76) — one comparator, so both always show the same sequence. The
+ * (T-76) — one comparator, so both always show the same sequence. The
  * snapshot stays the raw string: parsing in the snapshot would mint a new
  * object identity per call and spin useSyncExternalStore forever.
  */

@@ -23,7 +23,7 @@ const BLOCK_TAGS = new Set([
 export const SOURCE_LINE_ATTR = "data-loc";
 
 /**
- * Where a code block's contents begin in the source (#52). The stamped
+ * Where a code block's contents begin in the source (T-52). The stamped
  * range starts at the ``` marker for fenced blocks but at the first code
  * line for indented ones; the renderer records the resolved start so
  * selection anchoring can map pierre's per-line rows back to source lines

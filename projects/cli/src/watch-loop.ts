@@ -167,7 +167,7 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
     if (items.length > 0) {
       if (opts.debounceSec !== undefined && !opts.poll) {
         // The window is anchored on when the newest entry of this first
-        // batch happened, not on when the watcher saw it (#50): resuming
+        // batch happened, not on when the watcher saw it (T-50): resuming
         // with an old cursor over already-quiet history returns at once
         // instead of idling out a full window, while live entries
         // (created_at ≈ now) still get the whole window. The anchor is

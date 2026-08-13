@@ -6,7 +6,7 @@ export type LineRange = { start: number; end: number };
  * 1-based inclusive line ranges of `newBody` that differ from `oldBody`
  * (insertions and rewrites; a pure deletion leaves no new lines to mark).
  * Drives the re-review aids: green "changed since vX" highlights and the
- * prev/next-change navigation (#23 phase 3).
+ * prev/next-change navigation (T-23 phase 3).
  */
 export function changedLineRanges(
   oldBody: string,

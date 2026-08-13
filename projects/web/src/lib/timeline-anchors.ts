@@ -1,5 +1,5 @@
 /**
- * Timeline permalink anchors (#38): `#comment-<id>` / `#event-<id>`.
+ * Timeline permalink anchors (T-38): `#comment-<id>` / `#event-<id>`.
  * The id doubles as the DOM element id, so anchor → element resolution
  * is a plain getElementById.
  */

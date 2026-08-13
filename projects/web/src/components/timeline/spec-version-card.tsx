@@ -23,7 +23,7 @@ const CHANGE_BADGE: Record<
 };
 
 /**
- * Version card under a spec_pushed event (#59): the pushed version's file
+ * Version card under a spec_pushed event (T-59): the pushed version's file
  * list with git-stats-style changes. Click contract — file name opens that
  * file at that (historical) version, the ± numbers open the per-file diff,
  * the title opens the whole version, ↔ the whole diff. Expanded by

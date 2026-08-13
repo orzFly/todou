@@ -9,7 +9,7 @@ export function ProjectLayout() {
   const project = useSuspenseQuery(projectQuery(slug));
   // Live updates for every page under this project (list/board/issue).
   useProjectEvents(slug);
-  // Feed the frecency ordering (#76).
+  // Feed the frecency ordering (T-76).
   useRecordProjectVisit(slug);
 
   return (

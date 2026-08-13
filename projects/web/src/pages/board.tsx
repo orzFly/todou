@@ -269,7 +269,7 @@ export function BoardCardContent({
         {issue.title}
       </Link>
       {/* Meta row hosts the question badge; the card's top-right corner
-          belongs to the unread marker above (#46, #77). */}
+          belongs to the unread marker above (T-46, T-77). */}
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
         <span className="text-xs text-muted-foreground">
           {formatRef(refPrefix, issue.number)}

@@ -5,7 +5,7 @@ import {
   parseTimelineAnchor,
 } from "@/lib/timeline-anchors.ts";
 
-/** What the anchor needs from the folded timeline (#30). */
+/** What the anchor needs from the folded timeline (T-30). */
 export type GapExpansion = {
   /** Items still folded between head and tail (0 = nothing left to load). */
   remaining: number;
@@ -27,9 +27,9 @@ function flash(el: HTMLElement) {
 }
 
 /**
- * Drive `#comment-<id>` / `#event-<id>` anchors (#38): once the target is
+ * Drive `#comment-<id>` / `#event-<id>` anchors (T-38): once the target is
  * rendered, center it and flash a highlight; while it isn't, expand the
- * folded middle (#30) one chunk at a time from the gap's head side until
+ * folded middle (T-30) one chunk at a time from the gap's head side until
  * the target's chunk is in. The anchor → element contract (anchorElementId)
  * and the scroll+flash step stay as they were.
  *
@@ -59,7 +59,7 @@ export function useTimelineAnchor(gap: GapExpansion): boolean {
       flash(el);
     } else if (gap.remaining > 0 && !gap.isExpanding) {
       // A dead anchor (deleted comment, foreign event id) expands at most
-      // the whole gap — bounded, unlike the pre-#30 load-everything walk.
+      // the whole gap — bounded, unlike the pre-T-30 load-everything walk.
       // Stop early if an expansion failed to shrink the gap (server
       // anomaly); anything else would loop forever.
       if (

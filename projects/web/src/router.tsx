@@ -141,7 +141,7 @@ const issueRoute = createRoute({
 });
 
 // Lazy: the spec view drags @pierre/diffs and the annotation layer along —
-// none of which the rest of the app needs on first paint (#24 direction).
+// none of which the rest of the app needs on first paint (T-24 direction).
 // The search parser stays inline so the page module is not statically
 // reachable from the route table.
 const specViewRoute = createRoute({

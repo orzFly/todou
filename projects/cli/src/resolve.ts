@@ -2,7 +2,7 @@ import type { Label, Status, TodouClient } from "@todou/shared";
 import { CliError } from "./errors.ts";
 
 /**
- * The project's current reference prefix for display spelling (#80).
+ * The project's current reference prefix for display spelling (T-80).
  * Best-effort on purpose: an old server (404) or a network blip must
  * never fail the command — the spelling just degrades to "#N".
  */

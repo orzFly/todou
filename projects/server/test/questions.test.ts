@@ -23,7 +23,7 @@ const QUESTIONS = [
   },
 ];
 
-describe.each(PLACEMENTS)("questions #19 (%s placement)", (placement) => {
+describe.each(PLACEMENTS)("questions T-19 (%s placement)", (placement) => {
   let t: TestApp;
   let cookie: string;
   let slug: string;

@@ -41,7 +41,7 @@ export function DocumentView({
   /** Markdown context (issue refs, attachment refs); omit outside a project. */
   slug?: string;
   issueNumber?: number;
-  /** The document's creation time (#80 time cutoff for issue refs). */
+  /** The document's creation time (T-80 time cutoff for issue refs). */
   refDate?: string;
 }) {
   if (render === "markdown") {
@@ -62,7 +62,7 @@ export function DocumentView({
 /**
  * Inline document embed: bordered card with a filename header and a
  * height-capped body, expanding to the full document in a dialog. Built
- * for text/markdown attachment embeds, generic on purpose — #23 renders
+ * for text/markdown attachment embeds, generic on purpose — T-23 renders
  * spec files through the same card (pass `text` directly, put version
  * chips or review state into `headerActions`).
  */

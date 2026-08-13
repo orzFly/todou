@@ -94,7 +94,7 @@ describe("detectAgentContext", () => {
     ).toBe("claude-from-env");
   });
 
-  it("scans past a single line larger than one chunk (#42 shape)", () => {
+  it("scans past a single line larger than one chunk (T-42 shape)", () => {
     // An image Read appends a ~400 KB base64 tool_result line; when the
     // current turn's assistant entry is not yet flushed, that line is the
     // effective tail and must not shield older assistant entries.

@@ -131,7 +131,7 @@ diffs-container {
     color-scheme: dark;
 }
 
-/* ---- Named themes (#36): picotera ports translated into our token set by
+/* ---- Named themes (T-36): picotera ports translated into our token set by
    a fixed mapping (surface→background/card, ink→foreground, accent→primary
    and ring, accent-faint/ink→accent pair, err→destructive, line→border).
    "light"/"dark" (the todou defaults) live in :root/.dark above and have no
@@ -727,7 +727,7 @@ diffs-container {
     }
 }
 
-/* #40 agent badge: deterministic per-session blurred-blob background.
+/* T-40 agent badge: deterministic per-session blurred-blob background.
    Hues and blob anchors arrive as inline --agent-* custom properties
    (hash of session_id, see agent-badge.tsx); L/C are clamped per theme so
    text contrast is hue-independent — measured worst-stop ≥ 10.2:1 light /
@@ -765,7 +765,7 @@ diffs-container {
 }
 
 @layer components {
-  /* GitHub-flavoured markdown typography (#32). One plain-CSS block —
+  /* GitHub-flavoured markdown typography (T-32). One plain-CSS block —
      theme tokens make it track light/dark for free, and element swaps in
      the renderer (react-markdown `components`) don't need class surgery.
      Sizes follow github.com issue comments (14px base). */
@@ -913,12 +913,12 @@ diffs-container {
     max-width: 100%;
   }
 
-  /* Timeline permalink target (#38): a short flash that fades out. */
+  /* Timeline permalink target (T-38): a short flash that fades out. */
   .anchor-flash {
     animation: anchor-flash 2s ease-out both;
   }
 
-  /* Spec review view (#23): blocks carrying comments, and blocks changed
+  /* Spec review view (T-23): blocks carrying comments, and blocks changed
      since the compare baseline (the ↑/↓ nav jumps between the latter). */
   .spec-annotated {
     border-left: 3px solid
@@ -948,7 +948,7 @@ diffs-container {
     );
   }
 
-  /* Code styling stays intentionally shallow: #31 swaps <pre>/<code>
+  /* Code styling stays intentionally shallow: T-31 swaps <pre>/<code>
      for pierre CodeView, and these rules must be trivial to delete. */
   .markdown-body code {
     padding: 0.2em 0.4em;

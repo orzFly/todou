@@ -5,7 +5,7 @@ import { makeTestApp, type TestApp } from "./helpers.ts";
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
 
 /**
- * The #80 time-cutoff compares content.created_at against
+ * The T-80 time-cutoff compares content.created_at against
  * ref_formats.effective_from. PGlite's clock only produces millisecond
  * timestamps, while real postgres stores microseconds in both columns —
  * so sub-millisecond orderings between a switch and adjacent writes only

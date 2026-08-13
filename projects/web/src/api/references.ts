@@ -14,7 +14,7 @@ export const referenceConfigQuery = (slug: string) =>
       try {
         return await api.getReferenceConfig(slug);
       } catch (error) {
-        // Servers predating #80 have no endpoint; degrade to the
+        // Servers predating T-80 have no endpoint; degrade to the
         // built-in behaviour instead of breaking every markdown view.
         if ((error as { status?: number }).status === 404)
           return DEFAULT_REFERENCE_CONFIG;
@@ -39,7 +39,7 @@ export function useRefPrefix(slug: string | undefined): string | null {
 }
 
 /**
- * Tokenizer config for content anchored at `refDate` (#80 time cutoff):
+ * Tokenizer config for content anchored at `refDate` (T-80 time cutoff):
  * the internal format is the one in force when the content was created,
  * autolinks are always the current rule set. No date = "now" (UI strings,
  * editor previews).
