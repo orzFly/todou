@@ -18,9 +18,18 @@ export const queryClient = new QueryClient({
   },
 });
 
+/**
+ * Metadata queries carry a 60s staleTime: the SSE change feed invalidates
+ * them per entity the moment they actually change (and reconnects run a
+ * broad compensation), so remount-driven refetching buys nothing. Content
+ * queries (issues, timeline, spec) stay on the 5s default.
+ */
+const METADATA_STALE_MS = 60_000;
+
 export const meQuery = queryOptions({
   queryKey: ["me"],
   queryFn: () => api.me(),
+  staleTime: METADATA_STALE_MS,
   retry: false,
 });
 
@@ -34,30 +43,35 @@ export const authModeQuery = queryOptions({
 export const projectsQuery = queryOptions({
   queryKey: ["projects"],
   queryFn: () => api.listProjects(),
+  staleTime: METADATA_STALE_MS,
 });
 
 export const projectQuery = (slug: string) =>
   queryOptions({
     queryKey: ["project", slug],
     queryFn: () => api.getProject(slug),
+    staleTime: METADATA_STALE_MS,
   });
 
 export const statusesQuery = (slug: string) =>
   queryOptions({
     queryKey: ["statuses", slug],
     queryFn: () => api.listStatuses(slug),
+    staleTime: METADATA_STALE_MS,
   });
 
 export const labelsQuery = (slug: string) =>
   queryOptions({
     queryKey: ["labels", slug],
     queryFn: () => api.listLabels(slug),
+    staleTime: METADATA_STALE_MS,
   });
 
 export const membersQuery = (slug: string) =>
   queryOptions({
     queryKey: ["members", slug],
     queryFn: () => api.listMembers(slug),
+    staleTime: METADATA_STALE_MS,
   });
 
 export const agentsQuery = queryOptions({
