@@ -2,12 +2,15 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { Link, Outlet, useParams } from "@tanstack/react-router";
 import { projectQuery } from "@/api/queries.ts";
 import { useProjectEvents } from "@/api/useProjectEvents.ts";
+import { useRecordProjectVisit } from "@/api/useProjectOrder.ts";
 
 export function ProjectLayout() {
   const { slug } = useParams({ from: "/authed/projects/$slug" });
   const project = useSuspenseQuery(projectQuery(slug));
   // Live updates for every page under this project (list/board/issue).
   useProjectEvents(slug);
+  // Feed the frecency ordering (#76).
+  useRecordProjectVisit(slug);
 
   return (
     <div className="space-y-4">

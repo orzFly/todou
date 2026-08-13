@@ -3,11 +3,13 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { api, projectsQuery } from "@/api/queries.ts";
+import { useProjectOrder } from "@/api/useProjectOrder.ts";
+import { NewBadge } from "@/components/project-switcher.tsx";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -29,6 +31,8 @@ import { Textarea } from "@/components/ui/textarea";
 
 export function ProjectsPage() {
   const projects = useSuspenseQuery(projectsQuery);
+  // Same frecency order as the navbar switcher (#76).
+  const ordered = useProjectOrder(projects.data);
 
   return (
     <div className="space-y-6">
@@ -42,7 +46,7 @@ export function ProjectsPage() {
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {projects.data.map((project) => (
+          {ordered.map(({ project, neverVisited, isNew }) => (
             <Link
               key={project.id}
               to="/projects/$slug"
@@ -50,7 +54,16 @@ export function ProjectsPage() {
             >
               <Card className="h-full transition-colors hover:bg-accent/50">
                 <CardHeader>
-                  <CardTitle className="text-base">{project.name}</CardTitle>
+                  <CardTitle
+                    className={
+                      neverVisited
+                        ? "flex items-center gap-2 text-base text-muted-foreground"
+                        : "flex items-center gap-2 text-base"
+                    }
+                  >
+                    {project.name}
+                    {isNew && <NewBadge />}
+                  </CardTitle>
                   <CardDescription>
                     {project.slug}
                     {project.description ? ` — ${project.description}` : ""}
@@ -66,12 +79,22 @@ export function ProjectsPage() {
 }
 
 function CreateProjectDialog() {
-  const [open, setOpen] = useState(false);
+  // The switcher footer lands here as /projects?new=1 → open on arrival,
+  // and drop the param on close so reload/back don't reopen it.
+  const openedViaSearch = useSearch({ from: "/authed/projects" }).new === true;
+  const [open, setOpen] = useState(openedViaSearch);
   const [slug, setSlug] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+
+  const onOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (!next && openedViaSearch) {
+      navigate({ to: "/projects", search: {}, replace: true });
+    }
+  };
 
   const create = useMutation({
     mutationFn: () => api.createProject({ slug, name, description }),
@@ -84,7 +107,7 @@ function CreateProjectDialog() {
   });
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
         <Button size="sm">
           <PlusIcon /> New project

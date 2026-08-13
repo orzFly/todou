@@ -4,6 +4,7 @@ import type { Me } from "@todou/shared";
 import type { ReactNode } from "react";
 import { api, authModeQuery, projectQuery } from "@/api/queries.ts";
 import { ProjectNav } from "@/components/project-nav.tsx";
+import { ProjectSwitcher } from "@/components/project-switcher.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { ThemeMenu } from "@/components/theme-menu.tsx";
 import { Button } from "@/components/ui/button";
@@ -64,6 +65,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
                 >
                   {project.data?.name ?? slug}
                 </Link>
+                <ProjectSwitcher slug={slug} />
                 <ProjectNav
                   slug={slug}
                   className="ml-2 hidden shrink-0 sm:flex"

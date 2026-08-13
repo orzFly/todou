@@ -101,6 +101,11 @@ const projectsRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/projects",
   component: ProjectsPage,
+  // ?new=1 (from the switcher footer) opens the create-project dialog.
+  validateSearch: (search): { new?: boolean } =>
+    search.new === true || search.new === 1 || search.new === "1"
+      ? { new: true }
+      : {},
 });
 
 const projectRoute = createRoute({
