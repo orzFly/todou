@@ -148,7 +148,8 @@ function CategoryTabs({
   );
 }
 
-function IssueTable({
+/** Exported for tests (pagination state, like IssueRow). */
+export function IssueTable({
   slug,
   page,
   statuses,
@@ -166,8 +167,23 @@ function IssueTable({
   const statusMutation = useIssueStatusMutation(slug);
   const labelsMutation = useIssueLabelsMutation(slug);
 
+  // Pages were appended under the previous filter state; keeping them would
+  // mix e.g. closed rows into the open list after a category switch.
+  const paginationKey = JSON.stringify([slug, search]);
+  const [loadedFor, setLoadedFor] = useState(paginationKey);
+  if (loadedFor !== paginationKey) {
+    setLoadedFor(paginationKey);
+    setExtraPages([]);
+  }
+
   const items = [...page.items, ...extraPages.flatMap((p) => p.items)];
-  const lastCursor = extraPages.at(-1)?.next_cursor ?? page.next_cursor ?? null;
+  // A null next_cursor on the newest loaded page means the end was reached;
+  // `??` would resurrect page 1's cursor there and Load More would re-append
+  // page 2 forever.
+  const lastCursor =
+    extraPages.length === 0
+      ? page.next_cursor
+      : (extraPages.at(-1)?.next_cursor ?? null);
 
   async function loadMore() {
     if (!lastCursor) return;
