@@ -60,6 +60,8 @@ scratch directory and on the tracker; it never enters the repository, not even a
    name** — that is what the overwhelming majority of this history does. The block below shows the
    *shape* of the trailer; it is not a menu. Picking a name out of it that nobody handed you
    misattributes the commit, and a trailer is only fixable by rewriting history.
+   The name is the model, not how it was configured: drop context-window, effort, and deployment
+   suffixes (`Claude Opus 5`, never `Claude Opus 5 (1M context)`).
    ```
    Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
    Co-Authored-By: Macchiato Venti 4.6 <noreply@example.com>
