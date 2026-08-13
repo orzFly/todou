@@ -75,7 +75,10 @@ docker run -d -p 8637:8637 -v todou-data:/data ghcr.io/orzfly/todou:latest
 ```
 
 Tags: `latest` is the most recent release, `x.y.z` a specific one, `edge`
-the tip of master, and `sha-*` an exact commit.
+the tip of master, and `sha-*` an exact commit. Every build also carries
+`YYYYMMDD-HHmmss-<sha>`, the commit's UTC date — it pins one build the way
+`sha-*` does, but sorting those tags alphabetically sorts them by age, so a
+rollback target is a matter of reading the list rather than of guessing.
 
 Everything under [Layout](#layout) that lives in `~/todou-data` lives in the
 `/data` volume here. Configure with `TODOU_*` environment variables (each
