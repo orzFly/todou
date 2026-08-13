@@ -120,5 +120,10 @@ export type IssueCountsQuery = z.infer<typeof IssueCountsQuery>;
 export const IssueCounts = z.object({
   open: z.number().int().nonnegative(),
   closed: z.number().int().nonnegative(),
+  /**
+   * Per-status detail from the same aggregate, keyed by status id (decimal
+   * string — JSON object keys). Statuses with zero matches are omitted.
+   */
+  by_status: z.record(z.string(), z.number().int().nonnegative()),
 });
 export type IssueCounts = z.infer<typeof IssueCounts>;

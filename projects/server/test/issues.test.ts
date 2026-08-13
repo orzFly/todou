@@ -624,6 +624,7 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
       }),
     );
     const done = statuses.find((s: { name: string }) => s.name === "Done");
+    const todo = statuses.find((s: { name: string }) => s.name === "Todo");
 
     for (let i = 1; i <= 5; i++) {
       const res = await t.app.request(`/api/projects/${countsSlug}/issues`, {
@@ -643,7 +644,11 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
         headers: { cookie },
       }),
     );
-    expect(all).toEqual({ open: 3, closed: 2 });
+    expect(all).toEqual({
+      open: 3,
+      closed: 2,
+      by_status: { [String(todo.id)]: 3, [String(done.id)]: 2 },
+    });
 
     const searched = await json(
       await t.app.request(
@@ -651,7 +656,11 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
         { headers: { cookie } },
       ),
     );
-    expect(searched).toEqual({ open: 1, closed: 0 });
+    expect(searched).toEqual({
+      open: 1,
+      closed: 0,
+      by_status: { [String(todo.id)]: 1 },
+    });
 
     // A filter that matches nothing yields zeros, not an error.
     const none = await json(
@@ -660,7 +669,7 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
         { headers: { cookie } },
       ),
     );
-    expect(none).toEqual({ open: 0, closed: 0 });
+    expect(none).toEqual({ open: 0, closed: 0, by_status: {} });
   });
 
   it("pages the timeline in both directions", async () => {

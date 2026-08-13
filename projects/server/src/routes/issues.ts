@@ -65,7 +65,8 @@ const listRoute = createRoute({
 const countsRoute = createRoute({
   method: "get",
   path: "/{slug}/issues/counts",
-  summary: "Open/closed totals under the same (category-neutral) filters",
+  summary:
+    "Open/closed totals plus per-status detail under the same (category-neutral) filters",
   request: { params: slugParam, query: IssueCountsQuery },
   responses: { 200: { description: "Counts", ...jsonBody(IssueCounts) } },
 });

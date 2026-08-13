@@ -544,17 +544,24 @@ export async function countIssuesByCategory(
   const { project } = await requireProject(ctx, actor, slug, "reader");
   const db = await ctx.router.forProject(routeInfoOf(project));
 
-  const counts: IssueCounts = { open: 0, closed: 0 };
+  const counts: IssueCounts = { open: 0, closed: 0, by_status: {} };
   const conditions = await issueFilterConditions(db, project.id, query);
   if (conditions === null) return counts;
 
   const rows = await db
-    .select({ category: statuses.category, count: sql<number>`count(*)` })
+    .select({
+      category: statuses.category,
+      statusId: issues.statusId,
+      count: sql<number>`count(*)`,
+    })
     .from(issues)
     .innerJoin(statuses, eq(issues.statusId, statuses.id))
     .where(and(...conditions))
-    .groupBy(statuses.category);
-  for (const row of rows) counts[row.category] = Number(row.count);
+    .groupBy(statuses.category, issues.statusId);
+  for (const row of rows) {
+    counts[row.category] += Number(row.count);
+    counts.by_status[String(row.statusId)] = Number(row.count);
+  }
   return counts;
 }
 
