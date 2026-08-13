@@ -2,14 +2,17 @@ import { homedir } from "node:os";
 import type { AgentContext } from "@todou/shared";
 import type { Env } from "../config.ts";
 import { claudeCode } from "./claude-code.ts";
+import { hermesAgent } from "./hermes-agent.ts";
 import type { Harness } from "./types.ts";
 
 /**
  * Ordered innermost-first: a harness whose environment is inherited by the
  * agents it spawns must come after the harnesses it can spawn, so the
- * nearest host wins when several signals are present at once.
+ * nearest host wins when several signals are present at once. A hermes
+ * terminal turn can launch claude code, which passes HERMES_SESSION_* on
+ * to its children — CLAUDECODE=1 then marks the direct host.
  */
-const HARNESSES: Harness[] = [claudeCode];
+const HARNESSES: Harness[] = [claudeCode, hermesAgent];
 
 /**
  * Provenance of the invoking agent harness. Detection must never break a
