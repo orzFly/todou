@@ -226,6 +226,7 @@ export async function submitAnswers(
       .update(issues)
       .set({
         openQuestions: sql`greatest(${issues.openQuestions} - ${answers.length}, 0)`,
+        updatedAt: new Date(),
       })
       .where(eq(issues.id, issue.id));
     return event;

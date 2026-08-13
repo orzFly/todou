@@ -173,7 +173,11 @@ export async function pushSpec(
     // review verdict — approvals never carry across pushes.
     await tx
       .update(issues)
-      .set({ specVersion: version.number, specReviewStatus: "unreviewed" })
+      .set({
+        specVersion: version.number,
+        specReviewStatus: "unreviewed",
+        updatedAt: new Date(),
+      })
       .where(eq(issues.id, issue.id));
 
     events.push(
@@ -529,6 +533,7 @@ export async function submitSpecReview(
         specReviewStatus:
           input.verdict === "approve" ? "approved" : "changes_requested",
         specUnresolvedComments: sql`${issues.specUnresolvedComments} + ${anchored.length}`,
+        updatedAt: new Date(),
       })
       .where(eq(issues.id, issue.id));
 

@@ -35,8 +35,9 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
     ).toEqual([
       { key: ["timeline", "todou", 7], scope: "refetch" },
       { key: ["questions", "todou", 7], scope: "refetch" },
-      // Unread markers (T-46) ride the list payload, but a comment cannot
-      // move an issue between pages — containment is enough.
+      // Unread markers (T-46) ride the list payload. An unpaired timeline
+      // entry (`referenced`, a comment edit) does not bump updated_at
+      // (T-101), so it cannot move a row between pages.
       { key: ["issues", "todou"], scope: { contains: 7 } },
     ]);
   });
@@ -205,6 +206,55 @@ describe("useProjectEvents", () => {
     // One broad refetch; no stale-mark/predicate pair from the contains path.
     expect(issuesCalls).toHaveLength(1);
     expect(issuesCalls[0]?.[0]).toEqual({ queryKey: ["issues", "todou"] });
+  });
+
+  /**
+   * T-101 made a plain comment bump updated_at, which reorders the
+   * updated-sorted list — so the pair a comment emits must reach the list
+   * broadly, while an unpaired timeline entry must stay narrow. Losing
+   * either half shows up as "commented, but the card did not jump".
+   */
+  it("refetches the list broadly for a comment, narrowly for a bare reference", () => {
+    vi.useFakeTimers();
+    const listScopes = (spy: ReturnType<typeof setup>["spy"]) =>
+      spy.mock.calls
+        .filter(
+          (call) =>
+            JSON.stringify(call[0]?.queryKey) ===
+            JSON.stringify(["issues", "todou"]),
+        )
+        .map((call) => call[0]?.refetchType ?? "default");
+
+    const commented = setup();
+    const commentFeed = MockEventSource.instances[0];
+    // What createComment publishes: the entry plus the bump's issue event.
+    commentFeed?.emit("change", {
+      entity: "timeline",
+      id: 9,
+      action: "created",
+      issue_number: 3,
+    });
+    commentFeed?.emit("change", {
+      entity: "issue",
+      id: 3,
+      action: "updated",
+      issue_number: 3,
+    });
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+    expect(listScopes(commented.spy)).toEqual(["default"]);
+
+    MockEventSource.instances = [];
+    const referenced = setup();
+    const refFeed = MockEventSource.instances[0];
+    // What recordReferences publishes on the target: a lone timeline entry.
+    refFeed?.emit("change", {
+      entity: "timeline",
+      id: 11,
+      action: "created",
+      issue_number: 4,
+    });
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+    expect(listScopes(referenced.spy)).toEqual(["none", "active"]);
   });
 
   it("compensates with broad invalidation after a reconnect", async () => {

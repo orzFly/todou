@@ -13,6 +13,11 @@ export const Issue = z.object({
   assignees: z.array(UserRef),
   labels: z.array(Label),
   created_at: Timestamp,
+  /**
+   * Last activity on the card: edits to its own fields, plus comments,
+   * attachments, answered questions and spec push/review. Being referenced
+   * by another issue does not count.
+   */
   updated_at: Timestamp,
   /** Last body-changing edit; null when the body was never edited. */
   body_edited_at: Timestamp.nullable(),

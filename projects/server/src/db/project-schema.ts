@@ -105,6 +105,13 @@ export const issues = pgTable(
       .references(() => statuses.id),
     authorId: bigint("author_id", { mode: "number" }).notNull(),
     createdAt: createdAt(),
+    // "Last activity on this card", not "last write to this row" (T-101):
+    // comment create, attachment, question answered, spec push and spec
+    // review all bump it alongside edits to the issue's own fields.
+    // Deliberately left alone by: `referenced` (someone else's card must not
+    // reorder this one's owner's list), `spec_comments_resolved` (cleanup,
+    // and one review is resolved in several batches), and comment
+    // edit/delete (a revision, not new activity).
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

@@ -13,11 +13,17 @@ type QueryKeyLike = ReadonlyArray<unknown>;
 
 /**
  * "refetch" re-fetches every active query under the key (the classic
- * broad invalidation). `contains` marks everything under the key stale
- * but only re-fetches pages that actually hold the issue: a comment
- * cannot move an issue between board columns or reorder an updated-sorted
- * list (only updateIssue bumps updated_at), so pages without the row have
- * nothing visible to change.
+ * broad invalidation). `contains` marks everything under the key stale but
+ * only re-fetches pages that actually hold the issue.
+ *
+ * Narrowing timeline events this way is safe only because the server pairs
+ * every activity that bumps `updated_at` — comment, attachment, answered
+ * question, spec push, spec review (T-101) — with an `issue` event, and a
+ * broad refetch subsumes a `contains` on the same key inside one coalescing
+ * window. Timeline entries that arrive unpaired (`referenced`, a comment
+ * edit or delete) deliberately do not bump, so they cannot move a row
+ * between board columns or reorder an updated-sorted list, and pages
+ * without the row have nothing visible to change.
  */
 export type InvalidationScope = "refetch" | { contains: number };
 export type Invalidation = { key: QueryKeyLike; scope: InvalidationScope };
@@ -51,7 +57,8 @@ export function invalidationsFor(
     case "timeline":
       // Question components and their answers ride the timeline, so the
       // per-issue question status (T-19) goes stale with it — as do the
-      // unread markers (T-46), which travel in the list payload.
+      // unread markers (T-46), which travel in the list payload. List
+      // ordering is the paired issue event's job; see InvalidationScope.
       return event.issue_number === undefined
         ? []
         : [

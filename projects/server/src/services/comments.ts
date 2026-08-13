@@ -84,24 +84,31 @@ export async function createComment(
     if (!comment) throw new Error("comment insert returned no row");
 
     const asked = questionCount(component);
-    if (asked > 0) {
-      await tx
-        .update(issues)
-        .set({ openQuestions: sql`${issues.openQuestions} + ${asked}` })
-        .where(eq(issues.id, issue.id));
-      // Counter changed → issue list badges must refresh.
-      events.push({
-        entity: "issue",
-        id: issue.id,
-        action: "updated",
-        issue_number: issueNumber,
-      });
-    }
+    await tx
+      .update(issues)
+      .set(
+        asked > 0
+          ? {
+              openQuestions: sql`${issues.openQuestions} + ${asked}`,
+              updatedAt: new Date(),
+            }
+          : { updatedAt: new Date() },
+      )
+      .where(eq(issues.id, issue.id));
 
+    // The new entry leads the burst; subscribers pin this order.
     events.push({
       entity: "timeline",
       id: comment.id,
       action: "created",
+      issue_number: issueNumber,
+    });
+    // updated_at moved (and maybe the counter) → issue list ordering and
+    // badges must refresh.
+    events.push({
+      entity: "issue",
+      id: issue.id,
+      action: "updated",
       issue_number: issueNumber,
     });
 

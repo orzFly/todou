@@ -121,10 +121,14 @@ export async function uploadAttachment(
         attachment: { id: attachment.id, filename, size: file.size },
       },
     });
+    await tx
+      .update(issues)
+      .set({ updatedAt: new Date() })
+      .where(eq(issues.id, issue.id));
     return attachment;
   });
 
-  publishAttachmentEvents(ctx, project.id, row.id, issueNumber);
+  publishAttachmentEvents(ctx, project.id, row.id, issue.id, issueNumber);
   return toAttachment(ctx, slug, row);
 }
 
@@ -137,6 +141,7 @@ function publishAttachmentEvents(
   ctx: AppContext,
   projectId: number,
   attachmentId: number,
+  issueId: number,
   issueNumber: number,
 ): void {
   ctx.bus.publish(projectId, {
@@ -149,6 +154,13 @@ function publishAttachmentEvents(
     entity: "timeline",
     id: attachmentId,
     action: "created",
+    issue_number: issueNumber,
+  });
+  // updated_at moved (T-101) → issue list ordering must refresh.
+  ctx.bus.publish(projectId, {
+    entity: "issue",
+    id: issueId,
+    action: "updated",
     issue_number: issueNumber,
   });
 }
@@ -316,6 +328,10 @@ export async function completeDirectUpload(
         .update(pendingUploads)
         .set({ completedAt: new Date() })
         .where(eq(pendingUploads.id, pending.id));
+      await tx
+        .update(issues)
+        .set({ updatedAt: new Date() })
+        .where(eq(issues.id, pending.issueId));
       return attachment;
     });
   } catch (err) {
@@ -326,7 +342,13 @@ export async function completeDirectUpload(
     return toAttachment(ctx, slug, existing);
   }
 
-  publishAttachmentEvents(ctx, project.id, row.id, issue.number);
+  publishAttachmentEvents(
+    ctx,
+    project.id,
+    row.id,
+    pending.issueId,
+    issue.number,
+  );
   return toAttachment(ctx, slug, row);
 }
 
