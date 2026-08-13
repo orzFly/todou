@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import type { Binding, CliConfig, Env, ServerEntry } from "./config.ts";
 import { normalizeServer } from "./config.ts";
 import { CliError } from "./errors.ts";
+import { detectHarnessId } from "./harness/index.ts";
 
 function git(cwd: string, args: string[]): string | null {
   const res = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
@@ -28,14 +29,14 @@ export type TokenSource =
   | "flag-profile"
   | "env-token"
   | "env-profile"
-  | "auto-claude-code"
+  | "auto-harness"
   | "default";
 
 export type ResolvedContext = {
   server?: string;
   token?: string;
   tokenSource: TokenSource | null;
-  /** Profile name when tokenSource is a profile (incl. auto-claude-code). */
+  /** Profile name when tokenSource is a profile (incl. auto-harness). */
   tokenProfile?: string;
   project?: string;
   binding: Binding | null;
@@ -83,12 +84,15 @@ function pickToken(
     return { token: env.TODOU_TOKEN, tokenSource: "env-token" };
   }
   if (env.TODOU_PROFILE) return lookup(env.TODOU_PROFILE, "env-profile");
-  const claude = entry?.tokens["claude-code"];
-  if (env.CLAUDECODE === "1" && claude) {
+  // A profile named after the detected harness opts that harness into its
+  // own identity; without one the auto rule stays entirely inert.
+  const harnessId = detectHarnessId(env);
+  const harnessToken = harnessId ? entry?.tokens[harnessId] : undefined;
+  if (harnessId && harnessToken) {
     return {
-      token: claude,
-      tokenSource: "auto-claude-code",
-      tokenProfile: "claude-code",
+      token: harnessToken,
+      tokenSource: "auto-harness",
+      tokenProfile: harnessId,
     };
   }
   if (entry?.token) return { token: entry.token, tokenSource: "default" };

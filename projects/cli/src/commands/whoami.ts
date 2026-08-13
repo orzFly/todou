@@ -11,8 +11,10 @@ export class WhoamiCommand extends ApiCommand {
   protected async run(client: TodouClient): Promise<void> {
     const me = await client.me();
     switch (this.ctx.tokenSource) {
-      case "auto-claude-code":
-        this.note('token: profile "claude-code" (auto via CLAUDECODE)');
+      case "auto-harness":
+        this.note(
+          `token: profile "${this.ctx.tokenProfile}" (auto-detected harness)`,
+        );
         break;
       case "flag-profile":
       case "env-profile":
@@ -23,6 +25,14 @@ export class WhoamiCommand extends ApiCommand {
         break;
       default:
         break;
+    }
+    // The deployment probe for new harness detectors: shows what a write
+    // from this environment would report, without having to post one.
+    if (this.agentContext) {
+      const session = this.agentContext.session_id
+        ? ` (session ${this.agentContext.session_id})`
+        : "";
+      this.note(`detected harness: ${this.agentContext.agent}${session}`);
     }
     this.output(
       me,

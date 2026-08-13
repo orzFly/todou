@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { detectAgentContext } from "../src/agent-context.ts";
-import { fakeFetch, loggedInEnv, runCli } from "./harness.ts";
+import { detectAgentContext } from "../../src/harness/index.ts";
+import { fakeFetch, loggedInEnv, runCli } from "../harness.ts";
 
 const home = mkdtempSync(join(tmpdir(), "todou-agent-home-"));
 afterAll(() => rmSync(home, { recursive: true, force: true }));
