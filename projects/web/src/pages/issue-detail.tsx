@@ -19,6 +19,11 @@ import {
 import { useRefPrefix } from "@/api/references.ts";
 import { AttachmentList } from "@/components/issue/attachment-list.tsx";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
+import {
+  LabelPicker,
+  useCanCreateLabels,
+  useCreateLabel,
+} from "@/components/issue/label-picker.tsx";
 import { MarkReadOnView } from "@/components/issue/mark-read-on-view.tsx";
 import {
   SpecEntryRow,
@@ -326,6 +331,8 @@ function Sidebar({
 }) {
   const queryClient = useQueryClient();
   const statusMutation = useIssueStatusMutation(slug);
+  const canCreateLabels = useCanCreateLabels(slug);
+  const createLabel = useCreateLabel(slug);
   const patch = useMutation({
     mutationFn: (input: { label_ids?: number[]; assignee_ids?: number[] }) =>
       api.updateIssue(slug, issue.number, input),
@@ -382,40 +389,24 @@ function Sidebar({
         <div className="flex flex-wrap items-center gap-1.5">
           <LabelChips labels={issue.labels} />
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
+        <LabelPicker
+          allLabels={allLabels}
+          selected={issue.labels}
+          onToggle={(label) => {
+            const current = issue.labels.map((l) => l.id);
+            patch.mutate({
+              label_ids: current.includes(label.id)
+                ? current.filter((id) => id !== label.id)
+                : [...current, label.id],
+            });
+          }}
+          onCreate={canCreateLabels ? createLabel : undefined}
+          trigger={
             <Button variant="outline" size="sm">
               Edit labels
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            {allLabels.length === 0 && (
-              <DropdownMenuItem disabled>No labels defined</DropdownMenuItem>
-            )}
-            {allLabels.map((label) => {
-              const active = issue.labels.some((l) => l.id === label.id);
-              return (
-                <DropdownMenuItem
-                  key={label.id}
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    const current = issue.labels.map((l) => l.id);
-                    patch.mutate({
-                      label_ids: active
-                        ? current.filter((id) => id !== label.id)
-                        : [...current, label.id],
-                    });
-                  }}
-                >
-                  <span className="w-4">
-                    {active && <CheckIcon className="size-4" />}
-                  </span>
-                  {label.name}
-                </DropdownMenuItem>
-              );
-            })}
-          </DropdownMenuContent>
-        </DropdownMenu>
+          }
+        />
       </section>
 
       <section className="space-y-2">

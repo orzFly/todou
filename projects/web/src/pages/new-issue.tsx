@@ -12,6 +12,11 @@ import {
 } from "@/api/queries.ts";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
 import {
+  LabelPicker,
+  useCanCreateLabels,
+  useCreateLabel,
+} from "@/components/issue/label-picker.tsx";
+import {
   StagedFileTray,
   StagedFileUploadButton,
   useStagedFiles,
@@ -48,6 +53,8 @@ export function NewIssuePage() {
   const statuses = useSuspenseQuery(statusesQuery(slug));
   const labels = useSuspenseQuery(labelsQuery(slug));
   const members = useSuspenseQuery(membersQuery(slug));
+  const canCreateLabels = useCanCreateLabels(slug);
+  const createLabel = useCreateLabel(slug);
 
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -190,38 +197,25 @@ export function NewIssuePage() {
               )}
             />
           </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+          <LabelPicker
+            allLabels={labels.data}
+            selected={labels.data.filter((label) =>
+              labelIds.includes(label.id),
+            )}
+            onToggle={(label) =>
+              setLabelIds((prev) =>
+                prev.includes(label.id)
+                  ? prev.filter((id) => id !== label.id)
+                  : [...prev, label.id],
+              )
+            }
+            onCreate={canCreateLabels ? createLabel : undefined}
+            trigger={
               <Button variant="outline" size="sm">
                 Edit labels
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              {labels.data.length === 0 && (
-                <DropdownMenuItem disabled>No labels defined</DropdownMenuItem>
-              )}
-              {labels.data.map((label) => (
-                <DropdownMenuItem
-                  key={label.id}
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    setLabelIds((prev) =>
-                      prev.includes(label.id)
-                        ? prev.filter((id) => id !== label.id)
-                        : [...prev, label.id],
-                    );
-                  }}
-                >
-                  <span className="w-4">
-                    {labelIds.includes(label.id) && (
-                      <CheckIcon className="size-4" />
-                    )}
-                  </span>
-                  {label.name}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+            }
+          />
         </section>
 
         <section className="space-y-2">
