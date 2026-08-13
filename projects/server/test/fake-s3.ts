@@ -185,7 +185,7 @@ function verifySigV4(
     const match = authHeader.match(
       /Credential=[^/]+\/([^,]+), SignedHeaders=([^,]+), Signature=(\w+)/,
     );
-    if (!match || !match[1] || !match[2] || !match[3]) {
+    if (!match?.[1] || !match[2] || !match[3]) {
       return { status: 403, code: "AccessDenied" };
     }
     credentialScope = match[1];
