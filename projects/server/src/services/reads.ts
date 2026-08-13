@@ -55,31 +55,45 @@ export async function ensureFrontier(
 }
 
 /**
- * Which of `issueIds` are unread for `userId`: any comment/event by someone
- * else, newer than the user's last-seen position (or the project frontier
- * when the issue was never opened). Two grouped-max scans over the page's
- * ids — cheap at list-page sizes, and self-healing on comment deletion.
+ * Unread state of `issueIds` for `userId`: an issue is unread when someone
+ * else commented or acted on it after the user's last-seen position (or the
+ * project frontier when the issue was never opened); `counts` carries how
+ * many such comments are waiting (#77 — events mark unread but don't count).
+ * One thresholded count over comments plus a grouped-max scan over events —
+ * cheap at list-page sizes, and self-healing on comment deletion.
  */
-export async function unreadIssueIds(
+export async function unreadIssueState(
   db: Db,
   projectId: number,
   userId: number,
   issueIds: number[],
-): Promise<Set<number>> {
-  if (issueIds.length === 0) return new Set();
+): Promise<{ unread: Set<number>; counts: Map<number, number> }> {
+  if (issueIds.length === 0) return { unread: new Set(), counts: new Map() };
   const frontier = await ensureFrontier(db, projectId, userId);
 
-  const latestComments = await db
-    .select({ issueId: comments.issueId, latest: max(comments.createdAt) })
+  // The per-issue threshold lives in SQL so the count and the boolean come
+  // from one comparison — comparing driver Dates in JS would truncate the
+  // stored microseconds and let the two drift on sub-millisecond activity.
+  const commentCounts = await db
+    .select({ issueId: comments.issueId, n: sql<number>`count(*)` })
     .from(comments)
+    .leftJoin(
+      issueReads,
+      and(
+        eq(issueReads.issueId, comments.issueId),
+        eq(issueReads.userId, userId),
+      ),
+    )
     .where(
       and(
         inArray(comments.issueId, issueIds),
         ne(comments.authorId, userId),
-        gt(comments.createdAt, frontier),
+        sql`${comments.createdAt} > coalesce(${issueReads.lastSeenAt}, ${frontier})`,
       ),
     )
     .groupBy(comments.issueId);
+  const counts = new Map(commentCounts.map((r) => [r.issueId, Number(r.n)]));
+
   const latestEvents = await db
     .select({
       issueId: issueEvents.issueId,
@@ -95,30 +109,32 @@ export async function unreadIssueIds(
     )
     .groupBy(issueEvents.issueId);
 
+  const unread = new Set(counts.keys());
+
   const latestForeign = new Map<number, Date>();
-  for (const { issueId, latest } of [...latestComments, ...latestEvents]) {
-    if (latest === null) continue;
-    const prev = latestForeign.get(issueId);
-    if (prev === undefined || latest > prev) latestForeign.set(issueId, latest);
+  for (const { issueId, latest } of latestEvents) {
+    if (latest === null || unread.has(issueId)) continue;
+    latestForeign.set(issueId, latest);
   }
-  if (latestForeign.size === 0) return new Set();
-
-  const readRows = await db
-    .select({ issueId: issueReads.issueId, lastSeenAt: issueReads.lastSeenAt })
-    .from(issueReads)
-    .where(
-      and(
-        eq(issueReads.userId, userId),
-        inArray(issueReads.issueId, [...latestForeign.keys()]),
-      ),
-    );
-  const lastSeen = new Map(readRows.map((r) => [r.issueId, r.lastSeenAt]));
-
-  const unread = new Set<number>();
-  for (const [issueId, latest] of latestForeign) {
-    if (latest > (lastSeen.get(issueId) ?? frontier)) unread.add(issueId);
+  if (latestForeign.size > 0) {
+    const readRows = await db
+      .select({
+        issueId: issueReads.issueId,
+        lastSeenAt: issueReads.lastSeenAt,
+      })
+      .from(issueReads)
+      .where(
+        and(
+          eq(issueReads.userId, userId),
+          inArray(issueReads.issueId, [...latestForeign.keys()]),
+        ),
+      );
+    const lastSeen = new Map(readRows.map((r) => [r.issueId, r.lastSeenAt]));
+    for (const [issueId, latest] of latestForeign) {
+      if (latest > (lastSeen.get(issueId) ?? frontier)) unread.add(issueId);
+    }
   }
-  return unread;
+  return { unread, counts };
 }
 
 /**

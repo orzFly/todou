@@ -42,7 +42,7 @@ import { projectMembers } from "../db/system-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
 import { type ProjectRow, requireProject, routeInfoOf } from "./access.ts";
 import { toLabel } from "./labels.ts";
-import { unreadIssueIds } from "./reads.ts";
+import { unreadIssueState } from "./reads.ts";
 import { recordReferences } from "./references.ts";
 import { recordRevision } from "./revisions.ts";
 import { toStatus } from "./statuses.ts";
@@ -518,7 +518,7 @@ export async function listIssues(
       : null;
 
   const bundles = await bundleIssues(ctx, db, project.id, page);
-  const unread = await unreadIssueIds(
+  const { unread, counts } = await unreadIssueState(
     db,
     project.id,
     actor.id,
@@ -528,6 +528,7 @@ export async function listIssues(
     items: bundles.map((b) => ({
       ...toIssue(b),
       unread: unread.has(b.row.id),
+      unread_comments: counts.get(b.row.id) ?? 0,
     })),
     next_cursor,
   };

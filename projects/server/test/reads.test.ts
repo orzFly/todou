@@ -72,6 +72,13 @@ describe.each(PLACEMENTS)(
 
     /** unread flag of one issue as seen by the cookie user's list call. */
     async function unreadOf(number: number): Promise<boolean> {
+      return (await stateOf(number)).unread;
+    }
+
+    /** unread flag + foreign-comment count from the same list call (#77). */
+    async function stateOf(
+      number: number,
+    ): Promise<{ unread: boolean; count: number }> {
       const res = await t.app.request(
         `/api/projects/${slug}/issues?numbers=${number}`,
         { headers: { cookie } },
@@ -80,7 +87,11 @@ describe.each(PLACEMENTS)(
       const page = await json(res);
       expect(page.items).toHaveLength(1);
       expect(typeof page.items[0].unread).toBe("boolean");
-      return page.items[0].unread;
+      expect(typeof page.items[0].unread_comments).toBe("number");
+      return {
+        unread: page.items[0].unread,
+        count: page.items[0].unread_comments,
+      };
     }
 
     async function markRead(
@@ -99,8 +110,8 @@ describe.each(PLACEMENTS)(
       await comment(issue.number, bob.headers, "before bootstrap");
       await settle();
       // First-ever list call by the cookie user creates the frontier at now,
-      // so bob's earlier comment never lights up.
-      expect(await unreadOf(issue.number)).toBe(false);
+      // so bob's earlier comment never lights up — nor counts (#77).
+      expect(await stateOf(issue.number)).toEqual({ unread: false, count: 0 });
     });
 
     it("lights on foreign activity, never on my own", async () => {
@@ -170,6 +181,124 @@ describe.each(PLACEMENTS)(
       );
       expect(deleted.status).toBe(204);
       expect(await unreadOf(issue.number)).toBe(false);
+    });
+
+    it("counts foreign comments of every kind; events only mark (#77)", async () => {
+      const issue = await createIssue("counting house");
+
+      // Two plain comments plus a questions comment from bob: 3.
+      await comment(issue.number, bob.headers, "one");
+      await comment(issue.number, bob.headers, "two");
+      const asked = await t.app.request(
+        `/api/projects/${slug}/issues/${issue.number}/comments`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", ...bob.headers },
+          body: JSON.stringify({
+            body: "please pick",
+            component: {
+              type: "questions",
+              questions: [
+                {
+                  question: "which?",
+                  options: [{ label: "a" }, { label: "b" }],
+                },
+              ],
+            },
+          }),
+        },
+      );
+      expect(asked.status).toBe(201);
+      expect(await stateOf(issue.number)).toEqual({ unread: true, count: 3 });
+
+      // A review by bob adds an anchored spec comment and a summary comment
+      // (5 total); its spec_review event, like all events, doesn't count.
+      const push = await t.app.request(
+        `/api/projects/${slug}/issues/${issue.number}/spec/push`,
+        {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({
+            files: [{ path: "design.md", body: "# One\nTwo\nThree\n" }],
+          }),
+        },
+      );
+      expect(push.status).toBe(200);
+      const reviewed = await t.app.request(
+        `/api/projects/${slug}/issues/${issue.number}/spec/reviews`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", ...bob.headers },
+          body: JSON.stringify({
+            version: 1,
+            verdict: "request_changes",
+            body: "summary nit",
+            comments: [
+              {
+                anchor: {
+                  path: "design.md",
+                  version: 1,
+                  line_start: 2,
+                  line_end: 2,
+                },
+                body: "anchored nit",
+              },
+            ],
+          }),
+        },
+      );
+      expect(reviewed.status).toBe(201);
+      expect(await stateOf(issue.number)).toEqual({ unread: true, count: 5 });
+
+      // Reading resets the threshold; only comments after it count again,
+      // and my own replies never do.
+      await settle();
+      expect((await markRead(issue.number)).status).toBe(204);
+      expect(await stateOf(issue.number)).toEqual({ unread: false, count: 0 });
+      await comment(issue.number, bob.headers, "post-read one");
+      await comment(issue.number, { cookie }, "my own reply");
+      await comment(issue.number, bob.headers, "post-read two");
+      expect(await stateOf(issue.number)).toEqual({ unread: true, count: 2 });
+    });
+
+    it("keeps the count at zero for event-only activity (#77)", async () => {
+      const issue = await createIssue("weak signal");
+      expect(await stateOf(issue.number)).toEqual({ unread: false, count: 0 });
+
+      const statuses = await json(
+        await t.app.request(`/api/projects/${slug}/statuses`, {
+          headers: { cookie },
+        }),
+      );
+      const other = statuses.find((s: { name: string }) => s.name !== "Todo");
+      const moved = await t.app.request(
+        `/api/projects/${slug}/issues/${issue.number}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json", ...bob.headers },
+          body: JSON.stringify({ status_id: other.id }),
+        },
+      );
+      expect(moved.status).toBe(200);
+      expect(await stateOf(issue.number)).toEqual({ unread: true, count: 0 });
+
+      await settle();
+      expect((await markRead(issue.number)).status).toBe(204);
+      expect(await stateOf(issue.number)).toEqual({ unread: false, count: 0 });
+    });
+
+    it("returns the default 0 outside list responses (#77)", async () => {
+      const issue = await createIssue("single view");
+      await comment(issue.number, bob.headers, "pending words");
+      expect((await stateOf(issue.number)).count).toBe(1);
+
+      const single = await json(
+        await t.app.request(`/api/projects/${slug}/issues/${issue.number}`, {
+          headers: { cookie },
+        }),
+      );
+      expect(single.unread).toBe(false);
+      expect(single.unread_comments).toBe(0);
     });
 
     it("validates the body and 404s unknown issues", async () => {
