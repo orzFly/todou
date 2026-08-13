@@ -67,6 +67,16 @@ wrong — a missing label is easy to spot later, a confidently wrong one is not.
 todou issue edit <N> -p <proj> --add-label 'area:<area>' --add-label 'kind:bug'
 ```
 
+**Triage is labels.** It is not the moment to write commentary. In particular, **never post
+scheduling notes** — "this collides with #12 and #34, serialize them" reads as useful and is not: the
+collision is speculative until both cards are actually dispatched, and every card number you name
+fires a "referenced by" event on it, so a habit of scheduling notes sprays noise across the whole
+board. You are the one who schedules; keep the ordering in your head and act on it at dispatch time.
+
+If triage surfaces something the *card itself* is missing — a wrong premise, a hidden dependency, two
+proposals of very different size — that is worth a comment. Keep it short and specific (see
+`/todou-cli`'s comment discipline). Everything else stays unwritten.
+
 Bulk-triaging a whole backlog is subagent work; keep your own context for dispatch and merges.
 
 ## Dispatching (herdr + claude)
@@ -91,6 +101,13 @@ Task brief checklist (trim as appropriate):
 3. Local verification expectations (dev server on a free port, real-browser checks with screenshots, close any tabs it opened);
 4. Wrap-up: commit (**do not merge**) → move to Ready to Ship → post a summary comment (screenshots/attachments;
    mind /todou-cli's "reference with intent" rule — no incidental `#N` lists) → report in the terminal.
+
+**Don't garnish the brief.** It carries the card, the fences, and the operational constraints the
+worker cannot discover on its own — nothing else. Your reading of the problem, your suspicion about
+the likely cause, your preferred design: leave them out. A worker reads the brief as instructions, so
+a stray opinion becomes a decision it never questions, and the user never sees the fork. If you
+genuinely have something to add, **post it as a comment on the card** — there it is visible, the user
+can overrule it, and the worker still gets it.
 
 Cards you triaged as `needs-brainstorm`: dispatch them **through the `/todou-brainstorm` skill** —
 put `/todou-brainstorm` on the first line of the task brief, followed by the card number and context.
