@@ -268,11 +268,7 @@ function SpecVersionCardBody({
       )}
 
       {awaitingReview && (
-        <ReviewCallToAction
-          params={params}
-          version={version}
-          unresolved={info.unresolved_comments}
-        />
+        <ReviewCallToAction params={params} version={version} />
       )}
     </div>
   );
@@ -287,36 +283,24 @@ function SpecVersionCardBody({
 function ReviewCallToAction({
   params,
   version,
-  unresolved,
 }: {
   params: { slug: string; number: string };
   version: number;
-  unresolved: number;
 }) {
   return (
     <div
       className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-amber-500/30 bg-amber-500/10 px-2.5 py-2"
       data-testid="spec-review-cta"
     >
-      <div className="min-w-0 flex-1">
-        <p className="font-medium text-sm">Awaiting your review</p>
-        <p className="text-xs text-muted-foreground">
-          v{version} is the latest version
-          {unresolved > 0 &&
-            ` · ${unresolved} unresolved comment${unresolved === 1 ? "" : "s"}`}
-        </p>
-      </div>
-      <Button
-        asChild
-        className="bg-emerald-600 text-white hover:bg-emerald-600/85"
-      >
+      <p className="min-w-0 flex-1 font-medium text-sm">Awaiting your review</p>
+      <Button asChild>
         <Link
           to="/projects/$slug/issues/$number/spec"
           params={params}
           search={{ v: version }}
         >
           <FileCheck2Icon />
-          View &amp; review
+          Read &amp; review →
         </Link>
       </Button>
     </div>

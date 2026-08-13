@@ -196,8 +196,10 @@ describe("SpecVersionCard", () => {
     );
     const cta = await view.findByTestId("spec-review-cta");
     expect(cta.textContent).toContain("Awaiting your review");
-    expect(cta.textContent).toContain("1 unresolved comment");
-    const link = view.getByRole("link", { name: /View & review/ });
+    // Title and button only — no subline (T-103).
+    expect(cta.textContent).not.toContain("unresolved comment");
+    expect(cta.textContent).not.toContain("latest version");
+    const link = view.getByRole("link", { name: /Read & review/ });
     expect(link.getAttribute("href")).toBe("/projects/p/issues/1/spec?v=2");
     // Survives the collapse — the ask is not part of the file list.
     fireEvent.click(view.getByLabelText("collapse file list"));
