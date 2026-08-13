@@ -46,6 +46,22 @@ export function LabelChip({
 }
 
 /**
+ * A single label inside a menu row: muted prefix outside a borderless
+ * value-only badge, matching how LabelChips renders whole lists.
+ */
+export function LabelInline({ label }: { label: Label }) {
+  const { prefix } = splitLabelName(label.name);
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1">
+      {prefix && (
+        <span className="text-xs text-muted-foreground">{prefix}</span>
+      )}
+      <LabelChip label={label} valueOnly bordered={false} />
+    </span>
+  );
+}
+
+/**
  * Grouped label list: labels sharing a `prefix:` render as the prefix in
  * muted text followed by one value-only chip each; unprefixed labels keep the
  * full chip. Each group is a single inline-flex unit so a wrapping container

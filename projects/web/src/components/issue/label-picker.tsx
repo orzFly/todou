@@ -4,7 +4,7 @@ import { CheckIcon, XIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { api, membersQuery, meQuery } from "@/api/queries.ts";
-import { LabelChip } from "@/components/issue/label-chip.tsx";
+import { LabelChip, LabelInline } from "@/components/issue/label-chip.tsx";
 import {
   Popover,
   PopoverContent,
@@ -43,20 +43,6 @@ export function useCreateLabel(slug: string): (name: string) => Promise<Label> {
       throw error;
     }
   };
-}
-
-/** A label rendered the grouped way inside menu rows: muted prefix outside,
- *  value-only tinted badge. */
-function MenuRowLabel({ label }: { label: Label }) {
-  const { prefix } = splitLabelName(label.name);
-  return (
-    <span className="inline-flex min-w-0 items-center gap-1">
-      {prefix && (
-        <span className="text-xs text-muted-foreground">{prefix}</span>
-      )}
-      <LabelChip label={label} valueOnly bordered={false} />
-    </span>
-  );
 }
 
 type PickerRow =
@@ -219,7 +205,7 @@ export function LabelPicker({
         {nearMismatch && (
           <div className="m-2 flex flex-wrap items-center gap-1 rounded-md border border-amber-500/60 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-400">
             Similar label exists
-            <MenuRowLabel label={near} />—
+            <LabelInline label={near} />—
             <button
               type="button"
               className="cursor-pointer font-semibold underline"
@@ -263,7 +249,7 @@ export function LabelPicker({
                   <span className="w-4 shrink-0">
                     {isSelected(row.label) && <CheckIcon className="size-4" />}
                   </span>
-                  <MenuRowLabel label={row.label} />
+                  <LabelInline label={row.label} />
                 </>
               ) : (
                 <>

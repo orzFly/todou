@@ -375,7 +375,7 @@ function Sidebar({
                 <span className="w-4">
                   {s.id === issue.status.id && <CheckIcon className="size-4" />}
                 </span>
-                {s.name}
+                <StatusPill status={s} className="border-0 px-0" />
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>

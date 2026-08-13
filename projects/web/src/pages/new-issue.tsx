@@ -179,6 +179,11 @@ export function NewIssuePage() {
             <SelectContent>
               {statuses.data.map((s) => (
                 <SelectItem key={s.id} value={String(s.id)}>
+                  <span
+                    className="size-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: s.color }}
+                    aria-hidden
+                  />
                   {s.name}
                 </SelectItem>
               ))}

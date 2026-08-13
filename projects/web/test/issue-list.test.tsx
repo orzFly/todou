@@ -14,6 +14,7 @@ import {
 import {
   LabelChip,
   LabelChips,
+  LabelInline,
   splitLabelName,
 } from "../src/components/issue/label-chip.tsx";
 import { StatusPill } from "../src/components/issue/status-pill.tsx";
@@ -176,6 +177,16 @@ describe("presentational chips", () => {
       />,
     );
     expect(getByTitle("area:web").textContent).toBe("web");
+  });
+
+  it("renders a menu-row label with the prefix outside a borderless badge", () => {
+    const { container, getByTitle } = render(
+      <LabelInline label={{ id: 1, name: "area:web", color: "#3b82f6" }} />,
+    );
+    const badge = getByTitle("area:web") as HTMLElement;
+    expect(badge.textContent).toBe("web");
+    expect(badge.style.borderColor).toBe("transparent");
+    expect(container.textContent).toBe("area:web");
   });
 
   it("groups same-prefix labels behind one muted prefix (T-90)", () => {
