@@ -53,6 +53,11 @@ Two rules specific to commit messages:
 Spotting something already committed that breaks these rules is not a licence to rewrite history on
 your own — file a card and let the user decide.
 
+And when a cleanup *is* authorised: the substitution ruleset driving it — the `old==>new` list fed to
+`git filter-repo`, or any equivalent redaction map — is a line-by-line catalogue of every real value
+being removed. Committing it puts the secrets straight back, just in a different file. Keep it in a
+scratch directory and on the tracker; it never enters the repository, not even after the rewrite.
+
 ## Before Committing
 
 1. Format and check:
