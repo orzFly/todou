@@ -99,15 +99,18 @@ in the terminal so the orchestrator knows to relay as a backstop.
 
 ## Comment discipline
 
-A tracker comment is a record, not an essay. Write it the way `/i-have-adhd` says to write anything:
+A tracker comment is a record, not an essay:
 
 - **Conclusion first.** The finding, the decision, the number. Context after, if at all.
 - **Bullets over prose.** Bold the claim, one line of why. Cap the list at five; if it's longer, split
-  "now" from "later".
+  "now" from "later". Anything the reader must *do* becomes numbered steps.
 - **No preamble, no recap, no closer.** Not "先说结论", not "综上", not "有问题随时说".
 - **One point per comment.** Two unrelated findings are two comments, or one card and one comment.
 - **Cut what the reader can already see.** Don't restate the card body, don't narrate what you did
   before saying what you found.
+
+State failures flat — cause, then fix, no "unfortunately". If something is left open, name the single
+thing that unblocks it rather than listing everything that remains.
 
 Length has to earn itself. A shipped-summary with real evidence (test counts, shas, a diff that
 surprised you) can run long; a triage note cannot. When in doubt, cut it in half and see what breaks.
