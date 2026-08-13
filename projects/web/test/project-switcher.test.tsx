@@ -1,4 +1,3 @@
-import type { QueryClient } from "@tanstack/react-query";
 import { QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -6,6 +5,7 @@ import {
   createRoute,
   createRouter,
   RouterProvider,
+  useParams,
 } from "@tanstack/react-router";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { Project } from "@todou/shared";
@@ -39,19 +39,26 @@ const me = {
   created_at: "2026-01-01T00:00:00Z",
 };
 
-/** The switcher needs live routes to land its navigations somewhere. */
-function renderSwitcher(projects: Project[], client?: QueryClient) {
-  const c = client ?? testQueryClient();
+/**
+ * The switcher needs live routes to land its navigations somewhere; the
+ * project subtree mirrors the app's so module keeping sees the real shapes.
+ */
+function renderSwitcher(projects: Project[], at = "/") {
+  const c = testQueryClient();
   c.setQueryData(["me"], me);
   c.setQueryData(["projects"], projects);
   vi.spyOn(api, "me").mockResolvedValue(me);
   vi.spyOn(api, "listProjects").mockResolvedValue(projects);
 
+  function SwitcherAtSlug() {
+    const { slug } = useParams({ strict: false });
+    return <ProjectSwitcher slug={slug ?? "alpha"} />;
+  }
   const rootRoute = createRootRoute();
   const indexRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/",
-    component: () => <ProjectSwitcher slug="alpha" />,
+    component: SwitcherAtSlug,
   });
   const projectsRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -61,10 +68,37 @@ function renderSwitcher(projects: Project[], client?: QueryClient) {
   const projectRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/projects/$slug",
+    component: SwitcherAtSlug,
+  });
+  const projectIndexRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "/",
+    validateSearch: (s) => s,
+  });
+  const boardRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "board",
+  });
+  const settingsRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "settings",
+  });
+  const issueRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "issues/$number",
   });
   const router = createRouter({
-    routeTree: rootRoute.addChildren([indexRoute, projectsRoute, projectRoute]),
-    history: createMemoryHistory({ initialEntries: ["/"] }),
+    routeTree: rootRoute.addChildren([
+      indexRoute,
+      projectsRoute,
+      projectRoute.addChildren([
+        projectIndexRoute,
+        boardRoute,
+        settingsRoute,
+        issueRoute,
+      ]),
+    ]),
+    history: createMemoryHistory({ initialEntries: [at] }),
   });
   render(
     <QueryClientProvider client={c}>
@@ -177,5 +211,55 @@ describe("ProjectSwitcher", () => {
     recordVisit(1, "todou", Date.now());
     expect(localStorage.getItem(visitsKey(1))).toBeTruthy();
     expect(localStorage.getItem(visitsKey(2))).toBeNull();
+  });
+});
+
+async function pickProject(name: string) {
+  const option = screen
+    .getAllByRole("option")
+    .find((el) => el.textContent?.includes(name));
+  if (!option) throw new Error(`no option for ${name}`);
+  fireEvent.click(option);
+}
+
+describe("ProjectSwitcher keeps the nav module (T-94)", () => {
+  it("switches board to board", async () => {
+    const router = renderSwitcher(fewProjects, "/projects/alpha/board");
+    await openSwitcher();
+    await pickProject("beta");
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/projects/beta/board"),
+    );
+  });
+
+  it("switches settings to settings", async () => {
+    const router = renderSwitcher(fewProjects, "/projects/alpha/settings");
+    await openSwitcher();
+    await pickProject("beta");
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/projects/beta/settings"),
+    );
+  });
+
+  it("switches list to list without the old search params", async () => {
+    const router = renderSwitcher(
+      fewProjects,
+      "/projects/alpha?category=closed&q=x",
+    );
+    await openSwitcher();
+    await pickProject("beta");
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/projects/beta"),
+    );
+    expect(router.state.location.search).toEqual({});
+  });
+
+  it("falls back to the list from an issue detail page", async () => {
+    const router = renderSwitcher(fewProjects, "/projects/alpha/issues/7");
+    await openSwitcher();
+    await pickProject("beta");
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/projects/beta"),
+    );
   });
 });

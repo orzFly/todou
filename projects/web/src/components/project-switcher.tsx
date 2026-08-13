@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { CheckIcon, ChevronsUpDownIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { projectsQuery } from "@/api/queries.ts";
 import { type OrderedProject, useProjectOrder } from "@/api/useProjectOrder.ts";
+import { projectTabs } from "@/components/project-nav.tsx";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -26,6 +27,7 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
   const navigate = useNavigate();
+  const matchRoute = useMatchRoute();
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -55,7 +57,15 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
   const openProject = (item: OrderedProject | undefined) => {
     if (!item) return;
     setOpen(false);
-    navigate({ to: "/projects/$slug", params: { slug: item.project.slug } });
+    // Keep the current nav module across the switch. Pages deeper than the
+    // nav (issue detail, spec view) have no cross-project counterpart, so
+    // they fall back to the list. Search params stay behind on purpose:
+    // another project's filters rarely transfer.
+    const tab = projectTabs.find((t) => matchRoute({ to: t.to }));
+    navigate({
+      to: tab?.to ?? "/projects/$slug",
+      params: { slug: item.project.slug },
+    });
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {

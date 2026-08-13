@@ -1,7 +1,8 @@
 import { Link } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
 
-const tabs = [
+/** Shared with the project switcher, which keeps the active tab across a switch. */
+export const projectTabs = [
   { to: "/projects/$slug", label: "List", exact: true },
   { to: "/projects/$slug/board", label: "Board", exact: false },
   { to: "/projects/$slug/settings", label: "Settings", exact: false },
@@ -20,7 +21,7 @@ export function ProjectNav({
 }) {
   return (
     <nav className={cn("flex gap-1", className)}>
-      {tabs.map((tab) => (
+      {projectTabs.map((tab) => (
         <Link
           key={tab.label}
           to={tab.to}
