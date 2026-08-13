@@ -15,9 +15,11 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   CheckIcon,
+  PencilIcon,
   PinIcon,
   PlusIcon,
   Trash2Icon,
+  XIcon,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -594,10 +596,13 @@ function ColorPicker({
   );
 }
 
-function LabelsSection({ slug }: { slug: string }) {
+export function LabelsSection({ slug }: { slug: string }) {
   const labels = useSuspenseQuery(labelsQuery(slug));
   const [name, setName] = useState("");
   const [color, setColor] = useState("#3b82f6");
+  const [editing, setEditing] = useState<{ id: number; draft: string } | null>(
+    null,
+  );
   const queryClient = useQueryClient();
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["labels", slug] });
@@ -621,6 +626,17 @@ function LabelsSection({ slug }: { slug: string }) {
     onSuccess: invalidate,
     onError: (error) => toast.error(error.message),
   });
+  const rename = useMutation({
+    mutationFn: (vars: { id: number; name: string }) =>
+      api.updateLabel(slug, vars.id, { name: vars.name }),
+    onSuccess: () => {
+      setEditing(null);
+      invalidate();
+      // Issue rows and board cards embed label names.
+      queryClient.invalidateQueries({ queryKey: ["issues", slug] });
+    },
+    onError: (error) => toast.error(error.message),
+  });
 
   return (
     <section className="space-y-3">
@@ -628,7 +644,62 @@ function LabelsSection({ slug }: { slug: string }) {
       <div className="flex flex-wrap items-center gap-2">
         {labels.data.map((label) => (
           <span key={label.id} className="inline-flex items-center gap-1">
-            <LabelChip label={label} />
+            {editing?.id === label.id ? (
+              <form
+                className="inline-flex items-center gap-1"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const next = editing.draft.trim();
+                  if (next === "" || next === label.name) setEditing(null);
+                  else rename.mutate({ id: label.id, name: next });
+                }}
+              >
+                <Input
+                  value={editing.draft}
+                  onChange={(e) =>
+                    setEditing({ id: label.id, draft: e.target.value })
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setEditing(null);
+                  }}
+                  aria-label={`new name for ${label.name}`}
+                  autoFocus
+                  // text-base below md: sub-16px inputs trigger iOS focus auto-zoom.
+                  className="h-7 w-44 text-base md:text-xs"
+                />
+                <Button
+                  type="submit"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={`save name for ${label.name}`}
+                >
+                  <CheckIcon className="size-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={`cancel renaming ${label.name}`}
+                  onClick={() => setEditing(null)}
+                >
+                  <XIcon className="size-3.5" />
+                </Button>
+              </form>
+            ) : (
+              <>
+                <LabelChip label={label} />
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`rename label ${label.name}`}
+                  onClick={() =>
+                    setEditing({ id: label.id, draft: label.name })
+                  }
+                >
+                  <PencilIcon className="size-3.5" />
+                </Button>
+              </>
+            )}
             <ColorPicker
               name={label.name}
               color={label.color}
