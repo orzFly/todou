@@ -66,8 +66,37 @@ describe("token selection matrix", () => {
   it("CLAUDECODE=1 auto-selects the claude-code profile", () => {
     const ctx = resolve({ env: { CLAUDECODE: "1" } });
     expect(ctx.token).toBe("todou_pat_claude");
-    expect(ctx.tokenSource).toBe("auto-claude-code");
+    expect(ctx.tokenSource).toBe("auto-harness");
     expect(ctx.tokenProfile).toBe("claude-code");
+  });
+
+  it("a hermes turn auto-selects the hermes-agent profile", () => {
+    const ctx = resolveContext({
+      flags: {},
+      env: { HERMES_SESSION_KEY: "agent:main:telegram:dm:1000001" },
+      config: {
+        default_server: "http://stub.test",
+        servers: {
+          "http://stub.test": {
+            token: "todou_pat_default",
+            tokens: { "hermes-agent": "todou_pat_hermes" },
+          },
+        },
+        bindings: [],
+      },
+      remoteUrl: null,
+    });
+    expect(ctx.token).toBe("todou_pat_hermes");
+    expect(ctx.tokenSource).toBe("auto-harness");
+    expect(ctx.tokenProfile).toBe("hermes-agent");
+  });
+
+  it("a hermes turn without a hermes-agent profile falls back to default", () => {
+    const ctx = resolve({
+      env: { HERMES_SESSION_KEY: "agent:main:telegram:dm:1000001" },
+    });
+    expect(ctx.token).toBe("todou_pat_default");
+    expect(ctx.tokenSource).toBe("default");
   });
 
   it("CLAUDECODE=1 without a claude-code profile falls back to default", () => {
@@ -198,7 +227,8 @@ describe("config compatibility and login --profile", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toContain(
-      'token: profile "claude-code" (auto via CLAUDECODE)',
+      'token: profile "claude-code" (auto-detected harness)',
     );
+    expect(result.stderr).toContain("detected harness: claude-code");
   });
 });

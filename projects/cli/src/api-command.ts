@@ -1,4 +1,8 @@
-import { AGENT_CONTEXT_HEADER, TodouClient } from "@todou/shared";
+import {
+  AGENT_CONTEXT_HEADER,
+  type AgentContext,
+  TodouClient,
+} from "@todou/shared";
 import { type BaseContext, Command, Option } from "clipanion";
 import { type CliConfig, loadCliConfig } from "./config.ts";
 import {
@@ -30,6 +34,7 @@ export abstract class ApiCommand extends Command<CliContext> {
 
   protected config!: CliConfig;
   protected ctx!: ResolvedContext;
+  protected agentContext: AgentContext | null = null;
 
   /** May return a non-zero exit code for "no error, but nothing happened". */
   // biome-ignore lint/suspicious/noConfusingVoidType: `undefined` would force every void-returning command to change its signature
@@ -65,13 +70,13 @@ export abstract class ApiCommand extends Command<CliContext> {
           `run \`todou login ${this.ctx.server}\` or set TODOU_TOKEN`,
         );
       }
-      const agentContext = detectAgentContext(this.context.env);
+      this.agentContext = detectAgentContext(this.context.env);
       const code = await this.run(
         new TodouClient({
           baseUrl: this.ctx.server,
           token: this.ctx.token,
-          headers: agentContext
-            ? { [AGENT_CONTEXT_HEADER]: JSON.stringify(agentContext) }
+          headers: this.agentContext
+            ? { [AGENT_CONTEXT_HEADER]: JSON.stringify(this.agentContext) }
             : undefined,
           fetch: this.context.fetchImpl,
         }),
