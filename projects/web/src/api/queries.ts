@@ -1,8 +1,12 @@
 import { QueryClient, queryOptions } from "@tanstack/react-query";
 import { TodouClient } from "@todou/shared";
 
-/** Same-origin client; vite dev proxies /api to the todou server. */
-export const api = new TodouClient();
+/**
+ * Same-origin client; vite dev proxies /api to the todou server.
+ * Batching is off under vitest (MODE=test): the suites stub fetch with
+ * per-path fake servers that must keep seeing plain GETs.
+ */
+export const api = new TodouClient({ batch: import.meta.env.MODE !== "test" });
 
 export const queryClient = new QueryClient({
   defaultOptions: {

@@ -16,6 +16,7 @@ import { activityRoutes } from "./routes/activity.ts";
 import { agentRoutes } from "./routes/agents.ts";
 import { attachmentRoutes } from "./routes/attachments.ts";
 import { authRoutes } from "./routes/auth.ts";
+import { batchRoutes } from "./routes/batch.ts";
 import { issueRoutes } from "./routes/issues.ts";
 import { labelRoutes } from "./routes/labels.ts";
 import { meRoutes } from "./routes/me.ts";
@@ -113,6 +114,14 @@ export function createApp(ctx: AppContext) {
   // before the auth guard so they work unauthenticated; everything after
   // the guard requires a session cookie or a bearer PAT.
   api.route("/auth", authRoutes(ctx));
+  // Before the auth guard on purpose: sub-requests re-enter the app and
+  // are authorized individually, and an unauthenticated mixed batch (the
+  // login page pairs /auth/mode with /me) must degrade per item — a 401
+  // envelope would fail the public halves with it.
+  api.route(
+    "/",
+    batchRoutes(() => app),
+  );
   api.doc31("/openapi.json", {
     openapi: "3.1.0",
     info: {
