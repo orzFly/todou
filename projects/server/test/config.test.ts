@@ -11,6 +11,7 @@ describe("loadConfig", () => {
     expect(config.database.projects.placement).toBe("shared");
     expect(config.storage.backend).toBe("fs");
     expect(config.storage.max_upload_mb).toBe(20);
+    expect(config.http.max_json_body_mb).toBe(4);
     expect(config.projectUrlFor).toBeNull();
   });
 

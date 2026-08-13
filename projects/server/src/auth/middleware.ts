@@ -14,6 +14,8 @@ export type AppEnv = {
     user: UserRow;
     /** Parsed x-todou-agent-context header; null when absent. */
     agentContext: AgentContext | null;
+    /** Set by the upload-route body limiters; the API-wide one stands down. */
+    bodyLimitScoped?: true;
   };
 };
 

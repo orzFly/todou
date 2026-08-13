@@ -10,7 +10,7 @@ import {
 } from "../errors.ts";
 
 // Avatars are small by design — independent of the attachment upload limit.
-const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+export const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
 const AVATAR_CONTENT_TYPES = new Set([
   "image/png",
   "image/jpeg",

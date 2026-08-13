@@ -1,7 +1,7 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { Hono } from "hono";
 
-type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 422 | 502 | 503;
+type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 413 | 422 | 502 | 503;
 
 export class DomainError extends Error {
   readonly status: ErrorStatus;
@@ -48,6 +48,12 @@ export class ConflictError extends DomainError {
 export class ValidationFailedError extends DomainError {
   constructor(message = "validation failed", details?: unknown) {
     super(422, "validation_failed", message, details);
+  }
+}
+
+export class PayloadTooLargeError extends DomainError {
+  constructor(message = "request body too large") {
+    super(413, "payload_too_large", message);
   }
 }
 

@@ -40,6 +40,10 @@ const ConfigSchema = z.object({
       port: z.coerce.number().int().min(1).max(65535).default(8637),
       static_dir: z.string().optional(),
       compression: flexibleBool.default(true),
+      // Bounds every API request body except the multipart upload routes,
+      // which get storage.max_upload_mb instead. Spec pushes travel as
+      // JSON, so this needs generous headroom over typical issue bodies.
+      max_json_body_mb: z.coerce.number().positive().default(4),
       public_origin: z.string().optional(),
       trusted_proxies: z.preprocess(
         // ENV delivers one comma-separated string; TOML delivers an array.
@@ -198,6 +202,7 @@ const ENV_MAP: Array<[string, string[]]> = [
   ["TODOU_HTTP_PORT", ["http", "port"]],
   ["TODOU_HTTP_STATIC_DIR", ["http", "static_dir"]],
   ["TODOU_HTTP_COMPRESSION", ["http", "compression"]],
+  ["TODOU_HTTP_MAX_JSON_BODY_MB", ["http", "max_json_body_mb"]],
   ["TODOU_DATABASE_SYSTEM", ["database", "system"]],
   ["TODOU_DATABASE_AUTO_MIGRATE", ["database", "auto_migrate"]],
   ["TODOU_DATABASE_PROJECTS_PLACEMENT", ["database", "projects", "placement"]],

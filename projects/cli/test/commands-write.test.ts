@@ -494,6 +494,35 @@ describe("attach", () => {
     expect(result.stderr).toContain("cannot read");
   });
 
+  it("stops at the size probe's 422 without a multipart fallback", async () => {
+    const file = join(dir, "big.bin");
+    writeFileSync(file, "stand-in for an oversize file");
+    const { fetchImpl, calls } = fakeFetch([
+      [
+        "POST",
+        "/api/projects/todou/attachments/direct-uploads",
+        // Servers answer the size gate before the backend gate (#70), so
+        // this 422 arrives on fs backends too — before any body is sent.
+        {
+          __status: 422,
+          body: {
+            error: {
+              code: "validation_failed",
+              message: "file exceeds the 20 MB upload limit",
+            },
+          },
+        },
+      ],
+    ]);
+    const result = await runCli(["attach", "3", file], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("file exceeds the 20 MB upload limit");
+    expect(calls).toHaveLength(1);
+  });
+
   it("accepts a project/number ref", async () => {
     const file = join(dir, "ref.txt");
     writeFileSync(file, "x");

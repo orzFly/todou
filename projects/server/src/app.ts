@@ -6,6 +6,11 @@ import { type AppEnv, authMiddleware } from "./auth/middleware.ts";
 import type { AppContext } from "./bootstrap.ts";
 import { registerErrorHandler } from "./errors.ts";
 import { agentContextMiddleware } from "./middleware/agent-context.ts";
+import {
+  avatarBodyLimit,
+  jsonBodyLimit,
+  uploadBodyLimit,
+} from "./middleware/body-limit.ts";
 import { compressMiddleware } from "./middleware/compress.ts";
 import { agentRoutes } from "./routes/agents.ts";
 import { attachmentRoutes } from "./routes/attachments.ts";
@@ -94,6 +99,14 @@ export function createApp(ctx: AppContext) {
   // basePath (rather than a prefixed mount) so the generated OpenAPI
   // document carries the /api prefix in its paths.
   const api = new OpenAPIHono<AppEnv>({ defaultHook }).basePath("/api");
+  // Body limits come before every route — including the unauthenticated
+  // /auth ones — so nothing buffers an oversized request (#70). The scoped
+  // upload limits must register ahead of the API-wide JSON limit, which
+  // would otherwise cut legitimate uploads off first.
+  api.use("/projects/:slug/attachments", uploadBodyLimit(ctx.config));
+  api.use("/me/avatar", avatarBodyLimit());
+  api.use("/agents/:id/avatar", avatarBodyLimit());
+  api.use("*", jsonBodyLimit(ctx.config));
   // Order matters: /auth endpoints and the OpenAPI document are registered
   // before the auth guard so they work unauthenticated; everything after
   // the guard requires a session cookie or a bearer PAT.

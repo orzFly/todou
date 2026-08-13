@@ -160,17 +160,21 @@ export async function requestDirectUpload(
   input: DirectUploadRequest,
 ): Promise<DirectUploadTicket> {
   const { project } = await requireProject(ctx, actor, slug, "writer");
-  if (!(ctx.storage instanceof S3Storage)) {
-    throw new DirectUploadUnavailableError();
-  }
-  const db = await ctx.router.forProject(routeInfoOf(project));
-
+  // The size gate precedes the backend gate: an oversize declaration means
+  // no upload path will take the file, so clients probing this endpoint
+  // first (the CLI does) learn that before shipping a single body byte —
+  // a 409 here would instead send them into the multipart fallback.
   const maxBytes = ctx.config.storage.max_upload_mb * 1024 * 1024;
   if (input.size > maxBytes) {
     throw new ValidationFailedError(
       `file exceeds the ${ctx.config.storage.max_upload_mb} MB upload limit`,
     );
   }
+  if (!(ctx.storage instanceof S3Storage)) {
+    throw new DirectUploadUnavailableError();
+  }
+  const db = await ctx.router.forProject(routeInfoOf(project));
+
   const issueRows = await db
     .select({ id: issues.id })
     .from(issues)

@@ -253,6 +253,26 @@ describe("direct uploads (fs backend)", () => {
     expect(complete.status).toBe(409);
     expect((await json(complete)).error.code).toBe("direct_upload_unavailable");
   });
+
+  // The size gate answers before the backend gate: a 409 would send the
+  // client into the multipart fallback with a file no path will accept.
+  it("rejects an oversize declaration instead of advertising fallback", async () => {
+    const res = await t.app.request(
+      `/api/projects/${slug}/attachments/direct-uploads`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({
+          issue_number: 1,
+          filename: "huge.bin",
+          content_type: "application/octet-stream",
+          size: 21 * 1024 * 1024,
+        }),
+      },
+    );
+    expect(res.status).toBe(422);
+    expect((await json(res)).error.code).toBe("validation_failed");
+  });
 });
 
 describe("attachments (s3 backend)", () => {
