@@ -1,14 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
+import { formatRef } from "@todou/shared";
 import { useEffect } from "react";
 import { issueQuery } from "@/api/issues.ts";
 import { projectQuery } from "@/api/queries.ts";
+import { useRefPrefix } from "@/api/references.ts";
 
 const FALLBACK = "todou 🥔";
 
 function titleFor(
   routeId: string | undefined,
-  ctx: { projectName: string; issueNumber?: number; issueTitle?: string },
+  ctx: {
+    projectName: string;
+    issueNumber?: number;
+    issueTitle?: string;
+    refPrefix: string | null;
+  },
 ): string {
   switch (routeId) {
     case "/authed/projects":
@@ -22,9 +29,9 @@ function titleFor(
     case "/authed/projects/$slug/issues/new":
       return `New issue · ${ctx.projectName}`;
     case "/authed/projects/$slug/issues/$number":
-      return `#${ctx.issueNumber}${ctx.issueTitle ? ` ${ctx.issueTitle}` : ""} · ${ctx.projectName}`;
+      return `${formatRef(ctx.refPrefix, ctx.issueNumber ?? 0)}${ctx.issueTitle ? ` ${ctx.issueTitle}` : ""} · ${ctx.projectName}`;
     case "/authed/projects/$slug/issues/$number/spec":
-      return `#${ctx.issueNumber} spec · ${ctx.projectName}`;
+      return `${formatRef(ctx.refPrefix, ctx.issueNumber ?? 0)} spec · ${ctx.projectName}`;
     case "/authed/settings/profile":
       return "Profile · todou";
     case "/authed/settings/agents":
@@ -66,10 +73,12 @@ export function TitleController() {
       slug != null && issueNumber != null && Number.isFinite(issueNumber),
   });
 
+  const refPrefix = useRefPrefix(slug ?? undefined);
   const title = titleFor(match?.routeId, {
     projectName: project.data?.name ?? slug ?? "",
     issueNumber,
     issueTitle: issue.data?.title,
+    refPrefix,
   });
 
   useEffect(() => {

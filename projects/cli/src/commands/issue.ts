@@ -5,7 +5,7 @@ import type {
   TimelineItem,
   TodouClient,
 } from "@todou/shared";
-import { TimelineFilterType } from "@todou/shared";
+import { formatRef, TimelineFilterType } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
@@ -19,6 +19,7 @@ import {
   renderQuestions,
 } from "../questions.ts";
 import {
+  fetchRefPrefix,
   resolveAssignees,
   resolveClosedStatus,
   resolveLabels,
@@ -31,14 +32,14 @@ import {
   watchRetryOptions,
 } from "../watch-loop.ts";
 
-function issueRow(issue: IssueListItem): string[] {
+function issueRow(issue: IssueListItem, refPrefix: string | null): string[] {
   // Old servers omit both fields entirely; undefined reads as "not unread"
   // and the marker degrades to the plain dot (#77). The count is exact —
   // terminal columns self-size, so the web's 99+ cap buys nothing here.
   const count = issue.unread_comments ?? 0;
   return [
     issue.unread ? (count > 0 ? `● (+${count})` : "●") : "",
-    `#${issue.number}`,
+    formatRef(refPrefix, issue.number),
     issue.title,
     issue.status.name,
     issue.labels.map((l) => l.name).join(","),
@@ -111,11 +112,12 @@ export class IssueListCommand extends ProjectCommand {
       ? { ...page, items: page.items.filter((i) => i.unread) }
       : page;
 
+    const refPrefix = this.json ? null : await fetchRefPrefix(client, project);
     this.output(shown, () => {
       if (shown.items.length === 0) {
         return this.unread ? "no unread issues" : "no issues";
       }
-      const body = table(shown.items.map((i) => issueRow(i)));
+      const body = table(shown.items.map((i) => issueRow(i, refPrefix)));
       return shown.next_cursor
         ? `${body}\n… more available (raise --limit)`
         : body;
@@ -145,8 +147,9 @@ export class IssueViewCommand extends ProjectCommand {
       number,
     );
     const paint = makePainter(this.context.stdout, this.context.env);
+    const refPrefix = this.json ? null : await fetchRefPrefix(client, project);
     this.output({ issue, timeline, next_cursor: cursor ?? null }, () =>
-      renderIssue(issue, timeline, cursor, paint),
+      renderIssue(issue, timeline, cursor, paint, refPrefix),
     );
     // Viewing advances the server-side read position (#46), pinned to the
     // newest entry actually shown so anything landing after the fetch stays
@@ -353,7 +356,11 @@ export class IssueCreateCommand extends ProjectCommand {
       ),
       assignee_ids: await resolveAssignees(client, project, this.assignees),
     });
-    this.output(issue, () => `#${issue.number} created: ${issue.title}`);
+    const refPrefix = this.json ? null : await fetchRefPrefix(client, project);
+    this.output(
+      issue,
+      () => `${formatRef(refPrefix, issue.number)} created: ${issue.title}`,
+    );
   }
 }
 
@@ -427,7 +434,8 @@ export class IssueEditCommand extends ProjectCommand {
       throw new CliError("nothing to change", "pass at least one edit flag");
     }
     const issue = await client.updateIssue(project, number, input);
-    this.output(issue, () => `#${issue.number} updated`);
+    const refPrefix = this.json ? null : await fetchRefPrefix(client, project);
+    this.output(issue, () => `${formatRef(refPrefix, issue.number)} updated`);
   }
 }
 
@@ -456,7 +464,11 @@ export class IssueCloseCommand extends ProjectCommand {
     const issue = await client.updateIssue(project, number, {
       status_id: target.id,
     });
-    this.output(issue, () => `#${issue.number} closed (${target.name})`);
+    const refPrefix = this.json ? null : await fetchRefPrefix(client, project);
+    this.output(
+      issue,
+      () => `${formatRef(refPrefix, issue.number)} closed (${target.name})`,
+    );
   }
 }
 
@@ -486,9 +498,12 @@ function renderIssue(
   timeline: TimelineItem[],
   cursor: string | undefined,
   paint: Painter,
+  refPrefix: string | null,
 ): string {
   const lines: string[] = [];
-  lines.push(`${paint("bold", `#${issue.number} ${issue.title}`)}`);
+  lines.push(
+    `${paint("bold", `${formatRef(refPrefix, issue.number)} ${issue.title}`)}`,
+  );
   lines.push(
     [
       `status: ${issue.status.name}`,

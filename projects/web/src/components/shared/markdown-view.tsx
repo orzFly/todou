@@ -1,6 +1,8 @@
+import { useQuery } from "@tanstack/react-query";
 import { type ComponentProps, type ReactNode, useMemo } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { refConfigFor, referenceConfigQuery } from "@/api/references.ts";
 import { AttachmentDocumentEmbed } from "@/components/issue/attachment-embed.tsx";
 import {
   AttachmentInlineImage,
@@ -106,11 +108,19 @@ export function MarkdownView({
   slug,
   issueNumber,
   embedded = false,
+  refDate,
   rehypePlugins,
 }: {
   children: string;
   /** Enables #N → issue link rendering; omit where there is no project. */
   slug?: string;
+  /**
+   * When the content was CREATED (#80): internal refs parse under the
+   * format in force at that moment, so pre-switch text keeps pointing at
+   * this project's issues after "#" is handed to an external tracker.
+   * Omit for live text (editor previews) — that reads as "now".
+   */
+  refDate?: string;
   /**
    * Enables rich attachment references (download-URL links, embedded
    * images and document cards upgrade to preview-aware components); omit
@@ -239,13 +249,26 @@ export function MarkdownView({
     [children, slug, issueNumber, embedded],
   );
 
+  const refQuery = useQuery({
+    ...referenceConfigQuery(slug ?? ""),
+    enabled: slug !== undefined,
+  });
+  // Stable references: react-markdown gets this array verbatim, and the
+  // tokenizer config must not churn identity on unrelated re-renders.
+  const remarkPlugins = useMemo(() => {
+    if (slug === undefined)
+      return [remarkGfm] as ComponentProps<typeof Markdown>["remarkPlugins"];
+    const config = refConfigFor(refQuery.data, refDate);
+    return [remarkGfm, [remarkIssueRefs, config]] as ComponentProps<
+      typeof Markdown
+    >["remarkPlugins"];
+  }, [slug, refQuery.data, refDate]);
+
   return (
     // Typography lives in styles.css (.markdown-body, GitHub-style).
     <div className="markdown-body">
       <Markdown
-        remarkPlugins={
-          slug === undefined ? [remarkGfm] : [remarkGfm, remarkIssueRefs]
-        }
+        remarkPlugins={remarkPlugins}
         rehypePlugins={rehypePlugins}
         components={components}
       >

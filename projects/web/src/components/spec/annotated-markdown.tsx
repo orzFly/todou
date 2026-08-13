@@ -132,6 +132,7 @@ export function AnnotatedMarkdown({
   slug,
   issueNumber,
   body,
+  refDate,
   annotations,
   changedRanges = [],
   onStage,
@@ -142,6 +143,8 @@ export function AnnotatedMarkdown({
   slug: string;
   issueNumber: number;
   body: string;
+  /** The viewed spec version's push time (#80 time cutoff). */
+  refDate?: string;
   annotations: DisplayedAnnotation[];
   /** Lines changed since the compare baseline — green highlight + ↑↓ nav. */
   changedRanges?: LineRange[];
@@ -265,6 +268,7 @@ export function AnnotatedMarkdown({
       <MarkdownView
         slug={slug}
         issueNumber={issueNumber}
+        refDate={refDate}
         rehypePlugins={REHYPE_PLUGINS}
       >
         {body}

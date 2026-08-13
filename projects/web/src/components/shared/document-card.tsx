@@ -32,6 +32,7 @@ export function DocumentView({
   render = documentRenderKind(filename),
   slug,
   issueNumber,
+  refDate,
 }: {
   filename: string;
   text: string;
@@ -40,10 +41,17 @@ export function DocumentView({
   /** Markdown context (issue refs, attachment refs); omit outside a project. */
   slug?: string;
   issueNumber?: number;
+  /** The document's creation time (#80 time cutoff for issue refs). */
+  refDate?: string;
 }) {
   if (render === "markdown") {
     return (
-      <MarkdownView slug={slug} issueNumber={issueNumber} embedded>
+      <MarkdownView
+        slug={slug}
+        issueNumber={issueNumber}
+        refDate={refDate}
+        embedded
+      >
         {text}
       </MarkdownView>
     );
@@ -64,6 +72,7 @@ export function DocumentCard({
   render,
   slug,
   issueNumber,
+  refDate,
   meta,
   headerActions,
   downloadUrl,
@@ -75,6 +84,7 @@ export function DocumentCard({
   render?: DocumentRender;
   slug?: string;
   issueNumber?: number;
+  refDate?: string;
   /** Short muted note next to the filename (e.g. a size). */
   meta?: string;
   /** Extra header controls, rendered before download/expand. */
@@ -160,6 +170,7 @@ export function DocumentCard({
             render={resolvedRender}
             slug={slug}
             issueNumber={issueNumber}
+            refDate={refDate}
           />
         </div>
         {overflowing && (
@@ -218,6 +229,7 @@ export function DocumentCard({
               render={resolvedRender}
               slug={slug}
               issueNumber={issueNumber}
+              refDate={refDate}
             />
           </div>
           {(meta !== undefined || downloadUrl !== undefined) && (

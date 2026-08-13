@@ -111,6 +111,7 @@ export async function createComment(
       actor.id,
       { issueNumber, commentId: comment.id },
       input.body,
+      comment.createdAt,
       agentContext,
     );
     for (const ref of refs) {
@@ -218,6 +219,7 @@ export async function updateComment(
       actor.id,
       { issueNumber, commentId: row.id },
       input.body,
+      row.createdAt,
       agentContext,
     );
     return { after, refs };

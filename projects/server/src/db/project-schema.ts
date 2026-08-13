@@ -32,6 +32,39 @@ export const projectMeta = pgTable("project_meta", {
   createdAt: createdAt(),
 });
 
+// Append-only internal reference-format history (#80). NULL prefix = "#N".
+// The format in force for a piece of content is the newest row with
+// effective_from <= content.created_at — history, not a single value, so
+// legacy text keeps parsing under the format it was written in.
+export const refFormats = pgTable(
+  "ref_formats",
+  {
+    id: id(),
+    projectId: projectId(),
+    prefix: text("prefix"),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("ref_formats_project_from_idx").on(t.projectId, t.effectiveFrom),
+  ],
+);
+
+export const autolinks = pgTable(
+  "autolinks",
+  {
+    id: id(),
+    projectId: projectId(),
+    prefix: text("prefix").notNull(),
+    urlTemplate: text("url_template").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("autolinks_project_prefix_idx").on(t.projectId, t.prefix),
+  ],
+);
+
 export const statuses = pgTable(
   "statuses",
   {

@@ -1,4 +1,8 @@
-import { splitIssueRefs } from "@/lib/issue-refs.ts";
+import {
+  DEFAULT_REF_CONFIG,
+  type RefConfig,
+  splitIssueRefs,
+} from "@/lib/issue-refs.ts";
 
 /**
  * Minimal structural mdast shape — typed locally so we don't have to add
@@ -8,6 +12,8 @@ type MdNode = {
   type: string;
   value?: string;
   url?: string;
+  title?: string | null;
+  data?: { hProperties?: Record<string, string> };
   children?: MdNode[];
 };
 
@@ -20,37 +26,50 @@ type MdNode = {
 const OPAQUE = new Set(["code", "inlineCode", "link", "linkReference"]);
 
 /**
- * remark plugin: turn #N tokens in text into links the MarkdownView `a`
- * renderer recognises by their `#issue-N` fragment href and upgrades to
- * <IssueLink>. Operating on the AST (not the source) is what exempts code
- * blocks and inline code — their text lives in opaque leaf nodes.
+ * remark plugin: turn reference tokens in text into links. Internal refs
+ * become links the MarkdownView `a` renderer recognises by their
+ * `#issue-N` fragment href and upgrades to <IssueLink>; autolink tokens
+ * become plain external links. Operating on the AST (not the source) is
+ * what exempts code blocks and inline code — their text lives in opaque
+ * leaf nodes. Config is per-content (#80 time cutoff); pass it via the
+ * remark options tuple: `[remarkIssueRefs, config]`.
  */
-export function remarkIssueRefs() {
-  return (tree: MdNode) => visit(tree);
+export function remarkIssueRefs(config: RefConfig = DEFAULT_REF_CONFIG) {
+  return (tree: MdNode) => visit(tree, config);
 }
 
-function visit(node: MdNode): void {
+function visit(node: MdNode, config: RefConfig): void {
   if (node.children === undefined || OPAQUE.has(node.type)) return;
   const next: MdNode[] = [];
   for (const child of node.children) {
     if (child.type === "text" && typeof child.value === "string") {
-      const segments = splitIssueRefs(child.value);
-      if (segments.some((s) => s.type === "ref")) {
+      const segments = splitIssueRefs(child.value, config);
+      if (segments.some((s) => s.type !== "text")) {
         for (const segment of segments) {
           next.push(
             segment.type === "text"
               ? { type: "text", value: segment.value }
-              : {
-                  type: "link",
-                  url: `#issue-${segment.number}`,
-                  children: [{ type: "text", value: segment.text }],
-                },
+              : segment.type === "ref"
+                ? {
+                    type: "link",
+                    url: `#issue-${segment.number}`,
+                    children: [{ type: "text", value: segment.text }],
+                  }
+                : {
+                    type: "link",
+                    url: segment.href,
+                    title: segment.href,
+                    data: {
+                      hProperties: { target: "_blank", rel: "noreferrer" },
+                    },
+                    children: [{ type: "text", value: segment.text }],
+                  },
           );
         }
         continue;
       }
     }
-    visit(child);
+    visit(child, config);
     next.push(child);
   }
   node.children = next;

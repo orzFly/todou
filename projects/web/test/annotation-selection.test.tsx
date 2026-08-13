@@ -1,8 +1,9 @@
+import { QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { AnnotatedMarkdown } from "../src/components/spec/annotated-markdown.tsx";
-import { renderWithProviders } from "./render.tsx";
+import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 // #60: the spec annotation flow died in two places — the comment button's
 // appearance re-rendered the markdown with a fresh component-override map
@@ -13,18 +14,25 @@ import { renderWithProviders } from "./render.tsx";
 describe("MarkdownView DOM stability (#60 root cause A)", () => {
   it("keeps overridden elements' DOM nodes across re-renders", async () => {
     const md = "First paragraph.\n\nSecond paragraph.";
+    // MarkdownView reads the reference config through react-query now, so
+    // a provider is part of its contract (the app root always has one).
+    const client = testQueryClient();
     const view = render(
-      <MarkdownView slug="p" issueNumber={1}>
-        {md}
-      </MarkdownView>,
+      <QueryClientProvider client={client}>
+        <MarkdownView slug="p" issueNumber={1}>
+          {md}
+        </MarkdownView>
+      </QueryClientProvider>,
     );
     const before = view.container.querySelector("p");
     expect(before).not.toBeNull();
     // Same props, new parent render — overridden <p> must not remount.
     view.rerender(
-      <MarkdownView slug="p" issueNumber={1}>
-        {md}
-      </MarkdownView>,
+      <QueryClientProvider client={client}>
+        <MarkdownView slug="p" issueNumber={1}>
+          {md}
+        </MarkdownView>
+      </QueryClientProvider>,
     );
     const after = view.container.querySelector("p");
     expect(after).toBe(before);

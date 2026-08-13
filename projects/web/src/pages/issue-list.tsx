@@ -5,11 +5,12 @@ import {
   useParams,
   useSearch,
 } from "@tanstack/react-router";
-import type {
-  IssueCounts,
-  IssueListItem,
-  IssueListPage as IssueListPageData,
-  Status,
+import {
+  formatRef,
+  type IssueCounts,
+  type IssueListItem,
+  type IssueListPage as IssueListPageData,
+  type Status,
 } from "@todou/shared";
 import {
   BookOpenTextIcon,
@@ -36,6 +37,7 @@ import {
   membersQuery,
   statusesQuery,
 } from "@/api/queries.ts";
+import { useRefPrefix } from "@/api/references.ts";
 import { FilterBar } from "@/components/issue/filter-bar.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
@@ -269,6 +271,7 @@ export function IssueRow({
   onStatus: (status: Status) => void;
   onToggleLabel: (labelId: number) => void;
 }) {
+  const refPrefix = useRefPrefix(slug);
   return (
     <TableRow>
       <TableCell className="text-muted-foreground">
@@ -281,7 +284,7 @@ export function IssueRow({
             unreadComments={issue.unread_comments}
           />
         </span>
-        #{issue.number}
+        {formatRef(refPrefix, issue.number)}
       </TableCell>
       <TableCell>
         <Link

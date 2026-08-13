@@ -1,3 +1,4 @@
+import { QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
   fireEvent,
@@ -18,7 +19,7 @@ import {
   rehypeSourceLines,
 } from "../src/lib/rehype-source-lines.ts";
 import { useSpecReviewDrafts } from "../src/lib/spec-drafts.ts";
-import { renderWithProviders } from "./render.tsx";
+import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -41,7 +42,9 @@ describe("rehypeSourceLines", () => {
   it("stamps block elements with their markdown source lines", () => {
     const md = "# Title\n\nFirst paragraph.\n\n- item one\n- item two\n";
     const view = render(
-      <MarkdownView rehypePlugins={[rehypeSourceLines]}>{md}</MarkdownView>,
+      <QueryClientProvider client={testQueryClient()}>
+        <MarkdownView rehypePlugins={[rehypeSourceLines]}>{md}</MarkdownView>
+      </QueryClientProvider>,
     );
     const h1 = view.container.querySelector("h1");
     expect(h1?.getAttribute("data-loc")).toBe("1-1");
@@ -61,7 +64,9 @@ describe("rehypeSourceLines", () => {
   it("keeps the stamp when a fence swaps to CodeBlock (#52)", () => {
     const md = "intro\n\n```ts\nconst a = 1;\nconst b = 2;\n```\n";
     const view = render(
-      <MarkdownView rehypePlugins={[rehypeSourceLines]}>{md}</MarkdownView>,
+      <QueryClientProvider client={testQueryClient()}>
+        <MarkdownView rehypePlugins={[rehypeSourceLines]}>{md}</MarkdownView>
+      </QueryClientProvider>,
     );
     // The fence spans source lines 3-6; its contents begin after the ```.
     const wrapper = view.container.querySelector("[data-loc='3-6']");

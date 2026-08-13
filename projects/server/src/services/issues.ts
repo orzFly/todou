@@ -310,6 +310,7 @@ export async function createIssue(
       actor.id,
       { issueNumber: number },
       input.body,
+      issue.createdAt,
       agentContext,
     );
     for (const ref of refs) {
@@ -762,6 +763,7 @@ export async function updateIssue(
         actor.id,
         { issueNumber: number },
         input.body,
+        before.createdAt,
         agentContext,
       );
       for (const ref of refs) {

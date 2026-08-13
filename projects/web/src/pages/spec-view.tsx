@@ -12,7 +12,12 @@ import {
   useParams,
   useSearch,
 } from "@tanstack/react-router";
-import type { SpecCommentItem, SpecFile, SpecInfo } from "@todou/shared";
+import {
+  formatRef,
+  type SpecCommentItem,
+  type SpecFile,
+  type SpecInfo,
+} from "@todou/shared";
 import { diffLines } from "diff";
 import {
   ArrowDownIcon,
@@ -23,6 +28,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
+import { useRefPrefix } from "@/api/references.ts";
 import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
 import { SpecStatusBadge } from "@/components/issue/spec-entry.tsx";
 import {
@@ -58,6 +64,7 @@ export function SpecViewPage() {
   });
   const issueNumber = Number(numberParam);
   const spec = useSuspenseQuery(specQuery(slug, issueNumber));
+  const refPrefix = useRefPrefix(slug);
 
   if (spec.data === null) {
     return (
@@ -68,7 +75,7 @@ export function SpecViewPage() {
             to="/projects/$slug/issues/$number"
             params={{ slug, number: numberParam }}
           >
-            Back to #{numberParam}
+            Back to {formatRef(refPrefix, issueNumber)}
           </Link>
         </Button>
       </div>
@@ -98,6 +105,7 @@ function SpecViewBody({
   issueNumber: number;
   spec: SpecInfo;
 }) {
+  const refPrefix = useRefPrefix(slug);
   const search = useSearch({
     from: "/authed/projects/$slug/issues/$number/spec",
   });
@@ -344,7 +352,8 @@ function SpecViewBody({
       <div className="flex flex-wrap items-center gap-2">
         <Button asChild size="sm" variant="ghost">
           <Link to="/projects/$slug/issues/$number" params={params}>
-            <ArrowLeftIcon className="size-4" />#{issueNumber}
+            <ArrowLeftIcon className="size-4" />
+            {formatRef(refPrefix, issueNumber)}
           </Link>
         </Button>
         <span className="font-semibold">Spec</span>
@@ -551,6 +560,9 @@ function SpecViewBody({
                   slug={slug}
                   issueNumber={issueNumber}
                   body={selected.body}
+                  refDate={
+                    spec.versions.find((v) => v.number === version)?.created_at
+                  }
                   annotations={displayed}
                   changedRanges={changedRanges}
                   onStage={(range) =>

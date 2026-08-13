@@ -14,6 +14,8 @@ export type PreviewTarget = {
   url: string;
   content_type?: string;
   size?: number;
+  /** Upload time; anchors markdown ref parsing (#80 time cutoff). */
+  created_at?: string;
 };
 
 const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|avif|svg)$/i;

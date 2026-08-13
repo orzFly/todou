@@ -6,6 +6,8 @@ import type {
   AnswersSubmitInput,
   Attachment,
   AuthMode,
+  Autolink,
+  AutolinkCreateInput,
   CommentComponentInput,
   DirectUploadTicket,
   Issue,
@@ -25,6 +27,8 @@ import type {
   Project,
   ProjectCreateInput,
   ProjectUpdateInput,
+  ReferenceConfig,
+  RefFormatSetInput,
   RevisionPage,
   SpecComments,
   SpecFiles,
@@ -228,6 +232,24 @@ export class TodouClient {
     });
   deleteStatus = (slug: string, id: number) =>
     this.request<void>("DELETE", `/projects/${slug}/statuses/${id}`);
+
+  getReferenceConfig = (slug: string) =>
+    this.request<ReferenceConfig>("GET", `/projects/${slug}/references/config`);
+  setReferenceFormat = (slug: string, input: RefFormatSetInput) =>
+    this.request<ReferenceConfig>(
+      "PUT",
+      `/projects/${slug}/references/format`,
+      { json: input },
+    );
+  createAutolink = (slug: string, input: AutolinkCreateInput) =>
+    this.request<Autolink>("POST", `/projects/${slug}/references/autolinks`, {
+      json: input,
+    });
+  deleteAutolink = (slug: string, id: number) =>
+    this.request<void>(
+      "DELETE",
+      `/projects/${slug}/references/autolinks/${id}`,
+    );
 
   listLabels = (slug: string) =>
     this.request<Label[]>("GET", `/projects/${slug}/labels`);

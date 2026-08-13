@@ -4,11 +4,12 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
-import type {
-  Member,
-  MemberRole,
-  Status,
-  StatusUpdateInput,
+import {
+  formatRef,
+  type Member,
+  type MemberRole,
+  type Status,
+  type StatusUpdateInput,
 } from "@todou/shared";
 import {
   ArrowDownIcon,
@@ -27,6 +28,7 @@ import {
   membersQuery,
   statusesQuery,
 } from "@/api/queries.ts";
+import { referenceConfigQuery } from "@/api/references.ts";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -88,7 +90,167 @@ export function ProjectSettingsPage() {
       <MembersSection slug={slug} />
       <StatusesSection slug={slug} />
       <LabelsSection slug={slug} />
+      <ReferencesSection slug={slug} />
     </div>
+  );
+}
+
+export function ReferencesSection({ slug }: { slug: string }) {
+  const config = useSuspenseQuery(referenceConfigQuery(slug));
+  const [prefixDraft, setPrefixDraft] = useState<string | null>(null);
+  const [linkPrefix, setLinkPrefix] = useState("");
+  const [linkTemplate, setLinkTemplate] = useState("");
+  const queryClient = useQueryClient();
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ["reference-config", slug] });
+
+  const current = config.data.format.prefix;
+  // null = untouched form; the input shows the live value until edited.
+  const draft = prefixDraft ?? current ?? "";
+  const dirty = prefixDraft !== null && (prefixDraft || null) !== current;
+
+  const setFormat = useMutation({
+    mutationFn: () =>
+      api.setReferenceFormat(slug, { prefix: draft.trim() || null }),
+    onSuccess: () => {
+      setPrefixDraft(null);
+      invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+  const addAutolink = useMutation({
+    mutationFn: () =>
+      api.createAutolink(slug, {
+        prefix: linkPrefix,
+        url_template: linkTemplate,
+      }),
+    onSuccess: () => {
+      setLinkPrefix("");
+      setLinkTemplate("");
+      invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+  const removeAutolink = useMutation({
+    mutationFn: (id: number) => api.deleteAutolink(slug, id),
+    onSuccess: invalidate,
+    onError: (error) => toast.error(error.message),
+  });
+
+  return (
+    <section className="space-y-4">
+      <h2 className="text-lg font-semibold">References</h2>
+      <div className="space-y-2">
+        <h3 className="text-sm font-medium">Issue reference format</h3>
+        <p className="text-sm text-muted-foreground">
+          How this project's issues are written and displayed. Existing text is
+          safe: content keeps parsing under the format that was active when it
+          was written.
+        </p>
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (dirty) setFormat.mutate();
+          }}
+        >
+          <Input
+            value={draft}
+            onChange={(e) =>
+              setPrefixDraft(e.target.value.toUpperCase().trim())
+            }
+            placeholder="#"
+            aria-label="reference format prefix"
+            className="w-32"
+          />
+          <span
+            className="text-sm text-muted-foreground"
+            data-testid="ref-format-preview"
+          >
+            {formatRef(draft.trim() || null, 76)}
+          </span>
+          <Button type="submit" size="sm" disabled={!dirty}>
+            {setFormat.isPending ? "Saving…" : "Save"}
+          </Button>
+        </form>
+        <p className="text-xs text-muted-foreground">
+          Empty = the built-in <code>#76</code> form. A prefix like{" "}
+          <code>T</code> switches new writing to <code>T-76</code>.
+        </p>
+      </div>
+      <div className="space-y-2">
+        <h3 className="text-sm font-medium">Autolinks</h3>
+        <p className="text-sm text-muted-foreground">
+          Prefix + number tokens that link out to an external tracker, e.g.{" "}
+          <code>#</code> → GitHub issues once the internal format is prefixed.
+          Rendering only — no reference events.
+        </p>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Prefix</TableHead>
+              <TableHead>URL template</TableHead>
+              <TableHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {config.data.autolinks.map((rule) => (
+              <TableRow key={rule.id}>
+                <TableCell className="font-mono">{rule.prefix}</TableCell>
+                <TableCell className="break-all font-mono text-xs">
+                  {rule.url_template}
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`delete autolink ${rule.prefix}`}
+                    onClick={() => removeAutolink.mutate(rule.id)}
+                  >
+                    <Trash2Icon className="size-3.5" />
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+            {config.data.autolinks.length === 0 && (
+              <TableRow>
+                <TableCell
+                  colSpan={3}
+                  className="text-sm text-muted-foreground"
+                >
+                  No autolinks yet.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (linkPrefix && linkTemplate) addAutolink.mutate();
+          }}
+        >
+          <Input
+            value={linkPrefix}
+            onChange={(e) => setLinkPrefix(e.target.value.trim())}
+            placeholder="Prefix (e.g. #)"
+            aria-label="autolink prefix"
+            className="w-36"
+          />
+          <Input
+            value={linkTemplate}
+            onChange={(e) => setLinkTemplate(e.target.value.trim())}
+            placeholder="https://github.com/org/repo/issues/<num>"
+            aria-label="autolink url template"
+            className="w-96 max-w-full"
+          />
+          <Button type="submit" size="sm">
+            <PlusIcon className="size-3.5" /> Add
+          </Button>
+        </form>
+      </div>
+    </section>
   );
 }
 

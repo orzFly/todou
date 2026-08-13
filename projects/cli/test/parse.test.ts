@@ -71,3 +71,34 @@ describe("parseIssueRef", () => {
     ).toThrow(/not an issue URL/);
   });
 });
+
+describe("parseIssueRef prefixed forms (#80)", () => {
+  it("parses PREFIX-N and takes the number", () => {
+    expect(parseIssueRef("T-76", "issue number")).toEqual({ number: 76 });
+    expect(parseIssueRef("FOOBAR-8", "issue number")).toEqual({ number: 8 });
+    expect(parseIssueRef("A_2X-9", "issue number")).toEqual({ number: 9 });
+  });
+
+  it("parses project/PREFIX-N", () => {
+    expect(parseIssueRef("todou/T-76", "issue number")).toEqual({
+      project: "todou",
+      number: 76,
+    });
+  });
+
+  it("rejects shapes that are not references", () => {
+    // Lowercase or leading-digit prefixes are not the documented form.
+    expect(() => parseIssueRef("t-76", "issue number")).toThrow(
+      /positive integer/,
+    );
+    expect(() => parseIssueRef("2T-76", "issue number")).toThrow(
+      /positive integer/,
+    );
+    expect(() => parseIssueRef("T-", "issue number")).toThrow(
+      /positive integer/,
+    );
+    expect(() => parseIssueRef("T-1234567890", "issue number")).toThrow(
+      /positive integer/,
+    );
+  });
+});

@@ -834,3 +834,73 @@ describe("project link/unlink", () => {
     expect(loadCliConfig({ XDG_CONFIG_HOME: dir }).bindings).toEqual([]);
   });
 });
+
+describe("reference format display (#80)", () => {
+  const config = {
+    format: {
+      prefix: "T",
+      history: [{ prefix: "T", effective_from: "2026-08-13T00:00:00Z" }],
+    },
+    autolinks: [],
+  };
+
+  it("spells the view header with the project prefix", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3", issue],
+      [
+        "GET",
+        "/api/projects/todou/issues/3/timeline",
+        { items: [], prev_cursor: null, next_cursor: null },
+      ],
+      ["PUT", "/api/projects/todou/issues/3/read", {}],
+      ["GET", "/api/projects/todou/references/config", config],
+    ]);
+    const result = await runCli(["issue", "view", "T-3", "-p", "todou"], {
+      fetchImpl,
+      env: loggedInEnv(),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("T-3 Fix the potato");
+    expect(result.stdout).not.toContain("#3");
+  });
+
+  it("spells list rows with the prefix and degrades without the endpoint", async () => {
+    const page = { items: [issue], next_cursor: null };
+    const withConfig = fakeFetch([
+      ["GET", "/api/projects/todou/issues", page],
+      ["GET", "/api/projects/todou/references/config", config],
+    ]);
+    const spelled = await runCli(["issue", "list", "-p", "todou"], {
+      fetchImpl: withConfig.fetchImpl,
+      env: loggedInEnv(),
+    });
+    expect(spelled.stdout).toContain("T-3");
+
+    // Old server: no config route — fakeFetch throws, the CLI degrades.
+    const without = fakeFetch([["GET", "/api/projects/todou/issues", page]]);
+    const fallback = await runCli(["issue", "list", "-p", "todou"], {
+      fetchImpl: without.fetchImpl,
+      env: loggedInEnv(),
+    });
+    expect(fallback.exitCode).toBe(0);
+    expect(fallback.stdout).toContain("#3");
+  });
+
+  it("skips the config fetch entirely under --json", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues",
+        { items: [issue], next_cursor: null },
+      ],
+    ]);
+    const result = await runCli(["issue", "list", "-p", "todou", "--json"], {
+      fetchImpl,
+      env: loggedInEnv(),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(
+      calls.some((c) => String(c.url).includes("/references/config")),
+    ).toBe(false);
+  });
+});

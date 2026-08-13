@@ -1,7 +1,7 @@
 import type { AgentContext } from "@todou/shared";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, lte } from "drizzle-orm";
 import type { Db } from "../db/driver.ts";
-import { issueEvents, issues } from "../db/project-schema.ts";
+import { issueEvents, issues, refFormats } from "../db/project-schema.ts";
 
 /**
  * Blank out fenced code blocks and inline code spans so their contents
@@ -34,21 +34,58 @@ export function stripMarkdownCode(text: string): string {
   return kept.join("\n").replace(/(`+)[^`][\s\S]*?\1/g, " ");
 }
 
-/** Extract #N issue references from markdown, ignoring code segments. */
-export function extractIssueRefs(text: string): number[] {
+/**
+ * Extract internal issue references from markdown, ignoring code
+ * segments. `prefix` selects the format the content was WRITTEN under
+ * (#80 time-cutoff rule): null = `#N`, 'T' = `T-N`. The web tokenizer
+ * (projects/web/src/lib/issue-refs.ts) mirrors these regexes.
+ */
+export function extractIssueRefs(
+  text: string,
+  prefix: string | null = null,
+): number[] {
+  const pattern =
+    prefix === null
+      ? /(?:^|\W)#(\d{1,9})\b/g
+      : // The leading boundary also excludes "-" so SOME-T-76 stays text.
+        new RegExp(String.raw`(?:^|[^\w-])${prefix}-(\d{1,9})\b`, "g");
   const found = new Set<number>();
-  for (const match of stripMarkdownCode(text).matchAll(
-    /(?:^|\W)#(\d{1,9})\b/g,
-  )) {
+  for (const match of stripMarkdownCode(text).matchAll(pattern)) {
     found.add(Number(match[1]));
   }
   return [...found];
 }
 
 /**
- * Record `referenced` events on the issues mentioned by #N in a saved body
- * or comment. Events land on the REFERENCED issue's timeline. Each
+ * The internal reference prefix in force at `at`: the newest ref_formats
+ * row with effective_from <= at, null (= "#") before the first row.
+ */
+export async function refPrefixAt(
+  db: Db,
+  projectId: number,
+  at: Date,
+): Promise<string | null> {
+  const rows = await db
+    .select({ prefix: refFormats.prefix })
+    .from(refFormats)
+    .where(
+      and(
+        eq(refFormats.projectId, projectId),
+        lte(refFormats.effectiveFrom, at),
+      ),
+    )
+    .orderBy(desc(refFormats.effectiveFrom), desc(refFormats.id))
+    .limit(1);
+  return rows[0]?.prefix ?? null;
+}
+
+/**
+ * Record `referenced` events on the issues mentioned in a saved body or
+ * comment. Events land on the REFERENCED issue's timeline. Each
  * (target, source) pair is recorded once, so edits don't spam timelines.
+ * `contentCreatedAt` anchors the format: text parses under the format in
+ * force when its row was CREATED, never when it was edited, so editing a
+ * pre-switch comment cannot flip the meaning of refs already in it.
  */
 export async function recordReferences(
   db: Db,
@@ -56,9 +93,11 @@ export async function recordReferences(
   actorId: number,
   source: { issueNumber: number; commentId?: number },
   text: string,
+  contentCreatedAt: Date,
   agentContext: AgentContext | null = null,
 ): Promise<Array<{ eventId: number; issueId: number; issueNumber: number }>> {
-  const numbers = extractIssueRefs(text).filter(
+  const prefix = await refPrefixAt(db, projectId, contentCreatedAt);
+  const numbers = extractIssueRefs(text, prefix).filter(
     (n) => n !== source.issueNumber,
   );
   if (numbers.length === 0) return [];

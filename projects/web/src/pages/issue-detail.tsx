@@ -4,7 +4,7 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
-import type { Issue, Status } from "@todou/shared";
+import { formatRef, type Issue, type Status } from "@todou/shared";
 import { CheckIcon, PencilIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -16,6 +16,7 @@ import {
   meQuery,
   statusesQuery,
 } from "@/api/queries.ts";
+import { useRefPrefix } from "@/api/references.ts";
 import { AttachmentList } from "@/components/issue/attachment-list.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { MarkReadOnView } from "@/components/issue/mark-read-on-view.tsx";
@@ -108,6 +109,7 @@ export function IssueDetailPage() {
 }
 
 function TitleBlock({ slug, issue }: { slug: string; issue: Issue }) {
+  const refPrefix = useRefPrefix(slug);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(issue.title);
   const queryClient = useQueryClient();
@@ -163,7 +165,7 @@ function TitleBlock({ slug, issue }: { slug: string; issue: Issue }) {
       <h1 className="text-2xl font-semibold">
         {issue.title}{" "}
         <span className="font-normal text-muted-foreground">
-          #{issue.number}
+          {formatRef(refPrefix, issue.number)}
         </span>
       </h1>
       <Button
@@ -296,7 +298,11 @@ function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
             No description.
           </p>
         ) : (
-          <MarkdownView slug={slug} issueNumber={issue.number}>
+          <MarkdownView
+            slug={slug}
+            issueNumber={issue.number}
+            refDate={issue.created_at}
+          >
             {issue.body}
           </MarkdownView>
         )}

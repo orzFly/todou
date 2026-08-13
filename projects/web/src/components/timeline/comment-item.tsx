@@ -199,7 +199,11 @@ export function CommentItem({
             </div>
           </div>
         ) : (
-          <MarkdownView slug={slug} issueNumber={issueNumber}>
+          <MarkdownView
+            slug={slug}
+            issueNumber={issueNumber}
+            refDate={comment.created_at}
+          >
             {comment.body}
           </MarkdownView>
         )}
@@ -211,6 +215,7 @@ export function CommentItem({
             issueNumber={issueNumber}
             commentId={comment.id}
             component={comment.component}
+            refDate={comment.created_at}
           />
         )}
       </div>

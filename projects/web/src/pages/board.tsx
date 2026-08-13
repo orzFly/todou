@@ -12,7 +12,7 @@ import {
 } from "@dnd-kit/core";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
-import type { IssueListItem, Status } from "@todou/shared";
+import { formatRef, type IssueListItem, type Status } from "@todou/shared";
 import {
   BookOpenTextIcon,
   MessageCircleQuestionIcon,
@@ -21,6 +21,7 @@ import {
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { boardColumnQuery, useBoardMove } from "@/api/board.ts";
 import { statusesQuery } from "@/api/queries.ts";
+import { useRefPrefix } from "@/api/references.ts";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { UnreadMarker } from "@/components/issue/unread-marker.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -245,6 +246,7 @@ export function BoardCardContent({
   slug: string;
   issue: IssueListItem;
 }) {
+  const refPrefix = useRefPrefix(slug);
   return (
     <div className="relative">
       {issue.unread && (
@@ -269,7 +271,9 @@ export function BoardCardContent({
       {/* Meta row hosts the question badge; the card's top-right corner
           belongs to the unread marker above (#46, #77). */}
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-        <span className="text-xs text-muted-foreground">#{issue.number}</span>
+        <span className="text-xs text-muted-foreground">
+          {formatRef(refPrefix, issue.number)}
+        </span>
         {issue.open_questions > 0 && (
           <span
             className="inline-flex items-center gap-1 rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700 dark:text-amber-400"

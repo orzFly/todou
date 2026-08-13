@@ -41,14 +41,28 @@ export type IssueRef = {
 const ISSUE_URL_PATH = /^\/projects\/([^/]+)\/issues\/([^/]+)\/?$/;
 
 /**
- * An issue reference as agents habitually write it: "16", "#16",
- * "project/16", "project/#16", or a full issue URL.
+ * A project's prefixed reference form (#80), e.g. "T-76" or "FOOBAR-8".
+ * Deliberately loose: any well-formed prefix is accepted without checking
+ * the project's configured one — the positional already names its project,
+ * so the number is unambiguous and validating would cost a network call.
+ */
+const PREFIXED_REF = /^[A-Z][A-Z0-9_]*-(\d{1,9})$/;
+
+function parseIssueNumberToken(value: string, what: string): number {
+  const prefixed = PREFIXED_REF.exec(value);
+  if (prefixed?.[1] !== undefined) return Number(prefixed[1]);
+  return parsePositiveInt(stripHash(value), what);
+}
+
+/**
+ * An issue reference as agents habitually write it: "16", "#16", "T-16",
+ * "project/16", "project/#16", "project/T-16", or a full issue URL.
  */
 export function parseIssueRef(value: string, what: string): IssueRef {
   if (/^https?:\/\//i.test(value)) return parseIssueUrl(value, what);
   const parts = value.split("/");
   if (parts.length === 1) {
-    return { number: parsePositiveInt(stripHash(value), what) };
+    return { number: parseIssueNumberToken(value, what) };
   }
   if (parts.length !== 2 || parts[0] === "" || parts[1] === "") {
     throw new CliError(
@@ -57,7 +71,7 @@ export function parseIssueRef(value: string, what: string): IssueRef {
   }
   return {
     project: checkSlug(parts[0] as string, value),
-    number: parsePositiveInt(stripHash(parts[1] as string), what),
+    number: parseIssueNumberToken(parts[1] as string, what),
   };
 }
 

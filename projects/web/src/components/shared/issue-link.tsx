@@ -1,15 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { formatRef } from "@todou/shared";
 import { CircleDotIcon, CircleSlashIcon } from "lucide-react";
 import type { ComponentProps } from "react";
 import { commentRefQuery, issueRefQuery } from "@/api/issue-refs.ts";
+import { referenceConfigQuery } from "@/api/references.ts";
 import { commentAnchor, parseIssuePermalink } from "@/lib/timeline-anchors.ts";
 
 /**
- * GitHub-style rich issue reference: status icon + title + muted #N once
- * the batched lookup lands, a plain #N link while it loads, and plain text
- * when the number matches no issue in the project. With `commentId` the
- * link deep-links to that comment's anchor and reads "… · comment by @x".
+ * GitHub-style rich issue reference: status icon + title + muted ref once
+ * the batched lookup lands, a plain ref link while it loads, and plain
+ * text when the number matches no issue in the project. With `commentId`
+ * the link deep-links to that comment's anchor and reads "… · comment by
+ * @x". Spelling is a UI string, so it always uses the project's CURRENT
+ * format (#80) — only user-authored text is anchored to its created_at.
  */
 export function IssueLink({
   slug,
@@ -21,20 +25,22 @@ export function IssueLink({
   commentId?: number;
 }) {
   const ref = useQuery(issueRefQuery(slug, number));
+  const config = useQuery(referenceConfigQuery(slug));
   const comment = useQuery({
     ...commentRefQuery(slug, number, commentId ?? 0),
     enabled: commentId !== undefined,
   });
+  const spelled = formatRef(config.data?.format.prefix ?? null, number);
 
-  if (ref.data === null) return <>#{number}</>;
+  if (ref.data === null) return <>{spelled}</>;
 
   const item = ref.data;
   const suffix =
     commentId === undefined
-      ? `#${number}`
+      ? spelled
       : comment.data
-        ? `#${number} · comment by @${comment.data.author.login}`
-        : `#${number} · comment`;
+        ? `${spelled} · comment by @${comment.data.author.login}`
+        : `${spelled} · comment`;
   return (
     <Link
       to="/projects/$slug/issues/$number"
@@ -47,7 +53,7 @@ export function IssueLink({
       data-comment-link={commentId}
       className="font-medium hover:underline"
       title={
-        item ? `#${number} ${item.title} (${item.status.name})` : undefined
+        item ? `${spelled} ${item.title} (${item.status.name})` : undefined
       }
     >
       {item && (

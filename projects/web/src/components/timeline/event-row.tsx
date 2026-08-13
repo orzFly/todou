@@ -1,5 +1,6 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import type { TimelineEvent } from "@todou/shared";
+import { formatRef, type TimelineEvent } from "@todou/shared";
 import {
   BookOpenTextIcon,
   CheckIcon,
@@ -16,11 +17,12 @@ import {
   UserPlusIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { refConfigFor, referenceConfigQuery } from "@/api/references.ts";
 import { AttachmentEventLink } from "@/components/issue/attachment-list.tsx";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
-import { splitIssueRefs } from "@/lib/issue-refs.ts";
+import { type RefConfig, splitIssueRefs } from "@/lib/issue-refs.ts";
 import { commentAnchor, eventAnchor } from "@/lib/timeline-anchors.ts";
 
 type Payload = Record<string, unknown>;
@@ -30,10 +32,15 @@ const asName = (v: unknown): string =>
     ? String((v as { name: unknown }).name)
     : "?";
 
-/** Human-readable line for a GitHub-style action event. Pure for tests. */
+/**
+ * Human-readable line for a GitHub-style action event. Pure for tests.
+ * `refPrefix` spells issue refs in the project's CURRENT format (#80) —
+ * event payloads store bare numbers, so historical events respell freely.
+ */
 export function describeEvent(
   type: TimelineEvent["event_type"],
   payload: Payload,
+  refPrefix: string | null = null,
 ): string {
   switch (type) {
     case "opened":
@@ -59,7 +66,7 @@ export function describeEvent(
       return `unassigned @${user?.login ?? "?"}`;
     }
     case "referenced":
-      return `referenced by #${String(payload.by_issue)}`;
+      return `referenced by ${formatRef(refPrefix, Number(payload.by_issue))}`;
     case "attachment_added": {
       const attachment = payload.attachment as
         | { filename?: string }
@@ -127,9 +134,10 @@ const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
 function linkifyIssueRefs(
   text: string,
   slug: string,
+  config: RefConfig,
   commentId?: number,
 ): ReactNode[] {
-  return splitIssueRefs(text).map((segment, i) =>
+  return splitIssueRefs(text, config).map((segment, i) =>
     segment.type === "ref" ? (
       <IssueLink
         // Index keys are safe: the segments of one action string never
@@ -140,8 +148,12 @@ function linkifyIssueRefs(
         number={segment.number}
         commentId={commentId}
       />
-    ) : (
+    ) : segment.type === "text" ? (
       segment.value
+    ) : (
+      // Action strings are UI-spelled and carry no autolink tokens, but
+      // the tokenizer type still includes them.
+      segment.text
     ),
   );
 }
@@ -156,7 +168,18 @@ export function EventRow({
   slug?: string;
   issueNumber?: number;
 }) {
-  const action = describeEvent(event.event_type, event.payload);
+  // UI strings spell refs in the project's current format (#80); the
+  // query no-ops (enabled: false) in project-less contexts.
+  const refConfigData = useQuery({
+    ...referenceConfigQuery(slug ?? ""),
+    enabled: slug !== undefined,
+  });
+  const refConfig = refConfigFor(refConfigData.data);
+  const action = describeEvent(
+    event.event_type,
+    event.payload,
+    refConfig.internalPrefix,
+  );
   // Linkable "attached …" needs the issue's attachment query for the
   // preview modal, so it only upgrades when the context props are there.
   const attached =
@@ -227,7 +250,7 @@ export function EventRow({
         ) : slug === undefined ? (
           action
         ) : (
-          linkifyIssueRefs(action, slug, refCommentId)
+          linkifyIssueRefs(action, slug, refConfig, refCommentId)
         )}
       </span>{" "}
       {slug !== undefined && issueNumber !== undefined ? (
