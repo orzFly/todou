@@ -1,6 +1,6 @@
 import type { Label as LabelType, Member, Status } from "@todou/shared";
 import { CheckIcon, FilterIcon, SearchIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   csvToIds,
   effectiveCategory,
@@ -9,6 +9,7 @@ import {
   idsToCsv,
   toggleId,
 } from "@/api/issues.ts";
+import { LabelInline } from "@/components/issue/label-chip.tsx";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -87,7 +88,19 @@ export function FilterBar({
 
       <MultiPick
         label="Status"
-        items={statuses.map((s) => ({ id: s.id, name: s.name }))}
+        items={statuses.map((s) => ({
+          id: s.id,
+          node: (
+            <>
+              <span
+                className="size-2 shrink-0 rounded-full"
+                style={{ backgroundColor: s.color }}
+                aria-hidden
+              />
+              {s.name}
+            </>
+          ),
+        }))}
         selected={selectedStatuses}
         onToggle={(id) =>
           onChange({
@@ -99,7 +112,10 @@ export function FilterBar({
 
       <MultiPick
         label="Labels"
-        items={labels.map((l) => ({ id: l.id, name: l.name }))}
+        items={labels.map((l) => ({
+          id: l.id,
+          node: <LabelInline label={l} />,
+        }))}
         selected={selectedLabels}
         onToggle={(id) =>
           onChange({ ...search, label: idsToCsv(toggleId(selectedLabels, id)) })
@@ -162,7 +178,7 @@ function MultiPick({
   onToggle,
 }: {
   label: string;
-  items: Array<{ id: number; name: string }>;
+  items: Array<{ id: number; node: ReactNode }>;
   selected: number[];
   onToggle: (id: number) => void;
 }) {
@@ -192,7 +208,7 @@ function MultiPick({
             <span className="w-4">
               {selected.includes(item.id) && <CheckIcon className="size-4" />}
             </span>
-            {item.name}
+            {item.node}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

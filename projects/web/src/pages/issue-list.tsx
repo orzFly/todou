@@ -40,7 +40,12 @@ import {
 } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import { FilterBar } from "@/components/issue/filter-bar.tsx";
-import { LabelChip } from "@/components/issue/label-chip.tsx";
+import { LabelChips } from "@/components/issue/label-chip.tsx";
+import {
+  LabelPicker,
+  useCanCreateLabels,
+  useCreateLabel,
+} from "@/components/issue/label-picker.tsx";
 import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -62,6 +67,8 @@ export function IssueListPage() {
   const members = useSuspenseQuery(membersQuery(slug));
   const issues = useSuspenseQuery(issuesQuery(slug, search));
   const counts = useSuspenseQuery(issueCountsQuery(slug, search));
+  const canCreateLabels = useCanCreateLabels(slug);
+  const createLabel = useCreateLabel(slug);
 
   const setSearch = (next: IssueSearch) =>
     navigate({
@@ -103,6 +110,7 @@ export function IssueListPage() {
         statuses={statuses.data}
         allLabels={labels.data}
         search={search}
+        onCreateLabel={canCreateLabels ? createLabel : undefined}
       />
     </div>
   );
@@ -151,12 +159,14 @@ export function IssueList({
   statuses,
   allLabels,
   search,
+  onCreateLabel,
 }: {
   slug: string;
   page: IssueListPageData;
   statuses: Status[];
   allLabels: Label[];
   search: IssueSearch;
+  onCreateLabel?: (name: string) => Promise<Label>;
 }) {
   const [extraPages, setExtraPages] = useState<IssueListPageData[]>([]);
   const queryClient = useQueryClient();
@@ -212,15 +222,16 @@ export function IssueList({
             onStatus={(status) =>
               statusMutation.mutate({ issueNumber: issue.number, status })
             }
-            onToggleLabel={(labelId) => {
+            onToggleLabel={(label) => {
               const current = issue.labels.map((l) => l.id);
               labelsMutation.mutate({
                 issueNumber: issue.number,
-                labelIds: current.includes(labelId)
-                  ? current.filter((id) => id !== labelId)
-                  : [...current, labelId],
+                labelIds: current.includes(label.id)
+                  ? current.filter((id) => id !== label.id)
+                  : [...current, label.id],
               });
             }}
+            onCreateLabel={onCreateLabel}
           />
         ))}
       </ul>
@@ -243,13 +254,15 @@ export function IssueRow({
   allLabels,
   onStatus,
   onToggleLabel,
+  onCreateLabel,
 }: {
   slug: string;
   issue: IssueListItem;
   statuses: Status[];
   allLabels: Label[];
   onStatus: (status: Status) => void;
-  onToggleLabel: (labelId: number) => void;
+  onToggleLabel: (label: Label) => void;
+  onCreateLabel?: (name: string) => Promise<Label>;
 }) {
   const refPrefix = useRefPrefix(slug);
   return (
@@ -316,19 +329,21 @@ export function IssueRow({
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
-        {issue.labels.map((label) => (
-          <LabelChip key={label.id} label={label} />
-        ))}
-        <DropdownMenu>
-          <DropdownMenuTrigger className="flex cursor-pointer text-muted-foreground hover:text-foreground">
-            <TagIcon className="size-3.5" aria-label="edit labels" />
-          </DropdownMenuTrigger>
-          <LabelEditMenu
-            allLabels={allLabels}
-            issueLabels={issue.labels}
-            onToggle={onToggleLabel}
-          />
-        </DropdownMenu>
+        <LabelChips labels={issue.labels} />
+        <LabelPicker
+          allLabels={allLabels}
+          selected={issue.labels}
+          onToggle={onToggleLabel}
+          onCreate={onCreateLabel}
+          trigger={
+            <button
+              type="button"
+              className="flex cursor-pointer text-muted-foreground hover:text-foreground"
+            >
+              <TagIcon className="size-3.5" aria-label="edit labels" />
+            </button>
+          }
+        />
         <span className="flex-1" />
         <span className="flex gap-1">
           {issue.assignees.map((user) => (
@@ -337,39 +352,5 @@ export function IssueRow({
         </span>
       </div>
     </li>
-  );
-}
-
-function LabelEditMenu({
-  allLabels,
-  issueLabels,
-  onToggle,
-}: {
-  allLabels: Label[];
-  issueLabels: Label[];
-  onToggle: (labelId: number) => void;
-}) {
-  return (
-    <DropdownMenuContent>
-      {allLabels.length === 0 && (
-        <DropdownMenuItem disabled>No labels defined</DropdownMenuItem>
-      )}
-      {allLabels.map((label) => (
-        <DropdownMenuItem
-          key={label.id}
-          onSelect={(e) => {
-            e.preventDefault();
-            onToggle(label.id);
-          }}
-        >
-          <span className="w-4">
-            {issueLabels.some((l) => l.id === label.id) && (
-              <CheckIcon className="size-4" />
-            )}
-          </span>
-          {label.name}
-        </DropdownMenuItem>
-      ))}
-    </DropdownMenuContent>
   );
 }
