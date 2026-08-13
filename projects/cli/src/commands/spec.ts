@@ -8,45 +8,76 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type { SpecFileInput, TodouClient } from "@todou/shared";
-import { SpecPushInput } from "@todou/shared";
+import {
+  SPEC_MAX_FILE_CHARS,
+  SPEC_MAX_FILES,
+  SpecPushInput,
+} from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { z } from "zod";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
 
+const WRONG_DIR_HINT =
+  "if that path is not part of your spec, this push ran from the wrong " +
+  "directory — <dir> must be the spec directory itself, not a repository root";
+
 /**
- * Every .md under `dir`, recursively, as spec-relative posix paths. Dot
+ * Every .md under `root`, recursively, as spec-relative posix paths. Dot
  * entries are skipped (the server rejects dotfile segments anyway); other
  * non-markdown files are collected so the caller can say what it ignored.
+ *
+ * `pushLimits` enforces the SpecPushInput caps while walking: a stray push
+ * from a repository root must fail on the file that breaks a cap, not
+ * buffer the whole source tree first. Pull's extras listing stays
+ * uncapped — any number of local files is legal there. Entries are walked
+ * in name order so which file gets blamed is stable for a given tree.
  */
 function collectMarkdown(
-  dir: string,
-  prefix = "",
+  root: string,
+  opts: { pushLimits: boolean },
 ): { files: SpecFileInput[]; skipped: string[] } {
-  let entries: Dirent[];
-  try {
-    entries = readdirSync(dir, { withFileTypes: true });
-  } catch (cause) {
-    throw new CliError(`cannot read directory ${dir}: ${String(cause)}`);
-  }
   const files: SpecFileInput[] = [];
   const skipped: string[] = [];
-  for (const entry of entries) {
-    if (entry.name.startsWith(".")) continue;
-    const path = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
-    if (entry.isDirectory()) {
-      const nested = collectMarkdown(join(dir, entry.name), path);
-      files.push(...nested.files);
-      skipped.push(...nested.skipped);
-    } else if (entry.isFile()) {
-      if (/\.md$/i.test(entry.name)) {
-        files.push({ path, body: readFileSync(join(dir, entry.name), "utf8") });
-      } else {
-        skipped.push(path);
+  const walk = (dir: string, prefix: string): void => {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch (cause) {
+      throw new CliError(`cannot read directory ${dir}: ${String(cause)}`);
+    }
+    entries.sort((a, b) => (a.name < b.name ? -1 : 1));
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) continue;
+      const path = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+      if (entry.isDirectory()) {
+        walk(join(dir, entry.name), path);
+      } else if (entry.isFile()) {
+        if (!/\.md$/i.test(entry.name)) {
+          skipped.push(path);
+          continue;
+        }
+        if (opts.pushLimits && files.length >= SPEC_MAX_FILES) {
+          throw new CliError(
+            `more than ${SPEC_MAX_FILES} markdown files under ${root} — ` +
+              `collection stopped at ${path}`,
+            WRONG_DIR_HINT,
+          );
+        }
+        const body = readFileSync(join(dir, entry.name), "utf8");
+        if (opts.pushLimits && body.length > SPEC_MAX_FILE_CHARS) {
+          throw new CliError(
+            `${path} is over the spec file cap ` +
+              `(${body.length} > ${SPEC_MAX_FILE_CHARS} characters)`,
+            WRONG_DIR_HINT,
+          );
+        }
+        files.push({ path, body });
       }
     }
-  }
+  };
+  walk(root, "");
   files.sort((a, b) => (a.path < b.path ? -1 : 1));
   return { files, skipped };
 }
@@ -91,7 +122,7 @@ export class SpecPushCommand extends ProjectCommand {
 
   protected async run(client: TodouClient): Promise<void> {
     const { project, number } = this.resolveIssueRef(this.number);
-    const { files, skipped } = collectMarkdown(this.dir);
+    const { files, skipped } = collectMarkdown(this.dir, { pushLimits: true });
     const input = SpecPushInput.safeParse({
       files,
       message: this.message,
@@ -156,9 +187,9 @@ export class SpecPullCommand extends ProjectCommand {
     }
 
     const specPaths = new Set(spec.files.map((f) => f.path));
-    const extras = collectMarkdown(this.dir).files.filter(
-      (f) => !specPaths.has(f.path),
-    );
+    const extras = collectMarkdown(this.dir, {
+      pushLimits: false,
+    }).files.filter((f) => !specPaths.has(f.path));
     for (const extra of extras) {
       if (this.prune) {
         unlinkSync(join(this.dir, extra.path));

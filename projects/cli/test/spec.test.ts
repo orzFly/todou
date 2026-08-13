@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SPEC_MAX_FILE_CHARS, SPEC_MAX_FILES } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import { fakeFetch, runCli } from "./harness.ts";
 
@@ -89,6 +90,67 @@ describe("spec push", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("fails during collection, before any request, past the file cap", async () => {
+    const tree: Record<string, string> = {};
+    for (let i = 0; i <= SPEC_MAX_FILES; i++) {
+      tree[`f${String(i).padStart(3, "0")}.md`] = "x\n";
+    }
+    const dir = specDir(tree);
+    const { fetchImpl, calls } = fakeFetch([]);
+    const run = await runCli(["spec", "push", "23", dir], {
+      fetchImpl,
+      env: ENV,
+    });
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr).toContain(
+      `more than ${SPEC_MAX_FILES} markdown files under ${dir}`,
+    );
+    // the name-ordered walk pins which file gets blamed
+    expect(run.stderr).toContain(
+      `collection stopped at f${String(SPEC_MAX_FILES).padStart(3, "0")}.md`,
+    );
+    expect(run.stderr).toContain("not a repository root");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("still pushes a set of exactly SPEC_MAX_FILES files", async () => {
+    const tree: Record<string, string> = {};
+    for (let i = 0; i < SPEC_MAX_FILES; i++) {
+      tree[`f${String(i).padStart(3, "0")}.md`] = "x\n";
+    }
+    const dir = specDir(tree);
+    const { fetchImpl, calls } = fakeFetch([
+      [
+        "POST",
+        "/api/projects/proj/issues/23/spec/push",
+        { unchanged: false, version: 1, added: [], changed: [], removed: [] },
+      ],
+    ]);
+    const run = await runCli(["spec", "push", "23", dir], {
+      fetchImpl,
+      env: ENV,
+    });
+    expect(run.exitCode).toBe(0);
+    const body = JSON.parse(String(calls[0]?.init.body));
+    expect(body.files).toHaveLength(SPEC_MAX_FILES);
+  });
+
+  it("fails during collection on a file over the per-file cap", async () => {
+    const dir = specDir({
+      // walked first (name order) and exactly at the cap: proves > not >=
+      "at-cap.md": "x".repeat(SPEC_MAX_FILE_CHARS),
+      "over.md": "x".repeat(SPEC_MAX_FILE_CHARS + 1),
+    });
+    const { fetchImpl, calls } = fakeFetch([]);
+    const run = await runCli(["spec", "push", "23", dir], {
+      fetchImpl,
+      env: ENV,
+    });
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr).toContain("over.md is over the spec file cap");
+    expect(calls).toHaveLength(0);
+  });
+
   it("requires the directory argument", async () => {
     const run = await runCli(["spec", "push", "23"], { env: ENV });
     expect(run.exitCode).not.toBe(0);
@@ -162,6 +224,27 @@ describe("spec pull", () => {
     });
     expect(pruned.stderr).toContain("pruned stale.md");
     expect(existsSync(join(dir, "stale.md"))).toBe(false);
+  });
+
+  it("lists any number of extras — the push caps do not apply to pull", async () => {
+    const tree: Record<string, string> = {};
+    for (let i = 0; i <= SPEC_MAX_FILES; i++) {
+      tree[`extra-${String(i).padStart(3, "0")}.md`] = "old\n";
+    }
+    const dir = specDir(tree);
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/proj/issues/23/spec/files", SPEC],
+    ]);
+    const run = await runCli(["spec", "pull", "23", dir], {
+      fetchImpl,
+      env: ENV,
+    });
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toContain("pulled spec v2 (2 files)");
+    expect(run.stderr).toContain("kept local file not in spec: extra-000.md");
+    expect(run.stderr).toContain(
+      `kept local file not in spec: extra-${String(SPEC_MAX_FILES).padStart(3, "0")}.md`,
+    );
   });
 });
 
