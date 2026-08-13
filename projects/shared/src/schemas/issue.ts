@@ -39,6 +39,15 @@ export const Issue = z.object({
    * Defaults on parse so clients tolerate older servers.
    */
   unread: z.boolean().default(false),
+  /**
+   * Per-viewer: comments (any component kind) by someone other than the
+   * requesting user, newer than their last-seen position (#77; same
+   * threshold as `unread`). Events don't count. Exact value — display
+   * capping is the client's business. Computed only for list responses;
+   * every other path returns the default 0. Defaults on parse so clients
+   * tolerate older servers.
+   */
+  unread_comments: z.number().int().nonnegative().default(0),
 });
 export type Issue = z.infer<typeof Issue>;
 

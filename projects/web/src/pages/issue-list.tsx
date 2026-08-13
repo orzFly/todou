@@ -39,6 +39,7 @@ import {
 import { FilterBar } from "@/components/issue/filter-bar.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
+import { UnreadMarker } from "@/components/issue/unread-marker.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import {
@@ -209,7 +210,7 @@ export function IssueTable({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-16">#</TableHead>
+              <TableHead className="w-20">#</TableHead>
               <TableHead>Title</TableHead>
               <TableHead className="w-36">Status</TableHead>
               <TableHead className="w-44">Labels</TableHead>
@@ -271,14 +272,14 @@ export function IssueRow({
   return (
     <TableRow>
       <TableCell className="text-muted-foreground">
-        {/* Fixed-width slot (the CLI's ● column) so numbers never shift. */}
-        <span className="mr-1.5 inline-block size-2 align-middle">
-          {issue.unread && (
-            <span
-              className="block size-2 rounded-full bg-blue-500 dark:bg-blue-400"
-              title="new activity since you last viewed"
-            />
-          )}
+        {/* Fixed-width slot (the CLI's ● column, sized for the 99+ badge)
+            keeps numbers from shifting; centering keeps the ring and the
+            badge on one axis. */}
+        <span className="mr-1.5 inline-flex w-[27px] items-center justify-center align-middle">
+          <UnreadMarker
+            unread={issue.unread}
+            unreadComments={issue.unread_comments}
+          />
         </span>
         #{issue.number}
       </TableCell>

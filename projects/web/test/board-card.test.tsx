@@ -36,6 +36,7 @@ const issue = (
   spec_review_status: spec?.spec_review_status ?? null,
   spec_unresolved_comments: 0,
   unread: false,
+  unread_comments: 0,
 });
 
 /* RouterProvider mounts asynchronously — wait for the title first. */
@@ -58,21 +59,36 @@ describe("BoardCardContent question badge", () => {
   });
 });
 
-describe("BoardCardContent unread dot (#46)", () => {
-  it("marks a card with foreign activity since last view", async () => {
+describe("BoardCardContent unread marker (#46, #77)", () => {
+  it("marks a card with event-only activity with the ring", async () => {
     const view = renderWithProviders(
       <BoardCardContent slug="p" issue={{ ...issue(0), unread: true }} />,
     );
-    await view.findByText("issue 1");
+    const title = await view.findByText("issue 1");
     expect(view.getByTitle("new activity since you last viewed")).toBeTruthy();
+    expect(title.className).toContain("pr-4");
   });
 
   it("stays quiet when the card is read", async () => {
     const view = renderWithProviders(
       <BoardCardContent slug="p" issue={issue(0)} />,
     );
-    await view.findByText("issue 1");
+    const title = await view.findByText("issue 1");
     expect(view.queryByTitle("new activity since you last viewed")).toBeNull();
+    expect(title.className).not.toContain("pr-4");
+  });
+
+  it("shows the comment-count badge and widens the title clearance", async () => {
+    const view = renderWithProviders(
+      <BoardCardContent
+        slug="p"
+        issue={{ ...issue(0), unread: true, unread_comments: 127 }}
+      />,
+    );
+    const title = await view.findByText("issue 1");
+    const badge = view.getByTitle("127 new comments since you last viewed");
+    expect(badge.textContent).toBe("99+");
+    expect(title.className).toContain("pr-8");
   });
 });
 

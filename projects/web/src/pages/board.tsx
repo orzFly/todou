@@ -22,6 +22,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { boardColumnQuery, useBoardMove } from "@/api/board.ts";
 import { statusesQuery } from "@/api/queries.ts";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
+import { UnreadMarker } from "@/components/issue/unread-marker.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -247,23 +248,26 @@ export function BoardCardContent({
   return (
     <div className="relative">
       {issue.unread && (
-        <span
-          className="absolute top-0 right-0 size-2 rounded-full bg-blue-500 dark:bg-blue-400"
-          title="new activity since you last viewed"
-        />
+        <span className="absolute top-0 right-0 inline-flex">
+          <UnreadMarker
+            unread={issue.unread}
+            unreadComments={issue.unread_comments}
+          />
+        </span>
       )}
       <Link
         to="/projects/$slug/issues/$number"
         params={{ slug, number: String(issue.number) }}
         className={cn(
           "block text-sm font-medium hover:underline",
-          issue.unread && "pr-4",
+          // The 99+ badge is ~27px wide; the ring only needs the old dot gap.
+          issue.unread_comments > 0 ? "pr-8" : issue.unread && "pr-4",
         )}
       >
         {issue.title}
       </Link>
       {/* Meta row hosts the question badge; the card's top-right corner
-          belongs to the unread dot above (#46). */}
+          belongs to the unread marker above (#46, #77). */}
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
         <span className="text-xs text-muted-foreground">#{issue.number}</span>
         {issue.open_questions > 0 && (

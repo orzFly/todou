@@ -32,9 +32,12 @@ import {
 } from "../watch-loop.ts";
 
 function issueRow(issue: IssueListItem): string[] {
+  // Old servers omit both fields entirely; undefined reads as "not unread"
+  // and the marker degrades to the plain dot (#77). The count is exact —
+  // terminal columns self-size, so the web's 99+ cap buys nothing here.
+  const count = issue.unread_comments ?? 0;
   return [
-    // Old servers omit the field entirely; undefined reads as "not unread".
-    issue.unread ? "●" : "",
+    issue.unread ? (count > 0 ? `● (+${count})` : "●") : "",
     `#${issue.number}`,
     issue.title,
     issue.status.name,

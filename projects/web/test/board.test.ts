@@ -37,6 +37,7 @@ const page = (numbers: number[], s: Status): IssueListPage => ({
     spec_review_status: null,
     spec_unresolved_comments: 0,
     unread: false,
+    unread_comments: 0,
   })),
   next_cursor: null,
 });

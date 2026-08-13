@@ -13,7 +13,7 @@ const status: Status = {
   is_default: false,
 };
 
-const issue = (unread: boolean): IssueListItem => ({
+const issue = (unread: boolean, unreadComments = 0): IssueListItem => ({
   id: 10,
   number: 1,
   title: "issue 1",
@@ -36,15 +36,16 @@ const issue = (unread: boolean): IssueListItem => ({
   spec_review_status: null,
   spec_unresolved_comments: 0,
   unread,
+  unread_comments: unreadComments,
 });
 
-const renderRow = (unread: boolean) =>
+const renderRow = (unread: boolean, unreadComments = 0) =>
   renderWithProviders(
     <Table>
       <TableBody>
         <IssueRow
           slug="p"
-          issue={issue(unread)}
+          issue={issue(unread, unreadComments)}
           statuses={[status]}
           allLabels={[]}
           onStatus={() => {}}
@@ -54,8 +55,8 @@ const renderRow = (unread: boolean) =>
     </Table>,
   );
 
-describe("IssueRow unread dot (#46)", () => {
-  it("shows the dot next to the number for foreign activity", async () => {
+describe("IssueRow unread marker (#46, #77)", () => {
+  it("shows the ring next to the number for event-only activity", async () => {
     const view = renderRow(true);
     await view.findByText("issue 1");
     expect(view.getByTitle("new activity since you last viewed")).toBeTruthy();
@@ -65,5 +66,28 @@ describe("IssueRow unread dot (#46)", () => {
     const view = renderRow(false);
     await view.findByText("issue 1");
     expect(view.queryByTitle("new activity since you last viewed")).toBeNull();
+  });
+
+  it("swaps the ring for a count badge when comments are waiting", async () => {
+    const view = renderRow(true, 12);
+    await view.findByText("issue 1");
+    const badge = view.getByTitle("12 new comments since you last viewed");
+    expect(badge.textContent).toBe("12");
+    expect(view.queryByTitle("new activity since you last viewed")).toBeNull();
+  });
+
+  it("caps the badge at 99+ but keeps the exact count in the tooltip", async () => {
+    const view = renderRow(true, 127);
+    await view.findByText("issue 1");
+    const badge = view.getByTitle("127 new comments since you last viewed");
+    expect(badge.textContent).toBe("99+");
+  });
+
+  it("uses the singular for a single new comment", async () => {
+    const view = renderRow(true, 1);
+    await view.findByText("issue 1");
+    expect(
+      view.getByTitle("1 new comment since you last viewed").textContent,
+    ).toBe("1");
   });
 });

@@ -51,6 +51,7 @@ function item(id: number, title: string, status: Status): IssueListItem {
     spec_review_status: null,
     spec_unresolved_comments: 0,
     unread: false,
+    unread_comments: 0,
   };
 }
 

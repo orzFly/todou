@@ -73,6 +73,33 @@ describe("unread markers (server state)", () => {
     expect(line4).not.toContain("●");
   });
 
+  it("renders ● (+N) when the server reports unread comments (#77)", async () => {
+    const countedPage = {
+      items: [
+        { ...listItem(3, "Fix the potato"), unread: true, unread_comments: 3 },
+        // Event-only activity: unread without a comment count keeps the dot.
+        { ...listItem(4, "Water the field"), unread: true, unread_comments: 0 },
+        {
+          ...listItem(5, "Plant more rows"),
+          unread: false,
+          unread_comments: 0,
+        },
+      ],
+      next_cursor: null,
+    };
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/issues", countedPage],
+    ]);
+    const result = await runCli(["issue", "list"], { fetchImpl, env });
+    expect(result.exitCode).toBe(0);
+    const line = (n: number) =>
+      result.stdout.split("\n").find((l) => l.includes(`#${n}`));
+    expect(line(3)).toContain("● (+3)");
+    expect(line(4)).toContain("●");
+    expect(line(4)).not.toContain("(+");
+    expect(line(5)).not.toContain("●");
+  });
+
   it("--unread filters to unread items", async () => {
     const { fetchImpl } = fakeFetch([
       ["GET", "/api/projects/todou/issues", issuePage],
