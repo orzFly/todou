@@ -12,7 +12,7 @@ project's vocabulary is:
 | `area:server` | `projects/server` |
 | `area:shared` | `projects/shared` |
 | `area:docs` | `docs/`, README, deployment docs |
-| `area:infra` | `deploy.sh`, CI, test infrastructure, repo tooling |
+| `area:infra` | Deployment, CI, test infrastructure, repo tooling |
 
 Several `area:` labels on one card are normal when the work really spans packages. Exactly one
 `kind:` — `bug`, `feature`, or `chore`. `needs-brainstorm` only when a design round must precede
@@ -64,6 +64,10 @@ scratch directory and on the tracker; it never enters the repository, not even a
    ```bash
    pnpm fmt && pnpm lint && pnpm typecheck
    ```
+   `pnpm fmt` is `biome check --write .` — it *edits files* and then exits 0, so its exit code says
+   "formatting was fixed", not "formatting was already correct". When what you need to prove is that
+   a tree is clean — auditing a generated or rewritten tree, say — judge it with read-only
+   `pnpm lint` and a `git status` that comes back empty.
 2. Run tests:
    ```bash
    pnpm test
