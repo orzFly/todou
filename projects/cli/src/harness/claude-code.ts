@@ -1,8 +1,8 @@
 import { closeSync, globSync, openSync, readSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentContext } from "@todou/shared";
-import type { Env } from "./config.ts";
+import type { Env } from "../config.ts";
+import type { Harness } from "./types.ts";
 
 const CHUNK_BYTES = 256 * 1024;
 // A single image Read appends a ~400 KB base64 tool_result line, and the
@@ -11,23 +11,18 @@ const CHUNK_BYTES = 256 * 1024;
 // worst-case I/O per command.
 const MAX_SCAN_BYTES = 16 * 1024 * 1024;
 
-/**
- * Provenance of the invoking agent, currently detecting only Claude Code.
- * Detection must never break a command: every probe failure degrades to
- * "less metadata", not to an error.
- */
-export function detectAgentContext(
-  env: Env,
-  home: string = homedir(),
-): AgentContext | null {
-  if (env.CLAUDECODE !== "1") return null;
-  const context: AgentContext = { agent: "claude-code" };
-  const sessionId = env.CLAUDE_CODE_SESSION_ID;
-  if (sessionId) context.session_id = sessionId;
-  const model = detectModel(env, sessionId, home);
-  if (model) context.model = model;
-  return context;
-}
+export const claudeCode: Harness = {
+  id: "claude-code",
+  matches: (env) => env.CLAUDECODE === "1",
+  context(env, home) {
+    const context: AgentContext = { agent: "claude-code" };
+    const sessionId = env.CLAUDE_CODE_SESSION_ID;
+    if (sessionId) context.session_id = sessionId;
+    const model = detectModel(env, sessionId, home);
+    if (model) context.model = model;
+    return context;
+  },
+};
 
 /**
  * The transcript tail wins over CLAUDE_MODEL: a SessionStart-hook snapshot

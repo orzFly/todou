@@ -1,6 +1,5 @@
 import { AGENT_CONTEXT_HEADER, TodouClient } from "@todou/shared";
 import { type BaseContext, Command, Option } from "clipanion";
-import { detectAgentContext } from "./agent-context.ts";
 import { type CliConfig, loadCliConfig } from "./config.ts";
 import {
   gitRemoteUrl,
@@ -8,6 +7,7 @@ import {
   resolveContext,
 } from "./context.ts";
 import { CliError, reportError } from "./errors.ts";
+import { detectAgentContext } from "./harness/index.ts";
 import { parseIssueRef } from "./parse.ts";
 
 export type CliContext = BaseContext & {

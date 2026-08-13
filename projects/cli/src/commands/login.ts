@@ -2,10 +2,10 @@ import { randomBytes } from "node:crypto";
 import { hostname } from "node:os";
 import { AGENT_CONTEXT_HEADER, TodouClient } from "@todou/shared";
 import { Command, Option } from "clipanion";
-import { detectAgentContext } from "../agent-context.ts";
 import type { CliContext } from "../api-command.ts";
 import { loadCliConfig, normalizeServer, saveCliConfig } from "../config.ts";
 import { CliError, reportError } from "../errors.ts";
+import { detectAgentContext } from "../harness/index.ts";
 import { openBrowser, promptHidden, waitForCallback } from "../login-flow.ts";
 
 export class LoginCommand extends Command<CliContext> {
