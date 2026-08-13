@@ -27,13 +27,47 @@ network outage for 2+ minutes and gave up — restart it with the same cursor, n
 
 | Event | Reaction |
 |---|---|
-| User opens / assigns a card | Dispatch a worker per the user's instruction (or queue it — see throttling) |
+| User opens a card | **Triage it right away** (see below). Dispatch only when the user moves it to Next or says so — `opened` alone is not a go signal |
+| User moves a card to Next | That is the go signal: dispatch a worker per the user's instruction |
 | User comments on a card | Owning worker still alive → relay to it; otherwise → file a follow-up card or handle it yourself |
 | Card moves Shipped → Done | Verified: gracefully exit the agent (see below), delete the merged branch |
 | Informational comment (reference links etc.) | No action — the comment itself is the record |
 
 Cover any pre-sentinel gap proactively: craft a cursor by hand and call
 `todou api GET '/projects/<proj>/activity?after=…'`, then check every user action was handled.
+
+## Triage (every new card, the moment it appears)
+
+Cards arrive unlabelled. **Label them as the sentinel reports them**, not later — a taxonomy that
+falls behind stops being trustworthy, and a card that reaches Next unlabelled has already missed the
+moment the labels would have earned their keep. Two dimensions plus one flag:
+
+| Label | Rule |
+|---|---|
+| `area:*` | Where the work lands. The vocabulary is per-project: derive it from the host project's own structure — its packages or modules — plus whatever lives outside them, typically docs and deployment/CI. Several areas on one card are expected when the work genuinely spans them; don't pad. |
+| `kind:*` | Exactly one: `bug` (something is broken), `feature` (new capability or deliberate improvement), `chore` (cleanup, refactor, investigation, tooling). |
+| `needs-brainstorm` | Only when a design/mockup round must precede implementation. |
+
+Agree the `area:` vocabulary with the user once, then **write it into the host project's agent
+instructions** (CLAUDE.md / AGENTS.md) so later sessions triage against that list instead of inventing
+a parallel one. Keep it small — an area that never selects anything is noise.
+
+`needs-brainstorm` is a **dispatch signal, not a decoration** — it is what later tells you to route the
+brief through `/todou-brainstorm` instead of straight to implementation. Set it while the card is
+fresh, then trust it.
+
+Deliberately absent: **no `priority:*`, no `status:*`**. The status column already carries both, it is
+dragged by the user's own hand, and it is the only authority; a second copy living in labels would
+silently drift from it.
+
+If a card's area genuinely isn't clear, set `kind:` and leave `area:` off rather than filing it
+wrong — a missing label is easy to spot later, a confidently wrong one is not.
+
+```bash
+todou issue edit <N> -p <proj> --add-label 'area:<area>' --add-label 'kind:bug'
+```
+
+Bulk-triaging a whole backlog is subagent work; keep your own context for dispatch and merges.
 
 ## Dispatching (herdr + claude)
 
@@ -58,7 +92,7 @@ Task brief checklist (trim as appropriate):
 4. Wrap-up: commit (**do not merge**) → move to Ready to Ship → post a summary comment (screenshots/attachments;
    mind /todou-cli's "reference with intent" rule — no incidental `#N` lists) → report in the terminal.
 
-Design-first cards (UI/approach decisions): dispatch them **through the `/todou-brainstorm` skill** —
+Cards you triaged as `needs-brainstorm`: dispatch them **through the `/todou-brainstorm` skill** —
 put `/todou-brainstorm` on the first line of the task brief, followed by the card number and context.
 That skill owns the whole dialogue loop (questions on the issue, spec review gate, approval before any
 implementation), and hands off to `/todou-plan` → `/todou-impl-plan` for the plan-review-implement

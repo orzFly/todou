@@ -47,6 +47,27 @@ todou watch -p <proj> --since <cursor> --timeout 43200 --debounce 60 --json  # w
 
 Use a 12-hour timeout (43200) and a 60-second debounce as the standard values.
 
+**Never issue a blocking wait bare — wrap it in a re-run loop.** This applies to `issue watch`,
+`todou watch` and `question wait` alike. Exit 3 (timeout) and exit 4 (network give-up) both mean *keep
+waiting*, and a wait parked in the background can also be lost to process-lifecycle accidents. Any of
+those endings leaves a bare wait returning with no answer — and an agent whose only wake path just
+returned empty goes idle forever:
+
+```bash
+while :; do
+  todou question wait <n> <commentId> -p <proj> --timeout 43200 --json; c=$?
+  [ $c -eq 0 ] && break   # answers in hand
+  [ $c -eq 1 ] && break   # fatal — report it, don't spin
+done                      # 3 (timeout) and 4 (outage) simply loop; nothing is lost
+```
+
+The loop being **killed** from outside (the harness stopping a background task) is a separate, observed
+failure — it has hit both workers and the orchestrator. It is not fatal and needs no cron: the kill
+notification itself re-invokes you, so the correct reaction is simply *restart the wait with the same
+cursor*, every time, however often it happens. Nothing is lost across the gap. Do not downgrade to a
+short-period self-poll — a 6-minute poll burns a whole agent turn per tick — and do say a word about it
+in the terminal so the orchestrator knows to relay as a backstop.
+
 - Exit codes: **0 = new entries** (stdout is `{items, next_cursor}`), **3 = timeout with nothing new**
   (normal, not an error), 1 = fatal error, **4 = gave up on a network outage** after automatic retries
   (a blocking watch retries transient failures — 5xx, refused, reset — for 2+ minutes first; `--poll`
@@ -57,7 +78,10 @@ Use a 12-hour timeout (43200) and a 60-second debounce as the standard values.
 - `--debounce N`: after the first new entry, keep collecting for N seconds and return one batch (fewer wake-ups, fewer tokens).
 - Project watch skips entries made by the current account by default (so same-account sibling agents never wake each other); `--any-actor` disables the filter.
 - Unread: `issue list` marks issues with unseen outside activity with `●`, `--unread` filters to them,
-  and `view` marks as read (local state under `~/.local/state/todou/`).
+  and `view` marks as read. The state is **per-user on the server** (the list response carries `unread`;
+  `view` fires `PUT /projects/<proj>/issues/<n>/read`), so it follows you across machines — there is no
+  local state file. "Unread" only ever counts *other* accounts' activity, never your own. Against a
+  server too old to have the endpoint it degrades silently: nothing marked, no error.
 
 ## Rich content in bodies and comments
 

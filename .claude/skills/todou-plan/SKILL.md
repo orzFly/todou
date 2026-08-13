@@ -54,6 +54,11 @@ todou issue watch <n> -p <proj> --type spec_review --since "$cursor" --timeout 4
 
 The watch returns when the user submits a verdict (exit 3 = timeout: re-poll a cursor and wait again).
 
+**Never substitute `spec status` polling for this watch.** A status call issued seconds before the
+verdict lands reports "unreviewed", and an agent that reacts by deciding to "check again in a few
+minutes" has no wake path at all — it goes idle, nothing ever re-invokes it, and the card stalls until
+a human notices. The blocking watch is the only thing that returns *when the verdict exists*.
+
 - **request-changes** (or annotations arrive):
   `todou spec comments <n> --unresolved --json` lists inline annotations with file + anchor.
   Apply them to the documents, sync requirement changes into proposal.md, then
