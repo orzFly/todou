@@ -12,14 +12,15 @@ question, answer, and proposal revision stays in the timeline, so anyone later (
 implementing it, likely you) can replay the decisions.
 
 Start by understanding the current project context, then ask questions to refine the idea. Once you
-understand what you're building, present the design and get user approval.
+understand what you're building, **write the design as a spec and let the review gate be the approval
+step** — the design does not get narrated into a comment first.
 
 **All questions to the user follow the "Asking the user questions" section of `/todou-cli`**
 (numbered-option comments + `issue watch` for replies) — not repeated here.
 
 <HARD-GATE>
 Do NOT invoke any implementation skill, write any code, scaffold any project, or take any
-implementation action until you have presented a design and the user has approved it.
+implementation action until the user has approved the spec at the review gate.
 This applies to EVERY project regardless of perceived simplicity.
 </HARD-GATE>
 
@@ -27,7 +28,8 @@ This applies to EVERY project regardless of perceived simplicity.
 
 Every project goes through this process. A todo list, a single-function utility, a config change —
 all of them. "Simple" projects are where unexamined assumptions cause the most wasted work. The design
-can be short (a few sentences for truly simple projects), but you MUST present it and get approval.
+can be short (a few sentences for truly simple projects), but you MUST push it as a spec and get it
+approved.
 
 ## Checklist
 
@@ -38,12 +40,11 @@ You MUST create a task for each of these items and complete them in order:
 2. **Use visuals when a question benefits from them** — build the mockup/demo directly, no permission
    needed (see Visual Material below)
 3. **Ask clarifying questions** — via issue comments (per /todou-cli); understand purpose/constraints/success criteria
-4. **Propose 2-3 approaches** — with trade-offs and your recommendation
-5. **Present design** — in sections scaled to their complexity, get the user's confirmation
-6. **Write design doc** — to a temp directory, and attach it to the issue
-7. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
-8. **User reviews written spec** — on the issue (see Review Gate)
-9. **Transition to implementation** — invoke the todou-plan skill (until it exists, file-based-plan)
+4. **Write the design doc** — to a temp directory; the 2-3 approaches, their trade-offs, and your
+   recommendation go *in it*, not into a comment
+5. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
+6. **User reviews the written spec** — push it and wait for the verdict (see Review Gate)
+7. **Transition to implementation** — invoke the todou-plan skill (until it exists, file-based-plan)
 
 ## The Process
 
@@ -65,17 +66,23 @@ You MUST create a task for each of these items and complete them in order:
 
 **Exploring approaches:**
 
-- Propose 2-3 different approaches with trade-offs
-- Present options conversationally, leading with your recommended option and why
+- Weigh 2-3 different approaches with trade-offs before settling on one
 - Every option should arrive already researched — read the code/data/prior art first and make the
   options concrete; don't outsource the homework to the user
+- **The comparison belongs in the spec**, together with the rejected options and why. Put an approach
+  on the card only when the choice is genuinely the user's and answerable as multiple-choice — then it
+  is a question, not an essay.
 
-**Presenting the design:**
+**Writing the design:**
 
-- Once you believe you understand what you're building, present the design
+- Once you believe you understand what you're building, write the spec. **Do not narrate the design
+  into a comment first and ask "does this look right, shall I write it up?"** — that round makes the
+  user read the same prose twice, and a comment has neither inline annotations nor a diff against the
+  previous version. The review gate is the approval step; one document, one place to annotate, one verdict.
 - Scale each section to its complexity: a few sentences if straightforward, up to 200-300 words if nuanced
-- Ask the user to confirm section by section (one comment round can cover several sections)
 - Cover: architecture, components, data flow, error handling, testing
+- Revisions land as new spec versions, so the user can diff v2 against v1 instead of reconstructing the
+  change out of a comment thread
 - Be ready to go back and clarify; user answers may overturn your premises — reversals are normal, don't dig in
 
 **Design for isolation and clarity:**
@@ -108,7 +115,8 @@ You MUST create a task for each of these items and complete them in order:
     Corrections modify the relevant sections directly — never append conflicting or wishy-washy entries.
     This counts as an explicitly requested modification of the recorded requirements, so it is allowed.
   - The meaning of any review annotations the user leaves gets recorded into proposal.md as well.
-- Write the validated design (spec) to `<tmpdir>/brainstorm.md`
+- Write the design (spec) to `<tmpdir>/brainstorm.md` — this is the document the user reviews, so it
+  carries the full reasoning: approaches weighed, option chosen, options rejected and why
 - Use the elements-of-style:writing-clearly-and-concisely skill if available
 - **Do not commit these documents to git.** Push them to the issue as a spec set:
   `todou spec push <n> <tmpdir> -p <proj> --message "brainstorm v1"` — the tracker carries the design
@@ -155,9 +163,10 @@ todou issue watch <n> -p <proj> --type spec_review --since "$cursor" --timeout 4
 - **Multiple choice preferred** — every question ships with a recommendation + reasoning, so the user
   can advance the design with a two-character reply ("a1, b2")
 - **YAGNI ruthlessly** — remove unnecessary features from all designs
-- **Explore alternatives** — always 2-3 approaches before settling; record the rejected options and why —
-  they are as valuable as the chosen one
-- **Incremental validation** — present design, get approval before moving on
+- **Explore alternatives** — always 2-3 approaches before settling; record the rejected options and why
+  in the spec — they are as valuable as the chosen one
+- **Long prose lives in the spec** — comments carry questions, pointers, and verdicts. Anything the
+  user might want to annotate, diff, or re-read belongs in a spec version, not in the timeline.
 - **Be flexible** — go back and clarify when something doesn't make sense
 
 ## Visual Material
