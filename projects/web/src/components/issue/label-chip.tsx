@@ -18,6 +18,10 @@ export function splitLabelName(name: string): {
  * Quiet chip (T-82): the label color lives only in the dot, the text stays in
  * foreground/muted — no `${color}22`-style translucent tints, which kept the
  * light/dark themes from needing per-color branches.
+ *
+ * Vertical metrics (text-xs, py-0.5, border) must equal StatusPill's: the two
+ * share the list's meta line and the board card, and any difference shows up
+ * as misaligned boxes and baselines (T-98).
  */
 export function LabelChip({
   label,
@@ -30,7 +34,7 @@ export function LabelChip({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-[5px] rounded-full border px-[7px] py-[1.5px] text-[11px] leading-[15px] whitespace-nowrap",
+        "inline-flex items-center gap-[5px] rounded-full border px-[7px] py-0.5 text-xs whitespace-nowrap",
         className,
       )}
       title={label.name}

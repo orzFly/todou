@@ -1,6 +1,10 @@
 import type { Status } from "@todou/shared";
 import { cn } from "@/lib/utils";
 
+/**
+ * Vertical metrics (text-xs, py-0.5, border) must equal LabelChip's — see the
+ * note there (T-98).
+ */
 export function StatusPill({
   status,
   className,

@@ -52,10 +52,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-/* Labels beyond this many collapse into a +N chip below the sm breakpoint;
-   desktop keeps them all (the meta line has the full row width). */
-const NARROW_LABEL_CAP = 2;
-
 export function IssueListPage() {
   const { slug } = useParams({ from: "/authed/projects/$slug" });
   const search = useSearch({ from: "/authed/projects/$slug/" });
@@ -256,7 +252,6 @@ export function IssueRow({
   onToggleLabel: (labelId: number) => void;
 }) {
   const refPrefix = useRefPrefix(slug);
-  const hiddenLabels = issue.labels.length - NARROW_LABEL_CAP;
   return (
     <li className="border-b px-3.5 py-2.5 transition-colors last:border-0 hover:bg-muted/50">
       <div className="flex items-center gap-2">
@@ -302,7 +297,10 @@ export function IssueRow({
           fixed-width, ≥sm only) so the meta line starts under the title. */}
       <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-[79px] max-sm:pl-[35px]">
         <DropdownMenu>
-          <DropdownMenuTrigger className="cursor-pointer">
+          {/* flex collapses the button's line box to the pill; the default
+              block box is 24px tall and seats the pill on its text baseline,
+              ~1.6px below the neighbouring label chips (T-98). */}
+          <DropdownMenuTrigger className="flex cursor-pointer">
             <StatusPill status={issue.status} />
           </DropdownMenuTrigger>
           <DropdownMenuContent>
@@ -316,27 +314,11 @@ export function IssueRow({
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
-        {issue.labels.map((label, index) => (
-          <LabelChip
-            key={label.id}
-            label={label}
-            className={index >= NARROW_LABEL_CAP ? "max-sm:hidden" : undefined}
-          />
+        {issue.labels.map((label) => (
+          <LabelChip key={label.id} label={label} />
         ))}
-        {hiddenLabels > 0 && (
-          <DropdownMenu>
-            <DropdownMenuTrigger className="inline-flex cursor-pointer items-center rounded-full border border-dashed px-[7px] py-[1.5px] text-[11px] leading-[15px] text-muted-foreground hover:text-foreground sm:hidden">
-              +{hiddenLabels}
-            </DropdownMenuTrigger>
-            <LabelEditMenu
-              allLabels={allLabels}
-              issueLabels={issue.labels}
-              onToggle={onToggleLabel}
-            />
-          </DropdownMenu>
-        )}
         <DropdownMenu>
-          <DropdownMenuTrigger className="cursor-pointer text-muted-foreground hover:text-foreground">
+          <DropdownMenuTrigger className="flex cursor-pointer text-muted-foreground hover:text-foreground">
             <TagIcon className="size-3.5" aria-label="edit labels" />
           </DropdownMenuTrigger>
           <LabelEditMenu
@@ -356,8 +338,6 @@ export function IssueRow({
   );
 }
 
-/* One checkable label list, two triggers: the row's tag icon and the narrow
-   +N chip — "see the rest" and "edit" are the same surface. */
 function LabelEditMenu({
   allLabels,
   issueLabels,

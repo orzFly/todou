@@ -59,35 +59,22 @@ const renderRow = (labelCount: number) =>
     </ul>,
   );
 
-/* The fold is CSS-only (max-sm:hidden / sm:hidden), so jsdom asserts the
-   classes, not visibility; the real-browser pass covers the rendering. */
-describe("IssueRow narrow-screen label fold (T-82)", () => {
-  it("folds labels beyond the cap into a +N chip", async () => {
+/* Wrapping itself is CSS (flex-wrap on the meta line), which jsdom cannot
+   exercise — so the assertions are that nothing hides or folds labels
+   anymore; the real-browser pass covers the wrapped rendering. */
+describe("IssueRow labels wrap instead of folding (T-98)", () => {
+  it("renders every label with no width-based hiding", async () => {
     const view = renderRow(4);
     await view.findByText("issue 1");
-    expect(view.getByTitle("kind:feature").className).toContain(
-      "max-sm:hidden",
-    );
-    expect(view.getByTitle("needs-brainstorm").className).toContain(
-      "max-sm:hidden",
-    );
-    const more = view.getByText("+2");
-    expect(more.className).toContain("sm:hidden");
+    for (const label of labels) {
+      expect(view.getByTitle(label.name).className).not.toContain(
+        "max-sm:hidden",
+      );
+    }
   });
 
-  it("keeps the first two labels visible at every width", async () => {
+  it("renders no +N chip regardless of label count", async () => {
     const view = renderRow(4);
-    await view.findByText("issue 1");
-    expect(view.getByTitle("area:web").className).not.toContain(
-      "max-sm:hidden",
-    );
-    expect(view.getByTitle("area:server").className).not.toContain(
-      "max-sm:hidden",
-    );
-  });
-
-  it("renders no +N chip at or below the cap", async () => {
-    const view = renderRow(2);
     await view.findByText("issue 1");
     expect(view.queryByText(/^\+\d/)).toBeNull();
   });

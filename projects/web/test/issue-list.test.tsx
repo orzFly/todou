@@ -164,6 +164,28 @@ describe("presentational chips", () => {
     );
     expect(getByTitle("area:web").textContent).toBe("area:web");
   });
+
+  it("shares vertical metrics between status pill and label chip (T-98)", () => {
+    const pill = render(
+      <StatusPill
+        status={{
+          id: 1,
+          name: "Todo",
+          category: "open",
+          color: "#3b82f6",
+          position: 1,
+          is_default: false,
+        }}
+      />,
+    ).container.firstElementChild;
+    const chip = render(
+      <LabelChip label={{ id: 1, name: "bug", color: "#ff0000" }} />,
+    ).container.firstElementChild;
+    for (const metric of ["text-xs", "py-0.5", "border"]) {
+      expect(pill?.className.split(" ")).toContain(metric);
+      expect(chip?.className.split(" ")).toContain(metric);
+    }
+  });
 });
 
 describe("splitLabelName (first-colon split)", () => {
