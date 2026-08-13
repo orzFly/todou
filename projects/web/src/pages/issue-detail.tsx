@@ -18,7 +18,7 @@ import {
 } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import { AttachmentList } from "@/components/issue/attachment-list.tsx";
-import { LabelChip } from "@/components/issue/label-chip.tsx";
+import { LabelChips } from "@/components/issue/label-chip.tsx";
 import { MarkReadOnView } from "@/components/issue/mark-read-on-view.tsx";
 import {
   SpecEntryRow,
@@ -379,10 +379,8 @@ function Sidebar({
         <h3 className="text-xs font-medium text-muted-foreground uppercase">
           Labels
         </h3>
-        <div className="flex flex-wrap gap-1">
-          {issue.labels.map((label) => (
-            <LabelChip key={label.id} label={label} />
-          ))}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <LabelChips labels={issue.labels} />
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

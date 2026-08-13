@@ -10,7 +10,7 @@ import {
   membersQuery,
   statusesQuery,
 } from "@/api/queries.ts";
-import { LabelChip } from "@/components/issue/label-chip.tsx";
+import { LabelChips } from "@/components/issue/label-chip.tsx";
 import {
   StagedFileTray,
   StagedFileUploadButton,
@@ -183,12 +183,12 @@ export function NewIssuePage() {
           <h3 className="text-xs font-medium text-muted-foreground uppercase">
             Labels
           </h3>
-          <div className="flex flex-wrap gap-1">
-            {labels.data
-              .filter((label) => labelIds.includes(label.id))
-              .map((label) => (
-                <LabelChip key={label.id} label={label} />
-              ))}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <LabelChips
+              labels={labels.data.filter((label) =>
+                labelIds.includes(label.id),
+              )}
+            />
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

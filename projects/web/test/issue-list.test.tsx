@@ -13,6 +13,7 @@ import {
 } from "../src/api/issues.ts";
 import {
   LabelChip,
+  LabelChips,
   splitLabelName,
 } from "../src/components/issue/label-chip.tsx";
 import { StatusPill } from "../src/components/issue/status-pill.tsx";
@@ -158,11 +159,44 @@ describe("presentational chips", () => {
     expect(getByText("bug")).toBeTruthy();
   });
 
-  it("keeps the full label name on the chip when the prefix is de-emphasized", () => {
+  it("tints the chip with the label color instead of showing a dot (T-90)", () => {
+    const chip = render(
+      <LabelChip label={{ id: 1, name: "bug", color: "#ff0000" }} />,
+    ).container.firstElementChild as HTMLElement;
+    expect(chip.style.backgroundColor).not.toBe("");
+    expect(chip.style.color).not.toBe("");
+    expect(chip.querySelectorAll("span").length).toBe(0);
+  });
+
+  it("keeps the full name in the title when valueOnly trims the prefix", () => {
     const { getByTitle } = render(
-      <LabelChip label={{ id: 1, name: "area:web", color: "#3b82f6" }} />,
+      <LabelChip
+        label={{ id: 1, name: "area:web", color: "#3b82f6" }}
+        valueOnly
+      />,
     );
-    expect(getByTitle("area:web").textContent).toBe("area:web");
+    expect(getByTitle("area:web").textContent).toBe("web");
+  });
+
+  it("groups same-prefix labels behind one muted prefix (T-90)", () => {
+    const { container, getByTitle, getByText } = render(
+      <LabelChips
+        labels={[
+          { id: 1, name: "area:web", color: "#3b82f6" },
+          { id: 2, name: "area:cli", color: "#0ea5e9" },
+          { id: 3, name: "needs-brainstorm", color: "#8b5cf6" },
+        ]}
+      />,
+    );
+    // one shared "area:" text node, not one per label
+    expect(
+      [...container.querySelectorAll("span")].filter(
+        (n) => n.textContent === "area:",
+      ).length,
+    ).toBe(1);
+    expect(getByTitle("area:web").textContent).toBe("web");
+    expect(getByTitle("area:cli").textContent).toBe("cli");
+    expect(getByText("needs-brainstorm")).toBeTruthy();
   });
 
   it("shares vertical metrics between status pill and label chip (T-98)", () => {

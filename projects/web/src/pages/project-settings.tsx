@@ -54,24 +54,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { PRESET_COLORS } from "@/lib/labels.ts";
 
 const ROLES: MemberRole[] = ["admin", "writer", "reader"];
 
-/** Preset swatches offered in the color popover (statuses and labels). */
-export const PRESET_COLORS = [
-  "#6b7280",
-  "#ef4444",
-  "#f97316",
-  "#f59e0b",
-  "#eab308",
-  "#22c55e",
-  "#10b981",
-  "#14b8a6",
-  "#0ea5e9",
-  "#3b82f6",
-  "#8b5cf6",
-  "#ec4899",
-];
+export { PRESET_COLORS };
 
 /** Lenient hand-typed hex → canonical #rrggbb, or null when unparseable. */
 export function normalizeHexColor(input: string): string | null {
