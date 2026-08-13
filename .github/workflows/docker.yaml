@@ -14,8 +14,10 @@ concurrency:
   group: docker-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
+# The image name is NOT ${{ github.repository }}: that expands with the
+# owner's original casing and registry references must be lowercase. Both
+# jobs resolve it from scripts/docker-image-ref.sh — the same derivation
+# local builds use — into $REGISTRY_IMAGE via $GITHUB_ENV.
 
 jobs:
   build:
@@ -31,10 +33,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
-      - name: Prepare platform slug
+      - name: Prepare platform slug and image ref
         run: |
           platform="${{ matrix.platform }}"
           echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
+          echo "REGISTRY_IMAGE=$(scripts/docker-image-ref.sh)" >> "$GITHUB_ENV"
       # Tags come from the merge job; this instance only supplies the OCI
       # labels, which have to be baked in at build time.
       - id: meta
@@ -72,6 +75,9 @@ jobs:
     runs-on: ubuntu-24.04
     needs: build
     steps:
+      - uses: actions/checkout@v7
+      - name: Resolve image ref
+        run: echo "REGISTRY_IMAGE=$(scripts/docker-image-ref.sh)" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v8
         with:
           path: /tmp/digests
