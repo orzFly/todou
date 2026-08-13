@@ -45,7 +45,8 @@ describe("waitForCallback", () => {
 });
 
 describe("browserCommand", () => {
-  const url = "https://todou.example/cli-auth?port=1663&state=abc&name=cli+%40+x";
+  const url =
+    "https://todou.example/cli-auth?port=1663&state=abc&name=cli+%40+x";
 
   it("keeps the full URL as one argument on every platform", () => {
     for (const platform of ["darwin", "win32", "linux"] as const) {

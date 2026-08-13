@@ -136,7 +136,11 @@ describe("CliAuthCard", () => {
       <CliAuthCard
         request={request}
         me={me}
-        agents={[agent(7, "bot-one"), agent(8, "bot-two"), agent(9, "old", true)]}
+        agents={[
+          agent(7, "bot-one"),
+          agent(8, "bot-two"),
+          agent(9, "old", true),
+        ]}
         lastAgentId={8}
         onCancel={() => {}}
         mint={vi.fn()}

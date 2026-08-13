@@ -76,7 +76,9 @@ describe("load/save round-trip", () => {
 
 describe("normalizeServer", () => {
   it("strips trailing slashes only", () => {
-    expect(normalizeServer("https://todou.example/")).toBe("https://todou.example");
+    expect(normalizeServer("https://todou.example/")).toBe(
+      "https://todou.example",
+    );
     expect(normalizeServer("http://localhost:8637")).toBe(
       "http://localhost:8637",
     );
