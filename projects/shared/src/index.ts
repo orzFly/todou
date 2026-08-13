@@ -8,6 +8,7 @@ export * from "./schemas/attachment.ts";
 export * from "./schemas/auth.ts";
 export * from "./schemas/common.ts";
 export * from "./schemas/component.ts";
+export * from "./schemas/cursor-envelope.ts";
 export * from "./schemas/issue.ts";
 export * from "./schemas/project.ts";
 export * from "./schemas/references.ts";

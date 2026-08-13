@@ -1,13 +1,22 @@
 import type {
   ActivityPage,
   ActivityQuery,
+  CrossActivityPage,
+  CrossActivityQuery,
   IssueEventType,
+  MultiCursorPositions,
   TimelineItem,
   TimelinePage,
   TimelineQuery,
   UserRef,
 } from "@todou/shared";
-import { TimelineFilterType } from "@todou/shared";
+import {
+  decodeMultiCursor,
+  encodeMultiCursor,
+  MalformedMultiCursorError,
+  TimelineFilterType,
+  UnsupportedCursorVersionError,
+} from "@todou/shared";
 import type { SQL } from "drizzle-orm";
 import {
   and,
@@ -26,9 +35,11 @@ import {
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
+import type { Db } from "../db/driver.ts";
 import { comments, issueEvents, issues } from "../db/project-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
 import { requireProject, routeInfoOf } from "./access.ts";
+import { listProjects } from "./projects.ts";
 import { getUserRefs } from "./users.ts";
 
 /**
@@ -360,30 +371,30 @@ export async function getTimeline(
   return { items, prev_cursor, next_cursor, has_more: hasMore, total_count };
 }
 
+type RawWithIssue = Raw & { number: number };
+
 /**
- * Project-wide activity stream: the same merged comments × events order as
- * the issue timeline, but across every issue, each entry annotated with its
- * issue number. Forward-only — `after` polls onward, `last` bootstraps a
- * "now" cursor. Cursors are interchangeable with issue-timeline cursors
- * (both encode a project-wide (created_at, kind, id) position).
+ * One project's activity rows in ascending timeline order: comments ×
+ * events merged, each joined to its issue number, up to `fetchCount` rows
+ * per table beyond `cursor` (or the newest `fetchCount` when `backward`).
+ * Callers cut the page; extracting this core is what lets the
+ * cross-project stream (T-93) reuse the exact single-project semantics
+ * once per watched project.
  */
-export async function getProjectActivity(
-  ctx: AppContext,
-  actor: UserRow,
-  slug: string,
-  query: ActivityQuery,
-): Promise<ActivityPage> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
-  const db = await ctx.router.forProject(routeInfoOf(project));
-
-  const backward = query.last;
-  const cursor = query.after === undefined ? null : decodeCursor(query.after);
+async function fetchProjectActivityRows(opts: {
+  db: Db;
+  projectId: number;
+  cursor: Cursor | null;
+  filters: { types?: string; exclude_actor?: number };
+  backward: boolean;
+  fetchCount: number;
+}): Promise<RawWithIssue[]> {
+  const { db, projectId, cursor, backward, fetchCount } = opts;
   const forward = !backward;
-
   const { wantComments, wantEvents, commentConditions, eventConditions } =
-    filterConditions(query);
-  commentConditions.push(eq(comments.projectId, project.id));
-  eventConditions.push(eq(issueEvents.projectId, project.id));
+    filterConditions(opts.filters);
+  commentConditions.push(eq(comments.projectId, projectId));
+  eventConditions.push(eq(issueEvents.projectId, projectId));
   if (cursor) {
     const c1 = beyond(
       comments.createdAt,
@@ -403,7 +414,6 @@ export async function getProjectActivity(
     if (c2) eventConditions.push(c2);
   }
 
-  const fetch = query.limit + 1;
   const commentOrder = backward
     ? [desc(comments.createdAt), desc(comments.id)]
     : [asc(comments.createdAt), asc(comments.id)];
@@ -422,7 +432,7 @@ export async function getProjectActivity(
         .innerJoin(issues, eq(comments.issueId, issues.id))
         .where(and(...commentConditions))
         .orderBy(...commentOrder)
-        .limit(fetch)
+        .limit(fetchCount)
     : [];
   const eventRows = wantEvents
     ? await db
@@ -435,11 +445,10 @@ export async function getProjectActivity(
         .innerJoin(issues, eq(issueEvents.issueId, issues.id))
         .where(and(...eventConditions))
         .orderBy(...eventOrder)
-        .limit(fetch)
+        .limit(fetchCount)
     : [];
 
-  type RawWithIssue = Raw & { number: number };
-  let merged: RawWithIssue[] = [
+  return [
     ...commentRows.map(
       (r) =>
         ({
@@ -459,16 +468,216 @@ export async function getProjectActivity(
         }) as RawWithIssue,
     ),
   ].sort(compareRaw);
-  const hasMore = merged.length > query.limit;
-  merged = backward ? merged.slice(-query.limit) : merged.slice(0, query.limit);
+}
 
-  const refs = await actorRefs(ctx, merged);
-  const items = merged.map((m) => ({
+/**
+ * Project-wide activity stream: the same merged comments × events order as
+ * the issue timeline, but across every issue, each entry annotated with its
+ * issue number. Forward-only — `after` polls onward, `last` bootstraps a
+ * "now" cursor. Cursors are interchangeable with issue-timeline cursors
+ * (both encode a project-wide (created_at, kind, id) position).
+ */
+export async function getProjectActivity(
+  ctx: AppContext,
+  actor: UserRow,
+  slug: string,
+  query: ActivityQuery,
+): Promise<ActivityPage> {
+  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const db = await ctx.router.forProject(routeInfoOf(project));
+
+  const backward = query.last;
+  const cursor = query.after === undefined ? null : decodeCursor(query.after);
+  const merged = await fetchProjectActivityRows({
+    db,
+    projectId: project.id,
+    cursor,
+    filters: query,
+    backward,
+    fetchCount: query.limit + 1,
+  });
+  const hasMore = merged.length > query.limit;
+  const page = backward
+    ? merged.slice(-query.limit)
+    : merged.slice(0, query.limit);
+
+  const refs = await actorRefs(ctx, page);
+  const items = page.map((m) => ({
     ...toItem(m, refs),
     issue_number: m.number,
   }));
 
-  const last = merged.at(-1);
+  const last = page.at(-1);
   const next_cursor = last ? encodeCursor(cursorOf(last)) : null;
+  return { items, next_cursor, has_more: hasMore };
+}
+
+type WatchedProject = {
+  slug: string;
+  projectId: number;
+  db: Db;
+  /** Opaque plain cursor to drain beyond; null = from the beginning. */
+  position: string | null;
+};
+
+/**
+ * The newest position present in the envelope, by wall-clock timestamp.
+ * Used as the starting position of projects the envelope has never seen:
+ * unlike "now", it is a pure function of the envelope, so re-sending the
+ * same envelope over a quiet stream cannot re-bootstrap past (and thereby
+ * lose) entries that arrived in between — the caller's cursor only moves
+ * when a page is actually delivered. Sub-millisecond ties are compared
+ * coarsely; picking the marginally older twin merely replays a hair more.
+ */
+function newestEnvelopePosition(envelope: MultiCursorPositions): string | null {
+  let best: { raw: string; at: number } | null = null;
+  for (const raw of Object.values(envelope)) {
+    if (raw === null) continue;
+    const at = Date.parse(decodeCursor(raw).t);
+    if (best === null || at > best.at) best = { raw, at };
+  }
+  return best?.raw ?? null;
+}
+
+/**
+ * Cross-project activity stream (T-93): the per-project stream of
+ * getProjectActivity, fanned out over several projects and merged, each
+ * entry annotated with its project slug. Positions advance per project —
+ * project databases may sit on hosts whose clocks disagree, so a single
+ * shared cursor would silently drop entries — and round-trip through the
+ * caller as an opaque envelope (see cursor-envelope.ts in @todou/shared).
+ *
+ * `after` accepts an envelope (per-project resume) or a plain cursor (the
+ * common wall-clock starting position for every watched project, letting
+ * an `issue view` cursor bootstrap a cross-project watch). `last`
+ * bootstraps "now" positions and returns them as an envelope with no
+ * items. The page cut needs no cross-project total order: each project's
+ * stream is internally ordered and resumes from its own delivered tail.
+ */
+export async function getCrossActivity(
+  ctx: AppContext,
+  actor: UserRow,
+  query: CrossActivityQuery,
+): Promise<CrossActivityPage> {
+  const explicit =
+    query.projects === undefined
+      ? null
+      : [
+          ...new Set(
+            query.projects
+              .split(",")
+              .map((slug) => slug.trim())
+              .filter((slug) => slug !== ""),
+          ),
+        ].sort();
+  if (explicit !== null && explicit.length === 0) {
+    throw new ValidationFailedError("projects names no project");
+  }
+  // Absent `projects` = everything the caller can read, re-resolved on
+  // every request so a long-running watch picks up projects created (or
+  // shared) after it started.
+  const slugs =
+    explicit ??
+    (await listProjects(ctx, actor)).map((project) => project.slug).sort();
+
+  const watched: WatchedProject[] = [];
+  for (const slug of slugs) {
+    const { project } = await requireProject(ctx, actor, slug, "reader");
+    watched.push({
+      slug,
+      projectId: project.id,
+      db: await ctx.router.forProject(routeInfoOf(project)),
+      position: null,
+    });
+  }
+
+  // The newest row's position regardless of the request's filters: a
+  // bootstrap marks "everything up to here is old", and filters only
+  // decide what gets delivered, never where "here" is.
+  const tailOf = async (p: WatchedProject): Promise<string | null> => {
+    const rows = await fetchProjectActivityRows({
+      db: p.db,
+      projectId: p.projectId,
+      cursor: null,
+      filters: {},
+      backward: true,
+      fetchCount: 1,
+    });
+    const newest = rows.at(-1);
+    return newest ? encodeCursor(cursorOf(newest)) : null;
+  };
+
+  if (query.last) {
+    const positions: MultiCursorPositions = {};
+    for (const p of watched) positions[p.slug] = await tailOf(p);
+    return {
+      items: [],
+      next_cursor: await encodeMultiCursor(positions),
+      has_more: false,
+    };
+  }
+
+  if (query.after !== undefined) {
+    let envelope: MultiCursorPositions | null;
+    try {
+      envelope = await decodeMultiCursor(query.after);
+    } catch (error) {
+      if (
+        error instanceof MalformedMultiCursorError ||
+        error instanceof UnsupportedCursorVersionError
+      ) {
+        throw new ValidationFailedError(error.message);
+      }
+      throw error;
+    }
+    if (envelope === null) {
+      // A plain cursor: wall-clock timestamps are comparable across
+      // projects, so it serves as the common starting position. Validate
+      // once up front so garbage fails as "malformed cursor", not as a
+      // per-project surprise.
+      decodeCursor(query.after);
+      for (const p of watched) p.position = query.after;
+    } else {
+      const fallback = newestEnvelopePosition(envelope);
+      for (const p of watched) {
+        p.position = p.slug in envelope ? (envelope[p.slug] ?? null) : fallback;
+      }
+    }
+  }
+
+  const all: (RawWithIssue & { slug: string })[] = [];
+  for (const p of watched) {
+    const rows = await fetchProjectActivityRows({
+      db: p.db,
+      projectId: p.projectId,
+      cursor: p.position === null ? null : decodeCursor(p.position),
+      filters: query,
+      backward: false,
+      fetchCount: query.limit + 1,
+    });
+    all.push(...rows.map((row) => ({ ...row, slug: p.slug })));
+  }
+  all.sort(
+    (a, b) =>
+      compareRaw(a, b) || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0),
+  );
+  const hasMore = all.length > query.limit;
+  const page = all.slice(0, query.limit);
+
+  const positions: MultiCursorPositions = {};
+  for (const p of watched) positions[p.slug] = p.position;
+  // Later rows overwrite earlier ones, leaving each project's position on
+  // its last *delivered* row — undelivered projects keep their incoming
+  // position, so the cut point can fall anywhere without losing entries.
+  for (const row of page) positions[row.slug] = encodeCursor(cursorOf(row));
+
+  const refs = await actorRefs(ctx, page);
+  const items = page.map((m) => ({
+    ...toItem(m, refs),
+    issue_number: m.number,
+    project: m.slug,
+  }));
+  const next_cursor =
+    page.length > 0 ? await encodeMultiCursor(positions) : null;
   return { items, next_cursor, has_more: hasMore };
 }

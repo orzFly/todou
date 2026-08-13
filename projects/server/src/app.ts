@@ -12,6 +12,7 @@ import {
   uploadBodyLimit,
 } from "./middleware/body-limit.ts";
 import { compressMiddleware } from "./middleware/compress.ts";
+import { activityRoutes } from "./routes/activity.ts";
 import { agentRoutes } from "./routes/agents.ts";
 import { attachmentRoutes } from "./routes/attachments.ts";
 import { authRoutes } from "./routes/auth.ts";
@@ -124,6 +125,7 @@ export function createApp(ctx: AppContext) {
   });
   api.use("*", authMiddleware(ctx));
   api.use("*", agentContextMiddleware());
+  api.route("/", activityRoutes());
   api.route("/", meRoutes());
   api.route("/", userRoutes());
   api.route("/agents", agentRoutes());

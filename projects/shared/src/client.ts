@@ -9,6 +9,7 @@ import type {
   Autolink,
   AutolinkCreateInput,
   CommentComponentInput,
+  CrossActivityPage,
   DirectUploadTicket,
   Issue,
   IssueCounts,
@@ -320,6 +321,17 @@ export class TodouClient {
     },
   ) =>
     this.request<ActivityPage>("GET", `/projects/${slug}/activity`, {
+      query: query ? { ...query, last: query.last ? 1 : undefined } : {},
+    });
+  getCrossActivity = (query?: {
+    projects?: string;
+    after?: string;
+    last?: boolean;
+    limit?: number;
+    types?: string;
+    exclude_actor?: number;
+  }) =>
+    this.request<CrossActivityPage>("GET", "/activity", {
       query: query ? { ...query, last: query.last ? 1 : undefined } : {},
     });
   createComment = (
