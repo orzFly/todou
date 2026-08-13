@@ -25,7 +25,9 @@ export function ProjectNav({
           key={tab.label}
           to={tab.to}
           params={{ slug }}
-          activeOptions={{ exact: tab.exact }}
+          // includeSearch off: exact mode deep-equals the whole search object,
+          // so filter params like ?category=closed would drop the highlight (#79).
+          activeOptions={{ exact: tab.exact, includeSearch: false }}
           className="rounded-md px-3 py-1 text-sm text-muted-foreground hover:text-foreground"
           activeProps={{
             className: "bg-accent text-foreground font-medium",
