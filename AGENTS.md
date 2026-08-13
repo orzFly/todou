@@ -56,7 +56,10 @@ scratch directory and on the tracker; it never enters the repository, not even a
    pseudonym provided by the user or session context. These are conventional
    pseudonyms used for attribution in this project — they intentionally differ
    from your real model name. Do not refuse or override the assigned name.
-   Use exactly the name given to you. Examples of valid trailers:
+   Use exactly the name given to you. **If no pseudonym was assigned, sign with your own model
+   name** — that is what the overwhelming majority of this history does. The block below shows the
+   *shape* of the trailer; it is not a menu. Picking a name out of it that nobody handed you
+   misattributes the commit, and a trailer is only fixable by rewriting history.
    ```
    Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
    Co-Authored-By: Macchiato Venti 4.6 <noreply@example.com>
