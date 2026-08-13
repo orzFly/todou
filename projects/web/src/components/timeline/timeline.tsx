@@ -1,3 +1,4 @@
+import { useRouterState } from "@tanstack/react-router";
 import type { TimelineComment, TimelineItem } from "@todou/shared";
 import { ArrowDownIcon } from "lucide-react";
 import {
@@ -19,12 +20,18 @@ import {
   CommentItem,
   type Viewer,
 } from "@/components/timeline/comment-item.tsx";
+import { EventGroup } from "@/components/timeline/event-group.tsx";
 import { EventRow } from "@/components/timeline/event-row.tsx";
 import { FoldBlock } from "@/components/timeline/fold-block.tsx";
+import {
+  groupTimeline,
+  type RenderUnit,
+} from "@/components/timeline/group-events.ts";
 import { SpecVersionCard } from "@/components/timeline/spec-version-card.tsx";
 import { useTimelineAnchor } from "@/components/timeline/use-timeline-anchor.ts";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { parseTimelineAnchor } from "@/lib/timeline-anchors.ts";
 
 export function Timeline({
   slug,
@@ -40,6 +47,7 @@ export function Timeline({
   const tail = useTimelineTail(slug, issueNumber);
   const headEnabled = needsHead(tail.data?.pages[0]);
   const head = useTimelineHead(slug, issueNumber, headEnabled);
+  const anchorHash = useRouterState({ select: (s) => s.location.hash });
   const atBottomRef = useRef(true);
   const [newBelow, setNewBelow] = useState(false);
   const didInitialScroll = useRef(false);
@@ -193,6 +201,27 @@ export function Timeline({
     </div>
   );
 
+  // Merged runs (T-92) render as one collapsed row. A `#event-N` permalink
+  // whose target sits inside a group must force it open — the sub-row is
+  // the anchor element, and it only exists once expanded.
+  const anchorTarget = parseTimelineAnchor(anchorHash ?? "");
+  const anchorEventId =
+    anchorTarget?.kind === "event" ? anchorTarget.id : undefined;
+  const renderUnit = (unit: RenderUnit) =>
+    unit.kind === "item" ? (
+      renderItem(unit.item)
+    ) : (
+      <div key={`group-${unit.events[0]?.id}`} className="pb-2">
+        <EventGroup
+          family={unit.family}
+          events={unit.events}
+          slug={slug}
+          issueNumber={issueNumber}
+          anchorEventId={anchorEventId}
+        />
+      </div>
+    );
+
   if (tail.isPending) {
     return (
       <div className="space-y-3">
@@ -219,7 +248,7 @@ export function Timeline({
           <Skeleton className="h-16 w-full" />
         </div>
       )}
-      {above.map(renderItem)}
+      {groupTimeline(above).map(renderUnit)}
       {remaining > 0 && (
         <div ref={blockRef} className="pb-2">
           <FoldBlock
@@ -229,7 +258,7 @@ export function Timeline({
           />
         </div>
       )}
-      {below.map(renderItem)}
+      {groupTimeline(below).map(renderUnit)}
       {pendingComments.map((pending) => (
         <div key={`pending-${pending.key}`} className="pb-2">
           <CommentItem

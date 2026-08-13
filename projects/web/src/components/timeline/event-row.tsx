@@ -22,15 +22,11 @@ import { AttachmentEventLink } from "@/components/issue/attachment-list.tsx";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
+import { asName } from "@/components/timeline/group-events.ts";
 import { type RefConfig, splitIssueRefs } from "@/lib/issue-refs.ts";
 import { commentAnchor, eventAnchor } from "@/lib/timeline-anchors.ts";
 
 type Payload = Record<string, unknown>;
-
-const asName = (v: unknown): string =>
-  typeof v === "object" && v !== null && "name" in v
-    ? String((v as { name: unknown }).name)
-    : "?";
 
 /**
  * Human-readable line for a GitHub-style action event. Pure for tests.
@@ -108,7 +104,7 @@ export function describeEvent(
   }
 }
 
-const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
+export const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
   opened: <CircleDotIcon className="size-3.5 text-green-600" />,
   closed: <CircleSlashIcon className="size-3.5 text-purple-600" />,
   reopened: <CircleDotIcon className="size-3.5 text-green-600" />,
@@ -162,11 +158,15 @@ export function EventRow({
   event,
   slug,
   issueNumber,
+  hideActor = false,
 }: {
   event: TimelineEvent;
   /** Enables #N → issue link rendering; omit where there is no project. */
   slug?: string;
   issueNumber?: number;
+  /** Inside an expanded merge group (T-92) the header already names the
+      actor once — sub-rows drop the chip and badge. */
+  hideActor?: boolean;
 }) {
   // UI strings spell refs in the project's current format (T-80); the
   // query no-ops (enabled: false) in project-less contexts.
@@ -218,14 +218,18 @@ export function EventRow({
       <span className="inline-flex shrink-0 align-middle text-muted-foreground/70">
         {ICONS[event.event_type]}
       </span>{" "}
-      <UserChip
-        user={event.actor}
-        nameClassName="font-medium text-foreground/80"
-      />{" "}
-      <AgentContextBadge
-        context={event.agent_context}
-        className="align-middle"
-      />{" "}
+      {!hideActor && (
+        <>
+          <UserChip
+            user={event.actor}
+            nameClassName="font-medium text-foreground/80"
+          />{" "}
+          <AgentContextBadge
+            context={event.agent_context}
+            className="align-middle"
+          />{" "}
+        </>
+      )}
       <span className="min-w-0 flex-1 sm:truncate" title={action}>
         {attached?.id !== undefined && slug && issueNumber ? (
           <>
