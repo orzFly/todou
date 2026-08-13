@@ -4,7 +4,6 @@ import type { Project } from "@todou/shared";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { meQuery } from "@/api/queries.ts";
 import {
-  hasNewBadge,
   isNeverVisited,
   orderProjects,
   parseVisits,
@@ -15,7 +14,6 @@ import {
 export type OrderedProject = {
   project: Project;
   neverVisited: boolean;
-  isNew: boolean;
 };
 
 function subscribeToStorage(callback: () => void) {
@@ -45,7 +43,6 @@ export function useProjectOrder(projects: Project[]): OrderedProject[] {
     return orderProjects(projects, data, now).map((project) => ({
       project,
       neverVisited: isNeverVisited(data, project.slug),
-      isNew: hasNewBadge(project, data, now),
     }));
   }, [projects, raw]);
 }

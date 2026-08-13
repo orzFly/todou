@@ -174,7 +174,6 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
                 >
                   {item.project.name}
                 </span>
-                {item.isNew && <NewBadge />}
               </div>
             ))
           )}
@@ -198,13 +197,5 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
         </div>
       </PopoverContent>
     </Popover>
-  );
-}
-
-export function NewBadge() {
-  return (
-    <span className="shrink-0 rounded-full border border-green-600 px-1.5 text-[10px] leading-4 text-green-600 dark:border-green-500 dark:text-green-500">
-      新
-    </span>
   );
 }

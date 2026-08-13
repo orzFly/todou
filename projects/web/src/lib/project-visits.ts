@@ -15,7 +15,6 @@ export const HALF_LIFE_DAYS = 14;
 export const NEW_BONUS = 10;
 export const NEW_HALF_LIFE_DAYS = 2;
 export const NEW_CUTOFF_DAYS = 14;
-export const NEW_BADGE_DAYS = 7;
 export const PRUNE_DAYS = 90;
 export const DEDUPE_MS = 30 * 60_000;
 
@@ -62,18 +61,6 @@ export function projectScore(
 export function isNeverVisited(data: VisitData, slug: string): boolean {
   const entry = data[slug];
   return entry === undefined || Object.keys(entry.d).length === 0;
-}
-
-/** The badge marks fresh projects you haven't opened yet, on this browser. */
-export function hasNewBadge(
-  project: Project,
-  data: VisitData,
-  now: number,
-): boolean {
-  return (
-    isNeverVisited(data, project.slug) &&
-    now - Date.parse(project.created_at) <= NEW_BADGE_DAYS * DAY_MS
-  );
 }
 
 /**

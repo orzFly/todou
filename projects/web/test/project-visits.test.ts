@@ -4,10 +4,10 @@ import {
   creationBonus,
   DEDUPE_MS,
   dayNumber,
-  hasNewBadge,
   isNeverVisited,
   orderProjects,
   parseVisits,
+  projectScore,
   readVisits,
   recordVisit,
   type VisitData,
@@ -83,6 +83,14 @@ describe("creationBonus", () => {
   it("treats a slightly-future created_at as brand new, not scoreless", () => {
     expect(creationBonus(new Date(NOW + 60_000).toISOString(), NOW)).toBe(10);
   });
+
+  it("applies to visited projects too — no unvisited gate", () => {
+    const fresh = project("fresh", 0);
+    const visits = entry({ 0: 1 });
+    expect(projectScore(fresh, visits, NOW)).toBe(
+      visitScore(visits, NOW) + creationBonus(fresh.created_at, NOW),
+    );
+  });
 });
 
 describe("orderProjects", () => {
@@ -124,21 +132,26 @@ describe("orderProjects", () => {
       "a",
     ]);
   });
+
+  it("lifts a fresh visited project above a busier old one via the bonus", () => {
+    const freshVisited = project("fresh-visited", 0);
+    const workhorse = project("workhorse", 300);
+    const data: VisitData = {
+      "fresh-visited": entry({ 0: 1 }),
+      workhorse: entry({ 0: 5, 1: 5 }),
+    };
+    // ≈1+10 vs ≈9.8: only the creation bonus puts fresh-visited on top.
+    expect(
+      orderProjects([workhorse, freshVisited], data, NOW).map((p) => p.slug),
+    ).toEqual(["fresh-visited", "workhorse"]);
+  });
 });
 
-describe("badges and flags", () => {
+describe("flags", () => {
   it("isNeverVisited: no entry or empty buckets", () => {
     expect(isNeverVisited({}, "x")).toBe(true);
     expect(isNeverVisited({ x: { d: {}, t: NOW } }, "x")).toBe(true);
     expect(isNeverVisited({ x: entry({ 1: 1 }) }, "x")).toBe(false);
-  });
-
-  it("hasNewBadge: unvisited and ≤7 days old, regardless of bonus score", () => {
-    expect(hasNewBadge(project("p", 2), {}, NOW)).toBe(true);
-    expect(hasNewBadge(project("p", 8), {}, NOW)).toBe(false);
-    expect(hasNewBadge(project("p", 2), { p: entry({ 0: 1 }) }, NOW)).toBe(
-      false,
-    );
   });
 });
 

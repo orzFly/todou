@@ -100,11 +100,16 @@ describe("ProjectsPage ordering (T-76)", () => {
     expect(titles[2]).toContain("old-never");
   });
 
-  it("badges fresh unvisited projects on the cards", async () => {
+  it("floats fresh projects by creation bonus, with no badge (T-87)", async () => {
     renderProjects([project("plain", 300), project("newborn", 2)]);
     // The name shows up in both the card title and the slug line.
     const [title] = await screen.findAllByText("newborn");
-    expect(title.closest("a")?.textContent).toContain("新");
+    expect(title.closest("a")?.textContent).not.toContain("新");
+    const titles = screen
+      .getAllByRole("link")
+      .map((el) => el.textContent ?? "")
+      .filter((t) => t.includes("plain") || t.includes("newborn"));
+    expect(titles[0]).toContain("newborn");
   });
 
   it("opens the create dialog when arriving as /projects?new=1", async () => {

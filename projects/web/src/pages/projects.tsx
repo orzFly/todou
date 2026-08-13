@@ -9,7 +9,6 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { api, projectsQuery } from "@/api/queries.ts";
 import { useProjectOrder } from "@/api/useProjectOrder.ts";
-import { NewBadge } from "@/components/project-switcher.tsx";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -46,7 +45,7 @@ export function ProjectsPage() {
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {ordered.map(({ project, neverVisited, isNew }) => (
+          {ordered.map(({ project, neverVisited }) => (
             <Link
               key={project.id}
               to="/projects/$slug"
@@ -57,12 +56,11 @@ export function ProjectsPage() {
                   <CardTitle
                     className={
                       neverVisited
-                        ? "flex items-center gap-2 text-base text-muted-foreground"
-                        : "flex items-center gap-2 text-base"
+                        ? "text-base text-muted-foreground"
+                        : "text-base"
                     }
                   >
                     {project.name}
-                    {isNew && <NewBadge />}
                   </CardTitle>
                   <CardDescription>
                     {project.slug}

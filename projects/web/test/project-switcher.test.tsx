@@ -186,13 +186,12 @@ describe("ProjectSwitcher", () => {
     );
   });
 
-  it("marks fresh unvisited projects with the badge", async () => {
+  it("floats fresh projects by creation bonus, with no badge (T-87)", async () => {
     renderSwitcher([...fewProjects, project("newborn", 2)]);
     await openSwitcher();
-    const newborn = screen
-      .getAllByRole("option")
-      .find((el) => el.textContent?.includes("newborn"));
-    expect(newborn?.textContent).toContain("新");
+    const names = screen.getAllByRole("option").map((el) => el.textContent);
+    expect(names[0]).toContain("newborn");
+    expect(names[0]).not.toContain("新");
   });
 
   it("still renders when localStorage is unavailable", async () => {
