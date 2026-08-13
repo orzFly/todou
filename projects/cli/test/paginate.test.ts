@@ -3,7 +3,7 @@ import { CliError } from "../src/errors.ts";
 import { drainPaged, MAX_DRAIN_PAGES } from "../src/paginate.ts";
 import { fakeFetch, loggedInEnv, runCli } from "./harness.ts";
 
-type Page = { items: number[]; next_cursor: string | null };
+type Page = { items: number[]; next_cursor: string | null; has_more?: boolean };
 
 /** fetchPage stub that serves `pages` in order and counts calls. */
 function scripted(pages: Page[]) {
@@ -85,6 +85,44 @@ describe("drainPaged", () => {
     );
     expect(calls).toBe(MAX_DRAIN_PAGES);
   });
+
+  it("ends on has_more=false without the trailing empty-page request", async () => {
+    const { fetchPage, calls } = scripted([
+      { items: [1, 2], next_cursor: "c1", has_more: true },
+      { items: [3], next_cursor: "c2", has_more: false },
+    ]);
+    const result = await drainPaged("timeline", undefined, fetchPage);
+    expect(result.items).toEqual([1, 2, 3]);
+    expect(result.cursor).toBe("c2");
+    expect(calls()).toBe(2);
+  });
+
+  it("still stops on a stalled cursor when has_more promises more", async () => {
+    const { fetchPage, calls } = scripted([
+      { items: [1], next_cursor: "c1", has_more: true },
+      { items: [2], next_cursor: "c1", has_more: true },
+    ]);
+    const result = await drainPaged("timeline", undefined, fetchPage);
+    expect(result.items).toEqual([1]);
+    expect(result.cursor).toBe("c1");
+    expect(calls()).toBe(2);
+  });
+
+  it("caps ever-fresh cursors even when has_more stays true", async () => {
+    let calls = 0;
+    const fetchPage = (): Promise<Page> => {
+      calls += 1;
+      return Promise.resolve({
+        items: [calls],
+        next_cursor: `c${calls}`,
+        has_more: true,
+      });
+    };
+    await expect(drainPaged("timeline", undefined, fetchPage)).rejects.toThrow(
+      CliError,
+    );
+    expect(calls).toBe(MAX_DRAIN_PAGES);
+  });
 });
 
 describe("issue view against a misbehaving server", () => {
@@ -114,6 +152,38 @@ describe("issue view against a misbehaving server", () => {
     body: `comment ${id}`,
     created_at: "2026-08-11T10:30:00Z",
     edited_at: null,
+  });
+
+  it("issue view stops at one request when has_more is false", async () => {
+    let timelineCalls = 0;
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3", issue],
+      ["PUT", "/api/projects/todou/issues/3/read", {}],
+      [
+        "GET",
+        "/api/projects/todou/issues/3/timeline",
+        () => {
+          timelineCalls += 1;
+          return {
+            items: [entry(timelineCalls)],
+            next_cursor: "c1",
+            has_more: false,
+          };
+        },
+      ],
+    ]);
+    const result = await runCli(["issue", "view", "3", "--json"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      timeline: unknown[];
+      next_cursor: string | null;
+    };
+    expect(parsed.timeline).toHaveLength(1);
+    expect(parsed.next_cursor).toBe("c1");
+    expect(timelineCalls).toBe(1);
   });
 
   it("finishes once when the cursor stalls instead of spinning", async () => {

@@ -140,12 +140,14 @@ describe("timeline cursors across sub-millisecond rows", () => {
       );
       if (page.items.length === 0) {
         expect(page.next_cursor).toBeNull();
+        expect(page.has_more).toBe(false);
         break;
       }
       // The T-69 failure shape: the last page's next_cursor is byte-identical
       // to the `after` that produced it, so drains spin forever.
       expect(page.next_cursor).not.toBe(after);
       seen.push(...page.items.map(keyOf));
+      expect(page.has_more).toBe(seen.length < order.length);
       after = page.next_cursor;
     }
     expect(seen).toEqual(order);
@@ -163,10 +165,12 @@ describe("timeline cursors across sub-millisecond rows", () => {
       const page = await json(res);
       if (page.items.length === 0) {
         expect(page.next_cursor).toBeNull();
+        expect(page.has_more).toBe(false);
         break;
       }
       expect(page.next_cursor).not.toBe(after);
       seen.push(...page.items.map(keyOf));
+      expect(page.has_more).toBe(seen.length < order.length);
       after = page.next_cursor;
     }
     expect(seen).toEqual(order);

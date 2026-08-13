@@ -63,6 +63,15 @@ export const TimelinePage = z.object({
   prev_cursor: Cursor.nullable(),
   next_cursor: Cursor.nullable(),
   /**
+   * Whether more items exist beyond this page in the direction the query
+   * walked (`after`/no cursor = forward, `before`/`last` = backward).
+   * "False" means the drain is complete as of this response — new rows may
+   * still arrive later. Optional because servers predating T-75 omit it;
+   * clients then fall back to empty-page termination. `next_cursor` stays a
+   * pure position token either way: present on every non-empty page.
+   */
+  has_more: z.boolean().optional(),
+  /**
    * Total items matching the same types/exclude_actor filters, independent
    * of the cursor window — lets clients size the folded middle (T-30).
    */
@@ -104,6 +113,8 @@ export type ActivityItem = z.infer<typeof ActivityItem>;
 export const ActivityPage = z.object({
   items: z.array(ActivityItem),
   next_cursor: Cursor.nullable(),
+  /** Same contract as TimelinePage.has_more (forward and `last` only). */
+  has_more: z.boolean().optional(),
 });
 export type ActivityPage = z.infer<typeof ActivityPage>;
 

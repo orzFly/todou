@@ -230,6 +230,7 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
     );
     expect(drained.items).toEqual([]);
     expect(drained.next_cursor).toBeNull();
+    expect(drained.has_more).toBe(false);
 
     const bad = await t.app.request(
       `/api/projects/${slug}/issues/${issue.number}/timeline?types=bogus`,
@@ -261,6 +262,7 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
     // Bootstrap a "now" cursor, then generate cross-issue activity.
     const tail = await activity("?last=1&limit=1");
     expect(tail.next_cursor).toBeTruthy();
+    expect(tail.has_more).toBe(true);
 
     await t.app.request(`/api/projects/${slug}/issues/${a.number}/comments`, {
       method: "POST",
@@ -287,6 +289,8 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
       ["comment", a.number],
       ["event", b.number],
     ]);
+    expect(all.has_more).toBe(false);
+    expect(all.next_cursor).not.toBeNull();
 
     // "Anyone but me" — the orchestrator/unread filter.
     const foreign = await activity(
@@ -677,6 +681,7 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
     expect(lastPage.items).toHaveLength(3);
     expect(lastPage.items.at(-1).body).toBe("comment 7");
     expect(lastPage.prev_cursor).not.toBeNull();
+    expect(lastPage.has_more).toBe(true);
     expect(lastPage.total_count).toBe(8);
 
     // Walk backward.
@@ -685,21 +690,27 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
       `?before=${lastPage.prev_cursor}&limit=3`,
     );
     expect(older.items.at(-1).body).toBe("comment 4");
+    expect(older.has_more).toBe(true);
     expect(older.total_count).toBe(8);
 
     // Walk forward from the older page's end — must reconnect seamlessly.
+    // The stream ends inside this page, so has_more turns false while
+    // next_cursor stays present (a pure position token, not a terminator).
     const forward = await timelineOf(
       issue.number,
       `?after=${older.next_cursor}&limit=10`,
     );
     expect(forward.items[0].body).toBe("comment 5");
     expect(forward.items).toHaveLength(3);
+    expect(forward.has_more).toBe(false);
+    expect(forward.next_cursor).not.toBeNull();
     expect(forward.total_count).toBe(8);
 
     // Beginning is reachable and flagged.
     const start = await timelineOf(issue.number, "?limit=4");
     expect(start.prev_cursor).toBeNull();
     expect(start.items[0].event_type).toBe("opened");
+    expect(start.has_more).toBe(true);
     expect(start.total_count).toBe(8);
   });
 

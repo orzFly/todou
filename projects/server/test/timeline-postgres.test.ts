@@ -120,6 +120,7 @@ describe.skipIf(!PG_URL)("timeline cursors on real postgres", () => {
   });
 
   it("drains forward to the end without stalling on organic rows", async () => {
+    const expected = ["event:opened", ...bodies];
     const seen: string[] = [];
     let after: string | undefined;
     for (let pages = 0; pages < 12; pages += 1) {
@@ -129,18 +130,31 @@ describe.skipIf(!PG_URL)("timeline cursors on real postgres", () => {
       );
       if (page.items.length === 0) {
         expect(page.next_cursor).toBeNull();
+        expect(page.has_more).toBe(false);
         break;
       }
       // The T-69 failure shape: at the end of the stream the boundary row is
       // returned again and next_cursor === after, forever.
       expect(page.next_cursor).not.toBe(after);
       seen.push(...page.items.map(keyOf));
+      expect(page.has_more).toBe(seen.length < expected.length);
       after = page.next_cursor;
     }
-    expect(seen).toEqual(["event:opened", ...bodies]);
+    expect(seen).toEqual(expected);
   });
 
   it("project activity drains forward without stalling", async () => {
+    // Issue 2's comments are backdated to 2026-02-02, so they lead; both
+    // opened events and issue 1's comments follow in organic order.
+    const expected = [
+      "d1",
+      "d2",
+      "d3",
+      "d4",
+      "event:opened",
+      ...bodies,
+      "event:opened",
+    ];
     const seen: string[] = [];
     let after: string | undefined;
     for (let pages = 0; pages < 16; pages += 1) {
@@ -152,23 +166,15 @@ describe.skipIf(!PG_URL)("timeline cursors on real postgres", () => {
       const page = await json(res);
       if (page.items.length === 0) {
         expect(page.next_cursor).toBeNull();
+        expect(page.has_more).toBe(false);
         break;
       }
       expect(page.next_cursor).not.toBe(after);
       seen.push(...page.items.map(keyOf));
+      expect(page.has_more).toBe(seen.length < expected.length);
       after = page.next_cursor;
     }
-    // Issue 2's comments are backdated to 2026-02-02, so they lead; both
-    // opened events and issue 1's comments follow in organic order.
-    expect(seen).toEqual([
-      "d1",
-      "d2",
-      "d3",
-      "d4",
-      "event:opened",
-      ...bodies,
-      "event:opened",
-    ]);
+    expect(seen).toEqual(expected);
   });
 
   it("legacy ms cursors resume mid-stream without repeats or skips", async () => {

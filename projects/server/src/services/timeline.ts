@@ -340,14 +340,8 @@ export async function getTimeline(
     ),
   ].sort(compareRaw);
 
-  let hasMore: boolean;
-  if (backward) {
-    hasMore = merged.length > query.limit;
-    merged = merged.slice(-query.limit);
-  } else {
-    hasMore = merged.length > query.limit;
-    merged = merged.slice(0, query.limit);
-  }
+  const hasMore = merged.length > query.limit;
+  merged = backward ? merged.slice(-query.limit) : merged.slice(0, query.limit);
 
   const refs = await actorRefs(ctx, merged);
   const items: TimelineItem[] = merged.map((m) => toItem(m, refs));
@@ -363,7 +357,7 @@ export async function getTimeline(
     first && !atBeginning ? encodeCursor(cursorOf(first)) : null;
   const next_cursor = last ? encodeCursor(cursorOf(last)) : null;
 
-  return { items, prev_cursor, next_cursor, total_count };
+  return { items, prev_cursor, next_cursor, has_more: hasMore, total_count };
 }
 
 /**
@@ -465,6 +459,7 @@ export async function getProjectActivity(
         }) as RawWithIssue,
     ),
   ].sort(compareRaw);
+  const hasMore = merged.length > query.limit;
   merged = backward ? merged.slice(-query.limit) : merged.slice(0, query.limit);
 
   const refs = await actorRefs(ctx, merged);
@@ -475,5 +470,5 @@ export async function getProjectActivity(
 
   const last = merged.at(-1);
   const next_cursor = last ? encodeCursor(cursorOf(last)) : null;
-  return { items, next_cursor };
+  return { items, next_cursor, has_more: hasMore };
 }
