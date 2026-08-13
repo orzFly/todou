@@ -204,6 +204,12 @@ origin comes from `http.public_origin` when set, otherwise it is derived
 per request from (trusted) forwarded headers — set it explicitly when the
 IdP is strict about redirect URIs and you want no surprises.
 
+Register that URI exactly. If your IdP only takes wildcard or regex
+patterns, scope them no wider than `<origin>/api/auth/` — never the whole
+origin: todou serves user-uploaded attachments on the same origin, and an
+origin-wide pattern lets an authorization code be redirected onto
+user-controlled content.
+
 Login maps the `login_claim` value to a todou login (lowercased; must be
 lowercase letters, digits, dashes). Unknown identities are auto-created
 when `auto_create` is on; a matching existing login that was never bound
