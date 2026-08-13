@@ -85,13 +85,13 @@ path finds it. Environment variables win over the file.
 
 The image runs as the unprivileged uid 65532 and contains no shell. A named
 volume inherits the right ownership automatically; a bind mount must be
-`chown -R 65532:65532` on the host first. For administrative commands, the
-image entrypoint is `node`, so pass the server entry and a subcommand — with
-PostgreSQL, migrations stay explicit:
+`chown -R 65532:65532` on the host first. Administrative commands go through
+the image's `todou-server` command — with PostgreSQL, migrations stay
+explicit:
 
 ```bash
 docker run --rm -e TODOU_DATABASE_SYSTEM=postgres://… \
-  ghcr.io/orzfly/todou:latest /app/projects/server/src/index.ts migrate
+  ghcr.io/orzfly/todou:latest todou-server migrate
 ```
 
 ## Serving the SPA

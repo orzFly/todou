@@ -20,6 +20,14 @@ FROM gcr.io/distroless/nodejs24-debian13:nonroot
 COPY --from=server-deps --chown=65532:65532 /data /data
 COPY --from=server-deps /app /app
 COPY --from=web-build /app/projects/web/dist /app/projects/web/dist
+# There is no shell to interpret a wrapper, but the kernel execs shebang
+# interpreters directly, so an absolute-path shebang gives the image a real
+# `todou-server` command. argv stays [node, wrapper, ...args] — the same
+# shape `node src/index.ts` produces, which runExit's argv.slice(2) expects.
+COPY --chmod=755 <<'EOF' /usr/local/bin/todou-server
+#!/nodejs/bin/node
+import("/app/projects/server/src/index.ts");
+EOF
 ENV NODE_ENV=production \
     TODOU_DATABASE_SYSTEM=pglite:///data/system \
     TODOU_STORAGE_PATH=/data/attachments \
@@ -29,6 +37,7 @@ ENV NODE_ENV=production \
 WORKDIR /data
 VOLUME /data
 EXPOSE 8637
-# The image entrypoint is node itself; `serve` is also the default command,
-# spelled out so `docker run <image> /app/... migrate` reads as the override.
-CMD ["/app/projects/server/src/index.ts", "serve"]
+# Clear the base image's `node` entrypoint so CMD[0] is PATH-resolved: both
+# `docker run <image>` and `docker run <image> todou-server migrate` work.
+ENTRYPOINT []
+CMD ["todou-server", "serve"]
