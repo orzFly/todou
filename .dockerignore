@@ -1,0 +1,19 @@
+# Keep `COPY . .` equivalent to the tracked tree, same intent as the
+# `git ls-files` staging in scripts/build-cli.sh.
+.git
+.github
+.claude
+.local
+.research
+.nix
+.envrc
+.env
+.env.*
+node_modules
+dist
+coverage
+data
+docs
+mockups
+todou.toml
+*.tsbuildinfo

@@ -66,6 +66,34 @@ For PostgreSQL, set `database.system` to a `postgres://` URL and apply
 migrations explicitly: `todou-server migrate` applies pending migrations to
 the system database and every project database.
 
+## Docker
+
+The same server + built SPA, prepackaged:
+
+```bash
+docker run -d -p 8637:8637 -v todou-data:/data ghcr.io/orzfly/todou:latest
+```
+
+Tags: `latest` is the most recent release, `x.y.z` a specific one, `edge`
+the tip of master, and `sha-*` an exact commit.
+
+Everything under [Layout](#layout) that lives in `~/todou-data` lives in the
+`/data` volume here. Configure with `TODOU_*` environment variables (each
+config key has one; see the sections below), or drop a `todou.toml` into the
+volume — the process working directory is `/data`, so the default config
+path finds it. Environment variables win over the file.
+
+The image runs as the unprivileged uid 65532 and contains no shell. A named
+volume inherits the right ownership automatically; a bind mount must be
+`chown -R 65532:65532` on the host first. For administrative commands, the
+image entrypoint is `node`, so pass the server entry and a subcommand — with
+PostgreSQL, migrations stay explicit:
+
+```bash
+docker run --rm -e TODOU_DATABASE_SYSTEM=postgres://… \
+  ghcr.io/orzfly/todou:latest /app/projects/server/src/index.ts migrate
+```
+
 ## Serving the SPA
 
 With `http.static_dir` set, one process serves both the SPA and the API —
