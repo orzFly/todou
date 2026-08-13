@@ -134,9 +134,12 @@ first; if it is working, just re-attach with `herdr agent wait`. Never poke an a
 **Throttling — at most 3 workers at once** (unless the user sets a different number). Count live
 worker agents, not subagents you spawn for merges or investigations. When the cap is full and another
 card lands in Next, **leave it in Next and say so** — Next *is* the queue, so nothing is lost and the
-user can see the depth. Dispatch the moment a slot frees, which is when a card reaches Done and you
-retire its agent. Never quietly exceed the cap because a card looks small: the limit is about the
-user's attention and the machine's memory, not about how hard the tasks are.
+user can see the depth. Never quietly exceed the cap because a card looks small: the limit is about
+the user's attention and the machine's memory, not about how hard the tasks are.
+
+**A slot frees at Shipped, not Done.** Once a card is merged and deployed its worker has nothing left
+to do, so backfill immediately. The agent still stays alive and idle until the user's Done, in case
+verification sends work back to it — that idle agent does not occupy a slot.
 
 ## Retiring an agent (tested behavior — read carefully)
 
