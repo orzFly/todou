@@ -5,10 +5,16 @@ import {
   BookOpenTextIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  FileCheck2Icon,
   UnfoldHorizontalIcon,
 } from "lucide-react";
 import { useState } from "react";
-import { specCommentsQuery, specVersionStatsQuery } from "@/api/spec.ts";
+import { meQuery } from "@/api/queries.ts";
+import {
+  specCommentsQuery,
+  specQuery,
+  specVersionStatsQuery,
+} from "@/api/spec.ts";
 import { Button } from "@/components/ui/button";
 import { diffstatCells, type SpecFileStat } from "@/lib/spec-version-stats.ts";
 import { cn } from "@/lib/utils.ts";
@@ -74,6 +80,19 @@ function SpecVersionCardBody({
   const anchoredHere =
     comments.data?.items.filter((i) => i.anchor.version === version) ?? [];
   const outdatedHere = anchoredHere.filter((i) => i.outdated);
+
+  // Review call to action (T-103). The card exists because a push happened,
+  // so the spec provably exists — no 404 probe to gate here.
+  const info = useQuery(specQuery(slug, issueNumber)).data;
+  const me = useQuery(meQuery).data;
+  const pushedBy = info?.versions.find((v) => v.number === version)?.author.id;
+  // The account that pushed a version can never sign it off (the server
+  // answers 403), so its own view gets the state without the button.
+  const isPusher = me !== undefined && pushedBy === me.id;
+  const awaitingReview =
+    info?.current_version === version &&
+    info.review_status === "unreviewed" &&
+    !isPusher;
 
   const rows: Array<{ path: string; change: SpecFileStat["change"] }> = [
     ...payload.added.map((path) => ({ path, change: "added" as const })),
@@ -247,6 +266,59 @@ function SpecVersionCardBody({
           )}
         </div>
       )}
+
+      {awaitingReview && (
+        <ReviewCallToAction
+          params={params}
+          version={version}
+          unresolved={info.unresolved_comments}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The review prompt under the newest still-unreviewed version (T-103) —
+ * modelled on GitHub's merge box: a tinted footer that outlives the file
+ * list's collapse, because the ask is the point of the card. Older
+ * versions and settled verdicts never grow one.
+ */
+function ReviewCallToAction({
+  params,
+  version,
+  unresolved,
+}: {
+  params: { slug: string; number: string };
+  version: number;
+  unresolved: number;
+}) {
+  return (
+    <div
+      className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-amber-500/30 bg-amber-500/10 px-2.5 py-2"
+      data-testid="spec-review-cta"
+    >
+      <div className="min-w-0 flex-1">
+        <p className="font-medium text-sm">Awaiting your review</p>
+        <p className="text-xs text-muted-foreground">
+          v{version} is the latest version
+          {unresolved > 0 &&
+            ` · ${unresolved} unresolved comment${unresolved === 1 ? "" : "s"}`}
+        </p>
+      </div>
+      <Button
+        asChild
+        className="bg-emerald-600 text-white hover:bg-emerald-600/85"
+      >
+        <Link
+          to="/projects/$slug/issues/$number/spec"
+          params={params}
+          search={{ v: version }}
+        >
+          <FileCheck2Icon />
+          View &amp; review
+        </Link>
+      </Button>
     </div>
   );
 }

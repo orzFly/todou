@@ -88,9 +88,34 @@ describe("SpecVersionCard", () => {
     ],
   };
 
-  function stubFetch() {
+  const SPEC_INFO = {
+    current_version: 2,
+    review_status: "unreviewed",
+    unresolved_comments: 1,
+    files: [{ path: "design.md", size: 6 }],
+    versions: [
+      {
+        number: 1,
+        author: { id: 2, login: "bot", kind: "machine" },
+        message: null,
+        created_at: "2026-08-12T11:00:00Z",
+      },
+      {
+        number: 2,
+        author: { id: 2, login: "bot", kind: "machine" },
+        message: "round 2",
+        created_at: "2026-08-12T12:00:00Z",
+      },
+    ],
+  };
+
+  /** `info` overrides the spec overview; `viewer` is the logged-in user id. */
+  function stubFetch(info: object = SPEC_INFO, viewer = 1) {
     vi.stubGlobal("fetch", async (input: unknown) => {
       const url = new URL(String(input), "http://test");
+      if (url.pathname.endsWith("/me")) {
+        return Response.json({ id: viewer, login: "user", kind: "human" });
+      }
       if (url.pathname.endsWith("/spec/files")) {
         return Response.json(url.searchParams.get("version") === "1" ? V1 : V2);
       }
@@ -118,6 +143,7 @@ describe("SpecVersionCard", () => {
           ],
         });
       }
+      if (url.pathname.endsWith("/spec")) return Response.json(info);
       throw new Error(`unexpected fetch: ${url.pathname}`);
     });
   }
@@ -161,6 +187,45 @@ describe("SpecVersionCard", () => {
     expect(view.getByText("Spec v2")).toBeTruthy();
     fireEvent.click(view.getByLabelText("expand file list"));
     expect(view.getByText("new.md")).toBeTruthy();
+  });
+
+  it("prompts for review on the latest unreviewed version (T-103)", async () => {
+    stubFetch();
+    const view = renderWithProviders(
+      <SpecVersionCard slug="p" issueNumber={1} payload={PAYLOAD} />,
+    );
+    const cta = await view.findByTestId("spec-review-cta");
+    expect(cta.textContent).toContain("Awaiting your review");
+    expect(cta.textContent).toContain("1 unresolved comment");
+    const link = view.getByRole("link", { name: /View & review/ });
+    expect(link.getAttribute("href")).toBe("/projects/p/issues/1/spec?v=2");
+    // Survives the collapse — the ask is not part of the file list.
+    fireEvent.click(view.getByLabelText("collapse file list"));
+    expect(view.getByTestId("spec-review-cta")).toBeTruthy();
+  });
+
+  it("stays out of settled verdicts, older versions, and the pusher's view", async () => {
+    const cases: Array<[string, object, number]> = [
+      ["approved", { ...SPEC_INFO, review_status: "approved" }, 1],
+      [
+        "changes requested",
+        { ...SPEC_INFO, review_status: "changes_requested" },
+        1,
+      ],
+      ["superseded", { ...SPEC_INFO, current_version: 3 }, 1],
+      ["pushed by the viewer", SPEC_INFO, 2],
+    ];
+    for (const [name, info, viewer] of cases) {
+      stubFetch(info, viewer);
+      const view = renderWithProviders(
+        <SpecVersionCard slug="p" issueNumber={1} payload={PAYLOAD} />,
+      );
+      // The stats chain (two snapshot fetches + lazy jsdiff) settles well
+      // after the spec overview — once it lands, an absent CTA is absent.
+      await waitFor(() => expect(view.getByText("+2")).toBeTruthy());
+      expect(view.queryByTestId("spec-review-cta"), name).toBeNull();
+      view.unmount();
+    }
   });
 
   it("renders nothing for a malformed payload", async () => {
