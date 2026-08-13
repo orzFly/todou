@@ -180,7 +180,7 @@ describe("groupTimeline", () => {
       comment(1000),
       event({ event_type: "referenced", payload: { by_issue: 8 }, atMs: 2000 }),
     ]);
-    expect(kinds(units)).toEqual(["item", "item", "item"]);
+    expect(kinds(units)).toEqual(["group:1", "item", "group:1"]);
   });
 
   it("still splits windowless references on a session boundary", () => {
@@ -198,7 +198,17 @@ describe("groupTimeline", () => {
         atMs: 1000,
       }),
     ]);
-    expect(kinds(units)).toEqual(["item", "item"]);
+    expect(kinds(units)).toEqual(["group:1", "group:1"]);
+  });
+
+  it("emits a lone referenced event as a group, unlike other families", () => {
+    const lone = groupTimeline([
+      event({ event_type: "referenced", payload: { by_issue: 7 }, atMs: 0 }),
+    ]);
+    expect(kinds(lone)).toEqual(["group:1"]);
+
+    const loneLabel = groupTimeline([event({ atMs: 0 })]);
+    expect(kinds(loneLabel)).toEqual(["item"]);
   });
 
   it("splits runs on a session boundary", () => {

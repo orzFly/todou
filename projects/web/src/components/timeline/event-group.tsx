@@ -153,7 +153,9 @@ export function EventGroup({
 /**
  * GitHub's "This was referenced" shape (T-99): a header naming the actor
  * once, then one always-visible line per reference — long source titles
- * wrap instead of truncating. The `#event-N` anchors sit on the list rows
+ * wrap instead of truncating. A lone reference renders this exact way
+ * too (groupTimeline emits referenced singles as groups), so there is no
+ * second rendering path. The `#event-N` anchors sit on the list rows
  * themselves, so deep links land without any expansion; each row's
  * created_at survives only as its tooltip.
  */
@@ -184,14 +186,20 @@ function ReferencedGroup({
           context={first.agent_context}
           className="align-middle"
         />{" "}
-        <span className="min-w-0 flex-1">referenced {events.length} times</span>{" "}
+        <span className="min-w-0 flex-1">
+          referenced {events.length} time{events.length === 1 ? "" : "s"}
+        </span>{" "}
         <Link
           to="/projects/$slug/issues/$number"
           params={{ slug, number: String(issueNumber) }}
           hash={eventAnchor(first.id)}
           hashScrollIntoView={false}
           className="shrink-0 text-xs whitespace-nowrap text-muted-foreground/70 hover:underline"
-          title={`${first.created_at} – ${last.created_at}`}
+          title={
+            first === last
+              ? first.created_at
+              : `${first.created_at} – ${last.created_at}`
+          }
         >
           {new Date(first.created_at).toLocaleString()}
         </Link>

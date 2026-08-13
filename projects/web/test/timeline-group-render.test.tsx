@@ -277,6 +277,32 @@ describe("EventGroup", () => {
     expect(stamp?.title).toBe(`${first.created_at} – ${last.created_at}`);
   });
 
+  it("renders a lone reference through the same block list (T-99)", async () => {
+    const only = event({
+      event_type: "referenced",
+      payload: { by_issue: 7, by_comment: 42 },
+      created_at: "2026-08-13T08:00:00.000Z",
+    });
+    const { findByTestId, queryByTestId, container } = renderWithProviders(
+      <EventGroup
+        family="referenced"
+        events={[only]}
+        slug="p"
+        issueNumber={1}
+      />,
+    );
+    const group = await findByTestId("event-group");
+    expect(group.textContent).toContain("referenced 1 time");
+    expect(group.textContent).not.toContain("1 times");
+    expect(queryByTestId("event-group-toggle")).toBeNull();
+    expect(container.querySelector(`li[id="event-${only.id}"]`)).toBeTruthy();
+    // A single event needs no range — the stamp tooltip is its timestamp.
+    const stamp = container.querySelector(
+      `a[href*="event-${only.id}"]`,
+    ) as HTMLAnchorElement | null;
+    expect(stamp?.title).toBe(only.created_at);
+  });
+
   it("links every attached file", async () => {
     const fileEvents = [
       event({

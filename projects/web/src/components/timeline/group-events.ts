@@ -72,8 +72,10 @@ export type RenderUnit =
 /**
  * Fold consecutive same-family, same-key events within the window into
  * groups; everything else passes through untouched. Single-event runs stay
- * plain items so today's rendering is the unchanged baseline. Order is
- * never rearranged — any comment or foreign-family item splits the run.
+ * plain items so today's rendering is the unchanged baseline — except
+ * referenced, whose lone events still come out as groups so one reference
+ * renders exactly like many (T-99). Order is never rearranged — any
+ * comment or foreign-family item splits the run.
  */
 export function groupTimeline(items: TimelineItem[]): RenderUnit[] {
   const units: RenderUnit[] = [];
@@ -87,7 +89,7 @@ export function groupTimeline(items: TimelineItem[]): RenderUnit[] {
   const flush = () => {
     if (!run) return;
     const first = run.events[0];
-    if (run.events.length === 1 && first) {
+    if (run.events.length === 1 && first && run.family !== "referenced") {
       units.push({ kind: "item", item: first });
     } else {
       units.push({ kind: "group", family: run.family, events: run.events });

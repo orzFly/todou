@@ -25,7 +25,6 @@ import { UserChip } from "@/components/shared/user-chip.tsx";
 import { asName } from "@/components/timeline/group-events.ts";
 import { type RefConfig, splitIssueRefs } from "@/lib/issue-refs.ts";
 import { commentAnchor, eventAnchor } from "@/lib/timeline-anchors.ts";
-import { cn } from "@/lib/utils";
 
 type Payload = Record<string, unknown>;
 
@@ -211,17 +210,10 @@ export function EventRow({
   // without hover. From sm up it keeps the T-25 single-line grid. The {" "}
   // separators only exist for the inline mode: whitespace-only flex items
   // are never rendered, so the sm layout still spaces purely via gap.
-  // Referenced rows are the exception (T-99): their rich source title is
-  // the payload, so they wrap at every width — icon, actor, and timestamp
-  // pinned to the first line — instead of truncating.
-  const wraps = event.event_type === "referenced";
   return (
     <div
       id={eventAnchor(event.id)}
-      className={cn(
-        "py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:gap-2",
-        wraps ? "sm:items-start" : "sm:items-center",
-      )}
+      className="py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-center sm:gap-2"
     >
       <span className="inline-flex shrink-0 align-middle text-muted-foreground/70">
         {ICONS[event.event_type]}
@@ -238,10 +230,7 @@ export function EventRow({
           />{" "}
         </>
       )}
-      <span
-        className={cn("min-w-0 flex-1", !wraps && "sm:truncate")}
-        title={wraps ? undefined : action}
-      >
+      <span className="min-w-0 flex-1 sm:truncate" title={action}>
         {attached?.id !== undefined && slug && issueNumber ? (
           <>
             attached{" "}
