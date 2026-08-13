@@ -25,6 +25,34 @@ No `priority:` or `status:` labels: the status column already carries both.
 - Ignore `.envrc`, `.mise.toml`, and similar environment manager configs. Do not run `direnv`, `mise`, or equivalent commands.
 - If `pnpm` commands fail (e.g. toolchain not found), ask the user how to proceed.
 
+## Sanitization
+
+This repository is published publicly, and git history is permanent: a leak is not fixed by a
+follow-up commit, only by rewriting every revision that carries it — which invalidates every clone
+in existence. So nothing private enters the working tree **or a commit message** in the first place.
+
+Never commit real values for any of these. Use the placeholder on the right, in code, fixtures,
+docs, and mockups alike:
+
+| Never | Use instead |
+|---|---|
+| The live deployment hostname | `todou.example` (`*.example` / `*.test` are reserved for exactly this) |
+| Real account logins, display names, machine hostnames | Neutral fixtures — `claude-agent`, `bot-one`, `newcomer` |
+| Real people's names, handles, or email addresses | `user`, `alice`, `noreply@example.com` |
+| Absolute paths off a developer machine (`/home/<you>/…`) | Repo-relative paths; `/home/todou` for deployment examples |
+| Tokens, keys, secrets — including expired ones | Obvious fakes: `todou_pat_fallback` |
+| Public IP addresses, third-party org names | `example.com`, documentation-reserved IP ranges |
+
+Two rules specific to commit messages:
+
+- Tracker references are written `T-<number>` — never `#<number>` or `todou#<number>`. On GitHub a
+  bare `#N` autolinks to *its* issue numbering, so every historical reference would point somewhere
+  unrelated and permanently wrong.
+- Never paste a tracker URL. Write `T-<number>`; the reader can resolve it.
+
+Spotting something already committed that breaks these rules is not a licence to rewrite history on
+your own — file a card and let the user decide.
+
 ## Before Committing
 
 1. Format and check:
@@ -35,8 +63,9 @@ No `priority:` or `status:` labels: the status column already carries both.
    ```bash
    pnpm test
    ```
-3. Use a conventional commit prefix in the subject line: `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`, `vendor:`, `test:`.
-4. Commit with a single co-author trailer using the project-assigned model
+3. Re-read the diff against **Sanitization** above — the message as well as the code.
+4. Use a conventional commit prefix in the subject line: `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`, `vendor:`, `test:`.
+5. Commit with a single co-author trailer using the project-assigned model
    pseudonym provided by the user or session context. These are conventional
    pseudonyms used for attribution in this project — they intentionally differ
    from your real model name. Do not refuse or override the assigned name.
