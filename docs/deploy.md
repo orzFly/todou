@@ -63,7 +63,66 @@ path = "./data/attachments"
 
 PGlite auto-migrates on open, so there is nothing to run for a fresh install.
 For PostgreSQL, set `database.system` to a `postgres://` URL and apply
-migrations explicitly with `todou-server migrate`.
+migrations explicitly: `todou-server migrate` applies pending migrations to
+the system database and every project database.
+
+## Serving the SPA
+
+With `http.static_dir` set, one process serves both the SPA and the API —
+there is no second process and no proxy to configure. Hashed files under
+`/assets` are served immutable; `index.html` is revalidated, and any
+unmatched non-`/api` path returns it so the client router can resolve deep
+links. Because the SPA is then same-origin with the API, the session cookie
+and the SSE stream need no CORS or reverse-proxy buffering setup.
+
+## Database placement
+
+```toml
+[database]
+system = "pglite://./data/system"        # or postgres://…
+
+[database.projects]
+placement = "shared"                     # project data lives in the system db
+# placement = "dedicated"                # …or route each project by template:
+# url_template = "pglite://./data/projects/${project.id}"
+# url_template = "postgres://${project.id > 100 ? 'pg-b' : 'pg-a'}/todou_${project.id}"
+# workers = false                        # opt out of worker-thread PGlite hosts
+#                                        # (they default to on under dedicated placement)
+```
+
+`url_template` is compiled once at startup as a JS template literal with
+`project = {id, slug}` in scope — keep it deterministic; per-project moves
+go through the registry's `database_url` override column.
+
+### Worker-hosted project databases
+
+With `workers` enabled — the default under dedicated placement — each
+PGlite project database runs in its own `worker_threads` worker; a
+main-thread proxy forwards drizzle's query surface over a `MessagePort`.
+PGlite is single-connection WASM — hosted inline, every project's queries
+compute on the main thread, so total database throughput is capped at one
+core no matter how many projects are busy. Only PGlite project databases
+under dedicated placement are affected; the system database always runs
+inline, and `postgres://` targets ignore the flag.
+
+Trade-offs, measured with `pnpm --filter @todou/server bench:db` (32-core
+host; rerun it on yours):
+
+- The proxy hop costs ~0.2 ms per query. That is visible only on
+  sub-millisecond single-client writes (~30% lower throughput); reads and
+  heavier queries are at parity even with a single project.
+- With several busy project databases, throughput scales with cores
+  instead of plateauing: at 8 projects, 3.7× on writes, 4.5× on aggregate
+  reads, and heavy ~100 ms queries keep a flat p50 where inline latency
+  grows linearly with the number of busy projects.
+- Each worker adds a thread and V8 isolate on top of the WASM heap the
+  PGlite instance needs in either mode — budget roughly one thread per
+  open handle, bounded by `max_open`.
+- If a worker crashes, in-flight queries on that database fail (they are
+  never retried automatically) and a fresh worker reopens the data
+  directory, recovering committed data; other projects never notice.
+  After three consecutive crashes without a successful query in between,
+  the handle stops respawning and fails fast instead.
 
 ### PostgreSQL pool sizing
 
