@@ -23,7 +23,7 @@ import { boardColumnQuery, useBoardMove } from "@/api/board.ts";
 import { statusesQuery } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
-import { UnreadMarker } from "@/components/issue/unread-marker.tsx";
+import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -250,8 +250,13 @@ export function BoardCardContent({
   return (
     <div className="relative">
       {issue.unread && (
-        <span className="absolute top-0 right-0 inline-flex">
-          <UnreadMarker
+        /* Negative offsets keep the marker itself where the plain marker
+           sat; the 24px hit target grows outward over the card padding
+           instead of crowding the title. */
+        <span className="absolute -top-2 -right-2 inline-flex">
+          <MarkReadButton
+            slug={slug}
+            number={issue.number}
             unread={issue.unread}
             unreadComments={issue.unread_comments}
           />

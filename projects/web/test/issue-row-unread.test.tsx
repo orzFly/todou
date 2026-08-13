@@ -1,7 +1,11 @@
+import { fireEvent, waitFor } from "@testing-library/react";
 import type { IssueListItem, Status } from "@todou/shared";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { api } from "../src/api/queries.ts";
 import { IssueRow } from "../src/pages/issue-list.tsx";
 import { renderWithProviders } from "./render.tsx";
+
+afterEach(() => vi.restoreAllMocks());
 
 const status: Status = {
   id: 1,
@@ -86,5 +90,18 @@ describe("IssueRow unread marker (T-46, T-77)", () => {
     expect(
       view.getByTitle("1 new comment since you last viewed").textContent,
     ).toBe("1");
+  });
+
+  it("clears the marker in place from the mark-read button (T-81)", async () => {
+    const spy = vi.spyOn(api, "markIssueRead").mockResolvedValue(undefined);
+    const view = renderRow(true, 3);
+    await view.findByText("issue 1");
+    fireEvent.click(view.getByRole("button", { name: /mark as read/i }));
+    await waitFor(() =>
+      expect(
+        view.queryByTitle("3 new comments since you last viewed"),
+      ).toBeNull(),
+    );
+    expect(spy).toHaveBeenCalledWith("p", 1, {});
   });
 });

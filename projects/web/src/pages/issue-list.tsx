@@ -41,8 +41,8 @@ import {
 import { useRefPrefix } from "@/api/references.ts";
 import { FilterBar } from "@/components/issue/filter-bar.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
+import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
-import { UnreadMarker } from "@/components/issue/unread-marker.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import {
@@ -259,7 +259,9 @@ export function IssueRow({
             keeps numbers from shifting; centering keeps the ring and the
             badge on one axis. */}
         <span className="inline-flex w-[27px] shrink-0 justify-center">
-          <UnreadMarker
+          <MarkReadButton
+            slug={slug}
+            number={issue.number}
             unread={issue.unread}
             unreadComments={issue.unread_comments}
           />
