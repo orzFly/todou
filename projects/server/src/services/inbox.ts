@@ -9,6 +9,7 @@ import {
   issueReads,
   issues,
   specVersions,
+  statuses,
 } from "../db/project-schema.ts";
 import { projectMembers, projects } from "../db/system-schema.ts";
 import { type ProjectRow, requireProject, routeInfoOf } from "./access.ts";
@@ -94,12 +95,18 @@ async function projectInbox(
     )
     .groupBy(issueEvents.issueId);
 
+  // Closed issues are excluded here and neutralized again at the keep-check
+  // below: once an issue is closed its unreviewed spec and unanswered
+  // questions have lost their timeliness (T-111). Only a genuinely new
+  // comment may still pull one in, and that arrives via commentCand.
   const pendingRows = await db
     .select({ id: issues.id })
     .from(issues)
+    .innerJoin(statuses, eq(issues.statusId, statuses.id))
     .where(
       and(
         eq(issues.projectId, project.id),
+        ne(statuses.category, "closed"),
         or(
           gt(issues.openQuestions, 0),
           and(
@@ -186,18 +193,25 @@ async function projectInbox(
     const row = bundle.row;
     const isUnread = unread.has(row.id);
     const specAuthor = specAuthors.get(row.id);
+    // Closing an issue retires both pending reasons (T-111), so a closed
+    // issue only survives on unread activity of its own — a new foreign
+    // comment (or, with the weak toggle on, a foreign event). The flag goes
+    // false with it: telling the reader to review a spec on a closed issue
+    // is the staleness the card is about.
+    const isClosed = bundle.status.category === "closed";
     const pendingSpecReview =
-      specAuthor !== undefined && specAuthor.authorId !== userId;
+      !isClosed && specAuthor !== undefined && specAuthor.authorId !== userId;
+    const openQuestions = isClosed ? 0 : row.openQuestions;
     // Candidates are a slight superset (e.g. an unreviewed spec the caller
     // pushed themself); only rows with a live reason stay.
-    if (!isUnread && !pendingSpecReview && row.openQuestions === 0) continue;
+    if (!isUnread && !pendingSpecReview && openQuestions === 0) continue;
     const unreadComments = counts.get(row.id) ?? 0;
     if (
       !showWeakUnread &&
       isUnread &&
       unreadComments === 0 &&
       !pendingSpecReview &&
-      row.openQuestions === 0
+      openQuestions === 0
     ) {
       continue;
     }
@@ -206,7 +220,7 @@ async function projectInbox(
       commentLatest.get(row.id),
       eventLatest.get(row.id),
       pendingSpecReview ? specAuthor?.createdAt : undefined,
-      row.openQuestions > 0 ? questionTimes.get(row.id) : undefined,
+      openQuestions > 0 ? questionTimes.get(row.id) : undefined,
     ]
       .filter((d): d is Date => d !== undefined)
       .reduce((a, b) => (a > b ? a : b), row.updatedAt);
