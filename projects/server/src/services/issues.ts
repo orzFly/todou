@@ -17,6 +17,7 @@ import {
   desc,
   eq,
   gt,
+  gte,
   ilike,
   inArray,
   lt,
@@ -24,6 +25,7 @@ import {
   type SQL,
   sql,
 } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
@@ -44,6 +46,7 @@ import { unreadIssueIds } from "./reads.ts";
 import { recordReferences } from "./references.ts";
 import { recordRevision } from "./revisions.ts";
 import { toStatus } from "./statuses.ts";
+import { microIso } from "./timeline.ts";
 import { getUserRefs } from "./users.ts";
 
 type IssueRow = typeof issues.$inferSelect;
@@ -340,6 +343,13 @@ export async function getIssue(
   return toIssue(bundle);
 }
 
+/**
+ * For the date sorts `v` carries the full microsecond precision postgres
+ * stores (see timeline.ts — the driver's Dates truncate to milliseconds,
+ * which made a desc page silently skip the boundary's millisecond-mates
+ * and an asc page re-match already-returned rows). For `sort=number` it is
+ * the plain integer.
+ */
 type ListCursor = { v: string | number; i: number };
 
 function encodeCursor(c: ListCursor): string {
@@ -348,10 +358,48 @@ function encodeCursor(c: ListCursor): string {
 
 function decodeCursor(raw: string): ListCursor {
   try {
-    return JSON.parse(Buffer.from(raw, "base64url").toString()) as ListCursor;
+    const parsed = JSON.parse(
+      Buffer.from(raw, "base64url").toString(),
+    ) as ListCursor;
+    if (typeof parsed.i !== "number") throw new Error("bad cursor");
+    return parsed;
   } catch {
     throw new ValidationFailedError("malformed cursor");
   }
+}
+
+/**
+ * Cursor predicate for the date sorts. `v` comes in two precisions:
+ * microsecond text from current servers, milliseconds from cursors minted
+ * before this fix. A millisecond `v` cannot order rows inside its own
+ * millisecond, so for those the whole [v, v+1ms) window counts as "equal"
+ * and the id tie-break decides — the single-table version of the rule in
+ * timeline.ts#beyond.
+ */
+function timeAdvance(
+  sortColumn: AnyPgColumn,
+  cur: ListCursor,
+  ascending: boolean,
+): SQL | undefined {
+  const v = String(cur.v);
+  if (Number.isNaN(Date.parse(v))) {
+    throw new ValidationFailedError("malformed cursor");
+  }
+  const exact = /\.\d{4,}/.test(v);
+  const from = sql`${v}::timestamptz`;
+  const to = exact
+    ? from
+    : sql`${new Date(Date.parse(v) + 1).toISOString()}::timestamptz`;
+  const strict = ascending
+    ? exact
+      ? gt(sortColumn, from)
+      : gte(sortColumn, to)
+    : lt(sortColumn, from);
+  const equal = exact
+    ? eq(sortColumn, from)
+    : and(gte(sortColumn, from), lt(sortColumn, to));
+  const tie = and(equal, (ascending ? gt : lt)(issues.id, cur.i));
+  return or(strict, tie);
 }
 
 /**
@@ -437,33 +485,34 @@ export async function listIssues(
   }
   if (query.cursor !== undefined) {
     const cur = decodeCursor(query.cursor);
-    const value =
-      query.sort === "number" ? Number(cur.v) : new Date(String(cur.v));
-    const tie = and(eq(sortColumn, value), beyond(issues.id, cur.i));
-    const advance = or(beyond(sortColumn, value), tie);
+    const advance =
+      query.sort === "number"
+        ? or(
+            beyond(sortColumn, Number(cur.v)),
+            and(eq(sortColumn, Number(cur.v)), beyond(issues.id, cur.i)),
+          )
+        : timeAdvance(sortColumn, cur, query.order === "asc");
     if (advance) conditions.push(advance);
   }
 
   const rows = await db
-    .select()
+    .select({
+      row: issues,
+      // Cursors need the sort value at full precision; see ListCursor.
+      ts: microIso(query.sort === "number" ? issues.createdAt : sortColumn),
+    })
     .from(issues)
     .where(and(...conditions))
     .orderBy(direction(sortColumn), direction(issues.id))
     .limit(query.limit + 1);
 
-  const page = rows.slice(0, query.limit);
-  const last = page.at(-1);
+  const page = rows.slice(0, query.limit).map((r) => r.row);
+  const last = rows.at(query.limit - 1);
   const next_cursor =
     rows.length > query.limit && last
       ? encodeCursor({
-          v:
-            query.sort === "number"
-              ? last.number
-              : (query.sort === "created"
-                  ? last.createdAt
-                  : last.updatedAt
-                ).toISOString(),
-          i: last.id,
+          v: query.sort === "number" ? last.row.number : last.ts,
+          i: last.row.id,
         })
       : null;
 

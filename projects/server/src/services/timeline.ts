@@ -77,7 +77,7 @@ function decodeCursor(raw: string): Cursor {
  * built from this text form instead (fixed-width, so lexicographic order is
  * chronological).
  */
-function microIso(createdAt: AnyPgColumn): SQL<string> {
+export function microIso(createdAt: AnyPgColumn): SQL<string> {
   return sql<string>`to_char(${createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 }
 
