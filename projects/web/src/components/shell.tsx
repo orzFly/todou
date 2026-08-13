@@ -4,6 +4,7 @@ import type { Me } from "@todou/shared";
 import type { ReactNode } from "react";
 import { api, authModeQuery, projectQuery } from "@/api/queries.ts";
 import { InboxButton } from "@/components/inbox-button.tsx";
+import { NewIssueButton } from "@/components/new-issue-button.tsx";
 import { ProjectNav } from "@/components/project-nav.tsx";
 import { ProjectSwitcher } from "@/components/project-switcher.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -75,6 +76,10 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
             )}
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            {/* Create first, then the badged inbox, then preferences and
+                account — the primary action leads the cluster and the
+                badge keeps a quiet neighbour on its right (T-104). */}
+            <NewIssueButton />
             <InboxButton />
             <ThemeMenu />
             <DropdownMenu>

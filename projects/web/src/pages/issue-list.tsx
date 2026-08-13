@@ -21,7 +21,6 @@ import {
   BookOpenTextIcon,
   CheckIcon,
   MessageCircleQuestionIcon,
-  PlusIcon,
   TagIcon,
 } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
@@ -122,7 +121,7 @@ export function IssueListPage() {
           backdrop bleed into the shell's horizontal padding. */}
       <div
         ref={toolbarRef}
-        className="-mx-4 flex flex-wrap items-center justify-between gap-2 px-4 py-1.5 sm:sticky sm:top-14 sm:z-30 sm:bg-background/95 sm:backdrop-blur"
+        className="-mx-4 flex flex-wrap items-center gap-2 px-4 py-1.5 sm:sticky sm:top-14 sm:z-30 sm:bg-background/95 sm:backdrop-blur"
       >
         <FilterBar
           search={search}
@@ -132,11 +131,6 @@ export function IssueListPage() {
           members={members.data}
           onChange={setSearch}
         />
-        <Button size="sm" asChild>
-          <Link to="/projects/$slug/issues/new" params={{ slug }}>
-            <PlusIcon /> New issue
-          </Link>
-        </Button>
       </div>
       {grouped ? (
         <GroupedIssueList
