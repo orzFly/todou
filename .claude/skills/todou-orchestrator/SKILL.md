@@ -37,9 +37,14 @@ network outage for 2+ minutes and gave up — restart it with the same cursor, n
 the workers you dispatch usually authenticate as the *same* machine account you do — so every card
 they move and every comment they post is filtered out as "your own". A worker reaching Ready to Ship
 will not wake you. `--any-actor` fixes the blindness but replaces it with a wake-loop on your own
-comments, so the working answer is: **keep a `herdr agent wait` attached to every live agent, for the
-whole of its life.** A `--wait` that returns at a review gate has expired — re-attach before you
-prompt again, or that agent finishes into silence.
+comments, so the working answer is: **keep a `herdr agent wait` attached to every agent that is
+actually working.** A `--wait` that returns at a review gate has expired — re-attach when you prompt
+the agent again, or it will finish into silence.
+
+Do not re-attach to an agent that is *already* idle: a plain `agent wait` resolves on the first
+settled state, so it returns instantly and tells you nothing. An agent parked at a review gate is
+waiting on the user, and the user's review **is** visible to the sentinel — let the sentinel wake you
+for that, and attach the herdr wait once the agent is moving again.
 
 Cover any pre-sentinel gap proactively: craft a cursor by hand and call
 `todou api GET '/projects/<proj>/activity?after=…'`, then check every user action was handled.
