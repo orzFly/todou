@@ -22,7 +22,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { boardColumnQuery, useBoardMove } from "@/api/board.ts";
 import { statusesQuery } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
-import { LabelChip } from "@/components/issue/label-chip.tsx";
+import { LabelChips } from "@/components/issue/label-chip.tsx";
 import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Badge } from "@/components/ui/badge";
@@ -297,9 +297,7 @@ export function BoardCardContent({
             spec
           </span>
         )}
-        {issue.labels.map((label) => (
-          <LabelChip key={label.id} label={label} />
-        ))}
+        <LabelChips labels={issue.labels} />
         <span className="ml-auto flex gap-1">
           {issue.assignees.map((user) => (
             <UserChip key={user.id} user={user} compact />
