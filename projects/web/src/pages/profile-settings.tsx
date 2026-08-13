@@ -1,16 +1,19 @@
 import {
   useMutation,
+  useQuery,
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import type { Me, MeUpdateInput } from "@todou/shared";
 import { useState } from "react";
 import { toast } from "sonner";
+import { prefsQuery, usePatchPrefs } from "@/api/prefs.ts";
 import { api, meQuery } from "@/api/queries.ts";
 import { AvatarEditor } from "@/components/shared/avatar-editor.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 
 /** The signed-in user's own profile. Agents are edited via /settings/agents. */
 export function ProfileSettingsPage() {
@@ -109,6 +112,43 @@ export function ProfileSettingsPage() {
           Save changes
         </Button>
       </form>
+
+      <UnreadIndicatorsSection />
+    </div>
+  );
+}
+
+/**
+ * The weak-unread toggle (T-97). Server-side preference: the same value
+ * drives the hollow-ring markers here and the weak-unread filter inside
+ * GET /me/inbox, so every browser agrees.
+ */
+function UnreadIndicatorsSection() {
+  const prefs = useQuery(prefsQuery);
+  const patch = usePatchPrefs();
+  const showWeak = prefs.data?.show_weak_unread ?? true;
+
+  return (
+    <div className="space-y-3 border-t pt-6">
+      <h2 className="font-medium">Unread indicators</h2>
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <Label htmlFor="weak-unread-toggle">Weak unread hints</Label>
+          <p className="text-sm text-muted-foreground">
+            Show a hollow ring on issues whose only news is events — no new
+            comments — and list them in the Inbox. Turning this off hides those
+            rings everywhere and filters such issues out of the Inbox.
+          </p>
+        </div>
+        <Switch
+          id="weak-unread-toggle"
+          checked={showWeak}
+          disabled={prefs.isPending}
+          onCheckedChange={(checked) =>
+            patch.mutate({ show_weak_unread: checked })
+          }
+        />
+      </div>
     </div>
   );
 }

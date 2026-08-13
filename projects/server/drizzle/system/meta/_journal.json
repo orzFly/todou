@@ -29,6 +29,13 @@
       "when": 1786592397103,
       "tag": "0003_oidc-subject-unique",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786645166263,
+      "tag": "0004_user-prefs",
+      "breakpoints": true
     }
   ]
 }

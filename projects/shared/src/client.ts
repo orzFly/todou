@@ -11,6 +11,7 @@ import type {
   CommentComponentInput,
   CrossActivityPage,
   DirectUploadTicket,
+  InboxPage,
   Issue,
   IssueCounts,
   IssueCreateInput,
@@ -24,6 +25,8 @@ import type {
   Me,
   Member,
   MemberRole,
+  MePrefs,
+  MePrefsPatch,
   MeUpdateInput,
   Project,
   ProjectCreateInput,
@@ -281,6 +284,11 @@ export class TodouClient {
     return this.request<Me>("POST", "/me/avatar", { form });
   };
   deleteMyAvatar = () => this.request<Me>("DELETE", "/me/avatar");
+  getMyPrefs = () => this.request<MePrefs>("GET", "/me/prefs");
+  patchMyPrefs = (input: MePrefsPatch) =>
+    this.request<MePrefs>("PATCH", "/me/prefs", { json: input });
+  getInbox = (query?: Query) =>
+    this.request<InboxPage>("GET", "/me/inbox", { query });
   createMyToken = (input: TokenCreateInput) =>
     this.request<TokenCreated>("POST", "/me/tokens", { json: input });
   listMyTokens = () => this.request<TokenListItem[]>("GET", "/me/tokens");

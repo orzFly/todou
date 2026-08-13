@@ -37,9 +37,15 @@ export function clearUnread(
  * Explicit mark-as-read (T-81), the loud sibling of useMarkIssueRead: the
  * passive on-view path may fail silently, a clicked button may not. Clears
  * the marker optimistically across every cache under ["issues", slug] —
- * list filter pages and board columns share that prefix.
+ * list filter pages and board columns share that prefix. Callers whose
+ * rows live under other keys (the inbox, T-97) pass those as
+ * `extraInvalidateKeys` instead of re-implementing the optimistic layers.
  */
-export function useMarkReadAction(slug: string, number: number) {
+export function useMarkReadAction(
+  slug: string,
+  number: number,
+  opts?: { extraInvalidateKeys?: ReadonlyArray<ReadonlyArray<unknown>> },
+) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => api.markIssueRead(slug, number, {}),
@@ -62,7 +68,11 @@ export function useMarkReadAction(slug: string, number: number) {
       }
       toast.error(`Could not mark as read: ${error.message}`);
     },
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: ["issues", slug] }),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["issues", slug] });
+      for (const queryKey of opts?.extraInvalidateKeys ?? []) {
+        queryClient.invalidateQueries({ queryKey });
+      }
+    },
   });
 }

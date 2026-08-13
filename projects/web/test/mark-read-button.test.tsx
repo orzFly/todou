@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
 import { clearUnread } from "../src/api/reads.ts";
 import { MarkReadButton } from "../src/components/issue/mark-read-button.tsx";
-import { renderWithProviders } from "./render.tsx";
+import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 vi.mock("sonner", async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -80,6 +80,33 @@ describe("MarkReadButton (T-81)", () => {
       ).toBeTruthy(),
     );
     expect(toast.error).toHaveBeenCalledWith("Could not mark as read: boom");
+  });
+
+  it("vanishes entirely for weak unread when the preference is off", async () => {
+    const client = testQueryClient();
+    client.setQueryData(["me-prefs"], { show_weak_unread: false });
+    const view = renderWithProviders(
+      <MarkReadButton slug="p" number={7} unread unreadComments={0} />,
+      client,
+    );
+    // Marker AND click target go together — no invisible hoverable button.
+    await waitFor(() =>
+      expect(view.queryByRole("button", { name: /mark as read/i })).toBeNull(),
+    );
+  });
+
+  it("keeps the count badge when the preference is off", async () => {
+    const client = testQueryClient();
+    client.setQueryData(["me-prefs"], { show_weak_unread: false });
+    const view = renderWithProviders(
+      <MarkReadButton slug="p" number={7} unread unreadComments={2} />,
+      client,
+    );
+    expect(
+      await view.findByRole("button", {
+        name: "2 new comments — mark as read",
+      }),
+    ).toBeTruthy();
   });
 
   it("does not let the click bubble into row/card handlers", async () => {

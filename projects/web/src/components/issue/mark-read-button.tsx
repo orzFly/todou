@@ -1,5 +1,7 @@
+import { useQuery } from "@tanstack/react-query";
 import { CheckIcon } from "lucide-react";
 import { useState } from "react";
+import { prefsQuery } from "@/api/prefs.ts";
 import { useMarkReadAction } from "@/api/reads.ts";
 import { UnreadMarker } from "@/components/issue/unread-marker.tsx";
 
@@ -10,21 +12,32 @@ import { UnreadMarker } from "@/components/issue/unread-marker.tsx";
  * query cache (the list's Load-more pages sit in component state), while
  * the hook's cache patch covers first-page rows and board columns; an error
  * resets both layers, so the marker comes back.
+ *
+ * The weak-unread preference gate lives here, not in UnreadMarker: hiding
+ * only the ring would leave an invisible but hoverable button behind
+ * (T-97). Marker and click target vanish together.
  */
 export function MarkReadButton({
   slug,
   number,
   unread,
   unreadComments,
+  extraInvalidateKeys,
 }: {
   slug: string;
   number: number;
   unread: boolean;
   unreadComments: number;
+  /** Extra query keys to invalidate after a successful mark (the inbox). */
+  extraInvalidateKeys?: ReadonlyArray<ReadonlyArray<unknown>>;
 }) {
   const [marked, setMarked] = useState(false);
-  const { mutate } = useMarkReadAction(slug, number);
+  const { mutate } = useMarkReadAction(slug, number, { extraInvalidateKeys });
+  // Absent or still-loading prefs behave like the default (show): the
+  // marker must never flicker off while the query warms up.
+  const showWeakUnread = useQuery(prefsQuery).data?.show_weak_unread ?? true;
   if ((!unread && unreadComments === 0) || marked) return null;
+  if (!showWeakUnread && unreadComments === 0) return null;
 
   // The button's accessible name replaces the marker's own role="img"
   // label, so the count has to travel along.

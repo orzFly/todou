@@ -59,7 +59,7 @@ export type IssueBundle = {
   author: UserRef;
 };
 
-function toIssue(bundle: IssueBundle): Issue {
+export function toIssue(bundle: IssueBundle): Issue {
   return {
     id: bundle.row.id,
     number: bundle.row.number,
@@ -97,7 +97,7 @@ async function loadIssueRow(
 }
 
 /** Bulk-assemble DTO parts for a set of issue rows (2 project-db queries). */
-async function bundleIssues(
+export async function bundleIssues(
   ctx: AppContext,
   db: Db,
   projectId: number,

@@ -2,6 +2,8 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
   IssueReadInput,
   Me,
+  MePrefs,
+  MePrefsPatch,
   MeUpdateInput,
   ProjectSlug,
   TokenCreated,
@@ -10,6 +12,7 @@ import {
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
 import { ForbiddenError, ValidationFailedError } from "../errors.ts";
+import { readPrefs, updatePrefs } from "../services/prefs.ts";
 import { deleteAvatar, setAvatar, updateProfile } from "../services/profile.ts";
 import { markIssueRead } from "../services/reads.ts";
 import { issueToken, listTokens, revokeToken } from "../services/tokens.ts";
@@ -110,6 +113,33 @@ const createTokenRoute = createRoute({
   },
 });
 
+const getPrefsRoute = createRoute({
+  method: "get",
+  path: "/me/prefs",
+  summary: "My preferences (defaults when never written)",
+  responses: {
+    200: {
+      description: "Preferences",
+      content: { "application/json": { schema: MePrefs } },
+    },
+  },
+});
+
+const patchPrefsRoute = createRoute({
+  method: "patch",
+  path: "/me/prefs",
+  summary: "Shallow-merge a partial update into my preferences",
+  request: {
+    body: { content: { "application/json": { schema: MePrefsPatch } } },
+  },
+  responses: {
+    200: {
+      description: "Updated preferences",
+      content: { "application/json": { schema: MePrefs } },
+    },
+  },
+});
+
 // Lives here rather than routes/issues.ts because read positions are the
 // caller's private per-user state, like everything else under /me — the
 // issue in the path is just what the position points at. (This file mounts
@@ -189,6 +219,19 @@ export function meRoutes() {
     const db = c.get("appCtx").router.system();
     const input = c.req.valid("json");
     return c.json(await issueToken(db, c.get("user").id, input), 201);
+  });
+
+  app.openapi(getPrefsRoute, async (c) => {
+    const db = c.get("appCtx").router.system();
+    return c.json(await readPrefs(db, c.get("user").id), 200);
+  });
+
+  app.openapi(patchPrefsRoute, async (c) => {
+    const db = c.get("appCtx").router.system();
+    return c.json(
+      await updatePrefs(db, c.get("user").id, c.req.valid("json")),
+      200,
+    );
   });
 
   app.openapi(markIssueReadRoute, async (c) => {

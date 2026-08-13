@@ -16,6 +16,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { AgentsSettingsPage } from "@/pages/agents-settings.tsx";
 import { BoardPage } from "@/pages/board.tsx";
 import { CliAuthPage } from "@/pages/cli-auth.tsx";
+import { InboxPage } from "@/pages/inbox.tsx";
 import { IssueDetailPage } from "@/pages/issue-detail.tsx";
 import { IssueListPage } from "@/pages/issue-list.tsx";
 import { LoginPage } from "@/pages/login.tsx";
@@ -172,6 +173,12 @@ const projectSettingsRoute = createRoute({
   component: ProjectSettingsPage,
 });
 
+const inboxRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/inbox",
+  component: InboxPage,
+});
+
 const profileSettingsRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/settings/profile",
@@ -200,6 +207,7 @@ const routeTree = rootRoute.addChildren([
   loginRoute,
   authedRoute.addChildren([
     indexRoute,
+    inboxRoute,
     projectsRoute,
     projectRoute.addChildren([
       projectIndexRoute,

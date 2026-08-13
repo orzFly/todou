@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import type { Me } from "@todou/shared";
 import type { ReactNode } from "react";
 import { api, authModeQuery, projectQuery } from "@/api/queries.ts";
+import { InboxButton } from "@/components/inbox-button.tsx";
 import { ProjectNav } from "@/components/project-nav.tsx";
 import { ProjectSwitcher } from "@/components/project-switcher.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -74,6 +75,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
             )}
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            <InboxButton />
             <ThemeMenu />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

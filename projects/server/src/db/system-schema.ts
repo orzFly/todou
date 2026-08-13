@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   index,
+  jsonb,
   pgTable,
   primaryKey,
   text,
@@ -80,6 +81,18 @@ export const tokens = pgTable(
     index("tokens_user_id_idx").on(t.userId),
   ],
 );
+
+export const userPrefs = pgTable("user_prefs", {
+  userId: bigint("user_id", { mode: "number" })
+    .primaryKey()
+    .references(() => users.id),
+  // One jsonb blob, validated by the MePrefs schema at the service layer:
+  // adding a preference key must not need a migration.
+  prefs: jsonb("prefs").notNull().default({}),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
 
 export const projects = pgTable(
   "projects",

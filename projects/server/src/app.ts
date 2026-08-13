@@ -17,6 +17,7 @@ import { agentRoutes } from "./routes/agents.ts";
 import { attachmentRoutes } from "./routes/attachments.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { batchRoutes } from "./routes/batch.ts";
+import { inboxRoutes } from "./routes/inbox.ts";
 import { issueRoutes } from "./routes/issues.ts";
 import { labelRoutes } from "./routes/labels.ts";
 import { meRoutes } from "./routes/me.ts";
@@ -136,6 +137,7 @@ export function createApp(ctx: AppContext) {
   api.use("*", agentContextMiddleware());
   api.route("/", activityRoutes());
   api.route("/", meRoutes());
+  api.route("/", inboxRoutes());
   api.route("/", userRoutes());
   api.route("/agents", agentRoutes());
   api.route("/projects", projectRoutes());
