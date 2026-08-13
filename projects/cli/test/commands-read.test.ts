@@ -835,7 +835,7 @@ describe("project link/unlink", () => {
   });
 });
 
-describe("reference format display (#80)", () => {
+describe("reference format display (T-80)", () => {
   const config = {
     format: {
       prefix: "T",

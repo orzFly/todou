@@ -18,7 +18,7 @@ const MULTIPART_SLACK_BYTES = 64 * 1024;
 /**
  * hono's bodyLimit rejects on the content-length header without reading
  * the body, and cuts chunked bodies off at maxSize mid-stream — either
- * way the request can no longer buffer past the limit (#70). Its default
+ * way the request can no longer buffer past the limit (T-70). Its default
  * rejection is a bare-text 413; throwing here routes it through the
  * uniform error body instead.
  */

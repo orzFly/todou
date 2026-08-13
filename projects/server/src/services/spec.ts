@@ -169,7 +169,7 @@ export async function pushSpec(
     const event = eventRows[0];
     if (!event) throw new Error("event insert returned no row");
 
-    // Denormalized spec state (#23): a new version always resets the
+    // Denormalized spec state (T-23): a new version always resets the
     // review verdict — approvals never carry across pushes.
     await tx
       .update(issues)
@@ -289,7 +289,7 @@ export async function getSpecFiles(
   };
 }
 
-// — inline comments & reviews (#23 phase 2) —
+// — inline comments & reviews (T-23 phase 2) —
 
 const QUOTE_LIMIT = 2000;
 
@@ -428,7 +428,7 @@ export async function submitSpecReview(
           `anchor ${comment.anchor.path} does not exist in v${comment.anchor.version}`,
         );
       }
-      // Undefined lines = file-level comment (#61): nothing to range-check
+      // Undefined lines = file-level comment (T-61): nothing to range-check
       // and nothing to quote — the anchor is the file itself.
       const lineStart = comment.anchor.line_start ?? null;
       const lineEnd = comment.anchor.line_end ?? null;
@@ -705,7 +705,7 @@ export async function listSpecComments(
     const currentBody = currentFiles.get(anchor.path);
     if (currentBody !== undefined) {
       if (anchor.line_start === null || anchor.line_end === null) {
-        // File-level comments (#61) stay live as long as the file exists;
+        // File-level comments (T-61) stay live as long as the file exists;
         // there are no lines to remap or to outdate.
         outdated = false;
       } else if (anchor.version === current.number) {

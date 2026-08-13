@@ -52,7 +52,7 @@ describe("remapLineRange", () => {
   });
 });
 
-describe("spec review loop #23", () => {
+describe("spec review loop T-23", () => {
   let t: TestApp;
   let cookie: string;
   let agentHeaders: Record<string, string>;

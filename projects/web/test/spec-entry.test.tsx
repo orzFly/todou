@@ -63,7 +63,7 @@ function stubFetch() {
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("SpecEntryRow (#63)", () => {
+describe("SpecEntryRow (T-63)", () => {
   it("renders version, status, file count and anchors to the latest push", async () => {
     stubFetch();
     const view = renderWithProviders(<SpecEntryRow slug="p" issueNumber={1} />);
@@ -78,7 +78,7 @@ describe("SpecEntryRow (#63)", () => {
   });
 });
 
-describe("SpecSidebarSection (#63)", () => {
+describe("SpecSidebarSection (T-63)", () => {
   it("lists files with stats and a review link, no verdict buttons", async () => {
     stubFetch();
     const view = renderWithProviders(

@@ -5,7 +5,7 @@ import { UserRef } from "./user.ts";
 
 // Everything here is strictObject on purpose: agents hallucinate extra
 // fields, and a silently-dropped "optoins" is a debugging session. Unknown
-// keys must fail loudly, with the offending path in the message (#19).
+// keys must fail loudly, with the offending path in the message (T-19).
 
 /** Key referenced by answers; short so it survives being typed by hand. */
 export const QuestionKey = z
@@ -66,14 +66,14 @@ export type QuestionsComponent = z.infer<typeof QuestionsComponent>;
 /**
  * The extensible slot on comments. Immutable once created — that is what
  * freezes answered questions without any block-level edit rules. Future
- * members (e.g. spec documents, #23) extend the union.
+ * members (e.g. spec documents, T-23) extend the union.
  */
 export const CommentComponentInput = z.discriminatedUnion("type", [
   QuestionsComponentInput,
 ]);
 export type CommentComponentInput = z.infer<typeof CommentComponentInput>;
 
-// Spec comments (#23) are stored-only on purpose: they exist in the stored
+// Spec comments (T-23) are stored-only on purpose: they exist in the stored
 // union but not in the input union, because their anchors must be validated
 // and quoted against a stored spec version — they are born exclusively
 // inside a review submission, never through a plain comment POST.
@@ -147,7 +147,7 @@ export type IssueQuestionsItem = z.infer<typeof IssueQuestionsItem>;
 
 export const IssueQuestions = z.object({
   items: z.array(IssueQuestionsItem),
-  /** Unanswered question count — matches `issues.open_questions` (#46). */
+  /** Unanswered question count — matches `issues.open_questions` (T-46). */
   open: z.number().int().nonnegative(),
 });
 export type IssueQuestions = z.infer<typeof IssueQuestions>;

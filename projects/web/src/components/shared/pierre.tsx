@@ -1,7 +1,7 @@
 import type { CodeViewProps, MultiFileDiffProps } from "@pierre/diffs/react";
 import { type ComponentType, lazy, Suspense, useMemo } from "react";
 
-// @pierre/diffs is the heaviest dependency in the web bundle (#24). Every
+// @pierre/diffs is the heaviest dependency in the web bundle (T-24). Every
 // value import goes through lazy() here so the library lands in its own
 // chunk, fetched the first time a code surface actually renders; the rest
 // of the app must only use type imports.
@@ -25,7 +25,7 @@ export const PIERRE_THEME = {
 /**
  * "system" makes pierre inject no color-scheme pin of its own; the actual
  * scheme is forced from the outer tree by the `diffs-container` rules in
- * styles.css, which follow the app theme (#36). Options objects that
+ * styles.css, which follow the app theme (T-36). Options objects that
  * captured this value at module scope stay correct for the same reason.
  */
 export const PIERRE_THEME_TYPE = "system" as const;

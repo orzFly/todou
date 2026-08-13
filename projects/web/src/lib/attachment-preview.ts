@@ -14,14 +14,14 @@ export type PreviewTarget = {
   url: string;
   content_type?: string;
   size?: number;
-  /** Upload time; anchors markdown ref parsing (#80 time cutoff). */
+  /** Upload time; anchors markdown ref parsing (T-80 time cutoff). */
   created_at?: string;
 };
 
 const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp|avif|svg)$/i;
 
 /**
- * Highlighting a multi-megabyte file would freeze the tab (#31), so bigger
+ * Highlighting a multi-megabyte file would freeze the tab (T-31), so bigger
  * text attachments are download-only everywhere.
  */
 export const TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;
@@ -59,7 +59,7 @@ export function isPreviewableImage(attachment: {
   const type = attachment.content_type ?? "";
   if (type.startsWith("image/")) return true;
   // Uploads that arrived without a real content type (the CLI sent
-  // application/octet-stream until #27's hotfix) fall back to the filename.
+  // application/octet-stream until T-27's hotfix) fall back to the filename.
   return hasGenericType(type) && IMAGE_EXTENSION.test(attachment.filename);
 }
 
@@ -85,7 +85,7 @@ export function isMarkdownDocument(attachment: {
   );
 }
 
-/** HTML gets the sandboxed reader (#58) instead of a source view. */
+/** HTML gets the sandboxed reader (T-58) instead of a source view. */
 export function isHtmlDocument(attachment: {
   filename: string;
   content_type?: string;

@@ -6,7 +6,7 @@ import type { Env } from "./config.ts";
 
 const CHUNK_BYTES = 256 * 1024;
 // A single image Read appends a ~400 KB base64 tool_result line, and the
-// current turn's assistant entry is not always flushed yet (#42) — so the
+// current turn's assistant entry is not always flushed yet (T-42) — so the
 // newest assistant entry can sit megabytes behind EOF. 16 MB bounds the
 // worst-case I/O per command.
 const MAX_SCAN_BYTES = 16 * 1024 * 1024;
@@ -111,7 +111,7 @@ function modelFromLine(line: string): string | undefined {
       entry.type === "assistant" &&
       typeof entry.message?.model === "string" &&
       // API-error turns log a placeholder entry with model "<synthetic>" —
-      // an angle-bracketed value is never a real model id (#42).
+      // an angle-bracketed value is never a real model id (T-42).
       !entry.message.model.startsWith("<")
     ) {
       return entry.message.model;

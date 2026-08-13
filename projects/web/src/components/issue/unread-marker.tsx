@@ -1,5 +1,5 @@
 /**
- * Three-state unread marker (#77): a count badge when foreign comments are
+ * Three-state unread marker (T-77): a count badge when foreign comments are
  * waiting, a hollow ring when only events happened, nothing when read.
  * Positioning (list slot / board corner) stays at the call sites.
  */
@@ -12,7 +12,7 @@ export function UnreadMarker({
 }) {
   if (unreadComments > 0) {
     // Cap is display-only; the tooltip keeps the exact count. One shade
-    // darker than the ring so the white digits stay readable (#77).
+    // darker than the ring so the white digits stay readable (T-77).
     const label = `${unreadComments} new comment${unreadComments === 1 ? "" : "s"} since you last viewed`;
     return (
       <span

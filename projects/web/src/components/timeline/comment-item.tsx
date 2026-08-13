@@ -145,7 +145,7 @@ export function CommentItem({
       </div>
       <div className="px-3 py-2">
         {/* Spec anchors render ABOVE the body: they are the context the
-            comment is about (GitHub review-comment layout, #23). */}
+            comment is about (GitHub review-comment layout, T-23). */}
         {!pending && comment.component?.type === "spec_comment" && (
           <SpecCommentAnchorCard
             slug={slug}

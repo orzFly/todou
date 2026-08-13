@@ -96,7 +96,7 @@ export type ProvisionOptions = {
  * Resolve an upstream-authenticated identity to a user row, keyed by the
  * subject ALONE. The IdP/proxy is fully trusted for WHO the request is —
  * but an asserted username is a public, re-registrable name, never proof
- * of ownership of an existing account, so it must not match one (#86).
+ * of ownership of an existing account, so it must not match one (T-86).
  * Unknown subjects are JIT-created; a taken login gets a random suffix
  * instead of adopting or refusing.
  */

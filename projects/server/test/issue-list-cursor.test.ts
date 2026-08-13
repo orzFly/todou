@@ -67,7 +67,7 @@ describe("issue list cursors across sub-millisecond rows", () => {
       );
       seen.push(...page.items.map((i: Item) => i.number));
       if (page.next_cursor === null) return seen;
-      // The #73 failure shape: a page hands back a cursor that reproduces
+      // The T-73 failure shape: a page hands back a cursor that reproduces
       // itself, so Load More can be clicked forever.
       expect(page.next_cursor).not.toBe(cursor);
       cursor = page.next_cursor;
@@ -151,7 +151,7 @@ describe("issue list cursors across sub-millisecond rows", () => {
  * The shape PGlite (and thus the dogfood deployment) actually stores:
  * several rows with byte-identical millisecond timestamps. Pagination
  * inside such a cluster rests entirely on the id tie-break; this pins the
- * production list path that #78's Load More rides on.
+ * production list path that T-78's Load More rides on.
  */
 describe("issue list cursors across identical timestamps", () => {
   let t: TestApp;

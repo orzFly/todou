@@ -40,7 +40,7 @@ export const specCommentsQuery = (slug: string, issueNumber: number) =>
   });
 
 /** Newest spec_pushed timeline event — the anchor target of the issue-page
- *  spec entry (#63) and the payload source for its stats. */
+ *  spec entry (T-63) and the payload source for its stats. */
 export const latestSpecPushQuery = (slug: string, issueNumber: number) =>
   queryOptions({
     queryKey: ["spec", slug, issueNumber, "latest-push"],
@@ -61,7 +61,7 @@ export const latestSpecPushQuery = (slug: string, issueNumber: number) =>
 
 /**
  * Per-file git stats of one push, computed from the immutable version
- * snapshots with lazily-loaded jsdiff (#59). Shared between the timeline
+ * snapshots with lazily-loaded jsdiff (T-59). Shared between the timeline
  * version card and the issue-page spec surfaces — one cache entry per
  * version.
  */

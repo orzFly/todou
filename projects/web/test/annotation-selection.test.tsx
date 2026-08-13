@@ -5,13 +5,13 @@ import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { AnnotatedMarkdown } from "../src/components/spec/annotated-markdown.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
-// #60: the spec annotation flow died in two places — the comment button's
+// T-60: the spec annotation flow died in two places — the comment button's
 // appearance re-rendered the markdown with a fresh component-override map
 // (React remounts overridden elements, killing the text selection anchored
 // in them), and the button's own mouseup bubbled into the container handler,
 // unmounting it before click could fire.
 
-describe("MarkdownView DOM stability (#60 root cause A)", () => {
+describe("MarkdownView DOM stability (T-60 root cause A)", () => {
   it("keeps overridden elements' DOM nodes across re-renders", async () => {
     const md = "First paragraph.\n\nSecond paragraph.";
     // MarkdownView reads the reference config through react-query now, so
@@ -39,7 +39,7 @@ describe("MarkdownView DOM stability (#60 root cause A)", () => {
   });
 });
 
-describe("AnnotatedMarkdown floating button (#60 root cause B)", () => {
+describe("AnnotatedMarkdown floating button (T-60 root cause B)", () => {
   function selectParagraph(container: HTMLElement): void {
     const p = container.querySelector("p[data-loc]");
     if (!p?.firstChild) throw new Error("no stamped paragraph to select");

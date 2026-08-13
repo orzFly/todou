@@ -8,7 +8,7 @@ const tabs = [
 ] as const;
 
 /**
- * Project-level navigation (#62). Lives in the floating header: inline on
+ * Project-level navigation (T-62). Lives in the floating header: inline on
  * wide screens, on its own second row below `sm`.
  */
 export function ProjectNav({
@@ -26,7 +26,7 @@ export function ProjectNav({
           to={tab.to}
           params={{ slug }}
           // includeSearch off: exact mode deep-equals the whole search object,
-          // so filter params like ?category=closed would drop the highlight (#79).
+          // so filter params like ?category=closed would drop the highlight (T-79).
           activeOptions={{ exact: tab.exact, includeSearch: false }}
           className="rounded-md px-3 py-1 text-sm text-muted-foreground hover:text-foreground"
           activeProps={{

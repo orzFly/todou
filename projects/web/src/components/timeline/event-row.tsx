@@ -34,7 +34,7 @@ const asName = (v: unknown): string =>
 
 /**
  * Human-readable line for a GitHub-style action event. Pure for tests.
- * `refPrefix` spells issue refs in the project's CURRENT format (#80) —
+ * `refPrefix` spells issue refs in the project's CURRENT format (T-80) —
  * event payloads store bare numbers, so historical events respell freely.
  */
 export function describeEvent(
@@ -168,7 +168,7 @@ export function EventRow({
   slug?: string;
   issueNumber?: number;
 }) {
-  // UI strings spell refs in the project's current format (#80); the
+  // UI strings spell refs in the project's current format (T-80); the
   // query no-ops (enabled: false) in project-less contexts.
   const refConfigData = useQuery({
     ...referenceConfigQuery(slug ?? ""),
@@ -207,7 +207,7 @@ export function EventRow({
       : undefined;
   // Below sm the row is plain inline flow — the whole event wraps like a
   // sentence (GitHub mobile), because truncate + title tooltip is unreadable
-  // without hover. From sm up it keeps the #25 single-line grid. The {" "}
+  // without hover. From sm up it keeps the T-25 single-line grid. The {" "}
   // separators only exist for the inline mode: whitespace-only flex items
   // are never rendered, so the sm layout still spaces purely via gap.
   return (

@@ -2,7 +2,7 @@ import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { z } from "zod";
 
 /**
- * Staged review comments (#23): drafts live in localStorage until the whole
+ * Staged review comments (T-23): drafts live in localStorage until the whole
  * review is submitted in one atomic POST — the server holds no pending
  * state. Keyed per issue (not per version) so drafts staged on v2 survive
  * the reviewer switching versions mid-review; each draft's anchor carries
@@ -13,7 +13,7 @@ const Draft = z.object({
   anchor: z.object({
     path: z.string(),
     version: z.number().int().positive(),
-    // Null = file-level comment (#61).
+    // Null = file-level comment (T-61).
     line_start: z.number().int().positive().nullable(),
     line_end: z.number().int().positive().nullable(),
   }),

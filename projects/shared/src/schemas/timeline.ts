@@ -30,12 +30,12 @@ export const TimelineComment = z.object({
   body: z.string(),
   /**
    * Structured payload rendered after the body; immutable once created.
-   * Defaults on parse so clients tolerate servers predating #19.
+   * Defaults on parse so clients tolerate servers predating T-19.
    */
   component: CommentComponent.nullable().default(null),
   created_at: Timestamp,
   edited_at: Timestamp.nullable(),
-  /** Spec-comment resolution stamp (#23); null for everything else. */
+  /** Spec-comment resolution stamp (T-23); null for everything else. */
   resolved_at: Timestamp.nullable().default(null),
   agent_context: AgentContext.nullable(),
 });
@@ -64,7 +64,7 @@ export const TimelinePage = z.object({
   next_cursor: Cursor.nullable(),
   /**
    * Total items matching the same types/exclude_actor filters, independent
-   * of the cursor window — lets clients size the folded middle (#30).
+   * of the cursor window — lets clients size the folded middle (T-30).
    */
   total_count: z.number().int().nonnegative(),
 });
@@ -89,7 +89,7 @@ export const TimelineQuery = z.object({
   // server-side so the error can name the offending entry.
   types: z.string().optional(),
   // Drop entries authored by this user id — lets a watching agent ignore
-  // its own writes and (with #35) powers "unread by others" semantics.
+  // its own writes and (with T-35) powers "unread by others" semantics.
   exclude_actor: z.coerce.number().int().positive().optional(),
 });
 export type TimelineQuery = z.infer<typeof TimelineQuery>;

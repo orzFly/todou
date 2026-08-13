@@ -14,7 +14,7 @@ const json = (res: Response): Promise<any> => res.json() as Promise<any>;
 const settle = () => new Promise((r) => setTimeout(r, 5));
 
 describe.each(PLACEMENTS)(
-  "unread read-state #46 (%s placement)",
+  "unread read-state T-46 (%s placement)",
   (placement) => {
     let t: TestApp;
     let cookie: string;
@@ -75,7 +75,7 @@ describe.each(PLACEMENTS)(
       return (await stateOf(number)).unread;
     }
 
-    /** unread flag + foreign-comment count from the same list call (#77). */
+    /** unread flag + foreign-comment count from the same list call (T-77). */
     async function stateOf(
       number: number,
     ): Promise<{ unread: boolean; count: number }> {
@@ -110,7 +110,7 @@ describe.each(PLACEMENTS)(
       await comment(issue.number, bob.headers, "before bootstrap");
       await settle();
       // First-ever list call by the cookie user creates the frontier at now,
-      // so bob's earlier comment never lights up — nor counts (#77).
+      // so bob's earlier comment never lights up — nor counts (T-77).
       expect(await stateOf(issue.number)).toEqual({ unread: false, count: 0 });
     });
 
@@ -183,7 +183,7 @@ describe.each(PLACEMENTS)(
       expect(await unreadOf(issue.number)).toBe(false);
     });
 
-    it("counts foreign comments of every kind; events only mark (#77)", async () => {
+    it("counts foreign comments of every kind; events only mark (T-77)", async () => {
       const issue = await createIssue("counting house");
 
       // Two plain comments plus a questions comment from bob: 3.
@@ -261,7 +261,7 @@ describe.each(PLACEMENTS)(
       expect(await stateOf(issue.number)).toEqual({ unread: true, count: 2 });
     });
 
-    it("keeps the count at zero for event-only activity (#77)", async () => {
+    it("keeps the count at zero for event-only activity (T-77)", async () => {
       const issue = await createIssue("weak signal");
       expect(await stateOf(issue.number)).toEqual({ unread: false, count: 0 });
 
@@ -287,7 +287,7 @@ describe.each(PLACEMENTS)(
       expect(await stateOf(issue.number)).toEqual({ unread: false, count: 0 });
     });
 
-    it("returns the default 0 outside list responses (#77)", async () => {
+    it("returns the default 0 outside list responses (T-77)", async () => {
       const issue = await createIssue("single view");
       await comment(issue.number, bob.headers, "pending words");
       expect((await stateOf(issue.number)).count).toBe(1);

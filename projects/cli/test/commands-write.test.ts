@@ -501,7 +501,7 @@ describe("attach", () => {
       [
         "POST",
         "/api/projects/todou/attachments/direct-uploads",
-        // Servers answer the size gate before the backend gate (#70), so
+        // Servers answer the size gate before the backend gate (T-70), so
         // this 422 arrives on fs backends too — before any body is sent.
         {
           __status: 422,

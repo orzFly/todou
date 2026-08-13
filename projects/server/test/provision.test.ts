@@ -106,7 +106,7 @@ describe("provisionUser", () => {
     expect(row.id).toBe(bound.id);
   });
 
-  // The #86 attack, constructed: an IdP-side registration of an existing
+  // The T-86 attack, constructed: an IdP-side registration of an existing
   // human's username must never take over that account.
   it("never adopts an unbound human whose login the IdP asserts", async () => {
     const victim = await insertUser({ login: "alice" });

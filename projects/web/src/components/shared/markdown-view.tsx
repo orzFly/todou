@@ -88,7 +88,7 @@ function MarkdownPre({
     <CodeBlock filename={fenceFilename(fence.tag)} contents={fence.text} />
   );
   // The pre → CodeBlock swap must not drop the source-line stamp the spec
-  // review view anchors selections to (#52). A wrapper re-carries it, plus
+  // review view anchors selections to (T-52). A wrapper re-carries it, plus
   // where the code content starts: the stamped range opens on the ```
   // marker for fenced blocks but on the first code line for indented ones.
   const stamp = (props as Record<string, unknown>)[SOURCE_LINE_ATTR];
@@ -115,7 +115,7 @@ export function MarkdownView({
   /** Enables #N → issue link rendering; omit where there is no project. */
   slug?: string;
   /**
-   * When the content was CREATED (#80): internal refs parse under the
+   * When the content was CREATED (T-80): internal refs parse under the
    * format in force at that moment, so pre-switch text keeps pointing at
    * this project's issues after "#" is handed to an external tracker.
    * Omit for live text (editor previews) — that reads as "now".
@@ -135,7 +135,7 @@ export function MarkdownView({
   embedded?: boolean;
   /**
    * Extra rehype plugins (e.g. source-line stamping for spec annotation,
-   * #23). Pass a stable reference — this goes straight to react-markdown.
+   * T-23). Pass a stable reference — this goes straight to react-markdown.
    */
   rehypePlugins?: ComponentProps<typeof Markdown>["rehypePlugins"];
 }) {
@@ -143,7 +143,7 @@ export function MarkdownView({
   // entry is an anonymous component, and a fresh map makes React treat each
   // one as a NEW component type, unmounting and rebuilding those DOM
   // subtrees on every parent render. Rebuilt text nodes silently collapse
-  // any live text selection — which broke spec annotation (#60): the
+  // any live text selection — which broke spec annotation (T-60): the
   // floating comment button's own appearance re-rendered the document and
   // destroyed the selection it was offering to annotate.
   const components: ComponentProps<typeof Markdown>["components"] = useMemo(

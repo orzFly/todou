@@ -9,14 +9,14 @@ const QUOTE_PREVIEW_LINES = 4;
 export type ComposerStaging = {
   path: string;
   version: number;
-  /** Null = file-level comment (#61). */
+  /** Null = file-level comment (T-61). */
   lineStart: number | null;
   lineEnd: number | null;
   quote: string;
 };
 
 /**
- * Comment-composer-style bottom strip for staging a spec comment (#61) —
+ * Comment-composer-style bottom strip for staging a spec comment (T-61) —
  * a sticky in-flow panel like the issue page's composer, never a modal:
  * the document stays visible and scrollable while writing. Key it by the
  * anchor so a new selection starts with an empty body.

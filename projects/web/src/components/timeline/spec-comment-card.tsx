@@ -33,7 +33,7 @@ export function SpecCommentAnchorCard({
   canResolve: boolean;
 }) {
   const anchor = component.anchor;
-  // Click-to-expand context (#23): fetch the anchored version lazily and
+  // Click-to-expand context (T-23): fetch the anchored version lazily and
   // widen the quote by a few lines either side, anchored range highlighted.
   const [expanded, setExpanded] = useState(false);
   const context = useQuery({
@@ -56,7 +56,7 @@ export function SpecCommentAnchorCard({
     onError: (error) => toast.error(error.message),
   });
 
-  // Null lines = file-level comment (#61): no quote and no line context.
+  // Null lines = file-level comment (T-61): no quote and no line context.
   const fileLevel = anchor.line_start === null || anchor.line_end === null;
   const lines = fileLevel
     ? "file"

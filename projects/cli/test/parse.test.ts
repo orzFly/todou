@@ -72,7 +72,7 @@ describe("parseIssueRef", () => {
   });
 });
 
-describe("parseIssueRef prefixed forms (#80)", () => {
+describe("parseIssueRef prefixed forms (T-80)", () => {
   it("parses PREFIX-N and takes the number", () => {
     expect(parseIssueRef("T-76", "issue number")).toEqual({ number: 76 });
     expect(parseIssueRef("FOOBAR-8", "issue number")).toEqual({ number: 8 });

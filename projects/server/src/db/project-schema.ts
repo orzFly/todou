@@ -32,7 +32,7 @@ export const projectMeta = pgTable("project_meta", {
   createdAt: createdAt(),
 });
 
-// Append-only internal reference-format history (#80). NULL prefix = "#N".
+// Append-only internal reference-format history (T-80). NULL prefix = "#N".
 // The format in force for a piece of content is the newest row with
 // effective_from <= content.created_at — history, not a single value, so
 // legacy text keeps parsing under the format it was written in.
@@ -109,12 +109,12 @@ export const issues = pgTable(
       .notNull()
       .defaultNow(),
     bodyEditedAt: timestamp("body_edited_at", { withTimezone: true }),
-    // Denormalized unanswered-question count (#19). Safe against drift:
+    // Denormalized unanswered-question count (T-19). Safe against drift:
     // components are immutable and answer events append-only, so the only
     // writers are comment create (+N), first answer (-N), and the delete
     // of a still-unanswered question comment (-N).
     openQuestions: integer("open_questions").notNull().default(0),
-    // Denormalized spec state (#23), same bounded-writer discipline: push
+    // Denormalized spec state (T-23), same bounded-writer discipline: push
     // bumps the version and resets the status, a review writes its verdict,
     // resolve/delete of an anchored comment moves the count. NULL version
     // and status = the issue has no spec.
@@ -167,7 +167,7 @@ export const comments = pgTable(
       .references(() => issues.id, { onDelete: "cascade" }),
     authorId: bigint("author_id", { mode: "number" }).notNull(),
     body: text("body").notNull(),
-    // Structured slot rendered after the body ({type:"questions",…}, #19).
+    // Structured slot rendered after the body ({type:"questions",…}, T-19).
     // Immutable once written — updateComment never touches it.
     component: jsonb("component").$type<CommentComponent | null>(),
     // Self-reported client provenance (e.g. Claude Code session/model);
@@ -175,7 +175,7 @@ export const comments = pgTable(
     agentContext: jsonb("agent_context").$type<AgentContext | null>(),
     createdAt: createdAt(),
     editedAt: timestamp("edited_at", { withTimezone: true }),
-    // Spec-comment resolution (#23). One-way: set once, never cleared —
+    // Spec-comment resolution (T-23). One-way: set once, never cleared —
     // meaningful only for comments whose component is a spec anchor.
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     resolvedBy: bigint("resolved_by", { mode: "number" }),
@@ -247,7 +247,7 @@ export const revisions = pgTable(
   ],
 );
 
-// One row per `spec push` — the version list of an issue's spec (#23).
+// One row per `spec push` — the version list of an issue's spec (T-23).
 // Versions are whole-set snapshots: reading v(N) never replays history.
 export const specVersions = pgTable(
   "spec_versions",
@@ -315,7 +315,7 @@ export const attachments = pgTable(
   ],
 );
 
-// Direct-upload bookkeeping (#3): a row is written when a presigned PUT is
+// Direct-upload bookkeeping (T-3): a row is written when a presigned PUT is
 // issued and marked completed when the attachment row lands. Rows are the
 // ONLY inventory of maybe-orphaned objects — gc walks this table instead of
 // listing the bucket, which is what keeps gc O(pending), not O(bucket).
@@ -343,7 +343,7 @@ export const pendingUploads = pgTable(
   ],
 );
 
-// Per-user read positions (#46). Unread is computed at read time from these
+// Per-user read positions (T-46). Unread is computed at read time from these
 // plus the activity tables — deliberately NOT denormalized onto issues: the
 // flag is per-viewer and comments are deletable, so live computation stays
 // correct with no counter discipline (contrast open_questions above).
@@ -364,7 +364,7 @@ export const issueReads = pgTable(
 // A user's unread epoch in a project, created lazily on their first unread
 // computation: anything older is treated as read, so enabling the feature
 // (or joining a project) never lights up history — same bootstrap semantics
-// as the CLI's local state (#35).
+// as the CLI's local state (T-35).
 export const readFrontiers = pgTable(
   "read_frontiers",
   {

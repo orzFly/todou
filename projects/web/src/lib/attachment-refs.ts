@@ -40,7 +40,7 @@ export function attachmentHref(
 }
 
 /**
- * The inline-view twin of a download URL (#58): same bytes served with an
+ * The inline-view twin of a download URL (T-58): same bytes served with an
  * inline disposition and a CSP sandbox, for HTML readers and open-in-tab.
  */
 export function viewHrefFromDownload(url: string): string {

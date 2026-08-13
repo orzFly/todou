@@ -75,7 +75,7 @@ describe("describeEvent", () => {
     ).toBe("attached a.txt");
   });
 
-  it("covers the spec vocabulary (#23)", () => {
+  it("covers the spec vocabulary (T-23)", () => {
     expect(
       describeEvent("spec_pushed", {
         version: 3,

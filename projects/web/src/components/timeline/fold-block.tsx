@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 
 /**
- * The folded-middle divider (#30), GitHub-style: sits in the seam between
+ * The folded-middle divider (T-30), GitHub-style: sits in the seam between
  * the rendered head and tail, names what is hidden, and expands one chunk
  * per click.
  */

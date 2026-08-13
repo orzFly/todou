@@ -131,7 +131,7 @@ describe.skipIf(!PG_URL)("timeline cursors on real postgres", () => {
         expect(page.next_cursor).toBeNull();
         break;
       }
-      // The #69 failure shape: at the end of the stream the boundary row is
+      // The T-69 failure shape: at the end of the stream the boundary row is
       // returned again and next_cursor === after, forever.
       expect(page.next_cursor).not.toBe(after);
       seen.push(...page.items.map(keyOf));

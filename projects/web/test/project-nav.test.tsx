@@ -47,7 +47,7 @@ async function status(name: string) {
   return el.getAttribute("data-status");
 }
 
-describe("ProjectNav active states (#79)", () => {
+describe("ProjectNav active states (T-79)", () => {
   it("keeps List highlighted when filter search params are set", async () => {
     renderNavAt("/projects/x?category=closed");
     await waitFor(async () => expect(await status("List")).toBe("active"));

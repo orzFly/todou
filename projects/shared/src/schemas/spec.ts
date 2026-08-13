@@ -2,9 +2,9 @@ import { z } from "zod";
 import { Id, Timestamp } from "./common.ts";
 import { UserRef } from "./user.ts";
 
-// Spec documents (#23): a set of markdown files attached to an issue, where
+// Spec documents (T-23): a set of markdown files attached to an issue, where
 // every `spec push` produces one whole-set version. Everything an agent can
-// send is strictObject — same rationale as component.ts (#19).
+// send is strictObject — same rationale as component.ts (T-19).
 
 export const SPEC_MAX_FILES = 64;
 export const SPEC_MAX_FILE_CHARS = 1_048_576;
@@ -149,7 +149,7 @@ export type SpecReviewPayload = z.infer<typeof SpecReviewPayload>;
 /**
  * What a reviewer submits: where the comment hangs. Line numbers are
  * 1-based inclusive source lines; omitting BOTH makes it a file-level
- * comment (#61) — one line without the other is rejected.
+ * comment (T-61) — one line without the other is rejected.
  */
 export const SpecCommentAnchorInput = z
   .strictObject({

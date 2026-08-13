@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build standalone `todou` CLI artifacts (issue #22): four deno-compiled
+# Build standalone `todou` CLI artifacts (T-22): four deno-compiled
 # executables plus one esbuild-bundled .cjs for users who bring their own
 # Node runtime. Everything lands in dist/, which is git-ignored.
 set -euo pipefail

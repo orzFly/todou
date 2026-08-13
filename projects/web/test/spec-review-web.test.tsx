@@ -26,7 +26,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-// Fences render through the lazily-imported pierre CodeView (#31); pin it
+// Fences render through the lazily-imported pierre CodeView (T-31); pin it
 // to a plain pre>code so the DOM is deterministic no matter when the lazy
 // chunk would resolve.
 vi.mock("@pierre/diffs/react", () => ({
@@ -61,7 +61,7 @@ describe("rehypeSourceLines", () => {
     expect(parseSourceLoc(null)).toBeNull();
   });
 
-  it("keeps the stamp when a fence swaps to CodeBlock (#52)", () => {
+  it("keeps the stamp when a fence swaps to CodeBlock (T-52)", () => {
     const md = "intro\n\n```ts\nconst a = 1;\nconst b = 2;\n```\n";
     const view = render(
       <QueryClientProvider client={testQueryClient()}>

@@ -13,7 +13,7 @@ import { commentAnchor, parseIssuePermalink } from "@/lib/timeline-anchors.ts";
  * text when the number matches no issue in the project. With `commentId`
  * the link deep-links to that comment's anchor and reads "… · comment by
  * @x". Spelling is a UI string, so it always uses the project's CURRENT
- * format (#80) — only user-authored text is anchored to its created_at.
+ * format (T-80) — only user-authored text is anchored to its created_at.
  */
 export function IssueLink({
   slug,

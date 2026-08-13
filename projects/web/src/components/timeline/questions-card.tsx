@@ -43,7 +43,7 @@ function InlineMarkdown({
 }: {
   slug: string;
   issueNumber: number;
-  /** created_at of the content this text belongs to (#80 time cutoff). */
+  /** created_at of the content this text belongs to (T-80 time cutoff). */
   refDate?: string;
   children: string;
   className?: string;
@@ -58,7 +58,7 @@ function InlineMarkdown({
 }
 
 /**
- * The interactive tail of a question comment (#19). One submission covers
+ * The interactive tail of a question comment (T-19). One submission covers
  * every question and is final — answered cards render read-only.
  */
 export function QuestionsCard({
@@ -72,7 +72,7 @@ export function QuestionsCard({
   issueNumber: number;
   commentId: number;
   component: QuestionsComponent;
-  /** The question comment's created_at (#80 time cutoff). */
+  /** The question comment's created_at (T-80 time cutoff). */
   refDate?: string;
 }) {
   const status = useQuery(questionsQuery(slug, issueNumber));

@@ -12,7 +12,7 @@ export interface ThemeDef {
   accent: string;
 }
 
-// The todou defaults lead each group; the rest are the picotera ports (#36).
+// The todou defaults lead each group; the rest are the picotera ports (T-36).
 // Adding a theme = one entry here + one :root[data-theme='…'] block in
 // styles.css.
 export const THEMES = [

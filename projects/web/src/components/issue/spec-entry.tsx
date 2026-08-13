@@ -50,10 +50,10 @@ export function SpecStatusBadge({
 }
 
 /**
- * The lightweight spec entry under the issue body (#63): one row —
+ * The lightweight spec entry under the issue body (T-63): one row —
  * version, review state, file count, total ± — whose click anchor-scrolls
- * to the latest spec_pushed event, where the #59 version card sits
- * expanded. The #38 anchor machinery does the scrolling/flashing and
+ * to the latest spec_pushed event, where the T-59 version card sits
+ * expanded. The T-38 anchor machinery does the scrolling/flashing and
  * loads older timeline pages when the push has scrolled out.
  */
 export function SpecEntryRow({
@@ -122,7 +122,7 @@ export function SpecEntryRow({
 }
 
 /**
- * "Latest spec" sidebar section (#63): review state and file links with
+ * "Latest spec" sidebar section (T-63): review state and file links with
  * the push's ± stats. Deliberately verdict-free — approving belongs to
  * the review view. Renders nothing while the issue has no spec.
  */

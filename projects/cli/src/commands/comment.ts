@@ -17,7 +17,7 @@ export class CommentAddCommand extends ProjectCommand {
       \`<number>\` also accepts \`<project>/<number>\` or a full issue URL;
       \`issue comment\` is an alias of \`comment add\`.
 
-      \`--questions\` attaches a questions component (#19): a JSON array of
+      \`--questions\` attaches a questions component (T-19): a JSON array of
       \`{question, options: [{label, description?}], multiple?, key?,
       header?}\`, all text fields markdown. Validation is strict — unknown
       fields fail with their path named. Readers answer on the issue page

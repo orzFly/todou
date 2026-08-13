@@ -77,7 +77,7 @@ afterEach(() => {
 
 describe("issue list Load More pagination state", () => {
   it("drops the button at the end instead of reusing page 1's cursor", async () => {
-    // #78: the last fetched page's null next_cursor must not fall back to
+    // T-78: the last fetched page's null next_cursor must not fall back to
     // the first page's cursor — that resurrects the button and re-appends
     // page 2 on every further click, forever.
     const page1: IssueListPageData = {
@@ -108,7 +108,7 @@ describe("issue list Load More pagination state", () => {
   });
 
   it("discards loaded pages when the filter state changes", async () => {
-    // #78: pages appended under ?category=closed lingered after switching
+    // T-78: pages appended under ?category=closed lingered after switching
     // to Open, so Done rows showed in the open list.
     const closedPage1: IssueListPageData = {
       items: [item(11, "done one", done)],

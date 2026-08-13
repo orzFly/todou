@@ -31,11 +31,11 @@ abstract class ConfiguredCommand extends Command {
 }
 
 // In-flight requests get this long to finish after a stop signal before
-// their connections are severed; clients retry/reconnect (#26, #41).
+// their connections are severed; clients retry/reconnect (T-26, T-41).
 const DRAIN_GRACE_MS = 1_000;
 // If shutdown wedges anyway (a stuck database close, an unforeseen open
 // handle), exit by force well before systemd's stop timeout escalates to
-// SIGKILL — that escalation is a ~90s outage per deploy (#56).
+// SIGKILL — that escalation is a ~90s outage per deploy (T-56).
 const FORCED_EXIT_MS = 5_000;
 
 class ServeCommand extends ConfiguredCommand {
@@ -239,7 +239,7 @@ class StorageGcCommand extends ConfiguredCommand {
 
 // The `user` command group is deliberately shell-only (no HTTP surface):
 // moving history onto an IdP identity is an operator act, never something an
-// asserted username may trigger (#86). On PGlite deployments stop the server
+// asserted username may trigger (T-86). On PGlite deployments stop the server
 // first — the data directory is single-process.
 abstract class UserAdminCommand extends ConfiguredCommand {
   async withSystemDb(

@@ -157,7 +157,7 @@ const issueQuestionsRoute = createRoute({
   method: "get",
   path: "/{slug}/issues/{number}/questions",
   summary:
-    "Question comments of an issue with their answer status (#19); powers " +
+    "Question comments of an issue with their answer status (T-19); powers " +
     "`todou question list/wait` and the web answer cards",
   request: { params: issueParams },
   responses: { 200: { description: "Status", ...jsonBody(IssueQuestions) } },

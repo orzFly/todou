@@ -47,7 +47,7 @@ export function ReviewSubmitDialog({
         ...(summary.trim() === "" ? {} : { body: summary }),
         comments: drafts.map((d) => ({
           // Strict input schema: file-level anchors OMIT the line keys
-          // rather than sending nulls (#61).
+          // rather than sending nulls (T-61).
           anchor: {
             path: d.anchor.path,
             version: d.anchor.version,

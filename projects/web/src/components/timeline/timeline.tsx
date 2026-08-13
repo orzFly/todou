@@ -44,7 +44,7 @@ export function Timeline({
   const [newBelow, setNewBelow] = useState(false);
   const didInitialScroll = useRef(false);
   const blockRef = useRef<HTMLDivElement>(null);
-  // Chunk-insert compensation, captured at click time (#30): the document
+  // Chunk-insert compensation, captured at click time (T-30): the document
   // height baseline plus the adaptive verdict — block in the upper half of
   // the viewport means the reader came up from the tail, so the tail side
   // stays glued; lower half means the head side is being read, and content

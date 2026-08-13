@@ -142,7 +142,7 @@ describe("timeline cursors across sub-millisecond rows", () => {
         expect(page.next_cursor).toBeNull();
         break;
       }
-      // The #69 failure shape: the last page's next_cursor is byte-identical
+      // The T-69 failure shape: the last page's next_cursor is byte-identical
       // to the `after` that produced it, so drains spin forever.
       expect(page.next_cursor).not.toBe(after);
       seen.push(...page.items.map(keyOf));

@@ -54,7 +54,7 @@ type PendingSelection = {
 };
 
 /**
- * Source-line range for the block a selection endpoint sits in (#52).
+ * Source-line range for the block a selection endpoint sits in (T-52).
  * pierre renders code blocks inside an open shadow root, so the walk hops
  * shadow boundaries host by host until a stamped ancestor appears. When
  * the endpoint is on one of pierre's line rows (`data-line`, 1-based
@@ -143,7 +143,7 @@ export function AnnotatedMarkdown({
   slug: string;
   issueNumber: number;
   body: string;
-  /** The viewed spec version's push time (#80 time cutoff). */
+  /** The viewed spec version's push time (T-80 time cutoff). */
   refDate?: string;
   annotations: DisplayedAnnotation[];
   /** Lines changed since the compare baseline — green highlight + ↑↓ nav. */
@@ -221,7 +221,7 @@ export function AnnotatedMarkdown({
   const onMouseUp = useCallback((event: ReactMouseEvent) => {
     // Presses on the annotation UI itself (floating button, chips) bubble
     // through here too; deriving state from them would clear `pending`
-    // and unmount the button before its click can fire (#60).
+    // and unmount the button before its click can fire (T-60).
     if (
       event.target instanceof Element &&
       event.target.closest("[data-annotation-ui]") !== null
@@ -292,7 +292,7 @@ export function AnnotatedMarkdown({
           data-annotation-ui=""
           // The browser's default pointer/mouse-down would collapse the
           // text selection under the button (and move focus) before click
-          // fires — the selection must outlive the press (#60).
+          // fires — the selection must outlive the press (T-60).
           onPointerDown={(e) => e.preventDefault()}
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => {

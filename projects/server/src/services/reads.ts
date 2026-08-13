@@ -15,7 +15,7 @@ import { requireProject, routeInfoOf } from "./access.ts";
 
 /**
  * The user's unread epoch in this project, created lazily on first use so
- * history before a user starts reading never counts as unread (#35's CLI
+ * history before a user starts reading never counts as unread (T-35's CLI
  * bootstrap semantics). Insert-then-reselect keeps concurrent first calls
  * safe — board columns fire several list queries at once on first load.
  */
@@ -58,7 +58,7 @@ export async function ensureFrontier(
  * Unread state of `issueIds` for `userId`: an issue is unread when someone
  * else commented or acted on it after the user's last-seen position (or the
  * project frontier when the issue was never opened); `counts` carries how
- * many such comments are waiting (#77 — events mark unread but don't count).
+ * many such comments are waiting (T-77 — events mark unread but don't count).
  * One thresholded count over comments plus a grouped-max scan over events —
  * cheap at list-page sizes, and self-healing on comment deletion.
  */

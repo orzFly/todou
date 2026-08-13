@@ -34,7 +34,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   const canLogout = authMode.data?.mode !== "forward";
 
   // Present on every route under /projects/$slug; the header morphs into a
-  // breadcrumb with the project nav there (#62).
+  // breadcrumb with the project nav there (T-62).
   const { slug } = useParams({ strict: false });
   const project = useQuery({
     ...projectQuery(slug ?? ""),

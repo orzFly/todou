@@ -21,7 +21,7 @@ export type AppContext = {
   /**
    * Aborted once when the process is asked to stop. Long-lived responses
    * (SSE) end themselves on this signal so `server.close()` can complete
-   * instead of waiting on connections that never finish (#56).
+   * instead of waiting on connections that never finish (T-56).
    */
   shutdown: AbortController;
 };

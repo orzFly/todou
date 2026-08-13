@@ -7,7 +7,7 @@ type UserRow = typeof users.$inferSelect;
 
 /**
  * Offline account administration behind `todou-server user …` — the explicit
- * replacement for the login-adoption path provisioning no longer has (#86).
+ * replacement for the login-adoption path provisioning no longer has (T-86).
  * Runs on the deployer's shell against the system database; there is no HTTP
  * surface, which is the point: migrating history onto an IdP identity is a
  * deliberate operator act, not something an asserted username can trigger.

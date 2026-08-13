@@ -34,7 +34,7 @@ import {
 
 function issueRow(issue: IssueListItem, refPrefix: string | null): string[] {
   // Old servers omit both fields entirely; undefined reads as "not unread"
-  // and the marker degrades to the plain dot (#77). The count is exact —
+  // and the marker degrades to the plain dot (T-77). The count is exact —
   // terminal columns self-size, so the web's 99+ cap buys nothing here.
   const count = issue.unread_comments ?? 0;
   return [
@@ -151,7 +151,7 @@ export class IssueViewCommand extends ProjectCommand {
     this.output({ issue, timeline, next_cursor: cursor ?? null }, () =>
       renderIssue(issue, timeline, cursor, paint, refPrefix),
     );
-    // Viewing advances the server-side read position (#46), pinned to the
+    // Viewing advances the server-side read position (T-46), pinned to the
     // newest entry actually shown so anything landing after the fetch stays
     // unread. After the output on purpose, and best-effort: an old server
     // (404) or a network blip must never fail the view itself.
