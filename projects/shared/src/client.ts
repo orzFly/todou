@@ -95,6 +95,15 @@ function queryString(query?: Query): string {
   return s === "" ? "" : `?${s}`;
 }
 
+/**
+ * WebCrypto's digest only takes a complete buffer, so hashing costs the
+ * file's size in memory; past this cap the optional checksum is skipped
+ * so the ticket request stays a pure size probe. Sized above the
+ * server's default 20 MB upload limit, so default deployments still
+ * checksum everything they accept.
+ */
+const MAX_SHA256_BYTES = 32 * 1024 * 1024;
+
 export class TodouClient {
   #baseUrl: string;
   #token?: string;
@@ -502,10 +511,13 @@ export class TodouClient {
     }
   };
 
-  /** base64 SHA-256 when the runtime offers WebCrypto; else omitted. */
+  /**
+   * base64 SHA-256; omitted when the runtime lacks WebCrypto or the
+   * file is too large to buffer whole (see MAX_SHA256_BYTES).
+   */
   #sha256 = async (file: File): Promise<string | undefined> => {
     const subtle = globalThis.crypto?.subtle;
-    if (!subtle) return undefined;
+    if (!subtle || file.size > MAX_SHA256_BYTES) return undefined;
     try {
       const digest = await subtle.digest("SHA-256", await file.arrayBuffer());
       return btoa(String.fromCharCode(...new Uint8Array(digest)));

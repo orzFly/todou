@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { TodouClient, TodouError } from "../src/client.ts";
 
@@ -17,6 +18,37 @@ function mockFetch(
   }) as typeof fetch;
   return { fetch: fetchImpl, calls };
 }
+
+function mockFetchSeq(responses: Array<{ status: number; body?: unknown }>): {
+  fetch: typeof fetch;
+  calls: Captured[];
+} {
+  const calls: Captured[] = [];
+  const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+    const res = responses[calls.length];
+    if (!res) throw new Error("no scripted response left");
+    calls.push({ url: String(url), init: init ?? {} });
+    return new Response(
+      res.body === undefined ? null : JSON.stringify(res.body),
+      { status: res.status, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+  return { fetch: fetchImpl, calls };
+}
+
+const directUploadResponses = (attachment: unknown) => [
+  {
+    status: 200,
+    body: {
+      upload_id: 7,
+      url: "http://store.test/put",
+      headers: {},
+      expires_at: "2026-01-01T00:00:00.000Z",
+    },
+  },
+  { status: 200, body: {} },
+  { status: 200, body: attachment },
+];
 
 describe("TodouClient", () => {
   it("builds csv query strings and skips undefined params", async () => {
@@ -130,6 +162,43 @@ describe("TodouClient", () => {
     const headers = calls[0]?.init.headers as Record<string, string>;
     expect(headers["x-todou-agent-context"]).toBe('{"agent":"claude-code"}');
     expect(headers.authorization).toBe("Bearer todou_pat_x");
+  });
+
+  it("pins sha256 on direct-upload tickets for small files", async () => {
+    const attachment = { id: 1, filename: "hello.txt" };
+    const { fetch, calls } = mockFetchSeq(directUploadResponses(attachment));
+    const client = new TodouClient({ fetch });
+    const file = new File(["hello"], "hello.txt", { type: "text/plain" });
+    const result = await client.uploadAttachment("todou", 3, file);
+    expect(result).toEqual(attachment);
+    const ticket = JSON.parse(String(calls[0]?.init.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(ticket.size).toBe(5);
+    expect(ticket.sha256).toBe(
+      createHash("sha256").update("hello").digest("base64"),
+    );
+    expect(calls[1]?.url).toBe("http://store.test/put");
+    expect(calls[2]?.url).toBe(
+      "/api/projects/todou/attachments/direct-uploads/7/complete",
+    );
+  });
+
+  it("skips sha256 above the hash cap instead of buffering the file", async () => {
+    const attachment = { id: 2, filename: "huge.bin" };
+    const { fetch, calls } = mockFetchSeq(directUploadResponses(attachment));
+    const client = new TodouClient({ fetch });
+    const size = 32 * 1024 * 1024 + 1;
+    const file = new File([new Uint8Array(size)], "huge.bin");
+    const result = await client.uploadAttachment("todou", 3, file);
+    expect(result).toEqual(attachment);
+    const ticket = JSON.parse(String(calls[0]?.init.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(ticket.size).toBe(size);
+    expect("sha256" in ticket).toBe(false);
   });
 
   it("exposes request() for raw API calls", async () => {
