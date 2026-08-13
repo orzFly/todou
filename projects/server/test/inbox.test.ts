@@ -72,6 +72,77 @@ describe("cross-project inbox T-97", () => {
     expect(res.status).toBe(204);
   }
 
+  type Category = "open" | "closed";
+  const statusIds = new Map<string, number>();
+
+  /** First status of `category` in the project, memoized per project. */
+  async function statusOf(slug: string, category: Category): Promise<number> {
+    const key = `${slug}:${category}`;
+    const cached = statusIds.get(key);
+    if (cached !== undefined) return cached;
+    const rows = await json(
+      await t.app.request(`/api/projects/${slug}/statuses`, {
+        headers: { cookie },
+      }),
+    );
+    const id = rows.find((s: { category: string }) => s.category === category)
+      .id as number;
+    statusIds.set(key, id);
+    return id;
+  }
+
+  async function setStatus(
+    slug: string,
+    number: number,
+    category: Category,
+  ): Promise<void> {
+    const res = await t.app.request(`/api/projects/${slug}/issues/${number}`, {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify({ status_id: await statusOf(slug, category) }),
+    });
+    expect(res.status).toBe(200);
+  }
+
+  async function pushSpec(
+    slug: string,
+    number: number,
+    who: Record<string, string>,
+    message = "v1",
+  ): Promise<void> {
+    const res = await t.app.request(
+      `/api/projects/${slug}/issues/${number}/spec/push`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", ...who },
+        body: JSON.stringify({
+          files: [{ path: "design.md", body: `# ${message}` }],
+          message,
+        }),
+      },
+    );
+    expect(res.status).toBe(200);
+  }
+
+  async function ask(
+    slug: string,
+    number: number,
+    who: Record<string, string>,
+    body: string,
+  ): Promise<number> {
+    const res = await comment(slug, number, who, body, {
+      type: "questions",
+      questions: [
+        {
+          question: "Pick one",
+          options: [{ label: "left" }, { label: "right" }],
+        },
+      ],
+    });
+    expect(res.status).toBe(201);
+    return (await json(res)).id;
+  }
+
   beforeAll(async () => {
     t = await makeTestApp();
     cookie = await t.login();
@@ -192,20 +263,7 @@ describe("cross-project inbox T-97", () => {
   it("closed issues with unread activity still show", async () => {
     const n = await createIssue(PA, "closed but unread");
     await comment(PA, n, bob.headers, "closing note");
-    const statuses = await json(
-      await t.app.request(`/api/projects/${PA}/statuses`, {
-        headers: { cookie },
-      }),
-    );
-    const done = statuses.find(
-      (s: { category: string }) => s.category === "closed",
-    );
-    const res = await t.app.request(`/api/projects/${PA}/issues/${n}`, {
-      method: "PATCH",
-      headers: headers(),
-      body: JSON.stringify({ status_id: done.id }),
-    });
-    expect(res.status).toBe(200);
+    await setStatus(PA, n, "closed");
 
     const row = rowOf(await items(), PA, n);
     expect(row).toMatchObject({ unread: true, status: { category: "closed" } });
@@ -214,18 +272,7 @@ describe("cross-project inbox T-97", () => {
 
   it("specs pushed by others await my review; my own never do", async () => {
     const n = await createIssue(PA, "spec by bob");
-    const push = await t.app.request(
-      `/api/projects/${PA}/issues/${n}/spec/push`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", ...bob.headers },
-        body: JSON.stringify({
-          files: [{ path: "design.md", body: "# v1" }],
-          message: "v1",
-        }),
-      },
-    );
-    expect(push.status).toBe(200);
+    await pushSpec(PA, n, bob.headers);
 
     let row = rowOf(await items(), PA, n);
     expect(row).toMatchObject({ pending_spec_review: true });
@@ -253,17 +300,7 @@ describe("cross-project inbox T-97", () => {
 
   it("open questions pull an issue in until answered", async () => {
     const n = await createIssue(PB, "question for alice");
-    const ask = await comment(PB, n, bob.headers, "which way?", {
-      type: "questions",
-      questions: [
-        {
-          question: "Pick one",
-          options: [{ label: "left" }, { label: "right" }],
-        },
-      ],
-    });
-    expect(ask.status).toBe(201);
-    const commentId = (await json(ask)).id;
+    const commentId = await ask(PB, n, bob.headers, "which way?");
 
     let row = rowOf(await items(), PB, n);
     expect(row).toMatchObject({ open_questions: 1 });
@@ -280,6 +317,80 @@ describe("cross-project inbox T-97", () => {
     await markRead(PB, n);
     row = rowOf(await items(), PB, n);
     expect(row).toBeUndefined();
+  });
+
+  it("closing an issue retires a spec waiting for my review (T-111)", async () => {
+    const n = await createIssue(PA, "spec then closed");
+    await pushSpec(PA, n, bob.headers);
+    expect(rowOf(await items(), PA, n)).toMatchObject({
+      pending_spec_review: true,
+    });
+
+    await setStatus(PA, n, "closed");
+    // Reading clears the unread left by bob's push; the pending review is
+    // then the only reason left, and closing has retired it.
+    await markRead(PA, n);
+    expect(rowOf(await items(), PA, n)).toBeUndefined();
+
+    // The exception: a genuinely new comment brings the issue back — but it
+    // no longer claims to be waiting for a review.
+    await comment(PA, n, bob.headers, "one more thought");
+    expect(rowOf(await items(), PA, n)).toMatchObject({
+      unread: true,
+      unread_comments: 1,
+      pending_spec_review: false,
+    });
+    await markRead(PA, n);
+
+    // Still unreviewed on the issue itself — only its claim on the inbox
+    // went away, and reopening restores it.
+    await setStatus(PA, n, "open");
+    expect(rowOf(await items(), PA, n)).toMatchObject({
+      pending_spec_review: true,
+    });
+    await setStatus(PA, n, "closed");
+    await markRead(PA, n);
+  });
+
+  it("closing an issue retires its open questions (T-111)", async () => {
+    const n = await createIssue(PB, "question then closed");
+    await ask(PB, n, bob.headers, "still relevant?");
+    expect(rowOf(await items(), PB, n)).toMatchObject({ open_questions: 1 });
+
+    await setStatus(PB, n, "closed");
+    await markRead(PB, n);
+    expect(rowOf(await items(), PB, n)).toBeUndefined();
+
+    // Unanswered all along: the row reports the question truthfully when a
+    // new comment pulls the issue back in, it just cannot pull on its own.
+    await comment(PB, n, bob.headers, "ping");
+    expect(rowOf(await items(), PB, n)).toMatchObject({
+      open_questions: 1,
+      unread_comments: 1,
+    });
+    await markRead(PB, n);
+    expect(rowOf(await items(), PB, n)).toBeUndefined();
+  });
+
+  it("a closed issue's pending rows stay gone with weak unread on (T-111)", async () => {
+    // show_weak_unread defaults to on, but the toggle must not resurrect
+    // what closing retired: with the spec/question reasons neutralized,
+    // there has to be real unread activity behind every closed row.
+    const n = await createIssue(PA, "closed, weak toggle on");
+    await pushSpec(PA, n, bob.headers);
+    await ask(PA, n, bob.headers, "worth finishing?");
+    await setStatus(PA, n, "closed");
+    await markRead(PA, n);
+
+    for (const on of [true, false, true]) {
+      const res = await t.app.request("/api/me/prefs", {
+        method: "PATCH",
+        headers: headers(),
+        body: JSON.stringify({ show_weak_unread: on }),
+      });
+      expect(res.status).toBe(200);
+      expect(rowOf(await items(), PA, n)).toBeUndefined();
+    }
   });
 
   it("scopes to explicit projects and 404s on unknown or foreign slugs", async () => {

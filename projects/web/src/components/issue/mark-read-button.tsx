@@ -22,17 +22,14 @@ export function MarkReadButton({
   number,
   unread,
   unreadComments,
-  extraInvalidateKeys,
 }: {
   slug: string;
   number: number;
   unread: boolean;
   unreadComments: number;
-  /** Extra query keys to invalidate after a successful mark (the inbox). */
-  extraInvalidateKeys?: ReadonlyArray<ReadonlyArray<unknown>>;
 }) {
   const [marked, setMarked] = useState(false);
-  const { mutate } = useMarkReadAction(slug, number, { extraInvalidateKeys });
+  const { mutate } = useMarkReadAction(slug, number);
   // Absent or still-loading prefs behave like the default (show): the
   // marker must never flicker off while the query warms up.
   const showWeakUnread = useQuery(prefsQuery).data?.show_weak_unread ?? true;

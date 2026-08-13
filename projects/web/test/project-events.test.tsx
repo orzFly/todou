@@ -1,9 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
+import type { ChangeEvent } from "@todou/shared";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   INVALIDATE_COALESCE_MS,
+  inboxInvalidations,
   invalidationsFor,
   pageContainsIssue,
   RECONNECT_BASE_MS,
@@ -54,8 +56,29 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
     ).toEqual([{ key: ["members", "p"], scope: "refetch" }]);
   });
 
-  it("covers reconnect compensation broadly", () => {
-    expect(reconnectInvalidations("p").length).toBeGreaterThanOrEqual(6);
+  it("covers reconnect compensation broadly, inbox included", () => {
+    const keys = reconnectInvalidations("p");
+    expect(keys.length).toBeGreaterThanOrEqual(6);
+    expect(keys).toContainEqual(["inbox"]);
+  });
+});
+
+describe("inboxInvalidations (T-112)", () => {
+  const forEntity = (entity: ChangeEvent["entity"]) =>
+    inboxInvalidations({ entity, id: 1, action: "created", issue_number: 7 });
+
+  it("rides the project stream for anything that can move an inbox row", () => {
+    // The badge's own signal is a 30s /activity poll; the stream the page is
+    // already subscribed to is three orders of magnitude faster.
+    for (const entity of ["issue", "comment", "timeline", "spec"] as const) {
+      expect(forEntity(entity)).toEqual([{ key: ["inbox"], scope: "refetch" }]);
+    }
+  });
+
+  it("stays out of the way for entities the inbox cannot show", () => {
+    for (const entity of ["label", "member", "project", "status"] as const) {
+      expect(forEntity(entity)).toEqual([]);
+    }
   });
 });
 
@@ -145,6 +168,20 @@ describe("useProjectEvents", () => {
     });
     await waitFor(() =>
       expect(spy).toHaveBeenCalledWith({ queryKey: ["timeline", "todou", 3] }),
+    );
+  });
+
+  it("carries the inbox badge on the project stream (T-112)", async () => {
+    const { spy } = setup();
+    const source = MockEventSource.instances[0];
+    source?.emit("change", {
+      entity: "comment",
+      id: 9,
+      action: "created",
+      issue_number: 3,
+    });
+    await waitFor(() =>
+      expect(spy).toHaveBeenCalledWith({ queryKey: ["inbox"] }),
     );
   });
 

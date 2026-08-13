@@ -161,7 +161,6 @@ function InboxRow({
             number={item.number}
             unread={item.unread}
             unreadComments={item.unread_comments}
-            extraInvalidateKeys={[["inbox"]]}
           />
         </span>
         <span className="w-11 shrink-0 text-[13px] text-muted-foreground tabular-nums max-sm:w-auto">

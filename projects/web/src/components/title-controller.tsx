@@ -32,6 +32,8 @@ function titleFor(
       return `${formatRef(ctx.refPrefix, ctx.issueNumber ?? 0)}${ctx.issueTitle ? ` ${ctx.issueTitle}` : ""} · ${ctx.projectName}`;
     case "/authed/projects/$slug/issues/$number/spec":
       return `${formatRef(ctx.refPrefix, ctx.issueNumber ?? 0)} spec · ${ctx.projectName}`;
+    case "/authed/inbox":
+      return "Inbox · todou";
     case "/authed/settings/profile":
       return "Profile · todou";
     case "/authed/settings/agents":

@@ -109,6 +109,23 @@ describe("MarkReadButton (T-81)", () => {
     ).toBeTruthy();
   });
 
+  it("refreshes the inbox badge, which no event ever would (T-112)", async () => {
+    // Read positions are eventless: neither SSE nor the /activity poll can
+    // report them, so the badge only drops if the mutation says so.
+    vi.spyOn(api, "markIssueRead").mockResolvedValue(undefined);
+    const client = testQueryClient();
+    const spy = vi.spyOn(client, "invalidateQueries");
+    const view = renderWithProviders(
+      <MarkReadButton slug="p" number={7} unread unreadComments={2} />,
+      client,
+    );
+    fireEvent.click(await view.findByRole("button", { name: /mark as read/i }));
+    await waitFor(() =>
+      expect(spy).toHaveBeenCalledWith({ queryKey: ["inbox"] }),
+    );
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["issues", "p"] });
+  });
+
   it("does not let the click bubble into row/card handlers", async () => {
     vi.spyOn(api, "markIssueRead").mockResolvedValue(undefined);
     const outer = vi.fn();
