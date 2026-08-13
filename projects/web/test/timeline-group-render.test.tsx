@@ -231,27 +231,50 @@ describe("EventGroup", () => {
     );
   });
 
-  it("links every referenced source", async () => {
-    const refEvents = [
-      event({
-        event_type: "referenced",
-        payload: { by_issue: 7, by_comment: 42 },
-      }),
-      event({ event_type: "referenced", payload: { by_issue: 9 } }),
-    ];
-    const { findByTestId } = renderWithProviders(
+  it("renders references as a resident block list, no expander (T-99)", async () => {
+    const first = event({
+      event_type: "referenced",
+      payload: { by_issue: 7, by_comment: 42 },
+      created_at: "2026-08-13T08:00:00.000Z",
+    });
+    const last = event({
+      event_type: "referenced",
+      payload: { by_issue: 9 },
+      created_at: "2026-08-13T14:30:00.000Z",
+    });
+    const { findByTestId, queryByTestId, container } = renderWithProviders(
       <EventGroup
         family="referenced"
-        events={refEvents}
+        events={[first, last]}
         slug="p"
         issueNumber={1}
       />,
     );
     const group = await findByTestId("event-group");
-    expect(group.textContent).toContain("referenced by");
+    expect(group.textContent).toContain("referenced 2 times");
+    expect(queryByTestId("event-group-toggle")).toBeNull();
+
+    // Anchors sit on the resident list rows — `#event-N` deep links land
+    // without any expansion — and each row's created_at is its tooltip.
+    for (const e of [first, last]) {
+      const row = container.querySelector(`li[id="event-${e.id}"]`);
+      expect(row).toBeTruthy();
+      expect(row?.getAttribute("title")).toBe(e.created_at);
+    }
+    await waitFor(() => {
+      expect(container.querySelector('[data-issue-link="7"]')).toBeTruthy();
+      expect(container.querySelector('[data-issue-link="9"]')).toBeTruthy();
+    });
+    // The by_comment deep link survives the move into the list.
     await waitFor(() =>
-      expect(group.querySelectorAll("a").length).toBeGreaterThanOrEqual(3),
+      expect(container.querySelector('[data-comment-link="42"]')).toBeTruthy(),
     );
+
+    // Header stamp: first event's permalink, range tooltip.
+    const stamp = container.querySelector(
+      `a[href*="event-${first.id}"]`,
+    ) as HTMLAnchorElement | null;
+    expect(stamp?.title).toBe(`${first.created_at} – ${last.created_at}`);
   });
 
   it("links every attached file", async () => {

@@ -224,5 +224,29 @@ describe("timeline rendering", () => {
     );
     expect(getByText("closed this (Done)")).toBeTruthy();
     expect(container.querySelector('[aria-label="agent"]')).toBeTruthy();
+    // Non-referenced rows keep the single-line grid with its tooltip mirror.
+    const action = getByText("closed this (Done)");
+    expect(action.className).toContain("sm:truncate");
+    expect(action.getAttribute("title")).toBe("closed this (Done)");
+  });
+
+  it("lets referenced rows wrap instead of truncating (T-99)", () => {
+    const { getByText, container } = render(
+      <EventRow
+        event={{
+          type: "event",
+          id: 2,
+          event_type: "referenced",
+          actor: bot,
+          payload: { by_issue: 7 },
+          created_at: "2026-08-11T00:00:00Z",
+          agent_context: null,
+        }}
+      />,
+    );
+    const action = getByText("referenced by #7");
+    expect(action.className).not.toContain("sm:truncate");
+    expect(action.getAttribute("title")).toBeNull();
+    expect(container.firstElementChild?.className).toContain("sm:items-start");
   });
 });

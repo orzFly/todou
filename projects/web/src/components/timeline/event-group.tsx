@@ -29,7 +29,7 @@ const emphasized = (names: string[]): ReactNode =>
   ));
 
 function summarize(
-  family: MergeFamily,
+  family: Exclude<MergeFamily, "referenced">,
   events: TimelineEvent[],
   slug: string,
   issueNumber: number,
@@ -82,34 +82,6 @@ function summarize(
           .join(" · "),
       };
     }
-    case "referenced": {
-      const refs = events.map((e) => ({
-        eventId: e.id,
-        number: Number(e.payload.by_issue),
-        commentId:
-          typeof e.payload.by_comment === "number"
-            ? e.payload.by_comment
-            : undefined,
-      }));
-      return {
-        node: (
-          <>
-            {"referenced by "}
-            {refs.map((ref, i) => (
-              <Fragment key={ref.eventId}>
-                {i > 0 && ", "}
-                <IssueLink
-                  slug={slug}
-                  number={ref.number}
-                  commentId={ref.commentId}
-                />
-              </Fragment>
-            ))}
-          </>
-        ),
-        text: `referenced ${refs.length} times`,
-      };
-    }
     case "attachments": {
       const files = events.map((e) => ({
         eventId: e.id,
@@ -147,10 +119,9 @@ function summarize(
 }
 
 /**
- * One collapsed row for a merged run (T-92): shared actor header, a
- * family-specific summary, and an expander that restores the raw rows.
- * The group has no anchor of its own — per-event `#event-N` targets live
- * on the sub-rows, so a permalink into the group must force it open.
+ * One render unit for a merged run (T-92). Most families collapse to a
+ * summary row with an expander; referenced runs instead keep every
+ * reference visible as a block list (T-99) — nothing to expand.
  */
 export function EventGroup({
   family,
@@ -164,6 +135,108 @@ export function EventGroup({
   slug: string;
   issueNumber: number;
   /** Parsed `#event-N` target currently in the URL hash, if any. */
+  anchorEventId?: number;
+}) {
+  return family === "referenced" ? (
+    <ReferencedGroup events={events} slug={slug} issueNumber={issueNumber} />
+  ) : (
+    <CollapsedGroup
+      family={family}
+      events={events}
+      slug={slug}
+      issueNumber={issueNumber}
+      anchorEventId={anchorEventId}
+    />
+  );
+}
+
+/**
+ * GitHub's "This was referenced" shape (T-99): a header naming the actor
+ * once, then one always-visible line per reference — long source titles
+ * wrap instead of truncating. The `#event-N` anchors sit on the list rows
+ * themselves, so deep links land without any expansion; each row's
+ * created_at survives only as its tooltip.
+ */
+function ReferencedGroup({
+  events,
+  slug,
+  issueNumber,
+}: {
+  events: TimelineEvent[];
+  slug: string;
+  issueNumber: number;
+}) {
+  const first = events[0];
+  const last = events[events.length - 1];
+  if (!first || !last) return null;
+
+  return (
+    <div data-testid="event-group">
+      <div className="py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-center sm:gap-2">
+        <span className="inline-flex shrink-0 align-middle text-muted-foreground/70">
+          {ICONS[first.event_type]}
+        </span>{" "}
+        <UserChip
+          user={first.actor}
+          nameClassName="font-medium text-foreground/80"
+        />{" "}
+        <AgentContextBadge
+          context={first.agent_context}
+          className="align-middle"
+        />{" "}
+        <span className="min-w-0 flex-1">referenced {events.length} times</span>{" "}
+        <Link
+          to="/projects/$slug/issues/$number"
+          params={{ slug, number: String(issueNumber) }}
+          hash={eventAnchor(first.id)}
+          hashScrollIntoView={false}
+          className="shrink-0 text-xs whitespace-nowrap text-muted-foreground/70 hover:underline"
+          title={`${first.created_at} – ${last.created_at}`}
+        >
+          {new Date(first.created_at).toLocaleString()}
+        </Link>
+      </div>
+      <ul className="ml-7 text-sm text-muted-foreground">
+        {events.map((event) => (
+          <li
+            key={event.id}
+            id={eventAnchor(event.id)}
+            title={event.created_at}
+            className="py-1"
+          >
+            <IssueLink
+              slug={slug}
+              number={Number(event.payload.by_issue)}
+              commentId={
+                typeof event.payload.by_comment === "number"
+                  ? event.payload.by_comment
+                  : undefined
+              }
+            />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * The collapsing families (T-92): shared actor header, a family-specific
+ * summary, and an expander that restores the raw rows. The group has no
+ * anchor of its own — per-event `#event-N` targets live on the sub-rows,
+ * so a permalink into the group must force it open.
+ */
+function CollapsedGroup({
+  family,
+  events,
+  slug,
+  issueNumber,
+  anchorEventId,
+}: {
+  family: Exclude<MergeFamily, "referenced">;
+  events: TimelineEvent[];
+  slug: string;
+  issueNumber: number;
   anchorEventId?: number;
 }) {
   const [open, setOpen] = useState(false);

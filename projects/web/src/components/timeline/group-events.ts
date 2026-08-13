@@ -11,10 +11,23 @@ import type {
  * all stay keyed on the raw items.
  */
 
-/** Adjacent events further apart than this never merge (inclusive bound). */
+/**
+ * Adjacent events further apart than this never merge (inclusive bound) —
+ * except in families windowMsFor exempts.
+ */
 export const MERGE_WINDOW_MS = 300_000;
 
 export type MergeFamily = "status" | "labels" | "referenced" | "attachments";
+
+/**
+ * References arrive whenever some other card's work touches this one —
+ * hours apart by nature, so a gesture-sized window would never fold them
+ * (T-99). GitHub batches "This was referenced" just as liberally.
+ * Adjacency and the session key still gate the merge.
+ */
+export function windowMsFor(family: MergeFamily): number {
+  return family === "referenced" ? Number.POSITIVE_INFINITY : MERGE_WINDOW_MS;
+}
 
 /**
  * Only low-information, high-frequency types merge. Milestones
@@ -95,7 +108,7 @@ export function groupTimeline(items: TimelineItem[]): RenderUnit[] {
       run &&
       run.family === family &&
       run.key === key &&
-      ms - run.lastMs <= MERGE_WINDOW_MS
+      ms - run.lastMs <= windowMsFor(family)
     ) {
       run.events.push(item);
       run.lastMs = ms;

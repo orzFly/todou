@@ -156,6 +156,51 @@ describe("groupTimeline", () => {
     expect(kinds(units)).toEqual(["group:3"]);
   });
 
+  it("merges adjacent references regardless of the window (T-99)", () => {
+    const HOURS = 3_600_000;
+    const units = groupTimeline([
+      event({ event_type: "referenced", payload: { by_issue: 7 }, atMs: 0 }),
+      event({
+        event_type: "referenced",
+        payload: { by_issue: 8 },
+        atMs: 3 * HOURS,
+      }),
+      event({
+        event_type: "referenced",
+        payload: { by_issue: 9 },
+        atMs: 9 * HOURS,
+      }),
+    ]);
+    expect(kinds(units)).toEqual(["group:3"]);
+  });
+
+  it("still splits windowless references on an interleaved comment", () => {
+    const units = groupTimeline([
+      event({ event_type: "referenced", payload: { by_issue: 7 }, atMs: 0 }),
+      comment(1000),
+      event({ event_type: "referenced", payload: { by_issue: 8 }, atMs: 2000 }),
+    ]);
+    expect(kinds(units)).toEqual(["item", "item", "item"]);
+  });
+
+  it("still splits windowless references on a session boundary", () => {
+    const units = groupTimeline([
+      event({
+        event_type: "referenced",
+        payload: { by_issue: 7 },
+        agent_context: sessionA,
+        atMs: 0,
+      }),
+      event({
+        event_type: "referenced",
+        payload: { by_issue: 8 },
+        agent_context: sessionB,
+        atMs: 1000,
+      }),
+    ]);
+    expect(kinds(units)).toEqual(["item", "item"]);
+  });
+
   it("splits runs on a session boundary", () => {
     const units = groupTimeline([
       event({ agent_context: sessionA, atMs: 0 }),
