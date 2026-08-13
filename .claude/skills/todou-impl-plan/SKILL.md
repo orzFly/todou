@@ -43,11 +43,13 @@ commit on your branch (**do not merge**), move the card to Ready to Ship, post a
 report in the terminal.
 
 The commit message carries a `Spec:` line above the `Co-Authored-By:` line, pointing at the issue
-and spec version the implementation follows:
+and spec version the implementation follows. **Write the card reference the way the project writes
+it** — many repos are mirrored to a host that autolinks bare `#N` to its own, unrelated numbering,
+so check the project's convention (AGENTS.md, recent `git log`) before inventing one:
 
 ```
 feat: implement the xyz feature
 
-Spec: <proj>#23 spec v3
+Spec: T-23 spec v3
 Co-Authored-By: <model> <noreply@anthropic.com>
 ```
