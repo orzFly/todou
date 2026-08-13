@@ -1,16 +1,49 @@
 import type { Label } from "@todou/shared";
+import { cn } from "@/lib/utils";
 
-export function LabelChip({ label }: { label: Label }) {
+/**
+ * Split a structured label name at the first colon. A leading colon is not a
+ * prefix (":oops" stays whole) — hence > 0, not >= 0.
+ */
+export function splitLabelName(name: string): {
+  prefix: string | null;
+  value: string;
+} {
+  const i = name.indexOf(":");
+  if (i > 0) return { prefix: name.slice(0, i + 1), value: name.slice(i + 1) };
+  return { prefix: null, value: name };
+}
+
+/**
+ * Quiet chip (T-82): the label color lives only in the dot, the text stays in
+ * foreground/muted — no `${color}22`-style translucent tints, which kept the
+ * light/dark themes from needing per-color branches.
+ */
+export function LabelChip({
+  label,
+  className,
+}: {
+  label: Label;
+  className?: string;
+}) {
+  const { prefix, value } = splitLabelName(label.name);
   return (
     <span
-      className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
-      style={{
-        backgroundColor: `${label.color}22`,
-        color: label.color,
-        border: `1px solid ${label.color}55`,
-      }}
+      className={cn(
+        "inline-flex items-center gap-[5px] rounded-full border px-[7px] py-[1.5px] text-[11px] leading-[15px] whitespace-nowrap",
+        className,
+      )}
+      title={label.name}
     >
-      {label.name}
+      <span
+        className="size-[7px] shrink-0 rounded-full"
+        style={{ backgroundColor: label.color }}
+        aria-hidden
+      />
+      <span>
+        {prefix && <span className="text-muted-foreground">{prefix}</span>}
+        {value}
+      </span>
     </span>
   );
 }

@@ -11,7 +11,10 @@ import {
   patchIssueStatus,
   toggleId,
 } from "../src/api/issues.ts";
-import { LabelChip } from "../src/components/issue/label-chip.tsx";
+import {
+  LabelChip,
+  splitLabelName,
+} from "../src/components/issue/label-chip.tsx";
 import { StatusPill } from "../src/components/issue/status-pill.tsx";
 
 describe("issueSearchSchema (filter state ↔ URL)", () => {
@@ -148,10 +151,41 @@ describe("presentational chips", () => {
     expect(getByText("In Progress")).toBeTruthy();
   });
 
-  it("renders label chips tinted by label color", () => {
+  it("renders label chips with the full name reachable", () => {
     const { getByText } = render(
       <LabelChip label={{ id: 1, name: "bug", color: "#ff0000" }} />,
     );
     expect(getByText("bug")).toBeTruthy();
+  });
+
+  it("keeps the full label name on the chip when the prefix is de-emphasized", () => {
+    const { getByTitle } = render(
+      <LabelChip label={{ id: 1, name: "area:web", color: "#3b82f6" }} />,
+    );
+    expect(getByTitle("area:web").textContent).toBe("area:web");
+  });
+});
+
+describe("splitLabelName (first-colon split)", () => {
+  it("splits a structured name at the first colon", () => {
+    expect(splitLabelName("area:web")).toEqual({
+      prefix: "area:",
+      value: "web",
+    });
+  });
+
+  it("keeps colon-free names whole", () => {
+    expect(splitLabelName("needs-brainstorm")).toEqual({
+      prefix: null,
+      value: "needs-brainstorm",
+    });
+  });
+
+  it("only the first colon splits", () => {
+    expect(splitLabelName("a:b:c")).toEqual({ prefix: "a:", value: "b:c" });
+  });
+
+  it("a leading colon is not a prefix", () => {
+    expect(splitLabelName(":x")).toEqual({ prefix: null, value: ":x" });
   });
 });

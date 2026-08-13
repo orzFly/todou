@@ -10,6 +10,7 @@ import {
   type IssueCounts,
   type IssueListItem,
   type IssueListPage as IssueListPageData,
+  type Label,
   type Status,
 } from "@todou/shared";
 import {
@@ -50,14 +51,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+
+/* Labels beyond this many collapse into a +N chip below the sm breakpoint;
+   desktop keeps them all (the meta line has the full row width). */
+const NARROW_LABEL_CAP = 2;
 
 export function IssueListPage() {
   const { slug } = useParams({ from: "/authed/projects/$slug" });
@@ -104,7 +101,7 @@ export function IssueListPage() {
           </Link>
         </Button>
       </div>
-      <IssueTable
+      <IssueList
         slug={slug}
         page={issues.data}
         statuses={statuses.data}
@@ -152,7 +149,7 @@ function CategoryTabs({
 }
 
 /** Exported for tests (pagination state, like IssueRow). */
-export function IssueTable({
+export function IssueList({
   slug,
   page,
   statuses,
@@ -162,7 +159,7 @@ export function IssueTable({
   slug: string;
   page: IssueListPageData;
   statuses: Status[];
-  allLabels: Array<{ id: number; name: string; color: string }>;
+  allLabels: Label[];
   search: IssueSearch;
 }) {
   const [extraPages, setExtraPages] = useState<IssueListPageData[]>([]);
@@ -208,42 +205,29 @@ export function IssueTable({
 
   return (
     <div className="space-y-3">
-      <div className="rounded-lg border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-20">#</TableHead>
-              <TableHead>Title</TableHead>
-              <TableHead className="w-36">Status</TableHead>
-              <TableHead className="w-44">Labels</TableHead>
-              <TableHead className="w-40">Assignees</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {items.map((issue) => (
-              <IssueRow
-                key={issue.id}
-                slug={slug}
-                issue={issue}
-                statuses={statuses}
-                allLabels={allLabels}
-                onStatus={(status) =>
-                  statusMutation.mutate({ issueNumber: issue.number, status })
-                }
-                onToggleLabel={(labelId) => {
-                  const current = issue.labels.map((l) => l.id);
-                  labelsMutation.mutate({
-                    issueNumber: issue.number,
-                    labelIds: current.includes(labelId)
-                      ? current.filter((id) => id !== labelId)
-                      : [...current, labelId],
-                  });
-                }}
-              />
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+      <ul className="rounded-lg border">
+        {items.map((issue) => (
+          <IssueRow
+            key={issue.id}
+            slug={slug}
+            issue={issue}
+            statuses={statuses}
+            allLabels={allLabels}
+            onStatus={(status) =>
+              statusMutation.mutate({ issueNumber: issue.number, status })
+            }
+            onToggleLabel={(labelId) => {
+              const current = issue.labels.map((l) => l.id);
+              labelsMutation.mutate({
+                issueNumber: issue.number,
+                labelIds: current.includes(labelId)
+                  ? current.filter((id) => id !== labelId)
+                  : [...current, labelId],
+              });
+            }}
+          />
+        ))}
+      </ul>
       {lastCursor && (
         <div className="text-center">
           <Button variant="outline" size="sm" onClick={loadMore}>
@@ -267,36 +251,37 @@ export function IssueRow({
   slug: string;
   issue: IssueListItem;
   statuses: Status[];
-  allLabels: Array<{ id: number; name: string; color: string }>;
+  allLabels: Label[];
   onStatus: (status: Status) => void;
   onToggleLabel: (labelId: number) => void;
 }) {
   const refPrefix = useRefPrefix(slug);
+  const hiddenLabels = issue.labels.length - NARROW_LABEL_CAP;
   return (
-    <TableRow>
-      <TableCell className="text-muted-foreground">
+    <li className="border-b px-3.5 py-2.5 transition-colors last:border-0 hover:bg-muted/50">
+      <div className="flex items-center gap-2">
         {/* Fixed-width slot (the CLI's ● column, sized for the 99+ badge)
             keeps numbers from shifting; centering keeps the ring and the
             badge on one axis. */}
-        <span className="mr-1.5 inline-flex w-[27px] items-center justify-center align-middle">
+        <span className="inline-flex w-[27px] shrink-0 justify-center">
           <UnreadMarker
             unread={issue.unread}
             unreadComments={issue.unread_comments}
           />
         </span>
-        {formatRef(refPrefix, issue.number)}
-      </TableCell>
-      <TableCell>
+        <span className="w-11 shrink-0 text-[13px] text-muted-foreground tabular-nums max-sm:w-auto">
+          {formatRef(refPrefix, issue.number)}
+        </span>
         <Link
           to="/projects/$slug/issues/$number"
           params={{ slug, number: String(issue.number) }}
-          className="font-medium hover:underline"
+          className="min-w-0 truncate font-medium hover:underline"
         >
           {issue.title}
         </Link>
         {issue.open_questions > 0 && (
           <span
-            className="ml-2 inline-flex items-center gap-1 rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 align-middle text-xs text-amber-700 dark:text-amber-400"
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700 dark:text-amber-400"
             title={`${issue.open_questions} unanswered question(s)`}
           >
             <MessageCircleQuestionIcon className="size-3.5" />
@@ -305,15 +290,17 @@ export function IssueRow({
         )}
         {issue.spec_review_status === "unreviewed" && (
           <span
-            className="ml-2 inline-flex items-center gap-1 rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 align-middle text-xs text-amber-700 dark:text-amber-400"
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700 dark:text-amber-400"
             title={`spec v${issue.spec_version} is awaiting review`}
           >
             <BookOpenTextIcon className="size-3.5" />
             spec
           </span>
         )}
-      </TableCell>
-      <TableCell>
+      </div>
+      {/* pl mirrors line 1: unread slot 27 + gap 8 (+ ref 44 when it is
+          fixed-width, ≥sm only) so the meta line starts under the title. */}
+      <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-[79px] max-sm:pl-[35px]">
         <DropdownMenu>
           <DropdownMenuTrigger className="cursor-pointer">
             <StatusPill status={issue.status} />
@@ -329,47 +316,78 @@ export function IssueRow({
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
-      </TableCell>
-      <TableCell>
-        <div className="flex flex-wrap items-center gap-1">
-          {issue.labels.map((label) => (
-            <LabelChip key={label.id} label={label} />
-          ))}
+        {issue.labels.map((label, index) => (
+          <LabelChip
+            key={label.id}
+            label={label}
+            className={index >= NARROW_LABEL_CAP ? "max-sm:hidden" : undefined}
+          />
+        ))}
+        {hiddenLabels > 0 && (
           <DropdownMenu>
-            <DropdownMenuTrigger className="cursor-pointer text-muted-foreground hover:text-foreground">
-              <TagIcon className="size-3.5" aria-label="edit labels" />
+            <DropdownMenuTrigger className="inline-flex cursor-pointer items-center rounded-full border border-dashed px-[7px] py-[1.5px] text-[11px] leading-[15px] text-muted-foreground hover:text-foreground sm:hidden">
+              +{hiddenLabels}
             </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              {allLabels.length === 0 && (
-                <DropdownMenuItem disabled>No labels defined</DropdownMenuItem>
-              )}
-              {allLabels.map((label) => (
-                <DropdownMenuItem
-                  key={label.id}
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    onToggleLabel(label.id);
-                  }}
-                >
-                  <span className="w-4">
-                    {issue.labels.some((l) => l.id === label.id) && (
-                      <CheckIcon className="size-4" />
-                    )}
-                  </span>
-                  {label.name}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
+            <LabelEditMenu
+              allLabels={allLabels}
+              issueLabels={issue.labels}
+              onToggle={onToggleLabel}
+            />
           </DropdownMenu>
-        </div>
-      </TableCell>
-      <TableCell>
-        <div className="flex flex-wrap gap-2">
+        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger className="cursor-pointer text-muted-foreground hover:text-foreground">
+            <TagIcon className="size-3.5" aria-label="edit labels" />
+          </DropdownMenuTrigger>
+          <LabelEditMenu
+            allLabels={allLabels}
+            issueLabels={issue.labels}
+            onToggle={onToggleLabel}
+          />
+        </DropdownMenu>
+        <span className="flex-1" />
+        <span className="flex gap-1">
           {issue.assignees.map((user) => (
             <UserChip key={user.id} user={user} compact />
           ))}
-        </div>
-      </TableCell>
-    </TableRow>
+        </span>
+      </div>
+    </li>
+  );
+}
+
+/* One checkable label list, two triggers: the row's tag icon and the narrow
+   +N chip — "see the rest" and "edit" are the same surface. */
+function LabelEditMenu({
+  allLabels,
+  issueLabels,
+  onToggle,
+}: {
+  allLabels: Label[];
+  issueLabels: Label[];
+  onToggle: (labelId: number) => void;
+}) {
+  return (
+    <DropdownMenuContent>
+      {allLabels.length === 0 && (
+        <DropdownMenuItem disabled>No labels defined</DropdownMenuItem>
+      )}
+      {allLabels.map((label) => (
+        <DropdownMenuItem
+          key={label.id}
+          onSelect={(e) => {
+            e.preventDefault();
+            onToggle(label.id);
+          }}
+        >
+          <span className="w-4">
+            {issueLabels.some((l) => l.id === label.id) && (
+              <CheckIcon className="size-4" />
+            )}
+          </span>
+          {label.name}
+        </DropdownMenuItem>
+      ))}
+    </DropdownMenuContent>
   );
 }

@@ -1,6 +1,5 @@
 import type { IssueListItem, Status } from "@todou/shared";
 import { describe, expect, it } from "vitest";
-import { Table, TableBody } from "../src/components/ui/table.tsx";
 import { IssueRow } from "../src/pages/issue-list.tsx";
 import { renderWithProviders } from "./render.tsx";
 
@@ -41,18 +40,16 @@ const issue = (unread: boolean, unreadComments = 0): IssueListItem => ({
 
 const renderRow = (unread: boolean, unreadComments = 0) =>
   renderWithProviders(
-    <Table>
-      <TableBody>
-        <IssueRow
-          slug="p"
-          issue={issue(unread, unreadComments)}
-          statuses={[status]}
-          allLabels={[]}
-          onStatus={() => {}}
-          onToggleLabel={() => {}}
-        />
-      </TableBody>
-    </Table>,
+    <ul>
+      <IssueRow
+        slug="p"
+        issue={issue(unread, unreadComments)}
+        statuses={[status]}
+        allLabels={[]}
+        onStatus={() => {}}
+        onToggleLabel={() => {}}
+      />
+    </ul>,
   );
 
 describe("IssueRow unread marker (T-46, T-77)", () => {

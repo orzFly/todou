@@ -7,7 +7,7 @@ import type {
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { IssueSearch } from "../src/api/issues.ts";
-import { IssueTable } from "../src/pages/issue-list.tsx";
+import { IssueList } from "../src/pages/issue-list.tsx";
 import { renderWithProviders } from "./render.tsx";
 
 const open: Status = {
@@ -92,7 +92,7 @@ describe("issue list Load More pagination state", () => {
     );
 
     const { getByText, queryByText, findByText } = renderWithProviders(
-      <IssueTable
+      <IssueList
         slug="p"
         page={page1}
         statuses={[open, done]}
@@ -134,7 +134,7 @@ describe("issue list Load More pagination state", () => {
           <button type="button" onClick={() => setCategory("open")}>
             switch to open
           </button>
-          <IssueTable
+          <IssueList
             slug="p"
             page={category === "closed" ? closedPage1 : openPage1}
             statuses={[open, done]}
