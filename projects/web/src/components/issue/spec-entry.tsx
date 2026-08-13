@@ -2,11 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { SpecReviewStatus } from "@todou/shared";
 import { ArrowDownIcon, BookOpenTextIcon, FileTextIcon } from "lucide-react";
-import {
-  latestSpecPushQuery,
-  specQuery,
-  specVersionStatsQuery,
-} from "@/api/spec.ts";
+import { specVersionStatsQuery, useIssueSpec } from "@/api/spec.ts";
 import {
   DiffstatBar,
   StatNumbers,
@@ -63,8 +59,7 @@ export function SpecEntryRow({
   slug: string;
   issueNumber: number;
 }) {
-  const spec = useQuery(specQuery(slug, issueNumber));
-  const latest = useQuery(latestSpecPushQuery(slug, issueNumber));
+  const { spec, latest } = useIssueSpec(slug, issueNumber);
   const stats = useQuery({
     ...specVersionStatsQuery(
       slug,
@@ -133,8 +128,7 @@ export function SpecSidebarSection({
   slug: string;
   issueNumber: number;
 }) {
-  const spec = useQuery(specQuery(slug, issueNumber));
-  const latest = useQuery(latestSpecPushQuery(slug, issueNumber));
+  const { spec, latest } = useIssueSpec(slug, issueNumber);
   const stats = useQuery({
     ...specVersionStatsQuery(
       slug,

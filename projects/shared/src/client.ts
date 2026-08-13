@@ -60,6 +60,12 @@ export type TodouClientOptions = {
    */
   headers?: Record<string, string>;
   fetch?: typeof fetch;
+  /**
+   * Coalesce same-tick GETs into one POST /api/batch exchange (T-91).
+   * Off by default: only the web app's burst-y query fan-out profits;
+   * sequential CLI calls would pay the macrotask delay for nothing.
+   */
+  batch?: boolean;
 };
 
 export class TodouError extends Error {
@@ -105,16 +111,42 @@ function queryString(query?: Query): string {
  */
 const MAX_SHA256_BYTES = 32 * 1024 * 1024;
 
+/** Mirrors the server's envelope cap (BATCH_MAX_REQUESTS). */
+const BATCH_LIMIT = 50;
+
+type BatchWaiter = {
+  url: string;
+  resolve: (value: unknown) => void;
+  reject: (error: unknown) => void;
+};
+
+function errorFromBody(status: number, parsed: unknown): TodouError {
+  const body = parsed as {
+    error?: { code?: string; message?: string; details?: unknown };
+  } | null;
+  return new TodouError(
+    status,
+    body?.error?.code ?? "unknown",
+    body?.error?.message ?? `${status}`,
+    body?.error?.details,
+  );
+}
+
 export class TodouClient {
   #baseUrl: string;
   #token?: string;
   #headers?: Record<string, string>;
   #fetch: typeof fetch;
+  #batch: boolean;
+  #batchQueue: BatchWaiter[] = [];
+  /** Remembered per client: the backend has no batch endpoint. */
+  #batchUnavailable = false;
 
   constructor(options?: TodouClientOptions) {
     this.#baseUrl = options?.baseUrl ?? "";
     this.#token = options?.token;
     this.#headers = options?.headers;
+    this.#batch = options?.batch ?? false;
     // Never store the bare global fetch: calling it as `this.#fetch(...)`
     // rebinds `this` to the client and browsers throw
     // "'fetch' called on an object that does not implement interface Window".
@@ -127,6 +159,19 @@ export class TodouClient {
    * behave exactly like the typed methods.
    */
   async request<T>(
+    method: string,
+    path: string,
+    init?: { json?: unknown; form?: FormData; query?: Query },
+  ): Promise<T> {
+    if (method === "GET" && this.#batch && !this.#batchUnavailable) {
+      return this.#enqueueBatch(
+        `${path}${queryString(init?.query)}`,
+      ) as Promise<T>;
+    }
+    return this.#send(method, path, init);
+  }
+
+  async #send<T>(
     method: string,
     path: string,
     init?: { json?: unknown; form?: FormData; query?: Query },
@@ -146,23 +191,81 @@ export class TodouClient {
       { method, headers, body, credentials: "same-origin" },
     );
     if (!res.ok) {
-      let code = "unknown";
-      let message = `${res.status}`;
-      let details: unknown;
+      let parsed: unknown = null;
       try {
-        const parsed = (await res.json()) as {
-          error?: { code?: string; message?: string; details?: unknown };
-        };
-        code = parsed.error?.code ?? code;
-        message = parsed.error?.message ?? message;
-        details = parsed.error?.details;
+        parsed = await res.json();
       } catch {
-        // Non-JSON error body; keep status as message.
+        // Non-JSON error body; errorFromBody keeps status as message.
       }
-      throw new TodouError(res.status, code, message, details);
+      throw errorFromBody(res.status, parsed);
     }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
+  }
+
+  /**
+   * Same-tick GETs coalesce into one POST /api/batch (T-91); the
+   * macrotask boundary lets every query mounted by one render commit
+   * join before the flush (same trick as the web's issue-refs batcher).
+   * A single queued request skips the envelope so plain HTTP semantics
+   * (and server logs) stay the norm outside bursts.
+   */
+  #enqueueBatch(url: string): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      this.#batchQueue.push({ url, resolve, reject });
+      if (this.#batchQueue.length === 1) {
+        setTimeout(() => void this.#flushBatch(), 0);
+      }
+    });
+  }
+
+  async #flushBatch(): Promise<void> {
+    const queue = this.#batchQueue;
+    this.#batchQueue = [];
+    if (queue.length === 1) {
+      const item = queue[0] as BatchWaiter;
+      this.#send<unknown>("GET", item.url).then(item.resolve, item.reject);
+      return;
+    }
+    for (let i = 0; i < queue.length; i += BATCH_LIMIT) {
+      await this.#sendBatchChunk(queue.slice(i, i + BATCH_LIMIT));
+    }
+  }
+
+  async #sendBatchChunk(chunk: BatchWaiter[]): Promise<void> {
+    let envelope: { responses: Array<{ status: number; body: unknown }> };
+    try {
+      envelope = await this.#send("POST", "/batch", {
+        json: { requests: chunk.map(({ url }) => ({ url })) },
+      });
+    } catch (error) {
+      // 404/405 = a server predating the gateway: remember, fall back to
+      // direct sends for this chunk, and never try the envelope again.
+      if (
+        error instanceof TodouError &&
+        (error.status === 404 || error.status === 405)
+      ) {
+        this.#batchUnavailable = true;
+        for (const item of chunk) {
+          this.#send<unknown>("GET", item.url).then(item.resolve, item.reject);
+        }
+        return;
+      }
+      for (const item of chunk) item.reject(error);
+      return;
+    }
+    chunk.forEach((item, i) => {
+      const result = envelope.responses[i];
+      if (result === undefined) {
+        item.reject(
+          new TodouError(502, "batch_mismatch", "missing batch response"),
+        );
+      } else if (result.status >= 200 && result.status < 300) {
+        item.resolve(result.status === 204 ? undefined : result.body);
+      } else {
+        item.reject(errorFromBody(result.status, result.body));
+      }
+    });
   }
 
   // — auth / me —

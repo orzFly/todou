@@ -215,3 +215,103 @@ describe("TodouClient", () => {
     expect(calls[0]?.init.body).toBe('{"user_id":2}');
   });
 });
+
+describe("TodouClient batching (T-91)", () => {
+  const envelopeFetch = () => {
+    const calls: Captured[] = [];
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      const { requests } = JSON.parse(String(init?.body)) as {
+        requests: Array<{ url: string }>;
+      };
+      return Response.json({
+        responses: requests.map((r) =>
+          r.url === "/missing"
+            ? {
+                status: 404,
+                body: { error: { code: "not_found", message: "nope" } },
+              }
+            : { status: 200, body: { echo: r.url } },
+        ),
+      });
+    }) as typeof fetch;
+    return { fetch: fetchImpl, calls };
+  };
+
+  it("coalesces same-tick GETs into one envelope, positionally", async () => {
+    const { fetch, calls } = envelopeFetch();
+    const client = new TodouClient({ fetch, batch: true });
+    const [a, b, c] = await Promise.all([
+      client.request("GET", "/me"),
+      client.request("GET", "/projects/p/statuses"),
+      client.request("GET", "/projects/p/issues", { query: { limit: 5 } }),
+    ]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("/api/batch");
+    expect(calls[0]?.init.method).toBe("POST");
+    expect(a).toEqual({ echo: "/me" });
+    expect(b).toEqual({ echo: "/projects/p/statuses" });
+    expect(c).toEqual({ echo: "/projects/p/issues?limit=5" });
+  });
+
+  it("sends a lone GET directly, keeping plain HTTP semantics", async () => {
+    const { fetch, calls } = mockFetch(200, { id: 1 });
+    const client = new TodouClient({ fetch, batch: true });
+    expect(await client.request("GET", "/me")).toEqual({ id: 1 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("/api/me");
+  });
+
+  it("rejects failed items with the same TodouError shape as direct sends", async () => {
+    const { fetch } = envelopeFetch();
+    const client = new TodouClient({ fetch, batch: true });
+    const [ok, missing] = await Promise.allSettled([
+      client.request("GET", "/me"),
+      client.request("GET", "/missing"),
+    ]);
+    expect(ok.status).toBe("fulfilled");
+    expect(missing.status).toBe("rejected");
+    const error = (missing as PromiseRejectedResult).reason as TodouError;
+    expect(error).toBeInstanceOf(TodouError);
+    expect(error.status).toBe(404);
+    expect(error.code).toBe("not_found");
+  });
+
+  it("falls back to direct sends and remembers when the gateway is missing", async () => {
+    const calls: Captured[] = [];
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      if (String(url).endsWith("/api/batch")) {
+        return Response.json(
+          { error: { code: "not_found", message: "no batch here" } },
+          { status: 404 },
+        );
+      }
+      return Response.json({ url: String(url) });
+    }) as typeof fetch;
+    const client = new TodouClient({ fetch: fetchImpl, batch: true });
+
+    const first = await Promise.all([
+      client.request("GET", "/me"),
+      client.request("GET", "/projects"),
+    ]);
+    expect(first).toEqual([{ url: "/api/me" }, { url: "/api/projects" }]);
+    const batchCalls = calls.filter((c) => c.url.endsWith("/api/batch"));
+    expect(batchCalls).toHaveLength(1);
+
+    // Degradation is remembered: the next burst goes straight to direct.
+    await Promise.all([
+      client.request("GET", "/me"),
+      client.request("GET", "/projects"),
+    ]);
+    expect(calls.filter((c) => c.url.endsWith("/api/batch"))).toHaveLength(1);
+  });
+
+  it("keeps writes out of the batch queue", async () => {
+    const { fetch, calls } = mockFetch(200, { ok: true });
+    const client = new TodouClient({ fetch, batch: true });
+    await client.request("POST", "/projects", { json: { slug: "x" } });
+    expect(calls[0]?.url).toBe("/api/projects");
+    expect(calls[0]?.init.method).toBe("POST");
+  });
+});

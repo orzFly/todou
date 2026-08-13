@@ -3,38 +3,41 @@ import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  INVALIDATE_COALESCE_MS,
   invalidationsFor,
+  pageContainsIssue,
   RECONNECT_BASE_MS,
   reconnectInvalidations,
   STALL_TIMEOUT_MS,
   useProjectEvents,
 } from "../src/api/useProjectEvents.ts";
 
-describe("invalidationsFor (SSE → query keys)", () => {
-  it("maps issue events to list, detail, and timeline", () => {
+describe("invalidationsFor (SSE → invalidation descriptors)", () => {
+  it("maps issue events to broad refetches (status may move columns)", () => {
     expect(
       invalidationsFor(
         { entity: "issue", id: 1, action: "updated", issue_number: 42 },
         "todou",
       ),
     ).toEqual([
-      ["issues", "todou"],
-      ["issue", "todou", 42],
-      ["timeline", "todou", 42],
+      { key: ["issues", "todou"], scope: "refetch" },
+      { key: ["issue", "todou", 42], scope: "refetch" },
+      { key: ["timeline", "todou", 42], scope: "refetch" },
     ]);
   });
 
-  it("maps timeline events to that issue's timeline, questions, and the list", () => {
+  it("scopes timeline events' list refetch to pages containing the issue", () => {
     expect(
       invalidationsFor(
         { entity: "timeline", id: 5, action: "created", issue_number: 7 },
         "todou",
       ),
     ).toEqual([
-      ["timeline", "todou", 7],
-      ["questions", "todou", 7],
-      // Unread markers (T-46) ride the list payload.
-      ["issues", "todou"],
+      { key: ["timeline", "todou", 7], scope: "refetch" },
+      { key: ["questions", "todou", 7], scope: "refetch" },
+      // Unread markers (T-46) ride the list payload, but a comment cannot
+      // move an issue between pages — containment is enough.
+      { key: ["issues", "todou"], scope: { contains: 7 } },
     ]);
   });
 
@@ -42,16 +45,34 @@ describe("invalidationsFor (SSE → query keys)", () => {
     expect(
       invalidationsFor({ entity: "status", id: 1, action: "updated" }, "p"),
     ).toEqual([
-      ["statuses", "p"],
-      ["issues", "p"],
+      { key: ["statuses", "p"], scope: "refetch" },
+      { key: ["issues", "p"], scope: "refetch" },
     ]);
     expect(
       invalidationsFor({ entity: "member", id: 1, action: "deleted" }, "p"),
-    ).toEqual([["members", "p"]]);
+    ).toEqual([{ key: ["members", "p"], scope: "refetch" }]);
   });
 
   it("covers reconnect compensation broadly", () => {
     expect(reconnectInvalidations("p").length).toBeGreaterThanOrEqual(6);
+  });
+});
+
+describe("pageContainsIssue", () => {
+  it("finds the row in a list page", () => {
+    expect(pageContainsIssue({ items: [{ number: 7 }] }, 7)).toBe(true);
+  });
+
+  it("misses pages without the row", () => {
+    expect(pageContainsIssue({ items: [{ number: 8 }] }, 7)).toBe(false);
+  });
+
+  it("rejects the counts shape (no items)", () => {
+    expect(pageContainsIssue({ open: 3, closed: 4 }, 7)).toBe(false);
+  });
+
+  it("tolerates empty caches", () => {
+    expect(pageContainsIssue(undefined, 7)).toBe(false);
   });
 });
 
@@ -133,6 +154,57 @@ describe("useProjectEvents", () => {
       listener({ data: "not json" } as MessageEvent);
     }
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("coalesces an event burst into one flush without duplicates", () => {
+    vi.useFakeTimers();
+    const { spy } = setup();
+    const source = MockEventSource.instances[0];
+    const event = {
+      entity: "timeline",
+      id: 9,
+      action: "created",
+      issue_number: 3,
+    };
+    source?.emit("change", event);
+    source?.emit("change", { ...event, id: 10 });
+    expect(spy).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+    const timelineCalls = spy.mock.calls.filter(
+      (call) =>
+        JSON.stringify(call[0]?.queryKey) ===
+        JSON.stringify(["timeline", "todou", 3]),
+    );
+    expect(timelineCalls).toHaveLength(1);
+  });
+
+  it("lets a broad issues refetch subsume a contains-scope in the same window", () => {
+    vi.useFakeTimers();
+    const { spy } = setup();
+    const source = MockEventSource.instances[0];
+    source?.emit("change", {
+      entity: "timeline",
+      id: 9,
+      action: "created",
+      issue_number: 3,
+    });
+    source?.emit("change", {
+      entity: "issue",
+      id: 3,
+      action: "updated",
+      issue_number: 3,
+    });
+
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+    const issuesCalls = spy.mock.calls.filter(
+      (call) =>
+        JSON.stringify(call[0]?.queryKey) ===
+        JSON.stringify(["issues", "todou"]),
+    );
+    // One broad refetch; no stale-mark/predicate pair from the contains path.
+    expect(issuesCalls).toHaveLength(1);
+    expect(issuesCalls[0]?.[0]).toEqual({ queryKey: ["issues", "todou"] });
   });
 
   it("compensates with broad invalidation after a reconnect", async () => {
