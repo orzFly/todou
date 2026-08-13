@@ -1,5 +1,6 @@
-import { queryOptions } from "@tanstack/react-query";
+import { queryOptions, useQuery } from "@tanstack/react-query";
 import { SpecPushedPayload, TodouError } from "@todou/shared";
+import { issueQuery } from "@/api/issues.ts";
 import { api } from "@/api/queries.ts";
 import {
   computeVersionStats,
@@ -39,6 +40,28 @@ export const specCommentsQuery = (slug: string, issueNumber: number) =>
     queryFn: () => api.getSpecComments(slug, issueNumber),
   });
 
+/**
+ * The spec surfaces of the issue page, gated on the denormalized
+ * `spec_version` the issue payload already carries (T-23): the page has
+ * the issue in cache by the time these mount, so spec-less issues (the
+ * common case) skip both the 404 probe and the spec_pushed timeline
+ * query entirely. An SSE spec push invalidates the issue alongside the
+ * spec keys, so the queries wake up on their own.
+ */
+export function useIssueSpec(slug: string, issueNumber: number) {
+  const issue = useQuery(issueQuery(slug, issueNumber));
+  const hasSpec = issue.data?.spec_version != null;
+  const spec = useQuery({
+    ...specQuery(slug, issueNumber),
+    enabled: hasSpec,
+  });
+  const latest = useQuery({
+    ...latestSpecPushQuery(slug, issueNumber),
+    enabled: hasSpec,
+  });
+  return { spec, latest };
+}
+
 /** Newest spec_pushed timeline event — the anchor target of the issue-page
  *  spec entry (T-63) and the payload source for its stats. */
 export const latestSpecPushQuery = (slug: string, issueNumber: number) =>
@@ -73,12 +96,17 @@ export const specVersionStatsQuery = (
   queryOptions({
     queryKey: ["spec-version-stats", slug, issueNumber, payload.version],
     staleTime: Number.POSITIVE_INFINITY,
-    queryFn: async (): Promise<SpecFileStat[]> => {
+    // Version snapshots go through the query cache (they are immutable,
+    // specFilesQuery caches them forever): adjacent stats queries share
+    // the versions they have in common — v2's "before" is v1's "after".
+    queryFn: async ({ client }): Promise<SpecFileStat[]> => {
       const [{ diffLines }, after, before] = await Promise.all([
         import("diff"),
-        api.getSpecFiles(slug, issueNumber, payload.version),
+        client.fetchQuery(specFilesQuery(slug, issueNumber, payload.version)),
         payload.version > 1
-          ? api.getSpecFiles(slug, issueNumber, payload.version - 1)
+          ? client.fetchQuery(
+              specFilesQuery(slug, issueNumber, payload.version - 1),
+            )
           : Promise.resolve(null),
       ]);
       return computeVersionStats(
