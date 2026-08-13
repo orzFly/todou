@@ -150,6 +150,29 @@ describe("AgentContextBadge in the timeline", () => {
     await vi.waitFor(() => expect(toast.success).toHaveBeenCalledOnce());
   });
 
+  it("copies the session id itself for a harness with no resume command", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    const badge = await renderBadge({
+      agent: "hermes-agent",
+      session_id: "agent:main:telegram:dm:1000001",
+    });
+    expect(badge.getAttribute("title")).toBe(
+      "hermes-agent · session agent:main:telegram:dm:1000001 — click to copy the session id",
+    );
+    expect(
+      badge.querySelector('[data-testid="harness-icon-bot"]'),
+    ).not.toBeNull();
+
+    fireEvent.click(badge);
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(
+      "agent:main:telegram:dm:1000001",
+    );
+  });
+
   it("is not clickable without a session id", async () => {
     const badge = await renderBadge({
       agent: "claude-code",

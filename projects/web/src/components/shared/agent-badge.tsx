@@ -3,6 +3,7 @@ import { Bot } from "lucide-react";
 import type { CSSProperties } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { HARNESS_META } from "@/lib/harness";
 import { cn } from "@/lib/utils";
 
 /* FNV-1a over the full session id: one-char differences must land on
@@ -96,7 +97,9 @@ export function AgentContextBadge({
     );
   }
 
-  const resumeCommand = `claude --resume ${sessionId}`;
+  const resume = HARNESS_META[context.agent]?.resume;
+  const copyText = resume ? resume(sessionId) : sessionId;
+  const copyLabel = resume ? "the resume command" : "the session id";
   return (
     <Badge
       variant="secondary"
@@ -106,13 +109,13 @@ export function AgentContextBadge({
       <button
         type="button"
         style={sessionStyle(sessionId)}
-        title={`${context.agent} · session ${sessionId} — click to copy the resume command`}
+        title={`${context.agent} · session ${sessionId} — click to copy ${copyLabel}`}
         onClick={async (e) => {
           // The badge sits inside timeline rows with their own click targets.
           e.stopPropagation();
           try {
-            await navigator.clipboard.writeText(resumeCommand);
-            toast.success(`Copied "${resumeCommand}"`);
+            await navigator.clipboard.writeText(copyText);
+            toast.success(`Copied "${copyText}"`);
           } catch {
             toast.error("Clipboard is unavailable in this browser");
           }
