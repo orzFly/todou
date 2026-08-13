@@ -83,7 +83,6 @@ describe("oidc helpers", () => {
       "exchange_failed",
       "claim_missing",
       "provision_denied",
-      "login_conflict",
       "never-heard-of-it",
     ]) {
       expect(oidcErrorText(code)).toBeTruthy();
@@ -126,6 +125,17 @@ describe("LoginPage per auth mode", () => {
     await view.findByText(oidcErrorText("claim_missing"));
     expect(assign).not.toHaveBeenCalled();
     expect(view.getByText("Try again")).toBeTruthy();
+  });
+
+  it("oidc: provision_denied shows the asserted subject for the admin", async () => {
+    const view = renderLogin(
+      clientWithMode("oidc"),
+      "/login?error=provision_denied&subject=idp-sub-42",
+    );
+    await view.findByText(oidcErrorText("provision_denied"));
+    expect(view.getByText("idp-sub-42")).toBeTruthy();
+    expect(view.getByText(/send it to your administrator/)).toBeTruthy();
+    expect(assign).not.toHaveBeenCalled();
   });
 
   it("forward: reaching the page at all reads as a proxy problem", async () => {

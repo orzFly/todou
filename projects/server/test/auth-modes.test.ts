@@ -1,4 +1,6 @@
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { users } from "../src/db/system-schema.ts";
 import { makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
@@ -93,6 +95,41 @@ describe("forward mode", () => {
 
     const second = await me(fromPeer("127.0.0.1"), { "Remote-User": "bob" });
     expect((await json(second)).is_instance_admin).toBe(false);
+  });
+
+  it("suffixes past a taken login instead of adopting the account", async () => {
+    const db = t.ctx.router.system();
+    const rows = await db
+      .insert(users)
+      .values({ kind: "human", login: "squatted", displayName: "squatted" })
+      .returning();
+    const victim = rows[0];
+    if (!victim) throw new Error("insert returned no row");
+
+    const res = await me(fromPeer("127.0.0.1"), { "Remote-User": "squatted" });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.id).not.toBe(victim.id);
+    expect(body.login).toMatch(/^squatted-[a-z0-9]{4}$/);
+
+    const after = await db.select().from(users).where(eq(users.id, victim.id));
+    expect(after[0]).toEqual(victim);
+  });
+
+  it("keeps the identity when the login is renamed inside todou", async () => {
+    const db = t.ctx.router.system();
+    const first = await me(fromPeer("127.0.0.1"), { "Remote-User": "renny" });
+    const created = await json(first);
+
+    await db
+      .update(users)
+      .set({ login: "renny-renamed" })
+      .where(eq(users.id, created.id));
+
+    const second = await me(fromPeer("127.0.0.1"), { "Remote-User": "renny" });
+    const body = await json(second);
+    expect(body.id).toBe(created.id);
+    expect(body.login).toBe("renny-renamed");
   });
 
   it("sets no cookie: authentication is per request", async () => {

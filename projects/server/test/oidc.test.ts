@@ -214,7 +214,11 @@ describe("oidc provisioning denials", () => {
         )}`,
         { headers: { cookie } },
       );
-      expect(res.headers.get("location")).toBe("/login?error=provision_denied");
+      // The subject rides along: it is what an admin needs for
+      // `todou-server user bind-subject`.
+      expect(res.headers.get("location")).toBe(
+        "/login?error=provision_denied&subject=denied-sub",
+      );
     } finally {
       await strict.cleanup();
     }

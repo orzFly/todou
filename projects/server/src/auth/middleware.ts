@@ -58,9 +58,11 @@ export function authMiddleware(ctx: AppContext) {
 
 /**
  * Forward mode: the reverse proxy authenticated the human; every request is
- * resolved from the identity header alone — no session, no cookie. The two
- * 401s stay distinguishable on purpose: "which side is misconfigured" is
- * the first question a forward-auth deployment debugs.
+ * resolved from the identity header alone — no session, no cookie. The
+ * asserted username doubles as the durable subject key, so renaming a login
+ * inside todou never detaches the identity. The two 401s stay
+ * distinguishable on purpose: "which side is misconfigured" is the first
+ * question a forward-auth deployment debugs.
  */
 async function forwardUser(c: RequestLike, ctx: AppContext): Promise<UserRow> {
   const forward = ctx.config.auth.forward;
@@ -86,6 +88,7 @@ async function forwardUser(c: RequestLike, ctx: AppContext): Promise<UserRow> {
   return provisionUser(
     ctx.router.system(),
     {
+      subject: login,
       login,
       name: forward.name_header ? c.req.header(forward.name_header) : null,
       email: forward.email_header ? c.req.header(forward.email_header) : null,

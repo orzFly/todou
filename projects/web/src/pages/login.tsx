@@ -25,8 +25,6 @@ export function oidcErrorText(code: string): string {
       return "The identity provider sent no usable username. Check the login_claim configuration.";
     case "provision_denied":
       return "Signed in, but no account exists here for that identity (and auto-creation is off).";
-    case "login_conflict":
-      return "Signed in, but the username is already taken by a different account here.";
     default:
       return "Sign-in failed. Try again.";
   }
@@ -53,6 +51,10 @@ export function LoginPage() {
 
   const redirect = safeRedirect(search.redirect);
   const oidcError = typeof search.error === "string" ? search.error : null;
+  const oidcSubject =
+    typeof search.subject === "string" && search.subject !== ""
+      ? search.subject
+      : null;
 
   const login = useMutation({
     mutationFn: () => api.login(),
@@ -104,6 +106,19 @@ export function LoginPage() {
               <p className="text-center text-sm text-destructive">
                 {oidcErrorText(oidcError)}
               </p>
+              {oidcSubject ? (
+                <div className="flex flex-col items-center gap-1">
+                  <code className="break-all rounded bg-muted px-2 py-1 text-xs">
+                    {oidcSubject}
+                  </code>
+                  <p className="text-center text-xs text-muted-foreground">
+                    This is the subject your identity provider asserted. If you
+                    believe you should have access, send it to your
+                    administrator — it is what they need to link or create your
+                    account.
+                  </p>
+                </div>
+              ) : null}
               <Button
                 onClick={() => window.location.assign(oidcLoginUrl(redirect))}
               >

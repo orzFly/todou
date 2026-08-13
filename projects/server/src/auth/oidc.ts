@@ -19,8 +19,7 @@ export type OidcErrorCode =
   | "state_mismatch"
   | "exchange_failed"
   | "claim_missing"
-  | "provision_denied"
-  | "login_conflict";
+  | "provision_denied";
 
 /** Only same-site paths may be resumed after login (mirrors the web rule). */
 export function safeRedirect(value: unknown): string {
@@ -134,7 +133,11 @@ export async function oidcCallback(
   c: AnyContext,
   ctx: AppContext,
 ): Promise<Response> {
-  const fail = (code: OidcErrorCode) => c.redirect(`/login?error=${code}`, 302);
+  const fail = (code: OidcErrorCode, params?: Record<string, string>) =>
+    c.redirect(
+      `/login?${new URLSearchParams({ error: code, ...params })}`,
+      302,
+    );
 
   const transientRaw = getCookie(c, TRANSIENT_COOKIE);
   deleteCookie(c, TRANSIENT_COOKIE, { path: TRANSIENT_PATH });
@@ -206,7 +209,11 @@ export async function oidcCallback(
       { autoCreate: ctx.config.auth.oidc.auto_create },
     );
   } catch (cause) {
-    if (cause instanceof ProvisionError) return fail(cause.reason);
+    if (cause instanceof ProvisionError) {
+      // The subject is exactly what an admin needs for `todou-server user
+      // bind-subject` — hand it to the person standing at the closed door.
+      return fail(cause.reason, { subject: claims.sub });
+    }
     throw cause;
   }
 

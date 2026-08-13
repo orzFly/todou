@@ -4,8 +4,10 @@ import {
   normalizeLogin,
   ProvisionError,
   provisionUser,
+  randomLoginSuffix,
+  uniqueViolation,
 } from "../src/auth/provision.ts";
-import { ensureBuiltinUser } from "../src/bootstrap.ts";
+import { BUILTIN_SUBJECT, ensureBuiltinUser } from "../src/bootstrap.ts";
 import type { Db } from "../src/db/driver.ts";
 import type { DbRouter } from "../src/db/router.ts";
 import { users } from "../src/db/system-schema.ts";
@@ -37,6 +39,11 @@ async function insertUser(
   return row;
 }
 
+async function rowById(id: number) {
+  const rows = await db.select().from(users).where(eq(users.id, id));
+  return rows[0];
+}
+
 describe("normalizeLogin", () => {
   it("lowercases and validates", () => {
     expect(normalizeLogin("Alice")).toBe("alice");
@@ -49,34 +56,88 @@ describe("normalizeLogin", () => {
   });
 });
 
-describe("provisionUser", () => {
-  it("matches by subject first, regardless of login drift", () => {
-    return (async () => {
-      const bound = await insertUser({
-        login: "alice",
-        oidcSubject: "sub-1",
-      });
-      const row = await provisionUser(
-        db,
-        { subject: "sub-1", login: "renamed-in-idp" },
-        { autoCreate: false },
-      );
-      expect(row.id).toBe(bound.id);
-    })();
+describe("randomLoginSuffix", () => {
+  it("is four lowercase alphanumerics", () => {
+    for (let i = 0; i < 20; i++) {
+      expect(randomLoginSuffix()).toMatch(/^[a-z0-9]{4}$/);
+    }
+  });
+});
+
+describe("uniqueViolation", () => {
+  it("reads node-postgres shaped errors (code + constraint)", () => {
+    const err = Object.assign(new Error("duplicate key"), {
+      code: "23505",
+      constraint: "users_login_idx",
+    });
+    expect(uniqueViolation(err)).toBe("users_login_idx");
   });
 
-  it("adopts an unbound user by login and binds the subject", async () => {
-    const legacy = await insertUser({ login: "alice" });
+  it("falls back to the canonical message text", () => {
+    const err = new Error(
+      'duplicate key value violates unique constraint "users_oidc_subject_idx"',
+    );
+    expect(uniqueViolation(err)).toBe("users_oidc_subject_idx");
+  });
+
+  it("walks the cause chain of wrapped errors", () => {
+    const inner = Object.assign(new Error("dup"), {
+      code: "23505",
+      constraint: "users_login_idx",
+    });
+    const outer = new Error("query failed", { cause: inner });
+    expect(uniqueViolation(outer)).toBe("users_login_idx");
+  });
+
+  it("returns null for anything else", () => {
+    expect(uniqueViolation(new Error("connection refused"))).toBeNull();
+    expect(uniqueViolation(undefined)).toBeNull();
+  });
+});
+
+describe("provisionUser", () => {
+  it("matches by subject first, regardless of login drift", async () => {
+    const bound = await insertUser({ login: "alice", oidcSubject: "sub-1" });
     const row = await provisionUser(
       db,
-      { subject: "sub-9", login: "alice" },
+      { subject: "sub-1", login: "renamed-in-idp" },
       { autoCreate: false },
     );
-    expect(row.id).toBe(legacy.id);
-    expect(row.oidcSubject).toBe("sub-9");
+    expect(row.id).toBe(bound.id);
   });
 
-  it("adopts the builtin account: the single→oidc migration path", async () => {
+  // The #86 attack, constructed: an IdP-side registration of an existing
+  // human's username must never take over that account.
+  it("never adopts an unbound human whose login the IdP asserts", async () => {
+    const victim = await insertUser({ login: "alice" });
+    expect(victim.oidcSubject).toBeNull();
+
+    const row = await provisionUser(
+      db,
+      { subject: "attacker-sub", login: "alice" },
+      { autoCreate: true },
+    );
+    expect(row.id).not.toBe(victim.id);
+    expect(row.login).toMatch(/^alice-[a-z0-9]{4}$/);
+    expect(row.oidcSubject).toBe("attacker-sub");
+
+    // Field by field: the victim's account is untouched.
+    expect(await rowById(victim.id)).toEqual(victim);
+  });
+
+  it("never adopts a human bound to a different subject", async () => {
+    const bound = await insertUser({ login: "bob", oidcSubject: "sub-real" });
+    const row = await provisionUser(
+      db,
+      { subject: "sub-other", login: "bob" },
+      { autoCreate: true },
+    );
+    expect(row.id).not.toBe(bound.id);
+    expect(row.login).toMatch(/^bob-[a-z0-9]{4}$/);
+    expect(await rowById(bound.id)).toEqual(bound);
+  });
+
+  it("never adopts the ex-single-mode builtin account", async () => {
     await ensureBuiltinUser(db);
     const seeded = await db.select().from(users).where(eq(users.login, "user"));
     const builtin = seeded[0];
@@ -86,65 +147,138 @@ describe("provisionUser", () => {
     const row = await provisionUser(
       db,
       { subject: "real-sub", login: "user" },
-      { autoCreate: false },
+      { autoCreate: true },
     );
-    expect(row.id).toBe(builtin.id);
-    expect(row.oidcSubject).toBe("real-sub");
-    expect(row.isInstanceAdmin).toBe(true);
+    expect(row.id).not.toBe(builtin.id);
+    expect(row.login).toMatch(/^user-[a-z0-9]{4}$/);
+    const untouched = await rowById(builtin.id);
+    expect(untouched).toEqual(builtin);
+    expect(untouched?.oidcSubject).toBe(BUILTIN_SUBJECT);
   });
 
-  it("forward mode (no subject) resolves by login without binding", async () => {
-    const existing = await insertUser({
-      login: "alice",
-      oidcSubject: "bound-elsewhere",
-    });
+  it("suffixes past a machine-held login instead of 403ing", async () => {
+    const bot = await insertUser({ login: "bot", kind: "machine" });
     const row = await provisionUser(
       db,
-      { login: "alice" },
+      { subject: "human-sub", login: "bot" },
+      { autoCreate: true },
+    );
+    expect(row.kind).toBe("human");
+    expect(row.login).toMatch(/^bot-[a-z0-9]{4}$/);
+    expect(await rowById(bot.id)).toEqual(bot);
+  });
+
+  it("keeps the identity when the login is renamed inside todou", async () => {
+    const created = await provisionUser(
+      db,
+      { subject: "stable-sub", login: "carol" },
+      { autoCreate: true },
+    );
+    await db
+      .update(users)
+      .set({ login: "renamed" })
+      .where(eq(users.id, created.id));
+    const again = await provisionUser(
+      db,
+      { subject: "stable-sub", login: "carol" },
       { autoCreate: false },
     );
-    expect(row.id).toBe(existing.id);
-    expect(row.oidcSubject).toBe("bound-elsewhere");
+    expect(again.id).toBe(created.id);
   });
 
-  it("rejects a login held by a machine account", async () => {
-    await insertUser({ login: "bot", kind: "machine" });
-    await expect(
-      provisionUser(db, { login: "bot" }, { autoCreate: true }),
-    ).rejects.toMatchObject({ reason: "login_conflict", status: 403 });
+  it("uses the bare login when it is free", async () => {
+    const row = await provisionUser(
+      db,
+      { subject: "sub-a", login: "alice" },
+      { autoCreate: true },
+    );
+    expect(row.login).toBe("alice");
   });
 
-  it("rejects a login bound to a different subject", async () => {
-    await insertUser({ login: "alice", oidcSubject: "sub-1" });
+  it("truncates a long base so the suffixed login fits the 64 cap", async () => {
+    const long = "a".repeat(64);
+    await insertUser({ login: long });
+    const row = await provisionUser(
+      db,
+      { subject: "long-sub", login: long },
+      { autoCreate: true },
+    );
+    expect(row.login).toMatch(/^a{59}-[a-z0-9]{4}$/);
+    expect(row.login.length).toBe(64);
+  });
+
+  it("retries with a fresh suffix when the suffixed login collides", async () => {
+    await insertUser({ login: "alice" });
+    await insertUser({ login: "alice-aaaa" });
+    const seq = ["aaaa", "bbbb"];
+    const row = await provisionUser(
+      db,
+      { subject: "seq-sub", login: "alice" },
+      { autoCreate: true, suffix: () => seq.shift() ?? "zzzz" },
+    );
+    expect(row.login).toBe("alice-bbbb");
+  });
+
+  it("gives up after exhausting the suffix attempts", async () => {
+    await insertUser({ login: "alice" });
+    await insertUser({ login: "alice-aaaa" });
     await expect(
       provisionUser(
         db,
-        { subject: "sub-2", login: "alice" },
-        { autoCreate: true },
+        { subject: "stuck-sub", login: "alice" },
+        { autoCreate: true, suffix: () => "aaaa" },
       ),
-    ).rejects.toMatchObject({ reason: "login_conflict" });
+    ).rejects.toThrow(/could not allocate a login/);
+  });
+
+  it("returns the winner of a same-subject race, not a duplicate", async () => {
+    let raced = false;
+    const row = await provisionUser(
+      db,
+      { subject: "race-sub", login: "alice" },
+      {
+        autoCreate: true,
+        // Runs between the subject lookup (miss) and the insert — the
+        // interleaving a concurrent login would produce.
+        beforeAttempt: async () => {
+          if (raced) return;
+          raced = true;
+          await insertUser({ login: "winner", oidcSubject: "race-sub" });
+        },
+      },
+    );
+    expect(row.login).toBe("winner");
+    const all = await db
+      .select()
+      .from(users)
+      .where(eq(users.oidcSubject, "race-sub"));
+    expect(all).toHaveLength(1);
   });
 
   it("rejects unknown identities when auto_create is off", async () => {
-    await expect(
-      provisionUser(db, { login: "nobody" }, { autoCreate: false }),
-    ).rejects.toMatchObject({ reason: "provision_denied" });
+    const error = await provisionUser(
+      db,
+      { subject: "sub-x", login: "nobody" },
+      { autoCreate: false },
+    ).catch((e) => e);
+    expect(error).toMatchObject({ reason: "provision_denied", status: 403 });
+    expect(error.message).toContain("nobody");
+    expect(error.message).toContain("sub-x");
   });
 
-  it("rejects disabled accounts on every path", async () => {
+  it("rejects disabled accounts on the subject match", async () => {
     await insertUser({
       login: "gone",
       oidcSubject: "sub-gone",
       disabledAt: new Date(),
     });
-    for (const input of [
-      { subject: "sub-gone", login: "whatever" },
-      { login: "gone" },
-    ]) {
-      await expect(
-        provisionUser(db, input, { autoCreate: true }),
-      ).rejects.toMatchObject({ reason: "provision_denied" });
-    }
+    await expect(
+      provisionUser(
+        db,
+        { subject: "sub-gone", login: "whatever" },
+        { autoCreate: true },
+      ),
+    ).rejects.toMatchObject({ reason: "provision_denied" });
   });
 
   it("JIT-creates with claims applied and first-human-becomes-admin", async () => {
@@ -177,7 +311,7 @@ describe("provisionUser", () => {
     await insertUser({ login: "bot", kind: "machine" });
     const row = await provisionUser(
       db,
-      { login: "alice" },
+      { subject: "sub-a", login: "alice" },
       { autoCreate: true },
     );
     expect(row.isInstanceAdmin).toBe(true);
@@ -186,7 +320,7 @@ describe("provisionUser", () => {
   it("drops an email the Me schema could not serialise", async () => {
     const row = await provisionUser(
       db,
-      { login: "alice", email: "not-an-email" },
+      { subject: "sub-a", login: "alice", email: "not-an-email" },
       { autoCreate: true },
     );
     expect(row.email).toBeNull();
@@ -195,7 +329,7 @@ describe("provisionUser", () => {
   it("exposes ProvisionError as a 403 DomainError", async () => {
     const error = await provisionUser(
       db,
-      { login: "nobody" },
+      { subject: "sub-x", login: "nobody" },
       { autoCreate: false },
     ).catch((e) => e);
     expect(error).toBeInstanceOf(ProvisionError);

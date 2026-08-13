@@ -11,6 +11,12 @@ import {
   enumerateBlobKeys,
   gcPendingUploads,
 } from "./services/storage-admin.ts";
+import {
+  adoptUser,
+  bindSubject,
+  listUsers,
+  UserAdminError,
+} from "./services/user-admin.ts";
 import { FsStorage } from "./storage/fs.ts";
 import { S3Storage } from "./storage/s3.ts";
 
@@ -231,6 +237,170 @@ class StorageGcCommand extends ConfiguredCommand {
   }
 }
 
+// The `user` command group is deliberately shell-only (no HTTP surface):
+// moving history onto an IdP identity is an operator act, never something an
+// asserted username may trigger (#86). On PGlite deployments stop the server
+// first — the data directory is single-process.
+abstract class UserAdminCommand extends ConfiguredCommand {
+  async withSystemDb(
+    fn: (db: ReturnType<DbRouter["system"]>) => Promise<number | undefined>,
+  ): Promise<number | undefined> {
+    const config = this.loadConfig();
+    const router = await DbRouter.open(config);
+    try {
+      return await fn(router.system());
+    } catch (error) {
+      if (error instanceof UserAdminError) {
+        this.context.stderr.write(`${error.message}\n`);
+        return 1;
+      }
+      throw error;
+    } finally {
+      await router.close();
+    }
+  }
+}
+
+class UserListCommand extends UserAdminCommand {
+  static paths = [["user", "list"]];
+
+  static usage = Command.Usage({
+    description: "List accounts with their oidc subject bindings",
+  });
+
+  async execute(): Promise<number | undefined> {
+    return this.withSystemDb(async (db) => {
+      const rows = await listUsers(db);
+      const header = ["id", "kind", "login", "subject", "admin", "disabled"];
+      const table = [
+        header,
+        ...rows.map((u) => [
+          String(u.id),
+          u.kind,
+          u.login,
+          u.oidcSubject ?? "",
+          u.isInstanceAdmin ? "yes" : "",
+          u.disabledAt ? "yes" : "",
+        ]),
+      ];
+      const widths = header.map((_, i) =>
+        table.reduce((w, r) => Math.max(w, (r[i] ?? "").length), 0),
+      );
+      for (const row of table) {
+        const line = row
+          .map((cell, i) => cell.padEnd(widths[i] ?? 0))
+          .join("  ");
+        this.context.stdout.write(`${line.trimEnd()}\n`);
+      }
+      return 0;
+    });
+  }
+}
+
+class UserBindSubjectCommand extends UserAdminCommand {
+  static paths = [["user", "bind-subject"]];
+
+  static usage = Command.Usage({
+    description: "Bind (or clear) the oidc subject of an account",
+    details:
+      "The low-level repair tool: provisioning matches accounts by subject " +
+      "alone, and this writes that binding directly. Refuses to overwrite " +
+      "an existing binding or displace another account's without --force. " +
+      "PGlite deployments must stop the server first.",
+  });
+
+  login = Option.String();
+
+  subject = Option.String("--subject", {
+    description: "Subject value to bind (IdP `sub`, or the forward username)",
+  });
+
+  clear = Option.Boolean("--clear", false, {
+    description: "Remove the binding instead of setting one",
+  });
+
+  force = Option.Boolean("--force", false, {
+    description:
+      "Overwrite an existing binding / move the value off its holder",
+  });
+
+  async execute(): Promise<number | undefined> {
+    if (this.clear === (this.subject !== undefined)) {
+      this.context.stderr.write(
+        "pass exactly one of --subject <value> or --clear\n",
+      );
+      return 1;
+    }
+    return this.withSystemDb(async (db) => {
+      const result = await bindSubject(db, {
+        login: this.login,
+        subject: this.subject,
+        clear: this.clear,
+        force: this.force,
+      });
+      if (result.displaced) {
+        this.context.stdout.write(
+          `"${result.displaced.login}" unbound (subject moved away)\n`,
+        );
+      }
+      this.context.stdout.write(
+        `"${result.user.login}" subject → ${result.user.oidcSubject ?? "(none)"}\n`,
+      );
+      return 0;
+    });
+  }
+}
+
+class UserAdoptCommand extends UserAdminCommand {
+  static paths = [["user", "adopt"]];
+
+  static usage = Command.Usage({
+    description:
+      "Move a JIT-created account's identity onto an existing account",
+    details:
+      "The single → oidc/forward migration step: sign in once (provisioning " +
+      "creates a fresh account for your IdP identity), then adopt it into " +
+      "the account that holds your history. --into receives --from's " +
+      "subject and login (--keep-login keeps its current login); --from is " +
+      "renamed <login>-retired-<id> and disabled, never deleted. PGlite " +
+      "deployments must stop the server first.",
+  });
+
+  into = Option.String("--into", {
+    required: true,
+    description: "Login of the account that keeps the history",
+  });
+
+  from = Option.String("--from", {
+    required: true,
+    description: "Login of the freshly created account to absorb",
+  });
+
+  keepLogin = Option.Boolean("--keep-login", false, {
+    description: "Keep --into's current login instead of taking --from's",
+  });
+
+  force = Option.Boolean("--force", false, {
+    description: "Overwrite an existing binding on --into",
+  });
+
+  async execute(): Promise<number | undefined> {
+    return this.withSystemDb(async (db) => {
+      const result = await adoptUser(db, {
+        into: this.into,
+        from: this.from,
+        keepLogin: this.keepLogin,
+        force: this.force,
+      });
+      this.context.stdout.write(
+        `"${result.into.login}" now carries subject "${result.into.oidcSubject}"\n` +
+          `"${result.retired.login}" retired and disabled\n`,
+      );
+      return 0;
+    });
+  }
+}
+
 const cli = new Cli({
   binaryLabel: "todou server",
   binaryName: "todou-server",
@@ -241,6 +411,9 @@ cli.register(ServeCommand);
 cli.register(MigrateCommand);
 cli.register(StorageMigrateCommand);
 cli.register(StorageGcCommand);
+cli.register(UserListCommand);
+cli.register(UserBindSubjectCommand);
+cli.register(UserAdoptCommand);
 cli.register(Builtins.HelpCommand);
 cli.register(Builtins.VersionCommand);
 cli.runExit(process.argv.slice(2));

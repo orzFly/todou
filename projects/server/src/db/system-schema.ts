@@ -37,7 +37,13 @@ export const users = pgTable(
     disabledAt: timestamp("disabled_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("users_login_idx").on(t.login)],
+  (t) => [
+    uniqueIndex("users_login_idx").on(t.login),
+    // The subject is the sole identity key for oidc/forward provisioning;
+    // uniqueness is what makes "insert, let the index arbitrate" races safe.
+    // Postgres treats NULLs as distinct, so PAT-only machine rows never clash.
+    uniqueIndex("users_oidc_subject_idx").on(t.oidcSubject),
+  ],
 );
 
 export const sessions = pgTable(

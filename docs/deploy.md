@@ -211,14 +211,39 @@ origin-wide pattern lets an authorization code be redirected onto
 user-controlled content.
 
 Login maps the `login_claim` value to a todou login (lowercased; must be
-lowercase letters, digits, dashes). Unknown identities are auto-created
-when `auto_create` is on; a matching existing login that was never bound
-to an IdP subject is adopted instead — including the single-mode builtin
-account, which is the migration path: rename the builtin user's login to
-your IdP username BEFORE switching modes, and your first oidc login
-inherits the full history. The first created human becomes instance admin.
-Switching back to single mode seeds a fresh builtin account; it does not
-un-adopt.
+lowercase letters, digits, dashes). Accounts are matched by the IdP's
+`sub` claim alone — an asserted username is a public, re-registrable
+name, never proof of owning an existing account, so it never matches
+one. Unknown subjects are auto-created when `auto_create` is on, with
+the username as the login; a taken login (human or machine alike) gets
+a random `-xxxx` suffix instead. The first created human becomes
+instance admin.
+
+### Migrating from `single` mode
+
+The builtin account holds your history, and nothing adopts it
+automatically. Hand it your IdP identity explicitly:
+
+1. Switch `auth.mode` and sign in once — this creates a fresh account
+   bound to your IdP identity.
+2. Stop the server if it runs on PGlite (the data directory is
+   single-process; postgres deployments can stay up).
+3. `todou-server user adopt --into user --from <your-idp-username>` —
+   the history account takes over the new account's subject *and*
+   login; the emptied shell is renamed `…-retired-<id>` and disabled.
+   Add `--keep-login` if the history account already has the login you
+   want (the shell then carries a suffixed variant of it).
+4. Start the server and sign in again: you are your history.
+
+`todou-server user list` shows every binding;
+`user bind-subject <login> --subject <value> [--force|--clear]` repairs
+a wrong one. Switching back to single mode seeds a fresh builtin
+account; it does not undo any of this.
+
+Deployments that ran forward mode before subject keying existed carry
+humans with no subject binding — those accounts will not be matched
+again; bind each once with `user bind-subject <login> --subject <the
+forwarded username>`.
 
 ### `forward`
 
@@ -247,8 +272,15 @@ Two hard requirements, both enforced:
   distinguish "untrusted peer" from "header missing" to keep this
   debuggable.
 
-Provisioning follows the same rules as oidc (auto-create, login adoption,
-first-human-is-admin), keyed by the header value as the login.
+Provisioning follows the same rules as oidc (subject keying, auto-create
+with suffixing, first-human-is-admin): the header value doubles as the
+stored subject, so renaming a login inside todou never detaches the
+identity. One caveat comes with that: an ex-single-mode builtin account
+is tracked by the sentinel subject `builtin`, which is also a valid
+username — an upstream user literally named `builtin` would match that
+account, history and admin bit included. The header namespace is the
+operator's responsibility; retire or rebind the builtin account when
+migrating (see the single-mode migration above).
 
 ## S3 attachment storage
 
