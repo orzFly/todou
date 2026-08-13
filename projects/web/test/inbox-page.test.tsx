@@ -64,7 +64,7 @@ describe("InboxPage", () => {
     expect(await view.findByText("收件箱清空了 🥔")).toBeTruthy();
   });
 
-  it("renders groups with reason chips and row details", async () => {
+  it("renders groups with reason badges and row details", async () => {
     mockInbox({
       items: [
         makeItem("greenhouse", 42, {
@@ -86,14 +86,42 @@ describe("InboxPage", () => {
     expect(await view.findByText("Project greenhouse")).toBeTruthy();
     expect(await view.findByText("Project potato-field")).toBeTruthy();
     expect(await view.findByText("issue 42")).toBeTruthy();
-    expect(await view.findByText("question waiting")).toBeTruthy();
-    expect(await view.findByText("spec v2 awaiting review")).toBeTruthy();
+    // The same badges the issue row and the board card wear, addressed the
+    // same way board-card.test does — not an inbox-only vocabulary (T-116).
+    expect(await view.findByTitle("1 unanswered question(s)")).toBeTruthy();
+    expect(await view.findByTitle("spec v2 is awaiting review")).toBeTruthy();
     // The strong-unread row carries the T-81 button with its count.
     expect(
       await view.findByRole("button", {
         name: "3 new comments — mark as read",
       }),
     ).toBeTruthy();
+  });
+
+  it("keeps the reason badges out of the desktop-only meta group", async () => {
+    mockInbox({
+      items: [
+        makeItem("a", 7, {
+          open_questions: 2,
+          pending_spec_review: true,
+          spec_version: 4,
+          spec_review_status: "unreviewed",
+        }),
+      ],
+      truncated: false,
+    });
+    const view = renderWithProviders(<InboxPage />);
+
+    // The status/time group is hidden below sm; a reason badge parked inside
+    // it would vanish on the phone, where this page is mostly read (T-116).
+    for (const title of [
+      "2 unanswered question(s)",
+      "spec v4 is awaiting review",
+    ]) {
+      const badge = await view.findByTitle(title);
+      expect(badge.closest(".max-sm\\:hidden")).toBeNull();
+    }
+    expect(view.getByText("issue 7")).toBeTruthy();
   });
 
   it("filters by tab", async () => {

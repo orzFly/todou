@@ -4,6 +4,10 @@ import { formatRef, type InboxItem } from "@todou/shared";
 import { useState } from "react";
 import { groupInboxItems, type InboxGroup, inboxQuery } from "@/api/inbox.ts";
 import { useRefPrefix } from "@/api/references.ts";
+import {
+  QuestionBadge,
+  SpecReviewBadge,
+} from "@/components/issue/attention-badge.tsx";
 import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -173,22 +177,18 @@ function InboxRow({
         >
           {item.title}
         </Link>
-        <span className="ml-auto flex shrink-0 items-center gap-2">
-          {item.pending_spec_review && item.spec_version !== null && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700 dark:bg-amber-950 dark:text-amber-400">
-              spec v{item.spec_version} awaiting review
-            </span>
-          )}
-          {item.open_questions > 0 && (
-            <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs text-violet-700 dark:bg-violet-950 dark:text-violet-400">
-              {item.open_questions === 1
-                ? "question waiting"
-                : `${item.open_questions} questions waiting`}
-            </span>
-          )}
-          <StatusPill status={item.status} className="max-sm:hidden" />
+        {/* Reasons hug the title, exactly as on an issue row or a board card;
+            only the meta pair is pushed to the far edge. */}
+        {item.open_questions > 0 && (
+          <QuestionBadge count={item.open_questions} className="shrink-0" />
+        )}
+        {item.pending_spec_review && (
+          <SpecReviewBadge version={item.spec_version} className="shrink-0" />
+        )}
+        <span className="ml-auto flex shrink-0 items-center gap-2 max-sm:hidden">
+          <StatusPill status={item.status} />
           <span
-            className="text-xs text-muted-foreground max-sm:hidden"
+            className="text-xs text-muted-foreground"
             title={item.last_activity_at}
           >
             {new Date(item.last_activity_at).toLocaleString()}

@@ -17,12 +17,7 @@ import {
   type Label,
   type Status,
 } from "@todou/shared";
-import {
-  BookOpenTextIcon,
-  CheckIcon,
-  MessageCircleQuestionIcon,
-  TagIcon,
-} from "lucide-react";
+import { CheckIcon, TagIcon } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import {
   csvToIds,
@@ -44,6 +39,10 @@ import {
   statusesQuery,
 } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
+import {
+  QuestionBadge,
+  SpecReviewBadge,
+} from "@/components/issue/attention-badge.tsx";
 import { FilterBar } from "@/components/issue/filter-bar.tsx";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
 import {
@@ -515,22 +514,10 @@ export function IssueRow({
           {issue.title}
         </Link>
         {issue.open_questions > 0 && (
-          <span
-            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700 dark:text-amber-400"
-            title={`${issue.open_questions} unanswered question(s)`}
-          >
-            <MessageCircleQuestionIcon className="size-3.5" />
-            {issue.open_questions}
-          </span>
+          <QuestionBadge count={issue.open_questions} className="shrink-0" />
         )}
         {issue.spec_review_status === "unreviewed" && (
-          <span
-            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700 dark:text-amber-400"
-            title={`spec v${issue.spec_version} is awaiting review`}
-          >
-            <BookOpenTextIcon className="size-3.5" />
-            spec
-          </span>
+          <SpecReviewBadge version={issue.spec_version} className="shrink-0" />
         )}
       </div>
       {/* pl mirrors line 1: unread slot 27 + gap 8 (+ ref 44 when it is

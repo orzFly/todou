@@ -13,11 +13,14 @@ import {
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import { formatRef, type IssueListItem, type Status } from "@todou/shared";
-import { BookOpenTextIcon, MessageCircleQuestionIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { boardColumnQuery, useBoardMove } from "@/api/board.ts";
 import { statusesQuery } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
+import {
+  QuestionBadge,
+  SpecReviewBadge,
+} from "@/components/issue/attention-badge.tsx";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
 import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -268,22 +271,10 @@ export function BoardCardContent({
           {formatRef(refPrefix, issue.number)}
         </span>
         {issue.open_questions > 0 && (
-          <span
-            className="inline-flex items-center gap-1 rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700 dark:text-amber-400"
-            title={`${issue.open_questions} unanswered question(s)`}
-          >
-            <MessageCircleQuestionIcon className="size-3.5" />
-            {issue.open_questions}
-          </span>
+          <QuestionBadge count={issue.open_questions} />
         )}
         {issue.spec_review_status === "unreviewed" && (
-          <span
-            className="inline-flex items-center gap-1 rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700 dark:text-amber-400"
-            title={`spec v${issue.spec_version} is awaiting review`}
-          >
-            <BookOpenTextIcon className="size-3.5" />
-            spec
-          </span>
+          <SpecReviewBadge version={issue.spec_version} />
         )}
         <LabelChips labels={issue.labels} />
         <span className="ml-auto flex gap-1">
