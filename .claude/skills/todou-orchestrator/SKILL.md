@@ -131,6 +131,13 @@ fresh, or `/new` first. Unrelated old context is a liability, not an asset.
 **Wait management**: a `--wait` timeout (herdr returns a timeout error) ≠ failure — run `herdr agent get`
 first; if it is working, just re-attach with `herdr agent wait`. Never poke an agent that is working.
 
+**Throttling — at most 3 workers at once** (unless the user sets a different number). Count live
+worker agents, not subagents you spawn for merges or investigations. When the cap is full and another
+card lands in Next, **leave it in Next and say so** — Next *is* the queue, so nothing is lost and the
+user can see the depth. Dispatch the moment a slot frees, which is when a card reaches Done and you
+retire its agent. Never quietly exceed the cap because a card looks small: the limit is about the
+user's attention and the machine's memory, not about how hard the tasks are.
+
 ## Retiring an agent (tested behavior — read carefully)
 
 Gracefully shut down by **prompting `/exit`** (plain `herdr agent prompt <name> "/exit"`, **without `--wait`** —
