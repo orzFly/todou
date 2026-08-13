@@ -1,4 +1,8 @@
-import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import {
+  useQuery,
+  useQueryClient,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
 import {
   Link,
   useNavigate,
@@ -15,18 +19,20 @@ import {
 } from "@todou/shared";
 import {
   BookOpenTextIcon,
-  CheckCircle2Icon,
   CheckIcon,
-  CircleDotIcon,
   MessageCircleQuestionIcon,
   PlusIcon,
   TagIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import {
+  csvToIds,
   effectiveCategory,
+  effectiveGroup,
+  effectiveSort,
   type IssueSearch,
   issueCountsQuery,
+  issueGroupQuery,
   issuesQuery,
   listParams,
   useIssueLabelsMutation,
@@ -56,6 +62,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export function IssueListPage() {
   const { slug } = useParams({ from: "/authed/projects/$slug" });
@@ -65,7 +72,6 @@ export function IssueListPage() {
   const statuses = useSuspenseQuery(statusesQuery(slug));
   const labels = useSuspenseQuery(labelsQuery(slug));
   const members = useSuspenseQuery(membersQuery(slug));
-  const issues = useSuspenseQuery(issuesQuery(slug, search));
   const counts = useSuspenseQuery(issueCountsQuery(slug, search));
   const canCreateLabels = useCanCreateLabels(slug);
   const createLabel = useCreateLabel(slug);
@@ -78,21 +84,49 @@ export function IssueListPage() {
       replace: true,
     });
 
+  // Group headers pin below whatever floats above them: app header plus the
+  // toolbar on desktop, the (taller, two-row) app header alone on mobile.
+  // Neither height is knowable in CSS across wrapping and breakpoints, so
+  // measure both into a variable (same approach as the board's fitCanvas).
+  const rootRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    const toolbar = toolbarRef.current;
+    if (!root || !toolbar) return;
+    const appbar = document.querySelector("header");
+    const measure = () => {
+      const base = appbar?.getBoundingClientRect().height ?? 0;
+      const floating = window.matchMedia("(min-width: 640px)").matches
+        ? toolbar.offsetHeight
+        : 0;
+      root.style.setProperty("--group-sticky-top", `${base + floating}px`);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    const observer = new ResizeObserver(measure);
+    observer.observe(toolbar);
+    if (appbar) observer.observe(appbar);
+    return () => {
+      window.removeEventListener("resize", measure);
+      observer.disconnect();
+    };
+  }, []);
+
+  const grouped =
+    effectiveCategory(search) === "open" && effectiveGroup(search) === "status";
+
   return (
-    <div className="space-y-4">
-      <CategoryTabs
-        counts={counts.data}
-        active={effectiveCategory(search)}
-        onSelect={(category) =>
-          setSearch({
-            ...search,
-            category: category === "open" ? undefined : category,
-          })
-        }
-      />
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <div ref={rootRef} className="space-y-4">
+      {/* The toolbar floats over the list on desktop (T-88); -mx/px let its
+          backdrop bleed into the shell's horizontal padding. */}
+      <div
+        ref={toolbarRef}
+        className="-mx-4 flex flex-wrap items-center justify-between gap-2 px-4 py-1.5 sm:sticky sm:top-14 sm:z-30 sm:bg-background/95 sm:backdrop-blur"
+      >
         <FilterBar
           search={search}
+          counts={counts.data}
           statuses={statuses.data}
           labels={labels.data}
           members={members.data}
@@ -104,51 +138,248 @@ export function IssueListPage() {
           </Link>
         </Button>
       </div>
-      <IssueList
-        slug={slug}
-        page={issues.data}
-        statuses={statuses.data}
-        allLabels={labels.data}
-        search={search}
-        onCreateLabel={canCreateLabels ? createLabel : undefined}
-      />
+      {grouped ? (
+        <GroupedIssueList
+          slug={slug}
+          statuses={statuses.data}
+          counts={counts.data}
+          allLabels={labels.data}
+          search={search}
+          onCreateLabel={canCreateLabels ? createLabel : undefined}
+        />
+      ) : (
+        <FlatIssueList
+          slug={slug}
+          statuses={statuses.data}
+          allLabels={labels.data}
+          search={search}
+          onCreateLabel={canCreateLabels ? createLabel : undefined}
+        />
+      )}
     </div>
   );
 }
 
-function CategoryTabs({
-  counts,
-  active,
-  onSelect,
+/**
+ * The flat page query lives below the grouped/flat fork so the grouped view
+ * never pays for a list page it does not render.
+ */
+function FlatIssueList({
+  slug,
+  statuses,
+  allLabels,
+  search,
+  onCreateLabel,
 }: {
-  counts: IssueCounts;
-  active: "open" | "closed" | "all";
-  onSelect: (category: "open" | "closed") => void;
+  slug: string;
+  statuses: Status[];
+  allLabels: Label[];
+  search: IssueSearch;
+  onCreateLabel?: (name: string) => Promise<Label>;
 }) {
-  const tab = (selected: boolean) =>
-    selected
-      ? "flex cursor-pointer items-center gap-1.5 font-semibold text-foreground"
-      : "flex cursor-pointer items-center gap-1.5 text-muted-foreground hover:text-foreground";
+  const issues = useSuspenseQuery(issuesQuery(slug, search));
   return (
-    <div className="flex items-center gap-3 text-sm">
-      <button
-        type="button"
-        className={tab(active === "open")}
-        onClick={() => onSelect("open")}
-      >
-        <CircleDotIcon className="size-4" />
-        Open {counts.open}
-      </button>
-      <span className="text-muted-foreground">·</span>
-      <button
-        type="button"
-        className={tab(active === "closed")}
-        onClick={() => onSelect("closed")}
-      >
-        <CheckCircle2Icon className="size-4" />
-        Closed {counts.closed}
-      </button>
+    <IssueList
+      slug={slug}
+      page={issues.data}
+      statuses={statuses}
+      allLabels={allLabels}
+      search={search}
+      onCreateLabel={onCreateLabel}
+    />
+  );
+}
+
+/**
+ * The grouped default of the open view (T-88): one section per non-empty
+ * open status, later pipeline stages first. Exported for tests.
+ */
+export function GroupedIssueList({
+  slug,
+  statuses,
+  counts,
+  allLabels,
+  search,
+  onCreateLabel,
+}: {
+  slug: string;
+  statuses: Status[];
+  counts: IssueCounts;
+  allLabels: Label[];
+  search: IssueSearch;
+  onCreateLabel?: (name: string) => Promise<Label>;
+}) {
+  const selected = csvToIds(search.status);
+  const groups = groupStatuses(statuses, counts, selected);
+
+  if (groups.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
+        No issues match. 地里很干净 🥔
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {groups.map((status) => (
+        <IssueGroup
+          key={status.id}
+          slug={slug}
+          status={status}
+          total={counts.by_status[String(status.id)] ?? 0}
+          statuses={statuses}
+          allLabels={allLabels}
+          search={search}
+          onCreateLabel={onCreateLabel}
+        />
+      ))}
     </div>
+  );
+}
+
+/**
+ * The groups worth rendering: open statuses with matches, later stages
+ * first, narrowed by the URL's multi-status filter. Exported for tests.
+ */
+export function groupStatuses(
+  statuses: Status[],
+  counts: IssueCounts,
+  selected: number[] | undefined,
+): Status[] {
+  return statuses
+    .filter((s) => s.category === "open")
+    .filter((s) => selected === undefined || selected.includes(s.id))
+    .filter((s) => (counts.by_status[String(s.id)] ?? 0) > 0)
+    .sort((a, b) => b.position - a.position);
+}
+
+function IssueGroup({
+  slug,
+  status,
+  total,
+  statuses,
+  allLabels,
+  search,
+  onCreateLabel,
+}: {
+  slug: string;
+  status: Status;
+  total: number;
+  statuses: Status[];
+  allLabels: Label[];
+  search: IssueSearch;
+  onCreateLabel?: (name: string) => Promise<Label>;
+}) {
+  const group = useQuery(issueGroupQuery(slug, status.id, search));
+  const [extraPages, setExtraPages] = useState<IssueListPageData[]>([]);
+  const queryClient = useQueryClient();
+  const statusMutation = useIssueStatusMutation(slug);
+  const labelsMutation = useIssueLabelsMutation(slug);
+
+  // Same guard as IssueList: pages loaded under a previous filter state
+  // would mix stale rows into the group.
+  const paginationKey = JSON.stringify([slug, search, status.id]);
+  const [loadedFor, setLoadedFor] = useState(paginationKey);
+  if (loadedFor !== paginationKey) {
+    setLoadedFor(paginationKey);
+    setExtraPages([]);
+  }
+
+  const items = [
+    ...(group.data?.items ?? []),
+    ...extraPages.flatMap((p) => p.items),
+  ];
+  const lastCursor =
+    extraPages.length === 0
+      ? (group.data?.next_cursor ?? null)
+      : (extraPages.at(-1)?.next_cursor ?? null);
+  // The optimistic move patches only the first page, so the loaded count
+  // can drift by one from `total` until the server refetch settles; clamp
+  // so the button never offers "Show 0 more".
+  const remaining = Math.max(total - items.length, 0);
+
+  async function loadMore() {
+    if (!lastCursor) return;
+    const base = issueGroupQuery(slug, status.id, search);
+    const next = await queryClient.fetchQuery({
+      queryKey: [...base.queryKey, lastCursor],
+      queryFn: () =>
+        api.listIssues(slug, {
+          status: [status.id],
+          q: search.q,
+          label: csvToIds(search.label),
+          assignee: search.assignee,
+          ...effectiveSort(search),
+          cursor: lastCursor,
+        }),
+    });
+    setExtraPages((prev) => [...prev, next]);
+  }
+
+  return (
+    <section aria-label={status.name}>
+      <div
+        className="sticky z-20 flex items-center gap-2 rounded-t-lg border bg-muted px-3.5 py-2 text-sm"
+        style={{ top: "var(--group-sticky-top, 56px)" }}
+      >
+        <span
+          className="size-2.5 rounded-full"
+          style={{ backgroundColor: status.color }}
+          aria-hidden
+        />
+        <span className="font-medium">{status.name}</span>
+        <span className="text-muted-foreground">{total}</span>
+      </div>
+      <ul className="rounded-b-lg border border-t-0">
+        {group.isPending && (
+          <li className="p-3">
+            <Skeleton className="h-12 w-full" />
+          </li>
+        )}
+        {group.isError && (
+          <li className="flex items-center justify-between gap-2 p-3 text-sm text-muted-foreground">
+            Could not load this group: {group.error.message}
+            <Button variant="outline" size="sm" onClick={() => group.refetch()}>
+              Retry
+            </Button>
+          </li>
+        )}
+        {items.map((issue) => (
+          <IssueRow
+            key={issue.id}
+            slug={slug}
+            issue={issue}
+            statuses={statuses}
+            allLabels={allLabels}
+            onStatus={(next) =>
+              statusMutation.mutate({ issueNumber: issue.number, status: next })
+            }
+            onToggleLabel={(label) => {
+              const current = issue.labels.map((l) => l.id);
+              labelsMutation.mutate({
+                issueNumber: issue.number,
+                labelIds: current.includes(label.id)
+                  ? current.filter((id) => id !== label.id)
+                  : [...current, label.id],
+              });
+            }}
+            onCreateLabel={onCreateLabel}
+          />
+        ))}
+        {lastCursor && remaining > 0 && (
+          <li>
+            <button
+              type="button"
+              className="w-full cursor-pointer p-2 text-center text-sm text-muted-foreground hover:text-foreground"
+              onClick={loadMore}
+            >
+              Show {remaining} more…
+            </button>
+          </li>
+        )}
+      </ul>
+    </section>
   );
 }
 

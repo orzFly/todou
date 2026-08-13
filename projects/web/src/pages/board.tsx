@@ -73,7 +73,7 @@ export function BoardPage() {
 
   // Size the canvas to the viewport space below it so the page itself never
   // scrolls and each column scrolls on its own. The offset above the canvas
-  // (header, project title, tabs) isn't knowable in CSS, so measure it.
+  // (the app header) isn't knowable in CSS, so measure it.
   const canvasRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
@@ -87,8 +87,8 @@ export function BoardPage() {
     };
     fitCanvas();
     window.addEventListener("resize", fitCanvas);
-    // Re-measure when content above the canvas reflows (e.g. the project
-    // description wrapping differently). Writing the same height back does
+    // Re-measure when content above the canvas reflows (e.g. the mobile
+    // header nav wrapping differently). Writing the same height back does
     // not re-trigger the observer, so this settles instead of looping.
     const observer = new ResizeObserver(fitCanvas);
     observer.observe(document.body);

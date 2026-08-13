@@ -5,6 +5,7 @@ import {
 } from "@tanstack/react-query";
 import type { IssueListPage, Status } from "@todou/shared";
 import { toast } from "sonner";
+import { prependIssue, removeIssue } from "@/api/issues.ts";
 import { api } from "@/api/queries.ts";
 
 export const boardColumnQuery = (slug: string, statusId: number) =>
@@ -32,16 +33,10 @@ export function moveIssue(
 ): { source?: IssueListPage; target?: IssueListPage } {
   const item = source?.items.find((i) => i.number === issueNumber);
   return {
-    source: source && {
-      ...source,
-      items: source.items.filter((i) => i.number !== issueNumber),
-    },
+    source: source && removeIssue(source, issueNumber),
     target:
       item && target
-        ? {
-            ...target,
-            items: [{ ...item, status: newStatus }, ...target.items],
-          }
+        ? prependIssue(target, { ...item, status: newStatus })
         : target,
   };
 }

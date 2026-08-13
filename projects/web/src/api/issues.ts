@@ -29,6 +29,8 @@ export const issueSearchSchema = z.object({
   assignee: z.coerce.number().int().positive().optional(),
   sort: z.enum(["created", "updated", "number"]).optional(),
   order: z.enum(["asc", "desc"]).optional(),
+  // Grouping is the default, so only the opt-out appears in the URL.
+  group: z.enum(["none"]).optional(),
 });
 export type IssueSearch = z.infer<typeof issueSearchSchema>;
 
@@ -44,6 +46,11 @@ export function effectiveSort(search: IssueSearch): {
   order: "asc" | "desc";
 } {
   return { sort: search.sort ?? "updated", order: search.order ?? "desc" };
+}
+
+/** Grouping applies only to the open-category view; T-88. */
+export function effectiveGroup(search: IssueSearch): "status" | "none" {
+  return search.group ?? "status";
 }
 
 /** URL search state → list API params, with the defaults applied. */
@@ -77,6 +84,56 @@ export const issuesQuery = (slug: string, search: IssueSearch) =>
     queryKey: ["issues", slug, search],
     queryFn: () => api.listIssues(slug, listParams(search)),
   });
+
+/**
+ * One status group of the grouped list view (T-88): the group is its own
+ * exact-status query, so each group paginates independently, board-style.
+ * The URL's multi-status filter only decides which groups render — it is
+ * deliberately absent here.
+ */
+export const issueGroupQuery = (
+  slug: string,
+  statusId: number,
+  search: IssueSearch,
+) =>
+  queryOptions({
+    // The {group} marker keys the cache under the ["issues", slug] prefix
+    // (existing SSE/mutation invalidations cover it) and lets the status
+    // mutation recognize status-scoped pages.
+    queryKey: [
+      "issues",
+      slug,
+      { group: statusId },
+      {
+        q: search.q,
+        label: search.label,
+        assignee: search.assignee,
+        ...effectiveSort(search),
+      },
+    ],
+    queryFn: () =>
+      api.listIssues(slug, {
+        status: [statusId],
+        q: search.q,
+        label: csvToIds(search.label),
+        assignee: search.assignee,
+        ...effectiveSort(search),
+      }),
+  });
+
+/**
+ * The status id a cached page is scoped to — {board: id} columns and
+ * {group: id} list groups — or null for mixed-status (flat) pages.
+ * Exported for tests.
+ */
+export function statusScopeOf(queryKey: readonly unknown[]): number | null {
+  const marker = queryKey[2];
+  if (typeof marker !== "object" || marker === null) return null;
+  const scope =
+    (marker as { board?: unknown }).board ??
+    (marker as { group?: unknown }).group;
+  return typeof scope === "number" ? scope : null;
+}
 
 /**
  * Keyed under ["issues", slug] on purpose: every existing invalidation of
@@ -124,6 +181,49 @@ export function patchIssueStatus(
   };
 }
 
+/** Pure cache patches for status-scoped pages, exported for tests. */
+export function removeIssue(
+  page: IssueListPage,
+  issueNumber: number,
+): IssueListPage {
+  return {
+    ...page,
+    items: page.items.filter((item) => item.number !== issueNumber),
+  };
+}
+
+export function prependIssue(
+  page: IssueListPage,
+  item: IssueListItem,
+): IssueListPage {
+  return { ...page, items: [item, ...page.items] };
+}
+
+/**
+ * Counts patch for an optimistic status move (exported for tests): the
+ * per-status pair shifts by one, and open/closed follow when the move
+ * crosses categories. A drained status keeps its 0 entry — the grouped
+ * view already treats 0 as "don't render".
+ */
+export function patchCountsMove(
+  counts: IssueCounts,
+  from: Status,
+  to: Status,
+): IssueCounts {
+  if (from.id === to.id) return counts;
+  const by_status = { ...counts.by_status };
+  const fromKey = String(from.id);
+  const toKey = String(to.id);
+  by_status[fromKey] = Math.max(0, (by_status[fromKey] ?? 0) - 1);
+  by_status[toKey] = (by_status[toKey] ?? 0) + 1;
+  const next = { ...counts, by_status };
+  if (from.category !== to.category) {
+    next[from.category] = Math.max(0, next[from.category] - 1);
+    next[to.category] += 1;
+  }
+  return next;
+}
+
 /** Optimistic inline status change from the list/board views. */
 export function useIssueStatusMutation(slug: string) {
   const queryClient = useQueryClient();
@@ -135,13 +235,44 @@ export function useIssueStatusMutation(slug: string) {
       const snapshots = queryClient.getQueriesData<IssueListPage | IssueCounts>(
         { queryKey: ["issues", slug] },
       );
-      for (const [key, data] of snapshots) {
-        // The counts query shares the key prefix but has no items to patch.
+      // The pre-move row, from whichever page holds it: its old status
+      // drives the counts patch and the source-group removal below.
+      let moved: IssueListItem | undefined;
+      for (const [, data] of snapshots) {
         if (data && "items" in data) {
+          moved = data.items.find((i) => i.number === vars.issueNumber);
+          if (moved) break;
+        }
+      }
+      for (const [key, data] of snapshots) {
+        if (!data) continue;
+        if (!("items" in data)) {
+          // Counts page: keep the group headers and segment totals in step.
+          if (moved) {
+            queryClient.setQueryData(
+              key,
+              patchCountsMove(data, moved.status, vars.status),
+            );
+          }
+          continue;
+        }
+        const scope = statusScopeOf(key);
+        if (scope === null) {
+          // Mixed-status (flat) page: the row stays, only its pill changes.
           queryClient.setQueryData(
             key,
             patchIssueStatus(data, vars.issueNumber, vars.status),
           );
+        } else if (scope === vars.status.id && moved) {
+          // Target group/column of the move (any cached filter variant).
+          if (moved.status.id !== vars.status.id) {
+            queryClient.setQueryData(
+              key,
+              prependIssue(data, { ...moved, status: vars.status }),
+            );
+          }
+        } else if (scope !== vars.status.id) {
+          queryClient.setQueryData(key, removeIssue(data, vars.issueNumber));
         }
       }
       return { snapshots };

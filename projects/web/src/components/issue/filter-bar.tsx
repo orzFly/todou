@@ -1,9 +1,22 @@
-import type { Label as LabelType, Member, Status } from "@todou/shared";
-import { CheckIcon, FilterIcon, SearchIcon } from "lucide-react";
+import type {
+  IssueCounts,
+  Label as LabelType,
+  Member,
+  Status,
+} from "@todou/shared";
+import {
+  CheckCircle2Icon,
+  CheckIcon,
+  CircleDotIcon,
+  FilterIcon,
+  Rows3Icon,
+  SearchIcon,
+} from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import {
   csvToIds,
   effectiveCategory,
+  effectiveGroup,
   effectiveSort,
   type IssueSearch,
   idsToCsv,
@@ -27,15 +40,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 
 export function FilterBar({
   search,
+  counts,
   statuses,
   labels,
   members,
   onChange,
 }: {
   search: IssueSearch;
+  counts: IssueCounts;
   statuses: Status[];
   labels: LabelType[];
   members: Member[];
@@ -56,6 +72,18 @@ export function FilterBar({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
+      <CategorySegment
+        counts={counts}
+        active={effectiveCategory(search)}
+        onSelect={(category) =>
+          onChange({
+            ...search,
+            // Open is the default, so it maps to a clean URL.
+            category: category === "open" ? undefined : category,
+          })
+        }
+      />
+
       <div className="relative">
         <SearchIcon className="absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
         <Input
@@ -65,26 +93,6 @@ export function FilterBar({
           className="w-56 pl-8"
         />
       </div>
-
-      <Select
-        value={effectiveCategory(search)}
-        onValueChange={(v) =>
-          onChange({
-            ...search,
-            // Open is the default, so it maps to a clean URL.
-            category: v === "open" ? undefined : (v as "closed" | "all"),
-          })
-        }
-      >
-        <SelectTrigger className="w-28" size="sm">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All</SelectItem>
-          <SelectItem value="open">Open</SelectItem>
-          <SelectItem value="closed">Closed</SelectItem>
-        </SelectContent>
-      </Select>
 
       <MultiPick
         label="Status"
@@ -167,6 +175,78 @@ export function FilterBar({
           <SelectItem value="number-desc">Number ↓</SelectItem>
         </SelectContent>
       </Select>
+
+      {/* Grouping only exists in the open-category view (T-88). */}
+      {effectiveCategory(search) === "open" && (
+        <Button
+          variant="outline"
+          size="sm"
+          aria-pressed={effectiveGroup(search) === "status"}
+          className={cn(
+            effectiveGroup(search) === "status" &&
+              "bg-muted font-semibold hover:bg-muted",
+          )}
+          onClick={() =>
+            onChange({
+              ...search,
+              group: effectiveGroup(search) === "status" ? "none" : undefined,
+            })
+          }
+        >
+          <Rows3Icon className="size-3.5" />
+          Grouped
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Open/Closed/All in the toolbar itself, replacing the tabs row above the
+ * list and the old category dropdown — the toolbar floats, and the category
+ * switch must float with it (T-88).
+ */
+function CategorySegment({
+  counts,
+  active,
+  onSelect,
+}: {
+  counts: IssueCounts;
+  active: "open" | "closed" | "all";
+  onSelect: (category: "open" | "closed" | "all") => void;
+}) {
+  const seg = (selected: boolean) =>
+    cn(
+      "flex h-8 cursor-pointer items-center gap-1.5 border-l px-2.5 text-sm first:border-l-0",
+      selected
+        ? "bg-muted font-semibold text-foreground"
+        : "text-muted-foreground hover:text-foreground",
+    );
+  return (
+    <div className="inline-flex overflow-hidden rounded-md border">
+      <button
+        type="button"
+        className={seg(active === "open")}
+        onClick={() => onSelect("open")}
+      >
+        <CircleDotIcon className="size-4" />
+        Open {counts.open}
+      </button>
+      <button
+        type="button"
+        className={seg(active === "closed")}
+        onClick={() => onSelect("closed")}
+      >
+        <CheckCircle2Icon className="size-4" />
+        Closed {counts.closed}
+      </button>
+      <button
+        type="button"
+        className={seg(active === "all")}
+        onClick={() => onSelect("all")}
+      >
+        All
+      </button>
     </div>
   );
 }
