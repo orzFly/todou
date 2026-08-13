@@ -33,6 +33,12 @@ export type ConfigOverrides = {
   extraToml?: string;
   /** Point storage at a fake S3 (see fake-s3.ts); backend flips to "s3". */
   s3?: { endpoint: string; publicEndpoint?: string; keyPrefix?: string };
+  /**
+   * Real database URL for the system tier instead of per-run pglite memory.
+   * Postgres URLs also get auto_migrate switched on, which the production
+   * default leaves off for that driver.
+   */
+  systemUrl?: string;
 };
 
 export function testConfig(
@@ -47,7 +53,10 @@ export function testConfig(
     `path = '${storageDir}'`,
     `max_upload_mb = ${overrides?.maxUploadMb ?? 20}`,
     "[database]",
-    `system = "pglite://memory/${run}-system"`,
+    `system = "${overrides?.systemUrl ?? `pglite://memory/${run}-system`}"`,
+    ...(overrides?.systemUrl?.startsWith("postgres")
+      ? ["auto_migrate = true"]
+      : []),
     "[database.projects]",
   ];
   if (placement === "shared") {

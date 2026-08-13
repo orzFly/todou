@@ -16,10 +16,12 @@ import {
   desc,
   eq,
   gt,
+  gte,
   inArray,
   lt,
   ne,
   or,
+  sql,
 } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { UserRow } from "../auth/pat.ts";
@@ -33,6 +35,13 @@ import { getUserRefs } from "./users.ts";
  * Timeline ordering is the tuple (created_at, kind, id) with comments
  * ranked before events at equal timestamps. Cursors encode that tuple and
  * are opaque to clients.
+ *
+ * `t` carries the full microsecond precision postgres stores — the driver's
+ * Date objects truncate to milliseconds, which made a sub-millisecond
+ * boundary row compare strictly after its own cursor, so forward drains
+ * re-returned it forever and `before=` skipped its millisecond-mates.
+ * Cursors minted before that fix (agents persist them across restarts) are
+ * still honored: see `beyond`.
  */
 type Cursor = { t: string; k: 0 | 1; i: number };
 
@@ -48,13 +57,28 @@ function decodeCursor(raw: string): Cursor {
     const parsed = JSON.parse(
       Buffer.from(raw, "base64url").toString(),
     ) as Cursor;
-    if (typeof parsed.t !== "string" || typeof parsed.i !== "number") {
+    if (
+      typeof parsed.t !== "string" ||
+      Number.isNaN(Date.parse(parsed.t)) ||
+      typeof parsed.i !== "number" ||
+      (parsed.k !== KIND_COMMENT && parsed.k !== KIND_EVENT)
+    ) {
       throw new Error("bad cursor");
     }
     return parsed;
   } catch {
     throw new ValidationFailedError("malformed cursor");
   }
+}
+
+/**
+ * `created_at` rendered at postgres's full microsecond precision. The
+ * driver's Dates only hold milliseconds, so cursors and the merge order are
+ * built from this text form instead (fixed-width, so lexicographic order is
+ * chronological).
+ */
+function microIso(createdAt: AnyPgColumn): SQL<string> {
+  return sql<string>`to_char(${createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 }
 
 /** Comma-separated `types` filter → validated set (null = no filter). */
@@ -74,8 +98,8 @@ function parseTypes(raw: string | undefined): Set<TimelineFilterType> | null {
 }
 
 type Raw =
-  | { kind: 0; row: typeof comments.$inferSelect }
-  | { kind: 1; row: typeof issueEvents.$inferSelect };
+  | { kind: 0; row: typeof comments.$inferSelect; ts: string }
+  | { kind: 1; row: typeof issueEvents.$inferSelect; ts: string };
 
 async function actorRefs(
   ctx: AppContext,
@@ -152,16 +176,14 @@ function filterConditions(query: { types?: string; exclude_actor?: number }): {
 
 function cursorOf(item: Raw): Cursor {
   return {
-    t: item.row.createdAt.toISOString(),
+    t: item.ts,
     k: item.kind,
     i: item.row.id,
   };
 }
 
 function compareRaw(a: Raw, b: Raw): number {
-  const ta = a.row.createdAt.getTime();
-  const tb = b.row.createdAt.getTime();
-  if (ta !== tb) return ta - tb;
+  if (a.ts !== b.ts) return a.ts < b.ts ? -1 : 1;
   if (a.kind !== b.kind) return a.kind - b.kind;
   return a.row.id - b.row.id;
 }
@@ -169,6 +191,14 @@ function compareRaw(a: Raw, b: Raw): number {
 /**
  * Per-table cursor predicate. `forward` means "strictly after the cursor
  * in timeline order"; backward is the mirror image.
+ *
+ * Cursor timestamps come in two precisions: microseconds from current
+ * servers, milliseconds from servers before the #69 fix (and from any
+ * PGlite-era cursor an agent still has persisted). A millisecond `t`
+ * cannot order rows inside its own millisecond, so for those cursors the
+ * whole [t, t+1ms) window counts as "equal timestamp" and the (kind, id)
+ * tie-break decides — the same rule the old encoding applied at equal
+ * timestamps, extended to the sub-millisecond digits it could not see.
  */
 function beyond(
   createdAt: AnyPgColumn,
@@ -177,21 +207,28 @@ function beyond(
   cursor: Cursor,
   forward: boolean,
 ) {
-  const ts = new Date(cursor.t);
-  const cmp = forward ? gt : lt;
-  const conditions: SQL[] = [];
-  const strict = cmp(createdAt, ts);
-  if (strict) conditions.push(strict);
+  const exact = /\.\d{4,}/.test(cursor.t);
+  const from = sql`${cursor.t}::timestamptz`;
+  const to = exact
+    ? from
+    : sql`${new Date(Date.parse(cursor.t) + 1).toISOString()}::timestamptz`;
+  const strict = forward
+    ? exact
+      ? gt(createdAt, from)
+      : gte(createdAt, to)
+    : lt(createdAt, from);
+  const equal = exact
+    ? eq(createdAt, from)
+    : and(gte(createdAt, from), lt(createdAt, to));
 
+  const conditions: SQL[] = [strict];
   if (tableKind === cursor.k) {
-    const tie = and(eq(createdAt, ts), cmp(id, cursor.i));
+    const cmp = forward ? gt : lt;
+    const tie = and(equal, cmp(id, cursor.i));
     if (tie) conditions.push(tie);
   } else {
     const kindAfter = forward ? tableKind > cursor.k : tableKind < cursor.k;
-    if (kindAfter) {
-      const tie = eq(createdAt, ts);
-      conditions.push(tie);
-    }
+    if (kindAfter && equal) conditions.push(equal);
   }
   return or(...conditions);
 }
@@ -278,7 +315,7 @@ export async function getTimeline(
   const [commentRows, eventRows] = [
     wantComments
       ? await db
-          .select()
+          .select({ row: comments, ts: microIso(comments.createdAt) })
           .from(comments)
           .where(and(...commentConditions))
           .orderBy(...commentOrder)
@@ -286,7 +323,7 @@ export async function getTimeline(
       : [],
     wantEvents
       ? await db
-          .select()
+          .select({ row: issueEvents, ts: microIso(issueEvents.createdAt) })
           .from(issueEvents)
           .where(and(...eventConditions))
           .orderBy(...eventOrder)
@@ -295,8 +332,12 @@ export async function getTimeline(
   ];
 
   let merged: Raw[] = [
-    ...commentRows.map((row) => ({ kind: KIND_COMMENT, row }) as Raw),
-    ...eventRows.map((row) => ({ kind: KIND_EVENT, row }) as Raw),
+    ...commentRows.map(
+      (r) => ({ kind: KIND_COMMENT, row: r.row, ts: r.ts }) as Raw,
+    ),
+    ...eventRows.map(
+      (r) => ({ kind: KIND_EVENT, row: r.row, ts: r.ts }) as Raw,
+    ),
   ].sort(compareRaw);
 
   let hasMore: boolean;
@@ -378,7 +419,11 @@ export async function getProjectActivity(
 
   const commentRows = wantComments
     ? await db
-        .select({ row: comments, number: issues.number })
+        .select({
+          row: comments,
+          number: issues.number,
+          ts: microIso(comments.createdAt),
+        })
         .from(comments)
         .innerJoin(issues, eq(comments.issueId, issues.id))
         .where(and(...commentConditions))
@@ -387,7 +432,11 @@ export async function getProjectActivity(
     : [];
   const eventRows = wantEvents
     ? await db
-        .select({ row: issueEvents, number: issues.number })
+        .select({
+          row: issueEvents,
+          number: issues.number,
+          ts: microIso(issueEvents.createdAt),
+        })
         .from(issueEvents)
         .innerJoin(issues, eq(issueEvents.issueId, issues.id))
         .where(and(...eventConditions))
@@ -399,11 +448,21 @@ export async function getProjectActivity(
   let merged: RawWithIssue[] = [
     ...commentRows.map(
       (r) =>
-        ({ kind: KIND_COMMENT, row: r.row, number: r.number }) as RawWithIssue,
+        ({
+          kind: KIND_COMMENT,
+          row: r.row,
+          ts: r.ts,
+          number: r.number,
+        }) as RawWithIssue,
     ),
     ...eventRows.map(
       (r) =>
-        ({ kind: KIND_EVENT, row: r.row, number: r.number }) as RawWithIssue,
+        ({
+          kind: KIND_EVENT,
+          row: r.row,
+          ts: r.ts,
+          number: r.number,
+        }) as RawWithIssue,
     ),
   ].sort(compareRaw);
   merged = backward ? merged.slice(-query.limit) : merged.slice(0, query.limit);
