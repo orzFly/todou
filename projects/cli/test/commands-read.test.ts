@@ -249,6 +249,12 @@ describe("issue view", () => {
           paths: ["design.md"],
         }),
         event(8, "closed", { from: null, to: { id: 2, name: "Done" } }),
+        event(9, "spec_review", {
+          version: 3,
+          verdict: "approve",
+          comment_id: null,
+          annotation_count: 0,
+        }),
       ],
       prev_cursor: null,
       next_cursor: null,
@@ -272,10 +278,13 @@ describe("issue view", () => {
     expect(result.stdout).toContain("referenced (by T-9)");
     expect(result.stdout).toContain("attachment_added (shot.png)");
     expect(result.stdout).toContain(
-      "spec_pushed (v2: 1 added, 2 changed — tighten scope · use `todou spec pull 3 <dir>` to view)",
+      "spec_pushed (v2: 1 added, 2 changed — tighten scope · use `todou spec pull 3 --version 2 <empty-dir>` to view)",
     );
     expect(result.stdout).toContain(
       "spec_review (v2 changes requested, 4 annotation(s) · use `todou spec comments 3 --unresolved` to view)",
+    );
+    expect(result.stdout).toContain(
+      "spec_review (v3 approved · use `todou spec pull 3 --version 3 <empty-dir>` to view)",
     );
     expect(result.stdout).toContain(
       "spec_comments_resolved (2 annotation(s) on design.md)",

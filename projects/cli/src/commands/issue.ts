@@ -681,7 +681,7 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
         .join(", ");
       const message =
         spec.data.message === null ? "" : ` — ${spec.data.message}`;
-      return `v${spec.data.version}${files ? `: ${files}` : ""}${message} · use \`todou spec pull ${ctx.issueNumber} <dir>\` to view`;
+      return `v${spec.data.version}${files ? `: ${files}` : ""}${message} · ${specPullHint(ctx, spec.data.version)}`;
     }
     case "spec_review": {
       const review = SpecReviewPayload.safeParse(payload);
@@ -692,7 +692,7 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
         annotation_count > 0 ? `, ${annotation_count} annotation(s)` : "";
       const hint =
         verdict === "approve"
-          ? `use \`todou spec pull ${ctx.issueNumber} <dir>\` to view`
+          ? specPullHint(ctx, version)
           : `use \`todou spec comments ${ctx.issueNumber} --unresolved\` to view`;
       return `v${version} ${outcome}${notes} · ${hint}`;
     }
@@ -707,6 +707,17 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
     default:
       return scalarDetail(payload);
   }
+}
+
+/**
+ * Pinned to the entry's own version — the current version may already be
+ * newer than the one this event talks about. `<empty-dir>` (rather than
+ * `<dir>`) steers the reader away from a directory with existing files:
+ * pull overwrites same-named files and keeps foreign .md files unless
+ * --prune deletes them, and a hint should not suggest either hazard.
+ */
+function specPullHint(ctx: TimelineRenderContext, version: number): string {
+  return `use \`todou spec pull ${ctx.issueNumber} --version ${version} <empty-dir>\` to view`;
 }
 
 /** A string field off a nested payload object; "?" mirrors the web's fallback. */
