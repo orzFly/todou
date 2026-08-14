@@ -47,9 +47,19 @@ function hermesHome(rows?: {
 }
 
 describe("hermes-agent detection", () => {
-  it("returns null without hermes signals — HERMES_HOME alone is not one", () => {
+  it("returns null without hermes signals — a knob alone is not one", () => {
     expect(detectAgentContext({}, home)).toBeNull();
     expect(detectAgentContext({ HERMES_HOME: "/somewhere" }, home)).toBeNull();
+    expect(detectAgentContext({ HERMES_INTERACTIVE: "1" }, home)).toBeNull();
+  });
+
+  it("detects a turn carrying no session variable at all (T-125)", () => {
+    // A terminal CLI turn, over ssh or not: hermes strips the session vars
+    // from a subprocess it cannot attribute to one session, leaving the
+    // subprocess-home marker as the only thing that says hermes spawned us.
+    expect(detectAgentContext({ HERMES_REAL_HOME: home }, home)).toEqual({
+      agent: "hermes-agent",
+    });
   });
 
   it("detects a gateway turn by session key", () => {
@@ -69,18 +79,25 @@ describe("hermes-agent detection", () => {
     expect(
       detectAgentContext({ CLAUDECODE: "1", HERMES_SESSION_KEY: KEY }, home),
     ).toEqual({ agent: "claude-code" });
+    expect(
+      detectAgentContext({ CLAUDECODE: "1", HERMES_REAL_HOME: home }, home),
+    ).toEqual({ agent: "claude-code" });
   });
 
-  it("reads the model via HERMES_SESSION_ID", () => {
+  it("reports the durable session id and its model", () => {
     const dir = hermesHome({ sessions: [[SID, "hermes-test-model"]] });
     expect(
       detectAgentContext(
-        { HERMES_SESSION_KEY: KEY, HERMES_SESSION_ID: SID, HERMES_HOME: dir },
+        {
+          HERMES_REAL_HOME: home,
+          HERMES_SESSION_ID: SID,
+          HERMES_HOME: dir,
+        },
         home,
       ),
     ).toEqual({
       agent: "hermes-agent",
-      session_id: KEY,
+      session_id: SID,
       model: "hermes-test-model",
     });
   });
@@ -97,9 +114,12 @@ describe("hermes-agent detection", () => {
       ],
     });
     expect(
-      detectAgentContext({ HERMES_SESSION_KEY: KEY, HERMES_HOME: dir }, home)
-        ?.model,
-    ).toBe("hermes-test-model");
+      detectAgentContext({ HERMES_SESSION_KEY: KEY, HERMES_HOME: dir }, home),
+    ).toEqual({
+      agent: "hermes-agent",
+      session_id: SID,
+      model: "hermes-test-model",
+    });
   });
 
   it("falls back to routing when HERMES_SESSION_ID is bridged empty", () => {
@@ -113,31 +133,46 @@ describe("hermes-agent detection", () => {
       detectAgentContext(
         { HERMES_SESSION_KEY: KEY, HERMES_SESSION_ID: "", HERMES_HOME: dir },
         home,
-      )?.model,
-    ).toBe("hermes-test-model");
+      ),
+    ).toEqual({
+      agent: "hermes-agent",
+      session_id: SID,
+      model: "hermes-test-model",
+    });
+  });
+
+  it("keeps the durable id when the model column is empty", () => {
+    const dir = hermesHome({
+      sessions: [[SID, ""]],
+      routing: [[KEY, JSON.stringify({ session_id: SID }), 1]],
+    });
+    expect(
+      detectAgentContext({ HERMES_SESSION_KEY: KEY, HERMES_HOME: dir }, home),
+    ).toEqual({ agent: "hermes-agent", session_id: SID });
   });
 
   it.each([
     ["no state.db", () => hermesHome()],
     ["empty database", () => hermesHome({ bare: true })],
-    ["no matching session row", () => hermesHome({ sessions: [] })],
+    ["no routing row", () => hermesHome({ sessions: [] })],
     [
       "malformed entry_json",
       () => hermesHome({ routing: [[KEY, "not json", 1]] }),
     ],
-    [
-      "empty model column",
-      () =>
-        hermesHome({
-          sessions: [[SID, ""]],
-          routing: [[KEY, JSON.stringify({ session_id: SID }), 1]],
-        }),
-    ],
-  ])("degrades to no model on %s", (_name, make) => {
+  ])("falls back to the session key on %s", (_name, make) => {
     const dir = make();
     expect(
       detectAgentContext({ HERMES_SESSION_KEY: KEY, HERMES_HOME: dir }, home),
     ).toEqual({ agent: "hermes-agent", session_id: KEY });
+  });
+
+  it("keeps the environment's session id when the database is unreadable", () => {
+    expect(
+      detectAgentContext(
+        { HERMES_REAL_HOME: home, HERMES_SESSION_ID: SID },
+        home,
+      ),
+    ).toEqual({ agent: "hermes-agent", session_id: SID });
   });
 });
 
@@ -166,7 +201,7 @@ describe("cli integration", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toContain(
-      `detected harness: hermes-agent (session ${KEY}, model hermes-test-model)`,
+      `detected harness: hermes-agent (session ${SID}, model hermes-test-model)`,
     );
   });
 

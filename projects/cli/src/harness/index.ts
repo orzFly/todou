@@ -11,7 +11,7 @@ import type { Harness } from "./types.ts";
  * Ordered innermost-first: a harness whose environment is inherited by the
  * agents it spawns must come after the harnesses it can spawn, so the
  * nearest host wins when several signals are present at once. A hermes
- * terminal turn can launch claude code, which passes HERMES_SESSION_* on
+ * terminal turn can launch claude code, which passes the hermes markers on
  * to its children — CLAUDECODE=1 then marks the direct host.
  *
  * claude code, codex and pi are peers rather than host and guest: each marks
