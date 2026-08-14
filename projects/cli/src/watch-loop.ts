@@ -175,11 +175,23 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
    * clock and settle the timeout and debounce windows by arithmetic (T-127).
    */
   clock?: Clock;
+  /**
+   * How the loop idles between drains, given the longest wait still useful
+   * (the time left on the deadline, or on the debounce window). The default
+   * is the poll interval; a push transport hands in a wait that also
+   * returns early when the server says there is something to pull (T-123).
+   * Either way the loop's arithmetic is unchanged — a wait that ends sooner
+   * only means an extra drain, never a different verdict.
+   */
+  wait?: (maxMs: number) => Promise<void>;
 }): Promise<number> {
   let cursor = opts.baseline;
   const clock = opts.clock ?? systemClock;
   const deadline = clock.now() + opts.timeoutSec * 1000;
   const retry = opts.retry ?? watchRetryOptions(opts.poll, undefined, clock);
+  const wait =
+    opts.wait ??
+    ((maxMs) => clock.sleep(Math.min(opts.intervalSec * 1000, maxMs)));
 
   // Cursors are absolute stream positions and only advance once a drain
   // has returned, so re-draining with the held cursor after a failure
@@ -216,7 +228,7 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
         for (;;) {
           const remaining = windowEnd - clock.now();
           if (remaining <= 0) break;
-          await clock.sleep(Math.min(opts.intervalSec * 1000, remaining));
+          await wait(remaining);
           items.push(...(await drainOnce()));
         }
       }
@@ -228,6 +240,6 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
       opts.onEmpty(cursor);
       return 3;
     }
-    await clock.sleep(Math.min(opts.intervalSec * 1000, remaining));
+    await wait(remaining);
   }
 }

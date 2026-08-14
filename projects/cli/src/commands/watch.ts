@@ -6,6 +6,7 @@ import type {
 import { formatRef, TimelineFilterType, TodouError } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
+import { openChangeNudges } from "../change-nudges.ts";
 import { CliError } from "../errors.ts";
 import { makePainter } from "../format.ts";
 import { drainPaged } from "../paginate.ts";
@@ -13,6 +14,7 @@ import { parseSeconds } from "../parse.ts";
 import { fetchRefPrefix } from "../resolve.ts";
 import {
   normalizeTypes,
+  type RetryOptions,
   resolveSelfFilter,
   retryTransient,
   runWatchLoop,
@@ -71,6 +73,17 @@ export class WatchCommand extends ProjectCommand {
       to ride out a slow deploy restart); \`--poll\` fails fast after 3.
       Exhausting the budget exits 4 — unlike 1, just rerun with the same
       \`--since\` cursor and nothing is missed or repeated.
+
+      Where the server offers a change feed, a blocking watch subscribes
+      to it and reacts the moment something lands instead of waiting out
+      \`--interval\`; against a server without one it polls exactly as
+      before, silently. The feed only ever says "there may be something
+      to pull" — entries themselves still come from the cursor, so a
+      dropped or missed push costs latency and never an entry. A timed
+      drain stays on as a backstop, but never more often than
+      \`--interval\`, which remains the pace outright whenever the feed is
+      down. Nothing else moves: same cursors, same filters, same exit
+      codes. \`--poll\` drains once and never subscribes.
 
       \`--debounce N\` batches a burst into one wake-up: keep collecting
       until N seconds after the newest entry of the first batch *happened*
@@ -155,6 +168,62 @@ export class WatchCommand extends ProjectCommand {
       ? {}
       : await resolveSelfFilter(client, this.agentContext, retry);
     const paint = makePainter(this.context.stdout, this.context.env);
+    // Transport, not truth (T-123). While the user-level change feed
+    // (T-122) is up, the loop idles on it instead of on --interval; every
+    // other thing this command does — the cursor it drains from, the
+    // self-filter it drains with, what it prints, what it exits with — is
+    // the same code as when it polled. A server without the feed, or a
+    // feed that drops, silently costs latency and nothing else. `--poll`
+    // drains once and leaves, so a subscription would be pure overhead.
+    const nudges = this.poll
+      ? null
+      : await openChangeNudges({
+          client,
+          projects: slugs === null ? null : new Set(slugs),
+          intervalSec,
+          clock: this.clock,
+        });
+    try {
+      return await this.watch(client, {
+        slugs,
+        retry,
+        types,
+        timeoutSec,
+        intervalSec,
+        debounceSec,
+        self,
+        paint,
+        wait: nudges?.wait,
+      });
+    } finally {
+      nudges?.close();
+    }
+  }
+
+  private async watch(
+    client: TodouClient,
+    opts: {
+      slugs: string[] | null;
+      retry: RetryOptions;
+      types: string | undefined;
+      timeoutSec: number;
+      intervalSec: number;
+      debounceSec: number | undefined;
+      self: SelfFilter;
+      paint: ReturnType<typeof makePainter>;
+      wait: ((maxMs: number) => Promise<void>) | undefined;
+    },
+  ): Promise<number> {
+    const {
+      slugs,
+      retry,
+      types,
+      timeoutSec,
+      intervalSec,
+      debounceSec,
+      self,
+      paint,
+    } = opts;
 
     if (slugs !== null && slugs.length === 1) {
       // Single-project mode: the published v0.1.0 contract — a plain
@@ -184,6 +253,7 @@ export class WatchCommand extends ProjectCommand {
         baseline,
         retry,
         clock: this.clock,
+        wait: opts.wait,
         drain: (after) =>
           drainActivity(client, project, { after, types, ...self }),
         onItems: (items, cursor) =>
@@ -265,6 +335,7 @@ export class WatchCommand extends ProjectCommand {
       baseline,
       retry,
       clock: this.clock,
+      wait: opts.wait,
       drain: async (after) => {
         const page = await drainCrossActivity(client, projects, {
           after,

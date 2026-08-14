@@ -14,8 +14,9 @@ export type Route = [
 
 /**
  * Route-table fetch stub: matches on method + pathname, replies 200 JSON.
- * Reply `{ __status: n, body }` to force a status; unmatched requests throw
- * so tests never silently talk past the stub.
+ * Reply `{ __status: n, body }` to force a status, or a ready-made
+ * `Response` for anything JSON cannot express (an event stream); unmatched
+ * requests throw so tests never silently talk past the stub.
  */
 export function fakeFetch(routes: Route[]) {
   const calls: Captured[] = [];
@@ -37,6 +38,7 @@ export function fakeFetch(routes: Route[]) {
             url,
           )
         : route[2];
+    if (raw instanceof Response) return raw;
     const forced = raw as { __status?: number; body?: unknown };
     const status = forced?.__status ?? 200;
     const body = forced?.__status !== undefined ? forced.body : raw;
@@ -46,6 +48,59 @@ export function fakeFetch(routes: Route[]) {
     });
   }) as typeof fetch;
   return { fetchImpl, calls };
+}
+
+export type SseStub = {
+  /** Route reply: one live `text/event-stream` response per open. */
+  reply: () => Response;
+  /** Queues a frame; before the first open it waits for the subscriber. */
+  push: (event: string, data: unknown) => void;
+  /** Ends the current connection the way a dropped stream does. */
+  drop: () => void;
+  /** How many times the feed has been subscribed to. */
+  opens: () => number;
+};
+
+/**
+ * A stand-in for the server's change feed (T-122). Frames queued before
+ * the first open are delivered with the opening `hello`, in the same chunk
+ * the subscriber's first read returns — which is what lets a test say
+ * "the feed had already spoken" without racing the watch's startup.
+ */
+export function sseStub(): SseStub {
+  const encoder = new TextEncoder();
+  let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+  let pending = "event: hello\ndata: {}\n\n";
+  let opens = 0;
+  const write = (text: string) => {
+    if (controller === null) pending += text;
+    else controller.enqueue(encoder.encode(text));
+  };
+  return {
+    reply: () => {
+      opens += 1;
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          controller = c;
+          c.enqueue(encoder.encode(pending));
+          pending = "event: hello\ndata: {}\n\n";
+        },
+        cancel() {
+          controller = null;
+        },
+      });
+      return new Response(body, {
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+    push: (event, data) =>
+      write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+    drop: () => {
+      controller?.close();
+      controller = null;
+    },
+    opens: () => opens,
+  };
 }
 
 export async function runCli(
@@ -108,10 +163,17 @@ export type VirtualClock = Clock & {
 
 /**
  * A clock that moves only when the code under test asks to wait: `sleep`
- * advances `now` and resolves at once, so a watch loop's poll cadence,
+ * advances `now` instead of waiting, so a watch loop's poll cadence,
  * timeout and debounce window are settled by arithmetic and never by how
  * loaded the machine is (T-127). That makes `elapsed()` an exact assertion
  * rather than a tolerance, and costs no wall time even for a 60s window.
+ *
+ * A sleep completes on a macrotask, and an aborted one advances nothing.
+ * Both are what a real timer does, and both matter to anything that races
+ * a sleep against an event (T-123): resolving synchronously would hand the
+ * race to the timer every time, hiding whether the event ever wins, and
+ * charging virtual seconds for a wait that was cut short would make
+ * `elapsed()` lie about it.
  *
  * Feed fixture timestamps from `iso()`, not `new Date()`: the debounce
  * anchor compares `created_at` against this clock, so an entry is "live"
@@ -122,10 +184,20 @@ export function virtualClock(start = "2026-08-11T12:00:00.000Z"): VirtualClock {
   let now = startMs;
   return {
     now: () => now,
-    sleep: (ms) => {
-      now += ms;
-      return Promise.resolve();
-    },
+    sleep: (ms, signal) =>
+      new Promise((resolve) => {
+        if (signal?.aborted) return resolve();
+        const timer = setTimeout(() => {
+          signal?.removeEventListener("abort", onAbort);
+          now += ms;
+          resolve();
+        }, 0);
+        const onAbort = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
+      }),
     elapsed: () => now - startMs,
     iso: (offsetMs = 0) => new Date(now + offsetMs).toISOString(),
   };

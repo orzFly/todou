@@ -1,3 +1,8 @@
+import {
+  type CrossChangeEvent,
+  CrossChangeEvent as CrossChangeEventSchema,
+  SSE_CHANGE_EVENT,
+} from "./events.ts";
 import type {
   ActivityPage,
   Agent,
@@ -52,6 +57,7 @@ import type {
   TokenCreateInput,
   TokenListItem,
 } from "./index.ts";
+import { SseDecoder } from "./sse.ts";
 
 export type TodouClientOptions = {
   /** Origin of the server; empty string = same origin (web app). */
@@ -660,4 +666,104 @@ export class TodouClient {
 
   /** EventSource URL for the user-level cross-project feed (T-122). */
   userEventsUrl = () => `${this.#baseUrl}/api/events`;
+
+  /**
+   * Subscribes to the user-level change feed (T-122) over plain `fetch`
+   * rather than EventSource, which cannot carry an Authorization header —
+   * the only way a token-authenticated client identifies itself.
+   *
+   * Resolves once the response headers prove the feed exists; frames are
+   * then dispatched from a background reader until the stream ends. Every
+   * way of *not* getting a feed throws a TodouError carrying the response
+   * status, so callers can sort "this server has no such endpoint" (404,
+   * permanent) from "the server is having a moment" (5xx, retry) with the
+   * same classifier they already use for REST calls.
+   *
+   * Events are pointers, never data (see ChangeEvent): a subscriber learns
+   * that something changed and refetches it through the authorized API.
+   */
+  openChangeStream = async (opts: {
+    onEvent: (event: CrossChangeEvent) => void;
+    /** Any bytes at all, framed or not — liveness for stall detection. */
+    onAlive?: () => void;
+  }): Promise<ChangeStream> => {
+    const headers: Record<string, string> = {
+      ...this.#headers,
+      accept: "text/event-stream",
+    };
+    if (this.#token) headers.authorization = `Bearer ${this.#token}`;
+    const abort = new AbortController();
+    const res = await this.#fetch(`${this.#baseUrl}/api/events`, {
+      method: "GET",
+      headers,
+      credentials: "same-origin",
+      signal: abort.signal,
+    });
+    if (!res.ok) {
+      let parsed: unknown = null;
+      try {
+        parsed = await res.json();
+      } catch {
+        // Non-JSON error body; errorFromBody keeps status as message.
+      }
+      throw errorFromBody(res.status, parsed);
+    }
+    const contentType = res.headers.get("content-type") ?? "";
+    if (!res.body || !contentType.includes("text/event-stream")) {
+      // A 2xx that is not a stream is something else answering for the
+      // server (a login page, a caching proxy). Reported with the real
+      // status so it classifies as permanent, not as a transient blip.
+      throw new TodouError(
+        res.status,
+        "not_event_stream",
+        `expected text/event-stream, got ${contentType || "an empty body"}`,
+      );
+    }
+
+    const reader = res.body.getReader();
+    const text = new TextDecoder();
+    const decoder = new SseDecoder();
+    // Frames from one chunk are dispatched synchronously, without an await
+    // between them: a caller that resumes on this promise has therefore
+    // seen everything the network had already delivered.
+    const closed = (async () => {
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          opts.onAlive?.();
+          for (const frame of decoder.push(
+            text.decode(value, { stream: true }),
+          )) {
+            if (frame.event !== SSE_CHANGE_EVENT) continue;
+            let event: CrossChangeEvent;
+            try {
+              event = CrossChangeEventSchema.parse(JSON.parse(frame.data));
+            } catch {
+              continue; // A frame we cannot read is one we cannot act on.
+            }
+            opts.onEvent(event);
+          }
+        }
+      } catch {
+        // A dropped stream is ordinary, not exceptional: it ends here and
+        // the caller decides whether to reconnect.
+      }
+    })();
+
+    return {
+      closed,
+      close: () => {
+        abort.abort();
+        void reader.cancel().catch(() => {});
+      },
+    };
+  };
 }
+
+/** A live subscription to the change feed; see `openChangeStream`. */
+export type ChangeStream = {
+  /** Resolves when the stream ends — dropped, failed, or closed. */
+  closed: Promise<void>;
+  close: () => void;
+};

@@ -315,3 +315,128 @@ describe("TodouClient batching (T-91)", () => {
     expect(calls[0]?.init.method).toBe("POST");
   });
 });
+
+describe("TodouClient change stream (T-123)", () => {
+  const feed = () => {
+    const encoder = new TextEncoder();
+    const calls: Captured[] = [];
+    let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+    let cancelled = false;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start: (c) => {
+            controller = c;
+          },
+          cancel: () => {
+            cancelled = true;
+          },
+        }),
+        { headers: { "content-type": "text/event-stream; charset=utf-8" } },
+      );
+    }) as typeof fetch;
+    return {
+      fetch: fetchImpl,
+      calls,
+      write: (text: string) => controller?.enqueue(encoder.encode(text)),
+      end: () => controller?.close(),
+      cancelled: () => cancelled,
+    };
+  };
+
+  const change = (project: string) =>
+    `event: change\ndata: ${JSON.stringify({
+      entity: "comment",
+      id: 9,
+      action: "created",
+      issue_number: 3,
+      project,
+    })}\n\n`;
+
+  it("subscribes to the user-level feed with the bearer token", async () => {
+    const server = feed();
+    const client = new TodouClient({
+      baseUrl: "http://api.test",
+      token: "todou_pat_test",
+      fetch: server.fetch,
+      headers: { "x-todou-agent-context": "{}" },
+    });
+    const stream = await client.openChangeStream({ onEvent: () => {} });
+    expect(server.calls[0]?.url).toBe("http://api.test/api/events");
+    const headers = server.calls[0]?.init.headers as Record<string, string>;
+    expect(headers.authorization).toBe("Bearer todou_pat_test");
+    expect(headers.accept).toBe("text/event-stream");
+    expect(headers["x-todou-agent-context"]).toBe("{}");
+    stream.close();
+  });
+
+  it("dispatches change events and reports liveness for every chunk", async () => {
+    const server = feed();
+    const client = new TodouClient({ fetch: server.fetch });
+    const events: string[] = [];
+    let alive = 0;
+    const stream = await client.openChangeStream({
+      onEvent: (event) => events.push(`${event.project}/${event.entity}`),
+      onAlive: () => {
+        alive += 1;
+      },
+    });
+    server.write(`event: hello\ndata: {}\n\n${change("todou")}`);
+    server.write("event: ping\ndata: {}\n\n");
+    server.end();
+    await stream.closed;
+    // One dispatch per change event; liveness counts bytes, not frames, so
+    // a heartbeat carrying no change still proves the stream is alive.
+    expect(events).toEqual(["todou/comment"]);
+    expect(alive).toBe(2);
+  });
+
+  it("drops frames it cannot read instead of ending the stream", async () => {
+    const server = feed();
+    const client = new TodouClient({ fetch: server.fetch });
+    const events: string[] = [];
+    const stream = await client.openChangeStream({
+      onEvent: (event) => events.push(event.project),
+    });
+    server.write("event: change\ndata: not json\n\n");
+    server.write('event: change\ndata: {"entity":"nope"}\n\n');
+    server.write(change("todou"));
+    server.end();
+    await stream.closed;
+    expect(events).toEqual(["todou"]);
+  });
+
+  it("reports a server without the feed as a plain 404", async () => {
+    const { fetch } = mockFetch(404, {
+      error: { code: "not_found", message: "no route" },
+    });
+    const client = new TodouClient({ fetch });
+    const error: unknown = await client
+      .openChangeStream({ onEvent: () => {} })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(TodouError);
+    expect((error as TodouError).status).toBe(404);
+  });
+
+  it("refuses a 2xx that is not an event stream", async () => {
+    const { fetch } = mockFetch(200, { hello: "i am a login page" });
+    const client = new TodouClient({ fetch });
+    const error: unknown = await client
+      .openChangeStream({ onEvent: () => {} })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(TodouError);
+    expect((error as TodouError).code).toBe("not_event_stream");
+    // 200, so callers classify it as permanent rather than retrying it.
+    expect((error as TodouError).status).toBe(200);
+  });
+
+  it("close() cancels the body so the process can exit", async () => {
+    const server = feed();
+    const client = new TodouClient({ fetch: server.fetch });
+    const stream = await client.openChangeStream({ onEvent: () => {} });
+    stream.close();
+    await stream.closed;
+    expect(server.cancelled()).toBe(true);
+  });
+});
