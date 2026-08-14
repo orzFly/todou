@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { IssueListPage } from "@todou/shared";
+import type { InboxPage, IssueListPage } from "@todou/shared";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 
@@ -8,11 +8,15 @@ import { api } from "@/api/queries.ts";
  * /activity row — so a mark-read is invisible to every change signal the app
  * has. The mutating client is the only party that knows the inbox shrank, and
  * must say so itself or the badge keeps its old count until something
- * unrelated happens to refresh it (T-112).
+ * unrelated happens to refresh it (T-112). Every mark-read, single or bulk,
+ * goes through here; an undefined slug is the cross-project scope.
  */
 const readInvalidations = (
-  slug: string,
-): ReadonlyArray<ReadonlyArray<unknown>> => [["issues", slug], ["inbox"]];
+  slug?: string,
+): ReadonlyArray<ReadonlyArray<unknown>> => [
+  slug === undefined ? ["issues"] : ["issues", slug],
+  ["inbox"],
+];
 
 /**
  * Advance my last-seen position on an issue (T-46). Best-effort by design:
@@ -24,6 +28,86 @@ export function useMarkIssueRead(slug: string, number: number) {
   return useMutation({
     mutationFn: () => api.markIssueRead(slug, number, {}),
     onError: (error) => console.warn("mark-read failed", error),
+    onSettled: () => {
+      for (const queryKey of readInvalidations(slug)) {
+        queryClient.invalidateQueries({ queryKey });
+      }
+    },
+  });
+}
+
+/** Pure cache patch, exported for tests. */
+export function clearAllUnread(page: IssueListPage): IssueListPage {
+  return {
+    ...page,
+    items: page.items.map((item) => ({
+      ...item,
+      unread: false,
+      unread_comments: 0,
+    })),
+  };
+}
+
+/**
+ * The inbox after a sweep, exported for tests. Mirrors the server's
+ * keep-check: being read retires only the unread reason, so a row still
+ * waiting on my spec review or carrying open questions stays — it just
+ * loses its marker. Rows that had nothing else to say leave.
+ */
+export function clearInboxUnread(page: InboxPage, slug?: string): InboxPage {
+  return {
+    ...page,
+    items: page.items.flatMap((item) => {
+      if (slug !== undefined && item.project.slug !== slug) return [item];
+      if (!item.pending_spec_review && item.open_questions === 0) return [];
+      return [{ ...item, unread: false, unread_comments: 0 }];
+    }),
+  };
+}
+
+/**
+ * Mark a whole project read, or every project when `slug` is omitted
+ * (T-100) — one endpoint, two scopes. Patches the same caches the
+ * single-issue action does, plus the inbox itself: without it the page
+ * would keep rendering rows the sweep just emptied until the refetch
+ * lands.
+ */
+export function useMarkAllReadAction(slug?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.markAllRead(slug === undefined ? {} : { projects: [slug] }),
+    onMutate: async () => {
+      const issuesKey = slug === undefined ? ["issues"] : ["issues", slug];
+      await queryClient.cancelQueries({ queryKey: issuesKey });
+      await queryClient.cancelQueries({ queryKey: ["inbox"] });
+      const lists = queryClient.getQueriesData<IssueListPage>({
+        queryKey: issuesKey,
+      });
+      const inboxes = queryClient.getQueriesData<InboxPage>({
+        queryKey: ["inbox"],
+      });
+      for (const [key, data] of lists) {
+        // The prefix also matches the tab-counts cache (no `items`); leave
+        // anything that isn't a list page untouched.
+        if (!data || !("items" in data)) continue;
+        queryClient.setQueryData(key, clearAllUnread(data));
+      }
+      for (const [key, data] of inboxes) {
+        if (!data) continue;
+        queryClient.setQueryData(key, clearInboxUnread(data, slug));
+      }
+      return { lists, inboxes };
+    },
+    onError: (error, _vars, context) => {
+      for (const [key, data] of [
+        ...(context?.lists ?? []),
+        ...(context?.inboxes ?? []),
+      ]) {
+        queryClient.setQueryData(key, data);
+      }
+      toast.error(`Could not mark as read: ${error.message}`);
+    },
     onSettled: () => {
       for (const queryKey of readInvalidations(slug)) {
         queryClient.invalidateQueries({ queryKey });

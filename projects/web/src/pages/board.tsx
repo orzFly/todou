@@ -22,6 +22,7 @@ import {
   SpecReviewBadge,
 } from "@/components/issue/attention-badge.tsx";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
+import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Badge } from "@/components/ui/badge";
@@ -132,6 +133,12 @@ export function BoardPage() {
         ref={canvasRef}
         className="mx-[calc(50%-50vw)] -mb-6 flex flex-col gap-4 px-4 pb-4"
       >
+        {/* The board has no filter toolbar to hang this off, so it gets a
+            row of its own — project-scoped, like the list's copy, because
+            the endpoint sweeps a project and not a column (T-100). */}
+        <div className="flex shrink-0 justify-end">
+          <MarkAllReadButton slug={slug} scopeName="this project" />
+        </div>
         <div className="flex min-h-0 flex-1 gap-4 overflow-x-auto">
           {statuses.data.map((status) => (
             <BoardColumn key={status.id} slug={slug} status={status} />

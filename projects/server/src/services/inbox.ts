@@ -11,31 +11,15 @@ import {
   specVersions,
   statuses,
 } from "../db/project-schema.ts";
-import { projectMembers, projects } from "../db/system-schema.ts";
-import { type ProjectRow, requireProject, routeInfoOf } from "./access.ts";
+import {
+  accessibleProjectRows,
+  type ProjectRow,
+  requireProject,
+  routeInfoOf,
+} from "./access.ts";
 import { bundleIssues, toIssue } from "./issues.ts";
 import { readPrefs } from "./prefs.ts";
 import { ensureFrontier, unreadIssueState } from "./reads.ts";
-
-/**
- * Same visibility rule as listProjects, but keeping the raw rows for db
- * routing. (T-93's /activity needs the same enumeration — whichever lands
- * second folds the two into one shared helper.)
- */
-async function accessibleProjectRows(
-  ctx: AppContext,
-  user: UserRow,
-): Promise<ProjectRow[]> {
-  const system = ctx.router.system();
-  if (user.isInstanceAdmin) return system.select().from(projects);
-  const memberships = await system
-    .select({ projectId: projectMembers.projectId })
-    .from(projectMembers)
-    .where(eq(projectMembers.userId, user.id));
-  const ids = memberships.map((m) => m.projectId);
-  if (ids.length === 0) return [];
-  return system.select().from(projects).where(inArray(projects.id, ids));
-}
 
 type ProjectSlice = { items: InboxItem[]; truncated: boolean };
 

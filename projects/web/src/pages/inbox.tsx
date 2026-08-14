@@ -8,6 +8,7 @@ import {
   QuestionBadge,
   SpecReviewBadge,
 } from "@/components/issue/attention-badge.tsx";
+import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -92,8 +93,10 @@ export function InboxPage() {
             </button>
           ))}
         </div>
-        {/* T-100 (bulk mark-as-read): the global "Mark all read" button
-            lands here, wired to PUT /me/read with no projects filter. */}
+        {/* max-sm only: below the tabs' breakpoint this wraps onto a line
+            of its own, where justify-between leaves it stranded at the
+            left edge — every other sweep control sits on the right. */}
+        <MarkAllReadButton scopeName="the inbox" className="max-sm:ml-auto" />
       </div>
 
       {groups.length === 0 ? (
@@ -135,8 +138,12 @@ function InboxGroupSection({ group }: { group: InboxGroup }) {
             {group.items.length}
           </span>
         </div>
-        {/* T-100 (bulk mark-as-read): the per-project "mark project read"
-            button lands here, wired to PUT /me/read {projects: [slug]}. */}
+        <MarkAllReadButton
+          slug={group.project.slug}
+          scopeName={group.project.name}
+          compact
+          className="-my-1"
+        />
       </header>
       <ul>
         {group.items.map((item) => (

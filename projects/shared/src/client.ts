@@ -8,6 +8,7 @@ import type {
   AuthMode,
   Autolink,
   AutolinkCreateInput,
+  BulkReadInput,
   CommentComponentInput,
   CrossActivityPage,
   DirectUploadTicket,
@@ -289,6 +290,8 @@ export class TodouClient {
     this.request<MePrefs>("PATCH", "/me/prefs", { json: input });
   getInbox = (query?: Query) =>
     this.request<InboxPage>("GET", "/me/inbox", { query });
+  markAllRead = (input: BulkReadInput = {}) =>
+    this.request<void>("PUT", "/me/read", { json: input });
   createMyToken = (input: TokenCreateInput) =>
     this.request<TokenCreated>("POST", "/me/tokens", { json: input });
   listMyTokens = () => this.request<TokenListItem[]>("GET", "/me/tokens");

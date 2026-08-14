@@ -50,6 +50,7 @@ import {
   useCanCreateLabels,
   useCreateLabel,
 } from "@/components/issue/label-picker.tsx";
+import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -129,6 +130,16 @@ export function IssueListPage() {
           labels={labels.data}
           members={members.data}
           onChange={setSearch}
+        />
+        {/* Its own line, right-aligned: the filters fill the bar at every
+            container width, and squeezing this in as an unlabelled icon
+            would hide a project-wide action inside a row of view controls
+            (T-100). The group headers pin below it either way — the sticky
+            offset is measured, not hard-coded. */}
+        <MarkAllReadButton
+          slug={slug}
+          scopeName="this project"
+          className="ml-auto"
         />
       </div>
       {grouped ? (

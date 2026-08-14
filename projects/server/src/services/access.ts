@@ -1,5 +1,5 @@
 import type { MemberRole } from "@todou/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import { projectMembers, projects } from "../db/system-schema.ts";
@@ -59,6 +59,26 @@ export async function requireProject(
     throw new ForbiddenError(`requires ${minRole} role`);
   }
   return { project, role };
+}
+
+/**
+ * Same visibility rule as listProjects, but keeping the raw rows so the
+ * caller can route to each project's database — what every cross-project
+ * `/me/*` endpoint needs (T-97's inbox, T-100's bulk read).
+ */
+export async function accessibleProjectRows(
+  ctx: AppContext,
+  user: UserRow,
+): Promise<ProjectRow[]> {
+  const system = ctx.router.system();
+  if (user.isInstanceAdmin) return system.select().from(projects);
+  const memberships = await system
+    .select({ projectId: projectMembers.projectId })
+    .from(projectMembers)
+    .where(eq(projectMembers.userId, user.id));
+  const ids = memberships.map((m) => m.projectId);
+  if (ids.length === 0) return [];
+  return system.select().from(projects).where(inArray(projects.id, ids));
 }
 
 export function routeInfoOf(project: ProjectRow) {

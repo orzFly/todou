@@ -1,4 +1,4 @@
-import type { IssueReadInput } from "@todou/shared";
+import type { BulkReadInput, IssueReadInput } from "@todou/shared";
 import { and, eq, gt, inArray, max, ne, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -11,7 +11,12 @@ import {
   readFrontiers,
 } from "../db/project-schema.ts";
 import { NotFoundError } from "../errors.ts";
-import { requireProject, routeInfoOf } from "./access.ts";
+import {
+  accessibleProjectRows,
+  type ProjectRow,
+  requireProject,
+  routeInfoOf,
+} from "./access.ts";
 
 /**
  * The user's unread epoch in this project, created lazily on first use so
@@ -174,4 +179,83 @@ export async function markIssueRead(
         lastSeenAt: sql`greatest(${issueReads.lastSeenAt}, excluded.last_seen_at)`,
       },
     });
+}
+
+/**
+ * Mark everything read across a scope of projects (T-100) — the inbox's
+ * "Mark all read" and a project's own are the same call, told apart by
+ * `projects`. Same family as markIssueRead: monotonic, no timeline event,
+ * no SSE.
+ *
+ * Advancing the frontier alone would not do it. `unreadIssueState` reads
+ * each issue's threshold as `coalesce(issue_reads.last_seen_at, frontier)`,
+ * so any issue the caller has ever opened keeps its own older position and
+ * stays unread behind a moved frontier — hence both layers, in one
+ * transaction per project.
+ *
+ * Not atomic across projects: databases may differ, so each gets its own
+ * transaction and the first failure aborts the rest. Retrying is safe —
+ * every write is a `greatest`, so replaying it changes nothing.
+ */
+export async function bulkMarkRead(
+  ctx: AppContext,
+  actor: UserRow,
+  input: BulkReadInput,
+): Promise<void> {
+  let scope: ProjectRow[];
+  if (input.projects === undefined) {
+    scope = await accessibleProjectRows(ctx, actor);
+  } else {
+    scope = [];
+    for (const slug of new Set(input.projects)) {
+      const { project } = await requireProject(ctx, actor, slug, "reader");
+      scope.push(project);
+    }
+  }
+
+  // Bound as a string with an explicit cast rather than a JS Date: the
+  // request may carry sub-millisecond precision that a Date would drop.
+  // Absent, each project database dates the sweep by its own clock — they
+  // are independent servers under `placement=dedicated`.
+  const at =
+    input.up_to === undefined ? sql`now()` : sql`${input.up_to}::timestamptz`;
+
+  for (const project of scope) {
+    const db = await ctx.router.forProject(routeInfoOf(project));
+    await db.transaction(async (tx) => {
+      // project_id is not redundant: several projects may share one
+      // database (placement=shared), and marking one read must not touch
+      // its neighbours.
+      await tx
+        .update(issueReads)
+        .set({ lastSeenAt: sql`greatest(${issueReads.lastSeenAt}, ${at})` })
+        .where(
+          and(
+            eq(issueReads.projectId, project.id),
+            eq(issueReads.userId, actor.id),
+          ),
+        );
+      await tx
+        .insert(readFrontiers)
+        .values({
+          projectId: project.id,
+          userId: actor.id,
+          // A frontier born here floors at now(): seeding it from an older
+          // `up_to` would let a mark-read call *create* unread history for
+          // someone who had never opened the project, inverting the lazy
+          // bootstrap ensureFrontier promises (T-35).
+          frontierAt: sql`greatest(now(), ${at})`,
+        })
+        .onConflictDoUpdate({
+          target: [readFrontiers.projectId, readFrontiers.userId],
+          // `at`, not `excluded.frontier_at`: the floor above applies only
+          // to a frontier that did not exist yet. An existing one honours
+          // the requested position exactly, so `up_to` in the past marks
+          // only up to there.
+          set: {
+            frontierAt: sql`greatest(${readFrontiers.frontierAt}, ${at})`,
+          },
+        });
+    });
+  }
 }

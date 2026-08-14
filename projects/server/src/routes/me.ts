@@ -1,5 +1,6 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
+  BulkReadInput,
   IssueReadInput,
   Me,
   MePrefs,
@@ -14,7 +15,7 @@ import type { AppEnv } from "../auth/middleware.ts";
 import { ForbiddenError, ValidationFailedError } from "../errors.ts";
 import { readPrefs, updatePrefs } from "../services/prefs.ts";
 import { deleteAvatar, setAvatar, updateProfile } from "../services/profile.ts";
-import { markIssueRead } from "../services/reads.ts";
+import { bulkMarkRead, markIssueRead } from "../services/reads.ts";
 import { issueToken, listTokens, revokeToken } from "../services/tokens.ts";
 import { ownerRefOf, toMe } from "../services/users.ts";
 
@@ -160,6 +161,19 @@ const markIssueReadRoute = createRoute({
   responses: { 204: { description: "Position advanced" } },
 });
 
+const bulkReadRoute = createRoute({
+  method: "put",
+  path: "/me/read",
+  summary:
+    "Mark everything read across a scope of projects (never regresses). " +
+    "Omit `projects` for every project I can read — the inbox's " +
+    '"Mark all read" and a project\'s own are this one call at two scopes.',
+  request: {
+    body: { content: { "application/json": { schema: BulkReadInput } } },
+  },
+  responses: { 204: { description: "Positions advanced" } },
+});
+
 const revokeTokenRoute = createRoute({
   method: "delete",
   path: "/me/tokens/{id}",
@@ -243,6 +257,11 @@ export function meRoutes() {
       number,
       c.req.valid("json"),
     );
+    return c.body(null, 204);
+  });
+
+  app.openapi(bulkReadRoute, async (c) => {
+    await bulkMarkRead(c.get("appCtx"), c.get("user"), c.req.valid("json"));
     return c.body(null, 204);
   });
 
