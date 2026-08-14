@@ -48,7 +48,10 @@ detected harness: hermes-agent (session agent:main:telegram:dm:1000001)
   the CLI looks it up in `$HERMES_HOME/state.db` (an *unofficial*,
   hermes-internal sqlite database) via the `node:sqlite` builtin, opened
   read-only: the durable session id comes from `HERMES_SESSION_ID`, or is
-  resolved from the session key through the gateway routing index. On
+  resolved from the session key through the gateway routing index. The
+  routing index is the normal path — a gateway turn bridges
+  `HERMES_SESSION_ID` through as an empty string, since the gateway binds
+  only the session key. On
   older Node versions without `node:sqlite`, or whenever any step fails,
   the field is simply omitted; detection never breaks a command.
 

@@ -29,10 +29,16 @@ export class WhoamiCommand extends ApiCommand {
     // The deployment probe for new harness detectors: shows what a write
     // from this environment would report, without having to post one.
     if (this.agentContext) {
-      const session = this.agentContext.session_id
-        ? ` (session ${this.agentContext.session_id})`
-        : "";
-      this.note(`detected harness: ${this.agentContext.agent}${session}`);
+      // The model is the part most likely to be missing on a host the detector
+      // was never run on, so the probe has to show it or it cannot catch a
+      // silently degraded lookup (T-120).
+      const detail = [
+        this.agentContext.session_id &&
+          `session ${this.agentContext.session_id}`,
+        this.agentContext.model && `model ${this.agentContext.model}`,
+      ].filter(Boolean);
+      const suffix = detail.length ? ` (${detail.join(", ")})` : "";
+      this.note(`detected harness: ${this.agentContext.agent}${suffix}`);
     }
     this.output(
       me,

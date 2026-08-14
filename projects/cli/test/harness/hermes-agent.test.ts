@@ -102,6 +102,21 @@ describe("hermes-agent detection", () => {
     ).toBe("hermes-test-model");
   });
 
+  it("falls back to routing when HERMES_SESSION_ID is bridged empty", () => {
+    // What a real gateway turn looks like: the gateway binds the session-id
+    // context var to "" and hermes exports that empty string verbatim (T-120).
+    const dir = hermesHome({
+      sessions: [[SID, "hermes-test-model"]],
+      routing: [[KEY, JSON.stringify({ session_id: SID }), 1]],
+    });
+    expect(
+      detectAgentContext(
+        { HERMES_SESSION_KEY: KEY, HERMES_SESSION_ID: "", HERMES_HOME: dir },
+        home,
+      )?.model,
+    ).toBe("hermes-test-model");
+  });
+
   it.each([
     ["no state.db", () => hermesHome()],
     ["empty database", () => hermesHome({ bare: true })],
@@ -126,7 +141,7 @@ describe("hermes-agent detection", () => {
   });
 });
 
-describe("header injection", () => {
+describe("cli integration", () => {
   const me = {
     id: 2,
     login: "claude",
@@ -134,6 +149,26 @@ describe("header injection", () => {
     kind: "machine",
     owner: null,
   };
+
+  it("whoami reports the detected session and model", async () => {
+    const { fetchImpl } = fakeFetch([["GET", "/api/me", me]]);
+    const result = await runCli(["whoami"], {
+      fetchImpl,
+      env: {
+        ...loggedInEnv(),
+        HERMES_SESSION_KEY: KEY,
+        HERMES_SESSION_ID: "",
+        HERMES_HOME: hermesHome({
+          sessions: [[SID, "hermes-test-model"]],
+          routing: [[KEY, JSON.stringify({ session_id: SID }), 1]],
+        }),
+      },
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain(
+      `detected harness: hermes-agent (session ${KEY}, model hermes-test-model)`,
+    );
+  });
 
   it("write commands carry the hermes context", async () => {
     const { fetchImpl, calls } = fakeFetch([

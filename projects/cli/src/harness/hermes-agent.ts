@@ -46,8 +46,14 @@ function detectHermesModel(env: Env, home: string): string | undefined {
       { readOnly: true },
     );
     try {
+      // `||`, not `??`: a gateway turn binds the session-id context var to the
+      // empty string (its default — the gateway passes only the session key)
+      // and hermes bridges explicitly-bound-empty values through to the child
+      // env verbatim. Under `??` that empty string counts as present and
+      // suppresses the routing lookup, so model would never resolve on exactly
+      // the turns this detector exists for (T-120).
       const id =
-        env.HERMES_SESSION_ID ??
+        env.HERMES_SESSION_ID ||
         sessionIdFromRouting(db, env.HERMES_SESSION_KEY);
       if (!id) return undefined;
       const row = db.prepare("SELECT model FROM sessions WHERE id = ?").get(id);
@@ -63,8 +69,8 @@ function detectHermesModel(env: Env, home: string): string | undefined {
 }
 
 /**
- * A gateway turn always carries the session key, but the durable session id
- * is bridged only when bound; the routing index maps one to the other.
+ * A gateway turn always carries the session key but never a usable durable
+ * session id; the routing index maps one to the other.
  */
 function sessionIdFromRouting(
   db: Database,
