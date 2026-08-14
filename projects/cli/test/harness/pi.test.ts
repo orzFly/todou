@@ -2,6 +2,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -10,6 +11,21 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { detectAgentContext } from "../../src/harness/index.ts";
 import { fakeFetch, loggedInEnv, runCli } from "../harness.ts";
+
+/*
+ * pi is the one detector that asks for its host process, so every case here
+ * would otherwise read the real process tree and take the cwd and argv of
+ * whatever ran the suite as pi's own. An unreadable tree pins these tests to
+ * what the environment alone can say; the host-driven paths are exercised
+ * with a fixture tree in process-tree.test.ts (T-128).
+ */
+const NO_TREE = {
+  platform: "linux" as const,
+  procRoot: "/nonexistent",
+  startPid: 0,
+};
+const detect: typeof detectAgentContext = (env, home, cwd) =>
+  detectAgentContext(env, home, cwd, NO_TREE);
 
 /* A home whose ~/.pi never exists: the no-session degradation baseline. */
 const home = mkdtempSync(join(tmpdir(), "todou-pi-home-"));
@@ -72,6 +88,12 @@ function writeSession(opts: {
   return path;
 }
 
+/* Fixture process trees and session directories, swept together at the end. */
+const procRoots: string[] = [];
+afterAll(() => {
+  for (const dir of procRoots) rmSync(dir, { recursive: true, force: true });
+});
+
 /** A fresh empty $PI_CODING_AGENT_DIR, so tests never see each other. */
 function agentDir(): string {
   return mkdtempSync(join(tmpdir(), "todou-pi-agent-"));
@@ -81,18 +103,14 @@ const ENV = { PI_CODING_AGENT: "true" };
 
 describe("pi detection", () => {
   it("returns null without the pi marker", () => {
-    expect(detectAgentContext({}, home, project)).toBeNull();
-    expect(
-      detectAgentContext({ PI_CODING_AGENT: "false" }, home, project),
-    ).toBeNull();
+    expect(detect({}, home, project)).toBeNull();
+    expect(detect({ PI_CODING_AGENT: "false" }, home, project)).toBeNull();
     // pi sets exactly "true"; a truthy-looking value is somebody else's.
-    expect(
-      detectAgentContext({ PI_CODING_AGENT: "1" }, home, project),
-    ).toBeNull();
+    expect(detect({ PI_CODING_AGENT: "1" }, home, project)).toBeNull();
   });
 
   it("degrades to agent-only when no session has been recorded", () => {
-    expect(detectAgentContext(ENV, home, project)).toEqual({ agent: "pi" });
+    expect(detect(ENV, home, project)).toEqual({ agent: "pi" });
   });
 
   it("reads the session id and model from the session log", () => {
@@ -103,13 +121,13 @@ describe("pi detection", () => {
       id: SID,
       lines: [modelChange("axonhub", "deepseek-v4-pro"), userLine],
     });
-    expect(
-      detectAgentContext({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project),
-    ).toEqual({
-      agent: "pi",
-      session_id: SID,
-      model: "axonhub/deepseek-v4-pro",
-    });
+    expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
+      {
+        agent: "pi",
+        session_id: SID,
+        model: "axonhub/deepseek-v4-pro",
+      },
+    );
   });
 
   it("takes the newest of model_change and assistant message, either way round", () => {
@@ -124,8 +142,7 @@ describe("pi detection", () => {
       ],
     });
     expect(
-      detectAgentContext({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)
-        ?.model,
+      detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)?.model,
     ).toBe("axonhub/answered-with");
 
     const swapped = agentDir();
@@ -139,11 +156,7 @@ describe("pi detection", () => {
       ],
     });
     expect(
-      detectAgentContext(
-        { ...ENV, PI_CODING_AGENT_DIR: swapped },
-        home,
-        project,
-      )?.model,
+      detect({ ...ENV, PI_CODING_AGENT_DIR: swapped }, home, project)?.model,
     ).toBe("openai/switched-to");
   });
 
@@ -156,8 +169,7 @@ describe("pi detection", () => {
       lines: [JSON.stringify({ type: "model_change", modelId: "bare-model" })],
     });
     expect(
-      detectAgentContext({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)
-        ?.model,
+      detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)?.model,
     ).toBe("bare-model");
   });
 
@@ -177,9 +189,9 @@ describe("pi detection", () => {
       lines: [modelChange("axonhub", "live-model")],
       mtime: 2_000_000,
     });
-    expect(
-      detectAgentContext({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project),
-    ).toEqual({ agent: "pi", session_id: SID, model: "axonhub/live-model" });
+    expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
+      { agent: "pi", session_id: SID, model: "axonhub/live-model" },
+    );
   });
 
   it("finds pi's session when a tool runs us from a subdirectory", () => {
@@ -190,9 +202,7 @@ describe("pi detection", () => {
       id: SID,
       lines: [modelChange("axonhub", "deepseek-v4-pro")],
     });
-    expect(
-      detectAgentContext({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, nested),
-    ).toEqual({
+    expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, nested)).toEqual({
       agent: "pi",
       session_id: SID,
       model: "axonhub/deepseek-v4-pro",
@@ -207,9 +217,9 @@ describe("pi detection", () => {
       id: SID,
       lines: [modelChange("axonhub", "deeper-model")],
     });
-    expect(
-      detectAgentContext({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project),
-    ).toEqual({ agent: "pi" });
+    expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
+      { agent: "pi" },
+    );
   });
 
   it("reads a flat --session-dir, filtering foreign projects by header cwd", () => {
@@ -231,11 +241,7 @@ describe("pi detection", () => {
       mtime: 1_000_000,
     });
     expect(
-      detectAgentContext(
-        { ...ENV, PI_CODING_AGENT_SESSION_DIR: flat },
-        home,
-        project,
-      ),
+      detect({ ...ENV, PI_CODING_AGENT_SESSION_DIR: flat }, home, project),
     ).toEqual({ agent: "pi", session_id: SID, model: "axonhub/ours" });
   });
 
@@ -248,7 +254,7 @@ describe("pi detection", () => {
       lines: [modelChange("axonhub", "deepseek-v4-pro")],
     });
     expect(
-      detectAgentContext(
+      detect(
         {
           ...ENV,
           PI_CODING_AGENT_DIR: dir,
@@ -260,13 +266,12 @@ describe("pi detection", () => {
     ).toBe("axonhub/deepseek-v4-pro");
   });
 
-  it("claude-code wins when both harnesses signal", () => {
+  it("falls back to the registry order with no readable process tree", () => {
+    // Both harnesses mark their whole process tree, so this environment alone
+    // cannot say which one is the direct host; the tree decides when it can
+    // be read, and the registry order is what is left when it cannot.
     expect(
-      detectAgentContext(
-        { CLAUDECODE: "1", PI_CODING_AGENT: "true" },
-        home,
-        project,
-      ),
+      detect({ CLAUDECODE: "1", PI_CODING_AGENT: "true" }, home, project),
     ).toEqual({ agent: "claude-code" });
   });
 
@@ -280,17 +285,17 @@ describe("pi detection", () => {
     const target = join(dir, "sessions", sessionDirName(project));
     mkdirSync(target, { recursive: true });
     writeFileSync(join(target, `x_${SID}.jsonl`), lines.join("\n"));
-    expect(
-      detectAgentContext({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project),
-    ).toEqual({ agent: "pi" });
+    expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
+      { agent: "pi" },
+    );
   });
 
   it("keeps the session when the log carries no model yet", () => {
     const dir = agentDir();
     writeSession({ agentDir: dir, cwd: project, id: SID, lines: [userLine] });
-    expect(
-      detectAgentContext({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project),
-    ).toEqual({ agent: "pi", session_id: SID });
+    expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
+      { agent: "pi", session_id: SID },
+    );
   });
 
   it("skips unparseable lines to reach the newest real entry", () => {
@@ -306,9 +311,165 @@ describe("pi detection", () => {
       ],
     });
     expect(
-      detectAgentContext({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)
-        ?.model,
+      detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)?.model,
     ).toBe("axonhub/deepseek-v4-pro");
+  });
+});
+
+describe("pi session recovery through the host process", () => {
+  /** A process tree in which pi itself is our host, carrying argv and cwd. */
+  function piHost(opts: { argv?: string[]; cwd?: string }) {
+    const root = mkdtempSync(join(tmpdir(), "todou-pi-proc-"));
+    procRoots.push(root);
+    const write = (
+      pid: number,
+      ppid: number,
+      env: Record<string, string>,
+      argv: string[],
+      cwd?: string,
+    ) => {
+      const dir = join(root, String(pid));
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "stat"), `${pid} (proc) S ${ppid} 0 0 0 -1`);
+      writeFileSync(
+        join(dir, "environ"),
+        `${Object.entries(env)
+          .map(([k, v]) => `${k}=${v}`)
+          .join("\0")}\0`,
+      );
+      writeFileSync(join(dir, "cmdline"), `${argv.join("\0")}\0`);
+      if (cwd) symlinkSync(cwd, join(dir, "cwd"));
+    };
+    // The shell pi spawned carries the marker; pi itself does not, which is
+    // what identifies it as the host.
+    write(100, 101, { PI_CODING_AGENT: "true" }, ["sh", "-c", "todou"]);
+    write(
+      101,
+      0,
+      {},
+      opts.argv ?? ["node", "/opt/harness/pi/cli.js"],
+      opts.cwd,
+    );
+    return { platform: "linux" as const, procRoot: root, startPid: 100 };
+  }
+
+  it("recovers a --session-dir that exists only on pi's command line", () => {
+    // The flag is invisible from the environment, so this mode used to
+    // degrade to no session and no model at all (T-108 limitation 2).
+    const flat = mkdtempSync(join(tmpdir(), "todou-pi-flat-"));
+    procRoots.push(flat);
+    writeSession({
+      dir: flat,
+      cwd: project,
+      id: SID,
+      lines: [modelChange("axonhub", "recovered")],
+    });
+    expect(
+      detectAgentContext(
+        ENV,
+        home,
+        project,
+        piHost({ argv: ["pi", "--session-dir", flat] }),
+      ),
+    ).toEqual({ agent: "pi", session_id: SID, model: "axonhub/recovered" });
+  });
+
+  it("lets pi's flag beat the environment variable", () => {
+    const fromEnv = mkdtempSync(join(tmpdir(), "todou-pi-env-"));
+    const fromFlag = mkdtempSync(join(tmpdir(), "todou-pi-flag-"));
+    procRoots.push(fromEnv, fromFlag);
+    writeSession({
+      dir: fromEnv,
+      cwd: project,
+      id: OTHER_SID,
+      lines: [modelChange("axonhub", "from-env")],
+    });
+    writeSession({
+      dir: fromFlag,
+      cwd: project,
+      id: SID,
+      lines: [modelChange("axonhub", "from-flag")],
+    });
+    expect(
+      detectAgentContext(
+        { ...ENV, PI_CODING_AGENT_SESSION_DIR: fromEnv },
+        home,
+        project,
+        piHost({ argv: ["pi", `--session-dir=${fromFlag}`] }),
+      ),
+    ).toEqual({ agent: "pi", session_id: SID, model: "axonhub/from-flag" });
+  });
+
+  it("claims pi's session when we run outside pi's own directory", () => {
+    // A tool may hand us a cwd that is not under pi's; pi's real cwd is what
+    // names its session directory and what the session header records.
+    const dir = agentDir();
+    const elsewhere = mkdtempSync(join(tmpdir(), "todou-pi-elsewhere-"));
+    procRoots.push(elsewhere);
+    writeSession({
+      agentDir: dir,
+      cwd: project,
+      id: SID,
+      lines: [modelChange("axonhub", "by-host-cwd")],
+    });
+    expect(
+      detectAgentContext(
+        { ...ENV, PI_CODING_AGENT_DIR: dir },
+        home,
+        elsewhere,
+        piHost({ cwd: project }),
+      ),
+    ).toEqual({ agent: "pi", session_id: SID, model: "axonhub/by-host-cwd" });
+  });
+
+  it("takes a --session path from outside every scanned directory", () => {
+    const outside = mkdtempSync(join(tmpdir(), "todou-pi-outside-"));
+    procRoots.push(outside);
+    const path = writeSession({
+      dir: outside,
+      cwd: project,
+      id: SID,
+      lines: [modelChange("axonhub", "named")],
+    });
+    expect(
+      detectAgentContext(
+        { ...ENV, PI_CODING_AGENT_DIR: agentDir() },
+        home,
+        project,
+        piHost({ argv: ["pi", "--session", path] }),
+      ),
+    ).toEqual({ agent: "pi", session_id: SID, model: "axonhub/named" });
+  });
+
+  it("lets a newer session beat the one named on the command line", () => {
+    // `/resume` switches sessions from inside a running pi, which leaves the
+    // argv naming a session pi has left; the live one is still the one being
+    // appended to.
+    const dir = agentDir();
+    const outside = mkdtempSync(join(tmpdir(), "todou-pi-resumed-"));
+    procRoots.push(outside);
+    const started = writeSession({
+      dir: outside,
+      cwd: project,
+      id: OTHER_SID,
+      lines: [modelChange("axonhub", "started-with")],
+      mtime: 1_000_000,
+    });
+    writeSession({
+      agentDir: dir,
+      cwd: project,
+      id: SID,
+      lines: [modelChange("axonhub", "resumed-into")],
+      mtime: 2_000_000,
+    });
+    expect(
+      detectAgentContext(
+        { ...ENV, PI_CODING_AGENT_DIR: dir },
+        home,
+        project,
+        piHost({ argv: ["pi", "--session", started], cwd: project }),
+      ),
+    ).toEqual({ agent: "pi", session_id: SID, model: "axonhub/resumed-into" });
   });
 });
 

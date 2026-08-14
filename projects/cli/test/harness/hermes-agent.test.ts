@@ -12,6 +12,14 @@ afterAll(() => rmSync(home, { recursive: true, force: true }));
 const KEY = "agent:main:telegram:dm:1000001";
 const SID = "20260101_000000_abcd1234";
 
+/* An unreadable process tree, so a tie is decided by the registry order
+ * alone rather than by whichever harness happened to run the suite (T-128). */
+const NO_TREE = {
+  platform: "linux" as const,
+  procRoot: "/nonexistent",
+  startPid: 0,
+};
+
 const sqlite = process.getBuiltinModule("node:sqlite");
 
 /** A fresh fake $HERMES_HOME; `rows` seeds state.db (absent = no db file). */
@@ -75,12 +83,25 @@ describe("hermes-agent detection", () => {
     });
   });
 
-  it("claude-code wins when both harnesses signal", () => {
+  it("falls back to the registry order with no readable process tree", () => {
+    // hermes stamps its marker on every child, including a claude code it
+    // launched, so the environment alone cannot say which is the direct host.
+    // The process tree resolves it when readable (process-tree.test.ts).
     expect(
-      detectAgentContext({ CLAUDECODE: "1", HERMES_SESSION_KEY: KEY }, home),
+      detectAgentContext(
+        { CLAUDECODE: "1", HERMES_SESSION_KEY: KEY },
+        home,
+        undefined,
+        NO_TREE,
+      ),
     ).toEqual({ agent: "claude-code" });
     expect(
-      detectAgentContext({ CLAUDECODE: "1", HERMES_REAL_HOME: home }, home),
+      detectAgentContext(
+        { CLAUDECODE: "1", HERMES_REAL_HOME: home },
+        home,
+        undefined,
+        NO_TREE,
+      ),
     ).toEqual({ agent: "claude-code" });
   });
 

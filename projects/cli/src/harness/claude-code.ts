@@ -8,7 +8,7 @@ import type { Harness } from "./types.ts";
 export const claudeCode = {
   id: "claude-code",
   matches: (env) => env.CLAUDECODE === "1",
-  context(env, home) {
+  context({ env, home }) {
     const context: AgentContext = { agent: "claude-code" };
     const sessionId = env.CLAUDE_CODE_SESSION_ID;
     if (sessionId) context.session_id = sessionId;

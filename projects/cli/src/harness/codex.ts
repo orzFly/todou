@@ -21,7 +21,7 @@ import type { Harness } from "./types.ts";
 export const codex = {
   id: "codex",
   matches: (env) => Boolean(env.CODEX_THREAD_ID),
-  context(env, home) {
+  context({ env, home }) {
     const context: AgentContext = { agent: "codex" };
     const threadId = env.CODEX_THREAD_ID;
     if (threadId) context.session_id = threadId;

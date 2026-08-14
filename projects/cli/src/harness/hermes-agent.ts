@@ -28,7 +28,7 @@ export const hermesAgent = {
     Boolean(env.HERMES_REAL_HOME) ||
     Boolean(env.HERMES_SESSION_KEY) ||
     env._HERMES_GATEWAY === "1",
-  context(env, home) {
+  context({ env, home }) {
     const context: AgentContext = { agent: "hermes-agent" };
     const session = detectHermesSession(env, home);
     if (session.id) context.session_id = session.id;

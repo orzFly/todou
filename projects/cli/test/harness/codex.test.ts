@@ -11,6 +11,14 @@ afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 const TID = "01900000-0000-7000-8000-000000000001";
 
+/* An unreadable process tree, so a tie is decided by the registry order
+ * alone rather than by whichever harness happened to run the suite (T-128). */
+const NO_TREE = {
+  platform: "linux" as const,
+  procRoot: "/nonexistent",
+  startPid: 0,
+};
+
 const turnContextLine = (model: string) =>
   JSON.stringify({
     timestamp: "2026-01-02T03:04:05.000Z",
@@ -134,16 +142,22 @@ describe("codex detection", () => {
     ).toEqual({ agent: "codex", session_id: "../../etc/passwd" });
   });
 
-  it("claude-code wins when both harnesses signal", () => {
-    // Pins the tie-break, not a truth: codex inherits CLAUDECODE from a claude
-    // code shell exactly as claude code inherits CODEX_THREAD_ID from a codex
-    // one, so this env is ambiguous and the registry order decides it.
+  it("falls back to the registry order with no readable process tree", () => {
+    // codex inherits CLAUDECODE from a claude code shell exactly as claude
+    // code inherits CODEX_THREAD_ID from a codex one, so this env is
+    // ambiguous. The process tree resolves it when it can be read (see
+    // process-tree.test.ts); this pins what is left when it cannot.
     expect(
-      detectAgentContext({ CLAUDECODE: "1", CODEX_THREAD_ID: TID }, home),
+      detectAgentContext(
+        { CLAUDECODE: "1", CODEX_THREAD_ID: TID },
+        home,
+        undefined,
+        NO_TREE,
+      ),
     ).toEqual({ agent: "claude-code" });
   });
 
-  it("codex wins over the hermes gateway that launched it", () => {
+  it("codex wins over the hermes gateway, tree or no tree", () => {
     expect(
       detectAgentContext(
         {
@@ -152,6 +166,8 @@ describe("codex detection", () => {
           HERMES_SESSION_KEY: "agent:main:telegram:dm:1000001",
         },
         home,
+        undefined,
+        NO_TREE,
       ),
     ).toEqual({ agent: "codex", session_id: TID });
   });
