@@ -1,0 +1,10 @@
+todou v0.2.0
+
+Cross-project work: a global Inbox, one event stream per user, and a
+todou watch that spans projects and idles on pushed events instead of
+polling. Harness detection now covers claude-code, codex, pi and
+hermes-agent, and every part reports its own version.
+
+Two defaults moved: updated_at now tracks activity (comments, attachments,
+answered questions, spec pushes and reviews), and todou watch filters out
+your own agent session rather than your whole account. Nothing breaking.
