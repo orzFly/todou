@@ -69,15 +69,37 @@ list already carries the detail, so the body must not restate it.
 
 66 lines is the right order of magnitude. 126 is not.
 
+## Approving the notes
+
+Both artifacts go through the spec review gate on the release card, and nothing
+is tagged before the verdict:
+
+```bash
+todou spec push <release-card> <dir>
+```
+
+A spec set rather than a comment: it carries inline annotations and a diff
+between versions — the same reason designs and plans live there.
+
+- **`spec push` takes `.md` only**, so the tag message goes up as
+  `vX.Y.Z.tag.md` and lands in the repo as `vX.Y.Z.tag.txt`. Map each file to
+  its repo path in the pointer comment.
+- **Changes requested**: `todou spec comments <n> --unresolved` → edit →
+  `spec resolve` → push the next version → wait again.
+- **A verdict only counts against the latest version**, so any edit after an
+  approve — including a wording fix while cutting — needs a fresh push and a
+  fresh approve.
+
 ## Cutting a release
 
 1. Decide the version and write both artifacts above.
-2. Land both files (leave the notes untracked and the script commits it with
+2. Get them approved on the card (above), on the version you are shipping.
+3. Land both files (leave the notes untracked and the script commits it with
    the bump; the tag message it only reads).
-3. On an up-to-date `master` with a clean tree:
+4. On an up-to-date `master` with a clean tree:
 
    ```bash
-   scripts/release.sh 0.2.0 --tag-message-file /tmp/tag-msg.txt
+   scripts/release.sh 0.2.0 --tag-message-file docs/releases/v0.2.0.tag.txt
    ```
 
    The script verifies (master, clean, synced with origin, notes present,
@@ -86,14 +108,14 @@ list already carries the detail, so the body must not restate it.
    first, then to the GitHub mirror. `--dry-run` rehearses the full
    command sequence from any branch, downgrading failed checks to warnings.
 
-4. The tag on the mirror triggers CI:
+5. The tag on the mirror triggers CI:
    - **release.yaml** asserts the checkout describes exactly as the tag and
      the manifests agree, builds the CLI artifacts, asserts the built
      `todou.cjs --version` answers with the tag, then creates the GitHub
      release from `docs/releases/vX.Y.Z.md` + generated commit list.
    - **docker.yaml** builds the multi-arch image with the version baked in
      and tags it `latest`, `x.y`, `x.y.z`, plus the date and sha tags.
-5. Deploy and distribute as usual (see `docs/deploy.md` — checkout
+6. Deploy and distribute as usual (see `docs/deploy.md` — checkout
    deployments pick the version up from their own git state; images carry it
    baked in).
 
@@ -101,8 +123,9 @@ list already carries the detail, so the body must not restate it.
 
 | Step | Who |
 |---|---|
-| Decide to release, confirm the notes | the user |
+| Decide to release | the user |
 | Draft notes + tag message | anyone (usually an agent, on the release card) |
+| Approve them (spec review) | the user — a precondition for tagging |
 | Bump, commit, tag, push | `scripts/release.sh` |
 | Artifacts, GitHub release, images | CI |
 | Deploy, CLI distribution | operators, per `docs/deploy.md` |
