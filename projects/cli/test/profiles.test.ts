@@ -22,17 +22,35 @@ const config: CliConfig = {
   bindings: [],
 };
 
+/** Same server, plus the shared profile every harness falls back to. */
+const shared: CliConfig = {
+  default_server: "http://stub.test",
+  servers: {
+    "http://stub.test": {
+      token: "todou_pat_default",
+      tokens: {
+        "claude-code": "todou_pat_claude",
+        harness: "todou_pat_harness",
+      },
+    },
+  },
+  bindings: [],
+};
+
 function resolve(overrides: {
   profile?: string;
   env?: Record<string, string>;
+  config?: CliConfig;
 }) {
   return resolveContext({
     flags: { profile: overrides.profile },
     env: overrides.env ?? {},
-    config,
+    config: overrides.config ?? config,
     remoteUrl: null,
   });
 }
+
+const HERMES_ENV = { HERMES_SESSION_KEY: "agent:main:telegram:dm:1000001" };
 
 describe("token selection matrix", () => {
   it("--profile beats TODOU_TOKEN", () => {
@@ -73,7 +91,7 @@ describe("token selection matrix", () => {
   it("a hermes turn auto-selects the hermes-agent profile", () => {
     const ctx = resolveContext({
       flags: {},
-      env: { HERMES_SESSION_KEY: "agent:main:telegram:dm:1000001" },
+      env: HERMES_ENV,
       config: {
         default_server: "http://stub.test",
         servers: {
@@ -92,11 +110,53 @@ describe("token selection matrix", () => {
   });
 
   it("a hermes turn without a hermes-agent profile falls back to default", () => {
-    const ctx = resolve({
-      env: { HERMES_SESSION_KEY: "agent:main:telegram:dm:1000001" },
-    });
+    const ctx = resolve({ env: HERMES_ENV });
     expect(ctx.token).toBe("todou_pat_default");
     expect(ctx.tokenSource).toBe("default");
+  });
+
+  it('"harness" covers a harness with no profile of its own', () => {
+    const ctx = resolve({ env: HERMES_ENV, config: shared });
+    expect(ctx.token).toBe("todou_pat_harness");
+    expect(ctx.tokenSource).toBe("auto-harness-shared");
+    expect(ctx.tokenProfile).toBe("harness");
+  });
+
+  it('a harness-named profile beats "harness"', () => {
+    const ctx = resolve({ env: { CLAUDECODE: "1" }, config: shared });
+    expect(ctx.token).toBe("todou_pat_claude");
+    expect(ctx.tokenSource).toBe("auto-harness");
+    expect(ctx.tokenProfile).toBe("claude-code");
+  });
+
+  it('"harness" stays inert outside a harness', () => {
+    const ctx = resolve({ env: {}, config: shared });
+    expect(ctx.token).toBe("todou_pat_default");
+    expect(ctx.tokenSource).toBe("default");
+  });
+
+  it('"default" and TODOU_TOKEN both bypass "harness"', () => {
+    const explicit = resolve({
+      profile: "default",
+      env: HERMES_ENV,
+      config: shared,
+    });
+    expect(explicit.token).toBe("todou_pat_default");
+    expect(explicit.tokenSource).toBe("default");
+
+    const fromEnv = resolve({
+      env: { ...HERMES_ENV, TODOU_TOKEN: "todou_pat_env" },
+      config: shared,
+    });
+    expect(fromEnv.token).toBe("todou_pat_env");
+    expect(fromEnv.tokenSource).toBe("env-token");
+  });
+
+  it("--profile harness works outside a harness too", () => {
+    const ctx = resolve({ profile: "harness", env: {}, config: shared });
+    expect(ctx.token).toBe("todou_pat_harness");
+    expect(ctx.tokenSource).toBe("flag-profile");
+    expect(ctx.tokenProfile).toBe("harness");
   });
 
   it("CLAUDECODE=1 without a claude-code profile falls back to default", () => {
@@ -228,6 +288,36 @@ describe("config compatibility and login --profile", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toContain(
       'token: profile "claude-code" (auto-detected harness)',
+    );
+    expect(result.stderr).toContain("detected harness: claude-code");
+  });
+
+  it("login --profile harness stores the shared profile whoami reports", async () => {
+    const me = {
+      id: 3,
+      login: "fleet",
+      display_name: "Fleet",
+      kind: "machine",
+      owner: null,
+    };
+    const { fetchImpl } = fakeFetch([["GET", "/api/me", me]]);
+    const env = { XDG_CONFIG_HOME: join(dir, "harness") };
+    const login = await runCli(
+      ["login", "http://stub.test", "--manual", "--profile", "harness"],
+      { fetchImpl, env, stdinText: "todou_pat_fleet\n" },
+    );
+    expect(login.exitCode).toBe(0);
+    expect(loadCliConfig(env).servers["http://stub.test"]?.tokens).toEqual({
+      harness: "todou_pat_fleet",
+    });
+
+    const result = await runCli(["whoami"], {
+      fetchImpl,
+      env: { ...env, CLAUDECODE: "1" },
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain(
+      'token: profile "harness" (auto-detected harness, no profile of its own)',
     );
     expect(result.stderr).toContain("detected harness: claude-code");
   });

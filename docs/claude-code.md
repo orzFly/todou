@@ -12,8 +12,11 @@ does two things automatically — no flags, no configuration:
 
    Claude Code sets `CLAUDECODE=1` in every shell it spawns, which is what
    triggers the auto-selection. Your own shell keeps using the default
-   token. Precedence: `--profile` > `TODOU_TOKEN` > `TODOU_PROFILE` >
-   auto-selection > default token (`--profile default` opts out).
+   token. A profile named `harness` serves *every* harness, for a fleet
+   that shares one machine account; `claude-code` wins wherever both
+   exist. Precedence: `--profile` > `TODOU_TOKEN` > `TODOU_PROFILE` >
+   `claude-code` > `harness` > default token (`--profile default` opts
+   out). Neither auto rule applies outside a harness.
 
 2. **Provenance metadata.** Every write (comments, issue events) carries
    an `X-Todou-Agent-Context` header recording

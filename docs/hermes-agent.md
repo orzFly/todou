@@ -11,9 +11,11 @@ and does two things automatically — no flags, no configuration:
    todou login https://todou.example --profile hermes-agent
    ```
 
-   Without such a profile the auto rule stays inert and the default token
-   is used. Precedence: `--profile` > `TODOU_TOKEN` > `TODOU_PROFILE` >
-   auto-selection > default token (`--profile default` opts out).
+   Without such a profile a `harness` profile — shared by every harness —
+   is tried next, and failing that the default token is used. Precedence:
+   `--profile` > `TODOU_TOKEN` > `TODOU_PROFILE` > `hermes-agent` >
+   `harness` > default token (`--profile default` opts out). Neither auto
+   rule applies outside a harness.
 
 2. **Provenance metadata.** Every write (comments, issue events) carries
    an `X-Todou-Agent-Context` header recording

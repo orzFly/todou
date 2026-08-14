@@ -30,13 +30,22 @@ export type TokenSource =
   | "env-token"
   | "env-profile"
   | "auto-harness"
+  | "auto-harness-shared"
   | "default";
+
+/**
+ * One identity for every harness, so a fleet of agents needs a single
+ * machine account rather than one per harness. A profile named after a
+ * specific harness still wins, which is how one harness is given an
+ * identity of its own without disturbing the rest.
+ */
+const SHARED_HARNESS_PROFILE = "harness";
 
 export type ResolvedContext = {
   server?: string;
   token?: string;
   tokenSource: TokenSource | null;
-  /** Profile name when tokenSource is a profile (incl. auto-harness). */
+  /** Profile name when tokenSource is a profile (incl. both auto rules). */
   tokenProfile?: string;
   project?: string;
   binding: Binding | null;
@@ -85,15 +94,27 @@ function pickToken(
   }
   if (env.TODOU_PROFILE) return lookup(env.TODOU_PROFILE, "env-profile");
   // A profile named after the detected harness opts that harness into its
-  // own identity; without one the auto rule stays entirely inert.
+  // own identity, and "harness" covers every harness that has none. Being
+  // inside a harness is the entire trigger: outside one, neither applies
+  // and the auto rule stays inert even when "harness" is stored.
   const harnessId = detectHarnessId(env);
-  const harnessToken = harnessId ? entry?.tokens[harnessId] : undefined;
-  if (harnessId && harnessToken) {
-    return {
-      token: harnessToken,
-      tokenSource: "auto-harness",
-      tokenProfile: harnessId,
-    };
+  if (harnessId) {
+    const own = entry?.tokens[harnessId];
+    if (own) {
+      return {
+        token: own,
+        tokenSource: "auto-harness",
+        tokenProfile: harnessId,
+      };
+    }
+    const shared = entry?.tokens[SHARED_HARNESS_PROFILE];
+    if (shared) {
+      return {
+        token: shared,
+        tokenSource: "auto-harness-shared",
+        tokenProfile: SHARED_HARNESS_PROFILE,
+      };
+    }
   }
   if (entry?.token) return { token: entry.token, tokenSource: "default" };
   return { token: undefined, tokenSource: null };

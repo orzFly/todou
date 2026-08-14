@@ -16,6 +16,14 @@ export class WhoamiCommand extends ApiCommand {
           `token: profile "${this.ctx.tokenProfile}" (auto-detected harness)`,
         );
         break;
+      case "auto-harness-shared":
+        // The detected harness is already printed below, so the useful
+        // thing left to say is why the shared profile won over one of
+        // that harness' own.
+        this.note(
+          `token: profile "${this.ctx.tokenProfile}" (auto-detected harness, no profile of its own)`,
+        );
+        break;
       case "flag-profile":
       case "env-profile":
         this.note(`token: profile "${this.ctx.tokenProfile}"`);

@@ -107,8 +107,10 @@ TODOU_SERVER=… TODOU_TOKEN=todou_pat_… TODOU_PROJECT=… todou issue list --
 
 # Store a separate identity per agent: inside Claude Code (CLAUDECODE=1)
 # the "claude-code" profile is picked automatically, and every write is
-# stamped with the session/model as timeline metadata.
+# stamped with the session/model as timeline metadata. The "harness"
+# profile serves every harness that has none of its own.
 todou login https://todou.example --profile claude-code
+todou login https://todou.example --profile harness
 ```
 
 `todou --help` lists every command; `todou api <method> </path>` reaches
