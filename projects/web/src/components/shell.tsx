@@ -1,9 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useParams } from "@tanstack/react-router";
+import {
+  Link,
+  useMatches,
+  useNavigate,
+  useParams,
+} from "@tanstack/react-router";
 import type { Me } from "@todou/shared";
 import type { ReactNode } from "react";
 import { api, authModeQuery, projectQuery } from "@/api/queries.ts";
 import { useUserEvents } from "@/api/useUserEvents.ts";
+import { VersionFooter } from "@/components/footer.tsx";
 import { InboxButton } from "@/components/inbox-button.tsx";
 import { ProjectNav } from "@/components/project-nav.tsx";
 import { ProjectSwitcher } from "@/components/project-switcher.tsx";
@@ -36,6 +42,12 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   // "log out" would do nothing and come back signed in.
   const authMode = useQuery(authModeQuery);
   const canLogout = authMode.data?.mode !== "forward";
+
+  // Board owns the viewport height; anything appended below it would add a
+  // scrollbar to a page designed not to scroll.
+  const fillsViewport = useMatches({
+    select: (matches) => matches.some((m) => m.staticData.fillsViewport),
+  });
 
   // Present on every route under /projects/$slug; the header morphs into a
   // breadcrumb with the project nav there (T-62).
@@ -120,6 +132,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
         )}
       </header>
       <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
+      {!fillsViewport && <VersionFooter />}
     </div>
   );
 }

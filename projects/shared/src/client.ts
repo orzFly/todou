@@ -56,6 +56,7 @@ import type {
   TokenCreated,
   TokenCreateInput,
   TokenListItem,
+  VersionInfo,
 } from "./index.ts";
 import { SseDecoder } from "./sse.ts";
 
@@ -277,6 +278,8 @@ export class TodouClient {
       }
     });
   }
+
+  version = () => this.request<VersionInfo>("GET", "/version");
 
   // — auth / me —
   authMode = () => this.request<AuthMode>("GET", "/auth/mode");

@@ -122,10 +122,19 @@ const projectIndexRoute = createRoute({
   validateSearch: (search) => issueSearchSchema.parse(search),
 });
 
+declare module "@tanstack/react-router" {
+  interface StaticDataRouteOption {
+    /** The page owns the full viewport height; the shell must not append
+     * flow content (the version footer) below it. */
+    fillsViewport?: boolean;
+  }
+}
+
 const projectBoardRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "board",
   component: BoardPage,
+  staticData: { fillsViewport: true },
 });
 
 // Registered before issues/$number so the static segment wins the match.

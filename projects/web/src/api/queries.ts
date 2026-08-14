@@ -44,6 +44,14 @@ export const authModeQuery = queryOptions({
   staleTime: Number.POSITIVE_INFINITY,
 });
 
+// The server's version only moves on deploy; the focus refetch (react-query's
+// default) is what lets the footer settle once both halves are restarted.
+export const versionQuery = queryOptions({
+  queryKey: ["server-version"],
+  queryFn: () => api.version(),
+  staleTime: 5 * 60_000,
+});
+
 export const projectsQuery = queryOptions({
   queryKey: ["projects"],
   queryFn: () => api.listProjects(),

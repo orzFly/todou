@@ -1,5 +1,6 @@
 import { serveStatic } from "@hono/node-server/serve-static";
 import { OpenAPIHono } from "@hono/zod-openapi";
+import { resolveVersion } from "@todou/shared/version";
 import { createMiddleware } from "hono/factory";
 import { z } from "zod";
 import { type AppEnv, authMiddleware } from "./auth/middleware.ts";
@@ -27,6 +28,7 @@ import { specRoutes } from "./routes/spec.ts";
 import { sseRoutes } from "./routes/sse.ts";
 import { statusRoutes } from "./routes/statuses.ts";
 import { userRoutes } from "./routes/users.ts";
+import { versionRoutes } from "./routes/version.ts";
 
 /**
  * Zod validation failures become uniform 422 error bodies. The message is
@@ -115,6 +117,9 @@ export function createApp(ctx: AppContext) {
   // before the auth guard so they work unauthenticated; everything after
   // the guard requires a session cookie or a bearer PAT.
   api.route("/auth", authRoutes(ctx));
+  // Public like /auth/mode: the login page, probes and diagnostics read the
+  // version without a session (and the repository is public anyway).
+  api.route("/", versionRoutes());
   // Before the auth guard on purpose: sub-requests re-enter the app and
   // are authorized individually, and an unauthenticated mixed batch (the
   // login page pairs /auth/mode with /me) must degrade per item — a 401
@@ -127,7 +132,7 @@ export function createApp(ctx: AppContext) {
     openapi: "3.1.0",
     info: {
       title: "todou",
-      version: "0.1.0",
+      version: resolveVersion(),
       description:
         "A to-do system where projects behave like GitHub-Issues-style " +
         "boards and agents are first-class machine users.",
