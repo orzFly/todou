@@ -19,7 +19,7 @@ export type AgentContext = z.infer<typeof AgentContext>;
  * compile until both sides exist. Other clients may report anything;
  * `AgentContext.agent` stays a free-form string on the wire.
  */
-export const HARNESS_IDS = ["claude-code", "hermes-agent"] as const;
+export const HARNESS_IDS = ["claude-code", "hermes-agent", "pi"] as const;
 export type HarnessId = (typeof HARNESS_IDS)[number];
 
 export const AGENT_CONTEXT_HEADER = "x-todou-agent-context";

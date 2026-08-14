@@ -1,6 +1,6 @@
 import type { HarnessId } from "@todou/shared";
 import type { ComponentType, SVGProps } from "react";
-import { ClaudeMark, HermesMark } from "./harness-logos.tsx";
+import { ClaudeMark, HermesMark, PiMark } from "./harness-logos.tsx";
 
 /**
  * Props a harness mark accepts. svgr's `?react` components take `title` on top
@@ -33,6 +33,7 @@ export const HARNESS_META: Record<HarnessId, HarnessMeta> = {
     resume: (sessionId) => `claude --resume ${sessionId}`,
   },
   "hermes-agent": { logo: HermesMark },
+  pi: { logo: PiMark, resume: (sessionId) => `pi --session ${sessionId}` },
 };
 
 /** Any client may report any agent string; unknown ones simply have no meta. */

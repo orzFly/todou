@@ -36,3 +36,4 @@
  */
 export { default as ClaudeMark } from "@lobehub/icons-static-svg/icons/claude.svg?react";
 export { default as HermesMark } from "@lobehub/icons-static-svg/icons/hermesagent.svg?react";
+export { default as PiMark } from "@lobehub/icons-static-svg/icons/pi.svg?react";

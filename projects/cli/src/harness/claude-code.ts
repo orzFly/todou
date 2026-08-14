@@ -1,15 +1,9 @@
-import { closeSync, globSync, openSync, readSync, statSync } from "node:fs";
+import { globSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentContext } from "@todou/shared";
 import type { Env } from "../config.ts";
+import { findInJsonlTail } from "./jsonl-tail.ts";
 import type { Harness } from "./types.ts";
-
-const CHUNK_BYTES = 256 * 1024;
-// A single image Read appends a ~400 KB base64 tool_result line, and the
-// current turn's assistant entry is not always flushed yet (T-42) — so the
-// newest assistant entry can sit megabytes behind EOF. 16 MB bounds the
-// worst-case I/O per command.
-const MAX_SCAN_BYTES = 16 * 1024 * 1024;
 
 export const claudeCode = {
   id: "claude-code",
@@ -52,43 +46,11 @@ function modelFromTranscript(
       join(home, ".claude", "projects", "*", `${sessionId}.jsonl`),
     )[0];
     if (!file) return undefined;
-    const size = statSync(file).size;
-    const floor = Math.max(0, size - MAX_SCAN_BYTES);
-    const fd = openSync(file, "r");
-    try {
-      let end = size;
-      // Head fragment of a line that continues past the chunk boundary.
-      // Kept as bytes: decoding per chunk would corrupt a multi-byte
-      // character straddling the boundary.
-      let carry: Buffer = Buffer.alloc(0);
-      while (end > floor) {
-        const start = Math.max(floor, end - CHUNK_BYTES);
-        const chunk = readAt(fd, start, end - start);
-        const window = carry.length ? Buffer.concat([chunk, carry]) : chunk;
-        const firstNewline = window.indexOf(0x0a);
-        if (firstNewline === -1) {
-          // One line spans the whole window; keep accumulating backwards.
-          carry = window;
-        } else {
-          const lines = window.toString("utf8", firstNewline + 1).split("\n");
-          for (let i = lines.length - 1; i >= 0; i--) {
-            const model = modelFromLine(lines[i] as string);
-            if (model) return model;
-          }
-          carry = window.subarray(0, firstNewline);
-        }
-        end = start;
-      }
-      // Only at the true start of the file is the leftover fragment a
-      // complete line; below the scan floor its beginning is missing.
-      if (floor === 0) return modelFromLine(carry.toString("utf8"));
-    } finally {
-      closeSync(fd);
-    }
+    return findInJsonlTail(file, modelFromLine);
   } catch {
     // Unreadable transcript is never an error.
+    return undefined;
   }
-  return undefined;
 }
 
 /**
@@ -115,15 +77,4 @@ function modelFromLine(line: string): string | undefined {
     // Half-written last line, a chunk-boundary fragment, or a foreign format.
   }
   return undefined;
-}
-
-function readAt(fd: number, position: number, length: number): Buffer {
-  const buffer = Buffer.alloc(length);
-  let filled = 0;
-  while (filled < length) {
-    const n = readSync(fd, buffer, filled, length - filled, position + filled);
-    if (n === 0) break; // the file shrank underneath us
-    filled += n;
-  }
-  return filled === length ? buffer : buffer.subarray(0, filled);
 }

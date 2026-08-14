@@ -3,6 +3,7 @@ import type { AgentContext, HarnessId } from "@todou/shared";
 import type { Env } from "../config.ts";
 import { claudeCode } from "./claude-code.ts";
 import { hermesAgent } from "./hermes-agent.ts";
+import { pi } from "./pi.ts";
 import type { Harness } from "./types.ts";
 
 /**
@@ -11,9 +12,16 @@ import type { Harness } from "./types.ts";
  * nearest host wins when several signals are present at once. A hermes
  * terminal turn can launch claude code, which passes HERMES_SESSION_* on
  * to its children — CLAUDECODE=1 then marks the direct host.
+ *
+ * claude code and pi are peers rather than host and guest: each marks its
+ * whole process tree, so whichever launched the other, the outer one still
+ * signals. Nothing in the environment breaks that tie, and claude code
+ * leads because it is what drives this tracker; a pi launched from a claude
+ * code tool call is the one shape that reports its host instead of itself.
  */
 export const HARNESSES = [
   claudeCode,
+  pi,
   hermesAgent,
 ] as const satisfies readonly Harness[];
 
@@ -24,9 +32,12 @@ export const HARNESSES = [
 export function detectAgentContext(
   env: Env,
   home: string = homedir(),
+  cwd: string = process.cwd(),
 ): AgentContext | null {
   try {
-    return HARNESSES.find((h) => h.matches(env))?.context(env, home) ?? null;
+    return (
+      HARNESSES.find((h) => h.matches(env))?.context(env, home, cwd) ?? null
+    );
   } catch {
     return null;
   }
