@@ -1,4 +1,6 @@
 import { Link } from "@tanstack/react-router";
+import { PlusIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /** Shared with the project switcher, which keeps the active tab across a switch. */
@@ -10,7 +12,9 @@ export const projectTabs = [
 
 /**
  * Project-level navigation (T-62). Lives in the floating header: inline on
- * wide screens, on its own second row below `sm`.
+ * wide screens, on its own second row below `sm`. Creating an issue rides
+ * along at the far end, so it is one click from every project module and
+ * absent exactly where there is no project to file into (T-104).
  */
 export function ProjectNav({
   slug,
@@ -20,7 +24,9 @@ export function ProjectNav({
   className?: string;
 }) {
   return (
-    <nav className={cn("flex gap-1", className)}>
+    // nowrap so a squeezed header truncates the project name instead of
+    // wrapping the tabs, which would push the create button off its row.
+    <nav className={cn("flex items-center gap-1 whitespace-nowrap", className)}>
       {projectTabs.map((tab) => (
         <Link
           key={tab.label}
@@ -37,6 +43,14 @@ export function ProjectNav({
           {tab.label}
         </Link>
       ))}
+      {/* The caller stretches the nav across the row, so this keeps the
+          right-edge position it held while it lived in the header cluster. */}
+      <Button size="sm" asChild className="ml-auto">
+        <Link to="/projects/$slug/issues/new" params={{ slug }}>
+          <PlusIcon />
+          New issue
+        </Link>
+      </Button>
     </nav>
   );
 }

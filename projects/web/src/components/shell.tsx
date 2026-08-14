@@ -4,7 +4,6 @@ import type { Me } from "@todou/shared";
 import type { ReactNode } from "react";
 import { api, authModeQuery, projectQuery } from "@/api/queries.ts";
 import { InboxButton } from "@/components/inbox-button.tsx";
-import { NewIssueButton } from "@/components/new-issue-button.tsx";
 import { ProjectNav } from "@/components/project-nav.tsx";
 import { ProjectSwitcher } from "@/components/project-switcher.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -46,8 +45,10 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   return (
     <div className="min-h-dvh bg-background">
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-2 px-4">
-          <div className="flex min-w-0 items-center gap-2">
+        <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4">
+          {/* Grows so the nav it holds can push its create button out to
+              the account cluster, instead of trailing after Settings. */}
+          <div className="flex min-w-0 flex-1 items-center gap-2">
             <Link
               to="/projects"
               className="flex shrink-0 items-center gap-2 font-semibold"
@@ -70,16 +71,12 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
                 <ProjectSwitcher slug={slug} />
                 <ProjectNav
                   slug={slug}
-                  className="ml-2 hidden shrink-0 sm:flex"
+                  className="ml-2 hidden flex-1 sm:flex"
                 />
               </>
             )}
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            {/* Create first, then the badged inbox, then preferences and
-                account — the primary action leads the cluster and the
-                badge keeps a quiet neighbour on its right (T-104). */}
-            <NewIssueButton />
             <InboxButton />
             <ThemeMenu />
             <DropdownMenu>
