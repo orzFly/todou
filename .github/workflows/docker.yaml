@@ -33,11 +33,16 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full history so git describe (the TODOU_BUILD_VERSION below) sees
+          # tags; the build context itself excludes .git.
+          fetch-depth: 0
       - name: Prepare platform slug and image ref
         run: |
           platform="${{ matrix.platform }}"
           echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
           echo "REGISTRY_IMAGE=$(scripts/docker-image-ref.sh)" >> "$GITHUB_ENV"
+          echo "TODOU_BUILD_VERSION=$(git describe --tags --always --dirty)" >> "$GITHUB_ENV"
       # Tags come from the merge job; this instance only supplies the OCI
       # labels, which have to be baked in at build time.
       - id: meta
@@ -55,6 +60,8 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.platform }}
+          build-args: |
+            TODOU_BUILD_VERSION=${{ env.TODOU_BUILD_VERSION }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ env.PLATFORM_PAIR }}

@@ -12,21 +12,42 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full history: the version string is git describe, which needs the
+          # tags a shallow fetch leaves behind.
+          fetch-depth: 0
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
+      # One line asserts both "exactly on the tag" and "not dirty"; the loop
+      # catches a release cut without bumping the five package.json files.
+      - name: Assert tag, tree and manifests agree
+        run: |
+          [ "$(git describe --tags --always --dirty)" = "$GITHUB_REF_NAME" ]
+          v="${GITHUB_REF_NAME#v}"
+          for f in package.json projects/*/package.json; do
+            [ "$(node -p "require('./$f').version")" = "$v" ]
+          done
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:cli
+      - name: Assert the artifact reports the tag
+        run: |
+          [ "$(node dist/todou.cjs --version)" = "$GITHUB_REF_NAME" ]
       - name: Checksums
         run: cd dist && sha256sum todou-* todou.cjs > SHA256SUMS
+      # Hand-written notes lead, the generated commit list follows — the only
+      # combination the gh manual documents is --notes with --generate-notes,
+      # so the file goes through --notes rather than --notes-file. A missing
+      # notes file fails the release: the body is a precondition.
       - name: Create release
         run: >-
           gh release create "$GITHUB_REF_NAME" dist/*
           --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+          --notes "$(cat "docs/releases/${GITHUB_REF_NAME}.md")"
         env:
           GH_TOKEN: ${{ github.token }}

@@ -5,6 +5,12 @@ RUN npm install -g pnpm@11
 WORKDIR /app
 COPY . .
 RUN pnpm install --frozen-lockfile --filter '@todou/web...'
+# The context excludes .git (.dockerignore), so the version arrives as a build
+# arg: docker.yaml passes `git describe --tags --always --dirty`; a local
+# build may pass the same or accept "unknown" in the footer. Declared after
+# the install so version churn never busts that layer's cache. ARG doubles as
+# the env var vite reads.
+ARG TODOU_BUILD_VERSION=""
 RUN pnpm --filter @todou/web build
 
 FROM node:24-trixie-slim AS server-deps
@@ -12,6 +18,13 @@ RUN npm install -g pnpm@11
 WORKDIR /app
 COPY . .
 RUN CI=true pnpm install --prod --frozen-lockfile --filter '@todou/server...'
+# Same injection scripts/build-cli.sh uses — overwrite the tracked
+# placeholder — so `todou-server --version` and /api/version answer without
+# git, which the distroless runtime does not carry.
+ARG TODOU_BUILD_VERSION=""
+RUN [ -z "$TODOU_BUILD_VERSION" ] || printf \
+    'export const BUILD_VERSION: string | null = "%s";\n' \
+    "$TODOU_BUILD_VERSION" > projects/shared/src/build-info.ts
 # The runtime image has no shell, so /data ownership can only arrive via COPY
 # from a stage that could chown it (distroless nonroot = uid 65532).
 RUN mkdir -p /data && chown 65532:65532 /data
