@@ -69,6 +69,35 @@ scratch directory and on the tracker; it never enters the repository, not even a
    Co-Authored-By: GPT 5.3 Codex <noreply@openai.com>
    ```
 
+## Navigation is links
+
+Anything whose job is to take the user somewhere else must be a real link — `<a href>`, or the
+router's `<Link>`, which renders one. Never `onClick` + `navigate()` hung on a `<button>` or a
+`<div>`.
+
+Appearance is free. A link may be styled as a button, a tab, a menu item, or a listbox option
+(`role="option"` on `a[href]` is valid ARIA); `asChild` on our `Button` and `DropdownMenuItem`
+exists precisely so the styling survives while the element underneath stays an anchor. The rule
+governs the element, not the look.
+
+Why it matters: middle-click, right-click → *Open in new tab*, ⌘/Ctrl-click, drag-to-bookmark and
+the status-bar URL preview are all browser behaviours keyed off `href`. A handler-only control
+silently swallows every one of them — the user middle-clicks, nothing happens, and nothing marks
+this "button" as different from the one beside it. That muscle memory predates our app by decades;
+we don't get to break it.
+
+Two consequences worth spelling out:
+
+- Resolve the destination during render, not inside the handler. The `href` has to exist before the
+  click does.
+- Let modified clicks through. Where the handler also dismisses a menu or popover, guard it
+  (`if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return`) so opening a background tab
+  doesn't tear down the surface the user is still standing on.
+
+`navigate()` stays right where there is no destination to point at until the click happens:
+redirecting after a mutation, cancel-and-discard, keyboard handlers on a composite widget, and
+filter controls that rewrite the current page's own search params.
+
 ## Environment
 
 - Ignore `.envrc`, `.mise.toml`, and similar environment manager configs. Do not run `direnv`, `mise`, or equivalent commands.

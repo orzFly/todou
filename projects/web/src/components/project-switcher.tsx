@@ -54,18 +54,25 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
       ?.scrollIntoView?.({ block: "nearest" });
   }, [open, hl]);
 
+  // Keep the current nav module across the switch. Pages deeper than the nav
+  // (issue detail, spec view) have no cross-project counterpart, so they fall
+  // back to the list. Search params stay behind on purpose: another project's
+  // filters rarely transfer. Resolved during render, not on click, because the
+  // options are real links and need their href up front (T-117).
+  const target =
+    projectTabs.find((t) => matchRoute({ to: t.to }))?.to ?? "/projects/$slug";
+
   const openProject = (item: OrderedProject | undefined) => {
     if (!item) return;
     setOpen(false);
-    // Keep the current nav module across the switch. Pages deeper than the
-    // nav (issue detail, spec view) have no cross-project counterpart, so
-    // they fall back to the list. Search params stay behind on purpose:
-    // another project's filters rarely transfer.
-    const tab = projectTabs.find((t) => matchRoute({ to: t.to }));
-    navigate({
-      to: tab?.to ?? "/projects/$slug",
-      params: { slug: item.project.slug },
-    });
+    navigate({ to: target, params: { slug: item.project.slug } });
+  };
+
+  // A modified click hands the link to the browser (new tab/window), so leave
+  // the picker standing — the user is stacking tabs, not leaving this page.
+  const closeUnlessNewTab = (e: React.MouseEvent) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    setOpen(false);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -146,20 +153,25 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
             </div>
           ) : (
             items.map((item, idx) => (
-              // biome-ignore lint/a11y/useKeyWithClickEvents: keys are handled by the listbox's onKeyDown via aria-activedescendant
-              <div
+              // A link, not a div: middle-click, right-click → open in new tab,
+              // ⌘/Ctrl-click and the status-bar URL preview all come free, and
+              // role="option" keeps the listbox semantics intact (T-117).
+              // tabIndex -1 because aria-activedescendant does the walking.
+              <Link
                 key={item.project.slug}
+                to={target}
+                params={{ slug: item.project.slug }}
                 id={`project-option-${item.project.slug}`}
                 data-idx={idx}
                 role="option"
                 tabIndex={-1}
                 aria-selected={item.project.slug === slug}
                 className={cn(
-                  "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm",
+                  "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm",
                   idx === hl && "bg-accent",
                 )}
                 onMouseMove={() => setHighlight(idx)}
-                onClick={() => openProject(item)}
+                onClick={closeUnlessNewTab}
               >
                 <span className="w-3.5 shrink-0">
                   {item.project.slug === slug && (
@@ -174,14 +186,14 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
                 >
                   {item.project.name}
                 </span>
-              </div>
+              </Link>
             ))
           )}
         </div>
         <div className="flex border-t p-1">
           <Link
             to="/projects"
-            onClick={() => setOpen(false)}
+            onClick={closeUnlessNewTab}
             className="flex-1 rounded-md px-2 py-1.5 text-center text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
           >
             All projects
@@ -189,7 +201,7 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
           <Link
             to="/projects"
             search={{ new: true }}
-            onClick={() => setOpen(false)}
+            onClick={closeUnlessNewTab}
             className="flex-1 rounded-md px-2 py-1.5 text-center text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
           >
             + New project

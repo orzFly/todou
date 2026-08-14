@@ -221,6 +221,30 @@ async function pickProject(name: string) {
   fireEvent.click(option);
 }
 
+describe("ProjectSwitcher options are links (T-117)", () => {
+  it("renders each option as an anchor carrying the destination", async () => {
+    renderSwitcher(fewProjects, "/projects/alpha/board");
+    await openSwitcher();
+    const options = screen.getAllByRole("option");
+    expect(options.map((el) => el.tagName)).toEqual(["A", "A", "A"]);
+    // Module keeping has to be resolved into the href, not on click: a
+    // middle-click never reaches our handler.
+    const beta = options.find((el) => el.textContent?.includes("beta"));
+    expect(beta?.getAttribute("href")).toBe("/projects/beta/board");
+  });
+
+  it("keeps the picker open when a modified click opens a new tab", async () => {
+    renderSwitcher(fewProjects);
+    await openSwitcher();
+    const beta = screen
+      .getAllByRole("option")
+      .find((el) => el.textContent?.includes("beta"));
+    if (!beta) throw new Error("no option for beta");
+    fireEvent.click(beta, { metaKey: true });
+    expect(screen.queryByRole("listbox")).toBeTruthy();
+  });
+});
+
 describe("ProjectSwitcher keeps the nav module (T-94)", () => {
   it("switches board to board", async () => {
     const router = renderSwitcher(fewProjects, "/projects/alpha/board");
