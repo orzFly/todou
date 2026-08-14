@@ -35,5 +35,6 @@
  * brands themselves, so these stay in their role as marks of provenance.
  */
 export { default as ClaudeMark } from "@lobehub/icons-static-svg/icons/claude.svg?react";
+export { default as CodexMark } from "@lobehub/icons-static-svg/icons/codex.svg?react";
 export { default as HermesMark } from "@lobehub/icons-static-svg/icons/hermesagent.svg?react";
 export { default as PiMark } from "@lobehub/icons-static-svg/icons/pi.svg?react";

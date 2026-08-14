@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import type { AgentContext, HarnessId } from "@todou/shared";
 import type { Env } from "../config.ts";
 import { claudeCode } from "./claude-code.ts";
+import { codex } from "./codex.ts";
 import { hermesAgent } from "./hermes-agent.ts";
 import { pi } from "./pi.ts";
 import type { Harness } from "./types.ts";
@@ -13,14 +14,17 @@ import type { Harness } from "./types.ts";
  * terminal turn can launch claude code, which passes HERMES_SESSION_* on
  * to its children — CLAUDECODE=1 then marks the direct host.
  *
- * claude code and pi are peers rather than host and guest: each marks its
- * whole process tree, so whichever launched the other, the outer one still
- * signals. Nothing in the environment breaks that tie, and claude code
- * leads because it is what drives this tracker; a pi launched from a claude
- * code tool call is the one shape that reports its host instead of itself.
+ * claude code, codex and pi are peers rather than host and guest: each marks
+ * its whole process tree — codex inherits the parent environment wholesale,
+ * so CLAUDECODE reaches its shells as well — so whichever launched the other,
+ * the outer one still signals. Nothing in the environment breaks that tie,
+ * and claude code leads because it is what drives this tracker; a peer
+ * launched from a claude code tool call is the one shape that reports its
+ * host instead of itself.
  */
 export const HARNESSES = [
   claudeCode,
+  codex,
   pi,
   hermesAgent,
 ] as const satisfies readonly Harness[];

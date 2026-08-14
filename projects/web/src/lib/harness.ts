@@ -1,6 +1,6 @@
 import type { HarnessId } from "@todou/shared";
 import type { ComponentType, SVGProps } from "react";
-import { ClaudeMark, HermesMark, PiMark } from "./harness-logos.tsx";
+import { ClaudeMark, CodexMark, HermesMark, PiMark } from "./harness-logos.tsx";
 
 /**
  * Props a harness mark accepts. svgr's `?react` components take `title` on top
@@ -31,6 +31,10 @@ export const HARNESS_META: Record<HarnessId, HarnessMeta> = {
   "claude-code": {
     logo: ClaudeMark,
     resume: (sessionId) => `claude --resume ${sessionId}`,
+  },
+  codex: {
+    logo: CodexMark,
+    resume: (sessionId) => `codex resume ${sessionId}`,
   },
   "hermes-agent": { logo: HermesMark },
   pi: { logo: PiMark, resume: (sessionId) => `pi --session ${sessionId}` },
