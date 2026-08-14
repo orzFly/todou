@@ -72,15 +72,27 @@ name what is still missing.
    required, so the web build fails until the mark exists, and every
    harness todou detects wears its own logo rather than the generic bot.
 
-   Take the upstream mark rather than drawing one —
-   [lobe-icons](https://github.com/lobehub/lobe-icons) carries most agent
-   brands as 24×24 `currentColor` SVGs. Vendor the paths into
-   `harness-logos.tsx`; do not add the package, which peer-depends on a
-   whole UI stack this app does not use. Keep the path verbatim, and copy
-   its licence into the mark's doc comment: this repository is public, and
-   a permissive licence still has terms — MIT requires the copyright and
-   permission notice to travel with the copy. Note that a licence over a
-   brand-icon collection is not a trademark grant from the brand owner.
+   Take the upstream mark rather than drawing one. `@lobehub/icons-static-svg`
+   is already a dependency and carries most agent brands as 24×24
+   `currentColor` SVGs, so a new mark is one re-export line:
+
+   ```ts
+   export { default as FooMark } from "@lobehub/icons-static-svg/icons/foo.svg?react";
+   ```
+
+   Only the icons actually imported are bundled, so the package's size is a
+   `node_modules` cost, not a payload one. Do not reach for its sibling
+   `@lobehub/icons`, the React component package — that is the one which
+   peer-depends on antd and `@lobehub/ui`, a whole UI stack this app does not
+   use. If a brand is missing from the collection, vendor that one path into
+   `harness-logos.tsx` verbatim with its own licence beside it.
+
+   The MIT notice for the collection lives at the top of `harness-logos.tsx`
+   and covers every mark taken from it — the package publishes no LICENSE
+   file of its own, and the build inlines its artwork into a bundle this
+   public repository ships, so the notice has to travel here. Note that a
+   licence over a brand-icon collection is not a trademark grant from the
+   brand owner.
 3. **Resume command** — optional `resume` in that same entry. Without one
    the badge copies the raw session id, which is the right answer when the
    harness cannot resume from what it reports.

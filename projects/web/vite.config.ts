@@ -1,10 +1,22 @@
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
+import svgr from "vite-plugin-svgr";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  // svgr serves the `?react` imports in lib/harness-logos.tsx: the brand marks
+  // ship as bare .svg files, and only a component can take the badge's sizing
+  // class and test id. vitest reads this same plugin array, so the marks
+  // resolve identically under happy-dom.
+  plugins: [
+    react(),
+    tailwindcss(),
+    // Each upstream mark hardcodes a <title> ("Claude", "Hermes Agent").
+    // titleProp turns that into a prop, which is the only way to *drop* it
+    // short of pulling in svgo — see the render in shared/agent-badge.tsx.
+    svgr({ svgrOptions: { titleProp: true } }),
+  ],
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),

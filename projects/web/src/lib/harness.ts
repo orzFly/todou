@@ -2,8 +2,16 @@ import type { HarnessId } from "@todou/shared";
 import type { ComponentType, SVGProps } from "react";
 import { ClaudeMark, HermesMark } from "./harness-logos.tsx";
 
+/**
+ * Props a harness mark accepts. svgr's `?react` components take `title` on top
+ * of the usual svg props, and the badge passes `title=""` to drop the brand
+ * <title> the upstream files ship with; a mark vendored by hand simply ignores
+ * it, since `title` is optional here.
+ */
+export type HarnessMarkProps = SVGProps<SVGSVGElement> & { title?: string };
+
 export type HarnessMeta = {
-  logo: ComponentType<SVGProps<SVGSVGElement>>;
+  logo: ComponentType<HarnessMarkProps>;
   /**
    * Builds the copy-on-click shell command for a session badge. A harness
    * that cannot resume from the id it reports (hermes routes sessions by

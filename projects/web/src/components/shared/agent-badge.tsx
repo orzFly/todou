@@ -36,10 +36,14 @@ function sessionStyle(sessionId: string): CSSProperties {
   } as CSSProperties;
 }
 
+/* The mark is decorative — the badge spells the harness out in text beside it.
+   `title=""` is what removes the brand <title> the upstream SVG ships with
+   (vite.config.ts makes it a prop for exactly this); left in, it would join the
+   badge's textContent and shadow the badge's own tooltip. */
 function HarnessIcon({ agent }: { agent: string }) {
   const Logo = harnessMeta(agent)?.logo;
   if (!Logo) return <Bot aria-hidden data-testid="harness-icon-unknown" />;
-  return <Logo data-testid={`harness-icon-${agent}`} />;
+  return <Logo aria-hidden title="" data-testid={`harness-icon-${agent}`} />;
 }
 
 /**
