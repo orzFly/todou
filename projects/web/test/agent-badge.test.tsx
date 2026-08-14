@@ -1,4 +1,5 @@
 import { fireEvent, waitFor } from "@testing-library/react";
+import { HARNESS_IDS } from "@todou/shared";
 import { describe, expect, it, vi } from "vitest";
 import { CommentItem } from "../src/components/timeline/comment-item.tsx";
 import { EventRow } from "../src/components/timeline/event-row.tsx";
@@ -103,22 +104,24 @@ describe("AgentContextBadge in the timeline", () => {
     expect(badge.style.getPropertyValue("--agent-h1")).toBe("");
   });
 
-  it("picks the harness icon: Claude logo for claude-*, bot otherwise", async () => {
-    const iconsIn = async (agent: string) => {
+  it("gives every known harness its own logo, and unknown agents the bot", async () => {
+    const marks = new Map<string, string>();
+    for (const agent of HARNESS_IDS) {
       const badge = await renderBadge({ agent, model: "some-model" });
-      return {
-        claude: badge.querySelector('[data-testid="harness-icon-claude"]'),
-        bot: badge.querySelector('[data-testid="harness-icon-bot"]'),
-      };
-    };
+      const logo = badge.querySelector(`[data-testid="harness-icon-${agent}"]`);
+      expect(logo, `${agent} renders its own mark`).not.toBeNull();
+      expect(
+        badge.querySelector('[data-testid="harness-icon-unknown"]'),
+      ).toBeNull();
+      marks.set(agent, logo?.innerHTML ?? "");
+    }
+    // A harness registered by copying another's entry must not inherit its mark.
+    expect(new Set(marks.values()).size).toBe(marks.size);
 
-    const claude = await iconsIn("claude-code");
-    expect(claude.claude).not.toBeNull();
-    expect(claude.bot).toBeNull();
-
-    const other = await iconsIn("aider");
-    expect(other.bot).not.toBeNull();
-    expect(other.claude).toBeNull();
+    const other = await renderBadge({ agent: "aider", model: "some-model" });
+    expect(
+      other.querySelector('[data-testid="harness-icon-unknown"]'),
+    ).not.toBeNull();
   });
 
   it("copies the resume command on click without bubbling to the row", async () => {
@@ -164,7 +167,7 @@ describe("AgentContextBadge in the timeline", () => {
       "hermes-agent · session agent:main:telegram:dm:1000001 — click to copy the session id",
     );
     expect(
-      badge.querySelector('[data-testid="harness-icon-bot"]'),
+      badge.querySelector('[data-testid="harness-icon-hermes-agent"]'),
     ).not.toBeNull();
 
     fireEvent.click(badge);

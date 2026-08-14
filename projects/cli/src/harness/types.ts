@@ -1,4 +1,4 @@
-import type { AgentContext } from "@todou/shared";
+import type { AgentContext, HarnessId } from "@todou/shared";
 import type { Env } from "../config.ts";
 
 /**
@@ -10,7 +10,7 @@ import type { Env } from "../config.ts";
  */
 export type Harness = {
   /** AgentContext.agent value, and the auto-selected token profile name. */
-  id: string;
+  id: HarnessId;
   matches(env: Env): boolean;
   context(env: Env, home: string): AgentContext;
 };

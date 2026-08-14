@@ -11,7 +11,7 @@ const CHUNK_BYTES = 256 * 1024;
 // worst-case I/O per command.
 const MAX_SCAN_BYTES = 16 * 1024 * 1024;
 
-export const claudeCode: Harness = {
+export const claudeCode = {
   id: "claude-code",
   matches: (env) => env.CLAUDECODE === "1",
   context(env, home) {
@@ -22,7 +22,7 @@ export const claudeCode: Harness = {
     if (model) context.model = model;
     return context;
   },
-};
+} satisfies Harness;
 
 /**
  * The transcript tail wins over CLAUDE_MODEL: a SessionStart-hook snapshot

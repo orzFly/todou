@@ -12,6 +12,16 @@ export const AgentContext = z.object({
 });
 export type AgentContext = z.infer<typeof AgentContext>;
 
+/**
+ * The `agent` value every detectable harness reports. Two registries are
+ * keyed by this union — a detector in `projects/cli/src/harness/` and a
+ * logo in `projects/web/src/lib/harness.ts` — so an id added here fails to
+ * compile until both sides exist. Other clients may report anything;
+ * `AgentContext.agent` stays a free-form string on the wire.
+ */
+export const HARNESS_IDS = ["claude-code", "hermes-agent"] as const;
+export type HarnessId = (typeof HARNESS_IDS)[number];
+
 export const AGENT_CONTEXT_HEADER = "x-todou-agent-context";
 
 /** Anything beyond this is rejected rather than truncated. */

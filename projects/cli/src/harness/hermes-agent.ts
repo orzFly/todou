@@ -15,7 +15,7 @@ type Database = InstanceType<SqliteModule["DatabaseSync"]>;
  * HERMES_HOME alone is NOT a signal: an ordinary shell may export it
  * permanently just to relocate hermes state.
  */
-export const hermesAgent: Harness = {
+export const hermesAgent = {
   id: "hermes-agent",
   matches: (env) =>
     Boolean(env.HERMES_SESSION_KEY) || env._HERMES_GATEWAY === "1",
@@ -26,7 +26,7 @@ export const hermesAgent: Harness = {
     if (model) context.model = model;
     return context;
   },
-};
+} satisfies Harness;
 
 /**
  * Best-effort model lookup in `$HERMES_HOME/state.db`. Hermes exposes no

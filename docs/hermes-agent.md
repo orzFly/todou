@@ -57,11 +57,31 @@ detected harness: hermes-agent (session agent:main:telegram:dm:1000001)
 
 ## Adding the next harness
 
-Detectors live in `projects/cli/src/harness/`, one file per harness behind
-a common interface, ordered innermost-first in `index.ts` (a harness whose
-environment variables are inherited by agents it spawns goes after the
-harnesses it can spawn). A new harness needs: the detector file, its
-registry entry, tests under `projects/cli/test/harness/`, optionally a
-resume-command entry in `projects/web/src/lib/harness.ts` (without one the
-badge copies the session id), optionally a token profile on the host —
-and a page like this one.
+`HARNESS_IDS` in `projects/shared/src/schemas/agent-context.ts` is the list
+both registries key off. Add the id there first; the CLI and web builds then
+name what is still missing.
+
+1. **Detector** — `projects/cli/src/harness/<id>.ts` plus its entry in
+   `index.ts`, and tests under `projects/cli/test/harness/`. That array is
+   ordered innermost-first: a harness whose environment variables are
+   inherited by the agents it spawns goes *after* the harnesses it can
+   spawn, so the nearest host wins.
+2. **Logo** — a mark in `projects/web/src/lib/harness-logos.tsx` and its
+   `logo` entry in `projects/web/src/lib/harness.ts`. Not optional:
+   `HARNESS_META` is a `Record` over the whole id union with `logo`
+   required, so the web build fails until the mark exists, and every
+   harness todou detects wears its own logo rather than the generic bot.
+
+   Take the upstream mark rather than drawing one —
+   [lobe-icons](https://github.com/lobehub/lobe-icons) carries most agent
+   brands as 24×24 `currentColor` SVGs. Vendor the paths into
+   `harness-logos.tsx`; do not add the package, which peer-depends on a
+   whole UI stack this app does not use. Keep the path verbatim, and copy
+   its licence into the mark's doc comment: this repository is public, and
+   a permissive licence still has terms — MIT requires the copyright and
+   permission notice to travel with the copy. Note that a licence over a
+   brand-icon collection is not a trademark grant from the brand owner.
+3. **Resume command** — optional `resume` in that same entry. Without one
+   the badge copies the raw session id, which is the right answer when the
+   harness cannot resume from what it reports.
+4. **Token profile** on the host, and a page like this one — both optional.
