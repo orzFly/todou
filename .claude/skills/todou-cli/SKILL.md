@@ -85,17 +85,39 @@ in the terminal so the orchestrator knows to relay as a backstop.
 
 ## Rich content in bodies and comments
 
-- `#N` renders as a rich issue link (exempt inside code blocks / inline code); pasted comment permalinks render richly too.
-- Attachment references are just real download URLs: `[name](…/attachments/12/download/name.ext)` renders
-  as a rich attachment link, and `![]()` images render inline.
+These are affordances, not a licence to write more — **Comment discipline** below still sets the length.
+
+**Attachments.** `todou attach` prints the URL it just created
+(`shot.png → /api/projects/<proj>/attachments/12/download/shot.png`); paste that string verbatim.
+
+- `[name](…/download/name.ext)` → rich attachment link (icon, click-to-preview).
+- `![](…/download/shot.png)` → renders inline, click-to-zoom.
+- `![](…/download/notes.md)` → image syntax on a *text* attachment embeds a document card (markdown
+  rendered, code highlighted); past 1 MiB it degrades to a download-only card.
+- Keep the path **root-relative** — rewritten absolute (`https://…`) it falls back to a plain link.
 - Single-file demo pages (mockups, prototype HTML) **must** be attached to the relevant issue with
   `todou attach` — never leave them only on local disk.
-- Timestamps are permalinks (`#comment-<id>`); opening one scrolls to and highlights the entry.
-- **Reference with intent**: every `#N` you write fires a "referenced by" event on that card. Use refs
-  when the link carries meaning (a follow-up, a dependency, a dupe); never enumerate incidental cards —
-  "rebased onto master containing #52/#53/#26/#49/#57" sprays five noise events and tells nobody
-  anything. Write "rebased onto latest master" instead. And **never self-reference**: inside issue 36,
-  `#36` is pure noise — write "this card" / "本卡".
+
+**Permalinks.** Every timestamp is one: `#comment-<id>` on comments, `#event-<id>` on events. Opening
+one centers the entry and flashes it, digging the target out first — it expands the folded middle of a
+long timeline, and forces open a collapsed merged run ("N items") when the target sits inside.
+`referenced` runs list every row already, so those links land directly. A pasted **absolute**
+same-origin issue/comment URL renders richly too.
+
+**Issue refs.** `#N` is the default token, not a universal one: the format is per-project and anchored
+to when the text was written, so a project that switched uses `T-N` and reads a bare `#N` as plain text
+(`todou api GET /projects/<proj>/references/config` says which). Fenced code and inline code are exempt,
+for rendering and events alike.
+
+- **Reference with intent**: the first ref from this card to another fires a "referenced by" event
+  there, deep-linked to the exact comment. Repeats from the same card — and later edits — are deduped,
+  so the cost is one event per pair, permanently. Use refs when the link carries meaning (a follow-up,
+  a dependency, a dupe); never enumerate incidental cards — "rebased onto master containing
+  #52/#53/#26/#49/#57" sprays five noise events and tells nobody anything. Write "rebased onto latest
+  master" instead. And **never self-reference**: inside issue 36, `#36` is pure noise (the server
+  drops the event) — write "this card" / "本卡".
+- **Tracker text only.** In source and commit messages write the project's textual form (`T-<n>`) —
+  in a public repo a bare `#N` autolinks to the host's own issue numbering, permanently wrong.
 
 ## Comment discipline
 
