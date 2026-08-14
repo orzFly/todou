@@ -1,6 +1,6 @@
 import type { IssueListItem, Label, Status } from "@todou/shared";
 import { describe, expect, it } from "vitest";
-import { IssueRow } from "../src/pages/issue-list.tsx";
+import { IssueRow, IssueRowMeta } from "../src/components/issue/issue-row.tsx";
 import { renderWithProviders } from "./render.tsx";
 
 const status: Status = {
@@ -51,10 +51,15 @@ const renderRow = (labelCount: number) =>
       <IssueRow
         slug="p"
         issue={issue(labelCount)}
-        statuses={[status]}
-        allLabels={labels}
-        onStatus={() => {}}
-        onToggleLabel={() => {}}
+        meta={
+          <IssueRowMeta
+            issue={issue(labelCount)}
+            statuses={[status]}
+            allLabels={labels}
+            onStatus={() => {}}
+            onToggleLabel={() => {}}
+          />
+        }
       />
     </ul>,
   );

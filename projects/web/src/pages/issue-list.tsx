@@ -3,21 +3,14 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import {
-  Link,
-  useNavigate,
-  useParams,
-  useSearch,
-} from "@tanstack/react-router";
-import {
-  formatRef,
-  type IssueCounts,
-  type IssueListItem,
-  type IssueListPage as IssueListPageData,
-  type Label,
-  type Status,
+import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import type {
+  IssueCounts,
+  IssueListItem,
+  IssueListPage as IssueListPageData,
+  Label,
+  Status,
 } from "@todou/shared";
-import { CheckIcon, TagIcon } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import {
   csvToIds,
@@ -38,29 +31,14 @@ import {
   membersQuery,
   statusesQuery,
 } from "@/api/queries.ts";
-import { useRefPrefix } from "@/api/references.ts";
-import {
-  QuestionBadge,
-  SpecReviewBadge,
-} from "@/components/issue/attention-badge.tsx";
 import { FilterBar } from "@/components/issue/filter-bar.tsx";
-import { LabelChips } from "@/components/issue/label-chip.tsx";
+import { IssueRow, IssueRowMeta } from "@/components/issue/issue-row.tsx";
 import {
-  LabelPicker,
   useCanCreateLabels,
   useCreateLabel,
 } from "@/components/issue/label-picker.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
-import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
-import { StatusPill } from "@/components/issue/status-pill.tsx";
-import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function IssueListPage() {
@@ -278,8 +256,6 @@ function IssueGroup({
   const group = useQuery(issueGroupQuery(slug, status.id, search));
   const [extraPages, setExtraPages] = useState<IssueListPageData[]>([]);
   const queryClient = useQueryClient();
-  const statusMutation = useIssueStatusMutation(slug);
-  const labelsMutation = useIssueLabelsMutation(slug);
 
   // Same guard as IssueList: pages loaded under a previous filter state
   // would mix stale rows into the group.
@@ -349,28 +325,13 @@ function IssueGroup({
             </Button>
           </li>
         )}
-        {items.map((issue) => (
-          <IssueRow
-            key={issue.id}
-            slug={slug}
-            issue={issue}
-            statuses={statuses}
-            allLabels={allLabels}
-            onStatus={(next) =>
-              statusMutation.mutate({ issueNumber: issue.number, status: next })
-            }
-            onToggleLabel={(label) => {
-              const current = issue.labels.map((l) => l.id);
-              labelsMutation.mutate({
-                issueNumber: issue.number,
-                labelIds: current.includes(label.id)
-                  ? current.filter((id) => id !== label.id)
-                  : [...current, label.id],
-              });
-            }}
-            onCreateLabel={onCreateLabel}
-          />
-        ))}
+        <ProjectIssueRows
+          slug={slug}
+          items={items}
+          statuses={statuses}
+          allLabels={allLabels}
+          onCreateLabel={onCreateLabel}
+        />
         {lastCursor && remaining > 0 && (
           <li>
             <button
@@ -405,8 +366,6 @@ export function IssueList({
 }) {
   const [extraPages, setExtraPages] = useState<IssueListPageData[]>([]);
   const queryClient = useQueryClient();
-  const statusMutation = useIssueStatusMutation(slug);
-  const labelsMutation = useIssueLabelsMutation(slug);
 
   // Pages were appended under the previous filter state; keeping them would
   // mix e.g. closed rows into the open list after a category switch.
@@ -447,28 +406,13 @@ export function IssueList({
   return (
     <div className="space-y-3">
       <ul className="rounded-lg border">
-        {items.map((issue) => (
-          <IssueRow
-            key={issue.id}
-            slug={slug}
-            issue={issue}
-            statuses={statuses}
-            allLabels={allLabels}
-            onStatus={(status) =>
-              statusMutation.mutate({ issueNumber: issue.number, status })
-            }
-            onToggleLabel={(label) => {
-              const current = issue.labels.map((l) => l.id);
-              labelsMutation.mutate({
-                issueNumber: issue.number,
-                labelIds: current.includes(label.id)
-                  ? current.filter((id) => id !== label.id)
-                  : [...current, label.id],
-              });
-            }}
-            onCreateLabel={onCreateLabel}
-          />
-        ))}
+        <ProjectIssueRows
+          slug={slug}
+          items={items}
+          statuses={statuses}
+          allLabels={allLabels}
+          onCreateLabel={onCreateLabel}
+        />
       </ul>
       {lastCursor && (
         <div className="text-center">
@@ -481,99 +425,55 @@ export function IssueList({
   );
 }
 
-/** Exported for tests (like BoardCardContent). */
-export function IssueRow({
+/**
+ * The rows of a project list: the shared row (T-118) plus the editable meta
+ * line, which is what this page adds over the inbox's read-only one. Both
+ * the grouped and the flat list render through here, so the mutation wiring
+ * is written once; it returns bare `<li>`s because the callers own the `<ul>`
+ * (the grouped one seats skeleton and error rows in the same list).
+ *
+ * Exported for tests.
+ */
+export function ProjectIssueRows({
   slug,
-  issue,
+  items,
   statuses,
   allLabels,
-  onStatus,
-  onToggleLabel,
   onCreateLabel,
 }: {
   slug: string;
-  issue: IssueListItem;
+  items: IssueListItem[];
   statuses: Status[];
   allLabels: Label[];
-  onStatus: (status: Status) => void;
-  onToggleLabel: (label: Label) => void;
   onCreateLabel?: (name: string) => Promise<Label>;
 }) {
-  const refPrefix = useRefPrefix(slug);
-  return (
-    <li className="border-b px-3.5 py-2.5 transition-colors last:border-0 hover:bg-muted/50">
-      <div className="flex items-center gap-2">
-        {/* Fixed-width slot (the CLI's ● column, sized for the 99+ badge)
-            keeps numbers from shifting; centering keeps the ring and the
-            badge on one axis. */}
-        <span className="inline-flex w-[27px] shrink-0 justify-center">
-          <MarkReadButton
-            slug={slug}
-            number={issue.number}
-            unread={issue.unread}
-            unreadComments={issue.unread_comments}
-          />
-        </span>
-        <span className="w-11 shrink-0 text-[13px] text-muted-foreground tabular-nums max-sm:w-auto">
-          {formatRef(refPrefix, issue.number)}
-        </span>
-        <Link
-          to="/projects/$slug/issues/$number"
-          params={{ slug, number: String(issue.number) }}
-          className="min-w-0 truncate font-medium hover:underline"
-        >
-          {issue.title}
-        </Link>
-        {issue.open_questions > 0 && (
-          <QuestionBadge count={issue.open_questions} className="shrink-0" />
-        )}
-        {issue.spec_review_status === "unreviewed" && (
-          <SpecReviewBadge version={issue.spec_version} className="shrink-0" />
-        )}
-      </div>
-      {/* pl mirrors line 1: unread slot 27 + gap 8 (+ ref 44 when it is
-          fixed-width, ≥sm only) so the meta line starts under the title. */}
-      <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-[79px] max-sm:pl-[35px]">
-        <DropdownMenu>
-          {/* flex collapses the button's line box to the pill; the default
-              block box is 24px tall and seats the pill on its text baseline,
-              ~1.6px below the neighbouring label chips (T-98). */}
-          <DropdownMenuTrigger className="flex cursor-pointer">
-            <StatusPill status={issue.status} />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            {statuses.map((s) => (
-              <DropdownMenuItem key={s.id} onSelect={() => onStatus(s)}>
-                <span className="w-4">
-                  {s.id === issue.status.id && <CheckIcon className="size-4" />}
-                </span>
-                <StatusPill status={s} className="border-0 px-0" />
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <LabelChips labels={issue.labels} />
-        <LabelPicker
+  const statusMutation = useIssueStatusMutation(slug);
+  const labelsMutation = useIssueLabelsMutation(slug);
+  return items.map((issue) => (
+    <IssueRow
+      key={issue.id}
+      slug={slug}
+      issue={issue}
+      meta={
+        <IssueRowMeta
+          issue={issue}
+          statuses={statuses}
           allLabels={allLabels}
-          selected={issue.labels}
-          onToggle={onToggleLabel}
-          onCreate={onCreateLabel}
-          trigger={
-            <button
-              type="button"
-              className="flex cursor-pointer text-muted-foreground hover:text-foreground"
-            >
-              <TagIcon className="size-3.5" aria-label="edit labels" />
-            </button>
+          onStatus={(status) =>
+            statusMutation.mutate({ issueNumber: issue.number, status })
           }
+          onToggleLabel={(label) => {
+            const current = issue.labels.map((l) => l.id);
+            labelsMutation.mutate({
+              issueNumber: issue.number,
+              labelIds: current.includes(label.id)
+                ? current.filter((id) => id !== label.id)
+                : [...current, label.id],
+            });
+          }}
+          onCreateLabel={onCreateLabel}
         />
-        <span className="flex-1" />
-        <span className="flex gap-1">
-          {issue.assignees.map((user) => (
-            <UserChip key={user.id} user={user} compact />
-          ))}
-        </span>
-      </div>
-    </li>
-  );
+      }
+    />
+  ));
 }

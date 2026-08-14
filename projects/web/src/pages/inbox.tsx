@@ -1,15 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { formatRef, type InboxItem } from "@todou/shared";
+import type { InboxItem } from "@todou/shared";
 import { useState } from "react";
 import { groupInboxItems, type InboxGroup, inboxQuery } from "@/api/inbox.ts";
-import { useRefPrefix } from "@/api/references.ts";
-import {
-  QuestionBadge,
-  SpecReviewBadge,
-} from "@/components/issue/attention-badge.tsx";
+import { IssueRow } from "@/components/issue/issue-row.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
-import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -122,7 +117,6 @@ export function InboxPage() {
 }
 
 function InboxGroupSection({ group }: { group: InboxGroup }) {
-  const refPrefix = useRefPrefix(group.project.slug);
   return (
     <section className="overflow-hidden rounded-lg border">
       <header className="flex items-center justify-between gap-2 border-b bg-muted/50 px-3.5 py-2">
@@ -147,51 +141,25 @@ function InboxGroupSection({ group }: { group: InboxGroup }) {
       </header>
       <ul>
         {group.items.map((item) => (
-          <InboxRow key={item.id} item={item} refPrefix={refPrefix} />
+          <InboxRow key={item.id} item={item} />
         ))}
       </ul>
     </section>
   );
 }
 
-function InboxRow({
-  item,
-  refPrefix,
-}: {
-  item: InboxItem;
-  refPrefix: string | null;
-}) {
-  const slug = item.project.slug;
+/**
+ * The shared issue row (T-118) with the inbox's own trailing pair. No meta
+ * line: the row reports rather than edits, and its project — the one thing
+ * the list's row never has to name — is already the section it sits in.
+ */
+function InboxRow({ item }: { item: InboxItem }) {
   return (
-    <li className="border-b px-3.5 py-2.5 transition-colors last:border-0 hover:bg-muted/50">
-      <div className="flex items-center gap-2">
-        {/* Same fixed-width marker slot as the issue list (T-77 sizing). */}
-        <span className="inline-flex w-[27px] shrink-0 justify-center">
-          <MarkReadButton
-            slug={slug}
-            number={item.number}
-            unread={item.unread}
-            unreadComments={item.unread_comments}
-          />
-        </span>
-        <span className="w-11 shrink-0 text-[13px] text-muted-foreground tabular-nums max-sm:w-auto">
-          {formatRef(refPrefix, item.number)}
-        </span>
-        <Link
-          to="/projects/$slug/issues/$number"
-          params={{ slug, number: String(item.number) }}
-          className="min-w-0 truncate font-medium hover:underline"
-        >
-          {item.title}
-        </Link>
-        {/* Reasons hug the title, exactly as on an issue row or a board card;
-            only the meta pair is pushed to the far edge. */}
-        {item.open_questions > 0 && (
-          <QuestionBadge count={item.open_questions} className="shrink-0" />
-        )}
-        {item.pending_spec_review && (
-          <SpecReviewBadge version={item.spec_version} className="shrink-0" />
-        )}
+    <IssueRow
+      slug={item.project.slug}
+      issue={item}
+      specAwaitingReview={item.pending_spec_review}
+      trailing={
         <span className="ml-auto flex shrink-0 items-center gap-2 max-sm:hidden">
           <StatusPill status={item.status} />
           <span
@@ -201,7 +169,7 @@ function InboxRow({
             {new Date(item.last_activity_at).toLocaleString()}
           </span>
         </span>
-      </div>
-    </li>
+      }
+    />
   );
 }

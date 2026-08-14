@@ -2,7 +2,7 @@ import { fireEvent, waitFor } from "@testing-library/react";
 import type { IssueListItem, Status } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
-import { IssueRow } from "../src/pages/issue-list.tsx";
+import { IssueRow } from "../src/components/issue/issue-row.tsx";
 import { renderWithProviders } from "./render.tsx";
 
 afterEach(() => vi.restoreAllMocks());
@@ -45,14 +45,7 @@ const issue = (unread: boolean, unreadComments = 0): IssueListItem => ({
 const renderRow = (unread: boolean, unreadComments = 0) =>
   renderWithProviders(
     <ul>
-      <IssueRow
-        slug="p"
-        issue={issue(unread, unreadComments)}
-        statuses={[status]}
-        allLabels={[]}
-        onStatus={() => {}}
-        onToggleLabel={() => {}}
-      />
+      <IssueRow slug="p" issue={issue(unread, unreadComments)} />
     </ul>,
   );
 
