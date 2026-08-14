@@ -417,6 +417,7 @@ export class TodouClient {
       limit?: number;
       types?: string;
       exclude_actor?: number;
+      exclude_agent_session?: string;
     },
   ) =>
     this.request<TimelinePage>(
@@ -432,6 +433,7 @@ export class TodouClient {
       limit?: number;
       types?: string;
       exclude_actor?: number;
+      exclude_agent_session?: string;
     },
   ) =>
     this.request<ActivityPage>("GET", `/projects/${slug}/activity`, {
@@ -444,6 +446,7 @@ export class TodouClient {
     limit?: number;
     types?: string;
     exclude_actor?: number;
+    exclude_agent_session?: string;
   }) =>
     this.request<CrossActivityPage>("GET", "/activity", {
       query: query ? { ...query, last: query.last ? 1 : undefined } : {},

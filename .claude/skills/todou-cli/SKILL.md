@@ -76,7 +76,10 @@ in the terminal so the orchestrator knows to relay as a backstop.
   They survive process restarts, and events during an outage are all delivered on reconnect, without duplicates.
 - Get a "now" cursor: `todou watch -p <proj> --poll --json` (exit 3 with empty items is expected).
 - `--debounce N`: after the first new entry, keep collecting for N seconds and return one batch (fewer wake-ups, fewer tokens).
-- Project watch skips entries made by the current account by default (so same-account sibling agents never wake each other); `--any-actor` disables the filter.
+- Both watches skip **your own agent session's** entries by default, not your whole account — a fleet
+  sharing one machine account does wake each other (T-121). Entries carrying no agent session (the web
+  UI, a shell with no harness) still fall back to the account. `--any-actor` turns the filter off;
+  `issue watch --exclude-actor <login>` swaps in one named account instead.
 - Unread: `issue list` marks issues with unseen outside activity with `●`, `--unread` filters to them,
   and `view` marks as read. The state is **per-user on the server** (the list response carries `unread`;
   `view` fires `PUT /projects/<proj>/issues/<n>/read`), so it follows you across machines — there is no

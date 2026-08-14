@@ -1,3 +1,4 @@
+import type { AgentContext, TodouClient } from "@todou/shared";
 import { TimelineFilterType, TodouError } from "@todou/shared";
 import { CliError, RetriesExhaustedError } from "./errors.ts";
 
@@ -116,6 +117,31 @@ export async function retryTransient<T>(
       await wait(delayMs);
     }
   }
+}
+
+/** Query parameters that spell "not mine" for the watch endpoints. */
+export type SelfFilter = {
+  excludeActor?: number;
+  excludeAgentSession?: string;
+};
+
+/**
+ * The default self-filter of every watch: this agent session's own writes,
+ * falling back to this account for entries no session claims (T-121). Both
+ * axes travel together — see the `exclude_agent_session` schema for how the
+ * server composes them.
+ */
+export async function resolveSelfFilter(
+  client: TodouClient,
+  agentContext: AgentContext | null,
+  retry: RetryOptions,
+): Promise<SelfFilter> {
+  return {
+    excludeActor: (await retryTransient(() => client.me(), retry)).id,
+    // `||`, not `??`: a harness may report an empty session id, which names
+    // nothing to filter on — and the server rejects it as a query param.
+    excludeAgentSession: agentContext?.session_id || undefined,
+  };
 }
 
 /**

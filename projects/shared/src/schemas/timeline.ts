@@ -73,8 +73,8 @@ export const TimelinePage = z.object({
    */
   has_more: z.boolean().optional(),
   /**
-   * Total items matching the same types/exclude_actor filters, independent
-   * of the cursor window — lets clients size the folded middle (T-30).
+   * Total items matching the same types/exclude filters, independent of
+   * the cursor window — lets clients size the folded middle (T-30).
    */
   total_count: z.number().int().nonnegative(),
 });
@@ -86,6 +86,24 @@ export const TimelineFilterType = z.enum([
   ...IssueEventType.options,
 ]);
 export type TimelineFilterType = z.infer<typeof TimelineFilterType>;
+
+/**
+ * Drop entries whose `agent_context.session_id` is this one (T-121). A whole
+ * fleet of agents commonly shares one machine account, so `exclude_actor`
+ * alone answers "not my account" where a watcher meant "not me" and hides
+ * every sibling's writes.
+ *
+ * The two are orthogonal on their own; together they read as "not mine":
+ * an entry carrying *any* session is judged on the session alone, and
+ * `exclude_actor` decides only the entries that carry none (web writes,
+ * clients without a harness). So a sibling agent on the same account stays
+ * visible while one's own writes stay filtered.
+ *
+ * `agent_context` is self-reported (see agent-context.ts), which makes this
+ * a convenience filter, never a permission boundary — enough for "do not
+ * wake me with my own writes".
+ */
+const excludeAgentSession = z.string().min(1).max(200).optional();
 
 export const TimelineQuery = z.object({
   before: Cursor.optional(),
@@ -101,6 +119,7 @@ export const TimelineQuery = z.object({
   // Drop entries authored by this user id — lets a watching agent ignore
   // its own writes and (with T-35) powers "unread by others" semantics.
   exclude_actor: z.coerce.number().int().positive().optional(),
+  exclude_agent_session: excludeAgentSession,
 });
 export type TimelineQuery = z.infer<typeof TimelineQuery>;
 
@@ -129,6 +148,7 @@ export const ActivityQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
   types: z.string().optional(),
   exclude_actor: z.coerce.number().int().positive().optional(),
+  exclude_agent_session: excludeAgentSession,
 });
 export type ActivityQuery = z.infer<typeof ActivityQuery>;
 
@@ -165,6 +185,7 @@ export const CrossActivityQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
   types: z.string().optional(),
   exclude_actor: z.coerce.number().int().positive().optional(),
+  exclude_agent_session: excludeAgentSession,
 });
 export type CrossActivityQuery = z.infer<typeof CrossActivityQuery>;
 

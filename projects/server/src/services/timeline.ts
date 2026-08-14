@@ -155,8 +155,51 @@ function toItem(m: Raw, refs: Map<number, UserRef>): TimelineItem {
       };
 }
 
-/** The parsed `types`/`exclude_actor` filters as per-table SQL conditions. */
-function filterConditions(query: { types?: string; exclude_actor?: number }): {
+type Filters = {
+  types?: string;
+  exclude_actor?: number;
+  exclude_agent_session?: string;
+};
+
+/**
+ * "Not mine", as conditions over one table's (actor, agent session) pair.
+ *
+ * Each axis stands alone: `exclude_actor` drops an account's entries,
+ * `exclude_agent_session` drops one agent session's. Together they compose
+ * into the filter a watching agent actually wants (T-121): entries carrying
+ * a session are judged by session alone — so a sibling agent sharing the
+ * machine account stays visible — and the account axis narrows to the
+ * entries that carry none (web writes, clients without a harness), where it
+ * remains the only available answer to "was this me?".
+ *
+ * The empty string is normalized to "no session": a harness that reports
+ * `session_id: ""` has told us nothing to compare, and letting it match
+ * would make every such entry look like everyone else's own writes.
+ */
+function notSelfConditions(
+  actorId: AnyPgColumn,
+  agentContext: AnyPgColumn,
+  filters: Filters,
+): SQL[] {
+  const conditions: SQL[] = [];
+  const session = sql`nullif(${agentContext} ->> 'session_id', '')`;
+  if (filters.exclude_agent_session !== undefined) {
+    conditions.push(
+      sql`${session} is distinct from ${filters.exclude_agent_session}::text`,
+    );
+  }
+  if (filters.exclude_actor !== undefined) {
+    conditions.push(
+      filters.exclude_agent_session === undefined
+        ? ne(actorId, filters.exclude_actor)
+        : sql`(${session} is not null or ${actorId} <> ${filters.exclude_actor})`,
+    );
+  }
+  return conditions;
+}
+
+/** The parsed `types`/self filters as per-table SQL conditions. */
+function filterConditions(query: Filters): {
   wantComments: boolean;
   wantEvents: boolean;
   commentConditions: SQL[];
@@ -173,10 +216,12 @@ function filterConditions(query: { types?: string; exclude_actor?: number }): {
   if (eventTypes !== null && eventTypes.length > 0) {
     eventConditions.push(inArray(issueEvents.type, eventTypes));
   }
-  if (query.exclude_actor !== undefined) {
-    commentConditions.push(ne(comments.authorId, query.exclude_actor));
-    eventConditions.push(ne(issueEvents.actorId, query.exclude_actor));
-  }
+  commentConditions.push(
+    ...notSelfConditions(comments.authorId, comments.agentContext, query),
+  );
+  eventConditions.push(
+    ...notSelfConditions(issueEvents.actorId, issueEvents.agentContext, query),
+  );
   return {
     wantComments,
     wantEvents: eventTypes === null || eventTypes.length > 0,
@@ -385,7 +430,7 @@ async function fetchProjectActivityRows(opts: {
   db: Db;
   projectId: number;
   cursor: Cursor | null;
-  filters: { types?: string; exclude_actor?: number };
+  filters: Filters;
   backward: boolean;
   fetchCount: number;
 }): Promise<RawWithIssue[]> {

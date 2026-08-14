@@ -33,13 +33,13 @@ network outage for 2+ minutes and gave up — restart it with the same cursor, n
 | Card moves Shipped → Done | Verified: gracefully exit the agent (see below), delete the merged branch |
 | Informational comment (reference links etc.) | No action — the comment itself is the record |
 
-**The sentinel cannot see your own fleet.** `watch` skips the current user's entries by default, and
-the workers you dispatch usually authenticate as the *same* machine account you do — so every card
-they move and every comment they post is filtered out as "your own". A worker reaching Ready to Ship
-will not wake you. `--any-actor` fixes the blindness but replaces it with a wake-loop on your own
-comments, so the working answer is: **keep a `herdr agent wait` attached to every agent that is
-actually working.** A `--wait` that returns at a review gate has expired — re-attach when you prompt
-the agent again, or it will finish into silence.
+**The sentinel sees your fleet, but only what the fleet writes.** `watch` skips your own *agent
+session's* entries, not your whole account (T-121), so a worker sharing your machine account does
+wake you when it moves a card or comments. Two gaps survive that fix: a harness reporting no session
+id falls back to account-level filtering — the old blindness, where the whole fleet is invisible —
+and an agent that dies mid-task writes nothing to wake you with. So still **keep a `herdr agent
+wait` attached to every agent that is actually working.** A `--wait` that returns at a review gate
+has expired — re-attach when you prompt the agent again, or it will finish into silence.
 
 Do not re-attach to an agent that is *already* idle: a plain `agent wait` resolves on the first
 settled state, so it returns instantly and tells you nothing. An agent parked at a review gate is

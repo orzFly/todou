@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { loadCliConfig, saveCliConfig } from "../src/config.ts";
-import { fakeFetch, loggedInEnv, runCli } from "./harness.ts";
+import { fakeFetch, loggedInEnv, type Route, runCli } from "./harness.ts";
 
 const me = {
   id: 2,
@@ -406,9 +406,13 @@ describe("issue watch", () => {
     prev_cursor: null,
     next_cursor: next,
   });
+  // Every watch resolves "me" first: the default self-filter needs the
+  // account axis for entries no agent session claims (T-121).
+  const watchFetch = (routes: Route[]) =>
+    fakeFetch([["GET", "/api/me", me], ...routes]);
 
   it("--poll returns new entries and the advanced cursor (exit 0)", async () => {
-    const { fetchImpl } = fakeFetch([
+    const { fetchImpl } = watchFetch([
       [
         "GET",
         "/api/projects/todou/issues/3/timeline",
@@ -432,7 +436,7 @@ describe("issue watch", () => {
   });
 
   it("--poll with nothing new echoes the cursor and exits 3", async () => {
-    const { fetchImpl } = fakeFetch([
+    const { fetchImpl } = watchFetch([
       ["GET", "/api/projects/todou/issues/3/timeline", pageWith([], null)],
     ]);
     const result = await runCli(
@@ -446,7 +450,7 @@ describe("issue watch", () => {
 
   it("without --since it baselines at now, then blocks until news", async () => {
     let forwardPolls = 0;
-    const { fetchImpl, calls } = fakeFetch([
+    const { fetchImpl, calls } = watchFetch([
       [
         "GET",
         "/api/projects/todou/issues/3/timeline",
@@ -480,7 +484,7 @@ describe("issue watch", () => {
   });
 
   it("times out with exit 3 when nothing happens", async () => {
-    const { fetchImpl } = fakeFetch([
+    const { fetchImpl } = watchFetch([
       ["GET", "/api/projects/todou/issues/3/timeline", pageWith([], null)],
     ]);
     const result = await runCli(
@@ -509,7 +513,7 @@ describe("issue watch", () => {
       created_at: new Date().toISOString(),
     };
     let c1Calls = 0;
-    const { fetchImpl } = fakeFetch([
+    const { fetchImpl } = watchFetch([
       [
         "GET",
         "/api/projects/todou/issues/3/timeline",
@@ -562,7 +566,7 @@ describe("issue watch", () => {
   it("--debounce window is fixed, so sustained activity still returns", async () => {
     let n = 0;
     let pending = true;
-    const { fetchImpl } = fakeFetch([
+    const { fetchImpl } = watchFetch([
       [
         "GET",
         "/api/projects/todou/issues/3/timeline",
@@ -620,7 +624,7 @@ describe("issue watch", () => {
       created_at: new Date(Date.now() - 60_000).toISOString(),
     };
     let c1Calls = 0;
-    const { fetchImpl } = fakeFetch([
+    const { fetchImpl } = watchFetch([
       [
         "GET",
         "/api/projects/todou/issues/3/timeline",
@@ -669,7 +673,7 @@ describe("issue watch", () => {
       created_at: new Date(Date.now() - 1_000).toISOString(),
     };
     let c1Calls = 0;
-    const { fetchImpl } = fakeFetch([
+    const { fetchImpl } = watchFetch([
       [
         "GET",
         "/api/projects/todou/issues/3/timeline",
@@ -731,7 +735,7 @@ describe("issue watch", () => {
   });
 
   it("--poll ignores --debounce and returns immediately", async () => {
-    const { fetchImpl } = fakeFetch([
+    const { fetchImpl } = watchFetch([
       [
         "GET",
         "/api/projects/todou/issues/3/timeline",
@@ -794,6 +798,52 @@ describe("issue watch", () => {
     const timelineCall = calls.find((c) => c.url.includes("/timeline"));
     expect(timelineCall?.url).toContain("types=comment%2Cstatus_changed");
     expect(timelineCall?.url).toContain("exclude_actor=2");
+  });
+
+  it("applies the same self-filter as todou watch (T-121)", async () => {
+    const { fetchImpl, calls } = watchFetch([
+      ["GET", "/api/projects/todou/issues/3/timeline", pageWith([], null)],
+    ]);
+    const result = await runCli(
+      ["issue", "watch", "3", "--poll", "--since", "c0"],
+      {
+        fetchImpl,
+        env: {
+          ...loggedInEnv("todou"),
+          CLAUDECODE: "1",
+          CLAUDE_CODE_SESSION_ID: "session-sentinel",
+        },
+      },
+    );
+    expect(result.exitCode).toBe(3);
+    const timelineCall = calls.find((c) => c.url.includes("/timeline"));
+    expect(timelineCall?.url).toContain("exclude_actor=2");
+    expect(timelineCall?.url).toContain(
+      "exclude_agent_session=session-sentinel",
+    );
+  });
+
+  it("--any-actor keeps everything and skips /me", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3/timeline", pageWith([], null)],
+    ]);
+    const result = await runCli(
+      ["issue", "watch", "3", "--poll", "--since", "c0", "--any-actor"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(3);
+    expect(calls.some((c) => c.url.includes("/api/me"))).toBe(false);
+    expect(calls.some((c) => c.url.includes("exclude_"))).toBe(false);
+  });
+
+  it("refuses --any-actor together with --exclude-actor", async () => {
+    const { fetchImpl } = fakeFetch([]);
+    const result = await runCli(
+      ["issue", "watch", "3", "--poll", "--any-actor", "--exclude-actor", "me"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("--any-actor conflicts with");
   });
 
   it("rejects unknown --type values before calling the server", async () => {

@@ -13,8 +13,10 @@ import { parseSeconds } from "../parse.ts";
 import { fetchRefPrefix } from "../resolve.ts";
 import {
   normalizeTypes,
+  resolveSelfFilter,
   retryTransient,
   runWatchLoop,
+  type SelfFilter,
   watchRetryOptions,
 } from "../watch-loop.ts";
 import { renderTimelineItem } from "./issue.ts";
@@ -30,9 +32,16 @@ export class WatchCommand extends ProjectCommand {
       comma-separated project list as one merged, time-ordered stream;
       \`--all-projects\` watches every project the token can read,
       re-enumerated as it runs, so projects created mid-watch join the
-      stream (conflicts with -p). Entries by the current user are skipped
-      unless \`--any-actor\` is set — the default answers "did anyone
-      else do anything?".
+      stream (conflicts with -p). One's own entries are skipped unless
+      \`--any-actor\` is set — the default answers "did anyone else do
+      anything?".
+
+      "One's own" means this agent session, not this account: a fleet of
+      agents sharing one machine account can see each other's work, while
+      the watcher's own writes stay filtered. Entries carrying no agent
+      session (the web UI, a shell without a harness) are judged by
+      account, as before. A server predating T-121 ignores the session and
+      filters the whole account — the old blind spot, but never an error.
 
       Cursors of a single-project watch are interchangeable with \`issue
       view\`/\`issue watch\` cursors of the same project, unchanged. A
@@ -117,7 +126,7 @@ export class WatchCommand extends ProjectCommand {
     description: `Comma-separated filter: ${TimelineFilterType.options.join(", ")}`,
   });
   anyActor = Option.Boolean("--any-actor", false, {
-    description: "Include the current user's own entries too",
+    description: "Include one's own entries too",
   });
   allProjects = Option.Boolean("--all-projects", false, {
     description: "Watch every accessible project (conflicts with -p)",
@@ -138,9 +147,9 @@ export class WatchCommand extends ProjectCommand {
       this.debounce === undefined
         ? undefined
         : parseSeconds(this.debounce, "--debounce");
-    const excludeActor = this.anyActor
-      ? undefined
-      : (await retryTransient(() => client.me(), retry)).id;
+    const self = this.anyActor
+      ? {}
+      : await resolveSelfFilter(client, this.agentContext, retry);
     const paint = makePainter(this.context.stdout, this.context.env);
 
     if (slugs !== null && slugs.length === 1) {
@@ -171,7 +180,7 @@ export class WatchCommand extends ProjectCommand {
         baseline,
         retry,
         drain: (after) =>
-          drainActivity(client, project, { after, types, excludeActor }),
+          drainActivity(client, project, { after, types, ...self }),
         onItems: (items, cursor) =>
           this.output(
             {
@@ -254,7 +263,7 @@ export class WatchCommand extends ProjectCommand {
         const page = await drainCrossActivity(client, projects, {
           after,
           types,
-          excludeActor,
+          ...self,
         });
         await ensurePrefixes(page.items);
         return page;
@@ -345,13 +354,14 @@ function rethrow404AsHint(error: unknown): never {
 async function drainActivity(
   client: TodouClient,
   project: string,
-  opts: { after?: string; types?: string; excludeActor?: number },
+  opts: { after?: string; types?: string } & SelfFilter,
 ): Promise<{ items: ActivityItem[]; cursor: string | undefined }> {
   return drainPaged("activity", opts.after, (after) =>
     client.getActivity(project, {
       after,
       types: opts.types,
       exclude_actor: opts.excludeActor,
+      exclude_agent_session: opts.excludeAgentSession,
       limit: 100,
     }),
   );
@@ -361,7 +371,7 @@ async function drainActivity(
 async function drainCrossActivity(
   client: TodouClient,
   projects: string | undefined,
-  opts: { after?: string; types?: string; excludeActor?: number },
+  opts: { after?: string; types?: string } & SelfFilter,
 ): Promise<{ items: CrossActivityItem[]; cursor: string | undefined }> {
   return drainPaged("activity", opts.after, (after) =>
     client
@@ -370,6 +380,7 @@ async function drainCrossActivity(
         after,
         types: opts.types,
         exclude_actor: opts.excludeActor,
+        exclude_agent_session: opts.excludeAgentSession,
         limit: 100,
       })
       .catch(rethrow404AsHint),

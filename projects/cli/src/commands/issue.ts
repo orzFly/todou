@@ -33,8 +33,11 @@ import {
 } from "../resolve.ts";
 import {
   normalizeTypes,
+  type RetryOptions,
+  resolveSelfFilter,
   retryTransient,
   runWatchLoop,
+  type SelfFilter,
   watchRetryOptions,
 } from "../watch-loop.ts";
 
@@ -184,6 +187,13 @@ export class IssueWatchCommand extends ProjectCommand {
       watch). Without \`--since\`, watching starts at "now" and history is
       skipped.
 
+      One's own entries are skipped, the same way \`todou watch\` skips
+      them: "one's own" means this agent session, so sibling agents sharing
+      a machine account stay visible, and entries carrying no agent session
+      (the web UI, a shell without a harness) are judged by account.
+      \`--any-actor\` keeps everything; \`--exclude-actor\` replaces the
+      default with one named account.
+
       Blocks until something new arrives or \`--timeout\` elapses; \`--poll\`
       checks once and returns immediately. Exit codes are loop-friendly:
       0 = new entries were printed, 3 = nothing new (timeout or empty poll),
@@ -247,22 +257,16 @@ export class IssueWatchCommand extends ProjectCommand {
   excludeActor = Option.String("--exclude-actor", {
     description: 'Ignore entries by this login ("me" = the current token)',
   });
+  anyActor = Option.Boolean("--any-actor", false, {
+    description: "Include one's own entries too",
+  });
 
   protected async run(client: TodouClient): Promise<number> {
     const { project, number } = this.resolveIssueRef(this.number);
     const retry = watchRetryOptions(this.poll, (line) => this.note(line));
     const types =
       this.types === undefined ? undefined : normalizeTypes(this.types);
-    const excludeActorFlag = this.excludeActor;
-    const excludeActor =
-      excludeActorFlag === undefined
-        ? undefined
-        : (
-            await retryTransient(
-              () => resolveAssignees(client, project, [excludeActorFlag]),
-              retry,
-            )
-          )[0];
+    const self = await this.resolveFilter(client, project, retry);
     const timeoutSec =
       this.timeout === undefined ? 60 : parseSeconds(this.timeout, "--timeout");
     const intervalSec =
@@ -294,7 +298,7 @@ export class IssueWatchCommand extends ProjectCommand {
       baseline,
       retry,
       drain: (after) =>
-        drainTimeline(client, project, number, { after, types, excludeActor }),
+        drainTimeline(client, project, number, { after, types, ...self }),
       onItems: (items, cursor) =>
         this.output({ items, next_cursor: cursor ?? null }, () =>
           [
@@ -319,6 +323,37 @@ export class IssueWatchCommand extends ProjectCommand {
           ].join("\n"),
         ),
     });
+  }
+
+  /**
+   * Whose entries to drop. The default is the self-filter `todou watch`
+   * uses — the two commands answered "who is me?" differently until T-121,
+   * which is how an agent ended up woken by its own comment. An explicit
+   * --exclude-actor names an account instead, and cannot be combined with
+   * --any-actor: one asks to drop entries, the other to keep them all.
+   */
+  private async resolveFilter(
+    client: TodouClient,
+    project: string,
+    retry: RetryOptions,
+  ): Promise<SelfFilter> {
+    const named = this.excludeActor;
+    if (named !== undefined) {
+      if (this.anyActor) {
+        throw new CliError(
+          "--any-actor conflicts with --exclude-actor",
+          "pass one or the other",
+        );
+      }
+      const [excludeActor] = await retryTransient(
+        () => resolveAssignees(client, project, [named]),
+        retry,
+      );
+      return { excludeActor };
+    }
+    return this.anyActor
+      ? {}
+      : resolveSelfFilter(client, this.agentContext, retry);
   }
 }
 
@@ -493,13 +528,14 @@ export async function drainTimeline(
   client: TodouClient,
   project: string,
   number: number,
-  opts: { after?: string; types?: string; excludeActor?: number } = {},
+  opts: { after?: string; types?: string } & SelfFilter = {},
 ): Promise<{ items: TimelineItem[]; cursor: string | undefined }> {
   return drainPaged("timeline", opts.after, (after) =>
     client.getTimeline(project, number, {
       after,
       types: opts.types,
       exclude_actor: opts.excludeActor,
+      exclude_agent_session: opts.excludeAgentSession,
       limit: 100,
     }),
   );

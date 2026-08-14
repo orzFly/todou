@@ -227,6 +227,8 @@ describe("watch (project-level)", () => {
     expect(parsed.next_cursor).toBe("a1");
     const activityCall = calls.find((c) => c.url.includes("/activity"));
     expect(activityCall?.url).toContain("exclude_actor=2");
+    // No harness, no session to name: the account is the whole answer.
+    expect(activityCall?.url).not.toContain("exclude_agent_session");
   });
 
   it("renders issue numbers for humans", async () => {
@@ -331,5 +333,36 @@ describe("watch (project-level)", () => {
     expect(parsed.next_cursor).toBe("a0");
     expect(calls.some((c) => c.url.includes("/api/me"))).toBe(false);
     expect(calls.some((c) => c.url.includes("exclude_actor"))).toBe(false);
+    expect(calls.some((c) => c.url.includes("exclude_agent_session"))).toBe(
+      false,
+    );
+  });
+
+  it("filters its own agent session, not its whole account (T-121)", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      ["GET", "/api/me", me],
+      ["GET", "/api/projects/todou/activity", page([], null)],
+      ["GET", "/api/activity", { items: [], next_cursor: null }],
+    ]);
+    const harnessEnv = {
+      ...loggedInEnv(),
+      CLAUDECODE: "1",
+      CLAUDE_CODE_SESSION_ID: "session-sentinel",
+    };
+    for (const argv of [
+      ["watch", "-p", "todou", "--poll", "--since", "a0", "--json"],
+      ["watch", "-p", "todou,other", "--poll", "--since", "a0", "--json"],
+    ]) {
+      const result = await runCli(argv, { fetchImpl, env: harnessEnv });
+      expect(result.exitCode).toBe(3);
+    }
+    // Both axes ride along on both endpoints: the session names this
+    // watcher, the account catches entries claiming no session at all.
+    const filtered = calls.filter((c) => c.url.includes("activity"));
+    expect(filtered).toHaveLength(2);
+    for (const call of filtered) {
+      expect(call.url).toContain("exclude_actor=2");
+      expect(call.url).toContain("exclude_agent_session=session-sentinel");
+    }
   });
 });
