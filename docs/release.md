@@ -46,14 +46,34 @@ Two artifacts per release, written up front:
   `--notes`, and `--generate-notes` appends the commit list under it. A
   missing file fails both the script and the workflow: the notes are a
   precondition, not an afterthought.
-- **The tag message** — a title line plus a short paragraph (the `v0.1.0`
-  shape), handed to the script as a file.
+- **`docs/releases/vX.Y.Z.tag.txt`** — the tag message: a title line plus a
+  short paragraph (the `v0.1.0` shape), handed to the script with
+  `--tag-message-file`. Commit it yourself; only the notes file gets picked up
+  on its own.
+
+### How to write the body
+
+The reader wants "what do I care about in this version". The appended commit
+list already carries the detail, so the body must not restate it.
+
+- **Conclusion first, bullets not prose.** Bold the claim, one line of why.
+  Five bullets per section; past that, split or cut.
+- **No preamble, no recap, no closer.** No scene-setting paragraph on top.
+- **Write for users, not a changelog** — what changed and what it means for the
+  reader. Implementation detail stays in the commits.
+- **Measured numbers earn their space** (before/after, latency, counts);
+  explanatory build-up does not.
+- **Never omitted**: behaviour changes with their caveats, breaking changes
+  (say "None" outright when there are none), the upgrade order and how a
+  mismatched pair degrades, and any migration a human has to run.
+
+66 lines is the right order of magnitude. 126 is not.
 
 ## Cutting a release
 
 1. Decide the version and write both artifacts above.
-2. Land the notes file (the script also picks it up untracked and commits it
-   with the bump).
+2. Land both files (leave the notes untracked and the script commits it with
+   the bump; the tag message it only reads).
 3. On an up-to-date `master` with a clean tree:
 
    ```bash
