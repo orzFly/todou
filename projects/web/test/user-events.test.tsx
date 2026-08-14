@@ -11,8 +11,8 @@ import {
   RECONNECT_BASE_MS,
   reconnectInvalidations,
   STALL_TIMEOUT_MS,
-  useProjectEvents,
-} from "../src/api/useProjectEvents.ts";
+  useUserEvents,
+} from "../src/api/useUserEvents.ts";
 
 describe("invalidationsFor (SSE → invalidation descriptors)", () => {
   it("maps issue events to broad refetches (status may move columns)", () => {
@@ -51,15 +51,24 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       { key: ["statuses", "p"], scope: "refetch" },
       { key: ["issues", "p"], scope: "refetch" },
     ]);
+    // A member event can be the user's own grant or revocation, so the
+    // project list goes stale with it (T-122).
     expect(
       invalidationsFor({ entity: "member", id: 1, action: "deleted" }, "p"),
-    ).toEqual([{ key: ["members", "p"], scope: "refetch" }]);
+    ).toEqual([
+      { key: ["members", "p"], scope: "refetch" },
+      { key: ["projects"], scope: "refetch" },
+    ]);
   });
 
   it("covers reconnect compensation broadly, inbox included", () => {
-    const keys = reconnectInvalidations("p");
+    const keys = reconnectInvalidations();
     expect(keys.length).toBeGreaterThanOrEqual(6);
     expect(keys).toContainEqual(["inbox"]);
+    // Slug-less prefixes: the user-level stream spans every project, so
+    // the compensation must too.
+    expect(keys).toContainEqual(["issues"]);
+    expect(keys).toContainEqual(["projects"]);
   });
 });
 
@@ -67,9 +76,7 @@ describe("inboxInvalidations (T-112)", () => {
   const forEntity = (entity: ChangeEvent["entity"]) =>
     inboxInvalidations({ entity, id: 1, action: "created", issue_number: 7 });
 
-  it("rides the project stream for anything that can move an inbox row", () => {
-    // The badge's own signal is a 30s /activity poll; the stream the page is
-    // already subscribed to is three orders of magnitude faster.
+  it("rides the user stream for anything that can move an inbox row", () => {
     for (const entity of ["issue", "comment", "timeline", "spec"] as const) {
       expect(forEntity(entity)).toEqual([{ key: ["inbox"], scope: "refetch" }]);
     }
@@ -137,7 +144,7 @@ class MockEventSource {
   }
 }
 
-describe("useProjectEvents", () => {
+describe("useUserEvents", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
@@ -151,27 +158,51 @@ describe("useProjectEvents", () => {
     const wrapper = ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     );
-    const hook = renderHook(() => useProjectEvents("todou"), { wrapper });
+    const hook = renderHook(() => useUserEvents(), { wrapper });
     return { spy, hook };
   }
 
-  it("subscribes to the project feed and invalidates on change events", async () => {
+  it("subscribes to the user feed and invalidates on change events", async () => {
     const { spy } = setup();
     const source = MockEventSource.instances[0];
-    expect(source?.url).toBe("/api/projects/todou/events");
+    expect(source?.url).toBe("/api/events");
 
     source?.emit("change", {
       entity: "timeline",
       id: 9,
       action: "created",
       issue_number: 3,
+      project: "todou",
     });
     await waitFor(() =>
       expect(spy).toHaveBeenCalledWith({ queryKey: ["timeline", "todou", 3] }),
     );
   });
 
-  it("carries the inbox badge on the project stream (T-112)", async () => {
+  it("routes each event to its own project's keys (T-122)", async () => {
+    const { spy } = setup();
+    const source = MockEventSource.instances[0];
+    source?.emit("change", {
+      entity: "timeline",
+      id: 1,
+      action: "created",
+      issue_number: 3,
+      project: "todou",
+    });
+    source?.emit("change", {
+      entity: "timeline",
+      id: 2,
+      action: "created",
+      issue_number: 9,
+      project: "other",
+    });
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledWith({ queryKey: ["timeline", "todou", 3] });
+      expect(spy).toHaveBeenCalledWith({ queryKey: ["timeline", "other", 9] });
+    });
+  });
+
+  it("carries the inbox badge for every project (T-112, T-122)", async () => {
     const { spy } = setup();
     const source = MockEventSource.instances[0];
     source?.emit("change", {
@@ -179,6 +210,7 @@ describe("useProjectEvents", () => {
       id: 9,
       action: "created",
       issue_number: 3,
+      project: "elsewhere",
     });
     await waitFor(() =>
       expect(spy).toHaveBeenCalledWith({ queryKey: ["inbox"] }),
@@ -191,6 +223,13 @@ describe("useProjectEvents", () => {
     for (const listener of source?.listeners.get("change") ?? []) {
       listener({ data: "not json" } as MessageEvent);
     }
+    // Valid JSON but no project slug: fails the CrossChangeEvent parse.
+    source?.emit("change", {
+      entity: "timeline",
+      id: 9,
+      action: "created",
+      issue_number: 3,
+    });
     expect(spy).not.toHaveBeenCalled();
   });
 
@@ -203,6 +242,7 @@ describe("useProjectEvents", () => {
       id: 9,
       action: "created",
       issue_number: 3,
+      project: "todou",
     };
     source?.emit("change", event);
     source?.emit("change", { ...event, id: 10 });
@@ -226,12 +266,14 @@ describe("useProjectEvents", () => {
       id: 9,
       action: "created",
       issue_number: 3,
+      project: "todou",
     });
     source?.emit("change", {
       entity: "issue",
       id: 3,
       action: "updated",
       issue_number: 3,
+      project: "todou",
     });
 
     vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
@@ -270,12 +312,14 @@ describe("useProjectEvents", () => {
       id: 9,
       action: "created",
       issue_number: 3,
+      project: "todou",
     });
     commentFeed?.emit("change", {
       entity: "issue",
       id: 3,
       action: "updated",
       issue_number: 3,
+      project: "todou",
     });
     vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
     expect(listScopes(commented.spy)).toEqual(["default"]);
@@ -289,6 +333,7 @@ describe("useProjectEvents", () => {
       id: 11,
       action: "created",
       issue_number: 4,
+      project: "todou",
     });
     vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
     expect(listScopes(referenced.spy)).toEqual(["none", "active"]);
@@ -300,7 +345,7 @@ describe("useProjectEvents", () => {
     source?.onerror?.();
     source?.onopen?.();
     await waitFor(() =>
-      expect(spy).toHaveBeenCalledWith({ queryKey: ["issues", "todou"] }),
+      expect(spy).toHaveBeenCalledWith({ queryKey: ["issues"] }),
     );
     expect(spy.mock.calls.length).toBeGreaterThanOrEqual(6);
   });
@@ -328,7 +373,7 @@ describe("useProjectEvents", () => {
     const second = MockEventSource.instances[1] as MockEventSource;
     second.readyState = MockEventSource.OPEN;
     second.onopen?.();
-    expect(spy).toHaveBeenCalledWith({ queryKey: ["issues", "todou"] });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["issues"] });
   });
 
   it("keeps backing off while reconnect attempts keep failing", () => {
@@ -366,6 +411,6 @@ describe("useProjectEvents", () => {
     const second = MockEventSource.instances[1] as MockEventSource;
     second.readyState = MockEventSource.OPEN;
     second.onopen?.();
-    expect(spy).toHaveBeenCalledWith({ queryKey: ["issues", "todou"] });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["issues"] });
   });
 });

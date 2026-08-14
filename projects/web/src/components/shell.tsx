@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import type { Me } from "@todou/shared";
 import type { ReactNode } from "react";
 import { api, authModeQuery, projectQuery } from "@/api/queries.ts";
+import { useUserEvents } from "@/api/useUserEvents.ts";
 import { InboxButton } from "@/components/inbox-button.tsx";
 import { ProjectNav } from "@/components/project-nav.tsx";
 import { ProjectSwitcher } from "@/components/project-switcher.tsx";
@@ -19,6 +20,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
+  // One user-level stream for every page and every readable project (T-122).
+  useUserEvents();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const logout = useMutation({

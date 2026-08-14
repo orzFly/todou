@@ -657,4 +657,7 @@ export class TodouClient {
 
   /** EventSource URL for the project change feed. */
   eventsUrl = (slug: string) => `${this.#baseUrl}/api/projects/${slug}/events`;
+
+  /** EventSource URL for the user-level cross-project feed (T-122). */
+  userEventsUrl = () => `${this.#baseUrl}/api/events`;
 }

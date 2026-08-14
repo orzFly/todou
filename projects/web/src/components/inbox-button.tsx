@@ -1,16 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { InboxIcon } from "lucide-react";
-import { inboxQuery, useInboxSignal } from "@/api/inbox.ts";
+import { inboxQuery } from "@/api/inbox.ts";
 import { Button } from "@/components/ui/button";
 
 /**
- * Navbar inbox entry (T-97). Mounted in the shell, so the inbox query and
- * its activity-polling signal live for the whole session — the badge stays
- * current on every page, not just /inbox.
+ * Navbar inbox entry (T-97). Mounted in the shell, so the inbox query lives
+ * for the whole session — the badge stays current on every page, not just
+ * /inbox. Its change signal is the shell's user-level stream (T-122).
  */
 export function InboxButton() {
-  useInboxSignal();
   const inbox = useQuery(inboxQuery);
   const count = inbox.data?.items.length ?? 0;
   const label = count > 0 ? `Inbox — ${count} unread` : "Inbox";

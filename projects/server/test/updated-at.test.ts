@@ -314,7 +314,9 @@ describe("issue updated_at activity policy T-101", () => {
     const target = await createIssue("sse pairing target");
 
     const seen: ChangeEvent[] = [];
-    const off = t.ctx.bus.subscribe(projectId, (e) => seen.push(e));
+    const off = t.ctx.bus.subscribe((pid, e) => {
+      if (pid === projectId) seen.push(e);
+    });
     try {
       await comment(number, `see also #${target}`);
     } finally {

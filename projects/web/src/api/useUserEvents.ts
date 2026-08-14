@@ -2,7 +2,8 @@ import type { QueryClient } from "@tanstack/react-query";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   type ChangeEvent,
-  ChangeEvent as ChangeEventSchema,
+  type CrossChangeEvent,
+  CrossChangeEvent as CrossChangeEventSchema,
   SSE_CHANGE_EVENT,
   SSE_PING_EVENT,
 } from "@todou/shared";
@@ -36,7 +37,9 @@ const refetch = (key: QueryKeyLike): Invalidation => ({
 /**
  * Pointer event → invalidation descriptors. Exported pure for tests.
  * Events carry no data, so every mapping ends in a refetch through the
- * authorized API.
+ * authorized API. The stream is user-level (T-122), so `slug` is the
+ * event's own project — invalidating a project the user is not looking at
+ * just marks its inactive queries stale for their next mount.
  */
 export function invalidationsFor(
   event: ChangeEvent,
@@ -90,19 +93,19 @@ export function invalidationsFor(
     case "label":
       return [refetch(["labels", slug]), refetch(["issues", slug])];
     case "member":
-      return [refetch(["members", slug])];
+      // A membership change can grant or revoke a whole project — the
+      // user-level stream delivers your own member events even for projects
+      // outside the visible set, so the switcher updates live (T-122).
+      return [refetch(["members", slug]), refetch(["projects"])];
     case "project":
       return [refetch(["project", slug]), refetch(["projects"])];
   }
 }
 
 /**
- * The inbox badge (T-97) is user-scoped and cross-project, so it stays out
- * of invalidationsFor's per-project map — but the stream we are already
- * subscribed to is the fastest signal available for the project in view. Its
- * own change signal is a 30s poll of /activity, which is what left the badge
- * trailing the list by up to half a minute (T-112). Activity in projects the
- * user is *not* looking at still waits for that poll.
+ * The inbox badge (T-97) is user-scoped and cross-project. Since T-122 the
+ * stream is too, so this covers every readable project — the 30s /activity
+ * poll that bridged the not-in-view projects (T-112) is gone.
  *
  * Only entities that can move a row in or out: comments and timeline entries
  * (unread counts, questions), spec pushes and reviews (pending review), and
@@ -156,22 +159,24 @@ export function applyInvalidation(
   });
 }
 
-/** Everything a reconnect might have missed. */
-export function reconnectInvalidations(slug: string): QueryKeyLike[] {
+/**
+ * Everything a reconnect might have missed. Slug-less prefixes on purpose:
+ * the stream carries every readable project, so the gap does too.
+ */
+export function reconnectInvalidations(): QueryKeyLike[] {
   return [
-    ["issues", slug],
-    ["issue", slug],
-    ["timeline", slug],
-    ["questions", slug],
-    ["attachments", slug],
-    ["spec", slug],
-    ["spec-files", slug],
-    ["statuses", slug],
-    ["labels", slug],
-    ["members", slug],
-    ["project", slug],
-    // Not project-scoped, but a drop may have swallowed the events that
-    // would have refreshed it (T-112).
+    ["issues"],
+    ["issue"],
+    ["timeline"],
+    ["questions"],
+    ["attachments"],
+    ["spec"],
+    ["spec-files"],
+    ["statuses"],
+    ["labels"],
+    ["members"],
+    ["project"],
+    ["projects"],
     ["inbox"],
   ];
 }
@@ -195,14 +200,16 @@ export const RECONNECT_MAX_MS = 30_000;
 export const INVALIDATE_COALESCE_MS = 300;
 
 /**
- * Subscribes to the project SSE change feed for as long as the component
- * is mounted. Reconnects are driven from here rather than left to the
- * browser: EventSource only retries transport-level drops, and gives up
- * permanently when a retry gets a non-200 response — which is exactly what
- * a reverse proxy answers (502) while the server restarts. After any drop
- * we run a full compensation invalidate since events may have been missed.
+ * Subscribes to the user-level SSE change feed for as long as the component
+ * is mounted — one connection covers every readable project (T-122), so it
+ * lives in the authed shell rather than a project layout. Reconnects are
+ * driven from here rather than left to the browser: EventSource only retries
+ * transport-level drops, and gives up permanently when a retry gets a
+ * non-200 response — which is exactly what a reverse proxy answers (502)
+ * while the server restarts. After any drop we run a full compensation
+ * invalidate since events may have been missed.
  */
-export function useProjectEvents(slug: string) {
+export function useUserEvents() {
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -265,20 +272,20 @@ export function useProjectEvents(slug: string) {
     const connect = () => {
       reconnectTimer = undefined;
       if (disposed) return;
-      const es = new EventSource(api.eventsUrl(slug));
+      const es = new EventSource(api.userEventsUrl());
       source = es;
       armStallTimer();
 
       es.addEventListener(SSE_CHANGE_EVENT, (e: MessageEvent) => {
         armStallTimer();
-        let event: ChangeEvent;
+        let event: CrossChangeEvent;
         try {
-          event = ChangeEventSchema.parse(JSON.parse(e.data as string));
+          event = CrossChangeEventSchema.parse(JSON.parse(e.data as string));
         } catch {
           return;
         }
         enqueue([
-          ...invalidationsFor(event, slug),
+          ...invalidationsFor(event, event.project),
           ...inboxInvalidations(event),
         ]);
       });
@@ -288,7 +295,7 @@ export function useProjectEvents(slug: string) {
         armStallTimer();
         if (dropped) {
           dropped = false;
-          for (const queryKey of reconnectInvalidations(slug)) {
+          for (const queryKey of reconnectInvalidations()) {
             queryClient.invalidateQueries({ queryKey });
           }
         }
@@ -310,5 +317,5 @@ export function useProjectEvents(slug: string) {
       pending = [];
       source?.close();
     };
-  }, [slug, queryClient]);
+  }, [queryClient]);
 }

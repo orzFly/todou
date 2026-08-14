@@ -1,40 +1,39 @@
 import type { ChangeEvent } from "@todou/shared";
 
-export type Subscriber = (event: ChangeEvent) => void;
+export type Subscriber = (projectId: number, event: ChangeEvent) => void;
 
 /**
- * In-process, per-project fan-out. Services publish AFTER their transaction
- * commits so subscribers always refetch committed data. Single-process by
- * design for this slice; a pg NOTIFY implementation can replace it behind
- * the same interface for multi-instance deployments.
+ * In-process fan-out. Services publish AFTER their transaction commits so
+ * subscribers always refetch committed data. Subscribers receive every
+ * project's events and filter for themselves: a user-level stream's visible
+ * set changes with membership, and the events that change it (member,
+ * project) are published on the very project the subscriber may not be
+ * following yet — a per-project fan-out could never deliver those (T-122).
+ * Single-process by design for this slice; a pg NOTIFY implementation on a
+ * single channel carrying the projectId can replace it behind the same
+ * interface for multi-instance deployments.
  */
 export class EventBus {
-  #subscribers = new Map<number, Set<Subscriber>>();
+  #subscribers = new Set<Subscriber>();
 
-  subscribe(projectId: number, fn: Subscriber): () => void {
-    let set = this.#subscribers.get(projectId);
-    if (!set) {
-      set = new Set();
-      this.#subscribers.set(projectId, set);
-    }
-    set.add(fn);
+  subscribe(fn: Subscriber): () => void {
+    this.#subscribers.add(fn);
     return () => {
-      set.delete(fn);
-      if (set.size === 0) this.#subscribers.delete(projectId);
+      this.#subscribers.delete(fn);
     };
   }
 
   publish(projectId: number, event: ChangeEvent): void {
-    for (const fn of this.#subscribers.get(projectId) ?? []) {
+    for (const fn of this.#subscribers) {
       try {
-        fn(event);
+        fn(projectId, event);
       } catch {
         // One broken subscriber must never break the others.
       }
     }
   }
 
-  subscriberCount(projectId: number): number {
-    return this.#subscribers.get(projectId)?.size ?? 0;
+  subscriberCount(): number {
+    return this.#subscribers.size;
   }
 }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Id } from "./schemas/common.ts";
+import { ProjectSlug } from "./schemas/project.ts";
 
 /** SSE event name used on the project change feed. */
 export const SSE_CHANGE_EVENT = "change";
@@ -40,3 +41,11 @@ export const ChangeEvent = z.object({
   issue_number: Id.optional(),
 });
 export type ChangeEvent = z.infer<typeof ChangeEvent>;
+
+/**
+ * What the SSE routes emit: a ChangeEvent tagged with the project it came
+ * from, so one user-level stream can carry every readable project (T-122).
+ * The slug slot matches CrossActivityItem's (T-93).
+ */
+export const CrossChangeEvent = ChangeEvent.extend({ project: ProjectSlug });
+export type CrossChangeEvent = z.infer<typeof CrossChangeEvent>;

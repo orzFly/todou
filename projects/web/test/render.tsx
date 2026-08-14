@@ -9,6 +9,23 @@ import {
 import { render } from "@testing-library/react";
 import type { ReactElement } from "react";
 
+// happy-dom ships no EventSource, and the shell opens the user-level stream
+// on mount (T-122). An inert stand-in keeps shell-rendering tests mountable;
+// real stream behavior is covered in user-events.test.tsx with its own mock.
+class InertEventSource {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSED = 2;
+  readyState = InertEventSource.CONNECTING;
+  onerror: unknown = null;
+  onopen: unknown = null;
+  addEventListener() {}
+  close() {}
+}
+if (typeof globalThis.EventSource === "undefined") {
+  (globalThis as { EventSource?: unknown }).EventSource = InertEventSource;
+}
+
 export function testQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },

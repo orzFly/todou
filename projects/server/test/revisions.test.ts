@@ -131,9 +131,9 @@ describe.each(PLACEMENTS)("revisions capture (%s placement)", (placement) => {
     expect(edited.body).toBe("second");
 
     const seen: string[] = [];
-    const off = t.ctx.bus.subscribe(projectId, (e) =>
-      seen.push(`${e.entity}:${e.action}`),
-    );
+    const off = t.ctx.bus.subscribe((pid, e) => {
+      if (pid === projectId) seen.push(`${e.entity}:${e.action}`);
+    });
     const noop = await patchComment(issue.number, comment.id, "second");
     off();
     expect(seen).toEqual([]);

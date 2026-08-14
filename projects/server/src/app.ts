@@ -147,7 +147,9 @@ export function createApp(ctx: AppContext) {
   api.route("/projects", issueRoutes());
   api.route("/projects", specRoutes());
   api.route("/projects", attachmentRoutes());
-  api.route("/projects", sseRoutes());
+  // Mounted at the root: sseRoutes carries both the user-level /events feed
+  // and the per-project /projects/{slug}/events view (T-122).
+  api.route("/", sseRoutes());
 
   app.route("/", api);
   if (ctx.config.http.static_dir) {
