@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import { resolveVersion } from "@todou/shared/version";
 import { Builtins, Cli, Command, Option } from "clipanion";
 import { createApp } from "./app.ts";
 import { bootstrap } from "./bootstrap.ts";
@@ -404,7 +405,7 @@ class UserAdoptCommand extends UserAdminCommand {
 const cli = new Cli({
   binaryLabel: "todou server",
   binaryName: "todou-server",
-  binaryVersion: "0.1.0",
+  binaryVersion: resolveVersion(),
 });
 
 cli.register(ServeCommand);

@@ -228,6 +228,7 @@ journalctl --user -u todou -n 30        # "todou server listening on :8637 🥔"
 
 curl -sSI http://localhost:8637/                 # 200 text/html, no-cache
 curl -sSI http://localhost:8637/settings/tokens  # 200 text/html — deep link
+curl -sS  http://localhost:8637/api/version      # {"version":"v0.2.0"} — see docs/release.md
 curl -sS  http://localhost:8637/api/openapi.json # the API document
 curl -sS  http://localhost:8637/api/nope         # JSON error, never HTML
 
