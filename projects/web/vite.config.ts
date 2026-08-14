@@ -51,5 +51,6 @@ export default defineConfig({
     // Exposes afterEach globally so testing-library auto-cleans between
     // tests (otherwise renders leak across cases).
     globals: true,
+    setupFiles: ["./test/setup.ts"],
   },
 });
