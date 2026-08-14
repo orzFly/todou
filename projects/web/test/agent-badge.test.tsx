@@ -153,7 +153,7 @@ describe("AgentContextBadge in the timeline", () => {
     await vi.waitFor(() => expect(toast.success).toHaveBeenCalledOnce());
   });
 
-  it("copies the session id itself for a harness with no resume command", async () => {
+  it("copies hermes' resume command from the durable session id", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText },
@@ -161,19 +161,31 @@ describe("AgentContextBadge in the timeline", () => {
     });
     const badge = await renderBadge({
       agent: "hermes-agent",
-      session_id: "agent:main:telegram:dm:1000001",
+      session_id: "20260101_000000_abc123",
     });
     expect(badge.getAttribute("title")).toBe(
-      "hermes-agent · session agent:main:telegram:dm:1000001 — click to copy the session id",
+      "hermes-agent · session 20260101_000000_abc123 — click to copy the resume command",
     );
-    expect(
-      badge.querySelector('[data-testid="harness-icon-hermes-agent"]'),
-    ).not.toBeNull();
 
     fireEvent.click(badge);
     expect(writeText).toHaveBeenCalledExactlyOnceWith(
-      "agent:main:telegram:dm:1000001",
+      "hermes --resume 20260101_000000_abc123",
     );
+  });
+
+  it("copies the session id itself for an agent with no known resume command", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    const badge = await renderBadge({ agent: "aider", session_id: "sess-77" });
+    expect(badge.getAttribute("title")).toBe(
+      "aider · session sess-77 — click to copy the session id",
+    );
+
+    fireEvent.click(badge);
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("sess-77");
   });
 
   it("is not clickable without a session id", async () => {

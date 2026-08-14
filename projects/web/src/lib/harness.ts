@@ -13,9 +13,10 @@ export type HarnessMarkProps = SVGProps<SVGSVGElement> & { title?: string };
 export type HarnessMeta = {
   logo: ComponentType<HarnessMarkProps>;
   /**
-   * Builds the copy-on-click shell command for a session badge. A harness
-   * that cannot resume from the id it reports (hermes routes sessions by
-   * chat) omits this, and the badge copies the session id itself.
+   * Builds the copy-on-click shell command for a session badge. Optional
+   * because a harness need not be resumable from the id it reports; the
+   * badge then copies the bare session id, which is also what any agent
+   * string outside this registry gets.
    */
   resume?: (sessionId: string) => string;
 };
@@ -36,7 +37,10 @@ export const HARNESS_META: Record<HarnessId, HarnessMeta> = {
     logo: CodexMark,
     resume: (sessionId) => `codex resume ${sessionId}`,
   },
-  "hermes-agent": { logo: HermesMark },
+  "hermes-agent": {
+    logo: HermesMark,
+    resume: (sessionId) => `hermes --resume ${sessionId}`,
+  },
   pi: { logo: PiMark, resume: (sessionId) => `pi --session ${sessionId}` },
 };
 
