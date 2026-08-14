@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { type Captured, fakeFetch, loggedInEnv, runCli } from "./harness.ts";
+import {
+  type Captured,
+  fakeFetch,
+  loggedInEnv,
+  runCli,
+  virtualClock,
+} from "./harness.ts";
 
 const me = {
   id: 2,
@@ -136,7 +142,7 @@ describe("watch: multi-project mode over GET /activity", () => {
     ]);
     const result = await runCli(
       ["watch", "-p", "aa,bb", "--poll", "--since", ENV1],
-      { fetchImpl, env: loggedInEnv() },
+      { fetchImpl, env: loggedInEnv(), clock: virtualClock() },
     );
     expect(result.exitCode).toBe(4);
     expect(result.stderr).toContain(

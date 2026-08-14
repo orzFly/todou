@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fakeFetch, loggedInEnv, runCli } from "./harness.ts";
+import { fakeFetch, loggedInEnv, runCli, virtualClock } from "./harness.ts";
 
 const me = {
   id: 2,
@@ -253,11 +253,10 @@ describe("watch (project-level)", () => {
   });
 
   it("--debounce batches a cross-issue burst into one wake-up", async () => {
-    // Live entries: created_at ≈ first sight, so the full window applies.
-    const liveComment = {
-      ...webComment,
-      created_at: new Date().toISOString(),
-    };
+    const clock = virtualClock();
+    // Live entry: created_at is the clock's own now, so the full window
+    // applies — the anchor is `created_at`, not first sight.
+    const liveComment = { ...webComment, created_at: clock.iso() };
     let a1Calls = 0;
     const { fetchImpl } = fakeFetch([
       ["GET", "/api/me", me],
@@ -295,14 +294,14 @@ describe("watch (project-level)", () => {
         "--since",
         "a0",
         "--debounce",
-        "0.4",
+        "60",
         "--interval",
-        "0.05",
+        "2",
         "--timeout",
-        "5",
+        "300",
         "--json",
       ],
-      { fetchImpl, env: loggedInEnv() },
+      { fetchImpl, env: loggedInEnv(), clock },
     );
     expect(result.exitCode).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
@@ -311,6 +310,10 @@ describe("watch (project-level)", () => {
     };
     expect(parsed.items.map((i) => i.issue_number)).toEqual([3, 4]);
     expect(parsed.next_cursor).toBe("a2");
+    // The whole window is honored — the second card lands on the second
+    // poll, yet the loop keeps collecting to the end instead of returning
+    // early. Virtual seconds, so a sentinel-sized window costs no wall time.
+    expect(clock.elapsed()).toBe(60_000);
   });
 
   it("--any-actor skips /me and the actor filter; bootstrap uses last=1", async () => {

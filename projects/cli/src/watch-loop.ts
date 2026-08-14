@@ -1,5 +1,6 @@
 import type { AgentContext, TodouClient } from "@todou/shared";
 import { TimelineFilterType, TodouError } from "@todou/shared";
+import { type Clock, systemClock } from "./clock.ts";
 import { CliError, RetriesExhaustedError } from "./errors.ts";
 
 /** Validates a comma-separated --type list, returning it normalized. */
@@ -20,10 +21,6 @@ export function normalizeTypes(raw: string): string {
     }
   }
   return parts.join(",");
-}
-
-export function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -58,8 +55,9 @@ export type RetryOptions = {
   maxDelayMs: number;
   /** Progress line per retry, for stderr. */
   onRetry?: (line: string) => void;
-  /** Test seams. */
+  /** Backoff waits; unset means the system clock. */
   sleep?: (ms: number) => Promise<void>;
+  /** Test seam. */
   random?: () => number;
 };
 
@@ -75,10 +73,12 @@ export type RetryOptions = {
 export function watchRetryOptions(
   poll: boolean,
   onRetry?: (line: string) => void,
+  clock: Clock = systemClock,
 ): RetryOptions {
-  return poll
-    ? { maxAttempts: 3, baseDelayMs: 500, maxDelayMs: 1000, onRetry }
-    : { maxAttempts: 14, baseDelayMs: 1000, maxDelayMs: 30_000, onRetry };
+  const budget = poll
+    ? { maxAttempts: 3, baseDelayMs: 500, maxDelayMs: 1000 }
+    : { maxAttempts: 14, baseDelayMs: 1000, maxDelayMs: 30_000 };
+  return { ...budget, onRetry, sleep: clock.sleep };
 }
 
 /**
@@ -91,7 +91,7 @@ export async function retryTransient<T>(
   fn: () => Promise<T>,
   opts: RetryOptions,
 ): Promise<T> {
-  const wait = opts.sleep ?? sleep;
+  const wait = opts.sleep ?? systemClock.sleep;
   const random = opts.random ?? Math.random;
   let failures = 0;
   for (;;) {
@@ -170,10 +170,16 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
   onEmpty: (cursor: string | undefined) => void;
   /** Overrides the poll-derived transient-failure budget. */
   retry?: RetryOptions;
+  /**
+   * Every deadline below is read from here, so a test can hand in a virtual
+   * clock and settle the timeout and debounce windows by arithmetic (T-127).
+   */
+  clock?: Clock;
 }): Promise<number> {
   let cursor = opts.baseline;
-  const deadline = Date.now() + opts.timeoutSec * 1000;
-  const retry = opts.retry ?? watchRetryOptions(opts.poll);
+  const clock = opts.clock ?? systemClock;
+  const deadline = clock.now() + opts.timeoutSec * 1000;
+  const retry = opts.retry ?? watchRetryOptions(opts.poll, undefined, clock);
 
   // Cursors are absolute stream positions and only advance once a drain
   // has returned, so re-draining with the held cursor after a failure
@@ -206,22 +212,22 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
           ...items.map((item) => Date.parse(item.created_at) || 0),
         );
         const windowEnd =
-          Math.min(Date.now(), newest) + opts.debounceSec * 1000;
+          Math.min(clock.now(), newest) + opts.debounceSec * 1000;
         for (;;) {
-          const remaining = windowEnd - Date.now();
+          const remaining = windowEnd - clock.now();
           if (remaining <= 0) break;
-          await sleep(Math.min(opts.intervalSec * 1000, remaining));
+          await clock.sleep(Math.min(opts.intervalSec * 1000, remaining));
           items.push(...(await drainOnce()));
         }
       }
       opts.onItems(items, cursor);
       return 0;
     }
-    const remaining = deadline - Date.now();
+    const remaining = deadline - clock.now();
     if (opts.poll || remaining <= 0) {
       opts.onEmpty(cursor);
       return 3;
     }
-    await sleep(Math.min(opts.intervalSec * 1000, remaining));
+    await clock.sleep(Math.min(opts.intervalSec * 1000, remaining));
   }
 }

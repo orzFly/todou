@@ -8,7 +8,7 @@ import {
   runWatchLoop,
   watchRetryOptions,
 } from "../src/watch-loop.ts";
-import { fakeFetch, loggedInEnv, runCli } from "./harness.ts";
+import { fakeFetch, loggedInEnv, runCli, virtualClock } from "./harness.ts";
 
 const fetchFailed = () =>
   new TypeError("fetch failed", {
@@ -254,6 +254,7 @@ describe("watch command network robustness", () => {
   };
 
   it("rides out 5xx blips on startup and mid-drain (real deploy-restart shape)", async () => {
+    const clock = virtualClock();
     let meCalls = 0;
     let activityCalls = 0;
     const { fetchImpl } = fakeFetch([
@@ -272,7 +273,7 @@ describe("watch command network robustness", () => {
     ]);
     const result = await runCli(
       ["watch", "-p", "todou", "--poll", "--since", "a0", "--json"],
-      { fetchImpl, env: loggedInEnv() },
+      { fetchImpl, env: loggedInEnv(), clock },
     );
     expect(result.exitCode).toBe(0);
     expect(meCalls).toBe(2);
@@ -289,13 +290,14 @@ describe("watch command network robustness", () => {
   });
 
   it("exits 4 with a clear message when the server stays down", async () => {
+    const clock = virtualClock();
     const { fetchImpl } = fakeFetch([
       ["GET", "/api/me", me],
       ["GET", "/api/projects/todou/activity", { __status: 503 }],
     ]);
     const result = await runCli(
       ["watch", "-p", "todou", "--poll", "--since", "a0"],
-      { fetchImpl, env: loggedInEnv() },
+      { fetchImpl, env: loggedInEnv(), clock },
     );
     expect(result.exitCode).toBe(4);
     expect(result.stderr).toContain(

@@ -1,6 +1,7 @@
 import { PassThrough, Readable } from "node:stream";
 import { Builtins, Cli } from "clipanion";
 import type { CliContext } from "../src/api-command.ts";
+import type { Clock } from "../src/clock.ts";
 import { commands } from "../src/commands/index.ts";
 
 export type Captured = { url: string; init: RequestInit };
@@ -54,6 +55,7 @@ export async function runCli(
     env?: Record<string, string | undefined>;
     cwd?: string;
     stdinText?: string;
+    clock?: Clock;
   } = {},
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const cli = new Cli<CliContext>({
@@ -87,12 +89,45 @@ export async function runCli(
     },
     cwd: options.cwd ?? "/",
     fetchImpl: options.fetchImpl,
+    clock: options.clock,
   });
 
   return {
     exitCode,
     stdout: Buffer.concat(outChunks).toString("utf8"),
     stderr: Buffer.concat(errChunks).toString("utf8"),
+  };
+}
+
+export type VirtualClock = Clock & {
+  /** Virtual milliseconds waited since the clock was created. */
+  elapsed: () => number;
+  /** ISO timestamp `offsetMs` from the current virtual instant. */
+  iso: (offsetMs?: number) => string;
+};
+
+/**
+ * A clock that moves only when the code under test asks to wait: `sleep`
+ * advances `now` and resolves at once, so a watch loop's poll cadence,
+ * timeout and debounce window are settled by arithmetic and never by how
+ * loaded the machine is (T-127). That makes `elapsed()` an exact assertion
+ * rather than a tolerance, and costs no wall time even for a 60s window.
+ *
+ * Feed fixture timestamps from `iso()`, not `new Date()`: the debounce
+ * anchor compares `created_at` against this clock, so an entry is "live"
+ * only if both readings come from the same clock.
+ */
+export function virtualClock(start = "2026-08-11T12:00:00.000Z"): VirtualClock {
+  const startMs = Date.parse(start);
+  let now = startMs;
+  return {
+    now: () => now,
+    sleep: (ms) => {
+      now += ms;
+      return Promise.resolve();
+    },
+    elapsed: () => now - startMs,
+    iso: (offsetMs = 0) => new Date(now + offsetMs).toISOString(),
   };
 }
 

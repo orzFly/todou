@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fakeFetch, loggedInEnv, runCli } from "./harness.ts";
+import { fakeFetch, loggedInEnv, runCli, virtualClock } from "./harness.ts";
 
 const USER = {
   id: 1,
@@ -160,6 +160,7 @@ describe("question wait", () => {
   });
 
   it("decodes the question_answered event when it arrives", async () => {
+    const clock = virtualClock();
     let polls = 0;
     const { fetchImpl } = fakeFetch([
       [
@@ -210,20 +211,22 @@ describe("question wait", () => {
         "19",
         "42",
         "--timeout",
-        "5",
+        "300",
         "--interval",
-        "0.01",
+        "2",
         "--json",
       ],
-      { fetchImpl, env: loggedInEnv("todou") },
+      { fetchImpl, env: loggedInEnv("todou"), clock },
     );
     expect(result.exitCode).toBe(0);
     const out = JSON.parse(result.stdout);
     expect(out.event_id).toBe(7);
     expect(out.answers[0].key).toBe("schema");
+    expect(clock.elapsed()).toBe(2_000);
   });
 
   it("exits 3 on timeout without an answer", async () => {
+    const clock = virtualClock();
     const { fetchImpl } = fakeFetch([
       [
         "GET",
@@ -233,20 +236,12 @@ describe("question wait", () => {
       ["GET", QUESTIONS_PATH, { items: [STORED_ITEM], open: 1 }],
     ]);
     const result = await runCli(
-      [
-        "question",
-        "wait",
-        "19",
-        "42",
-        "--timeout",
-        "0.05",
-        "--interval",
-        "0.01",
-      ],
-      { fetchImpl, env: loggedInEnv("todou") },
+      ["question", "wait", "19", "42", "--timeout", "60", "--interval", "2"],
+      { fetchImpl, env: loggedInEnv("todou"), clock },
     );
     expect(result.exitCode).toBe(3);
     expect(result.stdout).toContain("no answer within");
+    expect(clock.elapsed()).toBe(60_000);
   });
 
   it("fails fast when the comment carries no questions", async () => {

@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { loadCliConfig, saveCliConfig } from "../src/config.ts";
-import { fakeFetch, loggedInEnv, type Route, runCli } from "./harness.ts";
+import {
+  fakeFetch,
+  loggedInEnv,
+  type Route,
+  runCli,
+  virtualClock,
+} from "./harness.ts";
 
 const me = {
   id: 2,
@@ -449,6 +455,7 @@ describe("issue watch", () => {
   });
 
   it("without --since it baselines at now, then blocks until news", async () => {
+    const clock = virtualClock();
     let forwardPolls = 0;
     const { fetchImpl, calls } = watchFetch([
       [
@@ -469,8 +476,8 @@ describe("issue watch", () => {
       ],
     ]);
     const result = await runCli(
-      ["issue", "watch", "3", "--interval", "0.05", "--timeout", "5", "--json"],
-      { fetchImpl, env: loggedInEnv("todou") },
+      ["issue", "watch", "3", "--interval", "2", "--timeout", "300", "--json"],
+      { fetchImpl, env: loggedInEnv("todou"), clock },
     );
     expect(result.exitCode).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
@@ -481,9 +488,13 @@ describe("issue watch", () => {
     expect(parsed.items.map((i) => i.body)).toEqual(["fresh news"]);
     expect(parsed.next_cursor).toBe("c2");
     expect(calls.some((c) => c.url.includes("last=1"))).toBe(true);
+    // Two empty polls at the requested interval, then the news — the
+    // cadence is the flag's, not the machine's.
+    expect(clock.elapsed()).toBe(4_000);
   });
 
   it("times out with exit 3 when nothing happens", async () => {
+    const clock = virtualClock();
     const { fetchImpl } = watchFetch([
       ["GET", "/api/projects/todou/issues/3/timeline", pageWith([], null)],
     ]);
@@ -495,23 +506,25 @@ describe("issue watch", () => {
         "--since",
         "c0",
         "--timeout",
-        "0.2",
+        "60",
         "--interval",
-        "0.05",
+        "2",
       ],
-      { fetchImpl, env: loggedInEnv("todou") },
+      { fetchImpl, env: loggedInEnv("todou"), clock },
     );
     expect(result.exitCode).toBe(3);
     expect(result.stdout).toContain("no new activity");
     expect(result.stdout).toContain("cursor: c0");
+    // The last sleep is clamped to the remaining time, so the quiet phase
+    // ends on the deadline rather than one interval past it.
+    expect(clock.elapsed()).toBe(60_000);
   });
 
   it("--debounce batches entries arriving inside the window", async () => {
-    // Live entry: created_at ≈ first sight, so the full window applies.
-    const liveComment = {
-      ...newComment,
-      created_at: new Date().toISOString(),
-    };
+    const clock = virtualClock();
+    // Live entry: created_at is the clock's own now, so the full window
+    // applies — the anchor is `created_at`, not first sight.
+    const liveComment = { ...newComment, created_at: clock.iso() };
     let c1Calls = 0;
     const { fetchImpl } = watchFetch([
       [
@@ -531,7 +544,6 @@ describe("issue watch", () => {
         },
       ],
     ]);
-    const started = Date.now();
     const result = await runCli(
       [
         "issue",
@@ -540,14 +552,14 @@ describe("issue watch", () => {
         "--since",
         "c0",
         "--debounce",
-        "0.4",
+        "60",
         "--interval",
-        "0.05",
+        "2",
         "--timeout",
-        "5",
+        "300",
         "--json",
       ],
-      { fetchImpl, env: loggedInEnv("todou") },
+      { fetchImpl, env: loggedInEnv("todou"), clock },
     );
     expect(result.exitCode).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
@@ -560,10 +572,11 @@ describe("issue watch", () => {
     ]);
     expect(parsed.next_cursor).toBe("c2");
     // The window is honored: no early return on the first entry.
-    expect(Date.now() - started).toBeGreaterThanOrEqual(350);
+    expect(clock.elapsed()).toBe(60_000);
   });
 
   it("--debounce window is fixed, so sustained activity still returns", async () => {
+    const clock = virtualClock();
     let n = 0;
     let pending = true;
     const { fetchImpl } = watchFetch([
@@ -581,7 +594,7 @@ describe("issue watch", () => {
                   ...newComment,
                   id: n,
                   body: `burst ${n}`,
-                  created_at: new Date().toISOString(),
+                  created_at: clock.iso(),
                 },
               ],
               `b${n}`,
@@ -600,29 +613,31 @@ describe("issue watch", () => {
         "--since",
         "b0",
         "--debounce",
-        "0.3",
+        "60",
         "--interval",
-        "0.05",
+        "2",
         "--timeout",
-        "5",
+        "300",
         "--json",
       ],
-      { fetchImpl, env: loggedInEnv("todou") },
+      { fetchImpl, env: loggedInEnv("todou"), clock },
     );
     expect(result.exitCode).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
       items: unknown[];
       next_cursor: string;
     };
-    expect(parsed.items.length).toBeGreaterThanOrEqual(2);
+    // Ever-fresh entries never push the anchor forward: the window still
+    // closes 60s after the *first* batch, so the count is exactly the
+    // opening drain plus one per 2s poll inside it.
+    expect(parsed.items).toHaveLength(1 + 60 / 2);
     expect(parsed.next_cursor).toBe(`b${n}`);
+    expect(clock.elapsed()).toBe(60_000);
   });
 
   it("--debounce returns at once when a resume back-fills an aged batch", async () => {
-    const staleComment = {
-      ...newComment,
-      created_at: new Date(Date.now() - 60_000).toISOString(),
-    };
+    const clock = virtualClock();
+    const staleComment = { ...newComment, created_at: clock.iso(-60_000) };
     let c1Calls = 0;
     const { fetchImpl } = watchFetch([
       [
@@ -636,7 +651,6 @@ describe("issue watch", () => {
         },
       ],
     ]);
-    const started = Date.now();
     const result = await runCli(
       [
         "issue",
@@ -647,17 +661,17 @@ describe("issue watch", () => {
         "--debounce",
         "5",
         "--interval",
-        "0.05",
+        "2",
         "--timeout",
-        "5",
+        "300",
         "--json",
       ],
-      { fetchImpl, env: loggedInEnv("todou") },
+      { fetchImpl, env: loggedInEnv("todou"), clock },
     );
     expect(result.exitCode).toBe(0);
     // The window (created_at + 5s) ended long before the watch saw the
     // entry, so it is delivered without idle waiting or re-polling.
-    expect(Date.now() - started).toBeLessThan(2000);
+    expect(clock.elapsed()).toBe(0);
     expect(c1Calls).toBe(1);
     const parsed = JSON.parse(result.stdout) as {
       items: Array<{ body: string }>;
@@ -668,10 +682,8 @@ describe("issue watch", () => {
   });
 
   it("--debounce waits only the remainder of a partially aged window", async () => {
-    const agedComment = {
-      ...newComment,
-      created_at: new Date(Date.now() - 1_000).toISOString(),
-    };
+    const clock = virtualClock();
+    const agedComment = { ...newComment, created_at: clock.iso(-1_000) };
     let c1Calls = 0;
     const { fetchImpl } = watchFetch([
       [
@@ -690,7 +702,7 @@ describe("issue watch", () => {
                       ...newComment,
                       id: 10,
                       body: "late news",
-                      created_at: new Date().toISOString(),
+                      created_at: clock.iso(),
                     },
                   ],
                   "c2",
@@ -700,7 +712,6 @@ describe("issue watch", () => {
         },
       ],
     ]);
-    const started = Date.now();
     const result = await runCli(
       [
         "issue",
@@ -711,12 +722,12 @@ describe("issue watch", () => {
         "--debounce",
         "2",
         "--interval",
-        "0.05",
+        "0.5",
         "--timeout",
-        "5",
+        "300",
         "--json",
       ],
-      { fetchImpl, env: loggedInEnv("todou") },
+      { fetchImpl, env: loggedInEnv("todou"), clock },
     );
     expect(result.exitCode).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
@@ -729,12 +740,13 @@ describe("issue watch", () => {
       "late news",
     ]);
     expect(parsed.next_cursor).toBe("c2");
-    // ...but ~1s of the 2s window was spent before the watch saw the
-    // entry: only the remainder is waited, not a fresh window.
-    expect(Date.now() - started).toBeLessThan(1700);
+    // ...but 1s of the 2s window was spent before the watch saw the entry:
+    // exactly the remainder is waited, not a fresh window.
+    expect(clock.elapsed()).toBe(1_000);
   });
 
   it("--poll ignores --debounce and returns immediately", async () => {
+    const clock = virtualClock();
     const { fetchImpl } = watchFetch([
       [
         "GET",
@@ -745,7 +757,6 @@ describe("issue watch", () => {
             : pageWith([], null),
       ],
     ]);
-    const started = Date.now();
     const result = await runCli(
       [
         "issue",
@@ -758,13 +769,13 @@ describe("issue watch", () => {
         "5",
         "--json",
       ],
-      { fetchImpl, env: loggedInEnv("todou") },
+      { fetchImpl, env: loggedInEnv("todou"), clock },
     );
     expect(result.exitCode).toBe(0);
     expect(
       (JSON.parse(result.stdout) as { items: unknown[] }).items,
     ).toHaveLength(1);
-    expect(Date.now() - started).toBeLessThan(2000);
+    expect(clock.elapsed()).toBe(0);
   });
 
   it("passes --type through and resolves --exclude-actor me", async () => {

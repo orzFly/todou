@@ -263,7 +263,11 @@ export class IssueWatchCommand extends ProjectCommand {
 
   protected async run(client: TodouClient): Promise<number> {
     const { project, number } = this.resolveIssueRef(this.number);
-    const retry = watchRetryOptions(this.poll, (line) => this.note(line));
+    const retry = watchRetryOptions(
+      this.poll,
+      (line) => this.note(line),
+      this.clock,
+    );
     const types =
       this.types === undefined ? undefined : normalizeTypes(this.types);
     const self = await this.resolveFilter(client, project, retry);
@@ -297,6 +301,7 @@ export class IssueWatchCommand extends ProjectCommand {
       debounceSec,
       baseline,
       retry,
+      clock: this.clock,
       drain: (after) =>
         drainTimeline(client, project, number, { after, types, ...self }),
       onItems: (items, cursor) =>

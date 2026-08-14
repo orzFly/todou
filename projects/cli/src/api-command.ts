@@ -4,6 +4,7 @@ import {
   TodouClient,
 } from "@todou/shared";
 import { type BaseContext, Command, Option } from "clipanion";
+import { type Clock, systemClock } from "./clock.ts";
 import { type CliConfig, loadCliConfig } from "./config.ts";
 import {
   gitRemoteUrl,
@@ -18,6 +19,8 @@ export type CliContext = BaseContext & {
   cwd: string;
   /** Test seam; production leaves it unset and TodouClient uses global fetch. */
   fetchImpl?: typeof fetch;
+  /** Test seam; production leaves it unset and time is the wall clock. */
+  clock?: Clock;
 };
 
 /** Base for every command that talks to a server: context, client, --json. */
@@ -43,6 +46,10 @@ export abstract class ApiCommand extends Command<CliContext> {
   /** Overridden by ProjectCommand; the base has no -p flag. */
   protected projectFlag(): string | undefined {
     return undefined;
+  }
+
+  protected get clock(): Clock {
+    return this.context.clock ?? systemClock;
   }
 
   async execute(): Promise<number | undefined> {

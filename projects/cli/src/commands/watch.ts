@@ -134,7 +134,11 @@ export class WatchCommand extends ProjectCommand {
 
   protected async run(client: TodouClient): Promise<number> {
     const slugs = this.resolveSlugs();
-    const retry = watchRetryOptions(this.poll, (line) => this.note(line));
+    const retry = watchRetryOptions(
+      this.poll,
+      (line) => this.note(line),
+      this.clock,
+    );
     const types =
       this.types === undefined ? undefined : normalizeTypes(this.types);
     const timeoutSec =
@@ -179,6 +183,7 @@ export class WatchCommand extends ProjectCommand {
         debounceSec,
         baseline,
         retry,
+        clock: this.clock,
         drain: (after) =>
           drainActivity(client, project, { after, types, ...self }),
         onItems: (items, cursor) =>
@@ -259,6 +264,7 @@ export class WatchCommand extends ProjectCommand {
       debounceSec,
       baseline,
       retry,
+      clock: this.clock,
       drain: async (after) => {
         const page = await drainCrossActivity(client, projects, {
           after,

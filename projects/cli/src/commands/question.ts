@@ -151,7 +151,11 @@ export class QuestionWaitCommand extends ProjectCommand {
   protected async run(client: TodouClient): Promise<number> {
     const { project, number } = this.resolveIssueRef(this.number);
     const commentId = parsePositiveInt(this.commentId, "comment id");
-    const retry = watchRetryOptions(this.poll, (line) => this.note(line));
+    const retry = watchRetryOptions(
+      this.poll,
+      (line) => this.note(line),
+      this.clock,
+    );
     const timeoutSec =
       this.timeout === undefined ? 60 : parseSeconds(this.timeout, "--timeout");
     const intervalSec =
@@ -192,6 +196,7 @@ export class QuestionWaitCommand extends ProjectCommand {
       intervalSec,
       baseline,
       retry,
+      clock: this.clock,
       drain: async (after) => {
         const page = await drainTimeline(client, project, number, {
           after,
