@@ -7,7 +7,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./config": "./src/config.ts"
+    "./config": "./src/config.ts",
+    "./version": "./src/version.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

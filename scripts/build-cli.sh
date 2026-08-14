@@ -17,21 +17,14 @@ macos-arm64:aarch64-apple-darwin
 windows-amd64:x86_64-pc-windows-msvc
 "
 
+# Computed before anything else touches the tree; --dirty reflects the same
+# working-tree content `git ls-files` stages below, so the suffix is truthful
+# about what actually enters the artifacts.
+VERSION="$(git describe --tags --always --dirty)"
+
 rm -rf "$OUT"
 mkdir -p "$OUT"
 trap 'rm -rf "$STAGE"' EXIT
-
-# esbuild tree-shakes by module graph, so it can bundle straight from the
-# workspace tree — no staging needed. `.cjs` rather than `.js` because the
-# bundle is CommonJS: a bare `.js` is read as ESM whenever the nearest
-# package.json says `"type": "module"`, which breaks the moment someone drops
-# the file into a modern project. The extension is unconditional.
-echo "==> esbuild single-file todou.cjs (bring-your-own-Node)"
-pnpm exec esbuild projects/cli/src/index.ts \
-  --bundle --platform=node --format=cjs \
-  --banner:js='#!/usr/bin/env node' \
-  --outfile="$OUT/todou.cjs"
-chmod +x "$OUT/todou.cjs"
 
 # `deno compile` embeds whole package directories without tree-shaking, so a
 # dev-dependency tree would ship typescript, vitest and @types/node inside
@@ -46,6 +39,26 @@ echo "==> staging a prod-only tree in $STAGE"
 mkdir -p "$STAGE"
 git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$STAGE"
 (cd "$STAGE" && CI=true pnpm install --prod --frozen-lockfile --filter '@todou/cli...')
+
+# Overwriting the tracked placeholder in the staged copy — never the working
+# tree — bakes the version into everything built from the stage; a build must
+# not dirty the developer's checkout.
+echo "==> injecting version $VERSION"
+printf 'export const BUILD_VERSION: string | null = "%s";\n' "$VERSION" \
+  > "$STAGE/projects/shared/src/build-info.ts"
+
+# esbuild bundles from the stage rather than the workspace tree so the version
+# injection above reaches the bundle through the same file deno compile reads —
+# one mechanism for every artifact. `.cjs` rather than `.js` because the bundle
+# is CommonJS: a bare `.js` is read as ESM whenever the nearest package.json
+# says `"type": "module"`, which breaks the moment someone drops the file into
+# a modern project. The extension is unconditional.
+echo "==> esbuild single-file todou.cjs (bring-your-own-Node)"
+pnpm exec esbuild "$STAGE/projects/cli/src/index.ts" \
+  --bundle --platform=node --format=cjs \
+  --banner:js='#!/usr/bin/env node' \
+  --outfile="$OUT/todou.cjs"
+chmod +x "$OUT/todou.cjs"
 
 # --no-check: type checking is `pnpm typecheck`'s job, and running it here
 # would demand @types/node — a dev dependency, absent from the staged tree by
