@@ -31,6 +31,38 @@ export function parseChoice<const T extends readonly string[]>(
   return value as T[number];
 }
 
+/**
+ * gh's repeatable list flags also split on commas — `--label "bug,ui"` is
+ * two labels there — and agents write them that way at every CLI (T-135).
+ * The cost is that a comma can no longer appear inside a name, which is the
+ * same trade gh makes.
+ */
+export function splitCommaList(values: string[]): string[] {
+  return values
+    .flatMap((value) => value.split(","))
+    .map((value) => value.trim())
+    .filter((value) => value !== "");
+}
+
+/**
+ * The API's `#rrggbb`, from any spelling a user is likely to reach for:
+ * gh takes its label colors bare (`ff0000`), and CSS shorthand (`#f00`) is
+ * what anyone who writes stylesheets types by reflex.
+ */
+export function parseColor(value: string, what: string): string {
+  const hex = (value.startsWith("#") ? value.slice(1) : value).toLowerCase();
+  const full = /^[0-9a-f]{3}$/.test(hex)
+    ? [...hex].map((digit) => digit.repeat(2)).join("")
+    : hex;
+  if (!/^[0-9a-f]{6}$/.test(full)) {
+    throw new CliError(
+      `${what} must be a hex color, got "${value}"`,
+      `write it as #rrggbb — also accepted: rrggbb, #rgb (e.g. ${what} '#3b82f6')`,
+    );
+  }
+  return `#${full}`;
+}
+
 export type IssueRef = {
   project?: string;
   number: number;

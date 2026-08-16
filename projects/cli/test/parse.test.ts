@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseIssueRef } from "../src/parse.ts";
+import { parseColor, parseIssueRef, splitCommaList } from "../src/parse.ts";
 
 describe("parseIssueRef", () => {
   it("parses a bare number", () => {
@@ -100,5 +100,31 @@ describe("parseIssueRef prefixed forms (T-80)", () => {
     expect(() => parseIssueRef("T-1234567890", "issue number")).toThrow(
       /positive integer/,
     );
+  });
+});
+
+describe("splitCommaList", () => {
+  it("splits, trims, and drops the empties", () => {
+    expect(splitCommaList(["area:cli, kind:bug", "needs-brainstorm"])).toEqual([
+      "area:cli",
+      "kind:bug",
+      "needs-brainstorm",
+    ]);
+    expect(splitCommaList([" ", "a,,b,"])).toEqual(["a", "b"]);
+    expect(splitCommaList([])).toEqual([]);
+  });
+});
+
+describe("parseColor", () => {
+  it("accepts every spelling anyone reaches for", () => {
+    expect(parseColor("#3B82F6", "--color")).toBe("#3b82f6");
+    expect(parseColor("3b82f6", "--color")).toBe("#3b82f6");
+    expect(parseColor("#f00", "--color")).toBe("#ff0000");
+    expect(parseColor("f00", "--color")).toBe("#ff0000");
+  });
+
+  it("names the accepted forms when it rejects one", () => {
+    expect(() => parseColor("red", "--color")).toThrow(/must be a hex color/);
+    expect(() => parseColor("#12345", "--color")).toThrow(/must be a hex/);
   });
 });

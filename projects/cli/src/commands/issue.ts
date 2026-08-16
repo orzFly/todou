@@ -18,18 +18,25 @@ import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
 import { makePainter, type Painter, relativeTime, table } from "../format.ts";
 import { drainPaged } from "../paginate.ts";
-import { parseChoice, parsePositiveInt, parseSeconds } from "../parse.ts";
+import {
+  parseChoice,
+  parsePositiveInt,
+  parseSeconds,
+  splitCommaList,
+} from "../parse.ts";
 import {
   decodeAnswerEvent,
   renderAnswerRecords,
   renderQuestions,
 } from "../questions.ts";
 import {
+  ensureLabels,
   fetchRefPrefix,
   resolveAssignees,
   resolveClosedStatus,
   resolveLabels,
   resolveStatus,
+  shellArg,
 } from "../resolve.ts";
 import {
   normalizeTypes,
@@ -61,21 +68,30 @@ export class IssueListCommand extends ProjectCommand {
   static paths = [["issue", "list"]];
   static usage = Command.Usage({
     description: "List issues with filters",
+    details:
+      "gh's spellings work too: `-l/--label`, `-a/--assignee`, `-L/--limit`, `-S/--search`, and `-s/--state open|closed|all`. Label flags are repeatable and comma-splittable (`--label 'area:cli,kind:bug'`), and match **any** of the named labels.",
   });
 
   status = Option.String("--status", { description: "Filter by status name" });
+  state = Option.String("-s,--state", {
+    description: "open | closed | all (gh's spelling of --open/--closed)",
+  });
   open = Option.Boolean("--open", false, {
     description: "Only open-category statuses",
   });
   closed = Option.Boolean("--closed", false, {
     description: "Only closed-category statuses",
   });
-  labels = Option.Array("--label", [], { description: "Filter by label name" });
-  assignee = Option.String("--assignee", {
-    description: "Filter by assignee login (or `me`)",
+  labels = Option.Array("-l,--label,--labels", [], {
+    description: "Filter by label name (repeatable; matches any)",
   });
-  query = Option.String("-q,--query", { description: "Full-text filter" });
-  limit = Option.String("--limit", { description: "Page size (1–100)" });
+  assignee = Option.String("-a,--assignee", {
+    description: "Filter by assignee login (or `me`/`@me`)",
+  });
+  query = Option.String("-q,-S,--query,--search", {
+    description: "Full-text filter",
+  });
+  limit = Option.String("-L,--limit", { description: "Page size (1–100)" });
   sort = Option.String("--sort", "created", {
     description: "created | updated | number",
   });
@@ -86,21 +102,31 @@ export class IssueListCommand extends ProjectCommand {
 
   protected async run(client: TodouClient): Promise<void> {
     const project = this.requireProject();
-    const pickers = [this.status, this.open, this.closed].filter(
+    const pickers = [this.status, this.state, this.open, this.closed].filter(
       Boolean,
     ).length;
     if (pickers > 1) {
       throw new CliError(
-        "--status, --open, and --closed are mutually exclusive",
+        "--status, --state, --open, and --closed are mutually exclusive",
+        "pick one — e.g. `--state open` alone, or `--status 'In Progress'` alone",
       );
     }
+    const state =
+      this.state === undefined
+        ? undefined
+        : parseChoice(
+            this.state.toLowerCase(),
+            ["open", "closed", "all"],
+            "--state",
+          );
 
     const status = this.status
       ? [(await resolveStatus(client, project, this.status)).id]
       : undefined;
+    const labelNames = splitCommaList(this.labels);
     const label =
-      this.labels.length > 0
-        ? (await resolveLabels(client, project, this.labels)).map((l) => l.id)
+      labelNames.length > 0
+        ? (await resolveLabels(client, project, labelNames)).map((l) => l.id)
         : undefined;
     const assignee = this.assignee
       ? (await resolveAssignees(client, project, [this.assignee]))[0]
@@ -110,7 +136,12 @@ export class IssueListCommand extends ProjectCommand {
       status,
       label,
       assignee,
-      category: this.open ? "open" : this.closed ? "closed" : undefined,
+      category:
+        this.open || state === "open"
+          ? "open"
+          : this.closed || state === "closed"
+            ? "closed"
+            : undefined,
       q: this.query,
       sort: parseChoice(this.sort, ["created", "updated", "number"], "--sort"),
       order: parseChoice(this.order, ["asc", "desc"], "--order"),
@@ -377,15 +408,21 @@ async function tailCursor(
 
 export class IssueCreateCommand extends ProjectCommand {
   static paths = [["issue", "create"]];
-  static usage = Command.Usage({ description: "Create an issue" });
+  static usage = Command.Usage({
+    description: "Create an issue",
+    details:
+      "gh's short flags work too (`-t`, `-b`, `-F`, `-l`, `-a`). A `--label` the project does not have yet is created on the spot, with a color derived from its name.",
+  });
 
-  title = Option.String("--title", { required: true });
-  body = Option.String("--body");
-  bodyFile = Option.String("--body-file", {
+  title = Option.String("-t,--title", { required: true });
+  body = Option.String("-b,--body");
+  bodyFile = Option.String("-F,--body-file", {
     description: "Body from a file, or - for stdin",
   });
-  labels = Option.Array("--label", []);
-  assignees = Option.Array("--assignee", []);
+  labels = Option.Array("-l,--label,--labels", [], {
+    description: "Repeatable and comma-splittable; unknown names are created",
+  });
+  assignees = Option.Array("-a,--assignee,--assignees", []);
   status = Option.String("--status");
 
   protected async run(client: TodouClient): Promise<void> {
@@ -403,10 +440,16 @@ export class IssueCreateCommand extends ProjectCommand {
       status_id: this.status
         ? (await resolveStatus(client, project, this.status)).id
         : undefined,
-      label_ids: (await resolveLabels(client, project, this.labels)).map(
-        (l) => l.id,
+      label_ids: (
+        await ensureLabels(client, project, splitCommaList(this.labels), (l) =>
+          this.note(l),
+        )
+      ).map((l) => l.id),
+      assignee_ids: await resolveAssignees(
+        client,
+        project,
+        splitCommaList(this.assignees),
       ),
-      assignee_ids: await resolveAssignees(client, project, this.assignees),
     });
     const refPrefix = this.json ? null : await fetchRefPrefix(client, project);
     this.output(
@@ -420,19 +463,40 @@ export class IssueEditCommand extends ProjectCommand {
   static paths = [["issue", "edit"]];
   static usage = Command.Usage({
     description: "Edit an issue's fields, labels, or assignees",
-    details:
-      "`<number>` also accepts `<project>/<number>` or a full issue URL.",
+    details: `
+      \`<number>\` also accepts \`<project>/<number>\` or a full issue URL.
+
+      Two ways to write labels, and they cannot be mixed:
+      \`--add-label\`/\`--remove-label\` edit the set in place (gh's flags),
+      while \`--label\`/\`--labels\` **replace** it wholesale — anything not
+      named is dropped, and the dropped names are printed. Both spellings
+      are repeatable and comma-splittable, and any label the project does
+      not have yet is created on the spot.
+    `,
+    examples: [
+      [
+        "Add one label, keep the rest",
+        "todou issue edit 3 --add-label 'area:cli'",
+      ],
+      [
+        "Make these the only labels",
+        "todou issue edit 3 --labels 'area:cli,kind:bug'",
+      ],
+    ],
   });
 
   number = Option.String({ required: true });
-  title = Option.String("--title");
-  body = Option.String("--body");
-  bodyFile = Option.String("--body-file");
+  title = Option.String("-t,--title");
+  body = Option.String("-b,--body");
+  bodyFile = Option.String("-F,--body-file");
   status = Option.String("--status");
-  addLabels = Option.Array("--add-label", []);
-  removeLabels = Option.Array("--remove-label", []);
-  addAssignees = Option.Array("--add-assignee", []);
-  removeAssignees = Option.Array("--remove-assignee", []);
+  setLabels = Option.Array("-l,--label,--labels", [], {
+    description: "Replace the whole label set with these",
+  });
+  addLabels = Option.Array("--add-label,--add-labels", []);
+  removeLabels = Option.Array("--remove-label,--remove-labels", []);
+  addAssignees = Option.Array("--add-assignee,--add-assignees", []);
+  removeAssignees = Option.Array("--remove-assignee,--remove-assignees", []);
 
   protected async run(client: TodouClient): Promise<void> {
     const { project, number } = this.resolveIssueRef(this.number);
@@ -452,30 +516,19 @@ export class IssueEditCommand extends ProjectCommand {
       input.status_id = (await resolveStatus(client, project, this.status)).id;
     }
 
-    // Label/assignee edits are read-modify-write: the API takes whole lists.
-    if (this.addLabels.length > 0 || this.removeLabels.length > 0) {
-      const current = (await client.getIssue(project, number)).labels.map(
-        (l) => l.id,
-      );
-      const add = (await resolveLabels(client, project, this.addLabels)).map(
-        (l) => l.id,
-      );
-      const remove = new Set(
-        (await resolveLabels(client, project, this.removeLabels)).map(
-          (l) => l.id,
-        ),
-      );
-      input.label_ids = [...new Set([...current, ...add])].filter(
-        (id) => !remove.has(id),
-      );
-    }
-    if (this.addAssignees.length > 0 || this.removeAssignees.length > 0) {
+    const labelIds = await this.resolveLabelEdit(client, project, number);
+    if (labelIds !== undefined) input.label_ids = labelIds;
+
+    // Assignee edits are read-modify-write: the API takes whole lists.
+    const addAssignees = splitCommaList(this.addAssignees);
+    const removeAssignees = splitCommaList(this.removeAssignees);
+    if (addAssignees.length > 0 || removeAssignees.length > 0) {
       const current = (await client.getIssue(project, number)).assignees.map(
         (a) => a.id,
       );
-      const add = await resolveAssignees(client, project, this.addAssignees);
+      const add = await resolveAssignees(client, project, addAssignees);
       const remove = new Set(
-        await resolveAssignees(client, project, this.removeAssignees),
+        await resolveAssignees(client, project, removeAssignees),
       );
       input.assignee_ids = [...new Set([...current, ...add])].filter(
         (id) => !remove.has(id),
@@ -488,6 +541,66 @@ export class IssueEditCommand extends ProjectCommand {
     const issue = await client.updateIssue(project, number, input);
     const refPrefix = this.json ? null : await fetchRefPrefix(client, project);
     this.output(issue, () => `${formatRef(refPrefix, issue.number)} updated`);
+  }
+
+  /**
+   * The issue's new label set, or undefined when no label flag was passed.
+   * Both styles are read-modify-write — the API only takes whole lists —
+   * but they answer different questions, so mixing them is refused rather
+   * than resolved in some order the caller would have to guess (T-135).
+   */
+  private async resolveLabelEdit(
+    client: TodouClient,
+    project: string,
+    number: number,
+  ): Promise<number[] | undefined> {
+    const set = splitCommaList(this.setLabels);
+    const add = splitCommaList(this.addLabels);
+    const remove = splitCommaList(this.removeLabels);
+    const note = (line: string) => this.note(line);
+
+    if (set.length > 0 && (add.length > 0 || remove.length > 0)) {
+      throw new CliError(
+        "--label/--labels replaces the whole label set; --add-label/--remove-label edit it",
+        "pass one style or the other, not both",
+      );
+    }
+    if (set.length > 0) {
+      const current = (await client.getIssue(project, number)).labels;
+      const desired = await ensureLabels(client, project, set, note);
+      const kept = new Set(desired.map((l) => l.id));
+      const dropped = current.filter((l) => !kept.has(l.id));
+      if (dropped.length > 0) {
+        // The flag is one agents reach for meaning "add" (T-135), so the
+        // one chance to catch a mistaken wipe is the moment it happens.
+        this.note(
+          `--label/--labels replaces the whole label set — removed ${dropped
+            .map((l) => l.name)
+            .join(", ")}`,
+        );
+        this.note(
+          `to add without replacing: todou issue edit ${this.number} -p ${project} ` +
+            `--add-label ${shellArg(dropped[0]?.name ?? "<name>")}`,
+        );
+      }
+      return desired.map((l) => l.id);
+    }
+    if (add.length === 0 && remove.length === 0) return undefined;
+
+    const current = (await client.getIssue(project, number)).labels.map(
+      (l) => l.id,
+    );
+    const added = (await ensureLabels(client, project, add, note)).map(
+      (l) => l.id,
+    );
+    // Removals stay strict: inventing a label just to drop it is a no-op
+    // that hides the typo behind it.
+    const removed = new Set(
+      (await resolveLabels(client, project, remove)).map((l) => l.id),
+    );
+    return [...new Set([...current, ...added])].filter(
+      (id) => !removed.has(id),
+    );
   }
 }
 
@@ -503,7 +616,7 @@ export class IssueCloseCommand extends ProjectCommand {
   status = Option.String("--status", {
     description: "A specific closed status (default: first by position)",
   });
-  comment = Option.String("--comment", {
+  comment = Option.String("-c,--comment", {
     description: "Leave a comment before closing",
   });
 

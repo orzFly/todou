@@ -33,10 +33,32 @@ todou status init -p <proj>                   # create whichever canonical statu
 todou status create -p <proj> --name X --category open|closed [--color '#hex'] [--before Y|--after Y]
 todou status edit X [--name N] [--category C] [--color '#hex'] [--before Y|--after Y] [--default]
 todou status delete X                         # refused (409) while issues still use it
+todou label list -p <proj>
+todou label create <name> [--color '#hex']    # rarely needed by hand — see Labels below
+todou label edit <name> [--name N] [--color '#hex']
+todou label delete <name>
 ```
 
 Forgiving forms (gh habits all work): `issue show` = `view`, `issue comment` = `comment add`,
 and every `<number>` positional also accepts `<proj>/16`, `"#16"`, or a full issue URL.
+gh's flag spellings work too — `-t/-b/-F/-l/-a` on `issue create`, `-l/-a/-L/-S/-s --state
+open|closed|all` on `issue list`, `-c` on `issue close`, `@me` wherever a login goes.
+
+## Labels
+
+**Never pre-create a label.** Any label flag on a write creates what it doesn't find, prints
+`created label 'X' (#color) · recolor: …` on stderr, and carries on. `todou label create` is for
+recoloring plans and bulk setup, not for clearing the way.
+
+- **Adding vs replacing.** `--add-label` / `--remove-label` edit the set in place;
+  `--label` / `--labels` **replace it wholesale**, and print what they dropped. The two styles
+  cannot be combined in one command. Reach for `--add-label` unless you mean to wipe.
+- **Both forms are lists.** Repeat the flag or comma-separate it — `--add-label 'area:cli,kind:bug'`
+  is two labels. A comma can therefore never appear inside a label name.
+- **Removals and filters stay strict.** `--remove-label` and `issue list --label` reject a name the
+  project doesn't have; only writes invent one. `issue list --label a --label b` matches **any**.
+- Auto-created labels get a color derived from their name. Recolor with the command in the notice.
+- Creating needs the **admin** role; a writer-only token gets told so, with the command to hand over.
 
 ## watch / poll (the agent's radar)
 
