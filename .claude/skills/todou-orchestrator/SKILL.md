@@ -81,10 +81,10 @@ todou issue edit <N> -p <proj> --add-label 'area:<area>' --add-label 'kind:bug'
 ```
 
 **Triage is labels.** It is not the moment to write commentary. In particular, **never post
-scheduling notes** — "this collides with #12 and #34, serialize them" reads as useful and is not: the
-collision is speculative until both cards are actually dispatched, and every card number you name
-fires a "referenced by" event on it, so a habit of scheduling notes sprays noise across the whole
-board. You are the one who schedules; keep the ordering in your head and act on it at dispatch time.
+scheduling notes** — "this collides with those two other cards, serialize them" reads as useful and
+is not: the collision is speculative until both cards are actually dispatched, and every card you
+reference fires a "referenced by" event on it, so a habit of scheduling notes sprays noise across the
+whole board. You are the one who schedules; keep the ordering in your head and act on it at dispatch time.
 
 If triage surfaces something the *card itself* is missing — a wrong premise, a hidden dependency, two
 proposals of very different size — that is worth a comment. Keep it short and specific (see
@@ -113,7 +113,7 @@ Task brief checklist (trim as appropriate):
 2. **Conflict fencing**: name what every other in-flight agent is touching, and require changes stay inside its own territory;
 3. Local verification expectations (dev server on a free port, real-browser checks with screenshots, close any tabs it opened);
 4. Wrap-up: commit (**do not merge**) → move to Ready to Ship → post a summary comment (screenshots/attachments;
-   mind /todou-cli's "reference with intent" rule — no incidental `#N` lists) → report in the terminal.
+   mind /todou-cli's "reference with intent" rule — no incidental lists of card refs) → report in the terminal.
 
 **Don't garnish the brief.** It carries the card, the fences, and the operational constraints the
 worker cannot discover on its own — nothing else. Your reading of the problem, your suspicion about
@@ -187,7 +187,7 @@ procedure can be delegated to a subagent; you only check the results:
 
 - You only push cards to Shipped; **Done always belongs to the user**. Clean up resources only after the user's Done.
 - Need a user decision? Post an options comment on the card and let the watch bring the answer — never AskUserQuestion (see /todou-cli).
-- Problems found in passing, or needs the user mentions aloud, become cards **immediately** (`#N` references auto-link) — never keep them in your head. When the request arrived outside the tracker (terminal, chat), **quote the user's original words verbatim in the card body** — that quote is the only trace the tracker will ever have.
+- Problems found in passing, or needs the user mentions aloud, become cards **immediately** (issue refs auto-link) — never keep them in your head. When the request arrived outside the tracker (terminal, chat), **quote the user's original words verbatim in the card body** — that quote is the only trace the tracker will ever have.
 - After the user says "take a break / no new work": the sentinel, relaying, and shepherding of already-dispatched
   tasks continue as normal — you just don't start new work.
 

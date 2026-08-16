@@ -16,7 +16,7 @@ Work in a scratch directory (temp dir or an untracked path — these files are *
 
 - `proposal.md` — the user's original requirements, **excluding anything already recorded on the
   tracker**: the issue body, comments, and question answers live in the timeline and are referenced
-  (`#N`, permalinks), never copied. What belongs here verbatim is only what has no tracker trace —
+  (issue refs — spelled as /todou-cli says, permalinks), never copied. What belongs here verbatim is only what has no tracker trace —
   requirements the user stated in the terminal/chat, decisions from outside channels — recorded like
   a transcript, with no judgment added. If a brainstorm preceded this (see /todou-brainstorm), start
   from its proposal.md.

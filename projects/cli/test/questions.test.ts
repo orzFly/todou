@@ -76,7 +76,9 @@ describe("comment add --questions", () => {
     );
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("question wait 19 42");
-    expect(calls).toHaveLength(1);
+    // One write, whatever else the command reads (T-134 added a
+    // reference-config lookup to spell the issue in the project's format).
+    expect(calls.filter((c) => c.init.method === "POST")).toHaveLength(1);
   });
 
   it("rejects hallucinated fields locally, naming the path", async () => {

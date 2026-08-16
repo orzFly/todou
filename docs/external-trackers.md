@@ -54,9 +54,25 @@ the project's configured one — the positional already names its project.
 Human-readable output spells issues in the project's current format;
 against servers without the config endpoint it falls back to `#N`.
 
+`--json` says the same thing in fields, so a script never has to guess
+(T-134):
+
+- Beside every issue number sits its spelled form — `number` → `ref`
+  (`issue list`/`view`/`create`/`edit`/`close`), `issue_number` →
+  `issue_ref` (`todou watch` items, `comment add`/`edit`).
+- Envelopes the CLI builds — `issue list`, `issue view`, `issue watch`,
+  single-project `todou watch` — also carry
+  `ref_format: {prefix, token}`. Spell any number as `token + number`.
+  This is the only source on an empty page or a bare timeline, where no
+  `ref` exists to copy. A cross-project `todou watch` stream has no one
+  format and omits the field; its items carry `issue_ref` instead.
+
+Both degrade to the `#N` form (`{"prefix": null, "token": "#"}`) against
+a server without the config endpoint.
+
 ## Conventions unaffected
 
-The `Spec: <proj>#N spec vX` commit trailer is an agent convention that
-todou's code never parses; it keeps working as-is. For repositories
-mirrored to GitHub, prefer the prefixed form in new commit messages so
-GitHub doesn't claim the reference.
+The `Spec: <issue-ref> spec vX` commit trailer is an agent convention that
+todou's code never parses; it keeps working whichever form the ref takes.
+For repositories mirrored to GitHub, prefer the prefixed form in new
+commit messages so GitHub doesn't claim the reference.

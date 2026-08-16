@@ -29,6 +29,7 @@ import {
   renderAnswerRecords,
   renderQuestions,
 } from "../questions.ts";
+import { refFormat, withRef } from "../refs.ts";
 import {
   ensureLabels,
   fetchRefPrefix,
@@ -152,16 +153,23 @@ export class IssueListCommand extends ProjectCommand {
       ? { ...page, items: page.items.filter((i) => i.unread) }
       : page;
 
-    const refPrefix = this.json ? null : await fetchRefPrefix(client, project);
-    this.output(shown, () => {
-      if (shown.items.length === 0) {
-        return this.unread ? "no unread issues" : "no issues";
-      }
-      const body = table(shown.items.map((i) => issueRow(i, refPrefix)));
-      return shown.next_cursor
-        ? `${body}\n… more available (raise --limit)`
-        : body;
-    });
+    const refPrefix = await fetchRefPrefix(client, project);
+    this.output(
+      {
+        ...shown,
+        items: shown.items.map((item) => withRef(item, refPrefix)),
+        ref_format: refFormat(refPrefix),
+      },
+      () => {
+        if (shown.items.length === 0) {
+          return this.unread ? "no unread issues" : "no issues";
+        }
+        const body = table(shown.items.map((i) => issueRow(i, refPrefix)));
+        return shown.next_cursor
+          ? `${body}\n… more available (raise --limit)`
+          : body;
+      },
+    );
   }
 }
 
@@ -187,9 +195,15 @@ export class IssueViewCommand extends ProjectCommand {
       number,
     );
     const paint = makePainter(this.context.stdout, this.context.env);
-    const refPrefix = this.json ? null : await fetchRefPrefix(client, project);
-    this.output({ issue, timeline, next_cursor: cursor ?? null }, () =>
-      renderIssue(issue, timeline, cursor, paint, refPrefix),
+    const refPrefix = await fetchRefPrefix(client, project);
+    this.output(
+      {
+        issue: withRef(issue, refPrefix),
+        timeline,
+        next_cursor: cursor ?? null,
+        ref_format: refFormat(refPrefix),
+      },
+      () => renderIssue(issue, timeline, cursor, paint, refPrefix),
     );
     // Viewing advances the server-side read position (T-46), pinned to the
     // newest entry actually shown so anything landing after the fetch stays
@@ -229,8 +243,10 @@ export class IssueWatchCommand extends ProjectCommand {
       checks once and returns immediately. Exit codes are loop-friendly:
       0 = new entries were printed, 3 = nothing new (timeout or empty poll),
       1 = error, 4 = gave up on a network outage (see below). \`--json\`
-      emits \`{ items, next_cursor }\`; feed next_cursor back into
-      \`--since\` to never miss or repeat an entry.
+      emits \`{ items, next_cursor, ref_format }\`; feed next_cursor back
+      into \`--since\` to never miss or repeat an entry. Timeline entries
+      carry no issue number, so \`ref_format\` (\`{prefix, token}\`) is
+      where this project's ref spelling comes from: \`token + number\`.
 
       Transient failures (connection refused/reset, timeouts, 5xx) are
       retried with exponential backoff and jitter: a blocking watch keeps
@@ -323,7 +339,10 @@ export class IssueWatchCommand extends ProjectCommand {
       )) ??
       undefined;
     const paint = makePainter(this.context.stdout, this.context.env);
-    const refPrefix = this.json ? null : await fetchRefPrefix(client, project);
+    const refPrefix = await fetchRefPrefix(client, project);
+    // Timeline entries carry no issue number of their own, so the envelope
+    // is the only place a watcher can read the project's ref format off.
+    const ref_format = refFormat(refPrefix);
 
     return runWatchLoop<TimelineItem>({
       poll: this.poll,
@@ -336,7 +355,7 @@ export class IssueWatchCommand extends ProjectCommand {
       drain: (after) =>
         drainTimeline(client, project, number, { after, types, ...self }),
       onItems: (items, cursor) =>
-        this.output({ items, next_cursor: cursor ?? null }, () =>
+        this.output({ items, next_cursor: cursor ?? null, ref_format }, () =>
           [
             ...items.map((item) =>
               renderTimelineItem(item, paint, {
@@ -348,15 +367,17 @@ export class IssueWatchCommand extends ProjectCommand {
           ].join("\n"),
         ),
       onEmpty: (cursor) =>
-        this.output({ items: [], next_cursor: cursor ?? null }, () =>
-          [
-            this.poll
-              ? "no new activity"
-              : `no new activity within ${timeoutSec}s`,
-            ...(cursor === undefined
-              ? []
-              : [paint("dim", `cursor: ${cursor}`)]),
-          ].join("\n"),
+        this.output(
+          { items: [], next_cursor: cursor ?? null, ref_format },
+          () =>
+            [
+              this.poll
+                ? "no new activity"
+                : `no new activity within ${timeoutSec}s`,
+              ...(cursor === undefined
+                ? []
+                : [paint("dim", `cursor: ${cursor}`)]),
+            ].join("\n"),
         ),
     });
   }
@@ -451,11 +472,8 @@ export class IssueCreateCommand extends ProjectCommand {
         splitCommaList(this.assignees),
       ),
     });
-    const refPrefix = this.json ? null : await fetchRefPrefix(client, project);
-    this.output(
-      issue,
-      () => `${formatRef(refPrefix, issue.number)} created: ${issue.title}`,
-    );
+    const created = withRef(issue, await fetchRefPrefix(client, project));
+    this.output(created, () => `${created.ref} created: ${created.title}`);
   }
 }
 
@@ -539,8 +557,8 @@ export class IssueEditCommand extends ProjectCommand {
       throw new CliError("nothing to change", "pass at least one edit flag");
     }
     const issue = await client.updateIssue(project, number, input);
-    const refPrefix = this.json ? null : await fetchRefPrefix(client, project);
-    this.output(issue, () => `${formatRef(refPrefix, issue.number)} updated`);
+    const updated = withRef(issue, await fetchRefPrefix(client, project));
+    this.output(updated, () => `${updated.ref} updated`);
   }
 
   /**
@@ -629,11 +647,8 @@ export class IssueCloseCommand extends ProjectCommand {
     const issue = await client.updateIssue(project, number, {
       status_id: target.id,
     });
-    const refPrefix = this.json ? null : await fetchRefPrefix(client, project);
-    this.output(
-      issue,
-      () => `${formatRef(refPrefix, issue.number)} closed (${target.name})`,
-    );
+    const closed = withRef(issue, await fetchRefPrefix(client, project));
+    this.output(closed, () => `${closed.ref} closed (${target.name})`);
   }
 }
 

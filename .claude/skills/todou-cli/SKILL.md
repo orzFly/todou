@@ -40,7 +40,8 @@ todou label delete <name>
 ```
 
 Forgiving forms (gh habits all work): `issue show` = `view`, `issue comment` = `comment add`,
-and every `<number>` positional also accepts `<proj>/16`, `"#16"`, or a full issue URL.
+and every `<number>` positional also accepts `<proj>/16`, `"#16"`, the project's own ref form
+(`T-16`), or a full issue URL — input is never picky about the spelling. Output is: see **Issue refs**.
 gh's flag spellings work too — `-t/-b/-F/-l/-a` on `issue create`, `-l/-a/-L/-S/-s --state
 open|closed|all` on `issue list`, `-c` on `issue close`, `@me` wherever a login goes.
 
@@ -90,7 +91,7 @@ cursor*, every time, however often it happens. Nothing is lost across the gap. D
 short-period self-poll — a 6-minute poll burns a whole agent turn per tick — and do say a word about it
 in the terminal so the orchestrator knows to relay as a backstop.
 
-- Exit codes: **0 = new entries** (stdout is `{items, next_cursor}`), **3 = timeout with nothing new**
+- Exit codes: **0 = new entries** (stdout is `{items, next_cursor, ref_format}`), **3 = timeout with nothing new**
   (normal, not an error), 1 = fatal error, **4 = gave up on a network outage** after automatic retries
   (a blocking watch retries transient failures — 5xx, refused, reset — for 2+ minutes first; `--poll`
   fails fast after 3 attempts). On exit 4 just rerun with the same cursor; nothing is lost.
@@ -124,16 +125,28 @@ rather than rewriting it into an absolute URL.
 **Permalinks.** Every timestamp is a link to that one entry (`#comment-<id>`, `#event-<id>`). Paste one
 to send the reader straight to a specific comment or event.
 
-**Issue refs.** Write a ref the way the CLI prints issue numbers (`T-<n>` here) — that form is the
-project's active one. Fenced and inline code are exempt, so you can quote a ref without making one.
+**Issue refs.** **Never presume the spelling.** A project writes its issues either bare (`#12`) or
+with a prefix (`T-12`), it is a per-project setting, and a guessed ref links nowhere. Read the form
+off the CLI — every command that knows an issue number prints its spelled form beside it:
+
+```bash
+todou issue view <n> -p <proj> --json | jq -r .issue.ref       # this card, spelled
+todou issue list -p <proj> --json | jq -r .ref_format.token    # "#" or "T-" — token + number
+```
+
+`ref` sits beside `number`, `issue_ref` beside `issue_number`, and `ref_format` rides on the
+`issue list` / `issue view` / `issue watch` / single-project `todou watch` envelopes, so even an
+empty page tells you. Human output spells the same form in its headers. Fenced and inline code are
+exempt from ref parsing, so you can quote a ref without making one.
 
 - **Reference with intent**: a ref notifies the card you point at. Use refs when the link carries
-  meaning (a follow-up, a dependency, a dupe); never enumerate incidental cards — "rebased onto master
-  containing T-52/T-53/T-26/T-49/T-57" sprays noise and tells nobody anything. Write "rebased onto
-  latest master" instead. And **never self-reference**: inside T-36, a `T-36` is pure noise — write
-  "this card" / "本卡".
-- **Tracker text only.** In source and commit messages write the project's textual form (`T-<n>`) —
-  in a public repo a bare `#N` autolinks to the host's own issue numbering, permanently wrong.
+  meaning (a follow-up, a dependency, a dupe); never enumerate incidental cards — a note listing the
+  five cards a branch was rebased past sprays noise and tells nobody anything. Write "rebased onto
+  latest master" instead. And **never self-reference**: a ref to the card you are writing on is pure
+  noise — write "this card" / "本卡".
+- **Tracker text only.** In source and commit messages write the project's own form, read as above.
+  In a public repo a bare `#N` autolinks to the host's own issue numbering, permanently wrong — so
+  where the project has no prefix configured, name the tracker in prose instead of writing `#N`.
 
 ## Comment discipline
 

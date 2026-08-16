@@ -61,7 +61,7 @@ You MUST create a task for each of these items and complete them in order:
   small questions to cut round-trips; see /todou-cli)
 - Prefer multiple choice questions when possible, but open-ended is fine too
 - **Out-of-scope needs that surface mid-discussion** (users often say "file that separately") go
-  straight to `todou issue create` — a `#N` reference in the body auto-links back — then return to the main thread
+  straight to `todou issue create` — an issue ref in the body auto-links back — then return to the main thread
 - Focus on understanding: purpose, constraints, success criteria
 
 **Exploring approaches:**
@@ -108,7 +108,7 @@ You MUST create a task for each of these items and complete them in order:
 
 - Write the user's original requirements to `<tmpdir>/proposal.md` — **excluding anything already
   recorded on the tracker**: the card body, comments, and question answers live in the timeline and
-  are referenced (`#N`, permalinks), never copied. Record verbatim, transcript-style and without
+  are referenced (issue refs — spelled as /todou-cli says, permalinks), never copied. Record verbatim, transcript-style and without
   judgment, only what has no tracker trace (requirements stated in the terminal/chat or other
   outside channels).
   - **Keep proposal.md up to date.** New information from the user during planning or execution goes in.

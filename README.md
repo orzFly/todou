@@ -98,8 +98,8 @@ todou project link my-project
 todou issue list --open
 todou issue create --title "Fix the potato" --body "It sprouted."
 todou issue view 1
-todou issue view my-project/1   # project/number, "#1", or an issue URL work
-                                # anywhere <number> does; `show` = `view`
+todou issue view my-project/1   # project/number, "#1", "T-1", or an issue
+                                # URL work anywhere <number> does; `show` = `view`
 todou issue close 1 --comment "done"
 
 # Agents/CI need no config file, and every command takes --json:

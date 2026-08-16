@@ -1030,13 +1030,14 @@ describe("reference format display (T-80)", () => {
     expect(fallback.stdout).toContain("#3");
   });
 
-  it("skips the config fetch entirely under --json", async () => {
+  it("fetches the config under --json too, to spell refs (T-134)", async () => {
     const { fetchImpl, calls } = fakeFetch([
       [
         "GET",
         "/api/projects/todou/issues",
         { items: [issue], next_cursor: null },
       ],
+      ["GET", "/api/projects/todou/references/config", config],
     ]);
     const result = await runCli(["issue", "list", "-p", "todou", "--json"], {
       fetchImpl,
@@ -1045,6 +1046,6 @@ describe("reference format display (T-80)", () => {
     expect(result.exitCode).toBe(0);
     expect(
       calls.some((c) => String(c.url).includes("/references/config")),
-    ).toBe(false);
+    ).toBe(true);
   });
 });

@@ -28,8 +28,10 @@ does two things automatically — no flags, no configuration:
 
 The command surface is also forgiving of gh-style habits: `issue show`
 and `issue comment` work as aliases, and anywhere a `<number>` is
-expected you can write `project/16`, `"#16"`, or paste the full issue
-URL.
+expected you can write `project/16`, `"#16"`, `T-16`, or paste the full
+issue URL. Output is not left to guesswork either: `--json` spells every
+issue number in the project's own reference format (see
+[docs/external-trackers.md](external-trackers.md)).
 
 ## Where the metadata comes from
 

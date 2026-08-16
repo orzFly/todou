@@ -6,7 +6,10 @@ import type {
   TodouClient,
   UserRef,
 } from "@todou/shared";
-import { AnswersSubmitInput as AnswersSubmitInputSchema } from "@todou/shared";
+import {
+  AnswersSubmitInput as AnswersSubmitInputSchema,
+  formatRef,
+} from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { z } from "zod";
 import { ProjectCommand } from "../api-command.ts";
@@ -19,6 +22,7 @@ import {
   renderAnswerRecords,
   renderQuestions,
 } from "../questions.ts";
+import { fetchRefPrefix } from "../resolve.ts";
 import {
   retryTransient,
   runWatchLoop,
@@ -51,8 +55,10 @@ async function findQuestionComment(
   const status = await client.getIssueQuestions(project, number);
   const item = status.items.find((i) => i.comment_id === commentId);
   if (!item) {
+    // "issue N", not the project's ref spelling: a failure path should not
+    // spend a round trip on the reference config just to phrase itself.
     throw new CliError(
-      `comment ${commentId} on #${number} carries no questions`,
+      `comment ${commentId} on issue ${number} carries no questions`,
       `list question comments with \`todou question list ${number}\``,
     );
   }
@@ -226,7 +232,7 @@ export class QuestionWaitCommand extends ProjectCommand {
         this.output({ comment_id: commentId, answer: null }, () =>
           this.poll
             ? "not answered yet"
-            : `no answer within ${timeoutSec}s (comment ${commentId} on #${number})`,
+            : `no answer within ${timeoutSec}s (comment ${commentId} on issue ${number})`,
         ),
     });
   }
@@ -280,11 +286,15 @@ export class QuestionAnswerCommand extends ProjectCommand {
         ? await this.buildFromFlags(client, project, number, commentId)
         : await this.parseAnswersInput(this.answersInput);
     await client.submitAnswers(project, number, commentId, input);
+    const item = await client
+      .getIssueQuestions(project, number)
+      .then((s) => s.items.find((i) => i.comment_id === commentId) ?? null);
+    // Only the prose spells the issue; the JSON payload is the question
+    // item, which carries no issue number to spell.
+    const refPrefix = this.json ? null : await fetchRefPrefix(client, project);
     this.output(
-      await client
-        .getIssueQuestions(project, number)
-        .then((s) => s.items.find((i) => i.comment_id === commentId) ?? null),
-      () => `answered comment ${commentId} on #${number}`,
+      item,
+      () => `answered comment ${commentId} on ${formatRef(refPrefix, number)}`,
     );
   }
 

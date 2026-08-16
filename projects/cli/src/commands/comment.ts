@@ -5,6 +5,8 @@ import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
 import { parsePositiveInt } from "../parse.ts";
 import { readQuestionsInput } from "../questions.ts";
+import { withIssueRef } from "../refs.ts";
+import { fetchRefPrefix } from "../resolve.ts";
 
 export class CommentAddCommand extends ProjectCommand {
   static paths = [
@@ -63,10 +65,15 @@ export class CommentAddCommand extends ProjectCommand {
       body,
       component,
     );
-    this.output(comment, () =>
+    const refPrefix = await fetchRefPrefix(client, project);
+    const posted = withIssueRef(
+      { ...comment, issue_number: number },
+      refPrefix,
+    );
+    this.output(posted, () =>
       component === undefined
-        ? `commented on #${number}`
-        : `asked ${component.questions.length} question(s) on #${number} — ` +
+        ? `commented on ${posted.issue_ref}`
+        : `asked ${component.questions.length} question(s) on ${posted.issue_ref} — ` +
           `wait for answers with \`todou question wait ${number} ${comment.id}\``,
     );
   }
@@ -103,6 +110,14 @@ export class CommentEditCommand extends ProjectCommand {
       commentId,
       body,
     );
-    this.output(comment, () => `edited comment ${commentId} on #${number}`);
+    const refPrefix = await fetchRefPrefix(client, project);
+    const edited = withIssueRef(
+      { ...comment, issue_number: number },
+      refPrefix,
+    );
+    this.output(
+      edited,
+      () => `edited comment ${commentId} on ${edited.issue_ref}`,
+    );
   }
 }

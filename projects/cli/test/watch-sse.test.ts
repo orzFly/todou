@@ -296,6 +296,7 @@ describe("watch over the change feed, contract unchanged (T-123)", () => {
     expect(JSON.parse(result.stdout)).toEqual({
       items: [],
       next_cursor: "a0",
+      ref_format: { prefix: null, token: "#" },
     });
     expect(clock.elapsed()).toBe(10_000);
     // Idling on the feed rather than on a 2s tick: two drains, not six.

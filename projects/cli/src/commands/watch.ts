@@ -11,6 +11,7 @@ import { CliError } from "../errors.ts";
 import { makePainter } from "../format.ts";
 import { drainPaged } from "../paginate.ts";
 import { parseSeconds } from "../parse.ts";
+import { type RefFormat, refFormat, withIssueRef } from "../refs.ts";
 import { fetchRefPrefix } from "../resolve.ts";
 import {
   normalizeTypes,
@@ -63,9 +64,13 @@ export class WatchCommand extends ProjectCommand {
       Exit codes: 0 = new entries were printed (in any watched project),
       3 = nothing new (timeout or empty poll), 1 = error, 4 = gave up on
       a network outage (see below). \`--json\` emits
-      \`{ items, next_cursor }\` where each item carries \`issue_number\`
-      and \`project\` (its slug); feed next_cursor back into \`--since\`
-      to never miss or repeat an entry.
+      \`{ items, next_cursor }\` where each item carries \`issue_number\`,
+      \`issue_ref\` (that number in its project's spelling) and
+      \`project\` (its slug); feed next_cursor back into \`--since\`
+      to never miss or repeat an entry. Single-project mode adds
+      \`ref_format\` (\`{prefix, token}\`) to the envelope, so an empty
+      poll still states the spelling; a cross-project stream has no one
+      format and leaves it out.
 
       Transient failures (connection refused/reset, timeouts, 5xx) are
       retried with exponential backoff and jitter: a blocking watch keeps
@@ -241,9 +246,8 @@ export class WatchCommand extends ProjectCommand {
           )
         ).next_cursor ??
         undefined;
-      const refPrefix = this.json
-        ? null
-        : await fetchRefPrefix(client, project);
+      const refPrefix = await fetchRefPrefix(client, project);
+      const ref_format = refFormat(refPrefix);
 
       return runWatchLoop<ActivityItem>({
         poll: this.poll,
@@ -259,8 +263,12 @@ export class WatchCommand extends ProjectCommand {
         onItems: (items, cursor) =>
           this.output(
             {
-              items: items.map((item) => ({ ...item, project })),
+              items: items.map((item) => ({
+                ...withIssueRef(item, refPrefix),
+                project,
+              })),
               next_cursor: cursor ?? null,
+              ref_format,
             },
             () =>
               [
@@ -275,7 +283,8 @@ export class WatchCommand extends ProjectCommand {
                 paint("dim", `cursor: ${cursor}`),
               ].join("\n"),
           ),
-        onEmpty: (cursor) => this.emitEmpty(cursor, timeoutSec, paint),
+        onEmpty: (cursor) =>
+          this.emitEmpty(cursor, timeoutSec, paint, ref_format),
       });
     }
 
@@ -284,7 +293,7 @@ export class WatchCommand extends ProjectCommand {
     // --since and next_cursor pass through opaquely.
     const projects = slugs?.join(",");
     const prefixes = new Map<string, string | null>();
-    if (!this.json && slugs !== null) {
+    if (slugs !== null) {
       for (const slug of slugs) {
         prefixes.set(slug, await fetchRefPrefix(client, slug));
       }
@@ -294,7 +303,6 @@ export class WatchCommand extends ProjectCommand {
     // inside the drain (async context); fetchRefPrefix never throws, so
     // it cannot eat into the retry budget.
     const ensurePrefixes = async (items: CrossActivityItem[]) => {
-      if (this.json) return;
       for (const item of items) {
         if (!prefixes.has(item.project)) {
           prefixes.set(
@@ -346,21 +354,30 @@ export class WatchCommand extends ProjectCommand {
         return page;
       },
       onItems: (items, cursor) =>
-        this.output({ items, next_cursor: cursor ?? null }, () =>
-          [
-            ...items.map(
-              (item) =>
-                `${paint("bold", spell(item))} ${renderTimelineItem(
-                  item,
-                  paint,
-                  {
-                    issueNumber: item.issue_number,
-                    refPrefix: prefixes.get(item.project) ?? null,
-                  },
-                )}`,
+        // No envelope-level ref_format here: the stream spans projects that
+        // may each spell refs differently, so the format lives per item.
+        this.output(
+          {
+            items: items.map((item) =>
+              withIssueRef(item, prefixes.get(item.project) ?? null),
             ),
-            paint("dim", `cursor: ${cursor}`),
-          ].join("\n"),
+            next_cursor: cursor ?? null,
+          },
+          () =>
+            [
+              ...items.map(
+                (item) =>
+                  `${paint("bold", spell(item))} ${renderTimelineItem(
+                    item,
+                    paint,
+                    {
+                      issueNumber: item.issue_number,
+                      refPrefix: prefixes.get(item.project) ?? null,
+                    },
+                  )}`,
+              ),
+              paint("dim", `cursor: ${cursor}`),
+            ].join("\n"),
         ),
       onEmpty: (cursor) => this.emitEmpty(cursor, timeoutSec, paint),
     });
@@ -399,12 +416,21 @@ export class WatchCommand extends ProjectCommand {
     cursor: string | undefined,
     timeoutSec: number,
     paint: ReturnType<typeof makePainter>,
+    format?: RefFormat,
   ): void {
-    this.output({ items: [], next_cursor: cursor ?? null }, () =>
-      [
-        this.poll ? "no new activity" : `no new activity within ${timeoutSec}s`,
-        ...(cursor === undefined ? [] : [paint("dim", `cursor: ${cursor}`)]),
-      ].join("\n"),
+    this.output(
+      {
+        items: [],
+        next_cursor: cursor ?? null,
+        ...(format === undefined ? {} : { ref_format: format }),
+      },
+      () =>
+        [
+          this.poll
+            ? "no new activity"
+            : `no new activity within ${timeoutSec}s`,
+          ...(cursor === undefined ? [] : [paint("dim", `cursor: ${cursor}`)]),
+        ].join("\n"),
     );
   }
 }
