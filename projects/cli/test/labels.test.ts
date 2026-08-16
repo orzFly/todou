@@ -216,6 +216,48 @@ describe("label auto-creation (T-135)", () => {
     expect(calls.every((c) => c.init.method !== "POST")).toBe(true);
   });
 
+  it("matches a stored name through a differently spaced spelling", async () => {
+    // The server canonicalizes whitespace (T-136), so the CLI has to ask
+    // for the canonical spelling — otherwise this misses, tries to create
+    // a label that exists, and surfaces a bare 409.
+    const spaced = { id: 21, name: "area: cli", color: "#3b82f6" };
+    const store = labelStore([spaced]);
+    let patched: Record<string, unknown> | undefined;
+    const { fetchImpl } = fakeFetch([
+      ...store.routes,
+      ["GET", "/api/projects/todou/issues/3", issueWith({})],
+      [
+        "PATCH",
+        "/api/projects/todou/issues/3",
+        (init: RequestInit) => {
+          patched = jsonBody(init);
+          return issueWith({});
+        },
+      ],
+    ]);
+    const result = await runCli(
+      ["issue", "edit", "3", "--add-label", "  area:   cli "],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(store.created).toEqual([]);
+    expect(patched).toEqual({ label_ids: [21] });
+  });
+
+  it("creates the canonical spelling, not the one that was typed", async () => {
+    const store = labelStore([]);
+    const { fetchImpl } = fakeFetch([
+      ...store.routes,
+      ["POST", "/api/projects/todou/issues", () => issueWith({ number: 9 })],
+    ]);
+    const result = await runCli(
+      ["issue", "create", "-t", "T", "-b", "x", "-l", "area:   cli"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(store.created.map((c) => c.name)).toEqual(["area: cli"]);
+  });
+
   it("keeps --remove-label strict too", async () => {
     const { fetchImpl } = fakeFetch([
       ["GET", "/api/projects/todou/issues/3", issueWith({ labels: [bug] })],

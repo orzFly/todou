@@ -1,5 +1,5 @@
 import type { Label, Status, TodouClient } from "@todou/shared";
-import { TodouError } from "@todou/shared";
+import { canonicalizeLabelName, TodouError } from "@todou/shared";
 import { CliError } from "./errors.ts";
 
 /**
@@ -68,12 +68,22 @@ export async function resolveClosedStatus(
   return closed;
 }
 
+/**
+ * Every label name the CLI says out loud is canonicalized first (T-136).
+ * The server stores the canonical spelling, so `'area:  cli'` has to match
+ * the stored `area: cli` — otherwise a lookup misses, the write path tries
+ * to create a label that already exists, and the user gets a bare 409.
+ */
 export async function resolveLabel(
   client: TodouClient,
   project: string,
   name: string,
 ): Promise<Label> {
-  return byName(await client.listLabels(project), name, "label");
+  return byName(
+    await client.listLabels(project),
+    canonicalizeLabelName(name),
+    "label",
+  );
 }
 
 /** Strict: for filters and for `label edit/delete`, a miss is a typo. */
@@ -84,7 +94,9 @@ export async function resolveLabels(
 ): Promise<Label[]> {
   if (names.length === 0) return [];
   const labels = await client.listLabels(project);
-  return names.map((name) => byName(labels, name, "label"));
+  return names.map((name) =>
+    byName(labels, canonicalizeLabelName(name), "label"),
+  );
 }
 
 /** Tailwind-500 hues, the family the seeded labels and statuses already use. */
@@ -128,7 +140,8 @@ export async function ensureLabels(
   if (names.length === 0) return [];
   const known = await client.listLabels(project);
   const resolved: Label[] = [];
-  for (const name of names) {
+  for (const raw of names) {
+    const name = canonicalizeLabelName(raw);
     const found = findByName(known, name);
     const label = found ?? (await createLabel(client, project, name, note));
     // Repeats within one command resolve against the fresh label too.

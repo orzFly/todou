@@ -77,6 +77,42 @@ export const StatusUpdateInput = z.object({
 });
 export type StatusUpdateInput = z.infer<typeof StatusUpdateInput>;
 
+/** The name a label is actually stored under: trimmed, spaces collapsed. */
+export function canonicalizeLabelName(input: string): string {
+  return input.trim().replace(/\s+/g, " ");
+}
+
+/**
+ * A writable label name (T-136). Two rules, both of them the CLI's
+ * addressing model made binding:
+ *
+ * - **No commas.** `--label 'a,b'` means two labels there, the way it does
+ *   in gh, so a stored `a,b` could be created and then never selected,
+ *   renamed or deleted from the CLI again.
+ * - **Canonical whitespace.** The CLI trims each comma-separated piece, so
+ *   `" bug "` would be just as unreachable. Collapsing runs of whitespace
+ *   comes along for free and matches what the web already sent.
+ *
+ * Read schemas stay unconstrained on purpose: rows that predate this rule
+ * must remain listable and renameable — the point is to stop new ones, not
+ * to make an existing project unreadable.
+ */
+export const LabelName = z
+  .string()
+  .transform(canonicalizeLabelName)
+  .pipe(
+    z
+      .string()
+      // Said in terms of what was sent, not of the canonical form the
+      // checks actually run against — "too small" reads as nonsense to
+      // someone who passed three spaces.
+      .min(1, { error: "label names cannot be blank (whitespace is trimmed)" })
+      .max(60, { error: "label names are at most 60 characters" })
+      .refine((name) => !name.includes(","), {
+        error: "label names cannot contain a comma — commas separate labels",
+      }),
+  );
+
 export const Label = z.object({
   id: Id,
   name: z.string(),
@@ -85,13 +121,13 @@ export const Label = z.object({
 export type Label = z.infer<typeof Label>;
 
 export const LabelCreateInput = z.object({
-  name: z.string().min(1).max(60),
+  name: LabelName,
   color: ColorHex.default("#3b82f6"),
 });
 export type LabelCreateInput = z.infer<typeof LabelCreateInput>;
 
 export const LabelUpdateInput = z.object({
-  name: z.string().min(1).max(60).optional(),
+  name: LabelName.optional(),
   color: ColorHex.optional(),
 });
 export type LabelUpdateInput = z.infer<typeof LabelUpdateInput>;

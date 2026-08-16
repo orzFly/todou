@@ -55,7 +55,9 @@ recoloring plans and bulk setup, not for clearing the way.
   `--label` / `--labels` **replace it wholesale**, and print what they dropped. The two styles
   cannot be combined in one command. Reach for `--add-label` unless you mean to wipe.
 - **Both forms are lists.** Repeat the flag or comma-separate it — `--add-label 'area:cli,kind:bug'`
-  is two labels. A comma can therefore never appear inside a label name.
+  is two labels. The server enforces the other half of that deal: a label name may not contain a
+  comma (422), and whitespace is canonicalized — `'area:   cli'` is stored, and matched, as
+  `area: cli`. So a name the CLI can say is always a name it can say again.
 - **Removals and filters stay strict.** `--remove-label` and `issue list --label` reject a name the
   project doesn't have; only writes invent one. `issue list --label a --label b` matches **any**.
 - Auto-created labels get a color derived from their name. Recolor with the command in the notice.

@@ -1,5 +1,10 @@
 import type { Label } from "@todou/shared";
 
+// Canonicalization is the server's rule now (T-136) — re-exported rather
+// than reimplemented so the picker's preview cannot drift from what a
+// create actually stores.
+export { canonicalizeLabelName } from "@todou/shared";
+
 /**
  * Split a structured label name at the first colon. A leading colon is not a
  * prefix (":oops" stays whole) — hence > 0, not >= 0.
@@ -28,11 +33,6 @@ export const PRESET_COLORS = [
   "#8b5cf6",
   "#ec4899",
 ];
-
-/** The name a new label is actually created with. */
-export function canonicalizeLabelName(input: string): string {
-  return input.trim().replace(/\s+/g, " ");
-}
 
 /**
  * Near-duplicate comparison key. Stripping *all* whitespace (not just

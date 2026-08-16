@@ -3,6 +3,9 @@ import {
   ChangeEvent,
   IssueCreateInput,
   IssueListQuery,
+  Label,
+  LabelName,
+  LabelUpdateInput,
   Login,
   ProjectSlug,
   TimelineComment,
@@ -163,5 +166,29 @@ describe("AgentContext on timeline items", () => {
       TimelineComment.safeParse({ ...base, agent_context: { agent: "" } })
         .success,
     ).toBe(false);
+  });
+});
+
+describe("LabelName (T-136)", () => {
+  it("canonicalizes whitespace", () => {
+    expect(LabelName.parse("  area:   cli  ")).toBe("area: cli");
+  });
+
+  it("refuses commas and names that collapse to nothing", () => {
+    expect(LabelName.safeParse("a,b").success).toBe(false);
+    expect(LabelName.safeParse("   ").success).toBe(false);
+    expect(LabelName.safeParse("x".repeat(61)).success).toBe(false);
+  });
+
+  it("measures the length after canonicalizing, not before", () => {
+    expect(LabelName.parse(`  ${"x".repeat(60)}  `)).toHaveLength(60);
+  });
+
+  it("leaves the read schema permissive so old rows stay readable", () => {
+    // A label stored before the rule existed must still list, and must
+    // still be renameable to something legal.
+    const stored = Label.parse({ id: 1, name: "a,b", color: "#3b82f6" });
+    expect(stored.name).toBe("a,b");
+    expect(LabelUpdateInput.parse({ name: "a b" }).name).toBe("a b");
   });
 });

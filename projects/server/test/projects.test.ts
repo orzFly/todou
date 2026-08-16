@@ -275,6 +275,66 @@ describe.each(PLACEMENTS)("projects domain (%s placement)", (placement) => {
     expect(del.status).toBe(204);
   });
 
+  // The CLI addresses labels by name and splits `--label 'a,b'` into two of
+  // them, so a name it could never say again must not be storable (T-136).
+  describe("label names the CLI can always address back", () => {
+    const postLabel = (s: string, body: unknown) =>
+      t.app.request(`/api/projects/${s}/labels`, {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify(body),
+      });
+
+    it("refuses a comma on create and on rename", async () => {
+      const s = slug();
+      await createProject(s);
+      const refused = await postLabel(s, { name: "a,b" });
+      expect(refused.status).toBe(422);
+      // The reason has to survive to the caller — a CLI user needs to read
+      // why, not just see a 422.
+      expect((await json(refused)).error.message).toContain(
+        "cannot contain a comma",
+      );
+
+      const created = await json(await postLabel(s, { name: "keeper" }));
+      const renamed = await t.app.request(
+        `/api/projects/${s}/labels/${created.id}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json", cookie },
+          body: JSON.stringify({ name: "still,bad" }),
+        },
+      );
+      expect(renamed.status).toBe(422);
+      // The refusal must not have half-applied.
+      const [after] = await json(
+        await t.app.request(`/api/projects/${s}/labels`, {
+          headers: { cookie },
+        }),
+      );
+      expect(after.name).toBe("keeper");
+    });
+
+    it("stores the canonical spelling of a whitespace-y name", async () => {
+      const s = slug();
+      await createProject(s);
+      const created = await json(
+        await postLabel(s, { name: "  area:   cli " }),
+      );
+      expect(created.name).toBe("area: cli");
+
+      // Canonicalization runs before the uniqueness check, so a differently
+      // spaced spelling of a stored name is a duplicate, not a second label.
+      expect((await postLabel(s, { name: "area:  cli" })).status).toBe(409);
+    });
+
+    it("rejects a name that canonicalizes away to nothing", async () => {
+      const s = slug();
+      await createProject(s);
+      expect((await postLabel(s, { name: "   " })).status).toBe(422);
+    });
+  });
+
   it("deletes a project and stops routing to it", async () => {
     const s = slug();
     await createProject(s);
