@@ -11,6 +11,7 @@ import {
   type ResolvedContext,
   resolveContext,
 } from "./context.ts";
+import { discoverDirConfig } from "./dir-config.ts";
 import { CliError, reportError } from "./errors.ts";
 import { detectAgentContext } from "./harness/index.ts";
 import { parseIssueRef } from "./parse.ts";
@@ -64,6 +65,7 @@ export abstract class ApiCommand extends Command<CliContext> {
         env: this.context.env,
         config: this.config,
         remoteUrl: gitRemoteUrl(this.context.cwd),
+        dirConfig: discoverDirConfig(this.context.cwd, this.context.env),
       });
       if (!this.ctx.server) {
         throw new CliError(
@@ -123,7 +125,7 @@ export abstract class ProjectCommand extends ApiCommand {
     if (!this.ctx.project) {
       throw new CliError(
         "no project selected",
-        "pass -p/--project <slug>, set TODOU_PROJECT, or bind this repository with `todou project link <slug>`",
+        "pass -p/--project <slug>, set TODOU_PROJECT, run `todou project link <slug>`, or add a .todou.toml",
       );
     }
     return this.ctx.project;

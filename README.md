@@ -95,6 +95,12 @@ todou login https://todou.example
 # Bind this git repository to a server/project (stored in the user
 # config, not the repo), then work from anywhere inside it:
 todou project link my-project
+
+# No usable git remote? link writes a directory config instead —
+# .config/todou.toml or .todou.toml at the repo root (or cwd) — which
+# commands find by walking upward, stopping at repository roots, $HOME,
+# and filesystem boundaries. --local/--global force either behavior.
+cd ~/scratch/notes && todou project link my-project
 todou issue list --open
 todou issue create --title "Fix the potato" --body "It sprouted."
 todou issue view 1

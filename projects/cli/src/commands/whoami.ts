@@ -1,6 +1,7 @@
 import type { TodouClient } from "@todou/shared";
 import { Command } from "clipanion";
 import { ApiCommand } from "../api-command.ts";
+import { displayPath } from "../dir-config.ts";
 
 export class WhoamiCommand extends ApiCommand {
   static paths = [["whoami"]];
@@ -33,6 +34,23 @@ export class WhoamiCommand extends ApiCommand {
         break;
       default:
         break;
+    }
+    // "Why is this command hitting project X" is directory discovery's own
+    // debugging question, so whoami names the winning source (T-133).
+    if (this.ctx.project) {
+      const source =
+        this.ctx.projectSource === "env"
+          ? "TODOU_PROJECT"
+          : this.ctx.projectSource === "dir-config" && this.ctx.dirConfig
+            ? `directory config ${displayPath(this.ctx.dirConfig.path, this.context.cwd)}`
+            : this.ctx.projectSource === "binding"
+              ? `git binding ${this.ctx.remoteUrl}`
+              : null;
+      this.note(
+        source
+          ? `project: ${this.ctx.project} (${source})`
+          : `project: ${this.ctx.project}`,
+      );
     }
     // The deployment probe for new harness detectors: shows what a write
     // from this environment would report, without having to post one.

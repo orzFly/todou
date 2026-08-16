@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -917,7 +917,7 @@ describe("project link/unlink", () => {
   const dir = mkdtempSync(join(tmpdir(), "todou-link-"));
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  it("errors helpfully outside a repository", async () => {
+  it("writes a directory config outside a repository (T-133)", async () => {
     const { fetchImpl } = fakeFetch([
       ["GET", "/api/projects/todou", { id: 1, slug: "todou" }],
     ]);
@@ -926,8 +926,11 @@ describe("project link/unlink", () => {
       env: { ...loggedInEnv(), XDG_CONFIG_HOME: dir },
       cwd: dir,
     });
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("no usable git remote");
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain("linked ./.todou.toml");
+    // cwd here IS $XDG_CONFIG_HOME — a wall the walk never enters, so the
+    // command must say the file will not take effect.
+    expect(result.stderr).toContain("has no effect here");
   });
 
   it("link verifies the slug and writes the binding; unlink removes it", async () => {
@@ -968,13 +971,16 @@ describe("project link/unlink", () => {
     expect(loadCliConfig(env).bindings).toEqual([]);
   });
 
-  it("unlink reports a missing binding", async () => {
+  it("unlink reports when there is nothing to remove", async () => {
     saveCliConfig({ servers: {}, bindings: [] }, { XDG_CONFIG_HOME: dir });
+    const empty = join(dir, "empty");
+    mkdirSync(empty);
     const result = await runCli(["project", "unlink"], {
       env: { XDG_CONFIG_HOME: dir },
-      cwd: dir,
+      cwd: empty,
     });
     expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("nothing to unlink here");
     expect(loadCliConfig({ XDG_CONFIG_HOME: dir }).bindings).toEqual([]);
   });
 });

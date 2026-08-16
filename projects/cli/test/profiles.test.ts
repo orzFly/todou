@@ -47,6 +47,7 @@ function resolve(overrides: {
     env: overrides.env ?? {},
     config: overrides.config ?? config,
     remoteUrl: null,
+    dirConfig: null,
   });
 }
 
@@ -103,6 +104,7 @@ describe("token selection matrix", () => {
         bindings: [],
       },
       remoteUrl: null,
+      dirConfig: null,
     });
     expect(ctx.token).toBe("todou_pat_hermes");
     expect(ctx.tokenSource).toBe("auto-harness");
@@ -171,6 +173,7 @@ describe("token selection matrix", () => {
         bindings: [],
       },
       remoteUrl: null,
+      dirConfig: null,
     });
     expect(ctx.token).toBe("todou_pat_default");
     expect(ctx.tokenSource).toBe("default");
@@ -202,6 +205,7 @@ describe("token selection matrix", () => {
       env: {},
       config: { servers: {}, bindings: [] },
       remoteUrl: null,
+      dirConfig: null,
     });
     expect(ctx.server).toBeUndefined();
     expect(ctx.tokenSource).toBeNull();

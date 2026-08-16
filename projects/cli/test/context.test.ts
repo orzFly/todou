@@ -73,13 +73,16 @@ describe("resolveContext", () => {
       env: {},
       config,
       remoteUrl: "git@example.com:me/repo.git",
+      dirConfig: null,
     });
     expect(ctx).toEqual({
       server: "https://todou.example",
       token: "todou_pat_bound",
       tokenSource: "default",
       project: "todou",
+      projectSource: "binding",
       binding: config.bindings[0],
+      dirConfig: null,
       remoteUrl: "git@example.com:me/repo.git",
     });
   });
@@ -94,9 +97,11 @@ describe("resolveContext", () => {
       },
       config,
       remoteUrl: "git@example.com:me/repo.git",
+      dirConfig: null,
     });
     expect(ctx.server).toBe("https://flag.example");
     expect(ctx.project).toBe("flagged");
+    expect(ctx.projectSource).toBe("flag");
     expect(ctx.token).toBe("todou_pat_env");
   });
 
@@ -106,8 +111,10 @@ describe("resolveContext", () => {
       env: {},
       config,
       remoteUrl: "git@example.com:me/repo.git",
+      dirConfig: null,
     });
     expect(ctx.project).toBeUndefined();
+    expect(ctx.projectSource).toBeNull();
     expect(ctx.token).toBe("todou_pat_fallback");
   });
 
@@ -117,6 +124,7 @@ describe("resolveContext", () => {
       env: {},
       config,
       remoteUrl: null,
+      dirConfig: null,
     });
     expect(ctx.server).toBe("https://fallback.example");
     expect(ctx.token).toBe("todou_pat_fallback");
@@ -129,8 +137,80 @@ describe("resolveContext", () => {
       env: {},
       config: { servers: {}, bindings: [] },
       remoteUrl: null,
+      dirConfig: null,
     });
     expect(ctx.server).toBeUndefined();
     expect(ctx.token).toBeUndefined();
+  });
+});
+
+describe("resolveContext with a directory config", () => {
+  const dirConfig = {
+    path: "/work/scratch/.todou.toml",
+    project: "dirproj",
+    server: "https://todou.example",
+  };
+
+  it("beats the binding for both server and project", () => {
+    const ctx = resolveContext({
+      flags: {},
+      env: {},
+      config,
+      remoteUrl: "git@example.com:me/repo.git",
+      dirConfig,
+    });
+    expect(ctx.server).toBe("https://todou.example");
+    expect(ctx.project).toBe("dirproj");
+    expect(ctx.projectSource).toBe("dir-config");
+  });
+
+  it("replaces the binding outright: no server key means default_server", () => {
+    const ctx = resolveContext({
+      flags: {},
+      env: {},
+      config,
+      remoteUrl: "git@example.com:me/repo.git",
+      dirConfig: { path: "/work/scratch/.todou.toml", project: "dirproj" },
+    });
+    expect(ctx.server).toBe("https://fallback.example");
+    expect(ctx.token).toBe("todou_pat_fallback");
+    expect(ctx.project).toBe("dirproj");
+    expect(ctx.projectSource).toBe("dir-config");
+  });
+
+  it("is beaten by TODOU_PROJECT", () => {
+    const ctx = resolveContext({
+      flags: {},
+      env: { TODOU_PROJECT: "enved" },
+      config,
+      remoteUrl: null,
+      dirConfig,
+    });
+    expect(ctx.project).toBe("enved");
+    expect(ctx.projectSource).toBe("env");
+  });
+
+  it("does not leak its project onto a different server", () => {
+    const ctx = resolveContext({
+      flags: { server: "https://fallback.example" },
+      env: {},
+      config,
+      remoteUrl: "git@example.com:me/repo.git",
+      dirConfig,
+    });
+    expect(ctx.project).toBeUndefined();
+    expect(ctx.projectSource).toBeNull();
+  });
+
+  it("floats a server-less project onto the active server", () => {
+    const ctx = resolveContext({
+      flags: { server: "https://todou.example" },
+      env: {},
+      config,
+      remoteUrl: null,
+      dirConfig: { path: "/work/scratch/.todou.toml", project: "dirproj" },
+    });
+    expect(ctx.project).toBe("dirproj");
+    expect(ctx.projectSource).toBe("dir-config");
   });
 });

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import type { Binding, CliConfig, Env, ServerEntry } from "./config.ts";
 import { normalizeServer } from "./config.ts";
+import type { DirConfig } from "./dir-config.ts";
 import { CliError } from "./errors.ts";
 import { detectHarnessId } from "./harness/index.ts";
 
@@ -25,6 +26,11 @@ export function gitRemoteUrl(cwd: string): string | null {
   return git(cwd, ["remote", "get-url", names[0] as string]);
 }
 
+/** Root of the working tree containing `cwd`; null outside any repository. */
+export function gitToplevel(cwd: string): string | null {
+  return git(cwd, ["rev-parse", "--show-toplevel"]);
+}
+
 export type TokenSource =
   | "flag-profile"
   | "env-token"
@@ -41,6 +47,8 @@ export type TokenSource =
  */
 const SHARED_HARNESS_PROFILE = "harness";
 
+export type ProjectSource = "flag" | "env" | "dir-config" | "binding";
+
 export type ResolvedContext = {
   server?: string;
   token?: string;
@@ -48,7 +56,10 @@ export type ResolvedContext = {
   /** Profile name when tokenSource is a profile (incl. both auto rules). */
   tokenProfile?: string;
   project?: string;
+  /** Where `project` came from; null when it stayed unresolved. */
+  projectSource: ProjectSource | null;
   binding: Binding | null;
+  dirConfig: DirConfig | null;
   remoteUrl: string | null;
 };
 
@@ -125,16 +136,21 @@ export function resolveContext(input: {
   env: Env;
   config: CliConfig;
   remoteUrl: string | null;
+  dirConfig: DirConfig | null;
 }): ResolvedContext {
-  const { flags, env, config, remoteUrl } = input;
+  const { flags, env, config, remoteUrl, dirConfig } = input;
   const binding = remoteUrl
     ? (config.bindings.find((b) => b.remote === remoteUrl) ?? null)
     : null;
 
+  // A directory config replaces the binding as the local source outright:
+  // one local source at a time, never a blend of file and binding fields —
+  // so a file without a server key falls through to default_server, not to
+  // the binding's server.
   const server = normalizeIfSet(
     flags.server ||
       env.TODOU_SERVER ||
-      binding?.server ||
+      (dirConfig ? dirConfig.server : binding?.server) ||
       config.default_server,
   );
   const picked = pickToken(
@@ -143,17 +159,38 @@ export function resolveContext(input: {
     server,
     server ? config.servers[server] : undefined,
   );
-  // The bound project belongs to the bound server; when --server/TODOU_SERVER
-  // points elsewhere, silently reusing the slug could hit an unrelated
-  // project that happens to share it.
-  const project =
-    flags.project ||
-    env.TODOU_PROJECT ||
-    (binding && normalizeServer(binding.server) === server
+  // A local project pinned to a server belongs to that server; when
+  // --server/TODOU_SERVER points elsewhere, silently reusing the slug
+  // could hit an unrelated project that happens to share it. A file
+  // without a server key floats onto whatever server is active.
+  const localProject = dirConfig
+    ? dirConfig.server === undefined ||
+      normalizeServer(dirConfig.server) === server
+      ? dirConfig.project
+      : undefined
+    : binding && normalizeServer(binding.server) === server
       ? binding.project
-      : undefined);
+      : undefined;
+  const project = flags.project || env.TODOU_PROJECT || localProject;
+  const projectSource: ProjectSource | null = flags.project
+    ? "flag"
+    : env.TODOU_PROJECT
+      ? "env"
+      : localProject === undefined
+        ? null
+        : dirConfig
+          ? "dir-config"
+          : "binding";
 
-  return { server, ...picked, project, binding, remoteUrl };
+  return {
+    server,
+    ...picked,
+    project,
+    projectSource,
+    binding,
+    dirConfig,
+    remoteUrl,
+  };
 }
 
 function normalizeIfSet(origin: string | undefined): string | undefined {
