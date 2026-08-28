@@ -38,6 +38,7 @@ import type {
   ProjectCreateInput,
   ProjectUpdateInput,
   ReferenceConfig,
+  ReferenceDirectory,
   RefFormatSetInput,
   RevisionPage,
   SpecComments,
@@ -368,6 +369,8 @@ export class TodouClient {
 
   getReferenceConfig = (slug: string) =>
     this.request<ReferenceConfig>("GET", `/projects/${slug}/references/config`);
+  getReferenceDirectory = () =>
+    this.request<ReferenceDirectory>("GET", "/me/reference-directory");
   setReferenceFormat = (slug: string, input: RefFormatSetInput) =>
     this.request<ReferenceConfig>(
       "PUT",

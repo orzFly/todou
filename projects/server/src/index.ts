@@ -6,7 +6,10 @@ import { bootstrap } from "./bootstrap.ts";
 import { loadConfig, resolveS3Settings } from "./config.ts";
 import { DbRouter } from "./db/router.ts";
 import { projects } from "./db/system-schema.ts";
-import { startHousekeeping } from "./services/housekeeping.ts";
+import {
+  runStartupChores,
+  startHousekeeping,
+} from "./services/housekeeping.ts";
 import {
   copyMissing,
   enumerateBlobKeys,
@@ -60,6 +63,7 @@ class ServeCommand extends ConfiguredCommand {
       this.context.stdout.write(`todou server listening on :${info.port} 🥔\n`);
     });
     const stopHousekeeping = startHousekeeping(context.router.system());
+    await runStartupChores(context);
 
     await new Promise<void>((resolve) => {
       const beginShutdown = () => {

@@ -63,6 +63,10 @@ export function describeEvent(
     }
     case "referenced":
       return `referenced by ${formatRef(refPrefix, Number(payload.by_issue))}`;
+    // Self-contained on purpose: the source lives in another project, so
+    // this project's format would spell a number that means nothing here.
+    case "cross_referenced":
+      return `referenced by ${String(payload.by_project)}#${String(payload.by_issue)}`;
     case "attachment_added": {
       const attachment = payload.attachment as
         | { filename?: string }
@@ -115,6 +119,7 @@ export const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
   assigned: <UserPlusIcon className="size-3.5" />,
   unassigned: <UserMinusIcon className="size-3.5" />,
   referenced: <LinkIcon className="size-3.5" />,
+  cross_referenced: <LinkIcon className="size-3.5" />,
   attachment_added: <PaperclipIcon className="size-3.5" />,
   question_answered: <ListChecksIcon className="size-3.5 text-green-600" />,
   spec_pushed: <BookOpenTextIcon className="size-3.5" />,

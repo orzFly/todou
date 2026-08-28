@@ -7,6 +7,7 @@ import {
   MePrefsPatch,
   MeUpdateInput,
   ProjectSlug,
+  ReferenceDirectory,
   TokenCreated,
   TokenCreateInput,
   TokenListItem,
@@ -16,6 +17,7 @@ import { ForbiddenError, ValidationFailedError } from "../errors.ts";
 import { readPrefs, updatePrefs } from "../services/prefs.ts";
 import { deleteAvatar, setAvatar, updateProfile } from "../services/profile.ts";
 import { bulkMarkRead, markIssueRead } from "../services/reads.ts";
+import { referenceDirectory } from "../services/reference-directory.ts";
 import { issueToken, listTokens, revokeToken } from "../services/tokens.ts";
 import { ownerRefOf, toMe } from "../services/users.ts";
 
@@ -174,6 +176,20 @@ const bulkReadRoute = createRoute({
   responses: { 204: { description: "Positions advanced" } },
 });
 
+const referenceDirectoryRoute = createRoute({
+  method: "get",
+  path: "/me/reference-directory",
+  summary:
+    "Prefix directory for resolving bare PREFIX-N references, trimmed to " +
+    "the projects I can read",
+  responses: {
+    200: {
+      description: "Holding intervals, plus the globally contested ones",
+      content: { "application/json": { schema: ReferenceDirectory } },
+    },
+  },
+});
+
 const revokeTokenRoute = createRoute({
   method: "delete",
   path: "/me/tokens/{id}",
@@ -263,6 +279,11 @@ export function meRoutes() {
   app.openapi(bulkReadRoute, async (c) => {
     await bulkMarkRead(c.get("appCtx"), c.get("user"), c.req.valid("json"));
     return c.body(null, 204);
+  });
+
+  app.openapi(referenceDirectoryRoute, async (c) => {
+    const ctx = c.get("appCtx");
+    return c.json(await referenceDirectory(ctx, c.get("user")), 200);
   });
 
   app.openapi(revokeTokenRoute, async (c) => {

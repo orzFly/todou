@@ -1,6 +1,8 @@
 import { and, isNotNull, lte, or } from "drizzle-orm";
+import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { sessions, tokens } from "../db/system-schema.ts";
+import { syncRefPrefixMirror } from "./reference-directory.ts";
 
 /** Hourly is plenty: dead rows are inert (auth re-checks expiry/revocation
  * on every request) — the sweep only reclaims storage. */
@@ -31,6 +33,24 @@ export async function sweepAuthRows(
     )
     .returning({ id: tokens.id });
   return { sessions: deadSessions.length, tokens: deadTokens.length };
+}
+
+/**
+ * One-shot boot chores. The prefix mirror is rebuilt rather than trusted:
+ * it lives in a different database from the histories it copies, so a
+ * crash between the two writes is repaired here and nowhere else.
+ * Failure is logged, never fatal — a stale mirror only costs bare-prefix
+ * resolution, and the server is still useful without it.
+ */
+export async function runStartupChores(ctx: AppContext): Promise<void> {
+  try {
+    const added = await syncRefPrefixMirror(ctx);
+    if (added > 0) {
+      console.log(`housekeeping: mirrored ${added} reference-format row(s)`);
+    }
+  } catch (err) {
+    console.error("housekeeping: reference-prefix mirror sync failed", err);
+  }
 }
 
 /**

@@ -211,6 +211,7 @@ export const issueEvents = pgTable(
         "assigned",
         "unassigned",
         "referenced",
+        "cross_referenced",
         "attachment_added",
         "question_answered",
         "spec_pushed",

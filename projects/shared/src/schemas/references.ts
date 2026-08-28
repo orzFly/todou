@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Id, Timestamp } from "./common.ts";
+import { ProjectSlug } from "./project.ts";
 
 /** Internal issue reference prefix: null = `#N`, 'T' = `T-N`. */
 export const InternalRefPrefix = z
@@ -50,6 +51,34 @@ export const ReferenceConfig = z.object({
   autolinks: z.array(Autolink),
 });
 export type ReferenceConfig = z.infer<typeof ReferenceConfig>;
+
+const PrefixInterval = { from: Timestamp, to: Timestamp.nullable() };
+
+export const PrefixClaimEntry = z.object({
+  prefix: z.string(),
+  slug: ProjectSlug,
+  ...PrefixInterval,
+});
+export type PrefixClaimEntry = z.infer<typeof PrefixClaimEntry>;
+
+/** A window several projects held at once — no slug, so no holder is leaked. */
+export const ContestedInterval = z.object({
+  prefix: z.string(),
+  ...PrefixInterval,
+});
+export type ContestedInterval = z.infer<typeof ContestedInterval>;
+
+/**
+ * What a client needs to resolve a bare `PREFIX-N` (T-150), trimmed to the
+ * viewer's readable projects. `since` null means the deployment has no
+ * cutoff recorded, which reads as "cross-project grammar off".
+ */
+export const ReferenceDirectory = z.object({
+  since: Timestamp.nullable(),
+  entries: z.array(PrefixClaimEntry),
+  contested: z.array(ContestedInterval),
+});
+export type ReferenceDirectory = z.infer<typeof ReferenceDirectory>;
 
 export const RefFormatSetInput = z.strictObject({
   prefix: InternalRefPrefix,
