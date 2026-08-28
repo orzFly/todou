@@ -210,6 +210,16 @@ export class SpecPullCommand extends ProjectCommand {
   }
 }
 
+/**
+ * One end of an anchor, `line` or `line.column` (T-142). The compact form
+ * keeps the CLI's own `path:5-7` grammar rather than the web's `L5:12–34`:
+ * this string is what agents grep and paste back.
+ */
+function at(line: number, col: number | null | undefined): string {
+  // A server older than T-142 sends no column key at all, not a null.
+  return col === null || col === undefined ? `${line}` : `${line}.${col}`;
+}
+
 export class SpecCommentsCommand extends ProjectCommand {
   static paths = [["spec", "comments"]];
   static usage = Command.Usage({
@@ -251,9 +261,9 @@ export class SpecCommentsCommand extends ProjectCommand {
       ];
       for (const item of items) {
         const anchor =
-          item.anchor.line_start === null
+          item.anchor.line_start === null || item.anchor.line_end === null
             ? `${item.anchor.path} (file)`
-            : `${item.anchor.path}:${item.anchor.line_start}-${item.anchor.line_end}`;
+            : `${item.anchor.path}:${at(item.anchor.line_start, item.anchor.col_start)}-${at(item.anchor.line_end, item.anchor.col_end)}`;
         const flags = [
           item.resolved === null
             ? "unresolved"

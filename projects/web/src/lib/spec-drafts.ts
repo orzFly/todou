@@ -16,6 +16,12 @@ const Draft = z.object({
     // Null = file-level comment (T-61).
     line_start: z.number().int().positive().nullable(),
     line_end: z.number().int().positive().nullable(),
+    // Columns (T-142) narrow the anchor inside those lines. Nullish, not
+    // nullable: drafts already sitting in localStorage have no such keys
+    // and must keep parsing — a schema miss silently drops the whole
+    // review the reviewer has been writing.
+    col_start: z.number().int().positive().nullish().default(null),
+    col_end: z.number().int().positive().nullish().default(null),
   }),
   /** Client-side display copy; the server re-quotes authoritatively. */
   quote: z.string(),

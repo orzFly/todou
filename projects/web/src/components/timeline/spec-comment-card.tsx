@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import type { SpecCommentComponent } from "@todou/shared";
+import { formatAnchorRange, type SpecCommentComponent } from "@todou/shared";
 import { CheckIcon, FileTextIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -58,11 +58,7 @@ export function SpecCommentAnchorCard({
 
   // Null lines = file-level comment (T-61): no quote and no line context.
   const fileLevel = anchor.line_start === null || anchor.line_end === null;
-  const lines = fileLevel
-    ? "file"
-    : anchor.line_end === anchor.line_start
-      ? `L${anchor.line_start}`
-      : `L${anchor.line_start}–${anchor.line_end}`;
+  const lines = formatAnchorRange(anchor);
 
   return (
     <div className="mb-2 overflow-hidden rounded-md border">

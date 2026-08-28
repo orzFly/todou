@@ -326,6 +326,25 @@ describe("spec comments", () => {
         current_line_start: 5,
         current_line_end: 5,
       },
+      {
+        comment_id: 419,
+        author: { id: 1, login: "user" },
+        created_at: "2026-08-12T06:12:00.000Z",
+        body: "This clause.",
+        anchor: {
+          path: "design.md",
+          version: 2,
+          line_start: 7,
+          line_end: 7,
+          col_start: 12,
+          col_end: 34,
+          quote: "half of a sentence",
+        },
+        resolved: null,
+        outdated: false,
+        current_line_start: 7,
+        current_line_end: 7,
+      },
     ],
   };
 
@@ -345,6 +364,9 @@ describe("spec comments", () => {
     expect(run.stdout).toContain(
       "#415 notes/phases.md:5-5 (v2) by user · resolved by claude-agent",
     );
+    // Column-anchored comments spell `line.column` on each end (T-142);
+    // the two above carry no columns and keep the plain line form.
+    expect(run.stdout).toContain("#419 design.md:7.12-7.34 (v2) by user");
   });
 
   it("--unresolved and --file filter locally", async () => {
@@ -356,8 +378,9 @@ describe("spec comments", () => {
       { fetchImpl, env: ENV },
     );
     const data = JSON.parse(run.stdout);
-    expect(data.items).toHaveLength(1);
-    expect(data.items[0].comment_id).toBe(412);
+    expect(data.items.map((i: { comment_id: number }) => i.comment_id)).toEqual(
+      [412, 419],
+    );
 
     const byFile = await runCli(
       ["spec", "comments", "23", "--file", "notes/phases.md", "--json"],

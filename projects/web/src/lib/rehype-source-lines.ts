@@ -4,6 +4,12 @@ import type { Element, Root } from "hast";
  * Block-level tags that make useful annotation anchors. Inline elements are
  * skipped: a selection maps to its closest block, which is the granularity
  * spec comments anchor at (redline did the same via sourcepos).
+ *
+ * `tr` is on the list even though it nests inside `table` (T-142). A GFM
+ * table row is exactly one source line, so stamping rows is what lets one
+ * edited cell highlight its own row instead of washing the whole table
+ * green; the table keeps its stamp as the fallback for table-wide
+ * selections. Consumers resolve nesting by taking the innermost match.
  */
 const BLOCK_TAGS = new Set([
   "p",
@@ -17,6 +23,7 @@ const BLOCK_TAGS = new Set([
   "pre",
   "blockquote",
   "table",
+  "tr",
   "hr",
 ]);
 

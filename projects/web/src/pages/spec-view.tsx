@@ -16,6 +16,7 @@ import {
   useSearch,
 } from "@tanstack/react-router";
 import {
+  formatAnchorRange,
   formatRef,
   type SpecCommentItem,
   type SpecFile,
@@ -114,11 +115,29 @@ function writeDiffWrap(wrap: boolean) {
   }
 }
 
-function quoteOf(body: string, start: number, end: number): string {
-  return body
-    .split("\n")
-    .slice(start - 1, end)
-    .join("\n");
+/**
+ * Display copy of the anchored source. The server re-cuts it
+ * authoritatively on submit; this has to agree with that cut, columns and
+ * all, or the composer would preview something else than it stages.
+ */
+function quoteOf(
+  body: string,
+  start: number,
+  end: number,
+  colStart: number | null = null,
+  colEnd: number | null = null,
+): string {
+  const lines = body.split("\n").slice(start - 1, end);
+  const last = lines.length - 1;
+  if (colStart !== null && colEnd !== null && last >= 0) {
+    if (last === 0) {
+      lines[0] = (lines[0] ?? "").slice(colStart - 1, colEnd);
+    } else {
+      lines[0] = (lines[0] ?? "").slice(colStart - 1);
+      lines[last] = (lines[last] ?? "").slice(0, colEnd);
+    }
+  }
+  return lines.join("\n");
 }
 
 function SpecViewBody({
@@ -165,14 +184,18 @@ function SpecViewBody({
     baseline.data !== undefined &&
     selected !== undefined &&
     !baseline.data.files.some((f) => f.path === selected.path);
-  const changedRanges = useMemo(() => {
+  // The baseline body drives BOTH aids: line ranges for the block-level
+  // wash and the ↑↓ nav, and the word-level diff inside those blocks (T-142).
+  const baselineBody = useMemo(() => {
     if (!highlightEnabled || selected === undefined || !baseline.data) {
-      return [];
+      return undefined;
     }
-    const old = baseline.data.files.find((f) => f.path === selected.path);
-    if (old === undefined) return [];
-    return changedLineRanges(old.body, selected.body);
+    return baseline.data.files.find((f) => f.path === selected.path)?.body;
   }, [highlightEnabled, selected, baseline.data]);
+  const changedRanges = useMemo(() => {
+    if (baselineBody === undefined || selected === undefined) return [];
+    return changedLineRanges(baselineBody, selected.body);
+  }, [baselineBody, selected]);
 
   // Files of the viewed version that differ from the baseline (new or
   // modified), in sidebar order — the rail the change navigation rides
@@ -322,6 +345,8 @@ function SpecViewBody({
           item,
           start: item.anchor.line_start,
           end: item.anchor.line_end,
+          colStart: item.anchor.col_start,
+          colEnd: item.anchor.col_end,
         });
       } else if (
         version === comments.data.current_version &&
@@ -335,6 +360,11 @@ function SpecViewBody({
           item,
           start: item.current_line_start,
           end: item.current_line_end,
+          // A successful remap means the anchored lines read the same, so
+          // the stored columns still cut them correctly (T-142) — there is
+          // no separate current_col_* to carry.
+          colStart: item.anchor.col_start,
+          colEnd: item.anchor.col_end,
         });
       } else {
         unplaced.push(item);
@@ -352,6 +382,8 @@ function SpecViewBody({
         draft,
         start: draft.anchor.line_start,
         end: draft.anchor.line_end,
+        colStart: draft.anchor.col_start,
+        colEnd: draft.anchor.col_end,
       });
     }
     return { displayed, unplaced, fileLevel };
@@ -490,6 +522,8 @@ function SpecViewBody({
                 version,
                 lineStart: null,
                 lineEnd: null,
+                colStart: null,
+                colEnd: null,
                 quote: "",
               })
             }
@@ -607,6 +641,7 @@ function SpecViewBody({
                   slug={slug}
                   issueNumber={issueNumber}
                   body={selected.body}
+                  baselineBody={baselineBody}
                   refDate={
                     spec.versions.find((v) => v.number === version)?.created_at
                   }
@@ -618,10 +653,14 @@ function SpecViewBody({
                       version,
                       lineStart: range.lineStart,
                       lineEnd: range.lineEnd,
+                      colStart: range.colStart,
+                      colEnd: range.colEnd,
                       quote: quoteOf(
                         selected.body,
                         range.lineStart,
                         range.lineEnd,
+                        range.colStart,
+                        range.colEnd,
                       ),
                     })
                   }
@@ -653,7 +692,7 @@ function SpecViewBody({
       {staging !== null && (
         <SpecComposer
           // A fresh anchor gets a fresh body.
-          key={`${staging.path}:${staging.lineStart}-${staging.lineEnd}:${staging.version}`}
+          key={`${staging.path}:${staging.lineStart}.${staging.colStart}-${staging.lineEnd}.${staging.colEnd}:${staging.version}`}
           staging={staging}
           onCancel={() => setStaging(null)}
           onStage={(body) => {
@@ -663,6 +702,8 @@ function SpecViewBody({
                 version: staging.version,
                 line_start: staging.lineStart,
                 line_end: staging.lineEnd,
+                col_start: staging.colStart,
+                col_end: staging.colEnd,
               },
               quote: staging.quote,
               body,
@@ -707,14 +748,7 @@ function UnplacedComment({
       <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
         <UserChip user={item.author} />
         <span>
-          {item.anchor.line_start === null
-            ? "file"
-            : `L${item.anchor.line_start}${
-                item.anchor.line_end !== item.anchor.line_start
-                  ? `–${item.anchor.line_end}`
-                  : ""
-              }`}{" "}
-          · v{item.anchor.version}
+          {formatAnchorRange(item.anchor)} · v{item.anchor.version}
         </span>
         {item.outdated && (
           <span className="rounded-full border px-1.5 text-muted-foreground">
@@ -874,6 +908,10 @@ function AnnotatedFileDiff({
           version,
           lineStart,
           lineEnd,
+          // pierre selects by line number; an in-line anchor comes from the
+          // rendered view (T-142 §9).
+          colStart: null,
+          colEnd: null,
           quote: quoteOf(body, lineStart, lineEnd),
         });
       },
@@ -933,14 +971,7 @@ function DiffAnnotation({ item }: { item: SpecCommentItem }) {
       <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
         <UserChip user={item.author} />
         <span>
-          {item.anchor.line_start === null
-            ? "file"
-            : `L${item.anchor.line_start}${
-                item.anchor.line_end !== item.anchor.line_start
-                  ? `–${item.anchor.line_end}`
-                  : ""
-              }`}{" "}
-          · v{item.anchor.version}
+          {formatAnchorRange(item.anchor)} · v{item.anchor.version}
         </span>
         {item.resolved !== null && (
           <span className="text-green-700 dark:text-green-400">resolved</span>

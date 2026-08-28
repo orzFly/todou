@@ -1,3 +1,4 @@
+import { formatAnchorRange } from "@todou/shared";
 import { FileTextIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,9 @@ export type ComposerStaging = {
   /** Null = file-level comment (T-61). */
   lineStart: number | null;
   lineEnd: number | null;
+  /** Null = the whole lines, as every pre-T-142 anchor means. */
+  colStart: number | null;
+  colEnd: number | null;
   quote: string;
 };
 
@@ -34,9 +38,12 @@ export function SpecComposer({
   const fileLevel = staging.lineStart === null;
   const lines = fileLevel
     ? "file comment"
-    : staging.lineStart === staging.lineEnd
-      ? `L${staging.lineStart}`
-      : `L${staging.lineStart}–${staging.lineEnd}`;
+    : formatAnchorRange({
+        line_start: staging.lineStart,
+        line_end: staging.lineEnd,
+        col_start: staging.colStart,
+        col_end: staging.colEnd,
+      });
   const quoteLines = staging.quote === "" ? [] : staging.quote.split("\n");
   const shown = quoteLines.slice(0, QUOTE_PREVIEW_LINES);
   const hidden = quoteLines.length - shown.length;

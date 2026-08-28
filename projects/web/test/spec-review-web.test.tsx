@@ -142,11 +142,41 @@ describe("blockForLine", () => {
 });
 
 describe("useSpecReviewDrafts", () => {
+  it("still reads drafts staged before columns existed (T-142)", () => {
+    localStorage.setItem(
+      "todou-spec-review:legacy:7",
+      JSON.stringify([
+        {
+          id: "d1",
+          anchor: {
+            path: "design.md",
+            version: 1,
+            line_start: 3,
+            line_end: 3,
+          },
+          quote: "…",
+          body: "from yesterday",
+        },
+      ]),
+    );
+    const hook = renderHook(() => useSpecReviewDrafts("legacy", 7));
+    expect(hook.result.current.drafts).toHaveLength(1);
+    expect(hook.result.current.drafts[0]?.anchor.col_start).toBeNull();
+    expect(hook.result.current.drafts[0]?.body).toBe("from yesterday");
+  });
+
   it("persists drafts per issue across hook instances", () => {
     const first = renderHook(() => useSpecReviewDrafts("p", 23));
     act(() => {
       first.result.current.add({
-        anchor: { path: "design.md", version: 1, line_start: 3, line_end: 4 },
+        anchor: {
+          path: "design.md",
+          version: 1,
+          line_start: 3,
+          line_end: 4,
+          col_start: null,
+          col_end: null,
+        },
         quote: "…",
         body: "draft one",
       });
@@ -176,6 +206,8 @@ describe("SpecCommentAnchorCard", () => {
       version: 2,
       line_start: 3,
       line_end: 4,
+      col_start: null,
+      col_end: null,
       quote: "Anchors point at…\nResolve is one-way.",
     },
   };
@@ -244,6 +276,8 @@ describe("ReviewSubmitDialog", () => {
               version: 3,
               line_start: 3,
               line_end: 4,
+              col_start: null,
+              col_end: null,
             },
             quote: "…",
             body: "Which diff library?",
@@ -270,6 +304,70 @@ describe("ReviewSubmitDialog", () => {
         {
           anchor: { path: "design.md", version: 3, line_start: 3, line_end: 4 },
           body: "Which diff library?",
+        },
+      ],
+    });
+  });
+
+  it("sends columns when the draft carries them (T-142)", async () => {
+    const posts: Array<{ body: unknown }> = [];
+    vi.stubGlobal("fetch", async (_input: unknown, init?: RequestInit) => {
+      posts.push({ body: JSON.parse(String(init?.body)) });
+      return Response.json(
+        {
+          event_id: 9,
+          version: 3,
+          verdict: "approve",
+          summary_comment_id: null,
+          comment_ids: [412],
+        },
+        { status: 201 },
+      );
+    });
+
+    const onSubmitted = vi.fn();
+    const view = renderWithProviders(
+      <ReviewSubmitDialog
+        slug="p"
+        issueNumber={23}
+        currentVersion={3}
+        drafts={[
+          {
+            id: "d1",
+            anchor: {
+              path: "design.md",
+              version: 3,
+              line_start: 5,
+              line_end: 5,
+              col_start: 12,
+              col_end: 34,
+            },
+            quote: "half a sentence",
+            body: "this clause",
+          },
+        ]}
+        open
+        onClose={() => {}}
+        onSubmitted={onSubmitted}
+      />,
+    );
+
+    expect((await view.findByText(/design\.md/)).textContent).toContain(
+      "L5:12–34",
+    );
+    fireEvent.click(view.getByText("Approve"));
+    await waitFor(() => expect(onSubmitted).toHaveBeenCalled());
+    expect(posts[0]?.body).toMatchObject({
+      comments: [
+        {
+          anchor: {
+            path: "design.md",
+            version: 3,
+            line_start: 5,
+            line_end: 5,
+            col_start: 12,
+            col_end: 34,
+          },
         },
       ],
     });

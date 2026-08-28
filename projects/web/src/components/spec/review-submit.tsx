@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { SpecReviewVerdict } from "@todou/shared";
+import { formatAnchorRange, type SpecReviewVerdict } from "@todou/shared";
 import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
@@ -57,6 +57,10 @@ export function ReviewSubmitDialog({
                   line_end: d.anchor.line_end,
                 }
               : {}),
+            // Columns follow the same omit-rather-than-null rule (T-142).
+            ...(d.anchor.col_start !== null && d.anchor.col_end !== null
+              ? { col_start: d.anchor.col_start, col_end: d.anchor.col_end }
+              : {}),
           },
           body: d.body,
         })),
@@ -103,11 +107,7 @@ export function ReviewSubmitDialog({
                 <span className="font-mono">
                   {draft.anchor.path}
                   {draft.anchor.line_start !== null &&
-                    `:${draft.anchor.line_start}${
-                      draft.anchor.line_end !== draft.anchor.line_start
-                        ? `–${draft.anchor.line_end}`
-                        : ""
-                    }`}{" "}
+                    ` ${formatAnchorRange(draft.anchor)}`}{" "}
                   (v{draft.anchor.version}
                   {draft.anchor.line_start === null && ", file"})
                 </span>{" "}

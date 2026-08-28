@@ -957,6 +957,71 @@ diffs-container {
     );
   }
 
+  /* Word-level marks inside those blocks (T-142). The block wash says
+     "something here changed"; these say what. Denser mixes than the block
+     colours so they read on top of them, and all derived from the same
+     tokens, so light and dark follow along without a second ruleset. */
+  .markdown-body ins.spec-ins {
+    text-decoration: none;
+    border-radius: var(--radius-sm);
+    padding: 0 0.1em;
+    background-color: color-mix(
+      in oklab,
+      var(--color-emerald-500) 24%,
+      transparent
+    );
+  }
+  .markdown-body del.spec-del {
+    border-radius: var(--radius-sm);
+    padding: 0 0.1em;
+    text-decoration-thickness: 1px;
+    background-color: color-mix(
+      in oklab,
+      var(--color-red-500) 16%,
+      transparent
+    );
+    color: color-mix(in oklab, var(--foreground) 65%, var(--color-red-500));
+  }
+  /* Structural removals — a whole paragraph or table row — have no line
+     left to strike through, so they degrade to a marker that carries the
+     removed source in its tooltip. */
+  .markdown-body del.spec-del-block {
+    display: block;
+    margin: 0.35rem 0;
+    padding: 0.1rem 0.5rem;
+    border-left: 3px solid
+      color-mix(in oklab, var(--color-red-500) 60%, transparent);
+    border-radius: var(--radius-sm);
+    background-color: color-mix(
+      in oklab,
+      var(--color-red-500) 10%,
+      transparent
+    );
+    color: color-mix(in oklab, var(--foreground) 55%, var(--color-red-500));
+    font-size: 0.85em;
+    text-decoration-thickness: 1px;
+  }
+  .markdown-body mark.spec-mark-comment,
+  .markdown-body mark.spec-mark-draft {
+    color: inherit;
+    border-radius: var(--radius-sm);
+    padding: 0 0.1em;
+  }
+  .markdown-body mark.spec-mark-comment {
+    background-color: color-mix(
+      in oklab,
+      var(--color-amber-500) 30%,
+      transparent
+    );
+  }
+  .markdown-body mark.spec-mark-draft {
+    background-color: color-mix(
+      in oklab,
+      var(--color-indigo-500) 26%,
+      transparent
+    );
+  }
+
   /* Code styling stays intentionally shallow: T-31 swaps <pre>/<code>
      for pierre CodeView, and these rules must be trivial to delete. */
   .markdown-body code {

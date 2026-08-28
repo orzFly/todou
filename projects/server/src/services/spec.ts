@@ -297,11 +297,31 @@ export async function getSpecFiles(
 
 const QUOTE_LIMIT = 2000;
 
-function quoteLines(body: string, start: number, end: number): string {
-  const quote = body
-    .split("\n")
-    .slice(start - 1, end)
-    .join("\n");
+/**
+ * The anchored source, verbatim. Columns (T-142) trim the ends: the first
+ * line starts at `colStart`, the last ends at `colEnd`, everything between
+ * stays whole — the same shape a browser selection has. Offsets are 1-based
+ * inclusive UTF-16 code units, which is exactly `String.prototype.slice`'s
+ * unit, so the quote the reviewer saw and the quote we store cannot drift.
+ */
+function quoteLines(
+  body: string,
+  start: number,
+  end: number,
+  colStart: number | null = null,
+  colEnd: number | null = null,
+): string {
+  const lines = body.split("\n").slice(start - 1, end);
+  const last = lines.length - 1;
+  if (colStart !== null && colEnd !== null && last >= 0) {
+    if (last === 0) {
+      lines[0] = (lines[0] ?? "").slice(colStart - 1, colEnd);
+    } else {
+      lines[0] = (lines[0] ?? "").slice(colStart - 1);
+      lines[last] = (lines[last] ?? "").slice(0, colEnd);
+    }
+  }
+  const quote = lines.join("\n");
   return quote.length > QUOTE_LIMIT ? `${quote.slice(0, QUOTE_LIMIT)}…` : quote;
 }
 
@@ -436,13 +456,29 @@ export async function submitSpecReview(
       // and nothing to quote — the anchor is the file itself.
       const lineStart = comment.anchor.line_start ?? null;
       const lineEnd = comment.anchor.line_end ?? null;
+      let colStart = comment.anchor.col_start ?? null;
+      let colEnd = comment.anchor.col_end ?? null;
       if (lineStart !== null && lineEnd !== null) {
-        const lineCount = body.split("\n").length;
-        if (lineEnd > lineCount) {
+        const lines = body.split("\n");
+        if (lineEnd > lines.length) {
           throw new ValidationFailedError(
-            `anchor ${comment.anchor.path}:${lineStart}-${lineEnd} exceeds the file (${lineCount} lines in v${comment.anchor.version})`,
+            `anchor ${comment.anchor.path}:${lineStart}-${lineEnd} exceeds the file (${lines.length} lines in v${comment.anchor.version})`,
           );
         }
+        if (colStart !== null && colEnd !== null) {
+          const startLen = (lines[lineStart - 1] ?? "").length;
+          const endLen = (lines[lineEnd - 1] ?? "").length;
+          if (colStart > startLen || colEnd > endLen) {
+            throw new ValidationFailedError(
+              `anchor ${comment.anchor.path}:${lineStart}.${colStart}-${lineEnd}.${colEnd} exceeds the anchored lines (${startLen} and ${endLen} characters in v${comment.anchor.version})`,
+            );
+          }
+        }
+      } else {
+        // A file-level anchor cannot carry columns; the schema already
+        // rejects that, so this only guards a future caller that bypasses it.
+        colStart = null;
+        colEnd = null;
       }
       anchored.push({
         anchor: {
@@ -450,9 +486,11 @@ export async function submitSpecReview(
           version: comment.anchor.version,
           line_start: lineStart,
           line_end: lineEnd,
+          col_start: colStart,
+          col_end: colEnd,
           quote:
             lineStart !== null && lineEnd !== null
-              ? quoteLines(body, lineStart, lineEnd)
+              ? quoteLines(body, lineStart, lineEnd, colStart, colEnd)
               : "",
         },
         body: comment.body,
@@ -698,7 +736,15 @@ export async function listSpecComments(
   const items: SpecCommentItem[] = [];
   for (const row of rows) {
     if (row.component?.type !== "spec_comment") continue;
-    const anchor = row.component.anchor;
+    // Anchors stored before T-142 have no column keys at all — the JSONB is
+    // whatever was written that day, and drizzle casts rather than parses.
+    // Normalizing here is what makes every response carry the same shape.
+    const stored = row.component.anchor;
+    const anchor: SpecCommentAnchor = {
+      ...stored,
+      col_start: stored.col_start ?? null,
+      col_end: stored.col_end ?? null,
+    };
     const author = refs.get(row.authorId);
     if (!author) throw new Error("author ref missing");
 

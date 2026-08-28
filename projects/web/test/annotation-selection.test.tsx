@@ -84,7 +84,12 @@ describe("AnnotatedMarkdown floating button (T-60 root cause B)", () => {
     expect(view.queryByText(/Comment L1/)).not.toBeNull();
 
     fireEvent.click(button);
-    expect(onStage).toHaveBeenCalledWith({ lineStart: 1, lineEnd: 1 });
+    expect(onStage).toHaveBeenCalledWith({
+      lineStart: 1,
+      lineEnd: 1,
+      colStart: null,
+      colEnd: null,
+    });
   });
 
   it("still clears the button on a genuine collapsed-selection mouseup", async () => {
@@ -115,6 +120,137 @@ describe("AnnotatedMarkdown floating button (T-60 root cause B)", () => {
     fireEvent.mouseUp(container.querySelector("p[data-loc]") as Element);
     await waitFor(() => {
       expect(view.queryByText(/Comment L1/)).toBeNull();
+    });
+  });
+});
+
+// T-142: a selection that stops inside a line anchors to the columns it
+// actually covers, instead of claiming the whole block.
+describe("AnnotatedMarkdown column anchors (T-142)", () => {
+  async function stageSelection(
+    body: string,
+    pick: (container: HTMLElement) => { node: Node; from: number; to: number },
+  ) {
+    const onStage = vi.fn();
+    const view = renderWithProviders(
+      <AnnotatedMarkdown
+        slug="p"
+        issueNumber={1}
+        body={body}
+        annotations={[]}
+        onStage={onStage}
+        onRemoveDraft={() => {}}
+        onResolve={() => {}}
+      />,
+    );
+    const container = await waitFor(() => {
+      const el = view.getByTestId("annotated-markdown");
+      if (!el.querySelector("[data-loc]")) throw new Error("not rendered");
+      return el;
+    });
+    const { node, from, to } = pick(container);
+    const range = document.createRange();
+    range.setStart(node, from);
+    range.setEnd(node, to);
+    const selection = window.getSelection();
+    if (!selection) throw new Error("no selection support");
+    selection.removeAllRanges();
+    selection.addRange(range);
+    fireEvent.mouseUp(container);
+    const button = await view.findByText(/Comment L/);
+    return { view, container, onStage, button };
+  }
+
+  it("anchors to the selected columns inside a paragraph", async () => {
+    const { onStage, button } = await stageSelection(
+      "The quick brown fox jumps.\n",
+      (container) => {
+        const node = container.querySelector("p[data-loc]")?.firstChild;
+        if (!node) throw new Error("no paragraph");
+        return { node, from: 4, to: 9 };
+      },
+    );
+    expect(button.textContent).toContain("L1:5–9");
+    fireEvent.click(button);
+    expect(onStage).toHaveBeenCalledWith({
+      lineStart: 1,
+      lineEnd: 1,
+      colStart: 5,
+      colEnd: 9,
+    });
+  });
+
+  it("anchors inside one table cell, on that row's source line", async () => {
+    const { onStage, button } = await stageSelection(
+      "| a | b |\n| --- | --- |\n| one | two |\n",
+      (container) => {
+        const cells = container.querySelectorAll("tbody td");
+        const node = cells[1]?.firstChild;
+        if (!node) throw new Error("no second cell");
+        return { node, from: 0, to: 3 };
+      },
+    );
+    fireEvent.click(button);
+    // "| one | two |" — the word "two" occupies columns 9 through 11.
+    expect(onStage).toHaveBeenCalledWith({
+      lineStart: 3,
+      lineEnd: 3,
+      colStart: 9,
+      colEnd: 11,
+    });
+  });
+
+  it("spans the whole line when the selection does", async () => {
+    const { onStage, button } = await stageSelection(
+      "intro\n\nsecond paragraph here\n",
+      (container) => {
+        const node =
+          container.querySelectorAll("p[data-loc]")[1]?.firstChild ?? null;
+        if (!node) throw new Error("no second paragraph");
+        return { node, from: 0, to: "second paragraph here".length };
+      },
+    );
+    fireEvent.click(button);
+    expect(onStage).toHaveBeenCalledWith({
+      lineStart: 3,
+      lineEnd: 3,
+      colStart: 1,
+      colEnd: 21,
+    });
+  });
+
+  it("falls back to lines for a selection anchored on an element", async () => {
+    const onStage = vi.fn();
+    const view = renderWithProviders(
+      <AnnotatedMarkdown
+        slug="p"
+        issueNumber={1}
+        body={"Alpha beta gamma.\n"}
+        annotations={[]}
+        onStage={onStage}
+        onRemoveDraft={() => {}}
+        onResolve={() => {}}
+      />,
+    );
+    const container = await waitFor(() => {
+      const el = view.getByTestId("annotated-markdown");
+      if (!el.querySelector("p[data-loc]")) throw new Error("not rendered");
+      return el;
+    });
+    const p = container.querySelector("p[data-loc]");
+    if (!p) throw new Error("no paragraph");
+    const range = document.createRange();
+    range.selectNodeContents(p);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    fireEvent.mouseUp(container);
+    fireEvent.click(await view.findByText(/Comment L1/));
+    expect(onStage).toHaveBeenCalledWith({
+      lineStart: 1,
+      lineEnd: 1,
+      colStart: null,
+      colEnd: null,
     });
   });
 });

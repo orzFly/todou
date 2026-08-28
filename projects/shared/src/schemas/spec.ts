@@ -150,6 +150,12 @@ export type SpecReviewPayload = z.infer<typeof SpecReviewPayload>;
  * What a reviewer submits: where the comment hangs. Line numbers are
  * 1-based inclusive source lines; omitting BOTH makes it a file-level
  * comment (T-61) — one line without the other is rejected.
+ *
+ * Columns (T-142) narrow the anchor inside those lines: 1-based inclusive
+ * UTF-16 code-unit offsets, `col_start` into `line_start` and `col_end`
+ * into `line_end`. They are optional everywhere — an anchor without them
+ * still means "these whole lines", which is what every anchor taken before
+ * T-142 means and what the diff view keeps producing.
  */
 export const SpecCommentAnchorInput = z
   .strictObject({
@@ -158,6 +164,8 @@ export const SpecCommentAnchorInput = z
     version: z.number().int().positive(),
     line_start: z.number().int().positive().optional(),
     line_end: z.number().int().positive().optional(),
+    col_start: z.number().int().positive().optional(),
+    col_end: z.number().int().positive().optional(),
   })
   .refine((a) => (a.line_start === undefined) === (a.line_end === undefined), {
     error: "line_start and line_end come together (omit both for file-level)",
@@ -169,23 +177,76 @@ export const SpecCommentAnchorInput = z
       a.line_end === undefined ||
       a.line_end >= a.line_start,
     { error: "line_end must be >= line_start", path: ["line_end"] },
+  )
+  .refine((a) => (a.col_start === undefined) === (a.col_end === undefined), {
+    error: "col_start and col_end come together (omit both for whole lines)",
+    path: ["col_end"],
+  })
+  .refine((a) => a.col_start === undefined || a.line_start !== undefined, {
+    error: "columns need lines (a file-level anchor cannot carry columns)",
+    path: ["col_start"],
+  })
+  .refine(
+    (a) =>
+      a.col_start === undefined ||
+      a.col_end === undefined ||
+      a.line_start !== a.line_end ||
+      a.col_end >= a.col_start,
+    {
+      error: "col_end must be >= col_start within one line",
+      path: ["col_end"],
+    },
   );
 export type SpecCommentAnchorInput = z.infer<typeof SpecCommentAnchorInput>;
 
 /**
  * Stored form: the server stamps `quote` (verbatim snapshot of the anchored
- * source lines; empty for file-level comments) so timeline cards render
- * without fetching the file — and so a client cannot forge what the lines
- * said. Null lines = file-level.
+ * source — the whole lines, or just the columns when the anchor carries
+ * them) so timeline cards render without fetching the file, and so a client
+ * cannot forge what the lines said. Null lines = file-level.
+ *
+ * Columns are `nullish` on the way in, not merely `nullable`: anchors stored
+ * before T-142 are JSONB rows with no such key at all, and they must keep
+ * parsing. The default normalizes them to an explicit null so every
+ * response shape is the same regardless of when the row was written.
  */
 export const SpecCommentAnchor = z.strictObject({
   path: z.string(),
   version: z.number().int().positive(),
   line_start: z.number().int().positive().nullable(),
   line_end: z.number().int().positive().nullable(),
+  col_start: z.number().int().positive().nullish().default(null),
+  col_end: z.number().int().positive().nullish().default(null),
   quote: z.string(),
 });
 export type SpecCommentAnchor = z.infer<typeof SpecCommentAnchor>;
+
+/** The positional half of an anchor, however it reached the reader. */
+export type AnchorRangeLike = {
+  line_start?: number | null;
+  line_end?: number | null;
+  col_start?: number | null;
+  col_end?: number | null;
+};
+
+/**
+ * Human label for where an anchor points: `file`, `L5`, `L5–7`, `L5:12–34`,
+ * `L5:12–L7:34`. Shared so the four web surfaces that show an anchor agree
+ * on the spelling down to the dash.
+ */
+export function formatAnchorRange(anchor: AnchorRangeLike): string {
+  const { line_start: lineStart, line_end: lineEnd } = anchor;
+  if (lineStart === null || lineStart === undefined) return "file";
+  const end = lineEnd ?? lineStart;
+  const colStart = anchor.col_start ?? null;
+  const colEnd = anchor.col_end ?? null;
+  if (colStart === null || colEnd === null) {
+    return end === lineStart ? `L${lineStart}` : `L${lineStart}–${end}`;
+  }
+  return end === lineStart
+    ? `L${lineStart}:${colStart}–${colEnd}`
+    : `L${lineStart}:${colStart}–L${end}:${colEnd}`;
+}
 
 /**
  * Comment-component member for spec annotations. Never client-creatable
