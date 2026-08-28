@@ -26,15 +26,25 @@ describe.each(PLACEMENTS)("projects domain (%s placement)", (placement) => {
     await t.cleanup();
   });
 
-  async function createProject(s: string) {
-    const res = await t.app.request("/api/projects", {
+  const postProject = (body: Record<string, unknown>) =>
+    t.app.request("/api/projects", {
       method: "POST",
       headers: { "content-type": "application/json", cookie },
-      body: JSON.stringify({ slug: s, name: `Project ${s}` }),
+      body: JSON.stringify(body),
     });
+
+  async function createProject(s: string) {
+    const res = await postProject({ slug: s, name: `Project ${s}` });
     expect(res.status).toBe(201);
     return json(res);
   }
+
+  const getRefConfig = async (s: string) =>
+    json(
+      await t.app.request(`/api/projects/${s}/references/config`, {
+        headers: { cookie },
+      }),
+    );
 
   it("creates a project with seeded statuses and creator as admin", async () => {
     const s = slug();
@@ -60,6 +70,86 @@ describe.each(PLACEMENTS)("projects domain (%s placement)", (placement) => {
     expect(members).toHaveLength(1);
     expect(members[0].role).toBe("admin");
     expect(members[0].user.login).toBe("user");
+  });
+
+  // T-148: the reference format is offered at creation instead of only in
+  // settings, so a project never has to start on a spelling nobody chose.
+  describe("issue reference format at creation time", () => {
+    it("records the prefix as history anchored at the project's own birth", async () => {
+      const s = slug();
+      const project = await json(
+        await postProject({ slug: s, name: `Project ${s}`, ref_prefix: "T" }),
+      );
+      const config = await getRefConfig(s);
+      expect(config.format.prefix).toBe("T");
+      expect(config.format.history).toEqual([
+        { prefix: "T", effective_from: project.created_at },
+      ]);
+    });
+
+    it("leaves the project on # when the prefix is omitted or null", async () => {
+      const omitted = slug();
+      await createProject(omitted);
+      expect(await getRefConfig(omitted)).toEqual({
+        format: { prefix: null, history: [] },
+        autolinks: [],
+      });
+
+      const explicit = slug();
+      const res = await postProject({
+        slug: explicit,
+        name: `Project ${explicit}`,
+        ref_prefix: null,
+      });
+      expect(res.status).toBe(201);
+      expect((await getRefConfig(explicit)).format).toEqual({
+        prefix: null,
+        history: [],
+      });
+    });
+
+    it("refuses a malformed prefix the same way the settings PUT does", async () => {
+      for (const bad of ["t", "1T", "T-X", "W".repeat(21)]) {
+        const res = await postProject({
+          slug: slug(),
+          name: "Bad prefix",
+          ref_prefix: bad,
+        });
+        expect(res.status).toBe(422);
+      }
+      // A refused creation must not have registered the slug either.
+      const s = slug();
+      expect(
+        (await postProject({ slug: s, name: "x", ref_prefix: "t" })).status,
+      ).toBe(422);
+      expect(
+        (await t.app.request(`/api/projects/${s}`, { headers: { cookie } }))
+          .status,
+      ).toBe(404);
+    });
+
+    // effective_from = created_at, so the format covers every instant the
+    // project could already hold content — including its very first issue.
+    it("parses the new format in content written immediately after creation", async () => {
+      const s = slug();
+      await postProject({ slug: s, name: `Project ${s}`, ref_prefix: "T" });
+      const issue = (body: string) =>
+        t.app.request(`/api/projects/${s}/issues`, {
+          method: "POST",
+          headers: { "content-type": "application/json", cookie },
+          body: JSON.stringify({ title: "t", body }),
+        });
+      const target = await json(await issue(""));
+      await issue(`fixes T-${target.number}`);
+
+      const timeline = await json(
+        await t.app.request(
+          `/api/projects/${s}/issues/${target.number}/timeline?types=referenced&limit=100`,
+          { headers: { cookie } },
+        ),
+      );
+      expect(timeline.items).toHaveLength(1);
+    });
   });
 
   it("409s on duplicate slugs", async () => {

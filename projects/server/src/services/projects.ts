@@ -14,11 +14,13 @@ import {
   issues,
   labels,
   projectMeta,
+  refFormats,
   statuses,
 } from "../db/project-schema.ts";
 import { projectMembers, projects } from "../db/system-schema.ts";
 import { ConflictError } from "../errors.ts";
 import { type ProjectRow, requireProject, routeInfoOf } from "./access.ts";
+import { mirrorRefFormat } from "./reference-directory.ts";
 
 const DEFAULT_STATUSES = [
   { name: "Todo", category: "open", color: "#6b7280", position: 0 },
@@ -71,11 +73,26 @@ export async function createProject(
     await db
       .insert(statuses)
       .values(DEFAULT_STATUSES.map((s) => ({ ...s, projectId: row.id })));
+    // Anchored at the registry row's own createdAt, not now(): the history
+    // then covers every instant the project could already hold content.
+    if (input.ref_prefix != null) {
+      await db.insert(refFormats).values({
+        projectId: row.id,
+        prefix: input.ref_prefix,
+        effectiveFrom: row.createdAt,
+      });
+    }
     await system.insert(projectMembers).values({
       projectId: row.id,
       userId: actor.id,
       role: "admin",
     });
+    if (input.ref_prefix != null) {
+      await mirrorRefFormat(system, row.id, {
+        prefix: input.ref_prefix,
+        effectiveFrom: row.createdAt,
+      });
+    }
   } catch (cause) {
     // Cross-database creation cannot be one transaction; compensate by
     // removing the registry row so the failed project is unroutable.

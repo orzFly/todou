@@ -8,6 +8,17 @@ export const ProjectSlug = z
   .max(64)
   .regex(/^[a-z0-9][a-z0-9-]*$/, "lowercase letters, digits, and dashes");
 
+/**
+ * Internal issue reference prefix: null = `#N`, 'T' = `T-N`. Lives here
+ * rather than in references.ts because project creation takes one too, and
+ * references.ts already imports this file — the other direction would cycle.
+ */
+export const InternalRefPrefix = z
+  .string()
+  .regex(/^[A-Z][A-Z0-9_]{0,19}$/, "capital letter, then capitals/digits/_")
+  .nullable();
+export type InternalRefPrefix = z.infer<typeof InternalRefPrefix>;
+
 export const Project = z.object({
   id: Id,
   slug: ProjectSlug,
@@ -21,6 +32,9 @@ export const ProjectCreateInput = z.object({
   slug: ProjectSlug,
   name: z.string().min(1).max(200),
   description: z.string().max(4000).default(""),
+  // Omitted and null both mean `#N`: no format history row is written, so
+  // the project claims nothing in the cross-project prefix directory.
+  ref_prefix: InternalRefPrefix.optional(),
 });
 export type ProjectCreateInput = z.infer<typeof ProjectCreateInput>;
 

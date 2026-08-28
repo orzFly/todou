@@ -4,6 +4,7 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { formatRef } from "@todou/shared";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -84,6 +85,7 @@ function CreateProjectDialog() {
   const [slug, setSlug] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [refPrefix, setRefPrefix] = useState("");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -95,7 +97,13 @@ function CreateProjectDialog() {
   };
 
   const create = useMutation({
-    mutationFn: () => api.createProject({ slug, name, description }),
+    mutationFn: () =>
+      api.createProject({
+        slug,
+        name,
+        description,
+        ref_prefix: refPrefix.trim() || undefined,
+      }),
     onSuccess: (project) => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       setOpen(false);
@@ -168,6 +176,34 @@ function CreateProjectDialog() {
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Optional"
             />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="project-ref-prefix">Issue reference format</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="project-ref-prefix"
+                value={refPrefix}
+                onChange={(e) =>
+                  setRefPrefix(e.target.value.toUpperCase().trim())
+                }
+                pattern="[A-Z][A-Z0-9_]{0,19}"
+                placeholder="#"
+                aria-label="reference format prefix"
+                className="w-32"
+              />
+              <span
+                className="text-sm text-muted-foreground"
+                data-testid="ref-format-preview"
+              >
+                {formatRef(refPrefix.trim() || null, 1)}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Empty = the built-in <code>#1</code> form. A prefix like{" "}
+              <code>T</code> writes this project's issues as <code>T-1</code>.
+              Changeable later in Settings; existing text keeps parsing under
+              the format that was active when it was written.
+            </p>
           </div>
           <DialogFooter>
             <Button type="submit" disabled={create.isPending}>

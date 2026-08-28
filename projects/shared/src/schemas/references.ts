@@ -1,13 +1,6 @@
 import { z } from "zod";
 import { Id, Timestamp } from "./common.ts";
-import { ProjectSlug } from "./project.ts";
-
-/** Internal issue reference prefix: null = `#N`, 'T' = `T-N`. */
-export const InternalRefPrefix = z
-  .string()
-  .regex(/^[A-Z][A-Z0-9_]{0,19}$/, "capital letter, then capitals/digits/_")
-  .nullable();
-export type InternalRefPrefix = z.infer<typeof InternalRefPrefix>;
+import { InternalRefPrefix, ProjectSlug } from "./project.ts";
 
 // A trailing digit would make the prefix/number boundary ambiguous
 // ("GH2" + "123" reads the same as "GH" + "2123").

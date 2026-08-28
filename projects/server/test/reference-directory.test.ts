@@ -144,6 +144,59 @@ describe("reference prefix directory T-150", () => {
     expect(after).toHaveLength(before.length);
   });
 
+  // A prefix chosen at creation (T-148) has to reach the directory by the
+  // same route a settings change does, or bare PREFIX-N would not resolve.
+  it("mirrors a prefix taken at creation as a hold open since created_at", async () => {
+    const res = await t.app.request("/api/projects", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        slug: "dir-d",
+        name: "Directory dir-d",
+        ref_prefix: "DD",
+      }),
+    });
+    expect(res.status).toBe(201);
+    const project = await json(res);
+
+    const page = await directory();
+    expect(holdsOf(page, "DD")).toEqual([
+      { prefix: "DD", slug: "dir-d", from: project.created_at, to: null },
+    ]);
+  });
+
+  it("contests an already-held prefix when a new project is created on it", async () => {
+    const before = await directory();
+    const held = holdsOf(before, "XX").map(
+      (e) => `${e.slug}:${e.from}:${e.to}`,
+    );
+
+    const res = await t.app.request("/api/projects", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        slug: "dir-e",
+        name: "Directory dir-e",
+        ref_prefix: "XX",
+      }),
+    });
+    expect(res.status).toBe(201);
+
+    const page = await directory();
+    // The existing holders keep their intervals — a new claim overlaps
+    // them, it does not close them.
+    expect(
+      holdsOf(page, "XX")
+        .filter((e) => e.slug !== "dir-e")
+        .map((e) => `${e.slug}:${e.from}:${e.to}`),
+    ).toEqual(held);
+    const contested = page.contested.filter(
+      (c: { prefix: string }) => c.prefix === "XX",
+    );
+    expect(contested).toHaveLength(1);
+    expect(contested[0].to).toBeNull();
+  });
+
   it("refuses an autolink prefix that shadows a project's qualified form", async () => {
     const res = await t.app.request(
       `/api/projects/${PA}/references/autolinks`,
