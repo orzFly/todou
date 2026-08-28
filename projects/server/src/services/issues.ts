@@ -41,6 +41,12 @@ import {
 import { projectMembers } from "../db/system-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
 import { type ProjectRow, requireProject, routeInfoOf } from "./access.ts";
+import {
+  analyzeReferences,
+  type CrossTarget,
+  loadReferenceInputs,
+  recordCrossReferences,
+} from "./cross-references.ts";
 import { toLabel } from "./labels.ts";
 import { unreadIssueState } from "./reads.ts";
 import { recordReferences } from "./references.ts";
@@ -238,6 +244,8 @@ export async function createIssue(
   }
 
   const events: ChangeEvent[] = [];
+  const refInputs = await loadReferenceInputs(ctx, db, project.id);
+  let crossTargets: CrossTarget[] = [];
   const row = await db.transaction(async (tx) => {
     const meta = await tx
       .update(projectMeta)
@@ -304,13 +312,21 @@ export async function createIssue(
       });
     }
 
+    const analyzed = await analyzeReferences(
+      tx,
+      refInputs,
+      project,
+      input.body,
+      issue.createdAt,
+      { issueNumber: number },
+    );
+    crossTargets = analyzed.cross;
     const refs = await recordReferences(
       tx,
       project.id,
       actor.id,
       { issueNumber: number },
-      input.body,
-      issue.createdAt,
+      analyzed.local,
       agentContext,
     );
     for (const ref of refs) {
@@ -325,6 +341,14 @@ export async function createIssue(
   });
 
   for (const e of events) ctx.bus.publish(project.id, e);
+  await recordCrossReferences(
+    ctx,
+    actor,
+    project,
+    { issueNumber: row.number },
+    crossTargets,
+    agentContext,
+  );
   const bundles = await bundleIssues(ctx, db, project.id, [row]);
   const bundle = bundles[0];
   if (!bundle) throw new Error("bundle missing");
@@ -612,6 +636,9 @@ export async function updateIssue(
           ...new Set([...currentAssignees, ...desiredAssignees]),
         ]);
 
+  const refInputs = await loadReferenceInputs(ctx, db, project.id);
+  let crossTargets: CrossTarget[] = [];
+
   const events: ChangeEvent[] = [];
   const pushTimeline = (eventId: number | undefined) => {
     if (eventId !== undefined) {
@@ -764,13 +791,21 @@ export async function updateIssue(
     await tx.update(issues).set(patch).where(eq(issues.id, before.id));
 
     if (input.body !== undefined && input.body !== before.body) {
+      const analyzed = await analyzeReferences(
+        tx,
+        refInputs,
+        project,
+        input.body,
+        before.createdAt,
+        { issueNumber: number },
+      );
+      crossTargets = analyzed.cross;
       const refs = await recordReferences(
         tx,
         project.id,
         actor.id,
         { issueNumber: number },
-        input.body,
-        before.createdAt,
+        analyzed.local,
         agentContext,
       );
       for (const ref of refs) {
@@ -791,6 +826,14 @@ export async function updateIssue(
     issue_number: number,
   });
   for (const e of events) ctx.bus.publish(project.id, e);
+  await recordCrossReferences(
+    ctx,
+    actor,
+    project,
+    { issueNumber: number },
+    crossTargets,
+    agentContext,
+  );
 
   const after = await loadIssueRow(db, project.id, number);
   const bundle = (await bundleIssues(ctx, db, project.id, [after]))[0];

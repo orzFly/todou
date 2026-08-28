@@ -1,6 +1,7 @@
 import type {
   ContestedInterval,
   PrefixClaimEntry,
+  PrefixDirectory,
   ReferenceDirectory,
 } from "@todou/shared";
 import { eq } from "drizzle-orm";
@@ -178,6 +179,23 @@ function interval(prefix: string, from: number, to: number): ContestedInterval {
   };
 }
 
+const entryOf = (hold: Hold): PrefixClaimEntry => ({
+  ...interval(hold.prefix, hold.from, hold.to),
+  slug: hold.slug,
+});
+
+/**
+ * Every project's holds. Extraction runs against this rather than a
+ * viewer's slice: what it resolves is gated afterwards by the author check
+ * and, at read time, by the viewer filter.
+ */
+export async function globalPrefixDirectory(
+  ctx: AppContext,
+): Promise<PrefixDirectory> {
+  const holds = await allHolds(ctx);
+  return { entries: holds.map(entryOf), contested: contestedWindows(holds) };
+}
+
 /**
  * The prefix directory as this viewer may see it: their own projects'
  * holds by name, and every globally contested window anonymised. Contested
@@ -189,7 +207,22 @@ export async function referenceDirectory(
   actor: UserRow,
 ): Promise<ReferenceDirectory> {
   const system = ctx.router.system();
-  const [rows, projectRows, readable] = await Promise.all([
+  const [holds, readable, since] = await Promise.all([
+    allHolds(ctx),
+    accessibleProjectRows(ctx, actor),
+    crossRefsSince(system),
+  ]);
+  const visible = new Set(readable.map((row) => row.slug));
+  return {
+    since,
+    entries: holds.filter((hold) => visible.has(hold.slug)).map(entryOf),
+    contested: contestedWindows(holds),
+  };
+}
+
+async function allHolds(ctx: AppContext): Promise<Hold[]> {
+  const system = ctx.router.system();
+  const [rows, projectRows] = await Promise.all([
     system
       .select({
         projectId: refPrefixes.projectId,
@@ -198,7 +231,6 @@ export async function referenceDirectory(
       })
       .from(refPrefixes),
     system.select({ id: projects.id, slug: projects.slug }).from(projects),
-    accessibleProjectRows(ctx, actor),
   ]);
 
   const slugOf = new Map(projectRows.map((row) => [row.id, row.slug]));
@@ -214,18 +246,5 @@ export async function referenceDirectory(
     const slug = slugOf.get(projectId);
     if (slug !== undefined) holds.push(...holdsOf(slug, list));
   }
-
-  const visible = new Set(readable.map((row) => row.slug));
-  const entries: PrefixClaimEntry[] = holds
-    .filter((hold) => visible.has(hold.slug))
-    .map((hold) => ({
-      ...interval(hold.prefix, hold.from, hold.to),
-      slug: hold.slug,
-    }));
-
-  return {
-    since: await crossRefsSince(system),
-    entries,
-    contested: contestedWindows(holds),
-  };
+  return holds;
 }

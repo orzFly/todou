@@ -13,6 +13,12 @@ import type { Db } from "../db/driver.ts";
 import { comments, issueEvents, issues } from "../db/project-schema.ts";
 import { ForbiddenError, NotFoundError } from "../errors.ts";
 import { requireProject, routeInfoOf } from "./access.ts";
+import {
+  analyzeReferences,
+  type CrossTarget,
+  loadReferenceInputs,
+  recordCrossReferences,
+} from "./cross-references.ts";
 import { canonicalizeComponent, questionCount } from "./questions.ts";
 import { recordReferences } from "./references.ts";
 import { deleteRevisionsFor, recordRevision } from "./revisions.ts";
@@ -67,6 +73,8 @@ export async function createComment(
       ? null
       : canonicalizeComponent(input.component);
 
+  const refInputs = await loadReferenceInputs(ctx, db, project.id);
+  let crossTargets: CrossTarget[] = [];
   const events: ChangeEvent[] = [];
   const row = await db.transaction(async (tx) => {
     const inserted = await tx
@@ -112,13 +120,21 @@ export async function createComment(
       issue_number: issueNumber,
     });
 
+    const analyzed = await analyzeReferences(
+      tx,
+      refInputs,
+      project,
+      input.body,
+      comment.createdAt,
+      { issueNumber, commentId: comment.id },
+    );
+    crossTargets = analyzed.cross;
     const refs = await recordReferences(
       tx,
       project.id,
       actor.id,
       { issueNumber, commentId: comment.id },
-      input.body,
-      comment.createdAt,
+      analyzed.local,
       agentContext,
     );
     for (const ref of refs) {
@@ -133,6 +149,14 @@ export async function createComment(
   });
 
   for (const e of events) ctx.bus.publish(project.id, e);
+  await recordCrossReferences(
+    ctx,
+    actor,
+    project,
+    { issueNumber, commentId: row.id },
+    crossTargets,
+    agentContext,
+  );
   return toTimelineComment(ctx, row);
 }
 
@@ -202,6 +226,9 @@ export async function updateComment(
   // bump, no SSE, no reference re-scan.
   if (input.body === row.body) return toTimelineComment(ctx, row);
 
+  const project = { id: projectId, slug };
+  const refInputs = await loadReferenceInputs(ctx, db, projectId);
+  let crossTargets: CrossTarget[] = [];
   const { after, refs } = await db.transaction(async (tx) => {
     const updated = await tx
       .update(comments)
@@ -220,13 +247,21 @@ export async function updateComment(
       agentContext,
     });
 
+    const analyzed = await analyzeReferences(
+      tx,
+      refInputs,
+      project,
+      input.body,
+      row.createdAt,
+      { issueNumber, commentId: row.id },
+    );
+    crossTargets = analyzed.cross;
     const refs = await recordReferences(
       tx,
       projectId,
       actor.id,
       { issueNumber, commentId: row.id },
-      input.body,
-      row.createdAt,
+      analyzed.local,
       agentContext,
     );
     return { after, refs };
@@ -245,6 +280,14 @@ export async function updateComment(
       issue_number: ref.issueNumber,
     });
   }
+  await recordCrossReferences(
+    ctx,
+    actor,
+    project,
+    { issueNumber, commentId: row.id },
+    crossTargets,
+    agentContext,
+  );
   return toTimelineComment(ctx, after);
 }
 
