@@ -63,6 +63,9 @@ import {
 } from "@/lib/spec-version-stats.ts";
 import { cn } from "@/lib/utils.ts";
 
+/** What ↑↓ stops on: both kinds of "changed since the baseline" mark (T-158). */
+const CHANGED_SELECTOR = ".spec-changed, .spec-ins-block";
+
 export function SpecViewPage() {
   const { slug, number: numberParam } = useParams({
     from: "/authed/projects/$slug/issues/$number/spec",
@@ -255,7 +258,7 @@ function SpecViewBody({
   const jumpWithin = (direction: 1 | -1): boolean => {
     const root = mainRef.current;
     if (!root) return false;
-    const els = [...root.querySelectorAll<HTMLElement>(".spec-changed")];
+    const els = [...root.querySelectorAll<HTMLElement>(CHANGED_SELECTOR)];
     if (els.length === 0) return false;
     const viewportCenter = window.scrollY + window.innerHeight / 2;
     const centers = els.map((el) => {
@@ -302,7 +305,7 @@ function SpecViewBody({
     pendingJumpRef.current = null;
     const root = mainRef.current;
     if (!root) return;
-    const els = [...root.querySelectorAll<HTMLElement>(".spec-changed")];
+    const els = [...root.querySelectorAll<HTMLElement>(CHANGED_SELECTOR)];
     const target = direction === 1 ? els[0] : els[els.length - 1];
     if (target) flashTo(target);
     // A file with no highlighted blocks (e.g. brand new) starts at the top.

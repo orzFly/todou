@@ -23,6 +23,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
+  INS_BLOCK_CLASS,
   MARK_KEY_ATTR,
   NO_DECORATIONS,
   rehypeDecorations,
@@ -369,7 +370,9 @@ export function AnnotatedMarkdown({
   // is pending.
   const rehypePlugins = useMemo<RehypePlugins>(
     () =>
-      decorations.spans.length === 0 && decorations.deletions.length === 0
+      decorations.spans.length === 0 &&
+      decorations.deletions.length === 0 &&
+      decorations.blocks.length === 0
         ? REHYPE_PLUGINS
         : [rehypeSourceLines, [rehypeDecorations, decorations]],
     [decorations],
@@ -409,7 +412,11 @@ export function AnnotatedMarkdown({
         changed.includes(block) &&
           !changed.some(
             (other) => other !== block && block.el.contains(other.el),
-          ),
+          ) &&
+          // A wholly-new block already says so, louder (T-158). Stacking
+          // the "something here changed" wash under it only shifts the
+          // padding and muddies the colour.
+          block.el.closest(`.${INS_BLOCK_CLASS}`) === null,
       );
     }
     const next: Chip[] = [];

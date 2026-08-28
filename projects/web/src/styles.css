@@ -957,6 +957,30 @@ diffs-container {
     );
   }
 
+  /* Blocks that are new in their entirety (T-158) — the middle of three
+     layers. The 6% wash above says "something here changed"; the 24% marks
+     below say which words. This says "all of it is new", so it sits between
+     them: deeper than a wash the reader must look inside, lighter than a
+     mark that has to shout from inside an otherwise unchanged block. */
+  .markdown-body .spec-ins-block {
+    border-left: 3px solid
+      color-mix(in oklab, var(--color-emerald-500) 60%, transparent);
+    padding-left: 0.5rem;
+    border-radius: var(--radius-sm);
+    background-color: color-mix(
+      in oklab,
+      var(--color-emerald-500) 12%,
+      transparent
+    );
+  }
+  .markdown-body .spec-annotated.spec-ins-block {
+    border-left-color: color-mix(
+      in oklab,
+      var(--color-amber-500) 60%,
+      var(--color-emerald-500)
+    );
+  }
+
   /* Word-level marks inside those blocks (T-142). The block wash says
      "something here changed"; these say what. Denser mixes than the block
      colours so they read on top of them, and all derived from the same

@@ -1,4 +1,5 @@
 import type { Element, ElementContent, Root, RootContent, Text } from "hast";
+import type { SourceRange } from "./spec-source-index.ts";
 
 /**
  * What a decorated run of text means. `ins` is word-level diff output;
@@ -31,12 +32,25 @@ export type DeletionDecoration = {
 export type Decorations = {
   spans: SpanDecoration[];
   deletions: DeletionDecoration[];
+  /**
+   * Source ranges that are new in their entirety (T-158). The outermost
+   * element inside each gets one class and keeps its children plain —
+   * "which words changed" has no answer worth rendering when it is all of
+   * them.
+   */
+  blocks: SourceRange[];
 };
 
-export const NO_DECORATIONS: Decorations = { spans: [], deletions: [] };
+export const NO_DECORATIONS: Decorations = {
+  spans: [],
+  deletions: [],
+  blocks: [],
+};
 
 /** Carries the annotation key so the popover can flash its exact mark. */
 export const MARK_KEY_ATTR = "data-mark-key";
+
+export const INS_BLOCK_CLASS = "spec-ins-block";
 
 const CLASS_OF: Record<SpanKind, string> = {
   ins: "spec-ins",
@@ -73,6 +87,23 @@ function wrap(value: string, kinds: SpanKind[], key: string | undefined) {
     content = [element];
   }
   return content;
+}
+
+function addClass(element: Element, name: string): void {
+  const existing = element.properties.className;
+  element.properties.className = Array.isArray(existing)
+    ? [...existing, name]
+    : typeof existing === "string"
+      ? [existing, name]
+      : [name];
+}
+
+/** Whether an element's whole source span sits inside one of `ranges`. */
+function fullyInside(element: Element, ranges: SourceRange[]): boolean {
+  const start = element.position?.start.offset;
+  const end = element.position?.end.offset;
+  if (start === undefined || end === undefined) return false;
+  return ranges.some((range) => range.start <= start && range.end >= end);
 }
 
 function inlineDeletion(deletion: DeletionDecoration): Element {
@@ -166,24 +197,36 @@ function decorateText(
  * node to land on is dropped in silence, and the document then reads
  * exactly as it did before — block-level highlight and all.
  *
- * Code blocks are skipped whole. `MarkdownPre` hands their text to pierre's
- * CodeView by concatenating the `<pre>`'s text children (T-31); an injected
- * `<ins>` in there would silently delete code from the display.
+ * The inside of a code block is never touched. `MarkdownPre` hands its text
+ * to pierre's CodeView by concatenating the `<pre>`'s text children (T-31);
+ * an injected `<ins>` in there would silently delete code from the display.
+ * The `<pre>` itself can still carry a whole-block class.
  */
 export function rehypeDecorations(options: Decorations = NO_DECORATIONS) {
   const spans = options.spans;
   const deletions = options.deletions;
+  const blocks = options.blocks;
   return (tree: Root) => {
-    if (spans.length === 0 && deletions.length === 0) return;
+    if (spans.length === 0 && deletions.length === 0 && blocks.length === 0) {
+      return;
+    }
     const inline = deletions.filter((d) => !d.block);
     const placed = new Set<DeletionDecoration>();
 
-    const visit = (parent: Root | Element): void => {
+    const visit = (parent: Root | Element, insideAdded: boolean): void => {
       const next: ElementContent[] = [];
       let changed = false;
       for (const child of parent.children as ElementContent[]) {
         if (child.type === "element") {
-          if (child.tagName !== "pre") visit(child);
+          // The class goes on the outermost element of a wholly-new range
+          // and nowhere below it, but the walk carries on regardless: an
+          // annotation anchored inside still has its mark to paint.
+          let added = insideAdded;
+          if (!added && fullyInside(child, blocks)) {
+            addClass(child, INS_BLOCK_CLASS);
+            added = true;
+          }
+          if (child.tagName !== "pre") visit(child, added);
           next.push(child);
           continue;
         }
@@ -200,7 +243,7 @@ export function rehypeDecorations(options: Decorations = NO_DECORATIONS) {
       }
       if (changed) parent.children = next as typeof parent.children;
     };
-    visit(tree);
+    visit(tree, false);
 
     // Structural deletions have no host inside the text; they go between
     // the blocks, at the seam the removed content left behind. Placed back

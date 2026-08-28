@@ -13,6 +13,24 @@ import type { LineRange } from "./spec-changes.ts";
  */
 const LEAF_BLOCKS = new Set(["paragraph", "heading", "tableCell"]);
 
+/**
+ * Structure the whole-block insertion evidence can name (T-158). `code` is
+ * on the list even though the prose engine cannot see inside it: a fence
+ * that falls entirely within inserted lines is provably new, and line
+ * evidence is the only evidence it will ever have.
+ */
+const SOURCE_BLOCKS = new Set([
+  "paragraph",
+  "heading",
+  "tableCell",
+  "tableRow",
+  "table",
+  "listItem",
+  "list",
+  "blockquote",
+  "code",
+]);
+
 const processor = unified().use(remarkParse).use(remarkGfm);
 
 /** One run of prose, with both of its coordinate systems. */
@@ -37,6 +55,39 @@ export type SourceSegment = {
   group: number;
 };
 
+export type SourceBlockType =
+  | "paragraph"
+  | "heading"
+  | "tableCell"
+  | "tableRow"
+  | "table"
+  | "listItem"
+  | "list"
+  | "blockquote"
+  | "code";
+
+/** One block of structure, for deciding what counts as "new whole" (T-158). */
+export type SourceBlock = {
+  type: SourceBlockType;
+  /** Absolute source offsets, half-open. */
+  start: number;
+  end: number;
+  /** 1-based inclusive source lines. */
+  line: number;
+  endLine: number;
+  /** Index into `SegmentIndex.blocks`; null at the top level. */
+  parent: number | null;
+  /** Leaf-block groups this subtree owns, inclusive; -1 when it owns none. */
+  firstGroup: number;
+  lastGroup: number;
+  /**
+   * The subtree holds code or raw HTML. Prose coverage then says nothing
+   * about the block as a whole — content the word-level engine never saw
+   * would be declared new on the strength of the text around it.
+   */
+  opaque: boolean;
+};
+
 export type SegmentIndex = {
   source: string;
   /** All prose in document order, leaf blocks separated by newlines. */
@@ -44,6 +95,8 @@ export type SegmentIndex = {
   segments: SourceSegment[];
   /** Absolute offset each 1-based source line starts at. */
   lineStarts: number[];
+  /** Block structure in document order: a parent always precedes its children. */
+  blocks: SourceBlock[];
 };
 
 function lineStartsOf(source: string): number[] {
@@ -66,13 +119,46 @@ function lineStartsOf(source: string): number[] {
  */
 export function buildSegmentIndex(source: string): SegmentIndex {
   const segments: SourceSegment[] = [];
+  const blocks: SourceBlock[] = [];
   let text = "";
   let groups = 0;
   let group = -1;
   let lastGroup: number | null = null;
+  let parent: number | null = null;
+
+  const pushBlock = (node: Nodes, type: SourceBlockType): number | null => {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (start === undefined || end === undefined) return null;
+    blocks.push({
+      type,
+      start,
+      end,
+      line: node.position?.start.line ?? 1,
+      endLine: node.position?.end.line ?? 1,
+      parent,
+      firstGroup: -1,
+      lastGroup: -1,
+      opaque: type === "code",
+    });
+    return blocks.length - 1;
+  };
+
+  const markOpaque = (): void => {
+    for (let i = parent; i !== null; ) {
+      const block = blocks[i];
+      if (block === undefined) return;
+      block.opaque = true;
+      i = block.parent;
+    }
+  };
 
   const visit = (node: Nodes): void => {
-    if (node.type === "code" || node.type === "html") return;
+    if (node.type === "code" || node.type === "html") {
+      if (node.type === "code") pushBlock(node, "code");
+      markOpaque();
+      return;
+    }
     if (node.type === "text" || node.type === "inlineCode") {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
@@ -94,14 +180,26 @@ export function buildSegmentIndex(source: string): SegmentIndex {
       return;
     }
     if (!("children" in node)) return;
-    const outer = group;
+    const outerGroup = group;
+    const outerParent = parent;
+    const index = SOURCE_BLOCKS.has(node.type)
+      ? pushBlock(node, node.type as SourceBlockType)
+      : null;
+    if (index !== null) parent = index;
+    const firstGroup = groups;
     if (LEAF_BLOCKS.has(node.type)) group = groups++;
     for (const child of node.children) visit(child);
-    group = outer;
+    const block = index === null ? undefined : blocks[index];
+    if (block !== undefined && groups > firstGroup) {
+      block.firstGroup = firstGroup;
+      block.lastGroup = groups - 1;
+    }
+    group = outerGroup;
+    parent = outerParent;
   };
 
   visit(processor.parse(source));
-  return { source, text, segments, lineStarts: lineStartsOf(source) };
+  return { source, text, segments, lineStarts: lineStartsOf(source), blocks };
 }
 
 /** Segments whose source span touches a 1-based inclusive line range. */
@@ -173,6 +271,171 @@ export function groupSpanOfText(
     groups.add(segment.group);
   }
   return groups.size;
+}
+
+/** Flattened-text extent of each leaf group; holes where a group has no prose. */
+function groupRangesOf(index: SegmentIndex): Array<SourceRange | undefined> {
+  const ranges: Array<SourceRange | undefined> = [];
+  for (const segment of index.segments) {
+    const end = segment.at + segment.text.length;
+    const existing = ranges[segment.group];
+    if (existing === undefined) {
+      ranges[segment.group] = { start: segment.at, end };
+    } else existing.end = end;
+  }
+  return ranges;
+}
+
+function proseRangeOf(
+  block: SourceBlock,
+  groupRanges: Array<SourceRange | undefined>,
+): SourceRange | null {
+  if (block.firstGroup < 0) return null;
+  let start = Number.POSITIVE_INFINITY;
+  let end = -1;
+  for (let g = block.firstGroup; g <= block.lastGroup; g++) {
+    const range = groupRanges[g];
+    if (range === undefined) continue;
+    start = Math.min(start, range.start);
+    end = Math.max(end, range.end);
+  }
+  return end < 0 ? null : { start, end };
+}
+
+/** Blocks with no qualifying ancestor, i.e. the outermost of each nest. */
+function outermost(index: SegmentIndex, qualifies: boolean[]): SourceBlock[] {
+  return index.blocks.filter((block, i) => {
+    if (qualifies[i] !== true) return false;
+    for (let p = block.parent; p !== null; ) {
+      if (qualifies[p] === true) return false;
+      p = index.blocks[p]?.parent ?? null;
+    }
+    return true;
+  });
+}
+
+/**
+ * Outermost blocks whose source lines fall entirely inside `range` — the
+ * evidence a pure insertion carries (T-158). Every line in there is new, so
+ * a block that fits inside is new in its entirety and gets one highlight
+ * instead of a box around each of its words.
+ */
+export function blocksFullyInLines(
+  index: SegmentIndex,
+  range: LineRange,
+): SourceBlock[] {
+  return outermost(
+    index,
+    index.blocks.map(
+      (block) => block.line >= range.start && block.endLine <= range.end,
+    ),
+  );
+}
+
+/**
+ * Outermost blocks whose every scrap of prose lies inside `covered`. This is
+ * the evidence left when jsdiff merged a real edit and an adjacent brand-new
+ * block into one rewrite pair, so the pair's line range proves nothing about
+ * either half (T-158).
+ *
+ * A block holding exactly one leaf group, covered exactly and no further, is
+ * excluded: that is a block whose words were replaced, not a block that was
+ * born — and word-level marks are the whole point there. Multi-group blocks
+ * and blocks the insertion spills past are genuinely new structure.
+ */
+export function blocksFullyCoveredByText(
+  index: SegmentIndex,
+  covered: SourceRange[],
+): SourceBlock[] {
+  const union = mergeRanges(covered);
+  const groupRanges = groupRangesOf(index);
+  const qualifies = index.blocks.map((block) => {
+    if (block.opaque || block.firstGroup < 0) return false;
+    let any = false;
+    for (let g = block.firstGroup; g <= block.lastGroup; g++) {
+      const range = groupRanges[g];
+      if (range === undefined) continue;
+      if (!union.some((u) => u.start <= range.start && u.end >= range.end)) {
+        return false;
+      }
+      any = true;
+    }
+    if (!any) return false;
+    if (block.lastGroup > block.firstGroup) return true;
+    const prose = proseRangeOf(block, groupRanges);
+    return (
+      prose !== null &&
+      union.some((u) => u.start < prose.start || u.end > prose.end)
+    );
+  });
+  return outermost(index, qualifies);
+}
+
+/** The `SegmentIndex.text` ranges a run of blocks occupies. */
+export function textRangesOfBlocks(
+  index: SegmentIndex,
+  blocks: SourceBlock[],
+): SourceRange[] {
+  const groupRanges = groupRangesOf(index);
+  const ranges: SourceRange[] = [];
+  for (const block of blocks) {
+    const prose = proseRangeOf(block, groupRanges);
+    if (prose !== null) ranges.push(prose);
+  }
+  return ranges;
+}
+
+/**
+ * Whether a flattened-text range swallows some paragraph or heading whole.
+ * Table cells are deliberately off the list: the cell outlives the edit, so
+ * its `<del>` has a home and stays inline where the reader can compare it
+ * with what replaced it (T-158).
+ */
+export function coversWholeProseBlock(
+  index: SegmentIndex,
+  from: number,
+  to: number,
+): boolean {
+  const groupRanges = groupRangesOf(index);
+  for (const block of index.blocks) {
+    if (block.type !== "paragraph" && block.type !== "heading") continue;
+    const prose = proseRangeOf(block, groupRanges);
+    if (prose !== null && prose.start >= from && prose.end <= to) return true;
+  }
+  return false;
+}
+
+/** Sorted, non-overlapping union of half-open ranges. */
+export function mergeRanges(ranges: SourceRange[]): SourceRange[] {
+  const out: SourceRange[] = [];
+  for (const range of [...ranges].sort((a, b) => a.start - b.start)) {
+    const last = out.at(-1);
+    if (last !== undefined && range.start <= last.end) {
+      last.end = Math.max(last.end, range.end);
+    } else out.push({ ...range });
+  }
+  return out;
+}
+
+/** `ranges` minus every part of `cuts`, both in the same coordinate space. */
+export function subtractRanges(
+  ranges: SourceRange[],
+  cuts: SourceRange[],
+): SourceRange[] {
+  const holes = mergeRanges(cuts);
+  const out: SourceRange[] = [];
+  for (const range of ranges) {
+    let start = range.start;
+    for (const hole of holes) {
+      if (hole.end <= start) continue;
+      if (hole.start >= range.end) break;
+      if (hole.start > start) out.push({ start, end: hole.start });
+      start = hole.end;
+      if (start >= range.end) break;
+    }
+    if (start < range.end) out.push({ start, end: range.end });
+  }
+  return out;
 }
 
 /** Source offset for a caret sitting at `pos` in the flattened text. */

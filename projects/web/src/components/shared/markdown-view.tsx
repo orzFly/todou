@@ -104,6 +104,9 @@ function MarkdownPre({
   const wrapperProps = {
     [SOURCE_LINE_ATTR]: stamp,
     [CODE_CONTENT_START_ATTR]: loc.start + (fenced ? 1 : 0),
+    // Decoration classes ride on the <pre> too (T-158: a fence inside a
+    // wholly-new range) and would otherwise vanish in the swap.
+    className: props.className,
   };
   return <div {...wrapperProps}>{block}</div>;
 }
