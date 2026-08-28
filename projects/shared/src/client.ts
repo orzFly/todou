@@ -15,6 +15,7 @@ import type {
   AutolinkCreateInput,
   BulkReadInput,
   CommentComponentInput,
+  CommentLocation,
   CrossActivityPage,
   DirectUploadTicket,
   InboxPage,
@@ -38,6 +39,7 @@ import type {
   ProjectCreateInput,
   ProjectUpdateInput,
   ReferenceConfig,
+  ReferenceDirectory,
   RefFormatSetInput,
   RevisionPage,
   SpecComments,
@@ -368,6 +370,8 @@ export class TodouClient {
 
   getReferenceConfig = (slug: string) =>
     this.request<ReferenceConfig>("GET", `/projects/${slug}/references/config`);
+  getReferenceDirectory = () =>
+    this.request<ReferenceDirectory>("GET", "/me/reference-directory");
   setReferenceFormat = (slug: string, input: RefFormatSetInput) =>
     this.request<ReferenceConfig>(
       "PUT",
@@ -470,6 +474,11 @@ export class TodouClient {
       "POST",
       `/projects/${slug}/issues/${number}/comments`,
       { json: component === undefined ? { body } : { body, component } },
+    );
+  locateComment = (slug: string, commentId: number) =>
+    this.request<CommentLocation>(
+      "GET",
+      `/projects/${slug}/comments/${commentId}`,
     );
   getComment = (slug: string, number: number, commentId: number) =>
     this.request<TimelineComment>(

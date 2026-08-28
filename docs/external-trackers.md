@@ -46,11 +46,80 @@ the reference format that was **in force when it was created**:
 Spec documents parse under the format in force when their version was
 pushed; markdown attachments under their upload time.
 
+## Referencing another project's issues
+
+A reference can name a project other than the one it is written in. The
+target issue's timeline records a `cross_referenced` event, the same way a
+local reference records `referenced`.
+
+Spellings, all equivalent:
+
+```
+mirror#12       mirror/12       mirror/M-12       mirror/#12
+```
+
+The prefix inside `mirror/M-12` is decoration: the slug decides the
+project and the number decides the issue, so a reference written today
+survives the target changing its format tomorrow.
+
+A bare foreign prefix also works. Writing `M-12` in another project
+resolves to `mirror#12` when `M` had exactly one holder at the moment the
+text was written. Two projects may share a prefix; while they do, the bare
+form resolves to neither and stays plain text. Write the slug-qualified
+form when you need certainty.
+
+A comment can be referenced by its own id, either on its own within the
+project that holds it, or hanging off any issue reference:
+
+```
+#comment-1462        T-12#comment-1462        mirror/M-12#comment-1462
+```
+
+Both link to that comment and count as a reference to the issue carrying
+it.
+
+### Which rule wins
+
+When several rules could claim the same text, they are tried in this
+order:
+
+1. slug-qualified forms and comment anchors
+2. this project's own reference format
+3. this project's autolinks
+4. a bare foreign prefix
+
+Autolinks outranking foreign prefixes is deliberate: a rule an
+administrator configured here beats another project happening to use the
+same prefix. The shadowed side is still reachable through the qualified
+form. Because a qualified form outranks everything, an autolink prefix
+that collides with one (`mirror#`) is rejected when you try to create it.
+
+### Who sees what
+
+A reference renders richly only for a reader who can open the target
+project. For everyone else it stays plain text, identical to what its
+author typed — the title, the status, and the existence of the project are
+never revealed.
+
+The reverse event follows the same principle from both ends. It is only
+written when its **author** can read the target project, so a reference
+cannot post into a project the writer has no access to. It is only shown
+to a reader who can open the **source** project, so nobody is left with a
+timeline entry, an inbox row, or an unread marker pointing somewhere they
+may not go.
+
+### Existing text
+
+All of this applies only to content created after the feature reached your
+deployment. Text written before then parses exactly as it did, so
+`mirror/T-12` in an old comment keeps whatever meaning it already had.
+
 ## CLI
 
 Issue positionals accept every spelling: `todou issue view 76`, `#76`,
-`T-76`, `todou/T-76`, or a full URL. The prefix is not validated against
-the project's configured one — the positional already names its project.
+`T-76`, `todou/T-76`, `todou#76`, or a full URL. The prefix is not
+validated against the project's configured one — the positional already
+names its project.
 Human-readable output spells issues in the project's current format;
 against servers without the config endpoint it falls back to `#N`.
 
@@ -69,6 +138,10 @@ against servers without the config endpoint it falls back to `#N`.
 
 Both degrade to the `#N` form (`{"prefix": null, "token": "#"}`) against
 a server without the config endpoint.
+
+A `cross_referenced` event carries its source as `by_project` and
+`by_issue`; spell it `<by_project>#<by_issue>` and it pastes back into any
+command that takes an issue.
 
 ## Conventions unaffected
 

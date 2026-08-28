@@ -24,6 +24,17 @@ describe("parseIssueRef", () => {
     });
   });
 
+  it("parses the prose form project#number", () => {
+    expect(parseIssueRef("todou#16", "issue number")).toEqual({
+      project: "todou",
+      number: 16,
+    });
+  });
+
+  it("keeps a bare hash from being read as a slug", () => {
+    expect(parseIssueRef("#16", "issue number")).toEqual({ number: 16 });
+  });
+
   it("treats an all-digit prefix as a project slug", () => {
     expect(parseIssueRef("42/16", "issue number")).toEqual({
       project: "42",

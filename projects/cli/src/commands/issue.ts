@@ -831,6 +831,14 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
       return typeof payload.by_issue === "number"
         ? `by ${formatRef(ctx.refPrefix, payload.by_issue)}`
         : scalarDetail(payload);
+    // Self-contained rather than spelled in this project's format: the
+    // source lives elsewhere, and `slug#N` pastes straight back into any
+    // command that takes an issue.
+    case "cross_referenced":
+      return typeof payload.by_issue === "number" &&
+        typeof payload.by_project === "string"
+        ? `by ${payload.by_project}#${payload.by_issue}`
+        : scalarDetail(payload);
     case "attachment_added":
       return payload.attachment === undefined
         ? scalarDetail(payload)

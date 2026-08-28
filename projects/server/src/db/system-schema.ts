@@ -108,6 +108,38 @@ export const projects = pgTable(
   (t) => [uniqueIndex("projects_slug_idx").on(t.slug)],
 );
 
+// Mirror of every project's ref_formats history (T-150). Resolving a bare
+// `PREFIX-N` written in project A means asking who held that prefix at that
+// instant across ALL projects — a question the per-project tables cannot
+// answer without opening every database in the deployment.
+export const refPrefixes = pgTable(
+  "ref_prefixes",
+  {
+    id: id(),
+    projectId: bigint("project_id", { mode: "number" })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    // NULL = "#N", and the row still matters: it closes the previous
+    // prefix's holding interval.
+    prefix: text("prefix"),
+    effectiveFrom: timestamp("effective_from", {
+      withTimezone: true,
+    }).notNull(),
+  },
+  (t) => [
+    index("ref_prefixes_project_from_idx").on(t.projectId, t.effectiveFrom),
+    index("ref_prefixes_prefix_idx").on(t.prefix),
+  ],
+);
+
+// Deployment-wide settings, validated at the service layer. Holds
+// `cross_refs_since`: the instant this instance ran the T-150 migration,
+// which is the cutoff the cross-project grammar opens at.
+export const systemSettings = pgTable("system_settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+});
+
 export const projectMembers = pgTable(
   "project_members",
   {

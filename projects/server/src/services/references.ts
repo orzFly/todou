@@ -1,4 +1,5 @@
 import type { AgentContext } from "@todou/shared";
+import { scanReferenceTokens } from "@todou/shared";
 import { and, desc, eq, inArray, lte } from "drizzle-orm";
 import type { Db } from "../db/driver.ts";
 import { issueEvents, issues, refFormats } from "../db/project-schema.ts";
@@ -37,21 +38,17 @@ export function stripMarkdownCode(text: string): string {
 /**
  * Extract internal issue references from markdown, ignoring code
  * segments. `prefix` selects the format the content was WRITTEN under
- * (T-80 time-cutoff rule): null = `#N`, 'T' = `T-N`. The web tokenizer
- * (projects/web/src/lib/issue-refs.ts) mirrors these regexes.
+ * (T-80 time-cutoff rule): null = `#N`, 'T' = `T-N`.
  */
 export function extractIssueRefs(
   text: string,
   prefix: string | null = null,
 ): number[] {
-  const pattern =
-    prefix === null
-      ? /(?:^|\W)#(\d{1,9})\b/g
-      : // The leading boundary also excludes "-" so SOME-T-76 stays text.
-        new RegExp(String.raw`(?:^|[^\w-])${prefix}-(\d{1,9})\b`, "g");
   const found = new Set<number>();
-  for (const match of stripMarkdownCode(text).matchAll(pattern)) {
-    found.add(Number(match[1]));
+  for (const token of scanReferenceTokens(stripMarkdownCode(text), {
+    internalPrefix: prefix,
+  })) {
+    if (token.type === "issue" && token.slug === null) found.add(token.number);
   }
   return [...found];
 }
@@ -80,26 +77,21 @@ export async function refPrefixAt(
 }
 
 /**
- * Record `referenced` events on the issues mentioned in a saved body or
- * comment. Events land on the REFERENCED issue's timeline. Each
- * (target, source) pair is recorded once, so edits don't spam timelines.
- * `contentCreatedAt` anchors the format: text parses under the format in
- * force when its row was CREATED, never when it was edited, so editing a
- * pre-switch comment cannot flip the meaning of refs already in it.
+ * Record `referenced` events on the issues a saved body or comment names.
+ * Events land on the REFERENCED issue's timeline. Each (target, source)
+ * pair is recorded once, so edits don't spam timelines. The numbers come
+ * pre-resolved from analyzeReferences, which is where the format cutoff
+ * and the cross-project grammar are applied.
  */
 export async function recordReferences(
   db: Db,
   projectId: number,
   actorId: number,
   source: { issueNumber: number; commentId?: number },
-  text: string,
-  contentCreatedAt: Date,
+  referenced: number[],
   agentContext: AgentContext | null = null,
 ): Promise<Array<{ eventId: number; issueId: number; issueNumber: number }>> {
-  const prefix = await refPrefixAt(db, projectId, contentCreatedAt);
-  const numbers = extractIssueRefs(text, prefix).filter(
-    (n) => n !== source.issueNumber,
-  );
+  const numbers = referenced.filter((n) => n !== source.issueNumber);
   if (numbers.length === 0) return [];
 
   const targets = await db

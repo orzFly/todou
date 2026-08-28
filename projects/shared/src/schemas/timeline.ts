@@ -16,6 +16,7 @@ export const IssueEventType = z.enum([
   "assigned",
   "unassigned",
   "referenced",
+  "cross_referenced",
   "attachment_added",
   "question_answered",
   "spec_pushed",
@@ -41,6 +42,18 @@ export const TimelineComment = z.object({
   agent_context: AgentContext.nullable(),
 });
 export type TimelineComment = z.infer<typeof TimelineComment>;
+
+/**
+ * A comment plus the issue carrying it — what a bare `#comment-M` needs
+ * before it can be rendered as a deep link (T-150).
+ */
+export const CommentLocation = z.object({
+  issue_number: Id,
+  /** Spelled in the project's CURRENT reference format. */
+  issue_ref: z.string(),
+  comment: TimelineComment,
+});
+export type CommentLocation = z.infer<typeof CommentLocation>;
 
 export const TimelineEvent = z.object({
   type: z.literal("event"),

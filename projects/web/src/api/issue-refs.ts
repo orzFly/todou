@@ -1,5 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
-import type { IssueListItem } from "@todou/shared";
+import type { CommentLocation, IssueListItem } from "@todou/shared";
 import { api } from "@/api/queries.ts";
 
 /**
@@ -64,6 +64,9 @@ async function flush(slug: string): Promise<void> {
     // null = the ref points at no issue in this project; render plain text.
     settle((waiter, number) => waiter.resolve(byNumber.get(number) ?? null));
   } catch (error) {
+    // Rejecting rather than resolving null keeps "no such issue" apart from
+    // "this project answered nothing": a cross-project <IssueLink> reads the
+    // difference and degrades to plain text on either (T-150).
     settle((waiter) => waiter.reject(error));
   }
 }
@@ -94,6 +97,26 @@ export const commentRefQuery = (
         return await api.getComment(slug, issueNumber, commentId);
       } catch (error) {
         // Deleted comments must not break the surrounding rich link.
+        if ((error as { status?: number }).status === 404) return null;
+        throw error;
+      }
+    },
+    staleTime: 60_000,
+  });
+
+/**
+ * Where a bare `#comment-M` points. Unbatched like commentRefQuery: the
+ * form is rare enough that one request per distinct id is fine.
+ */
+export const commentLocationQuery = (slug: string, commentId: number) =>
+  queryOptions({
+    queryKey: ["comment-location", slug, commentId],
+    queryFn: async (): Promise<CommentLocation | null> => {
+      try {
+        return await api.locateComment(slug, commentId);
+      } catch (error) {
+        // Deleted comment, unreadable project, or a server predating the
+        // endpoint — all three render as plain text.
         if ((error as { status?: number }).status === 404) return null;
         throw error;
       }

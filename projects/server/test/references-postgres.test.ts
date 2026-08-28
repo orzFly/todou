@@ -96,4 +96,46 @@ describe.skipIf(!PG_URL)("reference cutoff on real postgres", () => {
     await createIssue("hash-again", `now #${second.number}`);
     expect(await referencedCount(second.number)).toBe(1);
   });
+
+  it("mirrors every switch and never lets a project contest itself", async () => {
+    // Prefixes are global and this database outlives the run, so a fixed
+    // "P" would be contested by every previous run's leftover project.
+    const tag = slug.slice("refs-pg-".length).toUpperCase();
+    const prefixes = [`P${tag}`, `Q${tag}`, `R${tag}`];
+
+    // Four switches as fast as the API allows: on real postgres each one
+    // gets its own microsecond, so the mirror must carry four rows and
+    // the holds derived from them must stay a single ordered chain.
+    for (const prefix of [...prefixes, null]) {
+      const res = await api("/references/format", {
+        method: "PUT",
+        body: JSON.stringify({ prefix }),
+      });
+      expect(res.status).toBe(200);
+    }
+    const config = await json(await api("/references/config"));
+    const directory = await json(
+      await t.app.request("/api/me/reference-directory", {
+        headers: { cookie },
+      }),
+    );
+
+    const held = (prefix: string) =>
+      directory.entries.filter(
+        (e: { prefix: string; slug: string }) =>
+          e.slug === slug && e.prefix === prefix,
+      );
+    for (const prefix of prefixes) {
+      expect(held(prefix)).toHaveLength(1);
+      // The last switch released everything, so no hold stays open.
+      expect(held(prefix)[0].to).not.toBeNull();
+    }
+    expect(
+      directory.contested.filter((c: { prefix: string }) =>
+        prefixes.includes(c.prefix),
+      ),
+    ).toEqual([]);
+    // Every project-side history row reached the mirror.
+    expect(config.format.history.length).toBeGreaterThanOrEqual(4);
+  });
 });

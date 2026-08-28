@@ -80,6 +80,9 @@ const ISSUE_URL_PATH = /^\/projects\/([^/]+)\/issues\/([^/]+)\/?$/;
  */
 const PREFIXED_REF = /^[A-Z][A-Z0-9_]*-(\d{1,9})$/;
 
+/** The slug-qualified form `project#16`; the slug's own charset excludes "#". */
+const QUALIFIED_REF = /^([a-z0-9][a-z0-9-]*)#(\d{1,9})$/;
+
 function parseIssueNumberToken(value: string, what: string): number {
   const prefixed = PREFIXED_REF.exec(value);
   if (prefixed?.[1] !== undefined) return Number(prefixed[1]);
@@ -88,10 +91,19 @@ function parseIssueNumberToken(value: string, what: string): number {
 
 /**
  * An issue reference as agents habitually write it: "16", "#16", "T-16",
- * "project/16", "project/#16", "project/T-16", or a full issue URL.
+ * "project/16", "project/#16", "project/T-16", "project#16", or a full
+ * issue URL. The "project#16" form is what cross-project references are
+ * written as in prose (T-150), so it has to paste back in here.
  */
 export function parseIssueRef(value: string, what: string): IssueRef {
   if (/^https?:\/\//i.test(value)) return parseIssueUrl(value, what);
+  const qualified = QUALIFIED_REF.exec(value);
+  if (qualified?.[1] !== undefined && qualified[2] !== undefined) {
+    return {
+      project: checkSlug(qualified[1], value),
+      number: parsePositiveInt(qualified[2], what),
+    };
+  }
   const parts = value.split("/");
   if (parts.length === 1) {
     return { number: parseIssueNumberToken(value, what) };

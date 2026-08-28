@@ -2,10 +2,11 @@ import type {
   AgentContext,
   ChangeEvent,
   CommentCreateInput,
+  CommentLocation,
   CommentUpdateInput,
   TimelineComment,
 } from "@todou/shared";
-import { QuestionAnsweredPayload } from "@todou/shared";
+import { formatRef, QuestionAnsweredPayload } from "@todou/shared";
 import { and, eq, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -13,8 +14,14 @@ import type { Db } from "../db/driver.ts";
 import { comments, issueEvents, issues } from "../db/project-schema.ts";
 import { ForbiddenError, NotFoundError } from "../errors.ts";
 import { requireProject, routeInfoOf } from "./access.ts";
+import {
+  analyzeReferences,
+  type CrossTarget,
+  loadReferenceInputs,
+  recordCrossReferences,
+} from "./cross-references.ts";
 import { canonicalizeComponent, questionCount } from "./questions.ts";
-import { recordReferences } from "./references.ts";
+import { recordReferences, refPrefixAt } from "./references.ts";
 import { deleteRevisionsFor, recordRevision } from "./revisions.ts";
 import { getUserRefs } from "./users.ts";
 
@@ -67,6 +74,8 @@ export async function createComment(
       ? null
       : canonicalizeComponent(input.component);
 
+  const refInputs = await loadReferenceInputs(ctx, db, project.id);
+  let crossTargets: CrossTarget[] = [];
   const events: ChangeEvent[] = [];
   const row = await db.transaction(async (tx) => {
     const inserted = await tx
@@ -112,13 +121,21 @@ export async function createComment(
       issue_number: issueNumber,
     });
 
+    const analyzed = await analyzeReferences(
+      tx,
+      refInputs,
+      project,
+      input.body,
+      comment.createdAt,
+      { issueNumber, commentId: comment.id },
+    );
+    crossTargets = analyzed.cross;
     const refs = await recordReferences(
       tx,
       project.id,
       actor.id,
       { issueNumber, commentId: comment.id },
-      input.body,
-      comment.createdAt,
+      analyzed.local,
       agentContext,
     );
     for (const ref of refs) {
@@ -133,6 +150,14 @@ export async function createComment(
   });
 
   for (const e of events) ctx.bus.publish(project.id, e);
+  await recordCrossReferences(
+    ctx,
+    actor,
+    project,
+    { issueNumber, commentId: row.id },
+    crossTargets,
+    agentContext,
+  );
   return toTimelineComment(ctx, row);
 }
 
@@ -155,6 +180,36 @@ export async function getComment(
   const row = rows[0];
   if (!row) throw new NotFoundError("comment not found");
   return toTimelineComment(ctx, row);
+}
+
+/**
+ * Resolve a comment without knowing which issue carries it — the entry
+ * point for a bare `#comment-M` reference (T-150), where the id is all the
+ * author wrote.
+ */
+export async function locateComment(
+  ctx: AppContext,
+  actor: UserRow,
+  slug: string,
+  commentId: number,
+): Promise<CommentLocation> {
+  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const db = await ctx.router.forProject(routeInfoOf(project));
+  const rows = await db
+    .select({ comment: comments, number: issues.number })
+    .from(comments)
+    .innerJoin(issues, eq(comments.issueId, issues.id))
+    .where(and(eq(comments.projectId, project.id), eq(comments.id, commentId)));
+  const row = rows[0];
+  if (!row) throw new NotFoundError("comment not found");
+  // The ref is a label for the reader, so it is spelled in the format in
+  // force now — not the one the comment was written under (T-80).
+  const prefix = await refPrefixAt(db, project.id, new Date());
+  return {
+    issue_number: row.number,
+    issue_ref: formatRef(prefix, row.number),
+    comment: await toTimelineComment(ctx, row.comment),
+  };
 }
 
 async function loadCommentForWrite(
@@ -202,6 +257,9 @@ export async function updateComment(
   // bump, no SSE, no reference re-scan.
   if (input.body === row.body) return toTimelineComment(ctx, row);
 
+  const project = { id: projectId, slug };
+  const refInputs = await loadReferenceInputs(ctx, db, projectId);
+  let crossTargets: CrossTarget[] = [];
   const { after, refs } = await db.transaction(async (tx) => {
     const updated = await tx
       .update(comments)
@@ -220,13 +278,21 @@ export async function updateComment(
       agentContext,
     });
 
+    const analyzed = await analyzeReferences(
+      tx,
+      refInputs,
+      project,
+      input.body,
+      row.createdAt,
+      { issueNumber, commentId: row.id },
+    );
+    crossTargets = analyzed.cross;
     const refs = await recordReferences(
       tx,
       projectId,
       actor.id,
       { issueNumber, commentId: row.id },
-      input.body,
-      row.createdAt,
+      analyzed.local,
       agentContext,
     );
     return { after, refs };
@@ -245,6 +311,14 @@ export async function updateComment(
       issue_number: ref.issueNumber,
     });
   }
+  await recordCrossReferences(
+    ctx,
+    actor,
+    project,
+    { issueNumber, commentId: row.id },
+    crossTargets,
+    agentContext,
+  );
   return toTimelineComment(ctx, after);
 }
 

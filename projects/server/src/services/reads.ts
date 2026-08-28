@@ -17,6 +17,7 @@ import {
   requireProject,
   routeInfoOf,
 } from "./access.ts";
+import { crossRefVisibleCondition } from "./cross-references.ts";
 
 /**
  * The user's unread epoch in this project, created lazily on first use so
@@ -80,6 +81,7 @@ export async function unreadIssueState(
   projectId: number,
   userId: number,
   issueIds: number[],
+  visibleSlugs: string[],
 ): Promise<{ unread: Set<number>; counts: Map<number, number> }> {
   const frontier = await ensureFrontier(db, projectId, userId);
   if (issueIds.length === 0) return { unread: new Set(), counts: new Map() };
@@ -140,6 +142,9 @@ export async function unreadIssueState(
         inArray(issueEvents.issueId, issueIds),
         ne(issueEvents.actorId, userId),
         gt(issueEvents.createdAt, frontier),
+        // Same predicate the timeline reads under: an event the viewer
+        // cannot see must never light the card that carries it.
+        crossRefVisibleCondition(visibleSlugs),
       ),
     )
     .groupBy(issueEvents.issueId);

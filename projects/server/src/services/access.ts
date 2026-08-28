@@ -81,6 +81,14 @@ export async function accessibleProjectRows(
   return system.select().from(projects).where(inArray(projects.id, ids));
 }
 
+/** The slugs a viewer may see named — the input to every visibility filter. */
+export async function accessibleProjectSlugs(
+  ctx: AppContext,
+  user: UserRow,
+): Promise<string[]> {
+  return (await accessibleProjectRows(ctx, user)).map((row) => row.slug);
+}
+
 export function routeInfoOf(project: ProjectRow) {
   return {
     id: project.id,

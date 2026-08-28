@@ -10,12 +10,36 @@ import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { autolinks, refFormats } from "../db/project-schema.ts";
+import { projects } from "../db/system-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
 import { requireProject, routeInfoOf } from "./access.ts";
+import { mirrorRefFormat } from "./reference-directory.ts";
 
 /** GitHub's autolink rule: no prefix may be a prefix of another. */
 function overlaps(a: string, b: string): boolean {
   return a.startsWith(b) || b.startsWith(a);
+}
+
+/**
+ * `todou#` as an autolink prefix would claim exactly the tokens the
+ * cross-project qualified form owns, and lose — qualified refs outrank
+ * autolinks. Refused at configuration time rather than left to render as
+ * a rule that silently never fires. Only this exact shape collides: any
+ * other trailing character keeps the digits from lining up.
+ */
+async function shadowedProjectSlug(
+  ctx: AppContext,
+  prefix: string,
+): Promise<string | null> {
+  const match = /^([a-z0-9][a-z0-9-]*)#$/.exec(prefix);
+  const slug = match?.[1];
+  if (slug === undefined) return null;
+  const rows = await ctx.router
+    .system()
+    .select({ slug: projects.slug })
+    .from(projects)
+    .where(eq(projects.slug, slug));
+  return rows[0]?.slug ?? null;
 }
 
 async function loadConfig(db: Db, projectId: number): Promise<ReferenceConfig> {
@@ -74,9 +98,18 @@ export async function setReferenceFormat(
       `internal format token "${token}" overlaps autolink prefix "${clash.prefix}"`,
     );
   }
-  await db
+  const inserted = await db
     .insert(refFormats)
-    .values({ projectId: project.id, prefix: input.prefix });
+    .values({ projectId: project.id, prefix: input.prefix })
+    .returning({
+      prefix: refFormats.prefix,
+      effectiveFrom: refFormats.effectiveFrom,
+    });
+  const row = inserted[0];
+  // Two databases, no shared transaction: the project's own history is
+  // authoritative and lands first. A mirror failure is reported so the
+  // admin can retry, and startup housekeeping re-copies it regardless.
+  if (row) await mirrorRefFormat(ctx.router.system(), project.id, row);
   return loadConfig(db, project.id);
 }
 
@@ -102,6 +135,13 @@ export async function createAutolink(
   if (clash) {
     throw new ValidationFailedError(
       `autolink prefix "${input.prefix}" overlaps existing autolink prefix "${clash.prefix}"`,
+    );
+  }
+  const shadowed = await shadowedProjectSlug(ctx, input.prefix);
+  if (shadowed !== null) {
+    throw new ValidationFailedError(
+      `autolink prefix "${input.prefix}" is the cross-project reference form ` +
+        `for project "${shadowed}" — see docs/external-trackers.md`,
     );
   }
   const inserted = await db

@@ -234,6 +234,7 @@ describe("issue view", () => {
         }),
         event(2, "assigned", { user: { id: 2, login: "claude" } }),
         event(3, "referenced", { by_issue: 9, by_comment: 41 }),
+        event(10, "cross_referenced", { by_project: "mirror", by_issue: 4 }),
         event(4, "attachment_added", {
           attachment: { id: 5, filename: "shot.png", size: 123 },
         }),
@@ -282,6 +283,9 @@ describe("issue view", () => {
     expect(result.stdout).toContain("label_added (bug)");
     expect(result.stdout).toContain("assigned (@claude)");
     expect(result.stdout).toContain("referenced (by T-9)");
+    // Self-contained: never spelled with this project's prefix, which
+    // would point at an unrelated card here.
+    expect(result.stdout).toContain("cross_referenced (by mirror#4)");
     expect(result.stdout).toContain("attachment_added (shot.png)");
     expect(result.stdout).toContain(
       "spec_pushed (v2: 1 added, 2 changed — tighten scope · use `todou spec pull 3 --version 2 <empty-dir>` to view)",

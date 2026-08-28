@@ -38,7 +38,12 @@ import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { comments, issueEvents, issues } from "../db/project-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
-import { requireProject, routeInfoOf } from "./access.ts";
+import {
+  accessibleProjectSlugs,
+  requireProject,
+  routeInfoOf,
+} from "./access.ts";
+import { crossRefVisibleCondition } from "./cross-references.ts";
 import { listProjects } from "./projects.ts";
 import { getUserRefs } from "./users.ts";
 
@@ -198,8 +203,11 @@ function notSelfConditions(
   return conditions;
 }
 
-/** The parsed `types`/self filters as per-table SQL conditions. */
-function filterConditions(query: Filters): {
+/** The parsed `types`/self/visibility filters as per-table SQL conditions. */
+function filterConditions(
+  query: Filters,
+  visibleSlugs: string[],
+): {
   wantComments: boolean;
   wantEvents: boolean;
   commentConditions: SQL[];
@@ -221,6 +229,7 @@ function filterConditions(query: Filters): {
   );
   eventConditions.push(
     ...notSelfConditions(issueEvents.actorId, issueEvents.agentContext, query),
+    crossRefVisibleCondition(visibleSlugs),
   );
   return {
     wantComments,
@@ -319,7 +328,7 @@ export async function getTimeline(
   // entirely. Cursors still order the merged stream, so a poll that matches
   // nothing simply returns an empty page and the caller keeps its cursor.
   const { wantComments, wantEvents, commentConditions, eventConditions } =
-    filterConditions(query);
+    filterConditions(query, await accessibleProjectSlugs(ctx, actor));
   commentConditions.push(eq(comments.issueId, issue.id));
   eventConditions.push(eq(issueEvents.issueId, issue.id));
 
@@ -431,13 +440,14 @@ async function fetchProjectActivityRows(opts: {
   projectId: number;
   cursor: Cursor | null;
   filters: Filters;
+  visibleSlugs: string[];
   backward: boolean;
   fetchCount: number;
 }): Promise<RawWithIssue[]> {
   const { db, projectId, cursor, backward, fetchCount } = opts;
   const forward = !backward;
   const { wantComments, wantEvents, commentConditions, eventConditions } =
-    filterConditions(opts.filters);
+    filterConditions(opts.filters, opts.visibleSlugs);
   commentConditions.push(eq(comments.projectId, projectId));
   eventConditions.push(eq(issueEvents.projectId, projectId));
   if (cursor) {
@@ -538,6 +548,7 @@ export async function getProjectActivity(
     projectId: project.id,
     cursor,
     filters: query,
+    visibleSlugs: await accessibleProjectSlugs(ctx, actor),
     backward,
     fetchCount: query.limit + 1,
   });
@@ -625,6 +636,11 @@ export async function getCrossActivity(
     explicit ??
     (await listProjects(ctx, actor)).map((project) => project.slug).sort();
 
+  // The filter set is every project the caller can read, even when this
+  // request only watches a few of them: what a cross-reference may name is
+  // a property of the viewer, not of the requested scope.
+  const visibleSlugs = await accessibleProjectSlugs(ctx, actor);
+
   const watched: WatchedProject[] = [];
   for (const slug of slugs) {
     const { project } = await requireProject(ctx, actor, slug, "reader");
@@ -645,6 +661,7 @@ export async function getCrossActivity(
       projectId: p.projectId,
       cursor: null,
       filters: {},
+      visibleSlugs,
       backward: true,
       fetchCount: 1,
     });
@@ -697,6 +714,7 @@ export async function getCrossActivity(
       projectId: p.projectId,
       cursor: p.position === null ? null : decodeCursor(p.position),
       filters: query,
+      visibleSlugs,
       backward: false,
       fetchCount: query.limit + 1,
     });

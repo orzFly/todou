@@ -2,6 +2,7 @@ export const TODOU = "todou";
 
 export * from "./client.ts";
 export * from "./events.ts";
+export * from "./references-grammar.ts";
 export * from "./schemas/agent.ts";
 export * from "./schemas/agent-context.ts";
 export * from "./schemas/attachment.ts";

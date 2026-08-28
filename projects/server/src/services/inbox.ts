@@ -13,10 +13,12 @@ import {
 } from "../db/project-schema.ts";
 import {
   accessibleProjectRows,
+  accessibleProjectSlugs,
   type ProjectRow,
   requireProject,
   routeInfoOf,
 } from "./access.ts";
+import { crossRefVisibleCondition } from "./cross-references.ts";
 import { bundleIssues, toIssue } from "./issues.ts";
 import { readPrefs } from "./prefs.ts";
 import { ensureFrontier, unreadIssueState } from "./reads.ts";
@@ -30,6 +32,7 @@ async function projectInbox(
   userId: number,
   limit: number,
   showWeakUnread: boolean,
+  visibleSlugs: string[],
 ): Promise<ProjectSlice> {
   const frontier = await ensureFrontier(db, project.id, userId);
 
@@ -95,6 +98,7 @@ async function projectInbox(
         ne(issueEvents.actorId, userId),
         gt(issueEvents.createdAt, frontier),
         sql`${issueEvents.createdAt} > coalesce(${issueReads.lastSeenAt}, ${frontier})`,
+        crossRefVisibleCondition(visibleSlugs),
       ),
     )
     .groupBy(issueEvents.issueId);
@@ -137,6 +141,7 @@ async function projectInbox(
     project.id,
     userId,
     ids,
+    visibleSlugs,
   );
 
   // Current version's author, for the "waiting for MY review" exclusion —
@@ -274,6 +279,9 @@ export async function getInbox(
   }
 
   const prefs = await readPrefs(ctx.router.system(), actor.id);
+  // The full readable set, not `scope`: a request narrowed to two projects
+  // still gets to see references from every project its caller can read.
+  const visibleSlugs = await accessibleProjectSlugs(ctx, actor);
 
   const items: InboxItem[] = [];
   let truncated = false;
@@ -286,6 +294,7 @@ export async function getInbox(
       actor.id,
       query.limit,
       prefs.show_weak_unread,
+      visibleSlugs,
     );
     items.push(...slice.items);
     truncated ||= slice.truncated;
