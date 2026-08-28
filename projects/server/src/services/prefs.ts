@@ -4,9 +4,11 @@ import type { Db } from "../db/driver.ts";
 import { userPrefs } from "../db/system-schema.ts";
 
 /**
- * Stored blobs may carry keys this build doesn't know (a newer server
- * wrote them, then rolled back) — strict-parse only the known slice and
- * let schema defaults fill the rest, so reads never throw on old rows.
+ * Stored blobs may carry keys this build doesn't know, or values it cannot
+ * read — a newer server wrote an enum member that was then rolled back
+ * (T-157). Both are dropped so the schema default fills the gap and a read
+ * never throws on an old row; a strict parse here would 500 the whole GET
+ * over one display preference.
  */
 function toPrefs(stored: unknown): MePrefs {
   const source =
@@ -14,8 +16,10 @@ function toPrefs(stored: unknown): MePrefs {
       ? (stored as Record<string, unknown>)
       : {};
   const known: Record<string, unknown> = {};
-  for (const key of Object.keys(MePrefs.shape)) {
-    if (key in source) known[key] = source[key];
+  for (const [key, schema] of Object.entries(MePrefs.shape)) {
+    if (key in source && schema.safeParse(source[key]).success) {
+      known[key] = source[key];
+    }
   }
   return MePrefs.parse(known);
 }

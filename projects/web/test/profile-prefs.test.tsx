@@ -1,4 +1,10 @@
-import { fireEvent, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { Me, MePrefs } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { prefsQuery } from "../src/api/prefs.ts";
@@ -20,49 +26,104 @@ const me: Me = {
   created_at: "2026-08-28T00:00:00Z",
 };
 
-function renderSettings(refBeforeTitle: boolean) {
+const DEFAULT_PREFS: MePrefs = {
+  show_weak_unread: true,
+  ref_placement_list: "before",
+  ref_placement_board: "own_line",
+  ref_placement_detail: "before",
+  ref_placement_reference: "before",
+};
+
+function renderSettings(prefs: Partial<MePrefs> = {}) {
   const client = testQueryClient();
   // Seeded, not fetched: useSuspenseQuery would otherwise suspend on a
   // boundary this bare render does not provide.
   client.setQueryData(meQuery.queryKey, me);
   client.setQueryData(prefsQuery.queryKey, {
-    show_weak_unread: true,
-    ref_before_title: refBeforeTitle,
+    ...DEFAULT_PREFS,
+    ...prefs,
   } satisfies MePrefs);
   const { container } = renderWithProviders(<ProfileSettingsPage />, client);
   return within(container);
 }
 
-describe("profile display preferences (T-153)", () => {
-  // One render per case: the label reaches its switch by id, and a second
-  // copy in the same document would steal the association.
-  it("shows the toggle on while the ref leads", async () => {
-    const view = renderSettings(true);
+describe("profile display preferences (T-157)", () => {
+  it("shows every surface's own placement", async () => {
+    const view = renderSettings({ ref_placement_list: "after" });
+    const value = async (name: string) =>
+      (await view.findByRole("combobox", { name })).textContent;
+
+    expect(await value("Issue lists & Inbox")).toContain("After title");
+    expect(await value("Board cards")).toContain("On its own line");
+    expect(await value("Issue page title")).toContain("Before title");
+    expect(await value("Issue references")).toContain("Before title");
+  });
+
+  it("patches only the surface that changed", async () => {
+    const spy = vi.spyOn(api, "patchMyPrefs").mockResolvedValue({
+      ...DEFAULT_PREFS,
+      ref_placement_board: "after",
+    });
+    const view = renderSettings();
+    // Typeahead on the closed trigger, the same path a keyboard user takes:
+    // "A" is the board's "After title, in the meta row".
+    fireEvent.keyDown(
+      await view.findByRole("combobox", { name: "Board cards" }),
+      {
+        key: "A",
+      },
+    );
+
+    await waitFor(() =>
+      expect(spy).toHaveBeenCalledWith({ ref_placement_board: "after" }),
+    );
+  });
+
+  it("offers a third placement on the board alone", async () => {
+    // A render apiece: only one listbox may be open at a time, and the
+    // suite's auto-cleanup runs between tests, not inside one.
+    const options = async (name: string) => {
+      const view = renderSettings();
+      fireEvent.keyDown(await view.findByRole("combobox", { name }), {
+        key: "ArrowDown",
+      });
+      const labels = screen.getAllByRole("option").map((o) => o.textContent);
+      cleanup();
+      return labels;
+    };
+
+    expect(await options("Board cards")).toEqual([
+      "Before title",
+      "After title, in the meta row",
+      "On its own line",
+    ]);
+    expect(await options("Issue page title")).toEqual([
+      "Before title",
+      "After title",
+    ]);
+  });
+
+  it("patches a flat surface with its own key too", async () => {
+    const spy = vi.spyOn(api, "patchMyPrefs").mockResolvedValue({
+      ...DEFAULT_PREFS,
+      ref_placement_detail: "after",
+    });
+    const view = renderSettings();
+    fireEvent.keyDown(
+      await view.findByRole("combobox", { name: "Issue page title" }),
+      { key: "A" },
+    );
+
+    await waitFor(() =>
+      expect(spy).toHaveBeenCalledWith({ ref_placement_detail: "after" }),
+    );
+  });
+
+  it("still carries the weak-unread toggle", async () => {
+    const view = renderSettings();
     expect(
-      (await view.findByRole("switch", { name: "Number before title" })).dataset
+      (await view.findByRole("switch", { name: "Weak unread hints" })).dataset
         .state,
     ).toBe("checked");
-  });
-
-  it("shows the toggle off while the ref trails", async () => {
-    const view = renderSettings(false);
-    expect(
-      (await view.findByRole("switch", { name: "Number before title" })).dataset
-        .state,
-    ).toBe("unchecked");
-  });
-
-  it("patches only its own key when toggled", async () => {
-    const spy = vi.spyOn(api, "patchMyPrefs").mockResolvedValue({
-      show_weak_unread: true,
-      ref_before_title: false,
-    });
-    const view = renderSettings(true);
-    fireEvent.click(
-      await view.findByRole("switch", { name: "Number before title" }),
-    );
-    await waitFor(() =>
-      expect(spy).toHaveBeenCalledWith({ ref_before_title: false }),
-    );
   });
 });

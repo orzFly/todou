@@ -56,7 +56,10 @@ function mockInbox(page: InboxPageData) {
   vi.spyOn(api, "getInbox").mockResolvedValue(page);
   vi.spyOn(api, "getMyPrefs").mockResolvedValue({
     show_weak_unread: true,
-    ref_before_title: true,
+    ref_placement_list: "before",
+    ref_placement_board: "own_line",
+    ref_placement_detail: "before",
+    ref_placement_reference: "before",
   });
 }
 

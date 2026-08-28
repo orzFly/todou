@@ -3,7 +3,7 @@ import { useRouterState } from "@tanstack/react-router";
 import { formatRef } from "@todou/shared";
 import { useEffect } from "react";
 import { issueQuery } from "@/api/issues.ts";
-import { useRefBeforeTitle } from "@/api/prefs.ts";
+import { useRefPlacement } from "@/api/prefs.ts";
 import { projectQuery } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
 
@@ -16,13 +16,13 @@ function titleFor(
     issueNumber?: number;
     issueTitle?: string;
     refPrefix: string | null;
-    refBeforeTitle: boolean;
+    refLeads: boolean;
   },
 ): string {
   const ref = formatRef(ctx.refPrefix, ctx.issueNumber ?? 0);
   const issueLabel = !ctx.issueTitle
     ? ref
-    : ctx.refBeforeTitle
+    : ctx.refLeads
       ? `${ref} ${ctx.issueTitle}`
       : `${ctx.issueTitle} ${ref}`;
   switch (routeId) {
@@ -84,13 +84,13 @@ export function TitleController() {
   });
 
   const refPrefix = useRefPrefix(slug ?? undefined);
-  const refBeforeTitle = useRefBeforeTitle();
+  const refLeads = useRefPlacement("detail") === "before";
   const title = titleFor(match?.routeId, {
     projectName: project.data?.name ?? slug ?? "",
     issueNumber,
     issueTitle: issue.data?.title,
     refPrefix,
-    refBeforeTitle,
+    refLeads,
   });
 
   useEffect(() => {

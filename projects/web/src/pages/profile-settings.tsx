@@ -4,15 +4,27 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import type { Me, MeUpdateInput } from "@todou/shared";
+import type {
+  BoardRefPlacement,
+  Me,
+  MeUpdateInput,
+  RefPlacement,
+} from "@todou/shared";
 import { useState } from "react";
 import { toast } from "sonner";
-import { prefsQuery, usePatchPrefs } from "@/api/prefs.ts";
+import { prefsQuery, usePatchPrefs, useRefPlacement } from "@/api/prefs.ts";
 import { api, meQuery } from "@/api/queries.ts";
 import { AvatarEditor } from "@/components/shared/avatar-editor.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 
 /** The signed-in user's own profile. Agents are edited via /settings/agents. */
@@ -154,33 +166,120 @@ function UnreadIndicatorsSection() {
   );
 }
 
-/** Where the issue number sits relative to the title (T-153). */
+const FLAT_PLACEMENTS: ReadonlyArray<{ value: RefPlacement; label: string }> = [
+  { value: "before", label: "Before title" },
+  { value: "after", label: "After title" },
+];
+
+const BOARD_PLACEMENTS: ReadonlyArray<{
+  value: BoardRefPlacement;
+  label: string;
+}> = [
+  { value: "before", label: "Before title" },
+  { value: "after", label: "After title, in the meta row" },
+  { value: "own_line", label: "On its own line" },
+];
+
+/** Where the issue number sits relative to the title, per surface (T-157). */
 function DisplaySection() {
   const prefs = useQuery(prefsQuery);
   const patch = usePatchPrefs();
-  const refBeforeTitle = prefs.data?.ref_before_title ?? true;
+  const pending = prefs.isPending;
+  const list = useRefPlacement("list");
+  const board = useRefPlacement("board");
+  const detail = useRefPlacement("detail");
+  const reference = useRefPlacement("reference");
 
   return (
-    <div className="space-y-3 border-t pt-6">
-      <h2 className="font-medium">Display</h2>
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <Label htmlFor="ref-before-title-toggle">Number before title</Label>
-          <p className="text-sm text-muted-foreground">
-            Put the issue number ahead of the title in issue lists, the Inbox,
-            board cards, issue pages, and references. Turn this off to read the
-            title first and find the number after it.
-          </p>
-        </div>
-        <Switch
-          id="ref-before-title-toggle"
-          checked={refBeforeTitle}
-          disabled={prefs.isPending}
-          onCheckedChange={(checked) =>
-            patch.mutate({ ref_before_title: checked })
-          }
-        />
+    <div className="space-y-4 border-t pt-6">
+      <div className="space-y-1">
+        <h2 className="font-medium">Issue number placement</h2>
+        <p className="text-sm text-muted-foreground">
+          Where the issue number sits relative to the title. Each surface reads
+          differently, so each one chooses for itself.
+        </p>
       </div>
+      <PlacementRow
+        id="ref-placement-list"
+        label="Issue lists & Inbox"
+        description="Rows in a project's issue list and in the Inbox."
+        value={list}
+        options={FLAT_PLACEMENTS}
+        disabled={pending}
+        onChange={(value) => patch.mutate({ ref_placement_list: value })}
+      />
+      <PlacementRow
+        id="ref-placement-board"
+        label="Board cards"
+        description="Cards on the board. On its own line puts the number under the title, above labels and assignees."
+        value={board}
+        options={BOARD_PLACEMENTS}
+        disabled={pending}
+        onChange={(value) => patch.mutate({ ref_placement_board: value })}
+      />
+      <PlacementRow
+        id="ref-placement-detail"
+        label="Issue page title"
+        description="The heading on an issue page. The floating title bar and the browser tab title follow it."
+        value={detail}
+        options={FLAT_PLACEMENTS}
+        disabled={pending}
+        onChange={(value) => patch.mutate({ ref_placement_detail: value })}
+      />
+      <PlacementRow
+        id="ref-placement-reference"
+        label="Issue references"
+        description="Issue links written inside descriptions and comments."
+        value={reference}
+        options={FLAT_PLACEMENTS}
+        disabled={pending}
+        onChange={(value) => patch.mutate({ ref_placement_reference: value })}
+      />
+    </div>
+  );
+}
+
+function PlacementRow<V extends string>({
+  id,
+  label,
+  description,
+  value,
+  options,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  description: string;
+  value: V;
+  options: ReadonlyArray<{ value: V; label: string }>;
+  disabled: boolean;
+  onChange: (value: V) => void;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div className="space-y-1">
+        <Label htmlFor={id}>{label}</Label>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </div>
+      <Select
+        value={value}
+        disabled={disabled}
+        // Radix hands back a bare string; the options above are the only
+        // values it can hand back.
+        onValueChange={(next) => onChange(next as V)}
+      >
+        <SelectTrigger id={id} className="shrink-0">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }

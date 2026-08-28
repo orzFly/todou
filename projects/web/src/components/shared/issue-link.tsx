@@ -8,7 +8,7 @@ import {
   commentRefQuery,
   issueRefQuery,
 } from "@/api/issue-refs.ts";
-import { useRefBeforeTitle } from "@/api/prefs.ts";
+import { useRefPlacement } from "@/api/prefs.ts";
 import { referenceConfigQuery } from "@/api/references.ts";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import { commentAnchor, parseIssuePermalink } from "@/lib/timeline-anchors.ts";
@@ -47,7 +47,7 @@ export function IssueLink({
     ...commentRefQuery(slug, number, commentId ?? 0),
     enabled: commentId !== undefined,
   });
-  const refBeforeTitle = useRefBeforeTitle();
+  const refLeads = useRefPlacement("reference") === "before";
   const prefix = config.data?.format.prefix ?? null;
   const spelled = crossProject
     ? `${slug}${prefix === null ? `#${number}` : `/${prefix}-${number}`}`
@@ -71,7 +71,7 @@ export function IssueLink({
   // Leading the title, the ref has already been spelled once; repeating it
   // after would read as two refs. What trails is then the comment note alone,
   // and with no comment there is nothing left to render.
-  const trailing = [refBeforeTitle && item ? null : spelled, commentNote]
+  const trailing = [refLeads && item ? null : spelled, commentNote]
     .filter((part) => part !== null)
     .join(" ");
   return (
@@ -88,7 +88,7 @@ export function IssueLink({
       className="font-medium hover:underline"
       title={
         item
-          ? refBeforeTitle
+          ? refLeads
             ? `${spelled} ${item.title} (${item.status.name})`
             : `${item.title} ${spelled} (${item.status.name})`
           : undefined
@@ -109,7 +109,7 @@ export function IssueLink({
               style={{ color: item.status.color }}
             />
           )}
-          {refBeforeTitle && (
+          {refLeads && (
             <span className="font-normal text-muted-foreground">
               {spelled}{" "}
             </span>

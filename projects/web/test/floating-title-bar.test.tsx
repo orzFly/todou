@@ -1,6 +1,11 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, waitFor, within } from "@testing-library/react";
-import type { Issue, MePrefs, ReferenceConfig } from "@todou/shared";
+import type {
+  Issue,
+  MePrefs,
+  ReferenceConfig,
+  RefPlacement,
+} from "@todou/shared";
 import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { prefsQuery } from "../src/api/prefs.ts";
@@ -70,13 +75,17 @@ class FakeIntersectionObserver {
 
 function seededClient(
   config: ReferenceConfig = prefixedConfig,
-  refBeforeTitle = true,
+  detail: RefPlacement = "before",
 ): QueryClient {
   const client = testQueryClient();
   client.setQueryData(referenceConfigQuery(SLUG).queryKey, config);
   client.setQueryData(prefsQuery.queryKey, {
     show_weak_unread: true,
-    ref_before_title: refBeforeTitle,
+    // The bar follows the detail page, and nothing else (T-157).
+    ref_placement_list: "after",
+    ref_placement_board: "own_line",
+    ref_placement_detail: detail,
+    ref_placement_reference: "after",
   } satisfies MePrefs);
   return client;
 }
@@ -91,10 +100,10 @@ function Harness() {
   );
 }
 
-async function renderBar(config?: ReferenceConfig, refBeforeTitle?: boolean) {
+async function renderBar(config?: ReferenceConfig, detail?: RefPlacement) {
   const { container } = renderWithProviders(
     <Harness />,
-    seededClient(config, refBeforeTitle),
+    seededClient(config, detail),
   );
   const view = within(container);
   const bar = await view.findByTestId("floating-title-bar");
@@ -141,10 +150,10 @@ describe("FloatingTitleBar (T-154)", () => {
     expect(bar.getAttribute("aria-hidden")).toBe("true");
   });
 
-  it.each([true, false])(
-    "keeps the ref out of the truncating span with ref_before_title=%s",
-    async (refBeforeTitle) => {
-      const { view, bar } = await renderBar(undefined, refBeforeTitle);
+  it.each(["before", "after"] as const)(
+    "keeps the ref out of the truncating span with ref_placement_detail=%s",
+    async (detail) => {
+      const { view, bar } = await renderBar(undefined, detail);
       const ref = await view.findByText("T-16");
       const title = await view.findByText(LONG_TITLE);
 
@@ -165,8 +174,8 @@ describe("FloatingTitleBar (T-154)", () => {
     ).toBeTruthy();
   });
 
-  it("puts the ref after the title when the preference is off", async () => {
-    const { view } = await renderBar(undefined, false);
+  it("puts the ref after the title when the detail page does", async () => {
+    const { view } = await renderBar(undefined, "after");
     const ref = await view.findByText("T-16");
     const title = await view.findByText(LONG_TITLE);
     expect(

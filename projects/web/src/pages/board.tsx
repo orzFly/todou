@@ -15,7 +15,7 @@ import { Link, useParams } from "@tanstack/react-router";
 import { formatRef, type IssueListItem, type Status } from "@todou/shared";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { boardColumnQuery, useBoardMove } from "@/api/board.ts";
-import { useRefBeforeTitle } from "@/api/prefs.ts";
+import { useRefPlacement } from "@/api/prefs.ts";
 import { statusesQuery } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import {
@@ -246,12 +246,13 @@ export function BoardCardContent({
   issue: IssueListItem;
 }) {
   const refPrefix = useRefPrefix(slug);
-  const refBeforeTitle = useRefBeforeTitle();
+  const placement = useRefPlacement("board");
   const ref = formatRef(refPrefix, issue.number);
-  // Once the ref moves up into the title, a plain card has nothing left to
-  // put on the meta row — and an empty flex row still spends its top margin.
+  // Only `after` seats the ref on the meta row; under the other two a plain
+  // card has nothing left to put there, and an empty flex row still spends
+  // its top margin.
   const showMeta =
-    !refBeforeTitle ||
+    placement === "after" ||
     issue.open_questions > 0 ||
     issue.spec_review_status === "unreviewed" ||
     issue.labels.length > 0 ||
@@ -280,16 +281,21 @@ export function BoardCardContent({
           issue.unread_comments > 0 ? "pr-8" : issue.unread && "pr-4",
         )}
       >
-        {refBeforeTitle && (
+        {placement === "before" && (
           <span className="font-normal text-muted-foreground">{ref} </span>
         )}
         {issue.title}
       </Link>
+      {/* Its own line sits outside the link: the ref reads as a caption under
+          the title rather than as more of its click target. */}
+      {placement === "own_line" && (
+        <div className="mt-0.5 text-xs text-muted-foreground">{ref}</div>
+      )}
       {/* Meta row hosts the question badge; the card's top-right corner
           belongs to the unread marker above (T-46, T-77). */}
       {showMeta && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          {!refBeforeTitle && (
+          {placement === "after" && (
             <span className="text-xs text-muted-foreground">{ref}</span>
           )}
           {issue.open_questions > 0 && (

@@ -4,6 +4,7 @@ import type {
   IssueListItem,
   MePrefs,
   ReferenceConfig,
+  RefPlacement,
   Status,
 } from "@todou/shared";
 import { describe, expect, it } from "vitest";
@@ -59,12 +60,16 @@ const prefixedConfig: ReferenceConfig = {
   autolinks: [],
 };
 
-function seededClient(refBeforeTitle: boolean): QueryClient {
+function seededClient(placement: RefPlacement): QueryClient {
   const client = testQueryClient();
   client.setQueryData(referenceConfigQuery(SLUG).queryKey, prefixedConfig);
   client.setQueryData(prefsQuery.queryKey, {
     show_weak_unread: true,
-    ref_before_title: refBeforeTitle,
+    ref_placement_list: placement,
+    // Deliberately unlike the list's: a row must read its own surface's key.
+    ref_placement_board: "own_line",
+    ref_placement_detail: "after",
+    ref_placement_reference: "after",
   } satisfies MePrefs);
   return client;
 }
@@ -77,12 +82,12 @@ const precedes = (a: Element, b: Element) =>
  * Scoped to this render's own container: the order cases mount both
  * preferences side by side, and body-wide queries would see two rows.
  */
-async function renderRow(refBeforeTitle: boolean) {
+async function renderRow(placement: RefPlacement) {
   const { container } = renderWithProviders(
     <ul>
       <IssueRow slug={SLUG} issue={issue} meta={<span>the meta line</span>} />
     </ul>,
-    seededClient(refBeforeTitle),
+    seededClient(placement),
   );
   const view = within(container);
   const title = await view.findByText(TITLE);
@@ -93,50 +98,50 @@ function GridProbe() {
   return <div data-testid="grid" className={useIssueListGrid()} />;
 }
 
-const renderGrid = async (refBeforeTitle: boolean) => {
+const renderGrid = async (placement: RefPlacement) => {
   const { container } = renderWithProviders(
     <GridProbe />,
-    seededClient(refBeforeTitle),
+    seededClient(placement),
   );
   return (await within(container).findByTestId("grid")).className;
 };
 
-describe("IssueRow ref placement (T-153)", () => {
+describe("IssueRow ref placement (T-153, T-157)", () => {
   it("leads with the ref by default, in its own column", async () => {
-    const { title, ref } = await renderRow(true);
+    const { title, ref } = await renderRow("before");
     expect(precedes(ref, title)).toBe(true);
     // Its own grid cell, not a passenger of the title's flex box — that is
     // what lets the list size the column to its longest ref (T-155).
     expect(ref.parentElement?.tagName).toBe("LI");
   });
 
-  it("trails the title when the preference is off", async () => {
-    const { title, ref } = await renderRow(false);
+  it("trails the title when the list is set to after", async () => {
+    const { title, ref } = await renderRow("after");
     expect(precedes(title, ref)).toBe(true);
     expect(ref.parentElement).toBe(title.parentElement);
   });
 
   it("keeps the trailing ref off the truncation path", async () => {
-    const { title, ref } = await renderRow(false);
+    const { title, ref } = await renderRow("after");
     expect(title.className).toContain("truncate");
     expect(ref.className).toContain("shrink-0");
     expect(ref.className).toContain("whitespace-nowrap");
   });
 
   it("drops the ref column from the list, rather than emptying it", async () => {
-    expect(await renderGrid(true)).toContain(
+    expect(await renderGrid("before")).toContain(
       "grid-cols-[27px_max-content_1fr]",
     );
-    expect(await renderGrid(false)).toContain("grid-cols-[27px_1fr]");
+    expect(await renderGrid("after")).toContain("grid-cols-[27px_1fr]");
   });
 
   it("indents the meta line under the title in both orders", async () => {
-    const leading = await renderRow(true);
+    const leading = await renderRow("before");
     expect(
       leading.view.getByText("the meta line").parentElement?.className,
     ).toContain("col-start-3");
 
-    const trailing = await renderRow(false);
+    const trailing = await renderRow("after");
     expect(
       trailing.view.getByText("the meta line").parentElement?.className,
     ).toContain("col-start-2");

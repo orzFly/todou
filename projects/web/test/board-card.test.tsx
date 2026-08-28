@@ -1,9 +1,16 @@
 import { fireEvent, waitFor, within } from "@testing-library/react";
-import type { IssueListItem, MePrefs, ReferenceConfig } from "@todou/shared";
+import type {
+  BoardRefPlacement,
+  IssueListItem,
+  MePrefs,
+  ReferenceConfig,
+  RefPlacement,
+} from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { prefsQuery } from "../src/api/prefs.ts";
 import { api } from "../src/api/queries.ts";
 import { referenceConfigQuery } from "../src/api/references.ts";
+import { IssueRow } from "../src/components/issue/issue-row.tsx";
 import { BoardCardContent } from "../src/pages/board.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
@@ -124,8 +131,8 @@ describe("BoardCardContent unread marker (T-46, T-77)", () => {
   });
 });
 
-describe("BoardCardContent ref placement (T-153)", () => {
-  const client = (refBeforeTitle: boolean) => {
+describe("BoardCardContent ref placement (T-153, T-157)", () => {
+  const client = (board: BoardRefPlacement, list: RefPlacement = "before") => {
     const c = testQueryClient();
     c.setQueryData(referenceConfigQuery("p").queryKey, {
       format: { prefix: "T", history: [] },
@@ -133,51 +140,83 @@ describe("BoardCardContent ref placement (T-153)", () => {
     } satisfies ReferenceConfig);
     c.setQueryData(prefsQuery.queryKey, {
       show_weak_unread: true,
-      ref_before_title: refBeforeTitle,
+      ref_placement_list: list,
+      ref_placement_board: board,
+      ref_placement_detail: "before",
+      ref_placement_reference: "before",
     } satisfies MePrefs);
     return c;
   };
 
-  it("carries the ref inside the title link by default", async () => {
+  const renderCard = async (board: BoardRefPlacement, openQuestions = 0) => {
     const { container } = renderWithProviders(
-      <BoardCardContent slug="p" issue={issue(0)} />,
-      client(true),
+      <BoardCardContent slug="p" issue={issue(openQuestions)} />,
+      client(board),
     );
     const view = within(container);
     const title = await view.findByText("issue 1");
-    expect(view.getByText("T-1").parentElement).toBe(title);
+    return { container, view, title, ref: view.getByText("T-1") };
+  };
+
+  /** True when `b` comes after `a` in document order. */
+  const precedes = (a: Element, b: Element) =>
+    (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+
+  it("gives the ref a line of its own by default", async () => {
+    const { container, title, ref } = await renderCard("own_line");
+    expect(title.contains(ref)).toBe(false);
+    expect(ref.className).toContain("mt-0.5");
+    expect(precedes(title, ref)).toBe(true);
+    // A bare card is its title and that line — no meta row is spun up to
+    // hold the ref, and none spends its margin.
+    expect(container.querySelector(".mt-1\\.5")).toBeNull();
   });
 
-  it("keeps the ref on the meta row when the preference is off", async () => {
-    const { container } = renderWithProviders(
-      <BoardCardContent slug="p" issue={issue(0)} />,
-      client(false),
-    );
-    const view = within(container);
-    const title = await view.findByText("issue 1");
-    const ref = view.getByText("T-1");
+  it("keeps that line above the meta row", async () => {
+    const { container, title, ref } = await renderCard("own_line", 2);
+    const meta = container.querySelector(".mt-1\\.5");
+    expect(meta).not.toBeNull();
+    expect(precedes(title, ref)).toBe(true);
+    expect(precedes(ref, meta as Element)).toBe(true);
+  });
+
+  it("carries the ref inside the title link when set to before", async () => {
+    const { title, ref } = await renderCard("before");
+    expect(ref.parentElement).toBe(title);
+  });
+
+  it("keeps the ref on the meta row when set to after", async () => {
+    const { container, title, ref } = await renderCard("after");
     expect(title.contains(ref)).toBe(false);
-    expect(
-      title.compareDocumentPosition(ref) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(precedes(title, ref)).toBe(true);
+    expect(container.querySelector(".mt-1\\.5")?.contains(ref)).toBe(true);
   });
 
   it("drops the emptied meta row rather than leaving its margin behind", async () => {
-    const { container } = renderWithProviders(
-      <BoardCardContent slug="p" issue={issue(0)} />,
-      client(true),
-    );
-    await within(container).findByText("issue 1");
+    const { container } = await renderCard("before");
     expect(container.querySelector(".mt-1\\.5")).toBeNull();
   });
 
   it("keeps the meta row for a card that still has badges", async () => {
-    const { container } = renderWithProviders(
-      <BoardCardContent slug="p" issue={issue(2)} />,
-      client(true),
-    );
-    await within(container).findByText("issue 1");
+    const { container } = await renderCard("before", 2);
     expect(container.querySelector(".mt-1\\.5")).not.toBeNull();
+  });
+
+  it("reads its own surface's key, not the list's (T-157)", async () => {
+    const { container } = renderWithProviders(
+      <>
+        <BoardCardContent slug="p" issue={issue(0)} />
+        <ul>
+          <IssueRow slug="p" issue={issue(0)} />
+        </ul>
+      </>,
+      client("own_line", "after"),
+    );
+    const view = within(container);
+    await view.findAllByText("issue 1");
+    const [card, row] = view.getAllByText("T-1");
+    expect(card.className).toContain("mt-0.5");
+    expect(row.className).toContain("shrink-0");
   });
 });
 

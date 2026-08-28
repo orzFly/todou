@@ -9,7 +9,7 @@ import { CheckIcon, PencilIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { issueQuery, useIssueStatusMutation } from "@/api/issues.ts";
-import { useRefBeforeTitle } from "@/api/prefs.ts";
+import { useRefPlacement } from "@/api/prefs.ts";
 import {
   api,
   labelsQuery,
@@ -132,7 +132,7 @@ export function IssueDetailPage() {
 
 function TitleBlock({ slug, issue }: { slug: string; issue: Issue }) {
   const refPrefix = useRefPrefix(slug);
-  const refBeforeTitle = useRefBeforeTitle();
+  const refLeads = useRefPlacement("detail") === "before";
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(issue.title);
   const queryClient = useQueryClient();
@@ -186,7 +186,7 @@ function TitleBlock({ slug, issue }: { slug: string; issue: Issue }) {
   return (
     <div className="flex items-start justify-between gap-2">
       <h1 className="text-2xl font-semibold">
-        {refBeforeTitle ? (
+        {refLeads ? (
           <>
             <span className="font-normal text-muted-foreground">
               {formatRef(refPrefix, issue.number)}

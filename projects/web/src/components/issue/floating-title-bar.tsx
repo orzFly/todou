@@ -1,6 +1,6 @@
 import { formatRef, type Issue } from "@todou/shared";
 import { type RefObject, useEffect, useState } from "react";
-import { useRefBeforeTitle } from "@/api/prefs.ts";
+import { useRefPlacement } from "@/api/prefs.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import { cn } from "@/lib/utils";
 
@@ -22,7 +22,7 @@ export function FloatingTitleBar({
   watchTarget: RefObject<HTMLElement | null>;
 }) {
   const refPrefix = useRefPrefix(slug);
-  const refBeforeTitle = useRefBeforeTitle();
+  const refLeads = useRefPlacement("detail") === "before";
   const [headerHeight, setHeaderHeight] = useState(FALLBACK_HEADER_HEIGHT);
   const [shown, setShown] = useState(false);
 
@@ -74,7 +74,7 @@ export function FloatingTitleBar({
       >
         {/* Either order, the ref stays outside the truncating span, so no
             title length can eat it. */}
-        {refBeforeTitle && (
+        {refLeads && (
           <span className="shrink-0 text-sm text-muted-foreground">
             {formatRef(refPrefix, issue.number)}
           </span>
@@ -85,7 +85,7 @@ export function FloatingTitleBar({
         >
           {issue.title}
         </span>
-        {!refBeforeTitle && (
+        {!refLeads && (
           <span className="shrink-0 text-sm text-muted-foreground">
             {formatRef(refPrefix, issue.number)}
           </span>
