@@ -90,7 +90,7 @@ describe("S3Storage against fake S3", () => {
     const parsed = new URL(url as string);
     expect(parsed.searchParams.get("X-Amz-Signature")).toBeTruthy();
     expect(parsed.searchParams.get("response-content-disposition")).toBe(
-      'attachment; filename="na_me.txt"',
+      "attachment; filename=\"na_me.txt\"; filename*=UTF-8''na%22me.txt",
     );
 
     // The fake verifies the signature for real, so a plain unauthenticated
@@ -98,7 +98,7 @@ describe("S3Storage against fake S3", () => {
     const res = await fetch(url as string);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-disposition")).toBe(
-      'attachment; filename="na_me.txt"',
+      "attachment; filename=\"na_me.txt\"; filename*=UTF-8''na%22me.txt",
     );
     expect(res.headers.get("content-type")).toBe("text/plain");
     expect(await res.text()).toBe("body");

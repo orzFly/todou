@@ -118,6 +118,53 @@ describe("attachments (fs backend)", () => {
     expect(download.headers.get("content-security-policy")).toBeNull();
   });
 
+  // Every one of these used to 500: a code point above 0xFF cannot go into a
+  // header value, and the TypeError fell through to the generic handler.
+  it.each([
+    [
+      "e2e-验收留证.txt",
+      "e2e-____.txt",
+      "e2e-%E9%AA%8C%E6%94%B6%E7%95%99%E8%AF%81.txt",
+    ],
+    [
+      "検証レポート.txt",
+      "______.txt",
+      "%E6%A4%9C%E8%A8%BC%E3%83%AC%E3%83%9D%E3%83%BC%E3%83%88.txt",
+    ],
+    [
+      "검수 증빙.txt",
+      "__ __.txt",
+      "%EA%B2%80%EC%88%98%20%EC%A6%9D%EB%B9%99.txt",
+    ],
+  ])("downloads a non-ASCII name: %s (T-147)", async (name, ascii, encoded) => {
+    const res = await upload(name, "unicode bytes");
+    expect(res.status).toBe(201);
+    const attachment = await json(res);
+    // Storage keeps the name as given; only the header gets encoded.
+    expect(attachment.filename).toBe(name);
+
+    const download = await t.app.request(attachment.url, {
+      headers: { cookie },
+    });
+    expect(download.status).toBe(200);
+    expect(await download.text()).toBe("unicode bytes");
+    expect(download.headers.get("content-disposition")).toBe(
+      `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`,
+    );
+
+    const view = await t.app.request(
+      attachment.url.replace("/download/", "/view/"),
+      { headers: { cookie } },
+    );
+    expect(view.status).toBe(200);
+    expect(view.headers.get("content-disposition")).toBe(
+      `inline; filename="${ascii}"; filename*=UTF-8''${encoded}`,
+    );
+    expect(view.headers.get("content-security-policy")).toBe(
+      "sandbox allow-scripts",
+    );
+  });
+
   it("requires membership on the view route like download", async () => {
     const res = await upload("secret.html", "<p>hi</p>");
     const attachment = await json(res);
@@ -370,6 +417,28 @@ describe("attachments (s3 backend)", () => {
       expect(followed.status).toBe(200);
       expect(await followed.text()).toBe("presigned bytes");
     }
+  });
+
+  // The store decodes this parameter and replays it as the response header,
+  // so a raw UTF-8 name here would land in a header on the far side (T-147).
+  it("presigns a non-ASCII name as RFC 6266 parameters (T-147)", async () => {
+    const attachment = await json(
+      await multipartUpload("e2e-验收留证.txt", "presigned unicode"),
+    );
+    const res = await t.app.request(attachment.url, { headers: { cookie } });
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") as string;
+    const expected =
+      'attachment; filename="e2e-____.txt"; ' +
+      "filename*=UTF-8''e2e-%E9%AA%8C%E6%94%B6%E7%95%99%E8%AF%81.txt";
+    expect(
+      new URL(location).searchParams.get("response-content-disposition"),
+    ).toBe(expected);
+
+    const followed = await fetch(location);
+    expect(followed.status).toBe(200);
+    expect(followed.headers.get("content-disposition")).toBe(expected);
+    expect(await followed.text()).toBe("presigned unicode");
   });
 
   it("keeps the view route server-streamed with the CSP sandbox", async () => {

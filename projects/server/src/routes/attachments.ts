@@ -9,6 +9,7 @@ import {
 import type { Context } from "hono";
 import type { AppEnv } from "../auth/middleware.ts";
 import { ValidationFailedError } from "../errors.ts";
+import { contentDisposition } from "../http/content-disposition.ts";
 import {
   completeDirectUpload,
   listIssueAttachments,
@@ -229,7 +230,7 @@ export function attachmentRoutes() {
     c.header("content-length", String(size));
     c.header(
       "content-disposition",
-      `${disposition}; filename="${row.filename.replaceAll('"', "_")}"`,
+      contentDisposition(disposition, row.filename),
     );
     if (disposition === "inline") {
       // Attachments are user-supplied and share the API's origin. The CSP

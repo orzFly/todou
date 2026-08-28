@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 import { AwsClient, AwsV4Signer } from "aws4fetch";
 import { type Config, ConfigError, type S3Credentials } from "../config.ts";
 import { NotFoundError, UpstreamError } from "../errors.ts";
+import { contentDisposition } from "../http/content-disposition.ts";
 import type { StorageBackend } from "./types.ts";
 
 type S3Settings = Config["storage"]["s3"];
@@ -179,9 +180,11 @@ export class S3Storage implements StorageBackend {
       String(this.#settings.presign_expiry_seconds),
     );
     if (opts?.filename) {
+      // The store replays this parameter back as the response header
+      // verbatim, so it has to be header-legal here too (T-147).
       url.searchParams.set(
         "response-content-disposition",
-        `attachment; filename="${opts.filename.replaceAll('"', "_")}"`,
+        contentDisposition("attachment", opts.filename),
       );
     }
     if (opts?.contentType) {
