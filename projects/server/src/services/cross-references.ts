@@ -4,7 +4,7 @@ import type {
   PrefixDirectory,
 } from "@todou/shared";
 import { scanReferenceTokens } from "@todou/shared";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, ne, or, type SQL, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
@@ -22,6 +22,20 @@ import {
   globalPrefixDirectory,
 } from "./reference-directory.ts";
 import { refPrefixAt, stripMarkdownCode } from "./references.ts";
+
+/**
+ * Hide `cross_referenced` events whose source project the viewer cannot
+ * read. A dangling "referenced by somewhere you may not go" is worse than
+ * silence and leaks that the project exists at all. It has to be a SQL
+ * predicate: the timeline counts and paginates over these tables, so
+ * dropping rows afterwards would break both.
+ */
+export function crossRefVisibleCondition(visibleSlugs: string[]): SQL {
+  const notCross = ne(issueEvents.type, "cross_referenced");
+  if (visibleSlugs.length === 0) return notCross;
+  const source = sql<string>`${issueEvents.payload} ->> 'by_project'`;
+  return or(notCross, inArray(source, visibleSlugs)) as SQL;
+}
 
 /** Everything the grammar needs beyond the text itself, loaded once per write. */
 export type ReferenceInputs = {

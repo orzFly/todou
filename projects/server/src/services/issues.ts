@@ -40,7 +40,12 @@ import {
 } from "../db/project-schema.ts";
 import { projectMembers } from "../db/system-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
-import { type ProjectRow, requireProject, routeInfoOf } from "./access.ts";
+import {
+  accessibleProjectSlugs,
+  type ProjectRow,
+  requireProject,
+  routeInfoOf,
+} from "./access.ts";
 import {
   analyzeReferences,
   type CrossTarget,
@@ -548,6 +553,7 @@ export async function listIssues(
     project.id,
     actor.id,
     page.map((r) => r.id),
+    await accessibleProjectSlugs(ctx, actor),
   );
   return {
     items: bundles.map((b) => ({
