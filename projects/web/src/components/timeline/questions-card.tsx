@@ -16,11 +16,11 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import { questionsQuery } from "@/api/questions.ts";
+import { MarkdownEditor } from "@/components/shared/markdown-editor.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 
 type Draft = { selected: Set<number>; other: string; declined: boolean };
 
@@ -334,21 +334,19 @@ function QuestionForm({
           Decline to answer
         </button>
       </div>
-      <Textarea
-        value={draft.other}
-        disabled={disabled}
-        onChange={(e) => {
-          const other = e.target.value;
+      <MarkdownEditor
+        initialValue={draft.other}
+        readOnly={disabled}
+        ariaLabel="Other / additional thoughts"
+        onChange={(other) => {
           onChange((d) => ({ ...d, other }));
         }}
-        rows={1}
         placeholder={
           draft.declined
             ? "Why not? (optional, markdown)"
             : "Other / additional thoughts… (optional, markdown; combines with selections)"
         }
-        // text-base below md: sub-16px inputs trigger iOS focus auto-zoom.
-        className="min-h-8 text-base md:text-sm"
+        className="min-h-8"
       />
     </fieldset>
   );

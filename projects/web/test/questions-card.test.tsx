@@ -2,6 +2,7 @@ import { fireEvent, waitFor } from "@testing-library/react";
 import type { QuestionsComponent } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QuestionsCard } from "../src/components/timeline/questions-card.tsx";
+import { cmSetValue } from "./cm.ts";
 import { renderWithProviders } from "./render.tsx";
 
 const user = {
@@ -135,10 +136,7 @@ describe("QuestionsCard (unanswered)", () => {
     fireEvent.click(optionButton(view, "Inline"));
     fireEvent.click(optionButton(view, "dev"));
     fireEvent.click(optionButton(view, "prod"));
-    const textareas = view.container.querySelectorAll("textarea");
-    fireEvent.change(textareas[0] as HTMLTextAreaElement, {
-      target: { value: "and keep it strict" },
-    });
+    cmSetValue(view.container, "and keep it strict");
 
     const submit = await view.findByText("Submit answers");
     await waitFor(() =>

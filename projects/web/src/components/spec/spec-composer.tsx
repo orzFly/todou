@@ -1,8 +1,8 @@
 import { formatAnchorRange } from "@todou/shared";
 import { FileTextIcon, XIcon } from "lucide-react";
 import { useState } from "react";
+import { MarkdownEditor } from "@/components/shared/markdown-editor.tsx";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 
 /** Longest quote preview before the rest folds into a "+N lines" note. */
 const QUOTE_PREVIEW_LINES = 4;
@@ -79,21 +79,19 @@ export function SpecComposer({
           </div>
         )}
         <div className="space-y-2 p-2">
-          <Textarea
+          <MarkdownEditor
             autoFocus
-            rows={3}
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
+            ariaLabel="Spec comment"
+            className="min-h-16"
+            onChange={setBody}
             placeholder={
               fileLevel
                 ? "Comment on this file (markdown)… staged locally until you finish the review"
                 : "Comment (markdown)… staged locally until you finish the review"
             }
-            onKeyDown={(e) => {
-              if (e.key === "Escape") onCancel();
-              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                if (body.trim() !== "") onStage(body);
-              }
+            onCancel={onCancel}
+            onSubmit={(value) => {
+              if (value.trim() !== "") onStage(value);
             }}
           />
           <div className="flex items-center gap-2">

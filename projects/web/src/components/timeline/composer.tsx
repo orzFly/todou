@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Me, TimelineComment } from "@todou/shared";
 import { SendIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import {
@@ -9,8 +9,11 @@ import {
   StagedFileUploadButton,
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
+import {
+  MarkdownEditor,
+  type MarkdownEditorHandle,
+} from "@/components/shared/markdown-editor.tsx";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 
 export type PendingComment = {
   key: number;
@@ -97,12 +100,12 @@ export function Composer({
   failed: PendingComment[];
   onRetry: (key: number) => void;
 }) {
-  const [body, setBody] = useState("");
+  const editor = useRef<MarkdownEditorHandle>(null);
   const [uploading, setUploading] = useState(false);
   const staging = useStagedFiles();
 
   async function submit() {
-    const trimmed = body.trim();
+    const trimmed = (editor.current?.getValue() ?? "").trim();
     if (uploading) return;
     if (trimmed === "" && staging.staged.length === 0) return;
     let full = trimmed;
@@ -120,7 +123,7 @@ export function Composer({
       }
     }
     onSend(full);
-    setBody("");
+    editor.current?.setValue("");
     staging.clear();
   }
 
@@ -153,22 +156,17 @@ export function Composer({
           void submit();
         }}
       >
-        <Textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
+        <MarkdownEditor
+          ref={editor}
+          ariaLabel="Write a comment"
           placeholder="Write a comment… (#N references other issues; paste or drop files)"
-          rows={3}
           // Sticky at the viewport bottom: an auto-growing draft must not
           // swallow the page, especially on small/mobile viewports.
-          className="max-h-[40dvh] sm:flex-1"
+          className="max-h-[40dvh] min-h-16 sm:flex-1"
           onPaste={staging.onPaste}
           onDrop={staging.onDrop}
           onDragOver={staging.onDragOver}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-              e.currentTarget.form?.requestSubmit();
-            }
-          }}
+          onSubmit={() => void submit()}
         />
         {/* Phones: the textarea gets the whole row; the buttons drop to
             their own row below (attach left, submit right — the same row

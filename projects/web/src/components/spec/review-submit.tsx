@@ -1,8 +1,12 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatAnchorRange, type SpecReviewVerdict } from "@todou/shared";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
+import {
+  MarkdownEditor,
+  type MarkdownEditorHandle,
+} from "@/components/shared/markdown-editor.tsx";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -10,7 +14,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/textarea";
 import type { SpecReviewDraft } from "@/lib/spec-drafts.ts";
 
 /**
@@ -38,6 +41,7 @@ export function ReviewSubmitDialog({
 }) {
   const [verdict, setVerdict] = useState<SpecReviewVerdict | null>(null);
   const [summary, setSummary] = useState("");
+  const editor = useRef<MarkdownEditorHandle>(null);
   const queryClient = useQueryClient();
   const submit = useMutation({
     mutationFn: (picked: SpecReviewVerdict) =>
@@ -80,6 +84,7 @@ export function ReviewSubmitDialog({
         queryClient.invalidateQueries({ queryKey: key });
       }
       setSummary("");
+      editor.current?.setValue("");
       setVerdict(null);
       onSubmitted();
     },
@@ -124,10 +129,11 @@ export function ReviewSubmitDialog({
             : `${drafts.length} staged comment(s) will be posted with the verdict.`}
         </p>
 
-        <Textarea
-          rows={3}
-          value={summary}
-          onChange={(e) => setSummary(e.target.value)}
+        <MarkdownEditor
+          ref={editor}
+          ariaLabel="Review summary"
+          className="min-h-16"
+          onChange={setSummary}
           placeholder="Summary (markdown, optional)"
         />
 

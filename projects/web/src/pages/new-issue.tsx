@@ -21,6 +21,10 @@ import {
   StagedFileUploadButton,
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
+import {
+  MarkdownEditor,
+  type MarkdownEditorHandle,
+} from "@/components/shared/markdown-editor.tsx";
 import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import { withAttachmentMarkers } from "@/components/timeline/composer.tsx";
 import { Button } from "@/components/ui/button";
@@ -39,7 +43,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 
 // Mirrors the server's choice when no status is sent with a new issue.
 export function pickDefaultStatus(statuses: Status[]): Status | undefined {
@@ -57,7 +60,7 @@ export function NewIssuePage() {
   const createLabel = useCreateLabel(slug);
 
   const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
+  const editor = useRef<MarkdownEditorHandle>(null);
   const [statusId, setStatusId] = useState("");
   const [labelIds, setLabelIds] = useState<number[]>([]);
   const [assigneeIds, setAssigneeIds] = useState<number[]>([]);
@@ -70,6 +73,7 @@ export function NewIssuePage() {
   async function submit() {
     const trimmedTitle = title.trim();
     if (submitting || trimmedTitle === "") return;
+    const body = editor.current?.getValue() ?? "";
     setSubmitting(true);
     try {
       let issue = createdRef.current;
@@ -125,13 +129,14 @@ export function NewIssuePage() {
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="new-issue-body">Description</Label>
-          <Textarea
-            id="new-issue-body"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
+          {/* A contenteditable is not a labelable element, so the caption
+              stands on its own and the editor carries its own name. */}
+          <Label>Description</Label>
+          <MarkdownEditor
+            ref={editor}
+            ariaLabel="Description"
             placeholder="Markdown supported. Reference other issues with #N; paste or drop files."
-            rows={10}
+            className="min-h-56"
             onPaste={staging.onPaste}
             onDrop={staging.onDrop}
             onDragOver={staging.onDragOver}

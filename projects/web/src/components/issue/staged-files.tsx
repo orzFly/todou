@@ -1,14 +1,12 @@
 import { useQueryClient } from "@tanstack/react-query";
 import type { Attachment } from "@todou/shared";
 import { FileIcon, PaperclipIcon, XIcon } from "lucide-react";
-import {
-  type ClipboardEvent,
-  type DragEvent,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/api/queries.ts";
+import type {
+  FileClipboardEvent,
+  FileDragEvent,
+} from "@/components/shared/markdown-editor.tsx";
 import { Button } from "@/components/ui/button";
 import { formatSize, isPreviewableImage } from "@/lib/attachment-preview.ts";
 import {
@@ -128,20 +126,20 @@ export function useStagedFiles() {
     return markers;
   }
 
-  function onPaste(e: ClipboardEvent) {
-    if (stage(e.clipboardData.files)) e.preventDefault();
+  function onPaste(e: FileClipboardEvent) {
+    if (stage(e.clipboardData?.files ?? [])) e.preventDefault();
   }
 
-  function onDrop(e: DragEvent) {
-    if (e.dataTransfer.files.length > 0) {
+  function onDrop(e: FileDragEvent) {
+    if (e.dataTransfer !== null && e.dataTransfer.files.length > 0) {
       e.preventDefault();
       stage(e.dataTransfer.files);
     }
   }
 
-  function onDragOver(e: DragEvent) {
+  function onDragOver(e: FileDragEvent) {
     // Without this the browser navigates to the dropped file.
-    if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+    if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
   }
 
   return {

@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { TimelineComment } from "@todou/shared";
 import { PencilIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import {
@@ -11,6 +11,10 @@ import {
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
+import {
+  MarkdownEditor,
+  type MarkdownEditorHandle,
+} from "@/components/shared/markdown-editor.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { RevisionHistory } from "@/components/shared/revision-history.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -18,7 +22,6 @@ import { withAttachmentMarkers } from "@/components/timeline/composer.tsx";
 import { QuestionsCard } from "@/components/timeline/questions-card.tsx";
 import { SpecCommentAnchorCard } from "@/components/timeline/spec-comment-card.tsx";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 
 export type Viewer = { id: number; isAdmin: boolean };
@@ -46,7 +49,7 @@ export function CommentItem({
   pending?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
-  const [body, setBody] = useState(comment.body);
+  const editor = useRef<MarkdownEditorHandle>(null);
   const [uploading, setUploading] = useState(false);
   const staging = useStagedFiles();
   const queryClient = useQueryClient();
@@ -65,6 +68,7 @@ export function CommentItem({
 
   async function handleSave() {
     if (uploading) return;
+    const body = editor.current?.getValue() ?? comment.body;
     let full = body;
     if (staging.staged.length > 0) {
       setUploading(true);
@@ -134,7 +138,8 @@ export function CommentItem({
             className="ml-auto"
             aria-label="edit comment"
             onClick={() => {
-              setBody(comment.body);
+              // The editor mounts fresh off comment.body each time edit mode
+              // opens, so an abandoned draft never survives into the next one.
               staging.clear();
               setEditing(!editing);
             }}
@@ -158,14 +163,21 @@ export function CommentItem({
         )}
         {editing ? (
           <div className="space-y-2">
-            <Textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={5}
+            <MarkdownEditor
+              ref={editor}
+              autoFocus
+              initialValue={comment.body}
+              ariaLabel="Edit comment"
+              className="min-h-28"
               placeholder="Edit comment… (paste or drop files)"
               onPaste={staging.onPaste}
               onDrop={staging.onDrop}
               onDragOver={staging.onDragOver}
+              onSubmit={() => void handleSave()}
+              onCancel={() => {
+                staging.clear();
+                setEditing(false);
+              }}
             />
             <StagedFileTray
               staged={staging.staged}

@@ -19,6 +19,7 @@ import {
   rehypeSourceLines,
 } from "../src/lib/rehype-source-lines.ts";
 import { useSpecReviewDrafts } from "../src/lib/spec-drafts.ts";
+import { cmSetValue } from "./cm.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 afterEach(() => {
@@ -289,9 +290,8 @@ describe("ReviewSubmitDialog", () => {
       />,
     );
 
-    fireEvent.change(await view.findByPlaceholderText(/Summary/), {
-      target: { value: "overall fine" },
-    });
+    await view.findByText("Request changes");
+    cmSetValue(view.baseElement, "overall fine");
     fireEvent.click(view.getByText("Request changes"));
 
     await waitFor(() => expect(onSubmitted).toHaveBeenCalled());

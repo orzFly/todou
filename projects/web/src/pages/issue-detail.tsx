@@ -37,6 +37,10 @@ import {
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
+import {
+  MarkdownEditor,
+  type MarkdownEditorHandle,
+} from "@/components/shared/markdown-editor.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { RevisionHistory } from "@/components/shared/revision-history.tsx";
 import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
@@ -55,7 +59,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { Textarea } from "@/components/ui/textarea";
 
 export function IssueDetailPage() {
   const { slug, number: numberParam } = useParams({
@@ -216,7 +219,7 @@ function TitleBlock({ slug, issue }: { slug: string; issue: Issue }) {
 
 function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
   const [editing, setEditing] = useState(false);
-  const [body, setBody] = useState(issue.body);
+  const editor = useRef<MarkdownEditorHandle>(null);
   const [uploading, setUploading] = useState(false);
   const staging = useStagedFiles();
   const queryClient = useQueryClient();
@@ -235,6 +238,7 @@ function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
 
   async function handleSave() {
     if (uploading) return;
+    const body = editor.current?.getValue() ?? issue.body;
     let full = body;
     if (staging.staged.length > 0) {
       setUploading(true);
@@ -276,7 +280,8 @@ function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
           className="ml-auto"
           aria-label="edit body"
           onClick={() => {
-            setBody(issue.body);
+            // The editor mounts fresh off issue.body, so entering edit mode
+            // always starts from what is on screen.
             staging.clear();
             setEditing(!editing);
           }}
@@ -287,10 +292,11 @@ function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
       <div className="px-3 py-2">
         {editing ? (
           <div className="space-y-2">
-            <Textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={8}
+            <MarkdownEditor
+              ref={editor}
+              initialValue={issue.body}
+              ariaLabel="Issue description"
+              className="min-h-44"
               placeholder="Describe the issue… (paste or drop files)"
               onPaste={staging.onPaste}
               onDrop={staging.onDrop}
