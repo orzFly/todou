@@ -10,13 +10,13 @@ export type Agent = z.infer<typeof Agent>;
 
 export const AgentCreateInput = z.object({
   login: Login,
-  display_name: z.string().min(1).max(200),
+  display_name: z.string().trim().min(1).max(200),
 });
 export type AgentCreateInput = z.infer<typeof AgentCreateInput>;
 
 export const AgentUpdateInput = z.object({
   login: Login.optional(),
-  display_name: z.string().min(1).max(200).optional(),
+  display_name: z.string().trim().min(1).max(200).optional(),
 });
 export type AgentUpdateInput = z.infer<typeof AgentUpdateInput>;
 

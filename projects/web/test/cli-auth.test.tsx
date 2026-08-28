@@ -37,7 +37,9 @@ function agent(id: number, login: string, disabled = false): Agent {
   return {
     id,
     login,
-    display_name: login,
+    // Deliberately unlike the login: the page has to show both, so a
+    // fixture where they coincide would prove nothing (T-149).
+    display_name: `Agent ${id}`,
     kind: "machine",
     avatar_url: null,
     owner: { id: 1, login: "orz" },
@@ -118,7 +120,8 @@ describe("CliAuthCard", () => {
       />,
     );
     expect(
-      (getByRole("radio", { name: "bot-one" }) as HTMLInputElement).checked,
+      (getByRole("radio", { name: "Agent 7 @bot-one" }) as HTMLInputElement)
+        .checked,
     ).toBe(true);
     expect(mint).not.toHaveBeenCalled();
 
@@ -148,9 +151,10 @@ describe("CliAuthCard", () => {
       />,
     );
     expect(
-      (getByRole("radio", { name: "bot-two" }) as HTMLInputElement).checked,
+      (getByRole("radio", { name: "Agent 8 @bot-two" }) as HTMLInputElement)
+        .checked,
     ).toBe(true);
-    expect(queryByRole("radio", { name: "old" })).toBeNull();
+    expect(queryByRole("radio", { name: "Agent 9 @old" })).toBeNull();
   });
 
   it("requires an explicit pick among several agents with no history", () => {
@@ -166,7 +170,7 @@ describe("CliAuthCard", () => {
     );
     const button = getByRole("button", { name: "Authorize" });
     expect(button).toHaveProperty("disabled", true);
-    fireEvent.click(getByRole("radio", { name: "bot-one" }));
+    fireEvent.click(getByRole("radio", { name: "Agent 7 @bot-one" }));
     expect(button).toHaveProperty("disabled", false);
   });
 
@@ -219,7 +223,7 @@ describe("CliAuthCard", () => {
         deliver={deliver}
       />,
     );
-    fireEvent.click(getByRole("radio", { name: "orz (yourself)" }));
+    fireEvent.click(getByRole("radio", { name: "Orz (yourself)" }));
     fireEvent.click(getByRole("button", { name: "Authorize" }));
     await waitFor(() => expect(deliver).toHaveBeenCalledTimes(1));
     expect(mint).toHaveBeenCalledWith({ kind: "me" }, "cli @ test");

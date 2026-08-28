@@ -35,7 +35,7 @@ import {
 import { referenceConfigQuery } from "@/api/references.ts";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
-import { UserChip } from "@/components/shared/user-chip.tsx";
+import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -359,7 +359,7 @@ function MembersSection({ slug }: { slug: string }) {
             {members.data.map((member: Member) => (
               <TableRow key={member.user.id}>
                 <TableCell>
-                  <UserChip user={member.user} />
+                  <UserChip user={member.user} showLogin />
                 </TableCell>
                 <TableCell>
                   <Select
@@ -387,7 +387,7 @@ function MembersSection({ slug }: { slug: string }) {
                   <Button
                     variant="ghost"
                     size="icon-sm"
-                    aria-label={`remove ${member.user.login}`}
+                    aria-label={`remove ${displayNameOf(member.user)}`}
                     onClick={() => remove.mutate(member.user.id)}
                   >
                     <Trash2Icon className="size-4" />
@@ -410,7 +410,8 @@ function MembersSection({ slug }: { slug: string }) {
                 setRole.mutate({ userId: agent.id, role: "writer" })
               }
             >
-              <PlusIcon className="size-3.5" /> {agent.login}
+              <PlusIcon className="size-3.5" /> {displayNameOf(agent)}
+              <span className="text-muted-foreground">@{agent.login}</span>
             </Button>
           ))}
         </div>

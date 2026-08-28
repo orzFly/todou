@@ -39,7 +39,7 @@ import {
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { RevisionHistory } from "@/components/shared/revision-history.tsx";
-import { UserChip } from "@/components/shared/user-chip.tsx";
+import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import {
   Composer,
   useCommentComposer,
@@ -356,7 +356,9 @@ function Sidebar({
   issue: Issue;
   statuses: Status[];
   allLabels: Array<{ id: number; name: string; color: string }>;
-  members: Array<{ user: { id: number; login: string } }>;
+  members: Array<{
+    user: { id: number; login: string; display_name: string };
+  }>;
 }) {
   const queryClient = useQueryClient();
   const statusMutation = useIssueStatusMutation(slug);
@@ -453,7 +455,9 @@ function Sidebar({
               Edit assignees
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent>
+          {/* Name plus login needs more room than the trigger's width, which
+              is what the menu defaults to. */}
+          <DropdownMenuContent className="w-auto">
             {members.map((member) => {
               const active = issue.assignees.some(
                 (a) => a.id === member.user.id,
@@ -474,7 +478,12 @@ function Sidebar({
                   <span className="w-4">
                     {active && <CheckIcon className="size-4" />}
                   </span>
-                  {member.user.login}
+                  <span className="whitespace-nowrap">
+                    {displayNameOf(member.user)}
+                  </span>
+                  <span className="whitespace-nowrap text-muted-foreground">
+                    @{member.user.login}
+                  </span>
                 </DropdownMenuItem>
               );
             })}

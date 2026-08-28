@@ -16,7 +16,13 @@ import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
-import { makePainter, type Painter, relativeTime, table } from "../format.ts";
+import {
+  makePainter,
+  type Painter,
+  personName,
+  relativeTime,
+  table,
+} from "../format.ts";
 import { drainPaged } from "../paginate.ts";
 import {
   parseChoice,
@@ -60,6 +66,9 @@ function issueRow(issue: IssueListItem, refPrefix: string | null): string[] {
     issue.title,
     issue.status.name,
     issue.labels.map((l) => l.name).join(","),
+    // Logins, not display names (T-149): comma-joined names containing
+    // spaces read ambiguously, and this column is what gets pasted back
+    // into `--assignee`.
     issue.assignees.map((a) => a.login).join(","),
     relativeTime(issue.updated_at),
   ];
@@ -692,7 +701,7 @@ function renderIssue(
         ? `labels: ${issue.labels.map((l) => l.name).join(", ")}`
         : null,
       issue.assignees.length > 0
-        ? `assignees: ${issue.assignees.map((a) => a.login).join(", ")}`
+        ? `assignees: ${issue.assignees.map(personName).join(", ")}`
         : null,
     ]
       .filter(Boolean)
@@ -701,7 +710,7 @@ function renderIssue(
   lines.push(
     paint(
       "dim",
-      `opened by ${issue.author.login} ${relativeTime(issue.created_at)} · updated ${relativeTime(issue.updated_at)}`,
+      `opened by ${personName(issue.author)} ${relativeTime(issue.created_at)} · updated ${relativeTime(issue.updated_at)}`,
     ),
   );
   if (issue.spec_version !== null) {
@@ -780,27 +789,27 @@ export function renderTimelineItem(
         .split("\n")
         .map((line) => paint("dim", `  > ${line}`))
         .join("\n");
-      return `${paint("cyan", item.author.login)} commented on ${anchor.path}:${lines} (v${anchor.version}, ${resolved})${edited} ${when}:\n${quote}\n${body}`;
+      return `${paint("cyan", personName(item.author))} commented on ${anchor.path}:${lines} (v${anchor.version}, ${resolved})${edited} ${when}:\n${quote}\n${body}`;
     }
-    return `${paint("cyan", item.author.login)} commented${edited} ${when}:\n${body}${questions}`;
+    return `${paint("cyan", personName(item.author))} commented${edited} ${when}:\n${body}${questions}`;
   }
   const answered = item.type === "event" ? decodeAnswerEvent(item) : null;
   if (answered !== null) {
     return [
-      `${paint("cyan", item.actor.login)} answered comment ${answered.comment_id} ${when}:`,
+      `${paint("cyan", personName(item.actor))} answered comment ${answered.comment_id} ${when}:`,
       ...renderAnswerRecords(answered.answers, paint),
     ].join("\n");
   }
   if (item.event_type === "title_changed") {
     return paint(
       "dim",
-      `${item.actor.login} renamed "${String(item.payload.from)}" → "${String(item.payload.to)}" ${when}`,
+      `${personName(item.actor)} renamed "${String(item.payload.from)}" → "${String(item.payload.to)}" ${when}`,
     );
   }
   const detail = eventDetail(item, ctx);
   return paint(
     "dim",
-    `${item.actor.login} ${item.event_type}${detail ? ` (${detail})` : ""} ${when}`,
+    `${personName(item.actor)} ${item.event_type}${detail ? ` (${detail})` : ""} ${when}`,
   );
 }
 
@@ -826,6 +835,8 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
       return nested(payload.label, "name");
     case "assigned":
     case "unassigned":
+      // The payload only ever stored `{id, login}`, so historical events
+      // have no display name to show (T-149).
       return `@${nested(payload.user, "login")}`;
     case "referenced":
       return typeof payload.by_issue === "number"

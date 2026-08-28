@@ -101,7 +101,9 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuLabel>{me.display_name}</DropdownMenuLabel>
+                {/* The chip in the trigger already carries the display name;
+                    the label is what tells you which account that is. */}
+                <DropdownMenuLabel>@{me.login}</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem asChild>
                   <Link to="/settings/profile">Profile</Link>

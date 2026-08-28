@@ -216,6 +216,47 @@ describe("issue view", () => {
     expect(result.stdout).toContain("#3 Fix the potato");
     expect(result.stdout).toContain("It sprouted.");
     expect(result.stdout).toContain("status_changed (Todo → Done)");
+    expect(result.stdout).toContain("assignees: Claude");
+    expect(result.stdout).toContain("opened by Claude");
+  });
+
+  it("names people by display name, falling back to the login (T-149)", async () => {
+    const nameless = { ...me, id: 4, login: "newcomer", display_name: "   " };
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3", issue],
+      [
+        "GET",
+        "/api/projects/todou/issues/3/timeline",
+        {
+          items: [
+            {
+              type: "comment",
+              id: 1,
+              author: { ...me, display_name: "Claude Agent" },
+              body: "first",
+              created_at: "2026-08-11T10:30:00Z",
+              edited_at: null,
+            },
+            {
+              type: "comment",
+              id: 2,
+              author: nameless,
+              body: "second",
+              created_at: "2026-08-11T10:35:00Z",
+              edited_at: null,
+            },
+          ],
+          prev_cursor: null,
+          next_cursor: null,
+        },
+      ],
+    ]);
+    const result = await runCli(["issue", "view", "3"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.stdout).toContain("Claude Agent commented");
+    expect(result.stdout).toContain("newcomer commented");
   });
 
   it("spells out event payloads and appends spec command hints", async () => {

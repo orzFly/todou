@@ -47,7 +47,7 @@ export type Me = z.infer<typeof Me>;
  * but not their login — that stays with the owner (see AgentUpdateInput).
  */
 export const MeUpdateInput = z.object({
-  display_name: z.string().min(1).max(200).optional(),
+  display_name: z.string().trim().min(1).max(200).optional(),
   login: Login.optional(),
 });
 export type MeUpdateInput = z.infer<typeof MeUpdateInput>;

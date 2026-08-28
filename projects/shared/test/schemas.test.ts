@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  AgentCreateInput,
+  AgentUpdateInput,
   ChangeEvent,
   IssueCreateInput,
   IssueListQuery,
@@ -7,6 +9,7 @@ import {
   LabelName,
   LabelUpdateInput,
   Login,
+  MeUpdateInput,
   ProjectSlug,
   TimelineComment,
   TimelineItem,
@@ -27,6 +30,26 @@ describe("ProjectSlug", () => {
 describe("Login", () => {
   it("accepts machine-style logins", () => {
     expect(Login.parse("review-bot")).toBe("review-bot");
+  });
+});
+
+describe("display name inputs (T-149)", () => {
+  it("trims before measuring, so a blank name cannot be stored", () => {
+    // Display names are what the UI shows for a person; one made of spaces
+    // renders as a nameless row everywhere.
+    expect(MeUpdateInput.parse({ display_name: " X " }).display_name).toBe("X");
+    expect(MeUpdateInput.safeParse({ display_name: "  " }).success).toBe(false);
+    expect(
+      AgentCreateInput.parse({ login: "bot-one", display_name: " Bot One " })
+        .display_name,
+    ).toBe("Bot One");
+    expect(
+      AgentCreateInput.safeParse({ login: "bot-one", display_name: " " })
+        .success,
+    ).toBe(false);
+    expect(AgentUpdateInput.safeParse({ display_name: "\t\n" }).success).toBe(
+      false,
+    );
   });
 });
 

@@ -23,6 +23,7 @@ import {
   toggleId,
 } from "@/api/issues.ts";
 import { LabelInline } from "@/components/issue/label-chip.tsx";
+import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -69,6 +70,7 @@ export function FilterBar({
 
   const selectedStatuses = csvToIds(search.status) ?? [];
   const selectedLabels = csvToIds(search.label) ?? [];
+  const selectedAssignee = members.find((m) => m.user.id === search.assignee);
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -142,13 +144,21 @@ export function FilterBar({
         }
       >
         <SelectTrigger className="w-36" size="sm">
-          <SelectValue placeholder="Assignee" />
+          {/* Naming the value here rather than letting the trigger echo the
+              selected item: the item carries `@login` for disambiguation,
+              and this narrow trigger would clip it to a bare "@". */}
+          <SelectValue placeholder="Assignee">
+            {selectedAssignee === undefined
+              ? "Any assignee"
+              : displayNameOf(selectedAssignee.user)}
+          </SelectValue>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="anyone">Any assignee</SelectItem>
           {members.map((m) => (
             <SelectItem key={m.user.id} value={String(m.user.id)}>
-              {m.user.login}
+              {displayNameOf(m.user)}
+              <span className="text-muted-foreground">@{m.user.login}</span>
             </SelectItem>
           ))}
         </SelectContent>

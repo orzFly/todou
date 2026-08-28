@@ -127,6 +127,19 @@ describe("question list", () => {
     expect(result.stdout).toContain("comment 42");
     expect(result.stdout).toContain("awaiting answer");
     expect(result.stdout).toContain("1) New entity");
+    expect(result.stdout).toContain("· User ");
+  });
+
+  it("names the answerer by display name (T-149)", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", QUESTIONS_PATH, { items: [ANSWERED_ITEM], open: 0 }],
+    ]);
+    const result = await runCli(["question", "list", "19"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("answered by User");
   });
 
   it("--unanswered hides answered comments", async () => {

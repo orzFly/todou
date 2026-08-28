@@ -18,6 +18,7 @@ import { z } from "zod";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
+import { personName } from "../format.ts";
 
 const WRONG_DIR_HINT =
   "if that path is not part of your spec, this push ran from the wrong " +
@@ -267,11 +268,11 @@ export class SpecCommentsCommand extends ProjectCommand {
         const flags = [
           item.resolved === null
             ? "unresolved"
-            : `resolved by ${item.resolved.by.login}`,
+            : `resolved by ${personName(item.resolved.by)}`,
           ...(item.outdated ? ["outdated"] : []),
         ].join(", ");
         lines.push(
-          `#${item.comment_id} ${anchor} (v${item.anchor.version}) by ${item.author.login} · ${flags}`,
+          `#${item.comment_id} ${anchor} (v${item.anchor.version}) by ${personName(item.author)} · ${flags}`,
         );
         for (const quoted of item.anchor.quote.split("\n")) {
           lines.push(`  > ${quoted}`);
@@ -413,7 +414,7 @@ export class SpecStatusCommand extends ProjectCommand {
         "versions:",
         ...info.versions.map((v) => {
           const note = v.message === null ? "" : ` — ${v.message}`;
-          return `  v${v.number} by ${v.author.login} at ${v.created_at}${note}`;
+          return `  v${v.number} by ${personName(v.author)} at ${v.created_at}${note}`;
         }),
       ];
       return lines.join("\n");

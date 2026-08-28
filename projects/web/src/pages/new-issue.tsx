@@ -21,7 +21,7 @@ import {
   StagedFileUploadButton,
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
-import { UserChip } from "@/components/shared/user-chip.tsx";
+import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import { withAttachmentMarkers } from "@/components/timeline/composer.tsx";
 import { Button } from "@/components/ui/button";
 import {
@@ -240,7 +240,9 @@ export function NewIssuePage() {
                 Edit assignees
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent>
+            {/* Name plus login needs more room than the trigger's width,
+                which is what the menu defaults to. */}
+            <DropdownMenuContent className="w-auto">
               {members.data.map((member) => (
                 <DropdownMenuItem
                   key={member.user.id}
@@ -258,7 +260,12 @@ export function NewIssuePage() {
                       <CheckIcon className="size-4" />
                     )}
                   </span>
-                  {member.user.login}
+                  <span className="whitespace-nowrap">
+                    {displayNameOf(member.user)}
+                  </span>
+                  <span className="whitespace-nowrap text-muted-foreground">
+                    @{member.user.login}
+                  </span>
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>

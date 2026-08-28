@@ -5,7 +5,7 @@ import { Login } from "@todou/shared";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { agentsQuery, api, meQuery } from "@/api/queries.ts";
-import { UserChip } from "@/components/shared/user-chip.tsx";
+import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -182,7 +182,7 @@ export function CliAuthCard({
                     type="radio"
                     name="cli-auth-target"
                     className="accent-primary"
-                    aria-label={agent.login}
+                    aria-label={`${displayNameOf(agent)} @${agent.login}`}
                     checked={
                       selection?.kind === "agent" && selection.id === agent.id
                     }
@@ -191,11 +191,11 @@ export function CliAuthCard({
                     }
                   />
                   <UserChip user={agent} />
-                  {agent.display_name !== agent.login && (
-                    <span className="truncate text-sm text-muted-foreground">
-                      {agent.display_name}
-                    </span>
-                  )}
+                  {/* Which account a token ends up belonging to is the whole
+                      question on this page, so the login is never optional. */}
+                  <span className="truncate text-sm text-muted-foreground">
+                    @{agent.login}
+                  </span>
                 </label>
               ))}
               <label className={rowClass}>
@@ -232,7 +232,7 @@ export function CliAuthCard({
                   type="radio"
                   name="cli-auth-target"
                   className="accent-primary"
-                  aria-label={`${me.login} (yourself)`}
+                  aria-label={`${displayNameOf(me)} (yourself)`}
                   checked={selection?.kind === "me"}
                   onChange={() => setSelection({ kind: "me" })}
                 />

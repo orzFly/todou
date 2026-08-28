@@ -140,7 +140,7 @@ describe("EventGroup", () => {
       expect(queryByText("added label area:docs")).toBeTruthy();
     });
     // The header names the actor once; expanded sub-rows must not repeat it.
-    expect(getAllByText("bot-one")).toHaveLength(1);
+    expect(getAllByText("Bot One")).toHaveLength(1);
 
     fireEvent.click(toggle);
     await waitFor(() =>

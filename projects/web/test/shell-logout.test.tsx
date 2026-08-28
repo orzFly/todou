@@ -20,8 +20,9 @@ async function openUserMenu(mode: "single" | "forward") {
   const client = testQueryClient();
   client.setQueryData(["auth-mode"], { mode });
   const view = renderWithProviders(<AppShell me={me}>x</AppShell>, client);
-  // The UserChip in the trigger renders the login, not the display name.
-  const trigger = await view.findByText("user");
+  // The UserChip in the trigger renders the display name; the menu's own
+  // label is the login (T-149).
+  const trigger = await view.findByText("User");
   fireEvent.pointerDown(trigger.closest("button") ?? trigger, {
     button: 0,
     pointerType: "mouse",
@@ -35,6 +36,7 @@ describe("AppShell logout visibility", () => {
   it("offers Log out under session-based modes", async () => {
     await openUserMenu("single");
     expect(screen.getByText("Log out")).toBeTruthy();
+    expect(screen.getByText("@user")).toBeTruthy();
   });
 
   it("hides Log out in forward mode — the proxy owns the login state", async () => {

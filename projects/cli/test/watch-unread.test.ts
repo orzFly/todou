@@ -247,7 +247,7 @@ describe("watch (project-level)", () => {
       ["watch", "-p", "todou", "--poll", "--since", "a0"],
       { fetchImpl, env: loggedInEnv() },
     );
-    expect(result.stdout).toContain("#3 user commented");
+    expect(result.stdout).toContain("#3 User commented");
     expect(result.stdout).toContain("web comment");
     expect(result.stdout).toContain("cursor: a1");
   });

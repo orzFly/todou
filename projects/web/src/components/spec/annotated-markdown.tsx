@@ -15,7 +15,7 @@ import {
 } from "react";
 import type Markdown from "react-markdown";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
-import { UserChip } from "@/components/shared/user-chip.tsx";
+import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -671,7 +671,7 @@ function AnnotationChip({
                 ) : (
                   <span
                     className="text-green-700 dark:text-green-400"
-                    title={`resolved by ${item.item.resolved.by.login}`}
+                    title={`resolved by ${displayNameOf(item.item.resolved.by)}`}
                   >
                     resolved
                   </span>

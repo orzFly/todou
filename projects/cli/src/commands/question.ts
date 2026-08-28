@@ -15,7 +15,12 @@ import { z } from "zod";
 import { ProjectCommand } from "../api-command.ts";
 import { drain } from "../body.ts";
 import { CliError } from "../errors.ts";
-import { makePainter, type Painter, relativeTime } from "../format.ts";
+import {
+  makePainter,
+  type Painter,
+  personName,
+  relativeTime,
+} from "../format.ts";
 import { parsePositiveInt, parseSeconds } from "../parse.ts";
 import {
   decodeAnswerEvent,
@@ -41,7 +46,7 @@ type AnswerResult = {
 
 function renderAnswerResult(result: AnswerResult, paint: Painter): string {
   return [
-    `${paint("cyan", result.actor.login)} answered comment ${result.comment_id} ${relativeTime(result.created_at)}:`,
+    `${paint("cyan", personName(result.actor))} answered comment ${result.comment_id} ${relativeTime(result.created_at)}:`,
     ...renderAnswerRecords(result.answers, paint),
   ].join("\n");
 }
@@ -99,11 +104,11 @@ export class QuestionListCommand extends ProjectCommand {
         const state = item.answer
           ? paint(
               "green",
-              `answered by ${item.answer.actor.login} ${relativeTime(item.answer.created_at)}`,
+              `answered by ${personName(item.answer.actor)} ${relativeTime(item.answer.created_at)}`,
             )
           : paint("yellow", "awaiting answer");
         lines.push(
-          `${paint("bold", `comment ${item.comment_id}`)} · ${item.author.login} ${relativeTime(item.created_at)} · ${state}`,
+          `${paint("bold", `comment ${item.comment_id}`)} · ${personName(item.author)} ${relativeTime(item.created_at)} · ${state}`,
         );
         lines.push(
           ...renderQuestions(

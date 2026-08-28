@@ -262,13 +262,21 @@ describe("spec status", () => {
           versions: [
             {
               number: 1,
-              author: { id: 2, login: "claude-agent" },
+              author: {
+                id: 2,
+                login: "claude-agent",
+                display_name: "Claude Agent",
+              },
               message: null,
               created_at: "2026-08-12T05:00:00.000Z",
             },
             {
               number: 2,
-              author: { id: 2, login: "claude-agent" },
+              author: {
+                id: 2,
+                login: "claude-agent",
+                display_name: "Claude Agent",
+              },
               message: "address review",
               created_at: "2026-08-12T06:00:00.000Z",
             },
@@ -280,7 +288,7 @@ describe("spec status", () => {
     expect(run.exitCode).toBe(0);
     expect(run.stdout).toContain("spec v2 · awaiting review");
     expect(run.stdout).toContain("design.md (7 bytes)");
-    expect(run.stdout).toContain("v2 by claude-agent");
+    expect(run.stdout).toContain("v2 by Claude Agent");
     expect(run.stdout).toContain("address review");
   });
 });
@@ -291,7 +299,7 @@ describe("spec comments", () => {
     items: [
       {
         comment_id: 412,
-        author: { id: 1, login: "user" },
+        author: { id: 1, login: "user", display_name: "Sam Reviewer" },
         created_at: "2026-08-12T06:10:00.000Z",
         body: "Which diff library?",
         anchor: {
@@ -308,7 +316,7 @@ describe("spec comments", () => {
       },
       {
         comment_id: 415,
-        author: { id: 1, login: "user" },
+        author: { id: 1, login: "user", display_name: "Sam Reviewer" },
         created_at: "2026-08-12T06:11:00.000Z",
         body: "Louder in the intro.",
         anchor: {
@@ -319,7 +327,7 @@ describe("spec comments", () => {
           quote: "Phase one ships push.",
         },
         resolved: {
-          by: { id: 2, login: "claude-agent" },
+          by: { id: 2, login: "claude-agent", display_name: "Claude Agent" },
           at: "2026-08-12T07:00:00.000Z",
         },
         outdated: false,
@@ -358,14 +366,16 @@ describe("spec comments", () => {
     });
     expect(run.exitCode).toBe(0);
     expect(run.stdout).toContain(
-      "#412 design.md:3-4 (v1) by user · unresolved, outdated",
+      "#412 design.md:3-4 (v1) by Sam Reviewer · unresolved, outdated",
     );
     expect(run.stdout).toContain("  > Anchors point at…");
     expect(run.stdout).toContain(
-      "#415 notes/phases.md:5-5 (v2) by user · resolved by claude-agent",
+      "#415 notes/phases.md:5-5 (v2) by Sam Reviewer · resolved by Claude Agent",
     );
     // Column-anchored comments spell `line.column` on each end (T-142);
     // the two above carry no columns and keep the plain line form.
+    // #419's author carries no display_name — the shape an older server
+    // sends — and falls back to the login (T-149).
     expect(run.stdout).toContain("#419 design.md:7.12-7.34 (v2) by user");
   });
 

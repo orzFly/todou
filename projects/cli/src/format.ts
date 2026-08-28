@@ -36,6 +36,18 @@ export function table(rows: string[][]): string {
     .join("\n");
 }
 
+/**
+ * How a person is named in human output. `?.` is not paranoia: responses are
+ * cast, not parsed, so a server older than `display_name` would otherwise
+ * print the string "undefined".
+ */
+export function personName(user: {
+  display_name?: string;
+  login: string;
+}): string {
+  return user.display_name?.trim() || user.login;
+}
+
 const STEPS: Array<[limit: number, divisor: number, unit: string]> = [
   [60, 1, "s"],
   [3600, 60, "m"],

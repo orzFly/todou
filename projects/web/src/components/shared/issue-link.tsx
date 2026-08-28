@@ -10,6 +10,7 @@ import {
 } from "@/api/issue-refs.ts";
 import { useRefBeforeTitle } from "@/api/prefs.ts";
 import { referenceConfigQuery } from "@/api/references.ts";
+import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import { commentAnchor, parseIssuePermalink } from "@/lib/timeline-anchors.ts";
 
 /**
@@ -18,7 +19,7 @@ import { commentAnchor, parseIssuePermalink } from "@/lib/timeline-anchors.ts";
  * plain ref link while it loads, and plain text when the number matches no
  * issue the viewer may see. With
  * `commentId` the link deep-links to that comment's anchor and reads "… ·
- * comment by @x". Spelling is a UI string, so it always uses the project's
+ * comment by X". Spelling is a UI string, so it always uses the project's
  * CURRENT format (T-80) — only user-authored text is anchored to its
  * created_at.
  *
@@ -65,7 +66,7 @@ export function IssueLink({
     commentId === undefined
       ? null
       : comment.data
-        ? `· comment by @${comment.data.author.login}`
+        ? `· comment by ${displayNameOf(comment.data.author)}`
         : "· comment";
   // Leading the title, the ref has already been spelled once; repeating it
   // after would read as two refs. What trails is then the comment note alone,

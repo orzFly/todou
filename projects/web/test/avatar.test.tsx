@@ -19,6 +19,43 @@ describe("initialsOf", () => {
   });
 });
 
+describe("UserChip names (T-149)", () => {
+  it("shows the display name, keeping the login for the initials fallback", () => {
+    const { getByText, queryByText } = render(<UserChip user={human} />);
+    expect(getByText("Spud Farmer")).toBeTruthy();
+    expect(queryByText("spud")).toBeNull();
+    expect(queryByText("@spud")).toBeNull();
+  });
+
+  it("falls back to the login when the display name is blank", () => {
+    const { getByText } = render(
+      <UserChip user={{ ...human, display_name: "   " }} />,
+    );
+    expect(getByText("spud")).toBeTruthy();
+    expect(getByText("S")).toBeTruthy();
+  });
+
+  it("adds the login beside the name under showLogin, never when compact", () => {
+    const { getByText, queryByText, rerender } = render(
+      <UserChip user={human} showLogin />,
+    );
+    expect(getByText("Spud Farmer")).toBeTruthy();
+    expect(getByText("@spud")).toBeTruthy();
+
+    rerender(<UserChip user={human} showLogin compact />);
+    expect(queryByText("@spud")).toBeNull();
+  });
+
+  it("reads the name off an old server's response without printing undefined", () => {
+    const legacy = { ...human } as Partial<typeof human>;
+    legacy.display_name = undefined;
+    const { getByText } = render(
+      <UserChip user={legacy as typeof human} showLogin />,
+    );
+    expect(getByText("spud")).toBeTruthy();
+  });
+});
+
 describe("UserChip avatars", () => {
   it("falls back to initials without an avatar", () => {
     const { container, getByText } = render(<UserChip user={human} />);
