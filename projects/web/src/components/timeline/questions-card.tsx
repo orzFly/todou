@@ -21,6 +21,7 @@ import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 
 type Draft = { selected: Set<number>; other: string; declined: boolean };
 
@@ -254,6 +255,7 @@ function QuestionForm({
 
   const OnIcon = question.multiple ? SquareCheckIcon : CheckIcon;
   const OffIcon = question.multiple ? SquareIcon : CircleIcon;
+  const refCompletion = useRefCompletion(slug);
 
   return (
     <fieldset className="space-y-1.5" data-question-key={question.key}>
@@ -347,6 +349,7 @@ function QuestionForm({
             : "Other / additional thoughts… (optional, markdown; combines with selections)"
         }
         className="min-h-8"
+        extensions={refCompletion}
       />
     </fieldset>
   );

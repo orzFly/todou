@@ -1,6 +1,7 @@
 import type {
   AgentContext,
   ChangeEvent,
+  CommentComponent,
   CommentCreateInput,
   CommentLocation,
   CommentUpdateInput,
@@ -18,6 +19,7 @@ import {
   analyzeReferences,
   type CrossTarget,
   loadReferenceInputs,
+  type ReferenceInputs,
   recordCrossReferences,
 } from "./cross-references.ts";
 import { canonicalizeComponent, questionCount } from "./questions.ts";
@@ -25,9 +27,9 @@ import { recordReferences, refPrefixAt } from "./references.ts";
 import { deleteRevisionsFor, recordRevision } from "./revisions.ts";
 import { getUserRefs } from "./users.ts";
 
-type CommentRow = typeof comments.$inferSelect;
+export type CommentRow = typeof comments.$inferSelect;
 
-async function toTimelineComment(
+export async function toTimelineComment(
   ctx: AppContext,
   row: CommentRow,
 ): Promise<TimelineComment> {
@@ -57,6 +59,101 @@ async function loadIssue(db: Db, projectId: number, number: number) {
   return row;
 }
 
+/**
+ * Insert a comment row inside an open transaction: the row itself, the
+ * issue's `updated_at` (plus the open-question counter), the reference scan
+ * and the timeline ChangeEvents it produces. Shared by `createComment` and
+ * the atomic command endpoint (T-161), which needs a comment and a set of
+ * field changes to land or roll back together.
+ *
+ * `refInputs` is a parameter because it reads the system database, which a
+ * project transaction must not hold a second connection for — the caller
+ * loads it before opening the transaction.
+ */
+export async function insertCommentInTx(
+  tx: Db,
+  args: {
+    project: { id: number; slug: string };
+    issue: { id: number; number: number };
+    actorId: number;
+    body: string;
+    component?: CommentComponent | null;
+    agentContext: AgentContext | null;
+    refInputs: ReferenceInputs;
+  },
+): Promise<{
+  comment: CommentRow;
+  /** Publish after commit; the comment leads, subscribers pin that. */
+  timeline: ChangeEvent[];
+  crossTargets: CrossTarget[];
+}> {
+  const { project, issue, actorId, body, agentContext, refInputs } = args;
+  const component = args.component ?? null;
+  const issueNumber = issue.number;
+
+  const inserted = await tx
+    .insert(comments)
+    .values({
+      projectId: project.id,
+      issueId: issue.id,
+      authorId: actorId,
+      body,
+      component,
+      agentContext,
+    })
+    .returning();
+  const comment = inserted[0];
+  if (!comment) throw new Error("comment insert returned no row");
+
+  const asked = questionCount(component);
+  await tx
+    .update(issues)
+    .set(
+      asked > 0
+        ? {
+            openQuestions: sql`${issues.openQuestions} + ${asked}`,
+            updatedAt: new Date(),
+          }
+        : { updatedAt: new Date() },
+    )
+    .where(eq(issues.id, issue.id));
+
+  const timeline: ChangeEvent[] = [
+    {
+      entity: "timeline",
+      id: comment.id,
+      action: "created",
+      issue_number: issueNumber,
+    },
+  ];
+
+  const analyzed = await analyzeReferences(
+    tx,
+    refInputs,
+    project,
+    body,
+    comment.createdAt,
+    { issueNumber, commentId: comment.id },
+  );
+  const refs = await recordReferences(
+    tx,
+    project.id,
+    actorId,
+    { issueNumber, commentId: comment.id },
+    analyzed.local,
+    agentContext,
+  );
+  for (const ref of refs) {
+    timeline.push({
+      entity: "timeline",
+      id: ref.eventId,
+      action: "created",
+      issue_number: ref.issueNumber,
+    });
+  }
+  return { comment, timeline, crossTargets: analyzed.cross };
+}
+
 export async function createComment(
   ctx: AppContext,
   actor: UserRow,
@@ -78,40 +175,17 @@ export async function createComment(
   let crossTargets: CrossTarget[] = [];
   const events: ChangeEvent[] = [];
   const row = await db.transaction(async (tx) => {
-    const inserted = await tx
-      .insert(comments)
-      .values({
-        projectId: project.id,
-        issueId: issue.id,
-        authorId: actor.id,
-        body: input.body,
-        component,
-        agentContext,
-      })
-      .returning();
-    const comment = inserted[0];
-    if (!comment) throw new Error("comment insert returned no row");
-
-    const asked = questionCount(component);
-    await tx
-      .update(issues)
-      .set(
-        asked > 0
-          ? {
-              openQuestions: sql`${issues.openQuestions} + ${asked}`,
-              updatedAt: new Date(),
-            }
-          : { updatedAt: new Date() },
-      )
-      .where(eq(issues.id, issue.id));
-
-    // The new entry leads the burst; subscribers pin this order.
-    events.push({
-      entity: "timeline",
-      id: comment.id,
-      action: "created",
-      issue_number: issueNumber,
+    const result = await insertCommentInTx(tx, {
+      project,
+      issue: { id: issue.id, number: issueNumber },
+      actorId: actor.id,
+      body: input.body,
+      component,
+      agentContext,
+      refInputs,
     });
+    crossTargets = result.crossTargets;
+    events.push(...result.timeline);
     // updated_at moved (and maybe the counter) → issue list ordering and
     // badges must refresh.
     events.push({
@@ -120,33 +194,7 @@ export async function createComment(
       action: "updated",
       issue_number: issueNumber,
     });
-
-    const analyzed = await analyzeReferences(
-      tx,
-      refInputs,
-      project,
-      input.body,
-      comment.createdAt,
-      { issueNumber, commentId: comment.id },
-    );
-    crossTargets = analyzed.cross;
-    const refs = await recordReferences(
-      tx,
-      project.id,
-      actor.id,
-      { issueNumber, commentId: comment.id },
-      analyzed.local,
-      agentContext,
-    );
-    for (const ref of refs) {
-      events.push({
-        entity: "timeline",
-        id: ref.eventId,
-        action: "created",
-        issue_number: ref.issueNumber,
-      });
-    }
-    return comment;
+    return result.comment;
   });
 
   for (const e of events) ctx.bus.publish(project.id, e);

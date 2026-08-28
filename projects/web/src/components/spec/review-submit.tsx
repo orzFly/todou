@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 import type { SpecReviewDraft } from "@/lib/spec-drafts.ts";
 
 /**
@@ -42,6 +43,7 @@ export function ReviewSubmitDialog({
   const [verdict, setVerdict] = useState<SpecReviewVerdict | null>(null);
   const [summary, setSummary] = useState("");
   const editor = useRef<MarkdownEditorHandle>(null);
+  const refCompletion = useRefCompletion(slug);
   const queryClient = useQueryClient();
   const submit = useMutation({
     mutationFn: (picked: SpecReviewVerdict) =>
@@ -135,6 +137,7 @@ export function ReviewSubmitDialog({
           className="min-h-16"
           onChange={setSummary}
           placeholder="Summary (markdown, optional)"
+          extensions={refCompletion}
         />
 
         <div className="flex justify-end gap-2">

@@ -14,6 +14,8 @@ import type {
   Autolink,
   AutolinkCreateInput,
   BulkReadInput,
+  CommandSubmitInput,
+  CommandSubmitResult,
   CommentComponentInput,
   CommentLocation,
   CrossActivityPage,
@@ -474,6 +476,13 @@ export class TodouClient {
       "POST",
       `/projects/${slug}/issues/${number}/comments`,
       { json: component === undefined ? { body } : { body, component } },
+    );
+  /** Comment plus incremental commands, one transaction (T-161). */
+  submitCommands = (slug: string, number: number, input: CommandSubmitInput) =>
+    this.request<CommandSubmitResult>(
+      "POST",
+      `/projects/${slug}/issues/${number}/commands`,
+      { json: input },
     );
   locateComment = (slug: string, commentId: number) =>
     this.request<CommentLocation>(

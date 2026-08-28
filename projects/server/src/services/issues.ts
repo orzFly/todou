@@ -66,6 +66,33 @@ import { microIso } from "./timeline.ts";
 import { getUserRefs } from "./users.ts";
 
 type IssueRow = typeof issues.$inferSelect;
+export type StatusRow = typeof statuses.$inferSelect;
+
+/**
+ * Which timeline event a status move records, and its payload. Shared by
+ * PATCH issue and the slash commands (T-161) so a `/close` and a status
+ * dropdown land the same event.
+ */
+export function statusEventOf(
+  from: StatusRow | undefined,
+  to: StatusRow,
+): {
+  type: (typeof issueEvents.$inferInsert)["type"];
+  payload: Record<string, unknown>;
+} {
+  return {
+    type:
+      from?.category !== "closed" && to.category === "closed"
+        ? "closed"
+        : from?.category === "closed" && to.category === "open"
+          ? "reopened"
+          : "status_changed",
+    payload: {
+      from: from ? { id: from.id, name: from.name } : null,
+      to: { id: to.id, name: to.name },
+    },
+  };
+}
 
 export type IssueBundle = {
   row: IssueRow;
@@ -664,19 +691,12 @@ export async function updateIssue(
     }
 
     if (input.status_id !== undefined && input.status_id !== before.statusId) {
-      const from = statusById.get(before.statusId);
       const to = statusById.get(input.status_id);
       if (!to) throw new ValidationFailedError("unknown status_id");
-      const payload = {
-        from: from ? { id: from.id, name: from.name } : null,
-        to: { id: to.id, name: to.name },
-      };
-      const type =
-        from?.category !== "closed" && to.category === "closed"
-          ? "closed"
-          : from?.category === "closed" && to.category === "open"
-            ? "reopened"
-            : "status_changed";
+      const { type, payload } = statusEventOf(
+        statusById.get(before.statusId),
+        to,
+      );
       await addEvent(type, payload);
     }
 

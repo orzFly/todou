@@ -86,6 +86,29 @@ export const issuesQuery = (slug: string, search: IssueSearch) =>
   });
 
 /**
+ * Candidates for the editor's `#`/`T-` completion (T-161): the most recently
+ * touched cards of one project, open and closed alike — a ref to a finished
+ * card is as legitimate as one to a live card. Cached like the other
+ * reference lookups, since completion fires on every keystroke.
+ */
+export const issueCompletionQuery = (slug: string) =>
+  queryOptions({
+    queryKey: ["issue-completion", slug],
+    queryFn: () =>
+      api.listIssues(slug, { sort: "updated", order: "desc", limit: 100 }),
+    staleTime: 60_000,
+  });
+
+/** Title/body search behind the same completion, for what the window misses. */
+export const issueCompletionSearchQuery = (slug: string, q: string) =>
+  queryOptions({
+    queryKey: ["issue-completion", slug, "search", q],
+    queryFn: () =>
+      api.listIssues(slug, { q, sort: "updated", order: "desc", limit: 20 }),
+    staleTime: 60_000,
+  });
+
+/**
  * One status group of the grouped list view (T-88): the group is its own
  * exact-status query, so each group paginates independently, board-style.
  * The URL's multi-status filter only decides which groups render — it is

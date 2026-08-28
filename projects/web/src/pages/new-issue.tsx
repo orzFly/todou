@@ -43,6 +43,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 
 // Mirrors the server's choice when no status is sent with a new issue.
 export function pickDefaultStatus(statuses: Status[]): Status | undefined {
@@ -58,6 +59,7 @@ export function NewIssuePage() {
   const members = useSuspenseQuery(membersQuery(slug));
   const canCreateLabels = useCanCreateLabels(slug);
   const createLabel = useCreateLabel(slug);
+  const refCompletion = useRefCompletion(slug);
 
   const [title, setTitle] = useState("");
   const editor = useRef<MarkdownEditorHandle>(null);
@@ -137,6 +139,7 @@ export function NewIssuePage() {
             ariaLabel="Description"
             placeholder="Markdown supported. Reference other issues with #N; paste or drop files."
             className="min-h-56"
+            extensions={refCompletion}
             onPaste={staging.onPaste}
             onDrop={staging.onDrop}
             onDragOver={staging.onDragOver}

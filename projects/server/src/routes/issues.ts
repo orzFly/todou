@@ -3,6 +3,8 @@ import {
   ActivityPage,
   ActivityQuery,
   AnswersSubmitInput,
+  CommandSubmitInput,
+  CommandSubmitResult,
   CommentCreateInput,
   CommentLocation,
   CommentUpdateInput,
@@ -23,6 +25,7 @@ import {
   TimelineQuery,
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
+import { executeCommands } from "../services/commands.ts";
 import {
   createComment,
   deleteComment,
@@ -122,6 +125,27 @@ const createCommentRoute = createRoute({
   summary: "Comment on an issue (writer)",
   request: { params: issueParams, body: jsonBody(CommentCreateInput) },
   responses: { 201: { description: "Created", ...jsonBody(TimelineComment) } },
+});
+
+const createCommandsRoute = createRoute({
+  method: "post",
+  path: "/{slug}/issues/{number}/commands",
+  summary:
+    "Comment and apply incremental field commands in one transaction (writer)",
+  description:
+    "What the web composer submits when the draft carried `/close`-style " +
+    "command lines (T-161). Commands are incremental — one label added, one " +
+    "assignee dropped — so a concurrent edit by someone else survives; " +
+    "`PATCH issue` remains the whole-set replacement. Either the body or the " +
+    "command list may be empty, not both. Any invalid id fails the whole " +
+    "submission (422) and the comment is not created; a command whose effect " +
+    "already holds succeeds without recording an event. No event type is " +
+    "specific to commands: effects land the same closed / status_changed / " +
+    "label_added / assigned events as any other path.",
+  request: { params: issueParams, body: jsonBody(CommandSubmitInput) },
+  responses: {
+    200: { description: "Applied", ...jsonBody(CommandSubmitResult) },
+  },
 });
 
 const getCommentRoute = createRoute({
@@ -309,6 +333,21 @@ export function issueRoutes() {
         c.get("agentContext"),
       ),
       201,
+    );
+  });
+
+  app.openapi(createCommandsRoute, async (c) => {
+    const { slug, number } = c.req.valid("param");
+    return c.json(
+      await executeCommands(
+        c.get("appCtx"),
+        c.get("user"),
+        slug,
+        number,
+        c.req.valid("json"),
+        c.get("agentContext"),
+      ),
+      200,
     );
   });
 

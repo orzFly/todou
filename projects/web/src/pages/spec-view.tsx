@@ -696,6 +696,7 @@ function SpecViewBody({
         <SpecComposer
           // A fresh anchor gets a fresh body.
           key={`${staging.path}:${staging.lineStart}.${staging.colStart}-${staging.lineEnd}.${staging.colEnd}:${staging.version}`}
+          slug={slug}
           staging={staging}
           onCancel={() => setStaging(null)}
           onStage={(body) => {

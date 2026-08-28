@@ -22,6 +22,7 @@ import { withAttachmentMarkers } from "@/components/timeline/composer.tsx";
 import { QuestionsCard } from "@/components/timeline/questions-card.tsx";
 import { SpecCommentAnchorCard } from "@/components/timeline/spec-comment-card.tsx";
 import { Button } from "@/components/ui/button";
+import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 
 export type Viewer = { id: number; isAdmin: boolean };
@@ -53,6 +54,7 @@ export function CommentItem({
   const [uploading, setUploading] = useState(false);
   const staging = useStagedFiles();
   const queryClient = useQueryClient();
+  const refCompletion = useRefCompletion(slug);
   const save = useMutation({
     mutationFn: (finalBody: string) =>
       api.updateComment(slug, issueNumber, comment.id, finalBody),
@@ -170,6 +172,7 @@ export function CommentItem({
               ariaLabel="Edit comment"
               className="min-h-28"
               placeholder="Edit comment… (paste or drop files)"
+              extensions={refCompletion}
               onPaste={staging.onPaste}
               onDrop={staging.onDrop}
               onDragOver={staging.onDragOver}

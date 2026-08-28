@@ -59,6 +59,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 
 export function IssueDetailPage() {
   const { slug, number: numberParam } = useParams({
@@ -116,6 +117,7 @@ export function IssueDetailPage() {
               slug={slug}
               issueNumber={issueNumber}
               onSend={composer.send}
+              onSendWithCommands={composer.sendWithCommands}
               failed={composer.pending.filter((p) => p.failed)}
               onRetry={composer.retry}
             />
@@ -220,6 +222,7 @@ function TitleBlock({ slug, issue }: { slug: string; issue: Issue }) {
 function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
   const [editing, setEditing] = useState(false);
   const editor = useRef<MarkdownEditorHandle>(null);
+  const refCompletion = useRefCompletion(slug);
   const [uploading, setUploading] = useState(false);
   const staging = useStagedFiles();
   const queryClient = useQueryClient();
@@ -298,6 +301,7 @@ function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
               ariaLabel="Issue description"
               className="min-h-44"
               placeholder="Describe the issue… (paste or drop files)"
+              extensions={refCompletion}
               onPaste={staging.onPaste}
               onDrop={staging.onDrop}
               onDragOver={staging.onDragOver}

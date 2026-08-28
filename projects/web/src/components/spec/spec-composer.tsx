@@ -3,6 +3,7 @@ import { FileTextIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 import { MarkdownEditor } from "@/components/shared/markdown-editor.tsx";
 import { Button } from "@/components/ui/button";
+import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 
 /** Longest quote preview before the rest folds into a "+N lines" note. */
 const QUOTE_PREVIEW_LINES = 4;
@@ -26,15 +27,18 @@ export type ComposerStaging = {
  * anchor so a new selection starts with an empty body.
  */
 export function SpecComposer({
+  slug,
   staging,
   onCancel,
   onStage,
 }: {
+  slug: string;
   staging: ComposerStaging;
   onCancel: () => void;
   onStage: (body: string) => void;
 }) {
   const [body, setBody] = useState("");
+  const refCompletion = useRefCompletion(slug);
   const fileLevel = staging.lineStart === null;
   const lines = fileLevel
     ? "file comment"
@@ -90,6 +94,7 @@ export function SpecComposer({
                 : "Comment (markdown)… staged locally until you finish the review"
             }
             onCancel={onCancel}
+            extensions={refCompletion}
             onSubmit={(value) => {
               if (value.trim() !== "") onStage(value);
             }}
