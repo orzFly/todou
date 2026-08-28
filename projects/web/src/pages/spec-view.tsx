@@ -27,6 +27,7 @@ import {
   ArrowLeftIcon,
   ArrowUpIcon,
   FileTextIcon,
+  WrapTextIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -92,6 +93,27 @@ export function SpecViewPage() {
 /** A draft in the making: where it anchors and what it quotes. */
 type Staging = ComposerStaging;
 
+const DIFF_WRAP_STORAGE_KEY = "todou-spec-diff-wrap";
+
+// Specs are markdown prose, so wrapping — not horizontal scrolling — is the
+// reading posture the diff opens in until the user says otherwise (T-143).
+function readDiffWrap(): boolean {
+  try {
+    return localStorage.getItem(DIFF_WRAP_STORAGE_KEY) !== "off";
+  } catch {
+    // storage may be unavailable (private mode); fall through
+    return true;
+  }
+}
+
+function writeDiffWrap(wrap: boolean) {
+  try {
+    localStorage.setItem(DIFF_WRAP_STORAGE_KEY, wrap ? "on" : "off");
+  } catch {
+    // preference just won't persist
+  }
+}
+
 function quoteOf(body: string, start: number, end: number): string {
   return body
     .split("\n")
@@ -120,6 +142,7 @@ function SpecViewBody({
   const [staging, setStaging] = useState<Staging | null>(null);
   const [finishOpen, setFinishOpen] = useState(false);
   const [showChanges, setShowChanges] = useState(true);
+  const [wrap, setWrap] = useState(readDiffWrap);
   const mainRef = useRef<HTMLDivElement>(null);
 
   const selectedPath = search.file ?? files.data.files[0]?.path;
@@ -394,6 +417,26 @@ function SpecViewBody({
             diff v{version - 1}…v{version}
           </Link>
         )}
+        {compare !== undefined && (
+          <button
+            type="button"
+            aria-pressed={wrap}
+            onClick={() => {
+              setWrap(!wrap);
+              writeDiffWrap(!wrap);
+            }}
+            className={cn(
+              "inline-flex cursor-pointer items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs",
+              wrap
+                ? "border-emerald-600/60 bg-emerald-600/10 text-emerald-700 dark:text-emerald-400"
+                : "text-muted-foreground hover:border-foreground/50",
+            )}
+            title="Wrap long lines instead of scrolling horizontally"
+          >
+            <WrapTextIcon className="size-3.5" />
+            wrap
+          </button>
+        )}
         {isNewFile && compare === undefined && (
           <span className="rounded-full border border-emerald-600/60 bg-emerald-600/10 px-2.5 py-0.5 text-xs text-emerald-700 dark:text-emerald-400">
             new in v{version}
@@ -470,6 +513,7 @@ function SpecViewBody({
           comments={comments.data.items}
           onStage={setStaging}
           focusPath={search.file}
+          wrap={wrap}
         />
       ) : (
         <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
@@ -712,6 +756,7 @@ function SpecDiff({
   comments,
   onStage,
   focusPath,
+  wrap,
 }: {
   slug: string;
   issueNumber: number;
@@ -722,6 +767,7 @@ function SpecDiff({
   onStage: (staging: Staging) => void;
   /** Scroll this file's diff into view — the version card's per-file link (T-59). */
   focusPath?: string;
+  wrap: boolean;
 }) {
   const from = useSuspenseQuery(specFilesQuery(slug, issueNumber, fromVersion));
   const focusRef = useRef<HTMLDivElement>(null);
@@ -774,6 +820,7 @@ function SpecDiff({
             toVersion={toVersion}
             comments={comments.filter((c) => c.anchor.path === pair.path)}
             onStage={onStage}
+            wrap={wrap}
           />
         </div>
       ))}
@@ -789,6 +836,7 @@ function AnnotatedFileDiff({
   toVersion,
   comments,
   onStage,
+  wrap,
 }: {
   path: string;
   oldBody: string;
@@ -797,6 +845,7 @@ function AnnotatedFileDiff({
   toVersion: number;
   comments: SpecCommentItem[];
   onStage: (staging: Staging) => void;
+  wrap: boolean;
 }) {
   const oldFile = useMemo(
     () => ({ name: path, contents: oldBody }),
@@ -812,6 +861,7 @@ function AnnotatedFileDiff({
       theme: syntaxTheme,
       themeType: PIERRE_THEME_TYPE,
       diffStyle: "unified" as const,
+      overflow: wrap ? ("wrap" as const) : ("scroll" as const),
       enableLineSelection: true,
       onLineSelectionEnd: (range: SelectedLineRange | null) => {
         if (!range) return;
@@ -828,7 +878,16 @@ function AnnotatedFileDiff({
         });
       },
     }),
-    [path, oldBody, newBody, fromVersion, toVersion, onStage, syntaxTheme],
+    [
+      path,
+      oldBody,
+      newBody,
+      fromVersion,
+      toVersion,
+      onStage,
+      syntaxTheme,
+      wrap,
+    ],
   );
   const lineAnnotations = useMemo(
     () =>
