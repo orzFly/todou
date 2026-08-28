@@ -121,11 +121,20 @@
 
 /* Every pierre code surface renders in a shadow root and resolves its
    palette with light-dark(); declarations from the outer tree win over
-   shadow :host rules, so these two lines keep pierre in step with the app
-   theme even where an options object captured themeType at module scope
-   (spec-view — owned by a change in flight, deliberately not edited). */
+   shadow :host rules, which is what lets these lines keep pierre in step
+   with the app theme.
+
+   The bg/fg pairs override what the syntax theme wrote into :host, and every
+   other chrome color pierre uses — line-number gutter, context rows, hunk
+   separators, the addition/deletion tints — is color-mix()'d off them, so
+   aligning these four aligns the whole surface, including themes with no
+   syntax counterpart to map to (T-144). */
 diffs-container {
     color-scheme: light;
+    --diffs-light-bg: var(--background);
+    --diffs-dark-bg: var(--background);
+    --diffs-light: var(--foreground);
+    --diffs-dark: var(--foreground);
 }
 .dark diffs-container {
     color-scheme: dark;

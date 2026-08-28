@@ -1,5 +1,6 @@
 import type { CodeViewProps, MultiFileDiffProps } from "@pierre/diffs/react";
 import { type ComponentType, lazy, Suspense, useMemo } from "react";
+import { syntaxThemeOf, type ThemePref, useThemePref } from "@/lib/theme.ts";
 
 // @pierre/diffs is the heaviest dependency in the web bundle (T-24). Every
 // value import goes through lazy() here so the library lands in its own
@@ -30,20 +31,61 @@ export const PIERRE_THEME = {
  */
 export const PIERRE_THEME_TYPE = "system" as const;
 
-// Module-scope per the library's props-stability guidance.
-const SNIPPET_OPTIONS = {
-  theme: PIERRE_THEME,
-  themeType: PIERRE_THEME_TYPE,
-  disableFileHeader: true,
-  disableLineNumbers: true,
-  overflow: "wrap",
-} as const;
+export type SyntaxTheme = { light: string; dark: string };
 
-const FILE_OPTIONS = {
-  theme: PIERRE_THEME,
-  themeType: PIERRE_THEME_TYPE,
-  disableFileHeader: true,
-} as const;
+// Keyed by preference, so every surface on the page hands pierre the same
+// object identity across renders (props-stability guidance below).
+const SYNTAX_THEMES = new Map<ThemePref, SyntaxTheme>();
+
+/**
+ * Syntax token colors for the active theme (T-144). Under "system" the pair
+ * stays pierre's own, because the light/dark choice is then made by CSS
+ * light-dark() inside the shadow root rather than by a React render. A named
+ * theme resolves to one shiki theme in both slots: its kind is fixed, so the
+ * slot the browser will not paint is irrelevant.
+ */
+export function useSyntaxTheme(): SyntaxTheme {
+  const pref = useThemePref();
+  const cached = SYNTAX_THEMES.get(pref);
+  if (cached) return cached;
+  const syntax = pref === "system" ? undefined : syntaxThemeOf(pref);
+  const resolved: SyntaxTheme =
+    syntax === undefined ? PIERRE_THEME : { light: syntax, dark: syntax };
+  SYNTAX_THEMES.set(pref, resolved);
+  return resolved;
+}
+
+// Module-scope per the library's props-stability guidance — now one object
+// per theme rather than one overall, so a surface only re-renders when the
+// theme it is rendered under actually changes.
+const SNIPPET_OPTIONS = new Map<SyntaxTheme, CodeViewProps["options"]>();
+const FILE_OPTIONS = new Map<SyntaxTheme, CodeViewProps["options"]>();
+
+function snippetOptions(theme: SyntaxTheme): CodeViewProps["options"] {
+  const cached = SNIPPET_OPTIONS.get(theme);
+  if (cached) return cached;
+  const options = {
+    theme,
+    themeType: PIERRE_THEME_TYPE,
+    disableFileHeader: true,
+    disableLineNumbers: true,
+    overflow: "wrap",
+  } as const;
+  SNIPPET_OPTIONS.set(theme, options);
+  return options;
+}
+
+function fileOptions(theme: SyntaxTheme): CodeViewProps["options"] {
+  const cached = FILE_OPTIONS.get(theme);
+  if (cached) return cached;
+  const options = {
+    theme,
+    themeType: PIERRE_THEME_TYPE,
+    disableFileHeader: true,
+  } as const;
+  FILE_OPTIONS.set(theme, options);
+  return options;
+}
 
 // Fence tags that are language names rather than the file extensions
 // pierre's filename inference knows.
@@ -106,6 +148,12 @@ export function CodeBlock({
     ],
     [filename, contents],
   );
+  const syntaxTheme = useSyntaxTheme();
+  const options = useMemo(
+    () =>
+      lineNumbers ? fileOptions(syntaxTheme) : snippetOptions(syntaxTheme),
+    [lineNumbers, syntaxTheme],
+  );
   return (
     <Suspense
       fallback={
@@ -114,11 +162,7 @@ export function CodeBlock({
         </pre>
       }
     >
-      <LazyCodeView
-        items={items}
-        options={lineNumbers ? FILE_OPTIONS : SNIPPET_OPTIONS}
-        className={className}
-      />
+      <LazyCodeView items={items} options={options} className={className} />
     </Suspense>
   );
 }

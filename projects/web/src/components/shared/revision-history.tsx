@@ -4,8 +4,8 @@ import { Suspense, useMemo, useState } from "react";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import {
   LazyMultiFileDiff,
-  PIERRE_THEME,
   PIERRE_THEME_TYPE,
+  useSyntaxTheme,
 } from "@/components/shared/pierre.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
@@ -19,13 +19,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-
-// Module-scope per the library's props-stability guidance.
-const DIFF_OPTIONS = {
-  theme: PIERRE_THEME,
-  themeType: PIERRE_THEME_TYPE,
-  diffStyle: "unified",
-} as const;
 
 /** Both sides of one edit as diff inputs; .md names give markdown highlighting. */
 export function toDiffFiles(revision: Revision, filename: string) {
@@ -140,6 +133,15 @@ function RevisionDiff({
     () => toDiffFiles(revision, filename),
     [revision, filename],
   );
+  const syntaxTheme = useSyntaxTheme();
+  const options = useMemo(
+    () => ({
+      theme: syntaxTheme,
+      themeType: PIERRE_THEME_TYPE,
+      diffStyle: "unified" as const,
+    }),
+    [syntaxTheme],
+  );
   return (
     <div className="max-h-[70vh] overflow-auto rounded-md">
       <Suspense
@@ -152,7 +154,7 @@ function RevisionDiff({
         <LazyMultiFileDiff
           oldFile={oldFile}
           newFile={newFile}
-          options={DIFF_OPTIONS}
+          options={options}
         />
       </Suspense>
     </div>

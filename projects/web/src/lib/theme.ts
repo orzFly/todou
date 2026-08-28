@@ -10,11 +10,18 @@ export interface ThemeDef {
   /** Menu swatch halves (oklch literals). */
   surface: string;
   accent: string;
+  /**
+   * shiki theme carrying this theme's syntax token colors, from pierre's
+   * bundled collection — an unlisted name throws at resolve time, so the
+   * set is pinned by test. Omitted where no upstream theme matches; those
+   * fall back to pierre's own tokens over the aligned background (T-144).
+   */
+  syntax?: string;
 }
 
 // The todou defaults lead each group; the rest are the picotera ports (T-36).
 // Adding a theme = one entry here + one :root[data-theme='…'] block in
-// styles.css.
+// styles.css, plus `syntax` where an upstream shiki theme matches (T-144).
 export const THEMES = [
   {
     value: "light",
@@ -36,6 +43,7 @@ export const THEMES = [
     kind: "light",
     surface: "oklch(0.965 0.036 92)",
     accent: "oklch(0.72 0.15 85)",
+    syntax: "solarized-light",
   },
   {
     value: "vs-light",
@@ -43,6 +51,7 @@ export const THEMES = [
     kind: "light",
     surface: "oklch(0.985 0.001 250)",
     accent: "oklch(0.5 0.16 250)",
+    syntax: "light-plus",
   },
   {
     value: "github-light",
@@ -50,6 +59,7 @@ export const THEMES = [
     kind: "light",
     surface: "oklch(0.985 0.002 250)",
     accent: "oklch(0.55 0.18 255)",
+    syntax: "github-light",
   },
   {
     value: "catppuccin-latte",
@@ -57,6 +67,7 @@ export const THEMES = [
     kind: "light",
     surface: "oklch(0.97 0.005 280)",
     accent: "oklch(0.52 0.22 300)",
+    syntax: "catppuccin-latte",
   },
   {
     value: "gruvbox-light",
@@ -64,6 +75,7 @@ export const THEMES = [
     kind: "light",
     surface: "oklch(0.95 0.04 95)",
     accent: "oklch(0.48 0.09 220)",
+    syntax: "gruvbox-light-medium",
   },
   {
     value: "dark",
@@ -85,6 +97,7 @@ export const THEMES = [
     kind: "dark",
     surface: "oklch(0.30 0.035 210)",
     accent: "oklch(0.68 0.14 235)",
+    syntax: "solarized-dark",
   },
   {
     value: "vs-dark",
@@ -92,6 +105,7 @@ export const THEMES = [
     kind: "dark",
     surface: "oklch(0.26 0.004 250)",
     accent: "oklch(0.62 0.15 245)",
+    syntax: "dark-plus",
   },
   {
     value: "github-dark",
@@ -99,6 +113,7 @@ export const THEMES = [
     kind: "dark",
     surface: "oklch(0.2 0.015 260)",
     accent: "oklch(0.65 0.17 255)",
+    syntax: "github-dark",
   },
   {
     value: "dracula",
@@ -106,6 +121,7 @@ export const THEMES = [
     kind: "dark",
     surface: "oklch(0.31 0.028 285)",
     accent: "oklch(0.74 0.16 300)",
+    syntax: "dracula",
   },
   {
     value: "nord",
@@ -113,6 +129,7 @@ export const THEMES = [
     kind: "dark",
     surface: "oklch(0.33 0.022 250)",
     accent: "oklch(0.78 0.08 210)",
+    syntax: "nord",
   },
   {
     value: "tokyo-night",
@@ -120,6 +137,7 @@ export const THEMES = [
     kind: "dark",
     surface: "oklch(0.24 0.025 270)",
     accent: "oklch(0.7 0.15 265)",
+    syntax: "tokyo-night",
   },
   {
     value: "one-dark",
@@ -127,6 +145,7 @@ export const THEMES = [
     kind: "dark",
     surface: "oklch(0.31 0.012 265)",
     accent: "oklch(0.72 0.14 245)",
+    syntax: "one-dark-pro",
   },
   {
     value: "monokai",
@@ -134,6 +153,7 @@ export const THEMES = [
     kind: "dark",
     surface: "oklch(0.27 0.012 110)",
     accent: "oklch(0.78 0.13 195)",
+    syntax: "monokai",
   },
   {
     value: "catppuccin-mocha",
@@ -141,6 +161,7 @@ export const THEMES = [
     kind: "dark",
     surface: "oklch(0.26 0.03 285)",
     accent: "oklch(0.78 0.13 300)",
+    syntax: "catppuccin-mocha",
   },
   {
     value: "gruvbox-dark",
@@ -148,6 +169,7 @@ export const THEMES = [
     kind: "dark",
     surface: "oklch(0.28 0.008 90)",
     accent: "oklch(0.74 0.13 60)",
+    syntax: "gruvbox-dark-medium",
   },
 ] as const satisfies readonly ThemeDef[];
 
@@ -159,6 +181,13 @@ const THEME_VALUES = THEMES.map((t) => t.value) as Theme[];
 
 export function themeKind(value: Theme): ThemeKind {
   return THEMES.find((t) => t.value === value)?.kind ?? "light";
+}
+
+export function syntaxThemeOf(value: Theme): string | undefined {
+  // Widened to ThemeDef: the const-asserted union only carries `syntax` on
+  // the members that declare it, so the property is unreachable otherwise.
+  const theme: ThemeDef | undefined = THEMES.find((t) => t.value === value);
+  return theme?.syntax;
 }
 
 export const THEME_STORAGE_KEY = "todou-theme";

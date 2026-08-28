@@ -1,4 +1,7 @@
 import type { SelectedLineRange } from "@pierre/diffs";
+// Imported directly rather than through the lazy wrapper in pierre.tsx: this
+// whole page is route-lazy, so pierre never reaches the main bundle through
+// it anyway (T-31).
 import { MultiFileDiff } from "@pierre/diffs/react";
 import {
   useMutation,
@@ -32,8 +35,8 @@ import { useRefPrefix } from "@/api/references.ts";
 import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
 import { SpecStatusBadge } from "@/components/issue/spec-entry.tsx";
 import {
-  PIERRE_THEME,
   PIERRE_THEME_TYPE,
+  useSyntaxTheme,
 } from "@/components/shared/pierre.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
@@ -699,17 +702,6 @@ function UnplacedComment({
   );
 }
 
-// Module-scope per the library's props-stability guidance; interaction
-// callbacks are merged per file pair below. Theme constants follow the
-// shared pierre setup (T-31); the direct MultiFileDiff import is fine here
-// because this whole page is route-lazy — pierre never reaches the main
-// bundle through it.
-const DIFF_THEME = {
-  theme: PIERRE_THEME,
-  themeType: PIERRE_THEME_TYPE,
-  diffStyle: "unified",
-} as const;
-
 /** All file pairs that differ between two versions, one diff per file. */
 function SpecDiff({
   slug,
@@ -814,9 +806,12 @@ function AnnotatedFileDiff({
     () => ({ name: path, contents: newBody }),
     [path, newBody],
   );
+  const syntaxTheme = useSyntaxTheme();
   const options = useMemo(
     () => ({
-      ...DIFF_THEME,
+      theme: syntaxTheme,
+      themeType: PIERRE_THEME_TYPE,
+      diffStyle: "unified" as const,
       enableLineSelection: true,
       onLineSelectionEnd: (range: SelectedLineRange | null) => {
         if (!range) return;
@@ -833,7 +828,7 @@ function AnnotatedFileDiff({
         });
       },
     }),
-    [path, oldBody, newBody, fromVersion, toVersion, onStage],
+    [path, oldBody, newBody, fromVersion, toVersion, onStage, syntaxTheme],
   );
   const lineAnnotations = useMemo(
     () =>
