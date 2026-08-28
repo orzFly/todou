@@ -1,4 +1,5 @@
 import type { AgentContext } from "@todou/shared";
+import { scanReferenceTokens } from "@todou/shared";
 import { and, desc, eq, inArray, lte } from "drizzle-orm";
 import type { Db } from "../db/driver.ts";
 import { issueEvents, issues, refFormats } from "../db/project-schema.ts";
@@ -37,21 +38,17 @@ export function stripMarkdownCode(text: string): string {
 /**
  * Extract internal issue references from markdown, ignoring code
  * segments. `prefix` selects the format the content was WRITTEN under
- * (T-80 time-cutoff rule): null = `#N`, 'T' = `T-N`. The web tokenizer
- * (projects/web/src/lib/issue-refs.ts) mirrors these regexes.
+ * (T-80 time-cutoff rule): null = `#N`, 'T' = `T-N`.
  */
 export function extractIssueRefs(
   text: string,
   prefix: string | null = null,
 ): number[] {
-  const pattern =
-    prefix === null
-      ? /(?:^|\W)#(\d{1,9})\b/g
-      : // The leading boundary also excludes "-" so SOME-T-76 stays text.
-        new RegExp(String.raw`(?:^|[^\w-])${prefix}-(\d{1,9})\b`, "g");
   const found = new Set<number>();
-  for (const match of stripMarkdownCode(text).matchAll(pattern)) {
-    found.add(Number(match[1]));
+  for (const token of scanReferenceTokens(stripMarkdownCode(text), {
+    internalPrefix: prefix,
+  })) {
+    if (token.type === "issue" && token.slug === null) found.add(token.number);
   }
   return [...found];
 }
