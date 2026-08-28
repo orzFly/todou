@@ -32,7 +32,12 @@ import {
   statusesQuery,
 } from "@/api/queries.ts";
 import { FilterBar } from "@/components/issue/filter-bar.tsx";
-import { IssueRow, IssueRowMeta } from "@/components/issue/issue-row.tsx";
+import {
+  ISSUE_LIST_GRID,
+  ISSUE_LIST_ROW,
+  IssueRow,
+  IssueRowMeta,
+} from "@/components/issue/issue-row.tsx";
 import {
   useCanCreateLabels,
   useCreateLabel,
@@ -40,6 +45,7 @@ import {
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 export function IssueListPage() {
   const { slug } = useParams({ from: "/authed/projects/$slug" });
@@ -311,14 +317,19 @@ function IssueGroup({
         <span className="font-medium">{status.name}</span>
         <span className="text-muted-foreground">{total}</span>
       </div>
-      <ul className="rounded-b-lg border border-t-0">
+      <ul className={cn("rounded-b-lg border border-t-0", ISSUE_LIST_GRID)}>
         {group.isPending && (
-          <li className="p-3">
+          <li className={cn(ISSUE_LIST_ROW, "p-3")}>
             <Skeleton className="h-12 w-full" />
           </li>
         )}
         {group.isError && (
-          <li className="flex items-center justify-between gap-2 p-3 text-sm text-muted-foreground">
+          <li
+            className={cn(
+              ISSUE_LIST_ROW,
+              "flex items-center justify-between gap-2 p-3 text-sm text-muted-foreground",
+            )}
+          >
             Could not load this group: {group.error.message}
             <Button variant="outline" size="sm" onClick={() => group.refetch()}>
               Retry
@@ -333,7 +344,7 @@ function IssueGroup({
           onCreateLabel={onCreateLabel}
         />
         {lastCursor && remaining > 0 && (
-          <li>
+          <li className={ISSUE_LIST_ROW}>
             <button
               type="button"
               className="w-full cursor-pointer p-2 text-center text-sm text-muted-foreground hover:text-foreground"
@@ -405,7 +416,7 @@ export function IssueList({
 
   return (
     <div className="space-y-3">
-      <ul className="rounded-lg border">
+      <ul className={cn("rounded-lg border", ISSUE_LIST_GRID)}>
         <ProjectIssueRows
           slug={slug}
           items={items}

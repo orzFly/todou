@@ -23,6 +23,28 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
+
+/**
+ * The columns of a list of `IssueRow`s — read marker, ref, everything else —
+ * carried by the `<ul>` so that the ref column is sized by the longest ref in
+ * the whole list. A per-row slot cannot do that: inside the 44px one this
+ * replaces, `CH-113` wrapped onto two lines and `REFRACT-` overflowed onto
+ * the title (T-155). Rows opt into the columns with `grid-cols-subgrid`.
+ *
+ * The list also owns the rows' horizontal padding, because a subgrid's own
+ * padding is subtracted from its first and last track — 14px of padding on
+ * the row itself would leave the 27px marker column 13px wide. Rows take that
+ * padding back through `ISSUE_LIST_ROW`.
+ */
+export const ISSUE_LIST_GRID =
+  "grid grid-cols-[27px_max-content_1fr] gap-x-2 px-3.5";
+
+/**
+ * Every `<li>` of such a list, row or not: one full-width cell, bleeding back
+ * over the list's padding so borders and hover still reach its edges.
+ */
+export const ISSUE_LIST_ROW = "col-span-full -mx-3.5";
 
 /**
  * One issue row, worn by the project list and the cross-project inbox alike
@@ -57,22 +79,28 @@ export function IssueRow({
 }) {
   const refPrefix = useRefPrefix(slug);
   return (
-    <li className="border-b px-3.5 py-2.5 transition-colors last:border-0 hover:bg-muted/50">
-      <div className="flex items-center gap-2">
-        {/* Fixed-width slot (the CLI's ● column, sized for the 99+ badge)
-            keeps numbers from shifting; centering keeps the ring and the
-            badge on one axis. */}
-        <span className="inline-flex w-[27px] shrink-0 justify-center">
-          <MarkReadButton
-            slug={slug}
-            number={issue.number}
-            unread={issue.unread}
-            unreadComments={issue.unread_comments}
-          />
-        </span>
-        <span className="w-11 shrink-0 text-[13px] text-muted-foreground tabular-nums max-sm:w-auto">
-          {formatRef(refPrefix, issue.number)}
-        </span>
+    <li
+      className={cn(
+        ISSUE_LIST_ROW,
+        "grid grid-cols-subgrid items-center border-b px-3.5 py-2.5 transition-colors last:border-0 hover:bg-muted/50",
+      )}
+    >
+      {/* Centering keeps the ring and the 99+ badge on one axis; the width of
+          the slot is the grid's first column (the CLI's ● column). */}
+      <span className="inline-flex justify-center">
+        <MarkReadButton
+          slug={slug}
+          number={issue.number}
+          unread={issue.unread}
+          unreadComments={issue.unread_comments}
+        />
+      </span>
+      {/* The old fixed width survives as a floor, so a project whose refs fit
+          within it keeps the spacing it had. */}
+      <span className="min-w-11 whitespace-nowrap text-[13px] text-muted-foreground tabular-nums max-sm:min-w-0">
+        {formatRef(refPrefix, issue.number)}
+      </span>
+      <div className="flex min-w-0 items-center gap-2">
         <Link
           to="/projects/$slug/issues/$number"
           params={{ slug, number: String(issue.number) }}
@@ -91,10 +119,8 @@ export function IssueRow({
         )}
         {trailing}
       </div>
-      {/* pl mirrors line 1: unread slot 27 + gap 8 (+ ref 44 when it is
-          fixed-width, ≥sm only) so the meta line starts under the title. */}
       {meta && (
-        <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-[79px] max-sm:pl-[35px]">
+        <div className="col-start-3 mt-1 flex flex-wrap items-center gap-1.5">
           {meta}
         </div>
       )}

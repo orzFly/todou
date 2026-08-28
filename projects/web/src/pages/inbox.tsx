@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import type { InboxItem } from "@todou/shared";
 import { useState } from "react";
 import { groupInboxItems, type InboxGroup, inboxQuery } from "@/api/inbox.ts";
-import { IssueRow } from "@/components/issue/issue-row.tsx";
+import { ISSUE_LIST_GRID, IssueRow } from "@/components/issue/issue-row.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -139,7 +139,7 @@ function InboxGroupSection({ group }: { group: InboxGroup }) {
           className="-my-1"
         />
       </header>
-      <ul>
+      <ul className={ISSUE_LIST_GRID}>
         {group.items.map((item) => (
           <InboxRow key={item.id} item={item} />
         ))}
