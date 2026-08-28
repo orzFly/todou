@@ -2,10 +2,11 @@ import type {
   AgentContext,
   ChangeEvent,
   CommentCreateInput,
+  CommentLocation,
   CommentUpdateInput,
   TimelineComment,
 } from "@todou/shared";
-import { QuestionAnsweredPayload } from "@todou/shared";
+import { formatRef, QuestionAnsweredPayload } from "@todou/shared";
 import { and, eq, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -20,7 +21,7 @@ import {
   recordCrossReferences,
 } from "./cross-references.ts";
 import { canonicalizeComponent, questionCount } from "./questions.ts";
-import { recordReferences } from "./references.ts";
+import { recordReferences, refPrefixAt } from "./references.ts";
 import { deleteRevisionsFor, recordRevision } from "./revisions.ts";
 import { getUserRefs } from "./users.ts";
 
@@ -179,6 +180,36 @@ export async function getComment(
   const row = rows[0];
   if (!row) throw new NotFoundError("comment not found");
   return toTimelineComment(ctx, row);
+}
+
+/**
+ * Resolve a comment without knowing which issue carries it — the entry
+ * point for a bare `#comment-M` reference (T-150), where the id is all the
+ * author wrote.
+ */
+export async function locateComment(
+  ctx: AppContext,
+  actor: UserRow,
+  slug: string,
+  commentId: number,
+): Promise<CommentLocation> {
+  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const db = await ctx.router.forProject(routeInfoOf(project));
+  const rows = await db
+    .select({ comment: comments, number: issues.number })
+    .from(comments)
+    .innerJoin(issues, eq(comments.issueId, issues.id))
+    .where(and(eq(comments.projectId, project.id), eq(comments.id, commentId)));
+  const row = rows[0];
+  if (!row) throw new NotFoundError("comment not found");
+  // The ref is a label for the reader, so it is spelled in the format in
+  // force now — not the one the comment was written under (T-80).
+  const prefix = await refPrefixAt(db, project.id, new Date());
+  return {
+    issue_number: row.number,
+    issue_ref: formatRef(prefix, row.number),
+    comment: await toTimelineComment(ctx, row.comment),
+  };
 }
 
 async function loadCommentForWrite(

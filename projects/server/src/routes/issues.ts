@@ -4,6 +4,7 @@ import {
   ActivityQuery,
   AnswersSubmitInput,
   CommentCreateInput,
+  CommentLocation,
   CommentUpdateInput,
   Issue,
   IssueCounts,
@@ -26,6 +27,7 @@ import {
   createComment,
   deleteComment,
   getComment,
+  locateComment,
   updateComment,
 } from "../services/comments.ts";
 import {
@@ -128,6 +130,20 @@ const getCommentRoute = createRoute({
   summary: "Fetch one comment (permalink resolution)",
   request: { params: commentParams },
   responses: { 200: { description: "Comment", ...jsonBody(TimelineComment) } },
+});
+
+const locateCommentRoute = createRoute({
+  method: "get",
+  path: "/{slug}/comments/{commentId}",
+  summary:
+    "Resolve a comment id to the issue carrying it (bare #comment-M refs)",
+  request: {
+    params: z.object({
+      slug: ProjectSlug,
+      commentId: z.coerce.number().int().positive(),
+    }),
+  },
+  responses: { 200: { description: "Comment", ...jsonBody(CommentLocation) } },
 });
 
 const patchCommentRoute = createRoute({
@@ -300,6 +316,14 @@ export function issueRoutes() {
     const { slug, number, commentId } = c.req.valid("param");
     return c.json(
       await getComment(c.get("appCtx"), c.get("user"), slug, number, commentId),
+      200,
+    );
+  });
+
+  app.openapi(locateCommentRoute, async (c) => {
+    const { slug, commentId } = c.req.valid("param");
+    return c.json(
+      await locateComment(c.get("appCtx"), c.get("user"), slug, commentId),
       200,
     );
   });

@@ -15,6 +15,7 @@ import type {
   AutolinkCreateInput,
   BulkReadInput,
   CommentComponentInput,
+  CommentLocation,
   CrossActivityPage,
   DirectUploadTicket,
   InboxPage,
@@ -473,6 +474,11 @@ export class TodouClient {
       "POST",
       `/projects/${slug}/issues/${number}/comments`,
       { json: component === undefined ? { body } : { body, component } },
+    );
+  locateComment = (slug: string, commentId: number) =>
+    this.request<CommentLocation>(
+      "GET",
+      `/projects/${slug}/comments/${commentId}`,
     );
   getComment = (slug: string, number: number, commentId: number) =>
     this.request<TimelineComment>(

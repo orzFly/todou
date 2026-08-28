@@ -13,6 +13,7 @@ import { issueRefQuery } from "../src/api/issue-refs.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { EventRow } from "../src/components/timeline/event-row.tsx";
 import { splitIssueRefs } from "../src/lib/issue-refs.ts";
+import { refHref } from "../src/lib/remark-issue-refs.ts";
 
 // Fences render through the lazily-imported pierre CodeView (T-31); pin it
 // to a plain pre>code so the DOM is deterministic no matter when the lazy
@@ -124,6 +125,62 @@ describe("splitIssueRefs", () => {
     expect(splitIssueRefs("#7 first")).toEqual([
       { type: "ref", number: 7, text: "#7" },
       { type: "text", value: " first" },
+    ]);
+  });
+});
+
+describe("cross-project segments and their hrefs", () => {
+  const config = {
+    internalPrefix: null,
+    cross: {
+      slugs: ["mirror"],
+      directory: {
+        entries: [
+          {
+            prefix: "M",
+            slug: "mirror",
+            from: "2026-01-01T00:00:00Z",
+            to: null,
+          },
+        ],
+        contested: [],
+      },
+      since: "2026-01-01T00:00:00Z",
+      at: "2026-06-01T00:00:00Z",
+    },
+  };
+
+  it("carries the target project and any comment anchor", () => {
+    expect(splitIssueRefs("mirror/M-7#comment-42 and M-8", config)).toEqual([
+      {
+        type: "xref",
+        slug: "mirror",
+        number: 7,
+        commentId: 42,
+        text: "mirror/M-7#comment-42",
+      },
+      { type: "text", value: " and " },
+      { type: "xref", slug: "mirror", number: 8, text: "M-8" },
+    ]);
+    expect(splitIssueRefs("see #comment-9", config)).toEqual([
+      { type: "text", value: "see " },
+      { type: "comment", commentId: 9, text: "#comment-9" },
+    ]);
+  });
+
+  it("encodes each segment as a href MarkdownLink can read back", () => {
+    const hrefs = splitIssueRefs(
+      "#3 #4#comment-5 mirror#7 mirror#8#comment-9 #comment-1",
+      config,
+    )
+      .filter((segment) => segment.type !== "text")
+      .map(refHref);
+    expect(hrefs).toEqual([
+      "#issue-3",
+      "#issue-4/comment-5",
+      "#xref-mirror/7",
+      "#xref-mirror/8/comment-9",
+      "#xref-comment-1",
     ]);
   });
 });

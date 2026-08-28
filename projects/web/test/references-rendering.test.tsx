@@ -8,13 +8,20 @@ import {
 import { render, waitFor } from "@testing-library/react";
 import type {
   IssueListItem,
+  Project,
   ReferenceConfig,
+  ReferenceDirectory,
   TimelineEvent,
 } from "@todou/shared";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
-import { refConfigFor, referenceConfigQuery } from "../src/api/references.ts";
+import { projectsQuery } from "../src/api/queries.ts";
+import {
+  refConfigFor,
+  referenceConfigQuery,
+  referenceDirectoryQuery,
+} from "../src/api/references.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { EventRow } from "../src/components/timeline/event-row.tsx";
 import { splitIssueRefs } from "../src/lib/issue-refs.ts";
@@ -250,6 +257,185 @@ describe("UI spelling follows the current format", () => {
       expect(view.container.textContent).toContain("T-3");
     });
     expect(view.container.textContent).not.toContain("#3");
+  });
+});
+
+/** mirror spells its issues "M-7"; todou has held "T" since the switch. */
+const mirrorConfig: ReferenceConfig = {
+  format: {
+    prefix: "M",
+    history: [{ prefix: "M", effective_from: SWITCH_AT }],
+  },
+  autolinks: [],
+};
+
+const project = (id: number, slug: string): Project => ({
+  id,
+  slug,
+  name: slug,
+  description: "",
+  created_at: SWITCH_AT,
+});
+
+const directory = (
+  over: Partial<ReferenceDirectory> = {},
+): ReferenceDirectory => ({
+  since: SWITCH_AT,
+  entries: [{ prefix: "M", slug: "mirror", from: SWITCH_AT, to: null }],
+  contested: [],
+  ...over,
+});
+
+/**
+ * A viewer whose readable set is `readable`, with the cross-project
+ * directory in place. `targets` seeds the batched issue lookups; anything
+ * left unseeded falls through to the suite's offline 404.
+ */
+function crossClient(opts: {
+  readable: string[];
+  dir?: ReferenceDirectory;
+  targets?: Array<[string, IssueListItem]>;
+}): QueryClient {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  client.setQueryData(referenceConfigQuery("todou").queryKey, switchedConfig);
+  client.setQueryData(referenceConfigQuery("mirror").queryKey, mirrorConfig);
+  client.setQueryData(
+    referenceDirectoryQuery.queryKey,
+    opts.dir ?? directory(),
+  );
+  client.setQueryData(
+    projectsQuery.queryKey,
+    opts.readable.map((slug, i) => project(i + 1, slug)),
+  );
+  for (const [slug, item] of opts.targets ?? []) {
+    client.setQueryData(issueRefQuery(slug, item.number).queryKey, item);
+  }
+  return client;
+}
+
+const crossView = (body: string, client: QueryClient) =>
+  renderWithProviders(
+    <MarkdownView slug="todou" refDate={AFTER}>
+      {body}
+    </MarkdownView>,
+    client,
+  );
+
+describe("cross-project references", () => {
+  it("renders a qualified ref in the target's own spelling", async () => {
+    const client = crossClient({
+      readable: ["todou", "mirror"],
+      targets: [["mirror", refItem(7, "Mirror target")]],
+    });
+    const view = crossView("see mirror#7 please", client);
+    const link = await waitFor(() => {
+      const el = view.container.querySelector("a[data-issue-project='mirror']");
+      expect(el).not.toBeNull();
+      return el as HTMLAnchorElement;
+    });
+    expect(link.getAttribute("href")).toBe("/projects/mirror/issues/7");
+    expect(link.textContent).toContain("Mirror target");
+    // The self-contained form, spelled in the TARGET's format.
+    expect(link.textContent).toContain("mirror/M-7");
+  });
+
+  it("resolves a bare foreign prefix through the directory", async () => {
+    const client = crossClient({
+      readable: ["todou", "mirror"],
+      targets: [["mirror", refItem(7, "Bare target")]],
+    });
+    const view = crossView("fixes M-7", client);
+    await waitFor(() => {
+      expect(
+        view.container.querySelector("a[data-issue-project='mirror']"),
+      ).not.toBeNull();
+    });
+  });
+
+  it("leaves a contested prefix as plain text", async () => {
+    const client = crossClient({
+      readable: ["todou", "mirror"],
+      dir: directory({
+        contested: [{ prefix: "M", from: SWITCH_AT, to: null }],
+      }),
+      targets: [["mirror", refItem(7, "Never shown")]],
+    });
+    const view = crossView("fixes M-7", client);
+    await waitFor(() => {
+      expect(view.container.textContent).toContain("fixes M-7");
+    });
+    expect(view.container.querySelector("a")).toBeNull();
+  });
+
+  it("keeps an unreadable project literal, down to the written spelling", async () => {
+    const client = crossClient({ readable: ["todou"] });
+    const view = crossView("see mirror/T-7 please", client);
+    await waitFor(() => {
+      expect(view.container.textContent).toContain("see mirror/T-7 please");
+    });
+    // No link, and the trailing T-7 never falls through to todou's own T-7.
+    expect(view.container.querySelector("a")).toBeNull();
+  });
+
+  it("degrades to plain text when the target lookup fails", async () => {
+    // mirror is nameable but its issues answer 404 — the offline default.
+    const client = crossClient({ readable: ["todou", "mirror"] });
+    const view = crossView("see mirror#7 please", client);
+    await waitFor(() => {
+      expect(view.container.textContent).toContain("mirror#7");
+    });
+    expect(view.container.querySelector("a")).toBeNull();
+  });
+
+  it("deep-links a comment anchor riding on a qualified ref", async () => {
+    const client = crossClient({
+      readable: ["todou", "mirror"],
+      targets: [["mirror", refItem(7, "Anchored")]],
+    });
+    const view = crossView("see mirror#7#comment-42", client);
+    const link = await waitFor(() => {
+      const el = view.container.querySelector("a[data-comment-link='42']");
+      expect(el).not.toBeNull();
+      return el as HTMLAnchorElement;
+    });
+    expect(link.getAttribute("href")).toContain("comment-42");
+  });
+
+  it("names the source project on a cross_referenced event", async () => {
+    const client = crossClient({
+      readable: ["todou", "mirror"],
+      targets: [["mirror", refItem(3, "Source card")]],
+    });
+    const view = renderWithProviders(
+      <EventRow
+        event={{
+          type: "event",
+          id: 9,
+          event_type: "cross_referenced",
+          actor: {
+            id: 1,
+            login: "user",
+            display_name: "User",
+            kind: "human",
+            avatar_url: null,
+            owner: null,
+          },
+          agent_context: null,
+          payload: { by_project: "mirror", by_issue: 3 },
+          created_at: AFTER,
+        }}
+        slug="todou"
+      />,
+      client,
+    );
+    await waitFor(() => {
+      expect(view.container.textContent).toContain("referenced by");
+      expect(view.container.textContent).toContain("mirror/M-3");
+    });
+    // Never spelled in this project's format, which would point elsewhere.
+    expect(view.container.textContent).not.toContain("T-3");
   });
 });
 

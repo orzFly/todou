@@ -1,6 +1,7 @@
 import {
   DEFAULT_REF_CONFIG,
   type RefConfig,
+  type RefSegment,
   splitIssueRefs,
 } from "@/lib/issue-refs.ts";
 
@@ -26,13 +27,36 @@ type MdNode = {
 const OPAQUE = new Set(["code", "inlineCode", "link", "linkReference"]);
 
 /**
- * remark plugin: turn reference tokens in text into links. Internal refs
- * become links the MarkdownView `a` renderer recognises by their
- * `#issue-N` fragment href and upgrades to <IssueLink>; autolink tokens
- * become plain external links. Operating on the AST (not the source) is
- * what exempts code blocks and inline code — their text lives in opaque
- * leaf nodes. Config is per-content (T-80 time cutoff); pass it via the
- * remark options tuple: `[remarkIssueRefs, config]`.
+ * The fragment hrefs MarkdownLink recognises. A fragment rather than a
+ * real path because the destination is only knowable after a lookup the
+ * renderer does — an <a href> written here would be a promise the link
+ * cannot always keep.
+ */
+export function refHref(segment: RefSegment): string {
+  switch (segment.type) {
+    case "ref":
+      return segment.commentId === undefined
+        ? `#issue-${segment.number}`
+        : `#issue-${segment.number}/comment-${segment.commentId}`;
+    case "xref":
+      return segment.commentId === undefined
+        ? `#xref-${segment.slug}/${segment.number}`
+        : `#xref-${segment.slug}/${segment.number}/comment-${segment.commentId}`;
+    case "comment":
+      return `#xref-comment-${segment.commentId}`;
+    default:
+      return "";
+  }
+}
+
+/**
+ * remark plugin: turn reference tokens in text into links. Reference
+ * tokens become links the MarkdownView `a` renderer recognises by their
+ * fragment href and upgrades to <IssueLink>; autolink tokens become plain
+ * external links. Operating on the AST (not the source) is what exempts
+ * code blocks and inline code — their text lives in opaque leaf nodes.
+ * Config is per-content (T-80 time cutoff); pass it via the remark options
+ * tuple: `[remarkIssueRefs, config]`.
  */
 export function remarkIssueRefs(config: RefConfig = DEFAULT_REF_CONFIG) {
   return (tree: MdNode) => visit(tree, config);
@@ -49,19 +73,19 @@ function visit(node: MdNode, config: RefConfig): void {
           next.push(
             segment.type === "text"
               ? { type: "text", value: segment.value }
-              : segment.type === "ref"
+              : segment.type === "ext"
                 ? {
-                    type: "link",
-                    url: `#issue-${segment.number}`,
-                    children: [{ type: "text", value: segment.text }],
-                  }
-                : {
                     type: "link",
                     url: segment.href,
                     title: segment.href,
                     data: {
                       hProperties: { target: "_blank", rel: "noreferrer" },
                     },
+                    children: [{ type: "text", value: segment.text }],
+                  }
+                : {
+                    type: "link",
+                    url: refHref(segment),
                     children: [{ type: "text", value: segment.text }],
                   },
           );

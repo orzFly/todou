@@ -2,6 +2,7 @@ import { queryOptions, useQuery } from "@tanstack/react-query";
 import {
   DEFAULT_REFERENCE_CONFIG,
   type ReferenceConfig,
+  type ReferenceDirectory,
   refPrefixAt,
 } from "@todou/shared";
 import { api } from "@/api/queries.ts";
@@ -25,6 +26,28 @@ export const referenceConfigQuery = (slug: string) =>
     staleTime: 60_000,
   });
 
+/** No cutoff = the cross-project grammar stays shut, which is the T-150 default. */
+const NO_DIRECTORY: ReferenceDirectory = {
+  since: null,
+  entries: [],
+  contested: [],
+};
+
+export const referenceDirectoryQuery = queryOptions({
+  queryKey: ["reference-directory"],
+  queryFn: async (): Promise<ReferenceDirectory> => {
+    try {
+      return await api.getReferenceDirectory();
+    } catch (error) {
+      // Servers predating T-150 have no endpoint; bare PREFIX-N then
+      // simply never resolves, and qualified forms carry on.
+      if ((error as { status?: number }).status === 404) return NO_DIRECTORY;
+      throw error;
+    }
+  },
+  staleTime: 60_000,
+});
+
 /**
  * The project's current reference prefix, for UI-spelled ref strings
  * (headings, list rows, document titles). null while loading — the
@@ -38,22 +61,42 @@ export function useRefPrefix(slug: string | undefined): string | null {
   return query.data?.format.prefix ?? null;
 }
 
+/** What the cross-project half of the grammar needs from the viewer's session. */
+export type CrossRefInputs = {
+  /** Slugs the viewer can read; a qualified form naming anything else stays literal. */
+  slugs: string[];
+  directory: ReferenceDirectory;
+};
+
 /**
  * Tokenizer config for content anchored at `refDate` (T-80 time cutoff):
  * the internal format is the one in force when the content was created,
  * autolinks are always the current rule set. No date = "now" (UI strings,
- * editor previews).
+ * editor previews). Omitting `cross` leaves the cross-project grammar off,
+ * which is what UI-spelled strings want — they are never user prose.
  */
 export function refConfigFor(
   config: ReferenceConfig | undefined,
   refDate?: string,
+  cross?: CrossRefInputs,
 ): RefConfig {
-  if (config === undefined) return { internalPrefix: null, autolinks: [] };
-  return {
+  const base = {
     internalPrefix:
-      refDate === undefined
-        ? config.format.prefix
-        : refPrefixAt(config.format.history, refDate),
-    autolinks: config.autolinks,
+      config === undefined
+        ? null
+        : refDate === undefined
+          ? config.format.prefix
+          : refPrefixAt(config.format.history, refDate),
+    autolinks: config?.autolinks ?? [],
+  };
+  if (cross === undefined) return base;
+  return {
+    ...base,
+    cross: {
+      slugs: cross.slugs,
+      directory: cross.directory,
+      since: cross.directory.since,
+      ...(refDate === undefined ? {} : { at: refDate }),
+    },
   };
 }

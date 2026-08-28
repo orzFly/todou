@@ -202,6 +202,15 @@ export function EventRow({
     typeof event.payload.by_comment === "number"
       ? event.payload.by_comment
       : undefined;
+  // A cross-reference names its source in the payload — this project's
+  // format cannot spell it, so the link is built from the coordinates
+  // rather than tokenized out of the action string.
+  const crossSource =
+    event.event_type === "cross_referenced" &&
+    typeof event.payload.by_project === "string" &&
+    typeof event.payload.by_issue === "number"
+      ? { slug: event.payload.by_project, number: event.payload.by_issue }
+      : null;
   // "answered N questions" deep-links back to the question comment.
   const answeredCommentId =
     event.event_type === "question_answered" &&
@@ -256,6 +265,16 @@ export function EventRow({
           >
             {action}
           </Link>
+        ) : crossSource !== null ? (
+          <>
+            referenced by{" "}
+            <IssueLink
+              slug={crossSource.slug}
+              number={crossSource.number}
+              crossProject
+              fallback={`${crossSource.slug}#${crossSource.number}`}
+            />
+          </>
         ) : slug === undefined ? (
           action
         ) : (

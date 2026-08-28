@@ -2,7 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { type ComponentProps, type ReactNode, useMemo } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { refConfigFor, referenceConfigQuery } from "@/api/references.ts";
+import { projectsQuery } from "@/api/queries.ts";
+import {
+  refConfigFor,
+  referenceConfigQuery,
+  referenceDirectoryQuery,
+} from "@/api/references.ts";
 import { AttachmentDocumentEmbed } from "@/components/issue/attachment-embed.tsx";
 import {
   AttachmentInlineImage,
@@ -253,16 +258,34 @@ export function MarkdownView({
     ...referenceConfigQuery(slug ?? ""),
     enabled: slug !== undefined,
   });
+  // Cross-project resolution is the viewer's own: which projects they can
+  // name, and which prefixes were unambiguously held when this was written.
+  const directoryQuery = useQuery({
+    ...referenceDirectoryQuery,
+    enabled: slug !== undefined,
+  });
+  const readableQuery = useQuery({
+    ...projectsQuery,
+    enabled: slug !== undefined,
+  });
   // Stable references: react-markdown gets this array verbatim, and the
   // tokenizer config must not churn identity on unrelated re-renders.
   const remarkPlugins = useMemo(() => {
     if (slug === undefined)
       return [remarkGfm] as ComponentProps<typeof Markdown>["remarkPlugins"];
-    const config = refConfigFor(refQuery.data, refDate);
+    const directory = directoryQuery.data;
+    const readable = readableQuery.data;
+    const config = refConfigFor(
+      refQuery.data,
+      refDate,
+      directory === undefined || readable === undefined
+        ? undefined
+        : { slugs: readable.map((p) => p.slug), directory },
+    );
     return [remarkGfm, [remarkIssueRefs, config]] as ComponentProps<
       typeof Markdown
     >["remarkPlugins"];
-  }, [slug, refQuery.data, refDate]);
+  }, [slug, refQuery.data, refDate, directoryQuery.data, readableQuery.data]);
 
   return (
     // Typography lives in styles.css (.markdown-body, GitHub-style).
