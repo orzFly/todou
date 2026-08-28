@@ -7,6 +7,7 @@ import {
 } from "@todou/shared";
 import { CheckIcon, TagIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { useRefBeforeTitle } from "@/api/prefs.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import {
   QuestionBadge,
@@ -37,8 +38,20 @@ import { cn } from "@/lib/utils";
  * the row itself would leave the 27px marker column 13px wide. Rows take that
  * padding back through `ISSUE_LIST_ROW`.
  */
-export const ISSUE_LIST_GRID =
-  "grid grid-cols-[27px_max-content_1fr] gap-x-2 px-3.5";
+const ISSUE_LIST_GRID = "grid grid-cols-[27px_max-content_1fr] gap-x-2 px-3.5";
+
+/**
+ * The same list with the ref trailing its title instead (T-153): no ref
+ * column at all. Emptying the track is not the same thing — a collapsed
+ * max-content track still leaves its two gaps behind, doubling the space
+ * between the marker and the title.
+ */
+const ISSUE_LIST_GRID_TRAILING_REF = "grid grid-cols-[27px_1fr] gap-x-2 px-3.5";
+
+/** The column layout a list of `IssueRow`s must wear, per the viewer's preference. */
+export function useIssueListGrid(): string {
+  return useRefBeforeTitle() ? ISSUE_LIST_GRID : ISSUE_LIST_GRID_TRAILING_REF;
+}
 
 /**
  * Every `<li>` of such a list, row or not: one full-width cell, bleeding back
@@ -78,6 +91,8 @@ export function IssueRow({
   meta?: ReactNode;
 }) {
   const refPrefix = useRefPrefix(slug);
+  const refBeforeTitle = useRefBeforeTitle();
+  const ref = formatRef(refPrefix, issue.number);
   return (
     <li
       className={cn(
@@ -95,11 +110,13 @@ export function IssueRow({
           unreadComments={issue.unread_comments}
         />
       </span>
-      {/* The old fixed width survives as a floor, so a project whose refs fit
-          within it keeps the spacing it had. */}
-      <span className="min-w-11 whitespace-nowrap text-[13px] text-muted-foreground tabular-nums max-sm:min-w-0">
-        {formatRef(refPrefix, issue.number)}
-      </span>
+      {refBeforeTitle && (
+        /* The old fixed width survives as a floor, so a project whose refs fit
+           within it keeps the spacing it had. */
+        <span className="min-w-11 whitespace-nowrap text-[13px] text-muted-foreground tabular-nums max-sm:min-w-0">
+          {ref}
+        </span>
+      )}
       <div className="flex min-w-0 items-center gap-2">
         <Link
           to="/projects/$slug/issues/$number"
@@ -108,6 +125,13 @@ export function IssueRow({
         >
           {issue.title}
         </Link>
+        {!refBeforeTitle && (
+          /* Trailing, the ref loses its own column, so it defends its width
+             here instead: a long title truncates, the ref never does. */
+          <span className="shrink-0 whitespace-nowrap text-[13px] text-muted-foreground tabular-nums">
+            {ref}
+          </span>
+        )}
         {/* Reasons hug the title, exactly as on a board card; only `trailing`
             is pushed to the far edge, so a badge never ends up inside a group
             the phone hides (T-116). */}
@@ -120,7 +144,12 @@ export function IssueRow({
         {trailing}
       </div>
       {meta && (
-        <div className="col-start-3 mt-1 flex flex-wrap items-center gap-1.5">
+        <div
+          className={cn(
+            "mt-1 flex flex-wrap items-center gap-1.5",
+            refBeforeTitle ? "col-start-3" : "col-start-2",
+          )}
+        >
           {meta}
         </div>
       )}

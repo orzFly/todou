@@ -8,13 +8,15 @@ import {
   commentRefQuery,
   issueRefQuery,
 } from "@/api/issue-refs.ts";
+import { useRefBeforeTitle } from "@/api/prefs.ts";
 import { referenceConfigQuery } from "@/api/references.ts";
 import { commentAnchor, parseIssuePermalink } from "@/lib/timeline-anchors.ts";
 
 /**
- * GitHub-style rich issue reference: status icon + title + muted ref once
- * the batched lookup lands, a plain ref link while it loads, and plain
- * text when the number matches no issue the viewer may see. With
+ * GitHub-style rich issue reference: status icon, title and muted ref once
+ * the batched lookup lands (in the viewer's preferred order, T-153), a
+ * plain ref link while it loads, and plain text when the number matches no
+ * issue the viewer may see. With
  * `commentId` the link deep-links to that comment's anchor and reads "… ·
  * comment by @x". Spelling is a UI string, so it always uses the project's
  * CURRENT format (T-80) — only user-authored text is anchored to its
@@ -44,6 +46,7 @@ export function IssueLink({
     ...commentRefQuery(slug, number, commentId ?? 0),
     enabled: commentId !== undefined,
   });
+  const refBeforeTitle = useRefBeforeTitle();
   const prefix = config.data?.format.prefix ?? null;
   const spelled = crossProject
     ? `${slug}${prefix === null ? `#${number}` : `/${prefix}-${number}`}`
@@ -58,12 +61,18 @@ export function IssueLink({
   }
 
   const item = ref.data;
-  const suffix =
+  const commentNote =
     commentId === undefined
-      ? spelled
+      ? null
       : comment.data
-        ? `${spelled} · comment by @${comment.data.author.login}`
-        : `${spelled} · comment`;
+        ? `· comment by @${comment.data.author.login}`
+        : "· comment";
+  // Leading the title, the ref has already been spelled once; repeating it
+  // after would read as two refs. What trails is then the comment note alone,
+  // and with no comment there is nothing left to render.
+  const trailing = [refBeforeTitle && item ? null : spelled, commentNote]
+    .filter((part) => part !== null)
+    .join(" ");
   return (
     <Link
       to="/projects/$slug/issues/$number"
@@ -77,7 +86,11 @@ export function IssueLink({
       data-comment-link={commentId}
       className="font-medium hover:underline"
       title={
-        item ? `${spelled} ${item.title} (${item.status.name})` : undefined
+        item
+          ? refBeforeTitle
+            ? `${spelled} ${item.title} (${item.status.name})`
+            : `${item.title} ${spelled} (${item.status.name})`
+          : undefined
       }
     >
       {item && (
@@ -95,10 +108,20 @@ export function IssueLink({
               style={{ color: item.status.color }}
             />
           )}
-          {item.title}{" "}
+          {refBeforeTitle && (
+            <span className="font-normal text-muted-foreground">
+              {spelled}{" "}
+            </span>
+          )}
+          {item.title}
         </>
       )}
-      <span className="font-normal text-muted-foreground">{suffix}</span>
+      {trailing !== "" && (
+        <span className="font-normal text-muted-foreground">
+          {item ? " " : ""}
+          {trailing}
+        </span>
+      )}
     </Link>
   );
 }

@@ -1,8 +1,9 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { act, fireEvent, waitFor } from "@testing-library/react";
-import type { Issue, ReferenceConfig } from "@todou/shared";
+import { act, fireEvent, waitFor, within } from "@testing-library/react";
+import type { Issue, MePrefs, ReferenceConfig } from "@todou/shared";
 import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { prefsQuery } from "../src/api/prefs.ts";
 import { referenceConfigQuery } from "../src/api/references.ts";
 import { FloatingTitleBar } from "../src/components/issue/floating-title-bar.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
@@ -67,9 +68,16 @@ class FakeIntersectionObserver {
   unobserve() {}
 }
 
-function seededClient(config: ReferenceConfig = prefixedConfig): QueryClient {
+function seededClient(
+  config: ReferenceConfig = prefixedConfig,
+  refBeforeTitle = true,
+): QueryClient {
   const client = testQueryClient();
   client.setQueryData(referenceConfigQuery(SLUG).queryKey, config);
+  client.setQueryData(prefsQuery.queryKey, {
+    show_weak_unread: true,
+    ref_before_title: refBeforeTitle,
+  } satisfies MePrefs);
   return client;
 }
 
@@ -83,8 +91,12 @@ function Harness() {
   );
 }
 
-async function renderBar(config?: ReferenceConfig) {
-  const view = renderWithProviders(<Harness />, seededClient(config));
+async function renderBar(config?: ReferenceConfig, refBeforeTitle?: boolean) {
+  const { container } = renderWithProviders(
+    <Harness />,
+    seededClient(config, refBeforeTitle),
+  );
+  const view = within(container);
   const bar = await view.findByTestId("floating-title-bar");
   return { view, bar };
 }
@@ -129,16 +141,37 @@ describe("FloatingTitleBar (T-154)", () => {
     expect(bar.getAttribute("aria-hidden")).toBe("true");
   });
 
-  it("keeps the ref out of the truncating span", async () => {
-    const { view, bar } = await renderBar();
+  it.each([true, false])(
+    "keeps the ref out of the truncating span with ref_before_title=%s",
+    async (refBeforeTitle) => {
+      const { view, bar } = await renderBar(undefined, refBeforeTitle);
+      const ref = await view.findByText("T-16");
+      const title = await view.findByText(LONG_TITLE);
+
+      expect(ref.parentElement).toBe(bar);
+      expect(title.parentElement).toBe(bar);
+      expect(title.contains(ref)).toBe(false);
+      expect(title.className).toContain("truncate");
+      expect(ref.className).toContain("shrink-0");
+    },
+  );
+
+  it("puts the ref ahead of the title by default (T-153)", async () => {
+    const { view } = await renderBar();
     const ref = await view.findByText("T-16");
     const title = await view.findByText(LONG_TITLE);
+    expect(
+      ref.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
 
-    expect(ref.parentElement).toBe(bar);
-    expect(title.parentElement).toBe(bar);
-    expect(title.contains(ref)).toBe(false);
-    expect(title.className).toContain("truncate");
-    expect(ref.className).toContain("shrink-0");
+  it("puts the ref after the title when the preference is off", async () => {
+    const { view } = await renderBar(undefined, false);
+    const ref = await view.findByText("T-16");
+    const title = await view.findByText(LONG_TITLE);
+    expect(
+      title.compareDocumentPosition(ref) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("spells the ref in the project's format", async () => {

@@ -15,6 +15,7 @@ import { Link, useParams } from "@tanstack/react-router";
 import { formatRef, type IssueListItem, type Status } from "@todou/shared";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { boardColumnQuery, useBoardMove } from "@/api/board.ts";
+import { useRefBeforeTitle } from "@/api/prefs.ts";
 import { statusesQuery } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import {
@@ -245,6 +246,16 @@ export function BoardCardContent({
   issue: IssueListItem;
 }) {
   const refPrefix = useRefPrefix(slug);
+  const refBeforeTitle = useRefBeforeTitle();
+  const ref = formatRef(refPrefix, issue.number);
+  // Once the ref moves up into the title, a plain card has nothing left to
+  // put on the meta row — and an empty flex row still spends its top margin.
+  const showMeta =
+    !refBeforeTitle ||
+    issue.open_questions > 0 ||
+    issue.spec_review_status === "unreviewed" ||
+    issue.labels.length > 0 ||
+    issue.assignees.length > 0;
   return (
     <div className="relative">
       {issue.unread && (
@@ -269,27 +280,32 @@ export function BoardCardContent({
           issue.unread_comments > 0 ? "pr-8" : issue.unread && "pr-4",
         )}
       >
+        {refBeforeTitle && (
+          <span className="font-normal text-muted-foreground">{ref} </span>
+        )}
         {issue.title}
       </Link>
       {/* Meta row hosts the question badge; the card's top-right corner
           belongs to the unread marker above (T-46, T-77). */}
-      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-        <span className="text-xs text-muted-foreground">
-          {formatRef(refPrefix, issue.number)}
-        </span>
-        {issue.open_questions > 0 && (
-          <QuestionBadge count={issue.open_questions} />
-        )}
-        {issue.spec_review_status === "unreviewed" && (
-          <SpecReviewBadge version={issue.spec_version} />
-        )}
-        <LabelChips labels={issue.labels} />
-        <span className="ml-auto flex gap-1">
-          {issue.assignees.map((user) => (
-            <UserChip key={user.id} user={user} compact />
-          ))}
-        </span>
-      </div>
+      {showMeta && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          {!refBeforeTitle && (
+            <span className="text-xs text-muted-foreground">{ref}</span>
+          )}
+          {issue.open_questions > 0 && (
+            <QuestionBadge count={issue.open_questions} />
+          )}
+          {issue.spec_review_status === "unreviewed" && (
+            <SpecReviewBadge version={issue.spec_version} />
+          )}
+          <LabelChips labels={issue.labels} />
+          <span className="ml-auto flex gap-1">
+            {issue.assignees.map((user) => (
+              <UserChip key={user.id} user={user} compact />
+            ))}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

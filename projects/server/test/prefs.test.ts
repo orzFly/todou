@@ -34,7 +34,10 @@ describe("user preferences", () => {
   it("returns defaults without creating a row", async () => {
     const res = await getPrefs();
     expect(res.status).toBe(200);
-    expect(await json(res)).toEqual({ show_weak_unread: true });
+    expect(await json(res)).toEqual({
+      show_weak_unread: true,
+      ref_before_title: true,
+    });
 
     const rows = await t.ctx.router.system().select().from(userPrefs);
     expect(rows).toHaveLength(0);
@@ -43,10 +46,16 @@ describe("user preferences", () => {
   it("PATCH creates the row and returns the full prefs", async () => {
     const res = await patchPrefs({ show_weak_unread: false });
     expect(res.status).toBe(200);
-    expect(await json(res)).toEqual({ show_weak_unread: false });
+    expect(await json(res)).toEqual({
+      show_weak_unread: false,
+      ref_before_title: true,
+    });
 
     const after = await json(await getPrefs());
-    expect(after).toEqual({ show_weak_unread: false });
+    expect(after).toEqual({
+      show_weak_unread: false,
+      ref_before_title: true,
+    });
   });
 
   it("a second PATCH shallow-merges into the stored blob", async () => {
@@ -54,10 +63,37 @@ describe("user preferences", () => {
     const res = await patchPrefs({});
     expect(res.status).toBe(200);
     // The empty patch must not clobber the previously stored key.
-    expect(await json(res)).toEqual({ show_weak_unread: false });
+    expect(await json(res)).toEqual({
+      show_weak_unread: false,
+      ref_before_title: true,
+    });
 
     const back = await patchPrefs({ show_weak_unread: true });
-    expect(await json(back)).toEqual({ show_weak_unread: true });
+    expect(await json(back)).toEqual({
+      show_weak_unread: true,
+      ref_before_title: true,
+    });
+  });
+
+  it("stores ref_before_title on its own (T-153)", async () => {
+    const res = await patchPrefs({ ref_before_title: false });
+    expect(res.status).toBe(200);
+    // The neighbouring key was written by an earlier patch and stays put.
+    expect(await json(res)).toEqual({
+      show_weak_unread: true,
+      ref_before_title: false,
+    });
+
+    expect(await json(await getPrefs())).toEqual({
+      show_weak_unread: true,
+      ref_before_title: false,
+    });
+
+    const back = await patchPrefs({ ref_before_title: true });
+    expect(await json(back)).toEqual({
+      show_weak_unread: true,
+      ref_before_title: true,
+    });
   });
 
   it("rejects unknown keys with the offending path named", async () => {
@@ -79,7 +115,11 @@ describe("user preferences", () => {
 
     const res = await getPrefs();
     expect(res.status).toBe(200);
-    expect(await json(res)).toEqual({ show_weak_unread: false });
+    // The row predates ref_before_title, so its default fills the gap.
+    expect(await json(res)).toEqual({
+      show_weak_unread: false,
+      ref_before_title: true,
+    });
   });
 
   it("keeps accounts separate", async () => {
@@ -87,6 +127,9 @@ describe("user preferences", () => {
     const res = await getPrefs(other.headers);
     expect(res.status).toBe(200);
     // The main account set false above; the neighbor still sees defaults.
-    expect(await json(res)).toEqual({ show_weak_unread: true });
+    expect(await json(res)).toEqual({
+      show_weak_unread: true,
+      ref_before_title: true,
+    });
   });
 });

@@ -8,6 +8,7 @@ import {
 import { render, waitFor } from "@testing-library/react";
 import type {
   IssueListItem,
+  MePrefs,
   Project,
   ReferenceConfig,
   ReferenceDirectory,
@@ -16,12 +17,14 @@ import type {
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
+import { prefsQuery } from "../src/api/prefs.ts";
 import { projectsQuery } from "../src/api/queries.ts";
 import {
   refConfigFor,
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
+import { IssueLink } from "../src/components/shared/issue-link.tsx";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { EventRow } from "../src/components/timeline/event-row.tsx";
 import { splitIssueRefs } from "../src/lib/issue-refs.ts";
@@ -436,6 +439,52 @@ describe("cross-project references", () => {
     });
     // Never spelled in this project's format, which would point elsewhere.
     expect(view.container.textContent).not.toContain("T-3");
+  });
+});
+
+describe("IssueLink ref placement (T-153)", () => {
+  const orderedClient = (refBeforeTitle: boolean) => {
+    const client = seededClient("todou", switchedConfig, [
+      refItem(7, "Target issue"),
+    ]);
+    client.setQueryData(prefsQuery.queryKey, {
+      show_weak_unread: true,
+      ref_before_title: refBeforeTitle,
+    } satisfies MePrefs);
+    return client;
+  };
+
+  const renderLink = async (refBeforeTitle: boolean, commentId?: number) => {
+    const view = renderWithProviders(
+      <IssueLink slug="todou" number={7} commentId={commentId} />,
+      orderedClient(refBeforeTitle),
+    );
+    return await waitFor(() => {
+      const el = view.container.querySelector("a[data-issue-link='7']");
+      expect(el?.textContent).toContain("Target issue");
+      return el as HTMLAnchorElement;
+    });
+  };
+
+  it("leads with the ref by default, spelling it exactly once", async () => {
+    const link = await renderLink(true);
+    expect(link.textContent).toBe("T-7 Target issue");
+    expect(link.title).toBe("T-7 Target issue (In Progress)");
+  });
+
+  it("trails the ref when the preference is off", async () => {
+    const link = await renderLink(false);
+    expect(link.textContent).toBe("Target issue T-7");
+    expect(link.title).toBe("Target issue T-7 (In Progress)");
+  });
+
+  it("keeps the comment note trailing in either order", async () => {
+    expect((await renderLink(true, 42)).textContent).toBe(
+      "T-7 Target issue · comment",
+    );
+    expect((await renderLink(false, 42)).textContent).toBe(
+      "Target issue T-7 · comment",
+    );
   });
 });
 

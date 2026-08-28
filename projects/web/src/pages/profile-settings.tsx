@@ -114,6 +114,7 @@ export function ProfileSettingsPage() {
       </form>
 
       <UnreadIndicatorsSection />
+      <DisplaySection />
     </div>
   );
 }
@@ -146,6 +147,37 @@ function UnreadIndicatorsSection() {
           disabled={prefs.isPending}
           onCheckedChange={(checked) =>
             patch.mutate({ show_weak_unread: checked })
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Where the issue number sits relative to the title (T-153). */
+function DisplaySection() {
+  const prefs = useQuery(prefsQuery);
+  const patch = usePatchPrefs();
+  const refBeforeTitle = prefs.data?.ref_before_title ?? true;
+
+  return (
+    <div className="space-y-3 border-t pt-6">
+      <h2 className="font-medium">Display</h2>
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <Label htmlFor="ref-before-title-toggle">Number before title</Label>
+          <p className="text-sm text-muted-foreground">
+            Put the issue number ahead of the title in issue lists, the Inbox,
+            board cards, issue pages, and references. Turn this off to read the
+            title first and find the number after it.
+          </p>
+        </div>
+        <Switch
+          id="ref-before-title-toggle"
+          checked={refBeforeTitle}
+          disabled={prefs.isPending}
+          onCheckedChange={(checked) =>
+            patch.mutate({ ref_before_title: checked })
           }
         />
       </div>

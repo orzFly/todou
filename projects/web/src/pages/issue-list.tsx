@@ -33,10 +33,10 @@ import {
 } from "@/api/queries.ts";
 import { FilterBar } from "@/components/issue/filter-bar.tsx";
 import {
-  ISSUE_LIST_GRID,
   ISSUE_LIST_ROW,
   IssueRow,
   IssueRowMeta,
+  useIssueListGrid,
 } from "@/components/issue/issue-row.tsx";
 import {
   useCanCreateLabels,
@@ -260,6 +260,7 @@ function IssueGroup({
   onCreateLabel?: (name: string) => Promise<Label>;
 }) {
   const group = useQuery(issueGroupQuery(slug, status.id, search));
+  const grid = useIssueListGrid();
   const [extraPages, setExtraPages] = useState<IssueListPageData[]>([]);
   const queryClient = useQueryClient();
 
@@ -317,7 +318,7 @@ function IssueGroup({
         <span className="font-medium">{status.name}</span>
         <span className="text-muted-foreground">{total}</span>
       </div>
-      <ul className={cn("rounded-b-lg border border-t-0", ISSUE_LIST_GRID)}>
+      <ul className={cn("rounded-b-lg border border-t-0", grid)}>
         {group.isPending && (
           <li className={cn(ISSUE_LIST_ROW, "p-3")}>
             <Skeleton className="h-12 w-full" />
@@ -375,6 +376,7 @@ export function IssueList({
   search: IssueSearch;
   onCreateLabel?: (name: string) => Promise<Label>;
 }) {
+  const grid = useIssueListGrid();
   const [extraPages, setExtraPages] = useState<IssueListPageData[]>([]);
   const queryClient = useQueryClient();
 
@@ -416,7 +418,7 @@ export function IssueList({
 
   return (
     <div className="space-y-3">
-      <ul className={cn("rounded-lg border", ISSUE_LIST_GRID)}>
+      <ul className={cn("rounded-lg border", grid)}>
         <ProjectIssueRows
           slug={slug}
           items={items}

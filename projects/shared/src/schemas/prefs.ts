@@ -17,6 +17,13 @@ export const MePrefs = z.strictObject({
    * (T-151), so turning this off never hides a new card.
    */
   show_weak_unread: z.boolean().default(true),
+  /**
+   * Put the ref before the title wherever the web UI renders both.
+   *
+   * Display-only: no server code reads it, unlike `show_weak_unread` above.
+   * It lives here anyway so the choice follows the user between browsers.
+   */
+  ref_before_title: z.boolean().default(true),
 });
 export type MePrefs = z.infer<typeof MePrefs>;
 
@@ -27,5 +34,6 @@ export type MePrefs = z.infer<typeof MePrefs>;
  */
 export const MePrefsPatch = z.strictObject({
   show_weak_unread: z.boolean().optional(),
+  ref_before_title: z.boolean().optional(),
 });
 export type MePrefsPatch = z.infer<typeof MePrefsPatch>;

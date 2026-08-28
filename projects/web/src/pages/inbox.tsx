@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import type { InboxItem } from "@todou/shared";
 import { useState } from "react";
 import { groupInboxItems, type InboxGroup, inboxQuery } from "@/api/inbox.ts";
-import { ISSUE_LIST_GRID, IssueRow } from "@/components/issue/issue-row.tsx";
+import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -117,6 +117,7 @@ export function InboxPage() {
 }
 
 function InboxGroupSection({ group }: { group: InboxGroup }) {
+  const grid = useIssueListGrid();
   return (
     <section className="overflow-hidden rounded-lg border">
       <header className="flex items-center justify-between gap-2 border-b bg-muted/50 px-3.5 py-2">
@@ -139,7 +140,7 @@ function InboxGroupSection({ group }: { group: InboxGroup }) {
           className="-my-1"
         />
       </header>
-      <ul className={ISSUE_LIST_GRID}>
+      <ul className={grid}>
         {group.items.map((item) => (
           <InboxRow key={item.id} item={item} />
         ))}
