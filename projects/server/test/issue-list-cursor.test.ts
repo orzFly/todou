@@ -145,6 +145,46 @@ describe("issue list cursors across sub-millisecond rows", () => {
     );
     expect(page.items.map((i: Item) => i.number)).toEqual([4, 5, 6, 7, 8]);
   });
+
+  it("mints compact cursors tagged with the sort key", async () => {
+    const byTime = await list("?sort=created&order=asc&limit=2");
+    expect(byTime.next_cursor).toMatch(/^4:t[0-9a-z]+\.[0-9a-z]+$/);
+    expect(byTime.next_cursor.length).toBeLessThan(25);
+
+    const byNumber = await list("?sort=number&order=asc&limit=2");
+    expect(byNumber.next_cursor).toMatch(/^4:n[0-9a-z]+\.[0-9a-z]+$/);
+  });
+
+  it("resumes a legacy cursor onto compact ones without a seam", async () => {
+    let cursor = legacyCursor(items[2] as Item);
+    const seen: number[] = [];
+    for (let pages = 0; pages < 8; pages += 1) {
+      const page = await list(
+        `?sort=created&order=asc&limit=2&cursor=${cursor}`,
+      );
+      seen.push(...page.items.map((i: Item) => i.number));
+      if (page.next_cursor === null) break;
+      expect(page.next_cursor.startsWith("4:")).toBe(true);
+      cursor = page.next_cursor;
+    }
+    expect(seen).toEqual([4, 5, 6, 7, 8]);
+  });
+
+  it("rejects a cursor minted for a different sort key", async () => {
+    const byNumber = await list("?sort=number&order=asc&limit=2");
+    const res = await t.app.request(
+      `/api/projects/${slug}/issues?sort=created&order=asc&cursor=${byNumber.next_cursor}`,
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(422);
+
+    const byTime = await list("?sort=created&order=asc&limit=2");
+    const swapped = await t.app.request(
+      `/api/projects/${slug}/issues?sort=number&order=asc&cursor=${byTime.next_cursor}`,
+      { headers: { cookie } },
+    );
+    expect(swapped.status).toBe(422);
+  });
 });
 
 /**

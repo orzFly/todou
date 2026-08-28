@@ -6,11 +6,14 @@ import {
   UnsupportedCursorVersionError,
 } from "../src/schemas/cursor-envelope.ts";
 
-/** A plain activity cursor: base64url of the (t, k, i) position tuple. */
+/** A version-1 plain cursor: base64url of the (t, k, i) position tuple. */
 const plainCursor = (i: number) =>
   Buffer.from(
     JSON.stringify({ t: "2026-08-11T12:00:00.123456Z", k: 1, i }),
   ).toString("base64url");
+
+/** The same position in the compact version-3 form the server now mints. */
+const compactCursor = (i: number) => `3:hl8rm75glc.1.${i.toString(36)}`;
 
 describe("cursor envelope", () => {
   it("round-trips per-project positions, including empty streams", async () => {
@@ -52,8 +55,22 @@ describe("cursor envelope", () => {
     expect(await decodeMultiCursor("not-base64!!")).toBeNull();
   });
 
+  it("returns null for the plain-cursor versions", async () => {
+    // A compact cursor carries a version prefix but is not an envelope: the
+    // server decodes it itself, which is what lets an `issue view` cursor
+    // bootstrap a cross-project watch.
+    expect(await decodeMultiCursor(compactCursor(7))).toBeNull();
+    expect(await decodeMultiCursor("4:thlrfxluubk.1z")).toBeNull();
+  });
+
+  it("round-trips an envelope of compact cursors", async () => {
+    const positions = { frontend: compactCursor(42), backend: null };
+    const encoded = await encodeMultiCursor(positions);
+    expect(await decodeMultiCursor(encoded)).toEqual(positions);
+  });
+
   it("rejects foreign version prefixes loudly", async () => {
-    await expect(decodeMultiCursor("3:abcd")).rejects.toBeInstanceOf(
+    await expect(decodeMultiCursor("5:abcd")).rejects.toBeInstanceOf(
       UnsupportedCursorVersionError,
     );
     await expect(decodeMultiCursor("1:abcd")).rejects.toBeInstanceOf(

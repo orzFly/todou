@@ -52,6 +52,11 @@ import {
   loadReferenceInputs,
   recordCrossReferences,
 } from "./cross-references.ts";
+import {
+  decodeListCursor as decodeCursor,
+  encodeListCursor as encodeCursor,
+  type ListCursor,
+} from "./cursor.ts";
 import { toLabel } from "./labels.ts";
 import { unreadIssueState } from "./reads.ts";
 import { recordReferences } from "./references.ts";
@@ -375,31 +380,6 @@ export async function getIssue(
 }
 
 /**
- * For the date sorts `v` carries the full microsecond precision postgres
- * stores (see timeline.ts — the driver's Dates truncate to milliseconds,
- * which made a desc page silently skip the boundary's millisecond-mates
- * and an asc page re-match already-returned rows). For `sort=number` it is
- * the plain integer.
- */
-type ListCursor = { v: string | number; i: number };
-
-function encodeCursor(c: ListCursor): string {
-  return Buffer.from(JSON.stringify(c)).toString("base64url");
-}
-
-function decodeCursor(raw: string): ListCursor {
-  try {
-    const parsed = JSON.parse(
-      Buffer.from(raw, "base64url").toString(),
-    ) as ListCursor;
-    if (typeof parsed.i !== "number") throw new Error("bad cursor");
-    return parsed;
-  } catch {
-    throw new ValidationFailedError("malformed cursor");
-  }
-}
-
-/**
  * Cursor predicate for the date sorts. `v` comes in two precisions:
  * microsecond text from current servers, milliseconds from cursors minted
  * before this fix. A millisecond `v` cannot order rows inside its own
@@ -515,7 +495,7 @@ export async function listIssues(
     conditions.push(inArray(issues.statusId, ids));
   }
   if (query.cursor !== undefined) {
-    const cur = decodeCursor(query.cursor);
+    const cur = decodeCursor(query.cursor, query.sort === "number");
     const advance =
       query.sort === "number"
         ? or(

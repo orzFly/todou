@@ -19,11 +19,13 @@ import { ProjectSlug } from "./project.ts";
  * that is absent entirely, which means the caller never watched that
  * project and the server starts it at "now".
  *
- * The version rides in the prefix: `:` cannot appear in a plain cursor
- * (base64url alphabet), so the prefix alone discriminates — no trial
- * decoding — and an unknown version fails loudly instead of being
- * misread. Version 1 is the implicit version of plain cursors and is
- * never written. The payload is compressed because it is highly
+ * The version rides in the prefix, over a number space shared with the
+ * plain cursors themselves — 1 (implicit, unprefixed base64url JSON),
+ * 2 (this envelope), 3 (compact timeline position), 4 (compact issue-list
+ * position). `:` cannot appear in an unprefixed cursor (base64url
+ * alphabet), so the prefix alone discriminates — no trial decoding — and a
+ * version from neither list fails loudly instead of being misread. The
+ * payload is compressed because it is highly
  * repetitive (slugs plus same-era cursors) and rides in GET query
  * strings, where an uncompressed envelope would grow linearly with the
  * project count; deflate-raw comes from the web-standard
@@ -36,6 +38,8 @@ import { ProjectSlug } from "./project.ts";
 const ENVELOPE_VERSION = 2;
 const ENVELOPE_PREFIX = `${ENVELOPE_VERSION}:`;
 const VERSION_PREFIX = /^(\d+):/;
+/** Prefixed versions that are plain cursors — the caller's to decode. */
+const PLAIN_VERSIONS = new Set(["3", "4"]);
 
 /** Per-project plain cursors; null = drain that project from the beginning. */
 export const MultiCursorPositions = z.record(ProjectSlug, Cursor.nullable());
@@ -80,17 +84,18 @@ export async function encodeMultiCursor(
 }
 
 /**
- * The per-project positions when `raw` is an envelope, null when it has no
- * version prefix (a plain cursor — the caller's business). Throws
- * UnsupportedCursorVersionError on a foreign version prefix and
- * MalformedMultiCursorError when a version-2 payload fails to inflate,
- * parse, or validate.
+ * The per-project positions when `raw` is an envelope, null when it is a
+ * plain cursor — the caller's business — whether unprefixed or carrying a
+ * plain-cursor version. Throws UnsupportedCursorVersionError on a foreign
+ * version prefix and MalformedMultiCursorError when a version-2 payload
+ * fails to inflate, parse, or validate.
  */
 export async function decodeMultiCursor(
   raw: string,
 ): Promise<MultiCursorPositions | null> {
   const version = VERSION_PREFIX.exec(raw);
   if (!version) return null;
+  if (PLAIN_VERSIONS.has(version[1])) return null;
   if (version[1] !== String(ENVELOPE_VERSION)) {
     throw new UnsupportedCursorVersionError(
       `unsupported cursor version "${version[1]}" (this build knows version ${ENVELOPE_VERSION})`,

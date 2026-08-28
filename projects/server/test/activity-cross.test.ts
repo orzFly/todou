@@ -182,6 +182,10 @@ describe.each(["shared", "dedicated"] as const)(
 
     it("accepts a plain single-project cursor as the common start", async () => {
       const plain = await plainCursorOf(pa); // position of A3
+      // Compact cursors carry a version prefix of their own, so the envelope
+      // decoder has to hand them back rather than reject them as a foreign
+      // version — this is the cross-command interchange promise.
+      expect(plain.startsWith("3:")).toBe(true);
       await settle();
       await comment(pb, issueB, "B3");
       await comment(pa, issueA, "A4");

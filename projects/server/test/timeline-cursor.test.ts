@@ -215,6 +215,30 @@ describe("timeline cursors across sub-millisecond rows", () => {
     expect(page.next_cursor).toBeNull();
   });
 
+  it("mints compact cursors", async () => {
+    const page = await timeline("?limit=2");
+    for (const cursor of [page.next_cursor, page.prev_cursor]) {
+      if (cursor === null) continue;
+      expect(cursor).toMatch(/^3:[0-9a-z]+\.[01]\.[0-9a-z]+$/);
+      expect(cursor.length).toBeLessThan(25);
+    }
+  });
+
+  it("resumes a legacy cursor onto compact ones without a seam", async () => {
+    // The live upgrade path: an agent's persisted version-1 cursor resumes,
+    // and every cursor it hands back from then on is the compact form.
+    const seen: string[] = [];
+    let after = legacyCursor(items[1] as Item);
+    for (let pages = 0; pages < 12; pages += 1) {
+      const page = await timeline(`?limit=2&after=${after}`);
+      if (page.items.length === 0) break;
+      seen.push(...page.items.map(keyOf));
+      expect(page.next_cursor.startsWith("3:")).toBe(true);
+      after = page.next_cursor;
+    }
+    expect(seen).toEqual(order.slice(2));
+  });
+
   it("legacy ms cursors page backward without loss", async () => {
     // Boundary c5 shares its millisecond with c4; the legacy encoding cannot
     // order them by time, so the (kind, id) tie-break must keep c4.

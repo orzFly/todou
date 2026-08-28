@@ -44,48 +44,16 @@ import {
   routeInfoOf,
 } from "./access.ts";
 import { crossRefVisibleCondition } from "./cross-references.ts";
+import {
+  type TimelineCursor as Cursor,
+  decodeTimelineCursor as decodeCursor,
+  encodeTimelineCursor as encodeCursor,
+} from "./cursor.ts";
 import { listProjects } from "./projects.ts";
 import { getUserRefs } from "./users.ts";
 
-/**
- * Timeline ordering is the tuple (created_at, kind, id) with comments
- * ranked before events at equal timestamps. Cursors encode that tuple and
- * are opaque to clients.
- *
- * `t` carries the full microsecond precision postgres stores — the driver's
- * Date objects truncate to milliseconds, which made a sub-millisecond
- * boundary row compare strictly after its own cursor, so forward drains
- * re-returned it forever and `before=` skipped its millisecond-mates.
- * Cursors minted before that fix (agents persist them across restarts) are
- * still honored: see `beyond`.
- */
-type Cursor = { t: string; k: 0 | 1; i: number };
-
 const KIND_COMMENT = 0 as const;
 const KIND_EVENT = 1 as const;
-
-function encodeCursor(c: Cursor): string {
-  return Buffer.from(JSON.stringify(c)).toString("base64url");
-}
-
-function decodeCursor(raw: string): Cursor {
-  try {
-    const parsed = JSON.parse(
-      Buffer.from(raw, "base64url").toString(),
-    ) as Cursor;
-    if (
-      typeof parsed.t !== "string" ||
-      Number.isNaN(Date.parse(parsed.t)) ||
-      typeof parsed.i !== "number" ||
-      (parsed.k !== KIND_COMMENT && parsed.k !== KIND_EVENT)
-    ) {
-      throw new Error("bad cursor");
-    }
-    return parsed;
-  } catch {
-    throw new ValidationFailedError("malformed cursor");
-  }
-}
 
 /**
  * `created_at` rendered at postgres's full microsecond precision. The
