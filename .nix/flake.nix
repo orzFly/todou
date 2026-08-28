@@ -19,6 +19,7 @@
           imports = [{
             name = "devshell";
             packages = [
+              pkgs.deno
               pkgs.nixpkgs-fmt
               pkgs.nodejs_24
               pkgs.pnpm
