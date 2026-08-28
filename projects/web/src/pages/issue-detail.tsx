@@ -6,7 +6,7 @@ import {
 import { useParams } from "@tanstack/react-router";
 import { formatRef, type Issue, type Status } from "@todou/shared";
 import { CheckIcon, PencilIcon, XIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { issueQuery, useIssueStatusMutation } from "@/api/issues.ts";
 import {
@@ -18,6 +18,7 @@ import {
 } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import { AttachmentList } from "@/components/issue/attachment-list.tsx";
+import { FloatingTitleBar } from "@/components/issue/floating-title-bar.tsx";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
 import {
   LabelPicker,
@@ -68,6 +69,9 @@ export function IssueDetailPage() {
   const members = useSuspenseQuery(membersQuery(slug));
 
   const composer = useCommentComposer(slug, issueNumber, me.data);
+  // Wraps TitleBlock rather than living inside it, so the floating bar's
+  // trigger is unaffected by the block swapping itself for the rename form.
+  const titleRef = useRef<HTMLDivElement>(null);
   const viewer = {
     id: me.data.id,
     isAdmin: members.data.some(
@@ -78,28 +82,40 @@ export function IssueDetailPage() {
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_240px]">
       <MarkReadOnView slug={slug} number={issueNumber} />
-      <div className="min-w-0 space-y-4">
-        <TitleBlock slug={slug} issue={issue.data} />
-        <BodyBlock slug={slug} issue={issue.data} />
-        <SpecEntryRow slug={slug} issueNumber={issueNumber} />
-        <AttachmentList slug={slug} issueNumber={issueNumber} />
-        <Separator />
-        <Timeline
+      {/* Two layers on purpose: the floating bar's zero-height host has to
+          stay out of the space-y flow, which would otherwise add a gap below
+          it, and its sticky container has to span the whole column. */}
+      <div className="min-w-0">
+        <FloatingTitleBar
           slug={slug}
-          issueNumber={issueNumber}
-          pendingComments={composer.pending.filter((p) => !p.failed)}
-          viewer={viewer}
+          issue={issue.data}
+          watchTarget={titleRef}
         />
-        {/* Floats at the viewport bottom while the timeline scrolls by,
-            and settles into flow at the end of the page (GitHub-style). */}
-        <div className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4">
-          <Composer
+        <div className="space-y-4">
+          <div ref={titleRef}>
+            <TitleBlock slug={slug} issue={issue.data} />
+          </div>
+          <BodyBlock slug={slug} issue={issue.data} />
+          <SpecEntryRow slug={slug} issueNumber={issueNumber} />
+          <AttachmentList slug={slug} issueNumber={issueNumber} />
+          <Separator />
+          <Timeline
             slug={slug}
             issueNumber={issueNumber}
-            onSend={composer.send}
-            failed={composer.pending.filter((p) => p.failed)}
-            onRetry={composer.retry}
+            pendingComments={composer.pending.filter((p) => !p.failed)}
+            viewer={viewer}
           />
+          {/* Floats at the viewport bottom while the timeline scrolls by,
+              and settles into flow at the end of the page (GitHub-style). */}
+          <div className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4">
+            <Composer
+              slug={slug}
+              issueNumber={issueNumber}
+              onSend={composer.send}
+              failed={composer.pending.filter((p) => p.failed)}
+              onRetry={composer.retry}
+            />
+          </div>
         </div>
       </div>
       <Sidebar
