@@ -8,6 +8,7 @@ import {
   formatRef,
   type Member,
   type MemberRole,
+  type ProjectUpdateInput,
   type Status,
   type StatusUpdateInput,
 } from "@todou/shared";
@@ -28,6 +29,7 @@ import {
   api,
   labelsQuery,
   membersQuery,
+  projectQuery,
   statusesQuery,
 } from "@/api/queries.ts";
 import { referenceConfigQuery } from "@/api/references.ts";
@@ -36,6 +38,7 @@ import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Popover,
   PopoverContent,
@@ -56,6 +59,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 import { PRESET_COLORS } from "@/lib/labels.ts";
 
 const ROLES: MemberRole[] = ["admin", "writer", "reader"];
@@ -76,11 +80,83 @@ export function ProjectSettingsPage() {
   const { slug } = useParams({ from: "/authed/projects/$slug" });
   return (
     <div className="space-y-10">
+      <ProjectSection slug={slug} />
       <MembersSection slug={slug} />
       <StatusesSection slug={slug} />
       <LabelsSection slug={slug} />
       <ReferencesSection slug={slug} />
     </div>
+  );
+}
+
+export function ProjectSection({ slug }: { slug: string }) {
+  const project = useSuspenseQuery(projectQuery(slug));
+  const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const [descriptionDraft, setDescriptionDraft] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+
+  const current = project.data;
+  // null = untouched field; the control shows the live value until edited.
+  const name = nameDraft ?? current.name;
+  const description = descriptionDraft ?? current.description;
+
+  const changes: ProjectUpdateInput = {};
+  if (nameDraft !== null && nameDraft.trim() !== current.name) {
+    changes.name = nameDraft.trim();
+  }
+  if (
+    descriptionDraft !== null &&
+    descriptionDraft.trim() !== current.description
+  ) {
+    changes.description = descriptionDraft.trim();
+  }
+  const dirty = Object.keys(changes).length > 0 && name.trim() !== "";
+
+  const save = useMutation({
+    mutationFn: () => api.updateProject(slug, changes),
+    onSuccess: () => {
+      setNameDraft(null);
+      setDescriptionDraft(null);
+      queryClient.invalidateQueries({ queryKey: ["project", slug] });
+      // The name rides along in the header, the switcher and the project list.
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  return (
+    <section className="space-y-3">
+      <h2 className="text-lg font-semibold">Project</h2>
+      <form
+        className="max-w-xl space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (dirty) save.mutate();
+        }}
+      >
+        <div className="space-y-2">
+          <Label htmlFor="project-settings-name">Name</Label>
+          <Input
+            id="project-settings-name"
+            value={name}
+            onChange={(e) => setNameDraft(e.target.value)}
+            placeholder="My potato field"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="project-settings-description">Description</Label>
+          <Textarea
+            id="project-settings-description"
+            value={description}
+            onChange={(e) => setDescriptionDraft(e.target.value)}
+            placeholder="Optional"
+          />
+        </div>
+        <Button type="submit" size="sm" disabled={!dirty}>
+          {save.isPending ? "Saving…" : "Save"}
+        </Button>
+      </form>
+    </section>
   );
 }
 

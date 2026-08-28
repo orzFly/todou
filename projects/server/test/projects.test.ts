@@ -121,6 +121,27 @@ describe.each(PLACEMENTS)("projects domain (%s placement)", (placement) => {
     ).toBe(403);
   });
 
+  it("lets an admin rename the project and redescribe it", async () => {
+    const s = slug();
+    await createProject(s);
+    const patched = await json(
+      await t.app.request(`/api/projects/${s}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({ name: "Renamed", description: "Now with why" }),
+      }),
+    );
+    expect(patched.name).toBe("Renamed");
+    expect(patched.description).toBe("Now with why");
+    expect(patched.slug).toBe(s);
+
+    const fetched = await json(
+      await t.app.request(`/api/projects/${s}`, { headers: { cookie } }),
+    );
+    expect(fetched.name).toBe("Renamed");
+    expect(fetched.description).toBe("Now with why");
+  });
+
   it("refuses to demote or remove the last admin", async () => {
     const s = slug();
     const project = await createProject(s);

@@ -1,9 +1,9 @@
 import { statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { TodouClient } from "@todou/shared";
+import type { ProjectUpdateInput, TodouClient } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { stringify } from "smol-toml";
-import { ApiCommand, type CliContext } from "../api-command.ts";
+import { ApiCommand, type CliContext, ProjectCommand } from "../api-command.ts";
 import { loadCliConfig, saveCliConfig } from "../config.ts";
 import { gitRemoteUrl, gitToplevel } from "../context.ts";
 import {
@@ -56,6 +56,52 @@ export class ProjectListCommand extends ApiCommand {
     this.output(projects, () =>
       table(projects.map((p) => [p.slug, p.name, p.description])),
     );
+  }
+}
+
+export class ProjectEditCommand extends ProjectCommand {
+  static paths = [["project", "edit"]];
+  static usage = Command.Usage({
+    description: "Rename a project or change its description",
+    details:
+      "The slug positional is optional: without it the project comes from " +
+      "-p/--project, TODOU_PROJECT, or this directory's link. The slug " +
+      "itself cannot be changed — it keys URLs, links and every binding.",
+  });
+
+  slug = Option.String({ required: false });
+  name = Option.String("--name", { description: "New display name" });
+  description = Option.String("--description", {
+    description: 'New description ("" clears it)',
+  });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const slug = this.targetProject();
+
+    const input: ProjectUpdateInput = {};
+    if (this.name !== undefined) input.name = this.name;
+    if (this.description !== undefined) input.description = this.description;
+    if (Object.keys(input).length === 0) {
+      throw new CliError("nothing to change", "pass --name or --description");
+    }
+
+    const project = await client.updateProject(slug, input);
+    this.output(
+      project,
+      () => `updated project ${project.slug} — ${project.name}`,
+    );
+  }
+
+  /** The positional is as explicit as -p; only a contradiction is an error. */
+  private targetProject(): string {
+    if (this.slug === undefined) return this.requireProject();
+    if (this.project !== undefined && this.project !== this.slug) {
+      throw new CliError(
+        `"${this.slug}" and -p/--project "${this.project}" name different projects`,
+        "drop one of them — they must agree",
+      );
+    }
+    return this.slug;
   }
 }
 

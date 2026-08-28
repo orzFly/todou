@@ -19,6 +19,7 @@ import {
 } from "./label.ts";
 import { LoginCommand } from "./login.ts";
 import {
+  ProjectEditCommand,
   ProjectLinkCommand,
   ProjectListCommand,
   ProjectUnlinkCommand,
@@ -51,6 +52,7 @@ export const commands: Array<CommandClass<CliContext>> = [
   LoginCommand,
   WhoamiCommand,
   ProjectListCommand,
+  ProjectEditCommand,
   ProjectLinkCommand,
   ProjectUnlinkCommand,
   IssueListCommand,

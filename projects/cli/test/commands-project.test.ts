@@ -286,6 +286,105 @@ describe("project unlink → directory config", () => {
   });
 });
 
+describe("project edit", () => {
+  const patched: Route = [
+    "PATCH",
+    "/api/projects/dogfood",
+    (init: RequestInit) => ({
+      id: 1,
+      slug: "dogfood",
+      ...JSON.parse(String(init.body)),
+    }),
+  ];
+  const patchBody = (calls: Array<{ url: string; init: RequestInit }>) =>
+    JSON.parse(String(calls.find((c) => c.init.method === "PATCH")?.init.body));
+
+  it("sends both fields and prints the updated project", async () => {
+    const { home, work } = setup();
+    const { fetchImpl, calls } = fakeFetch([patched]);
+    const result = await runCli(
+      ["project", "edit", "dogfood", "--name", "Dogfood", "--description", "A"],
+      { fetchImpl, env: { ...loggedInEnv(), HOME: home }, cwd: work },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(patchBody(calls)).toEqual({ name: "Dogfood", description: "A" });
+    expect(result.stdout).toContain("updated project dogfood — Dogfood");
+  });
+
+  it("omits the field that was not passed, and clears on --description ''", async () => {
+    const { home, work } = setup();
+    const named = fakeFetch([patched]);
+    await runCli(["project", "edit", "dogfood", "--name", "Renamed"], {
+      fetchImpl: named.fetchImpl,
+      env: { ...loggedInEnv(), HOME: home },
+      cwd: work,
+    });
+    expect(patchBody(named.calls)).toEqual({ name: "Renamed" });
+
+    const cleared = fakeFetch([patched]);
+    await runCli(["project", "edit", "dogfood", "--description", ""], {
+      fetchImpl: cleared.fetchImpl,
+      env: { ...loggedInEnv(), HOME: home },
+      cwd: work,
+    });
+    expect(patchBody(cleared.calls)).toEqual({ description: "" });
+  });
+
+  it("refuses a no-op edit before making a request", async () => {
+    const { home, work } = setup();
+    const { fetchImpl, calls } = fakeFetch([patched]);
+    const result = await runCli(["project", "edit", "dogfood"], {
+      fetchImpl,
+      env: { ...loggedInEnv(), HOME: home },
+      cwd: work,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("nothing to change");
+    expect(calls).toEqual([]);
+  });
+
+  it("falls back to the directory config when the slug is omitted", async () => {
+    const { home, work } = setup();
+    writeFileSync(join(work, ".todou.toml"), 'project = "dogfood"\n');
+    const { fetchImpl, calls } = fakeFetch([patched]);
+    const result = await runCli(["project", "edit", "--name", "Bound"], {
+      fetchImpl,
+      env: { ...loggedInEnv(), HOME: home },
+      cwd: work,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(calls[0]?.url).toContain("/api/projects/dogfood");
+    expect(patchBody(calls)).toEqual({ name: "Bound" });
+  });
+
+  it("rejects a positional that contradicts -p", async () => {
+    const { home, work } = setup();
+    const { fetchImpl, calls } = fakeFetch([patched]);
+    const result = await runCli(
+      ["project", "edit", "dogfood", "-p", "todou", "--name", "X"],
+      { fetchImpl, env: { ...loggedInEnv(), HOME: home }, cwd: work },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("name different projects");
+    expect(calls).toEqual([]);
+  });
+
+  it("--json prints the whole project", async () => {
+    const { home, work } = setup();
+    const { fetchImpl } = fakeFetch([patched]);
+    const result = await runCli(
+      ["project", "edit", "dogfood", "--name", "Dogfood", "--json"],
+      { fetchImpl, env: { ...loggedInEnv(), HOME: home }, cwd: work },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      id: 1,
+      slug: "dogfood",
+      name: "Dogfood",
+    });
+  });
+});
+
 describe("whoami project source", () => {
   const me = {
     id: 2,
