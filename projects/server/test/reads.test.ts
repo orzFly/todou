@@ -48,14 +48,48 @@ describe.each(PLACEMENTS)(
       await t.cleanup();
     });
 
-    async function createIssue(title: string): Promise<{ number: number }> {
-      const res = await t.app.request(`/api/projects/${slug}/issues`, {
-        method: "POST",
-        headers: headers(),
-        body: JSON.stringify({ title }),
-      });
+    async function createIssueAs(
+      who: Record<string, string>,
+      title: string,
+      opts: { body?: string; slug?: string } = {},
+    ): Promise<{ number: number }> {
+      const res = await t.app.request(
+        `/api/projects/${opts.slug ?? slug}/issues`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", ...who },
+          body: JSON.stringify(
+            opts.body === undefined ? { title } : { title, body: opts.body },
+          ),
+        },
+      );
       expect(res.status).toBe(201);
       return json(res);
+    }
+
+    async function createIssue(title: string): Promise<{ number: number }> {
+      return createIssueAs({ cookie }, title);
+    }
+
+    /** A fresh project with bob as writer, for bootstrap scenarios. */
+    async function makeProject(name: string): Promise<string> {
+      const created = `${slug}-${name}`;
+      const res = await t.app.request("/api/projects", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ slug: created, name: created }),
+      });
+      expect(res.status).toBe(201);
+      const member = await t.app.request(
+        `/api/projects/${created}/members/${bob.user.id}`,
+        {
+          method: "PUT",
+          headers: headers(),
+          body: JSON.stringify({ role: "writer" }),
+        },
+      );
+      expect(member.status).toBe(204);
+      return created;
     }
 
     async function comment(
@@ -78,9 +112,10 @@ describe.each(PLACEMENTS)(
     /** unread flag + foreign-comment count from the same list call (T-77). */
     async function stateOf(
       number: number,
+      inSlug: string = slug,
     ): Promise<{ unread: boolean; count: number }> {
       const res = await t.app.request(
-        `/api/projects/${slug}/issues?numbers=${number}`,
+        `/api/projects/${inSlug}/issues?numbers=${number}`,
         { headers: { cookie } },
       );
       expect(res.status).toBe(200);
@@ -285,6 +320,72 @@ describe.each(PLACEMENTS)(
       await settle();
       expect((await markRead(issue.number)).status).toBe(204);
       expect(await stateOf(issue.number)).toEqual({ unread: false, count: 0 });
+    });
+
+    it("counts a foreign card's top post as its first comment (T-151)", async () => {
+      const posted = await createIssueAs(bob.headers, "bob opens one", {
+        body: "the top post",
+      });
+      expect(await stateOf(posted.number)).toEqual({ unread: true, count: 1 });
+
+      // A title-only card counts the same: the card is the content, so the
+      // count is per card, not per body.
+      const bare = await createIssueAs(bob.headers, "bob opens a bare one");
+      expect(await stateOf(bare.number)).toEqual({ unread: true, count: 1 });
+
+      // Mine never counts, body or no body.
+      const mine = await createIssueAs({ cookie }, "I open one", {
+        body: "my own words",
+      });
+      expect(await stateOf(mine.number)).toEqual({ unread: false, count: 0 });
+    });
+
+    it("adds replies on top of it, and reading clears both (T-151)", async () => {
+      const issue = await createIssueAs(bob.headers, "bob opens and replies");
+      await comment(issue.number, bob.headers, "…and adds a thought");
+      expect(await stateOf(issue.number)).toEqual({ unread: true, count: 2 });
+
+      await settle();
+      expect((await markRead(issue.number)).status).toBe(204);
+      expect(await stateOf(issue.number)).toEqual({ unread: false, count: 0 });
+
+      // The top post stays read behind the new position — only the reply
+      // counts, so a card never gets counted twice.
+      await comment(issue.number, bob.headers, "one more");
+      expect(await stateOf(issue.number)).toEqual({ unread: true, count: 1 });
+    });
+
+    it("mints the frontier even on an empty first list (T-151)", async () => {
+      const fresh = await makeProject("boot");
+      const empty = await t.app.request(`/api/projects/${fresh}/issues`, {
+        headers: { cookie },
+      });
+      expect(empty.status).toBe(200);
+      expect((await json(empty)).items).toEqual([]);
+      await settle();
+
+      // Looking at an empty project is still where reading starts, so bob's
+      // first card afterwards is news rather than pre-arrival history.
+      const first = await createIssueAs(bob.headers, "the first card ever", {
+        slug: fresh,
+      });
+      expect(await stateOf(first.number, fresh)).toEqual({
+        unread: true,
+        count: 1,
+      });
+    });
+
+    it("still reads history from before my first look as read (T-35)", async () => {
+      const cold = await makeProject("cold");
+      const before = await createIssueAs(bob.headers, "opened before I came", {
+        slug: cold,
+      });
+      await settle();
+      // This list call is both the first look and the frontier's birth.
+      expect(await stateOf(before.number, cold)).toEqual({
+        unread: false,
+        count: 0,
+      });
     });
 
     it("returns the default 0 outside list responses (T-77)", async () => {

@@ -11,6 +11,10 @@ export const MePrefs = z.strictObject({
   /**
    * Show the hollow-ring marker (and inbox rows) for issues whose only
    * news is events — no new comments (T-77's weak-unread state).
+   *
+   * A card someone else just opened is *not* one of those, despite `opened`
+   * being an event: its top post counts as the first unread comment
+   * (T-151), so turning this off never hides a new card.
    */
   show_weak_unread: z.boolean().default(true),
 });

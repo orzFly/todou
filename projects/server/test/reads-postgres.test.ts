@@ -106,4 +106,41 @@ describe.skipIf(!PG_URL)("unread comment counts on real postgres", () => {
     expect(page.items[0].unread).toBe(true);
     expect(page.items[0].unread_comments).toBe(2);
   });
+
+  it("counts a top post inside the last-seen millisecond (T-151)", async () => {
+    // Same blind spot, now on `issues.created_at`: the card's own threshold
+    // must be compared in SQL too, or a card opened microseconds after the
+    // read position reads as already seen.
+    const created = await t.app.request(`/api/projects/${slug}/issues`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...bob.headers },
+      body: JSON.stringify({ title: "microsecond card" }),
+    });
+    expect(created.status).toBe(201);
+    const { id, number } = await json(created);
+    await t.ctx.router
+      .system()
+      .execute(
+        sql`update issues set created_at = '2026-04-04T10:00:01.000700Z'::timestamptz where id = ${id}`,
+      );
+
+    const read = await t.app.request(
+      `/api/projects/${slug}/issues/${number}/read`,
+      {
+        method: "PUT",
+        headers: headers(),
+        body: JSON.stringify({ up_to: "2026-04-04T10:00:01.000Z" }),
+      },
+    );
+    expect(read.status).toBe(204);
+
+    const page = await json(
+      await t.app.request(`/api/projects/${slug}/issues?numbers=${number}`, {
+        headers: { cookie },
+      }),
+    );
+    expect(page.items).toHaveLength(1);
+    // Truncating to the millisecond would tie, and a tie is not "after".
+    expect(page.items[0].unread_comments).toBe(1);
+  });
 });

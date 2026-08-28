@@ -56,6 +56,26 @@ async function projectInbox(
     )
     .groupBy(comments.issueId);
 
+  // Cards opened by someone else, on the comment threshold rather than the
+  // event one: the top post counts as a comment (T-151), so the asymmetry
+  // above applies to it too. `opened` reaches eventCand as well, but only
+  // above the frontier floor — which would drop exactly the cards a stale
+  // per-issue position is meant to keep.
+  const issueCand = await db
+    .select({ issueId: issues.id })
+    .from(issues)
+    .leftJoin(
+      issueReads,
+      and(eq(issueReads.issueId, issues.id), eq(issueReads.userId, userId)),
+    )
+    .where(
+      and(
+        eq(issues.projectId, project.id),
+        ne(issues.authorId, userId),
+        sql`${issues.createdAt} > coalesce(${issueReads.lastSeenAt}, ${frontier})`,
+      ),
+    );
+
   const eventCand = await db
     .select({
       issueId: issueEvents.issueId,
@@ -103,6 +123,7 @@ async function projectInbox(
 
   const candidateIds = new Set<number>([
     ...commentCand.map((r) => r.issueId),
+    ...issueCand.map((r) => r.issueId),
     ...eventCand.map((r) => r.issueId),
     ...pendingRows.map((r) => r.id),
   ]);

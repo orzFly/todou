@@ -47,10 +47,12 @@ export const Issue = z.object({
   /**
    * Per-viewer: comments (any component kind) by someone other than the
    * requesting user, newer than their last-seen position (T-77; same
-   * threshold as `unread`). Events don't count. Exact value — display
-   * capping is the client's business. Computed only for list responses;
-   * every other path returns the default 0. Defaults on parse so clients
-   * tolerate older servers.
+   * threshold as `unread`). Events don't count. The issue itself counts as
+   * the first comment when someone else opened it past that position
+   * (T-151) — the top post is a post — so a card nobody has replied to yet
+   * still reports 1. Exact value — display capping is the client's
+   * business. Computed only for list responses; every other path returns
+   * the default 0. Defaults on parse so clients tolerate older servers.
    */
   unread_comments: z.number().int().nonnegative().default(0),
 });

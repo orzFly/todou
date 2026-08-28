@@ -23,6 +23,11 @@ import {
  * history before a user starts reading never counts as unread (T-35's CLI
  * bootstrap semantics). Insert-then-reselect keeps concurrent first calls
  * safe — board columns fire several list queries at once on first load.
+ *
+ * "First use" includes a list that comes back empty (T-151): a project the
+ * user has looked at while it had nothing in it is still a project they have
+ * started reading, and skipping the frontier there would leave the next batch
+ * of foreign cards dated before it — arriving already read.
  */
 export async function ensureFrontier(
   db: Db,
@@ -64,8 +69,11 @@ export async function ensureFrontier(
  * else commented or acted on it after the user's last-seen position (or the
  * project frontier when the issue was never opened); `counts` carries how
  * many such comments are waiting (T-77 — events mark unread but don't count).
- * One thresholded count over comments plus a grouped-max scan over events —
- * cheap at list-page sizes, and self-healing on comment deletion.
+ * The issue itself is the first of those comments when someone else opened it
+ * after that position (T-151), so a new card lands as strong unread instead of
+ * the weak, event-only kind `show_weak_unread` is allowed to hide.
+ * Two thresholded counts plus a grouped-max scan over events — cheap at
+ * list-page sizes, and self-healing on comment deletion.
  */
 export async function unreadIssueState(
   db: Db,
@@ -73,8 +81,8 @@ export async function unreadIssueState(
   userId: number,
   issueIds: number[],
 ): Promise<{ unread: Set<number>; counts: Map<number, number> }> {
-  if (issueIds.length === 0) return { unread: new Set(), counts: new Map() };
   const frontier = await ensureFrontier(db, projectId, userId);
+  if (issueIds.length === 0) return { unread: new Set(), counts: new Map() };
 
   // The per-issue threshold lives in SQL so the count and the boolean come
   // from one comparison — comparing driver Dates in JS would truncate the
@@ -98,6 +106,28 @@ export async function unreadIssueState(
     )
     .groupBy(comments.issueId);
   const counts = new Map(commentCounts.map((r) => [r.issueId, Number(r.n)]));
+
+  // The top post, on the same threshold and by the same reasoning — a card
+  // is one row, not a group, so it contributes at most 1. Only `created_at`
+  // is read: editing a body is a revision event, not a fresh first comment,
+  // and must not relight a card the reader has already been through.
+  const freshIssues = await db
+    .select({ issueId: issues.id })
+    .from(issues)
+    .leftJoin(
+      issueReads,
+      and(eq(issueReads.issueId, issues.id), eq(issueReads.userId, userId)),
+    )
+    .where(
+      and(
+        inArray(issues.id, issueIds),
+        ne(issues.authorId, userId),
+        sql`${issues.createdAt} > coalesce(${issueReads.lastSeenAt}, ${frontier})`,
+      ),
+    );
+  for (const { issueId } of freshIssues) {
+    counts.set(issueId, (counts.get(issueId) ?? 0) + 1);
+  }
 
   const latestEvents = await db
     .select({

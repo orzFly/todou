@@ -44,8 +44,7 @@ describe.each(PLACEMENTS)("bulk mark-as-read T-100 (%s)", (placement) => {
       expect(member.status).toBe(204);
       // Bootstrap the caller's frontier before any activity exists, or the
       // first list call would date it after bob's comments and nothing
-      // would ever read as unread (T-35). unreadIssueState skips the
-      // frontier entirely on an empty page, so the project needs a row.
+      // would ever read as unread (T-35).
       await createIssue(slug, "frontier bootstrap");
       const listed = await t.app.request(`/api/projects/${slug}/issues`, {
         headers: { cookie },

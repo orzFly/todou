@@ -39,14 +39,22 @@ describe("cross-project inbox T-97", () => {
         i.project.slug === slug && i.number === number,
     );
 
-  async function createIssue(slug: string, title: string): Promise<number> {
+  async function createIssueAs(
+    slug: string,
+    who: Record<string, string>,
+    title: string,
+  ): Promise<number> {
     const res = await t.app.request(`/api/projects/${slug}/issues`, {
       method: "POST",
-      headers: headers(),
+      headers: { "content-type": "application/json", ...who },
       body: JSON.stringify({ title }),
     });
     expect(res.status).toBe(201);
     return (await json(res)).number;
+  }
+
+  async function createIssue(slug: string, title: string): Promise<number> {
+    return createIssueAs(slug, headers(), title);
   }
 
   async function comment(
@@ -246,6 +254,34 @@ describe("cross-project inbox T-97", () => {
 
     await markRead(PA, n);
     await markRead(PA, strong);
+  });
+
+  it("a card someone else opened outlives the weak toggle (T-151)", async () => {
+    const n = await createIssueAs(PA, bob.headers, "bob's brand-new card");
+
+    const off = await t.app.request("/api/me/prefs", {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify({ show_weak_unread: false }),
+    });
+    expect(off.status).toBe(200);
+    // Nobody has replied yet — the top post is the single unread comment,
+    // and that is what keeps the row out of the weak-unread bucket.
+    expect(rowOf(await items(), PA, n)).toMatchObject({
+      unread: true,
+      unread_comments: 1,
+    });
+
+    await markRead(PA, n);
+    expect(rowOf(await items(), PA, n)).toBeUndefined();
+
+    const on = await t.app.request("/api/me/prefs", {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify({ show_weak_unread: true }),
+    });
+    expect(on.status).toBe(200);
+    expect(rowOf(await items(), PA, n)).toBeUndefined();
   });
 
   it("per-issue read position beats the frontier", async () => {
