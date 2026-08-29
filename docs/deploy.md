@@ -135,13 +135,27 @@ already holds the build gets a 304 for free. Clients that accept `zstd`
 transfer, and no decompression on the server.
 
 The docker image ships all five builds and enables this by default. A
-checkout deployment packs them itself:
+checkout deployment is handed them from a development machine instead:
 
 ```bash
-cd ~/todou
-scripts/build-cli.sh                              # dist/, ~337 MB
-scripts/pack-cli.sh dist ~/todou-data/cli-dist    # ~98 MB of .zst + manifest
+scripts/push-cli.sh todou@todou.example    # builds, packs, ~98 MB over scp
 ```
+
+Building on the host itself is not worth arranging: `build-cli.sh` needs
+deno, `pack-cli.sh` needs zstd, and a server should not grow a toolchain to
+make one command work. So the script builds here — refusing, unless
+`--force`, to build a tree that is dirty or off `origin/master`, since the
+version it bakes in would then describe something the host will never run —
+and leaves the packed result on the far side as `~/todou-data/cli-dist.new`,
+after checking every uploaded file against its own manifest. The update
+script activates it with one `rename` (see [Updating](#updating)), which
+fixes the order for free: push, then deploy, and the manifest ends up
+describing the commit that is actually running.
+
+`--activate` performs that swap, the restart and the version check from here
+instead, for a CLI refresh with no deploy behind it. `--dry-run` prints the
+whole remote sequence and touches nothing; `--data-dir` / `--checkout` move
+the remote paths, and `TODOU_DEPLOY_HOST` stands in for the argument.
 
 ```toml
 [http]
@@ -151,9 +165,7 @@ cli_dist_dir = "./cli-dist"     # relative to the working directory, absolutised
 Unset — the default — turns both endpoints into a 404 carrying
 `cli_dist_not_configured`. Set, the manifest is read and verified at startup:
 a missing or truncated artifact refuses the boot rather than failing a
-download weeks later. `pack-cli.sh` needs `zstd` on `PATH`; rerun both
-commands whenever the checkout is updated, or the manifest will keep
-advertising the previous version.
+download weeks later.
 
 These are the largest public responses the server serves (~94 MB each). If
 that matters on your link, rate-limit `/api/cli/` at the reverse proxy.
@@ -267,16 +279,73 @@ systemctl --user enable --now todou
 
 ## Updating
 
+Keep this as a script on the host rather than in the repo — a script that
+`git pull`s itself while the shell is still reading it is a footgun. What
+follows is the reference for what that script has to contain:
+
 ```bash
+set -e
 cd ~/todou
 git pull --ff-only
 pnpm install --frozen-lockfile
 pnpm build
+
+DATA=~/todou-data
+
+# Activate a CLI drop staged by scripts/push-cli.sh, if one is waiting. Its
+# manifest is uploaded last and describes the rest, so a directory holding it
+# plus exactly its artifacts is a whole one; anything else must not go live,
+# because the server refuses to boot on an incomplete distribution.
+if [ -d "$DATA/cli-dist.new" ]; then
+  node -e '
+    const fs = require("node:fs"), dir = process.argv[1];
+    const m = JSON.parse(fs.readFileSync(dir + "/manifest.json", "utf8"));
+    if (fs.readdirSync(dir).length !== m.artifacts.length + 1) {
+      console.error(dir + " is incomplete — push it again");
+      process.exit(1);
+    }
+  ' "$DATA/cli-dist.new"
+  rm -rf "$DATA/cli-dist.old"
+  if [ -d "$DATA/cli-dist" ]; then mv "$DATA/cli-dist" "$DATA/cli-dist.old"; fi
+  mv "$DATA/cli-dist.new" "$DATA/cli-dist"      # atomic: no half-built cli-dist
+fi
+
 systemctl --user restart todou
+
+# The manifest has to name the commit now running. When it does not, /api/cli
+# is handing out a CLI built from some other state of the tree — which is what
+# happens by default, since a deploy moves the checkout and nothing else.
+deployed=$(git describe --tags --always)
+served=
+for _ in $(seq 30); do
+  if served=$(curl -fsS localhost:8637/api/cli \
+    | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version'); then break; fi
+  sleep 1
+done
+if [ "$served" != "$deployed" ]; then
+  echo "ALARM: /api/cli serves ${served:-nothing}, the checkout is at $deployed" >&2
+  echo "       run scripts/push-cli.sh from a dev machine, then rerun this" >&2
+  exit 1
+fi
+rm -rf "$DATA/cli-dist.old"
 ```
 
-Keep this as a script on the host rather than in the repo — a script that
-`git pull`s itself while the shell is still reading it is a footgun.
+Both CLI blocks belong to deployments that set `http.cli_dist_dir`; without
+it nothing is ever staged and `/api/cli` is a 404 by design. Two edges to
+know before the first run:
+
+- **The first push** finds no `cli-dist` to move aside, so the inner `mv` is
+  skipped and the drop simply becomes the first one.
+- **A refused boot** — `journalctl --user -u todou` naming a missing or
+  short artifact — is why `cli-dist.old` outlives the restart and is only
+  removed once the served version has been confirmed. Put it back and rerun
+  `push-cli.sh` from a dev machine:
+
+  ```bash
+  rm -rf ~/todou-data/cli-dist
+  mv ~/todou-data/cli-dist.old ~/todou-data/cli-dist
+  systemctl --user restart todou
+  ```
 
 ## Verifying
 
