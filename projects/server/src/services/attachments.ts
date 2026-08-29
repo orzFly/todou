@@ -23,6 +23,7 @@ import {
 } from "../errors.ts";
 import { S3Storage } from "../storage/s3.ts";
 import { requireProject, routeInfoOf } from "./access.ts";
+import { assertIssueReadable, assertIssueWritable } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
 type AttachmentRow = typeof attachments.$inferSelect;
@@ -72,7 +73,7 @@ export async function uploadAttachment(
   file: File,
   agentContext: AgentContext | null = null,
 ): Promise<Attachment> {
-  const { project } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireProject(ctx, actor, slug, "writer");
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   const maxBytes = ctx.config.storage.max_upload_mb * 1024 * 1024;
@@ -83,13 +84,18 @@ export async function uploadAttachment(
   }
 
   const issueRows = await db
-    .select({ id: issues.id })
+    .select({
+      id: issues.id,
+      authorId: issues.authorId,
+      deletedAt: issues.deletedAt,
+    })
     .from(issues)
     .where(
       and(eq(issues.projectId, project.id), eq(issues.number, issueNumber)),
     );
   const issue = issueRows[0];
   if (!issue) throw new NotFoundError("issue not found");
+  assertIssueWritable(issue, actor, role);
 
   const storageKey = newStorageKey();
   await ctx.storage.put(storageKey, new Uint8Array(await file.arrayBuffer()));
@@ -171,7 +177,7 @@ export async function requestDirectUpload(
   slug: string,
   input: DirectUploadRequest,
 ): Promise<DirectUploadTicket> {
-  const { project } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireProject(ctx, actor, slug, "writer");
   // The size gate precedes the backend gate: an oversize declaration means
   // no upload path will take the file, so clients probing this endpoint
   // first (the CLI does) learn that before shipping a single body byte —
@@ -188,7 +194,11 @@ export async function requestDirectUpload(
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   const issueRows = await db
-    .select({ id: issues.id })
+    .select({
+      id: issues.id,
+      authorId: issues.authorId,
+      deletedAt: issues.deletedAt,
+    })
     .from(issues)
     .where(
       and(
@@ -198,6 +208,7 @@ export async function requestDirectUpload(
     );
   const issue = issueRows[0];
   if (!issue) throw new NotFoundError("issue not found");
+  assertIssueWritable(issue, actor, role);
 
   const storageKey = newStorageKey();
   const expiresAt = new Date(
@@ -240,7 +251,7 @@ export async function completeDirectUpload(
   uploadId: number,
   agentContext: AgentContext | null = null,
 ): Promise<Attachment> {
-  const { project } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireProject(ctx, actor, slug, "writer");
   if (!(ctx.storage instanceof S3Storage)) {
     throw new DirectUploadUnavailableError();
   }
@@ -286,11 +297,16 @@ export async function completeDirectUpload(
   }
 
   const issueRows = await db
-    .select({ number: issues.number })
+    .select({
+      number: issues.number,
+      authorId: issues.authorId,
+      deletedAt: issues.deletedAt,
+    })
     .from(issues)
     .where(eq(issues.id, pending.issueId));
   const issue = issueRows[0];
   if (!issue) throw new NotFoundError("issue not found");
+  assertIssueWritable(issue, actor, role);
 
   let row: AttachmentRow;
   try {
@@ -358,20 +374,29 @@ export async function openAttachment(
   slug: string,
   attachmentId: number,
 ): Promise<{ row: AttachmentRow }> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await requireProject(ctx, actor, slug, "reader");
   const db = await ctx.router.forProject(routeInfoOf(project));
+  // Joined to the issue rather than looked up by attachment id alone: the id
+  // is the whole URL, so without the join a deleted card's attachments would
+  // stay downloadable by anyone who ever saw one of those links (T-145).
   const rows = await db
-    .select()
+    .select({
+      row: attachments,
+      authorId: issues.authorId,
+      deletedAt: issues.deletedAt,
+    })
     .from(attachments)
+    .innerJoin(issues, eq(attachments.issueId, issues.id))
     .where(
       and(
         eq(attachments.id, attachmentId),
         eq(attachments.projectId, project.id),
       ),
     );
-  const row = rows[0];
-  if (!row) throw new NotFoundError("attachment not found");
-  return { row };
+  const found = rows[0];
+  if (!found) throw new NotFoundError("attachment not found");
+  assertIssueReadable(found, actor, role);
+  return { row: found.row };
 }
 
 export async function listIssueAttachments(
@@ -380,16 +405,21 @@ export async function listIssueAttachments(
   slug: string,
   issueNumber: number,
 ): Promise<Attachment[]> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await requireProject(ctx, actor, slug, "reader");
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issueRows = await db
-    .select({ id: issues.id })
+    .select({
+      id: issues.id,
+      authorId: issues.authorId,
+      deletedAt: issues.deletedAt,
+    })
     .from(issues)
     .where(
       and(eq(issues.projectId, project.id), eq(issues.number, issueNumber)),
     );
   const issue = issueRows[0];
   if (!issue) throw new NotFoundError("issue not found");
+  assertIssueReadable(issue, actor, role);
   const rows = await db
     .select()
     .from(attachments)

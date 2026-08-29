@@ -24,6 +24,7 @@ import {
 import { bundleIssues, toIssue } from "./issues.ts";
 import { readPrefs } from "./prefs.ts";
 import { ensureFrontier, unreadIssueState } from "./reads.ts";
+import { notDeleted } from "./trash.ts";
 
 type ProjectSlice = { items: InboxItem[]; truncated: boolean };
 
@@ -136,7 +137,14 @@ async function projectInbox(
   if (candidateIds.size === 0) return { items: [], truncated: false };
   const ids = [...candidateIds];
 
-  const rows = await db.select().from(issues).where(inArray(issues.id, ids));
+  // The one choke point for the trash (T-145): candidates arrive from four
+  // separate scans, but every item the inbox emits is built from these rows,
+  // so filtering here is what makes "deleted → out of everyone's inbox"
+  // hold no matter which scan turned the card up.
+  const rows = await db
+    .select()
+    .from(issues)
+    .where(and(inArray(issues.id, ids), notDeleted));
   const bundles = await bundleIssues(ctx, db, project.id, rows);
   const { unread, counts } = await unreadIssueState(
     db,

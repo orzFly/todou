@@ -30,6 +30,7 @@ import {
   parseSeconds,
   splitCommaList,
 } from "../parse.ts";
+import { confirm } from "../prompt.ts";
 import {
   decodeAnswerEvent,
   renderAnswerRecords,
@@ -70,7 +71,10 @@ function issueRow(issue: IssueListItem, refPrefix: string | null): string[] {
     // spaces read ambiguously, and this column is what gets pasted back
     // into `--assignee`.
     issue.assignees.map((a) => a.login).join(","),
-    relativeTime(issue.updated_at),
+    // In the trash the useful time is when the card went in — deleting
+    // deliberately leaves updated_at alone, so it would show pre-deletion
+    // activity here. Everywhere else deleted_at is null and nothing changes.
+    relativeTime(issue.deleted_at ?? issue.updated_at),
   ];
 }
 
@@ -108,6 +112,9 @@ export class IssueListCommand extends ProjectCommand {
   order = Option.String("--order", "desc", { description: "asc | desc" });
   unread = Option.Boolean("--unread", false, {
     description: "Only issues with unread activity by other users",
+  });
+  deleted = Option.Boolean("--deleted", false, {
+    description: "List the trash instead (newest deletion first)",
   });
 
   protected async run(client: TodouClient): Promise<void> {
@@ -156,6 +163,7 @@ export class IssueListCommand extends ProjectCommand {
       sort: parseChoice(this.sort, ["created", "updated", "number"], "--sort"),
       order: parseChoice(this.order, ["asc", "desc"], "--order"),
       limit: this.limit ? parsePositiveInt(this.limit, "--limit") : undefined,
+      deleted: this.deleted ? true : undefined,
     });
 
     const shown = this.unread
@@ -171,6 +179,7 @@ export class IssueListCommand extends ProjectCommand {
       },
       () => {
         if (shown.items.length === 0) {
+          if (this.deleted) return "the trash is empty";
           return this.unread ? "no unread issues" : "no issues";
         }
         const body = table(shown.items.map((i) => issueRow(i, refPrefix)));
@@ -658,6 +667,70 @@ export class IssueCloseCommand extends ProjectCommand {
     });
     const closed = withRef(issue, await fetchRefPrefix(client, project));
     this.output(closed, () => `${closed.ref} closed (${target.name})`);
+  }
+}
+
+export class IssueDeleteCommand extends ProjectCommand {
+  static paths = [["issue", "delete"]];
+  static usage = Command.Usage({
+    description: "Move an issue to the trash",
+    details:
+      "Reversible — `issue restore` brings the card and everything on it back, and the number is never reused. While it is in the trash the issue is visible only to project admins and its author (`issue list --deleted`), references to it read as plain text, and every write to it is refused.\n\nPrompts unless `-y/--yes` is given, and refuses to run unprompted off a TTY. `<number>` also accepts `<project>/<number>` or a full issue URL.",
+  });
+
+  number = Option.String({ required: true });
+  yes = Option.Boolean("-y,--yes", false, {
+    description: "Skip the confirmation prompt",
+  });
+
+  protected async run(client: TodouClient): Promise<number> {
+    const { project, number } = this.resolveIssueRef(this.number);
+    const issue = withRef(
+      await client.getIssue(project, number),
+      await fetchRefPrefix(client, project),
+    );
+
+    if (!this.yes) {
+      if (!isTTY(this.context.stdin)) {
+        throw new CliError(
+          "refusing to delete without a confirmation",
+          `pass -y/--yes: todou issue delete ${this.number} -y`,
+        );
+      }
+      const ok = await confirm(
+        this.context.stdin,
+        this.context.stderr,
+        `Move ${issue.ref} "${issue.title}" to the trash?`,
+      );
+      if (!ok) {
+        this.note("cancelled");
+        return 1;
+      }
+    }
+
+    await client.deleteIssue(project, number);
+    this.output({ ...issue, deleted: true }, () => `${issue.ref} deleted`);
+    return 0;
+  }
+}
+
+export class IssueRestoreCommand extends ProjectCommand {
+  static paths = [["issue", "restore"]];
+  static usage = Command.Usage({
+    description: "Take an issue back out of the trash",
+    details:
+      "`<number>` also accepts `<project>/<number>` or a full issue URL. Restoring is not destructive, so it never prompts.",
+  });
+
+  number = Option.String({ required: true });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const { project, number } = this.resolveIssueRef(this.number);
+    const issue = withRef(
+      await client.restoreIssue(project, number),
+      await fetchRefPrefix(client, project),
+    );
+    this.output(issue, () => `${issue.ref} restored (${issue.status.name})`);
   }
 }
 

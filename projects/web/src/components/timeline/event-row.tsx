@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { formatRef, resolveSlugAt, type TimelineEvent } from "@todou/shared";
 import {
+  ArchiveRestoreIcon,
   BookOpenTextIcon,
   CheckIcon,
   CircleDotIcon,
@@ -13,6 +14,7 @@ import {
   PencilIcon,
   RefreshCwIcon,
   TagIcon,
+  Trash2Icon,
   UserMinusIcon,
   UserPlusIcon,
 } from "lucide-react";
@@ -109,6 +111,10 @@ export function describeEvent(
       const count = ids?.length ?? 0;
       return `resolved ${count} spec comment${count === 1 ? "" : "s"}`;
     }
+    case "deleted":
+      return "moved this to the trash";
+    case "restored":
+      return "restored this from the trash";
   }
 }
 
@@ -129,6 +135,8 @@ export const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
   spec_pushed: <BookOpenTextIcon className="size-3.5" />,
   spec_review: <FileCheck2Icon className="size-3.5 text-amber-600" />,
   spec_comments_resolved: <CheckIcon className="size-3.5 text-green-600" />,
+  deleted: <Trash2Icon className="size-3.5 text-destructive" />,
+  restored: <ArchiveRestoreIcon className="size-3.5" />,
 };
 
 /**

@@ -21,6 +21,7 @@ import {
   ValidationFailedError,
 } from "../errors.ts";
 import { requireProject, routeInfoOf } from "./access.ts";
+import { assertIssueReadable, assertIssueWritable } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
 /**
@@ -137,7 +138,11 @@ function toAnswerRecords(
 
 async function loadIssue(db: Db, projectId: number, number: number) {
   const rows = await db
-    .select({ id: issues.id })
+    .select({
+      id: issues.id,
+      authorId: issues.authorId,
+      deletedAt: issues.deletedAt,
+    })
     .from(issues)
     .where(and(eq(issues.projectId, projectId), eq(issues.number, number)));
   const row = rows[0];
@@ -165,9 +170,10 @@ export async function submitAnswers(
   input: AnswersSubmitInput,
   agentContext: AgentContext | null = null,
 ): Promise<TimelineEvent> {
-  const { project } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireProject(ctx, actor, slug, "writer");
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(db, project.id, issueNumber);
+  assertIssueWritable(issue, actor, role);
 
   const commentRows = await db
     .select()
@@ -266,9 +272,10 @@ export async function listIssueQuestions(
   slug: string,
   issueNumber: number,
 ): Promise<IssueQuestions> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await requireProject(ctx, actor, slug, "reader");
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(db, project.id, issueNumber);
+  assertIssueReadable(issue, actor, role);
 
   const commentRows = await db
     .select()

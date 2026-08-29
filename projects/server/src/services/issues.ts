@@ -8,6 +8,7 @@ import type {
   IssueListQuery,
   IssueUpdateInput,
   Label,
+  MemberRole,
   Status,
   UserRef,
 } from "@todou/shared";
@@ -20,6 +21,7 @@ import {
   gte,
   ilike,
   inArray,
+  isNotNull,
   lt,
   or,
   type SQL,
@@ -39,8 +41,18 @@ import {
   statuses,
 } from "../db/project-schema.ts";
 import { projectMembers } from "../db/system-schema.ts";
-import { NotFoundError, ValidationFailedError } from "../errors.ts";
-import { type ProjectRow, requireProject, routeInfoOf } from "./access.ts";
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationFailedError,
+} from "../errors.ts";
+import {
+  accessibleProjectSlugs,
+  type ProjectRow,
+  requireProject,
+  routeInfoOf,
+} from "./access.ts";
 import {
   analyzeReferences,
   type CrossTarget,
@@ -59,6 +71,12 @@ import { recordReferences } from "./references.ts";
 import { recordRevision } from "./revisions.ts";
 import { toStatus } from "./statuses.ts";
 import { microIso } from "./timeline.ts";
+import {
+  assertIssueReadable,
+  assertIssueWritable,
+  notDeleted,
+  seesTrashed,
+} from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
 type IssueRow = typeof issues.$inferSelect;
@@ -96,6 +114,7 @@ export type IssueBundle = {
   labels: Label[];
   assignees: UserRef[];
   author: UserRef;
+  deletedBy: UserRef | null;
 };
 
 export function toIssue(bundle: IssueBundle): Issue {
@@ -118,9 +137,16 @@ export function toIssue(bundle: IssueBundle): Issue {
     // Per-viewer fields; only listIssues overrides them (T-46, T-77).
     unread: false,
     unread_comments: 0,
+    deleted_at: bundle.row.deletedAt?.toISOString() ?? null,
+    deleted_by: bundle.deletedBy,
   };
 }
 
+/**
+ * The issue by number, trash and all. Every caller gates the row it gets
+ * back (see trash.ts) — loading first is what lets the gate tell "deleted"
+ * apart from "never existed".
+ */
 async function loadIssueRow(
   db: Db,
   projectId: number,
@@ -163,6 +189,7 @@ export async function bundleIssues(
 
   const refIds = [
     ...rows.map((r) => r.authorId),
+    ...rows.map((r) => r.deletedBy).filter((id) => id !== null),
     ...assigneeRows.map((a) => a.userId),
   ];
   const refs = await getUserRefs(ctx.router.system(), refIds);
@@ -188,6 +215,10 @@ export async function bundleIssues(
         .filter((a) => a.issueId === row.id)
         .map((a) => refs.get(a.userId) ?? ghost(a.userId)),
       author: refs.get(row.authorId) ?? ghost(row.authorId),
+      deletedBy:
+        row.deletedBy === null
+          ? null
+          : (refs.get(row.deletedBy) ?? ghost(row.deletedBy)),
     };
   });
 }
@@ -394,9 +425,10 @@ export async function getIssue(
   slug: string,
   number: number,
 ): Promise<Issue> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await requireProject(ctx, actor, slug, "reader");
   const db = await ctx.router.forProject(routeInfoOf(project));
   const row = await loadIssueRow(db, project.id, number);
+  assertIssueReadable(row, actor, role);
   const bundle = (await bundleIssues(ctx, db, project.id, [row]))[0];
   if (!bundle) throw new Error("bundle missing");
   return toIssue(bundle);
@@ -439,13 +471,27 @@ function timeAdvance(
 /**
  * WHERE clauses for the category-neutral list filters, shared by list and
  * counts. Returns null when a filter provably matches nothing.
+ *
+ * `trash` swaps the default "live cards only" for the trash view: only
+ * deleted cards, narrowed to the ones this viewer may see there. An author
+ * with no deleted cards gets an empty page rather than an error — the trash
+ * is a view, not a privilege one passes or fails.
  */
 async function issueFilterConditions(
   db: Db,
   projectId: number,
   query: IssueCountsQuery,
+  trash?: { actor: UserRow; role: MemberRole },
 ): Promise<SQL[] | null> {
   const conditions: SQL[] = [eq(issues.projectId, projectId)];
+  if (trash === undefined) {
+    conditions.push(notDeleted);
+  } else {
+    conditions.push(isNotNull(issues.deletedAt));
+    if (trash.role !== "admin") {
+      conditions.push(eq(issues.authorId, trash.actor.id));
+    }
+  }
 
   if (query.status !== undefined) {
     conditions.push(inArray(issues.statusId, query.status));
@@ -486,18 +532,30 @@ export async function listIssues(
   slug: string,
   query: IssueListQuery,
 ): Promise<{ items: Issue[]; next_cursor: string | null }> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await requireProject(ctx, actor, slug, "reader");
   const db = await ctx.router.forProject(routeInfoOf(project));
 
-  const sortColumn = {
-    created: issues.createdAt,
-    updated: issues.updatedAt,
-    number: issues.number,
-  }[query.sort];
+  // The trash orders by when a card went in, whatever `sort` says: deleting
+  // deliberately leaves `updated_at` alone (it is not activity on the card,
+  // see the column's own note), so no other column can express "most
+  // recently thrown away".
+  const sortColumn = query.deleted
+    ? issues.deletedAt
+    : {
+        created: issues.createdAt,
+        updated: issues.updatedAt,
+        number: issues.number,
+      }[query.sort];
+  const byNumber = !query.deleted && query.sort === "number";
   const direction = query.order === "asc" ? asc : desc;
   const beyond = query.order === "asc" ? gt : lt;
 
-  const conditions = await issueFilterConditions(db, project.id, query);
+  const conditions = await issueFilterConditions(
+    db,
+    project.id,
+    query,
+    query.deleted ? { actor, role } : undefined,
+  );
   if (conditions === null) return { items: [], next_cursor: null };
 
   if (query.numbers !== undefined) {
@@ -518,14 +576,13 @@ export async function listIssues(
     conditions.push(inArray(issues.statusId, ids));
   }
   if (query.cursor !== undefined) {
-    const cur = decodeCursor(query.cursor, query.sort === "number");
-    const advance =
-      query.sort === "number"
-        ? or(
-            beyond(sortColumn, Number(cur.v)),
-            and(eq(sortColumn, Number(cur.v)), beyond(issues.id, cur.i)),
-          )
-        : timeAdvance(sortColumn, cur, query.order === "asc");
+    const cur = decodeCursor(query.cursor, byNumber);
+    const advance = byNumber
+      ? or(
+          beyond(sortColumn, Number(cur.v)),
+          and(eq(sortColumn, Number(cur.v)), beyond(issues.id, cur.i)),
+        )
+      : timeAdvance(sortColumn, cur, query.order === "asc");
     if (advance) conditions.push(advance);
   }
 
@@ -533,7 +590,7 @@ export async function listIssues(
     .select({
       row: issues,
       // Cursors need the sort value at full precision; see ListCursor.
-      ts: microIso(query.sort === "number" ? issues.createdAt : sortColumn),
+      ts: microIso(byNumber ? issues.createdAt : sortColumn),
     })
     .from(issues)
     .where(and(...conditions))
@@ -545,7 +602,7 @@ export async function listIssues(
   const next_cursor =
     rows.length > query.limit && last
       ? encodeCursor({
-          v: query.sort === "number" ? last.row.number : last.ts,
+          v: byNumber ? last.row.number : last.ts,
           i: last.row.id,
         })
       : null;
@@ -606,9 +663,10 @@ export async function updateIssue(
   input: IssueUpdateInput,
   agentContext: AgentContext | null = null,
 ): Promise<Issue> {
-  const { project } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireProject(ctx, actor, slug, "writer");
   const db = await ctx.router.forProject(routeInfoOf(project));
   const before = await loadIssueRow(db, project.id, number);
+  assertIssueWritable(before, actor, role);
 
   if (input.label_ids !== undefined) {
     await validateLabelIds(db, project.id, input.label_ids);
@@ -839,6 +897,124 @@ export async function updateIssue(
 
   const after = await loadIssueRow(db, project.id, number);
   const bundle = (await bundleIssues(ctx, db, project.id, [after]))[0];
+  if (!bundle) throw new Error("bundle missing");
+  return toIssue(bundle);
+}
+
+/**
+ * Delete and restore share everything but the direction, so they share the
+ * body too: the same author-or-admin gate, the same "already in that state"
+ * 409, the same event-plus-pointer shape.
+ *
+ * Neither touches `updated_at`. Moving a card in or out of the trash is not
+ * activity on the card — the trash sorts by `deleted_at`, and a restored
+ * card must come back exactly where it left the list.
+ */
+async function setTrashed(
+  ctx: AppContext,
+  actor: UserRow,
+  slug: string,
+  number: number,
+  trashed: boolean,
+  agentContext: AgentContext | null,
+): Promise<{ project: ProjectRow; db: Db; row: IssueRow }> {
+  const { project, role } = await requireProject(ctx, actor, slug, "writer");
+  const db = await ctx.router.forProject(routeInfoOf(project));
+  const row = await loadIssueRow(db, project.id, number);
+
+  // Visibility before permission: to someone who may not see this card in
+  // the trash it must look like it was never there.
+  if (row.deletedAt !== null && !seesTrashed(row, actor, role)) {
+    throw new NotFoundError("issue not found");
+  }
+  if (role !== "admin" && row.authorId !== actor.id) {
+    throw new ForbiddenError(
+      "only the author or a project admin may delete or restore an issue",
+    );
+  }
+  if (trashed && row.deletedAt !== null) {
+    throw new ConflictError("this issue is already in the trash");
+  }
+  if (!trashed && row.deletedAt === null) {
+    throw new ConflictError("this issue is not in the trash");
+  }
+
+  const events: ChangeEvent[] = [];
+  const after = await db.transaction(async (tx) => {
+    const updated = await tx
+      .update(issues)
+      .set(
+        trashed
+          ? { deletedAt: new Date(), deletedBy: actor.id }
+          : { deletedAt: null, deletedBy: null },
+      )
+      .where(eq(issues.id, row.id))
+      .returning();
+    const next = updated[0];
+    if (!next) throw new Error("issue update returned no row");
+
+    const inserted = await tx
+      .insert(issueEvents)
+      .values({
+        projectId: project.id,
+        issueId: row.id,
+        actorId: actor.id,
+        // No payload: actor and timestamp are the whole record. A title in
+        // here would survive the deletion it is recording.
+        type: trashed ? "deleted" : "restored",
+        payload: {},
+        agentContext,
+      })
+      .returning({ id: issueEvents.id });
+    const eventId = inserted[0]?.id;
+    if (eventId !== undefined) {
+      events.push({
+        entity: "timeline",
+        id: eventId,
+        action: "created",
+        issue_number: number,
+      });
+    }
+    return next;
+  });
+
+  events.push({
+    entity: "issue",
+    id: row.id,
+    action: trashed ? "deleted" : "updated",
+    issue_number: number,
+  });
+  for (const e of events) ctx.bus.publish(project.id, e);
+  return { project, db, row: after };
+}
+
+/** Move an issue to the trash (T-145); reversible via restoreIssue. */
+export async function deleteIssue(
+  ctx: AppContext,
+  actor: UserRow,
+  slug: string,
+  number: number,
+  agentContext: AgentContext | null = null,
+): Promise<void> {
+  await setTrashed(ctx, actor, slug, number, true, agentContext);
+}
+
+export async function restoreIssue(
+  ctx: AppContext,
+  actor: UserRow,
+  slug: string,
+  number: number,
+  agentContext: AgentContext | null = null,
+): Promise<Issue> {
+  const { project, db, row } = await setTrashed(
+    ctx,
+    actor,
+    slug,
+    number,
+    false,
+    agentContext,
+  );
+  const bundle = (await bundleIssues(ctx, db, project.id, [row]))[0];
   if (!bundle) throw new Error("bundle missing");
   return toIssue(bundle);
 }

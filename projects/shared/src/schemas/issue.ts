@@ -55,6 +55,14 @@ export const Issue = z.object({
    * the default 0. Defaults on parse so clients tolerate older servers.
    */
   unread_comments: z.number().int().nonnegative().default(0),
+  /**
+   * Trash state (T-145): when the card is in the trash, when it went in and
+   * who put it there. Only ever non-null on a read path the viewer may see
+   * the trash through — everywhere else a deleted card is simply absent.
+   * Defaults keep older servers parseable.
+   */
+  deleted_at: Timestamp.nullable().default(null),
+  deleted_by: UserRef.nullable().default(null),
 });
 export type Issue = z.infer<typeof Issue>;
 
@@ -111,6 +119,15 @@ export const IssueListQuery = z.object({
   order: z.enum(["asc", "desc"]).default("desc"),
   cursor: Cursor.optional(),
   limit: z.coerce.number().int().min(1).max(100).default(30),
+  /**
+   * The trash view (T-145). False — the default every existing caller keeps
+   * — excludes deleted cards; true returns *only* them, narrowed to what the
+   * viewer may see there (admins the whole project, authors their own).
+   */
+  deleted: z.preprocess(
+    (v) => (typeof v === "string" ? v === "1" || v === "true" : v),
+    z.boolean().default(false),
+  ),
 });
 export type IssueListQuery = z.infer<typeof IssueListQuery>;
 

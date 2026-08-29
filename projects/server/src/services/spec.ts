@@ -1,6 +1,7 @@
 import type {
   AgentContext,
   ChangeEvent,
+  MemberRole,
   SpecCommentAnchor,
   SpecCommentItem,
   SpecComments,
@@ -31,20 +32,36 @@ import {
   ValidationFailedError,
 } from "../errors.ts";
 import { requireProject, routeInfoOf } from "./access.ts";
+import { assertIssueReadable, assertIssueWritable } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
-async function loadIssue(db: Db, projectId: number, number: number) {
+/**
+ * `gate` is the trash rule this caller reads under (T-145): every spec path
+ * runs one, so a deleted card's spec is unreachable by the same rules as the
+ * card itself.
+ */
+async function loadIssue(
+  db: Db,
+  projectId: number,
+  number: number,
+  actor: UserRow,
+  role: MemberRole,
+  gate: typeof assertIssueReadable,
+) {
   const rows = await db
     .select({
       id: issues.id,
       specVersion: issues.specVersion,
       specReviewStatus: issues.specReviewStatus,
       specUnresolvedComments: issues.specUnresolvedComments,
+      authorId: issues.authorId,
+      deletedAt: issues.deletedAt,
     })
     .from(issues)
     .where(and(eq(issues.projectId, projectId), eq(issues.number, number)));
   const row = rows[0];
   if (!row) throw new NotFoundError("issue not found");
+  gate(row, actor, role);
   return row;
 }
 
@@ -79,9 +96,16 @@ export async function pushSpec(
   input: SpecPushInput,
   agentContext: AgentContext | null = null,
 ): Promise<SpecPushResult> {
-  const { project } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireProject(ctx, actor, slug, "writer");
   const db = await ctx.router.forProject(routeInfoOf(project));
-  const issue = await loadIssue(db, project.id, issueNumber);
+  const issue = await loadIssue(
+    db,
+    project.id,
+    issueNumber,
+    actor,
+    role,
+    assertIssueWritable,
+  );
 
   const events: ChangeEvent[] = [];
   const result = await db.transaction(async (tx) => {
@@ -219,9 +243,16 @@ export async function getSpecInfo(
   slug: string,
   issueNumber: number,
 ): Promise<SpecInfo> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await requireProject(ctx, actor, slug, "reader");
   const db = await ctx.router.forProject(routeInfoOf(project));
-  const issue = await loadIssue(db, project.id, issueNumber);
+  const issue = await loadIssue(
+    db,
+    project.id,
+    issueNumber,
+    actor,
+    role,
+    assertIssueReadable,
+  );
 
   const versionRows = await db
     .select()
@@ -262,9 +293,16 @@ export async function getSpecFiles(
   issueNumber: number,
   versionNumber?: number,
 ): Promise<SpecFiles> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await requireProject(ctx, actor, slug, "reader");
   const db = await ctx.router.forProject(routeInfoOf(project));
-  const issue = await loadIssue(db, project.id, issueNumber);
+  const issue = await loadIssue(
+    db,
+    project.id,
+    issueNumber,
+    actor,
+    role,
+    assertIssueReadable,
+  );
 
   let version: typeof specVersions.$inferSelect | undefined;
   if (versionNumber === undefined) {
@@ -390,9 +428,16 @@ export async function submitSpecReview(
   input: SpecReviewSubmitInput,
   agentContext: AgentContext | null = null,
 ): Promise<SpecReviewResult> {
-  const { project } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireProject(ctx, actor, slug, "writer");
   const db = await ctx.router.forProject(routeInfoOf(project));
-  const issue = await loadIssue(db, project.id, issueNumber);
+  const issue = await loadIssue(
+    db,
+    project.id,
+    issueNumber,
+    actor,
+    role,
+    assertIssueWritable,
+  );
 
   const events: ChangeEvent[] = [];
   const result = await db.transaction(async (tx) => {
@@ -617,9 +662,16 @@ export async function resolveSpecComments(
   input: SpecCommentsResolveInput,
   agentContext: AgentContext | null = null,
 ): Promise<{ resolved: number[] }> {
-  const { project } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireProject(ctx, actor, slug, "writer");
   const db = await ctx.router.forProject(routeInfoOf(project));
-  const issue = await loadIssue(db, project.id, issueNumber);
+  const issue = await loadIssue(
+    db,
+    project.id,
+    issueNumber,
+    actor,
+    role,
+    assertIssueWritable,
+  );
 
   const events: ChangeEvent[] = [];
   const resolved = await db.transaction(async (tx) => {
@@ -709,9 +761,16 @@ export async function listSpecComments(
   slug: string,
   issueNumber: number,
 ): Promise<SpecComments> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await requireProject(ctx, actor, slug, "reader");
   const db = await ctx.router.forProject(routeInfoOf(project));
-  const issue = await loadIssue(db, project.id, issueNumber);
+  const issue = await loadIssue(
+    db,
+    project.id,
+    issueNumber,
+    actor,
+    role,
+    assertIssueReadable,
+  );
 
   const current = await currentVersionRow(db, issue.id);
   if (!current) throw new NotFoundError("this issue has no spec");

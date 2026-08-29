@@ -35,6 +35,7 @@ import {
   statusEventOf,
   toIssue,
 } from "./issues.ts";
+import { assertIssueWritable } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
 /**
@@ -55,16 +56,22 @@ export async function executeCommands(
   input: CommandSubmitInput,
   agentContext: AgentContext | null = null,
 ): Promise<CommandSubmitResult> {
-  const { project } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireProject(ctx, actor, slug, "writer");
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issueRows = await db
-    .select({ id: issues.id, number: issues.number })
+    .select({
+      id: issues.id,
+      number: issues.number,
+      authorId: issues.authorId,
+      deletedAt: issues.deletedAt,
+    })
     .from(issues)
     .where(
       and(eq(issues.projectId, project.id), eq(issues.number, issueNumber)),
     );
   const issue = issueRows[0];
   if (!issue) throw new NotFoundError("issue not found");
+  assertIssueWritable(issue, actor, role);
 
   // Validate and prefetch BEFORE the transaction opens: in shared placement
   // both tiers share one PGlite connection, so a system query issued inside

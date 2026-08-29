@@ -3,6 +3,7 @@ import { scanReferenceTokens } from "@todou/shared";
 import { and, desc, eq, inArray, lte } from "drizzle-orm";
 import type { Db } from "../db/driver.ts";
 import { issueEvents, issues, refFormats } from "../db/project-schema.ts";
+import { notDeleted } from "./trash.ts";
 
 /**
  * Blank out fenced code blocks and inline code spans so their contents
@@ -98,7 +99,13 @@ export async function recordReferences(
     .select({ id: issues.id, number: issues.number })
     .from(issues)
     .where(
-      and(eq(issues.projectId, projectId), inArray(issues.number, numbers)),
+      and(
+        eq(issues.projectId, projectId),
+        inArray(issues.number, numbers),
+        // A card in the trash takes no new references, exactly like a number
+        // nobody ever used (T-145).
+        notDeleted,
+      ),
     );
   if (targets.length === 0) return [];
 

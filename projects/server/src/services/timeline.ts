@@ -49,6 +49,7 @@ import {
   encodeTimelineCursor as encodeCursor,
 } from "./cursor.ts";
 import { listProjects } from "./projects.ts";
+import { assertIssueReadable, notDeleted } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
 const KIND_COMMENT = 0 as const;
@@ -272,17 +273,22 @@ export async function getTimeline(
   issueNumber: number,
   query: TimelineQuery,
 ): Promise<TimelinePage> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await requireProject(ctx, actor, slug, "reader");
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   const issueRows = await db
-    .select({ id: issues.id })
+    .select({
+      id: issues.id,
+      authorId: issues.authorId,
+      deletedAt: issues.deletedAt,
+    })
     .from(issues)
     .where(
       and(eq(issues.projectId, project.id), eq(issues.number, issueNumber)),
     );
   const issue = issueRows[0];
   if (!issue) throw new NotFoundError("issue not found");
+  assertIssueReadable(issue, actor, role);
 
   // Directions: `after` walks forward, `before` walks backward, `last`
   // takes the newest page. Default (no cursor) reads from the beginning.
@@ -417,6 +423,18 @@ async function fetchProjectActivityRows(opts: {
     filterConditions(opts.filters, opts.visibleSlugs);
   commentConditions.push(eq(comments.projectId, projectId));
   eventConditions.push(eq(issueEvents.projectId, projectId));
+  // A card in the trash goes quiet everywhere except about the trashing
+  // itself (T-145): an agent blocked on `todou watch` learns the card is
+  // gone, by number, and its cursor keeps advancing over a continuous
+  // stream. Everything else about the card — including its comments — stops
+  // reaching the feed the moment it is deleted, and comes back on restore.
+  commentConditions.push(notDeleted);
+  const trashAudible = inArray(issueEvents.type, [
+    "deleted",
+    "restored",
+  ] satisfies IssueEventType[]);
+  const eventVisible = or(notDeleted, trashAudible);
+  if (eventVisible) eventConditions.push(eventVisible);
   if (cursor) {
     const c1 = beyond(
       comments.createdAt,

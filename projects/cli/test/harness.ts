@@ -110,6 +110,8 @@ export async function runCli(
     env?: Record<string, string | undefined>;
     cwd?: string;
     stdinText?: string;
+    /** Marks the stub stdin as a terminal, for the prompt paths. */
+    stdinIsTTY?: boolean;
     clock?: Clock;
     openBrowser?: (url: string) => void;
   } = {},
@@ -131,8 +133,13 @@ export async function runCli(
   stdout.on("data", (chunk) => outChunks.push(Buffer.from(chunk)));
   stderr.on("data", (chunk) => errChunks.push(Buffer.from(chunk)));
 
+  const stdin = Readable.from([options.stdinText ?? ""]);
+  if (options.stdinIsTTY) {
+    (stdin as Readable & { isTTY?: boolean }).isTTY = true;
+  }
+
   const exitCode = await cli.run(argv, {
-    stdin: Readable.from([options.stdinText ?? ""]),
+    stdin,
     stdout,
     stderr,
     colorDepth: 1,

@@ -132,6 +132,11 @@ export const issues = pgTable(
     specUnresolvedComments: integer("spec_unresolved_comments")
       .notNull()
       .default(0),
+    // Trash (T-145): NULL = live. The row and everything hanging off it stay
+    // put, so restoring is clearing these two columns — and the unique index
+    // below, untouched by a delete, is why a restore can never collide.
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: bigint("deleted_by", { mode: "number" }),
   },
   (t) => [
     uniqueIndex("issues_project_number_idx").on(t.projectId, t.number),
@@ -217,6 +222,8 @@ export const issueEvents = pgTable(
         "spec_pushed",
         "spec_review",
         "spec_comments_resolved",
+        "deleted",
+        "restored",
       ],
     }).notNull(),
     payload: jsonb("payload").notNull().default({}),

@@ -3,7 +3,12 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearch,
+} from "@tanstack/react-router";
 import type {
   IssueCounts,
   IssueListItem,
@@ -11,6 +16,7 @@ import type {
   Label,
   Status,
 } from "@todou/shared";
+import { ArrowLeftIcon, Trash2Icon } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import {
   csvToIds,
@@ -24,12 +30,14 @@ import {
   listParams,
   useIssueLabelsMutation,
   useIssueStatusMutation,
+  useRestoreIssueMutation,
 } from "@/api/issues.ts";
 import {
   api,
   labelsQuery,
   membersQuery,
   statusesQuery,
+  useIsProjectAdmin,
 } from "@/api/queries.ts";
 import { FilterBar } from "@/components/issue/filter-bar.tsx";
 import {
@@ -38,25 +46,41 @@ import {
   IssueRowMeta,
   useIssueListGrid,
 } from "@/components/issue/issue-row.tsx";
-import {
-  useCanCreateLabels,
-  useCreateLabel,
-} from "@/components/issue/label-picker.tsx";
+import { useCreateLabel } from "@/components/issue/label-picker.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
+/**
+ * The list route serves two pages: the issue list and the trash (T-145).
+ * They are separate components, not one with a branch, because they need
+ * different hooks — a conditional inside one component would change the hook
+ * count the moment `?deleted=1` is toggled.
+ */
 export function IssueListPage() {
   const { slug } = useParams({ from: "/authed/projects/$slug" });
   const search = useSearch({ from: "/authed/projects/$slug/" });
-  const navigate = useNavigate();
+  return search.deleted ? (
+    <TrashView slug={slug} search={search} />
+  ) : (
+    <ProjectIssueListPage slug={slug} search={search} />
+  );
+}
 
+function ProjectIssueListPage({
+  slug,
+  search,
+}: {
+  slug: string;
+  search: IssueSearch;
+}) {
+  const navigate = useNavigate();
   const statuses = useSuspenseQuery(statusesQuery(slug));
   const labels = useSuspenseQuery(labelsQuery(slug));
   const members = useSuspenseQuery(membersQuery(slug));
   const counts = useSuspenseQuery(issueCountsQuery(slug, search));
-  const canCreateLabels = useCanCreateLabels(slug);
+  const isAdmin = useIsProjectAdmin(slug);
   const createLabel = useCreateLabel(slug);
 
   const setSearch = (next: IssueSearch) =>
@@ -125,6 +149,21 @@ export function IssueListPage() {
           scopeName="this project"
           className="ml-auto"
         />
+        {/* Admin-only, because only they see the whole project's trash. An
+            author with deleted cards of their own reaches the same view by
+            URL or through `todou issue list --deleted`. */}
+        {isAdmin && (
+          <Button variant="ghost" size="sm" asChild>
+            <Link
+              to="/projects/$slug"
+              params={{ slug }}
+              search={{ deleted: true }}
+            >
+              <Trash2Icon />
+              Trash
+            </Link>
+          </Button>
+        )}
       </div>
       {grouped ? (
         <GroupedIssueList
@@ -133,7 +172,7 @@ export function IssueListPage() {
           counts={counts.data}
           allLabels={labels.data}
           search={search}
-          onCreateLabel={canCreateLabels ? createLabel : undefined}
+          onCreateLabel={isAdmin ? createLabel : undefined}
         />
       ) : (
         <FlatIssueList
@@ -141,8 +180,84 @@ export function IssueListPage() {
           statuses={statuses.data}
           allLabels={labels.data}
           search={search}
-          onCreateLabel={canCreateLabels ? createLabel : undefined}
+          onCreateLabel={isAdmin ? createLabel : undefined}
         />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The trash (T-145): one flat list of what the viewer may see in there, each
+ * row offering the one action that applies. No filter bar and no grouping —
+ * open/closed and status columns describe work in progress, and nothing in
+ * here is in progress.
+ *
+ * Exported for tests.
+ */
+export function TrashView({
+  slug,
+  search,
+}: {
+  slug: string;
+  search: IssueSearch;
+}) {
+  const issues = useSuspenseQuery(issuesQuery(slug, search));
+  const restore = useRestoreIssueMutation(slug);
+  const grid = useIssueListGrid();
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="flex items-center gap-2 font-heading text-lg font-medium">
+          <Trash2Icon className="size-4 text-muted-foreground" />
+          Trash
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Deleted issues, newest first. Restoring brings a card back with
+          everything on it; numbers are never reused.
+        </p>
+        <Button variant="ghost" size="sm" asChild className="ml-auto">
+          <Link to="/projects/$slug" params={{ slug }} search={{}}>
+            <ArrowLeftIcon />
+            Back to issues
+          </Link>
+        </Button>
+      </div>
+      {issues.data.items.length === 0 ? (
+        <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
+          The trash is empty. 干干净净 🧺
+        </div>
+      ) : (
+        <ul className={cn("rounded-lg border", grid)}>
+          {issues.data.items.map((issue) => (
+            <IssueRow
+              key={issue.id}
+              slug={slug}
+              issue={issue}
+              trailing={
+                <span className="ml-auto flex shrink-0 items-center gap-2">
+                  {issue.deleted_at && (
+                    <span
+                      className="text-xs whitespace-nowrap text-muted-foreground"
+                      title={issue.deleted_at}
+                    >
+                      deleted {new Date(issue.deleted_at).toLocaleDateString()}
+                    </span>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    disabled={restore.isPending}
+                    onClick={() => restore.mutate(issue.number)}
+                  >
+                    Restore
+                  </Button>
+                </span>
+              }
+            />
+          ))}
+        </ul>
       )}
     </div>
   );

@@ -6,8 +6,10 @@ import { CommentAddCommand, CommentEditCommand } from "./comment.ts";
 import {
   IssueCloseCommand,
   IssueCreateCommand,
+  IssueDeleteCommand,
   IssueEditCommand,
   IssueListCommand,
+  IssueRestoreCommand,
   IssueViewCommand,
   IssueWatchCommand,
 } from "./issue.ts";
@@ -61,6 +63,8 @@ export const commands: Array<CommandClass<CliContext>> = [
   IssueWatchCommand,
   IssueEditCommand,
   IssueCloseCommand,
+  IssueDeleteCommand,
+  IssueRestoreCommand,
   CommentAddCommand,
   CommentEditCommand,
   QuestionListCommand,

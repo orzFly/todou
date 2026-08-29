@@ -29,6 +29,7 @@ import {
   globalSlugEntries,
 } from "./reference-directory.ts";
 import { refPrefixAt, stripMarkdownCode } from "./references.ts";
+import { notDeleted } from "./trash.ts";
 
 /**
  * Hide `cross_referenced` events whose source project the viewer cannot
@@ -193,7 +194,11 @@ async function issuesOfComments(
     .from(comments)
     .innerJoin(issues, eq(comments.issueId, issues.id))
     .where(
-      and(eq(comments.projectId, projectId), inArray(comments.id, [...ids])),
+      and(
+        eq(comments.projectId, projectId),
+        inArray(comments.id, [...ids]),
+        notDeleted,
+      ),
     );
   return rows.map((row) => row.number);
 }
@@ -258,7 +263,11 @@ async function recordInProject(
     .select({ id: issues.id, number: issues.number })
     .from(issues)
     .where(
-      and(eq(issues.projectId, target.id), inArray(issues.number, numbers)),
+      and(
+        eq(issues.projectId, target.id),
+        inArray(issues.number, numbers),
+        notDeleted,
+      ),
     );
   if (rows.length === 0) return;
 

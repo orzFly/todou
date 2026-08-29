@@ -3,12 +3,17 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { useParams } from "@tanstack/react-router";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import { formatRef, type Issue, type Status } from "@todou/shared";
-import { CheckIcon, PencilIcon, XIcon } from "lucide-react";
+import { CheckIcon, PencilIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
-import { issueQuery, useIssueStatusMutation } from "@/api/issues.ts";
+import {
+  issueQuery,
+  useDeleteIssueMutation,
+  useIssueStatusMutation,
+  useRestoreIssueMutation,
+} from "@/api/issues.ts";
 import { useRefPlacement } from "@/api/prefs.ts";
 import {
   api,
@@ -51,6 +56,7 @@ import {
 } from "@/components/timeline/composer.tsx";
 import { Timeline } from "@/components/timeline/timeline.tsx";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -77,16 +83,19 @@ export function IssueDetailPage() {
   // Wraps TitleBlock rather than living inside it, so the floating bar's
   // trigger is unaffected by the block swapping itself for the rename form.
   const titleRef = useRef<HTMLDivElement>(null);
-  const viewer = {
-    id: me.data.id,
-    isAdmin: members.data.some(
-      (m) => m.user.id === me.data.id && m.role === "admin",
-    ),
-  };
+  const isAdmin = members.data.some(
+    (m) => m.user.id === me.data.id && m.role === "admin",
+  );
+  const viewer = { id: me.data.id, isAdmin };
+  // Only the author or an admin can even reach a deleted card, so anyone
+  // seeing this banner may act on it (T-145).
+  const trashed = issue.data.deleted_at !== null;
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_240px]">
-      <MarkReadOnView slug={slug} number={issueNumber} />
+      {/* Nothing in the trash is ever unread, so there is no position to
+          advance while looking at one — the endpoint would 404. */}
+      {!trashed && <MarkReadOnView slug={slug} number={issueNumber} />}
       {/* Two layers on purpose: the floating bar's zero-height host has to
           stay out of the space-y flow, which would otherwise add a gap below
           it, and its sticky container has to span the whole column. */}
@@ -97,10 +106,11 @@ export function IssueDetailPage() {
           watchTarget={titleRef}
         />
         <div className="space-y-4">
+          {trashed && <TrashBanner slug={slug} issue={issue.data} />}
           <div ref={titleRef}>
-            <TitleBlock slug={slug} issue={issue.data} />
+            <TitleBlock slug={slug} issue={issue.data} readOnly={trashed} />
           </div>
-          <BodyBlock slug={slug} issue={issue.data} />
+          <BodyBlock slug={slug} issue={issue.data} readOnly={trashed} />
           <SpecEntryRow slug={slug} issueNumber={issueNumber} />
           <AttachmentList slug={slug} issueNumber={issueNumber} />
           <Separator />
@@ -112,16 +122,18 @@ export function IssueDetailPage() {
           />
           {/* Floats at the viewport bottom while the timeline scrolls by,
               and settles into flow at the end of the page (GitHub-style). */}
-          <div className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4">
-            <Composer
-              slug={slug}
-              issueNumber={issueNumber}
-              onSend={composer.send}
-              onSendWithCommands={composer.sendWithCommands}
-              failed={composer.pending.filter((p) => p.failed)}
-              onRetry={composer.retry}
-            />
-          </div>
+          {!trashed && (
+            <div className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4">
+              <Composer
+                slug={slug}
+                issueNumber={issueNumber}
+                onSend={composer.send}
+                onSendWithCommands={composer.sendWithCommands}
+                failed={composer.pending.filter((p) => p.failed)}
+                onRetry={composer.retry}
+              />
+            </div>
+          )}
         </div>
       </div>
       <Sidebar
@@ -130,12 +142,56 @@ export function IssueDetailPage() {
         statuses={statuses.data}
         allLabels={labels.data}
         members={members.data}
+        canDelete={isAdmin || issue.data.author.id === me.data.id}
+        trashed={trashed}
       />
     </div>
   );
 }
 
-function TitleBlock({ slug, issue }: { slug: string; issue: Issue }) {
+/**
+ * What a trashed card wears instead of its edit affordances. The restore
+ * button sits in the banner rather than the sidebar because it is the one
+ * thing to do on this page, and the banner is what explains why.
+ */
+function TrashBanner({ slug, issue }: { slug: string; issue: Issue }) {
+  const restore = useRestoreIssueMutation(slug);
+  const by = issue.deleted_by ? displayNameOf(issue.deleted_by) : "someone";
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
+      <Trash2Icon className="size-4 shrink-0 text-destructive" />
+      <span>
+        In the trash — deleted by {by}
+        {issue.deleted_at && (
+          <span title={issue.deleted_at}>
+            {" "}
+            on {new Date(issue.deleted_at).toLocaleString()}
+          </span>
+        )}
+        .
+      </span>
+      <Button
+        size="sm"
+        variant="outline"
+        className="ml-auto"
+        disabled={restore.isPending}
+        onClick={() => restore.mutate(issue.number)}
+      >
+        Restore
+      </Button>
+    </div>
+  );
+}
+
+function TitleBlock({
+  slug,
+  issue,
+  readOnly = false,
+}: {
+  slug: string;
+  issue: Issue;
+  readOnly?: boolean;
+}) {
   const refPrefix = useRefPrefix(slug);
   const refLeads = useRefPlacement("detail") === "before";
   const [editing, setEditing] = useState(false);
@@ -207,19 +263,29 @@ function TitleBlock({ slug, issue }: { slug: string; issue: Issue }) {
           </>
         )}
       </h1>
-      <Button
-        size="icon-sm"
-        variant="ghost"
-        aria-label="edit title"
-        onClick={() => setEditing(true)}
-      >
-        <PencilIcon className="size-4" />
-      </Button>
+      {!readOnly && (
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label="edit title"
+          onClick={() => setEditing(true)}
+        >
+          <PencilIcon className="size-4" />
+        </Button>
+      )}
     </div>
   );
 }
 
-function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
+function BodyBlock({
+  slug,
+  issue,
+  readOnly = false,
+}: {
+  slug: string;
+  issue: Issue;
+  readOnly?: boolean;
+}) {
   const [editing, setEditing] = useState(false);
   const editor = useRef<MarkdownEditorHandle>(null);
   const refCompletion = useRefCompletion(slug);
@@ -277,20 +343,22 @@ function BodyBlock({ slug, issue }: { slug: string; issue: Issue }) {
             fetchRevisions={() => api.getIssueRevisions(slug, issue.number)}
           />
         )}
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          className="ml-auto"
-          aria-label="edit body"
-          onClick={() => {
-            // The editor mounts fresh off issue.body, so entering edit mode
-            // always starts from what is on screen.
-            staging.clear();
-            setEditing(!editing);
-          }}
-        >
-          <PencilIcon className="size-3.5" />
-        </Button>
+        {!readOnly && (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            className="ml-auto"
+            aria-label="edit body"
+            onClick={() => {
+              // The editor mounts fresh off issue.body, so entering edit mode
+              // always starts from what is on screen.
+              staging.clear();
+              setEditing(!editing);
+            }}
+          >
+            <PencilIcon className="size-3.5" />
+          </Button>
+        )}
       </div>
       <div className="px-3 py-2">
         {editing ? (
@@ -361,6 +429,8 @@ function Sidebar({
   statuses,
   allLabels,
   members,
+  canDelete,
+  trashed,
 }: {
   slug: string;
   issue: Issue;
@@ -369,11 +439,17 @@ function Sidebar({
   members: Array<{
     user: { id: number; login: string; display_name: string };
   }>;
+  canDelete: boolean;
+  trashed: boolean;
 }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const refPrefix = useRefPrefix(slug);
   const statusMutation = useIssueStatusMutation(slug);
   const canCreateLabels = useCanCreateLabels(slug);
   const createLabel = useCreateLabel(slug);
+  const deleteIssue = useDeleteIssueMutation(slug);
+  const [confirming, setConfirming] = useState(false);
   const patch = useMutation({
     mutationFn: (input: { label_ids?: number[]; assignee_ids?: number[] }) =>
       api.updateIssue(slug, issue.number, input),
@@ -398,29 +474,35 @@ function Sidebar({
         <h3 className="text-xs font-medium text-muted-foreground uppercase">
           Status
         </h3>
-        <DropdownMenu>
-          <DropdownMenuTrigger className="cursor-pointer">
-            <StatusPill status={issue.status} />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            {statuses.map((s) => (
-              <DropdownMenuItem
-                key={s.id}
-                onSelect={() =>
-                  statusMutation.mutate({
-                    issueNumber: issue.number,
-                    status: s,
-                  })
-                }
-              >
-                <span className="w-4">
-                  {s.id === issue.status.id && <CheckIcon className="size-4" />}
-                </span>
-                <StatusPill status={s} className="border-0 px-0" />
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {trashed ? (
+          <StatusPill status={issue.status} />
+        ) : (
+          <DropdownMenu>
+            <DropdownMenuTrigger className="cursor-pointer">
+              <StatusPill status={issue.status} />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              {statuses.map((s) => (
+                <DropdownMenuItem
+                  key={s.id}
+                  onSelect={() =>
+                    statusMutation.mutate({
+                      issueNumber: issue.number,
+                      status: s,
+                    })
+                  }
+                >
+                  <span className="w-4">
+                    {s.id === issue.status.id && (
+                      <CheckIcon className="size-4" />
+                    )}
+                  </span>
+                  <StatusPill status={s} className="border-0 px-0" />
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </section>
 
       <section className="space-y-2">
@@ -430,24 +512,26 @@ function Sidebar({
         <div className="flex flex-wrap items-center gap-1.5">
           <LabelChips labels={issue.labels} />
         </div>
-        <LabelPicker
-          allLabels={allLabels}
-          selected={issue.labels}
-          onToggle={(label) => {
-            const current = issue.labels.map((l) => l.id);
-            patch.mutate({
-              label_ids: current.includes(label.id)
-                ? current.filter((id) => id !== label.id)
-                : [...current, label.id],
-            });
-          }}
-          onCreate={canCreateLabels ? createLabel : undefined}
-          trigger={
-            <Button variant="outline" size="sm">
-              Edit labels
-            </Button>
-          }
-        />
+        {!trashed && (
+          <LabelPicker
+            allLabels={allLabels}
+            selected={issue.labels}
+            onToggle={(label) => {
+              const current = issue.labels.map((l) => l.id);
+              patch.mutate({
+                label_ids: current.includes(label.id)
+                  ? current.filter((id) => id !== label.id)
+                  : [...current, label.id],
+              });
+            }}
+            onCreate={canCreateLabels ? createLabel : undefined}
+            trigger={
+              <Button variant="outline" size="sm">
+                Edit labels
+              </Button>
+            }
+          />
+        )}
       </section>
 
       <section className="space-y-2">
@@ -459,50 +543,94 @@ function Sidebar({
             <UserChip key={user.id} user={user} />
           ))}
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm">
-              Edit assignees
-            </Button>
-          </DropdownMenuTrigger>
-          {/* Name plus login needs more room than the trigger's width, which
-              is what the menu defaults to. */}
-          <DropdownMenuContent className="w-auto">
-            {members.map((member) => {
-              const active = issue.assignees.some(
-                (a) => a.id === member.user.id,
-              );
-              return (
-                <DropdownMenuItem
-                  key={member.user.id}
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    const current = issue.assignees.map((a) => a.id);
-                    patch.mutate({
-                      assignee_ids: active
-                        ? current.filter((id) => id !== member.user.id)
-                        : [...current, member.user.id],
-                    });
-                  }}
-                >
-                  <span className="w-4">
-                    {active && <CheckIcon className="size-4" />}
-                  </span>
-                  <span className="whitespace-nowrap">
-                    {displayNameOf(member.user)}
-                  </span>
-                  <span className="whitespace-nowrap text-muted-foreground">
-                    @{member.user.login}
-                  </span>
-                </DropdownMenuItem>
-              );
-            })}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {!trashed && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                Edit assignees
+              </Button>
+            </DropdownMenuTrigger>
+            {/* Name plus login needs more room than the trigger's width, which
+                is what the menu defaults to. */}
+            <DropdownMenuContent className="w-auto">
+              {members.map((member) => {
+                const active = issue.assignees.some(
+                  (a) => a.id === member.user.id,
+                );
+                return (
+                  <DropdownMenuItem
+                    key={member.user.id}
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      const current = issue.assignees.map((a) => a.id);
+                      patch.mutate({
+                        assignee_ids: active
+                          ? current.filter((id) => id !== member.user.id)
+                          : [...current, member.user.id],
+                      });
+                    }}
+                  >
+                    <span className="w-4">
+                      {active && <CheckIcon className="size-4" />}
+                    </span>
+                    <span className="whitespace-nowrap">
+                      {displayNameOf(member.user)}
+                    </span>
+                    <span className="whitespace-nowrap text-muted-foreground">
+                      @{member.user.login}
+                    </span>
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </section>
 
       {/* Placement per the T-63 verdict: after Assignees, verdict-free. */}
       <SpecSidebarSection slug={slug} issueNumber={issue.number} />
+
+      {canDelete && !trashed && (
+        <section className="space-y-2">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase">
+            Danger zone
+          </h3>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => setConfirming(true)}
+          >
+            <Trash2Icon className="size-3.5" />
+            Delete issue
+          </Button>
+          <ConfirmDialog
+            open={confirming}
+            onOpenChange={setConfirming}
+            title="Move this issue to the trash?"
+            description={
+              <>
+                <strong>
+                  {formatRef(refPrefix, issue.number)} {issue.title}
+                </strong>{" "}
+                disappears from lists, search and references, and every write to
+                it is refused. Nothing is erased: you can restore it from the
+                trash, and its number is never reused.
+              </>
+            }
+            confirmLabel="Move to trash"
+            destructive
+            pending={deleteIssue.isPending}
+            onConfirm={() =>
+              deleteIssue.mutate(issue.number, {
+                // Redirect after a mutation — the page we are standing on is
+                // about to stop being reachable for most viewers.
+                onSuccess: () =>
+                  navigate({ to: "/projects/$slug", params: { slug } }),
+              })
+            }
+          />
+        </section>
+      )}
     </aside>
   );
 }

@@ -462,6 +462,11 @@ export class TodouClient {
     this.request<Issue>("PATCH", `/projects/${slug}/issues/${number}`, {
       json: input,
     });
+  /** Move an issue to the trash — reversible, see restoreIssue (T-145). */
+  deleteIssue = (slug: string, number: number) =>
+    this.request<void>("DELETE", `/projects/${slug}/issues/${number}`);
+  restoreIssue = (slug: string, number: number) =>
+    this.request<Issue>("POST", `/projects/${slug}/issues/${number}/restore`);
   markIssueRead = (slug: string, number: number, input: IssueReadInput = {}) =>
     this.request<void>("PUT", `/projects/${slug}/issues/${number}/read`, {
       json: input,

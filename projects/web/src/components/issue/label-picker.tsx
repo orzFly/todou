@@ -1,9 +1,9 @@
-import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import type { Label } from "@todou/shared";
 import { CheckIcon, XIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
-import { api, membersQuery, meQuery } from "@/api/queries.ts";
+import { api, useIsProjectAdmin } from "@/api/queries.ts";
 import { LabelChip, LabelInline } from "@/components/issue/label-chip.tsx";
 import {
   Popover,
@@ -20,11 +20,7 @@ import { cn } from "@/lib/utils";
 
 /** Label creation is admin-only server-side; the UI hides the affordance. */
 export function useCanCreateLabels(slug: string): boolean {
-  const me = useSuspenseQuery(meQuery);
-  const members = useSuspenseQuery(membersQuery(slug));
-  return members.data.some(
-    (m) => m.user.id === me.data.id && m.role === "admin",
-  );
+  return useIsProjectAdmin(slug);
 }
 
 /** The onCreate implementation shared by all picker call sites. */

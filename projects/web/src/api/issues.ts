@@ -31,6 +31,10 @@ export const issueSearchSchema = z.object({
   order: z.enum(["asc", "desc"]).optional(),
   // Grouping is the default, so only the opt-out appears in the URL.
   group: z.enum(["none"]).optional(),
+  // The trash (T-145) is a mode of the list route, not a route of its own —
+  // so it is one param, and the same URL is shareable with whoever else may
+  // see it. Present only when on.
+  deleted: z.union([z.literal(true), z.literal(1), z.literal("1")]).optional(),
 });
 export type IssueSearch = z.infer<typeof issueSearchSchema>;
 
@@ -53,8 +57,25 @@ export function effectiveGroup(search: IssueSearch): "status" | "none" {
   return search.group ?? "status";
 }
 
+type ListParams = {
+  q?: string;
+  category?: "open" | "closed";
+  status?: number[];
+  label?: number[];
+  assignee?: number;
+  sort?: "created" | "updated" | "number";
+  order?: "asc" | "desc";
+  deleted?: true;
+};
+
 /** URL search state → list API params, with the defaults applied. */
-export function listParams(search: IssueSearch) {
+export function listParams(search: IssueSearch): ListParams {
+  if (search.deleted) {
+    // The trash comes back as one flat set the server orders by deletion
+    // time. The category tabs, the status/label/assignee filters and the
+    // sort controls all describe live work, so none of them is passed on.
+    return { q: search.q, deleted: true };
+  }
   const category = effectiveCategory(search);
   return {
     q: search.q,
@@ -312,6 +333,46 @@ export function useIssueStatusMutation(slug: string) {
         queryKey: ["issue", slug, vars.issueNumber],
       });
     },
+  });
+}
+
+/**
+ * Everything a delete or a restore can move: the card itself, every list and
+ * count page of the project (the trash is one of them), and the inbox, which
+ * a deleted card drops straight out of.
+ */
+function invalidateAfterTrashMove(
+  queryClient: ReturnType<typeof useQueryClient>,
+  slug: string,
+  issueNumber: number,
+): void {
+  queryClient.invalidateQueries({ queryKey: ["issues", slug] });
+  queryClient.invalidateQueries({ queryKey: ["issue", slug, issueNumber] });
+  queryClient.invalidateQueries({ queryKey: ["inbox"] });
+  // Every rendered <IssueLink> to this card reads through here, and this is
+  // the invalidation that makes them flip to plain text (and back).
+  queryClient.invalidateQueries({ queryKey: ["issue-ref", slug] });
+}
+
+/** Move an issue to the trash (T-145). */
+export function useDeleteIssueMutation(slug: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (issueNumber: number) => api.deleteIssue(slug, issueNumber),
+    onError: (error) => toast.error(`Could not delete issue: ${error.message}`),
+    onSettled: (_data, _error, issueNumber) =>
+      invalidateAfterTrashMove(queryClient, slug, issueNumber),
+  });
+}
+
+export function useRestoreIssueMutation(slug: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (issueNumber: number) => api.restoreIssue(slug, issueNumber),
+    onError: (error) =>
+      toast.error(`Could not restore issue: ${error.message}`),
+    onSettled: (_data, _error, issueNumber) =>
+      invalidateAfterTrashMove(queryClient, slug, issueNumber),
   });
 }
 

@@ -22,6 +22,10 @@ export const IssueEventType = z.enum([
   "spec_pushed",
   "spec_review",
   "spec_comments_resolved",
+  // Trash (T-145). Payload is empty on purpose: actor and timestamp are the
+  // whole record, so the trace a deleted card leaves behind carries no title.
+  "deleted",
+  "restored",
 ]);
 export type IssueEventType = z.infer<typeof IssueEventType>;
 

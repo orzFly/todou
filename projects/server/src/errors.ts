@@ -90,6 +90,17 @@ export class CliDistNotConfiguredError extends DomainError {
   }
 }
 
+/** Writing to a card that is in the trash (T-145) — restore it first. */
+export class IssueDeletedError extends DomainError {
+  constructor() {
+    super(
+      409,
+      "issue_deleted",
+      "this issue is in the trash — restore it before changing it",
+    );
+  }
+}
+
 export class DirectUploadUnavailableError extends DomainError {
   constructor() {
     super(

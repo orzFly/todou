@@ -18,6 +18,7 @@ import {
   routeInfoOf,
 } from "./access.ts";
 import { crossRefVisibleCondition } from "./cross-references.ts";
+import { notDeleted } from "./trash.ts";
 
 /**
  * The user's unread epoch in this project, created lazily on first use so
@@ -124,6 +125,7 @@ export async function unreadIssueState(
       and(
         inArray(issues.id, issueIds),
         ne(issues.authorId, userId),
+        notDeleted,
         sql`${issues.createdAt} > coalesce(${issueReads.lastSeenAt}, ${frontier})`,
       ),
     );
@@ -195,7 +197,15 @@ export async function markIssueRead(
   const issueRows = await db
     .select({ id: issues.id })
     .from(issues)
-    .where(and(eq(issues.projectId, project.id), eq(issues.number, number)));
+    .where(
+      and(
+        eq(issues.projectId, project.id),
+        eq(issues.number, number),
+        // Nothing in the trash is ever unread, so there is no position to
+        // advance on one — not even for the admin looking at it.
+        notDeleted,
+      ),
+    );
   const issue = issueRows[0];
   if (!issue) throw new NotFoundError("issue not found");
 

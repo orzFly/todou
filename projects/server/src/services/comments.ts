@@ -25,6 +25,7 @@ import {
 import { canonicalizeComponent, questionCount } from "./questions.ts";
 import { recordReferences, refPrefixAt } from "./references.ts";
 import { deleteRevisionsFor, recordRevision } from "./revisions.ts";
+import { assertIssueReadable, assertIssueWritable } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
 export type CommentRow = typeof comments.$inferSelect;
@@ -51,7 +52,12 @@ export async function toTimelineComment(
 
 async function loadIssue(db: Db, projectId: number, number: number) {
   const rows = await db
-    .select({ id: issues.id, number: issues.number })
+    .select({
+      id: issues.id,
+      number: issues.number,
+      authorId: issues.authorId,
+      deletedAt: issues.deletedAt,
+    })
     .from(issues)
     .where(and(eq(issues.projectId, projectId), eq(issues.number, number)));
   const row = rows[0];
@@ -162,9 +168,10 @@ export async function createComment(
   input: CommentCreateInput,
   agentContext: AgentContext | null = null,
 ): Promise<TimelineComment> {
-  const { project } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireProject(ctx, actor, slug, "writer");
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(db, project.id, issueNumber);
+  assertIssueWritable(issue, actor, role);
 
   const component =
     input.component === undefined
@@ -217,9 +224,10 @@ export async function getComment(
   issueNumber: number,
   commentId: number,
 ): Promise<TimelineComment> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await requireProject(ctx, actor, slug, "reader");
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(db, project.id, issueNumber);
+  assertIssueReadable(issue, actor, role);
 
   const rows = await db
     .select()
@@ -241,15 +249,24 @@ export async function locateComment(
   slug: string,
   commentId: number,
 ): Promise<CommentLocation> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await requireProject(ctx, actor, slug, "reader");
   const db = await ctx.router.forProject(routeInfoOf(project));
   const rows = await db
-    .select({ comment: comments, number: issues.number })
+    .select({
+      comment: comments,
+      number: issues.number,
+      authorId: issues.authorId,
+      deletedAt: issues.deletedAt,
+    })
     .from(comments)
     .innerJoin(issues, eq(comments.issueId, issues.id))
     .where(and(eq(comments.projectId, project.id), eq(comments.id, commentId)));
   const row = rows[0];
   if (!row) throw new NotFoundError("comment not found");
+  // This endpoint reaches a comment by id alone, so the issue's own gate
+  // never ran: without this, a bare `#comment-M` would hand out the body of
+  // a comment on a deleted card.
+  assertIssueReadable(row, actor, role);
   // The ref is a label for the reader, so it is spelled in the format in
   // force now — not the one the comment was written under (T-80).
   const prefix = await refPrefixAt(db, project.id, new Date());
@@ -270,6 +287,7 @@ async function loadCommentForWrite(
   const { project, role } = await requireProject(ctx, actor, slug, "writer");
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(db, project.id, issueNumber);
+  assertIssueWritable(issue, actor, role);
 
   const rows = await db
     .select()

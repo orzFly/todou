@@ -12,6 +12,7 @@ import type { Db } from "../db/driver.ts";
 import { comments, issues, revisions } from "../db/project-schema.ts";
 import { NotFoundError } from "../errors.ts";
 import { requireProject, routeInfoOf } from "./access.ts";
+import { assertIssueReadable } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
 export type RevisionSubjectType =
@@ -123,17 +124,23 @@ export async function listIssueRevisions(
   issueNumber: number,
   query: RevisionQuery,
 ): Promise<RevisionPage> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await requireProject(ctx, actor, slug, "reader");
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   const issueRows = await db
-    .select({ id: issues.id, body: issues.body })
+    .select({
+      id: issues.id,
+      body: issues.body,
+      authorId: issues.authorId,
+      deletedAt: issues.deletedAt,
+    })
     .from(issues)
     .where(
       and(eq(issues.projectId, project.id), eq(issues.number, issueNumber)),
     );
   const issue = issueRows[0];
   if (!issue) throw new NotFoundError("issue not found");
+  assertIssueReadable(issue, actor, role);
 
   const items = await listRevisions(ctx, db, {
     projectId: project.id,
@@ -153,17 +160,22 @@ export async function listCommentRevisions(
   commentId: number,
   query: RevisionQuery,
 ): Promise<RevisionPage> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await requireProject(ctx, actor, slug, "reader");
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   const issueRows = await db
-    .select({ id: issues.id })
+    .select({
+      id: issues.id,
+      authorId: issues.authorId,
+      deletedAt: issues.deletedAt,
+    })
     .from(issues)
     .where(
       and(eq(issues.projectId, project.id), eq(issues.number, issueNumber)),
     );
   const issue = issueRows[0];
   if (!issue) throw new NotFoundError("issue not found");
+  assertIssueReadable(issue, actor, role);
 
   const commentRows = await db
     .select({ id: comments.id, body: comments.body })

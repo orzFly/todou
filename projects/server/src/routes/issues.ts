@@ -36,8 +36,10 @@ import {
 import {
   countIssuesByCategory,
   createIssue,
+  deleteIssue,
   getIssue,
   listIssues,
+  restoreIssue,
   updateIssue,
 } from "../services/issues.ts";
 import { listIssueQuestions, submitAnswers } from "../services/questions.ts";
@@ -100,6 +102,30 @@ const patchIssueRoute = createRoute({
     "recorded as a timeline event",
   request: { params: issueParams, body: jsonBody(IssueUpdateInput) },
   responses: { 200: { description: "Updated", ...jsonBody(Issue) } },
+});
+
+const deleteIssueRoute = createRoute({
+  method: "delete",
+  path: "/{slug}/issues/{number}",
+  summary: "Move an issue to the trash (author or project admin)",
+  description:
+    "Reversible: the row and everything hanging off it (comments, events, " +
+    "attachments, spec, revisions, read state) stay put, and POST " +
+    "`…/restore` brings all of it back. While it is in the trash the issue " +
+    "is invisible to everyone but project admins and its author — inbound " +
+    "references to it degrade to plain text, exactly like a number nobody " +
+    "ever used — and every write to it answers 409. The number is never " +
+    "recycled, deleted or not.",
+  request: { params: issueParams },
+  responses: { 204: { description: "Moved to the trash" } },
+});
+
+const restoreIssueRoute = createRoute({
+  method: "post",
+  path: "/{slug}/issues/{number}/restore",
+  summary: "Take an issue back out of the trash (author or project admin)",
+  request: { params: issueParams },
+  responses: { 200: { description: "Restored", ...jsonBody(Issue) } },
 });
 
 const timelineRoute = createRoute({
@@ -289,6 +315,32 @@ export function issueRoutes() {
         slug,
         number,
         c.req.valid("json"),
+        c.get("agentContext"),
+      ),
+      200,
+    );
+  });
+
+  app.openapi(deleteIssueRoute, async (c) => {
+    const { slug, number } = c.req.valid("param");
+    await deleteIssue(
+      c.get("appCtx"),
+      c.get("user"),
+      slug,
+      number,
+      c.get("agentContext"),
+    );
+    return c.body(null, 204);
+  });
+
+  app.openapi(restoreIssueRoute, async (c) => {
+    const { slug, number } = c.req.valid("param");
+    return c.json(
+      await restoreIssue(
+        c.get("appCtx"),
+        c.get("user"),
+        slug,
+        number,
         c.get("agentContext"),
       ),
       200,

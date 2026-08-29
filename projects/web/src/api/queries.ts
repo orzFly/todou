@@ -1,4 +1,8 @@
-import { QueryClient, queryOptions } from "@tanstack/react-query";
+import {
+  QueryClient,
+  queryOptions,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
 import { TodouClient } from "@todou/shared";
 
 /**
@@ -85,6 +89,20 @@ export const membersQuery = (slug: string) =>
     queryFn: () => api.listMembers(slug),
     staleTime: METADATA_STALE_MS,
   });
+
+/**
+ * Whether the viewer administers this project — the gate behind every
+ * admin-only affordance the UI hides. Hiding is cosmetic: the server decides,
+ * and an instance admin (who is an admin everywhere without a membership row)
+ * reads false here and is still allowed through.
+ */
+export function useIsProjectAdmin(slug: string): boolean {
+  const me = useSuspenseQuery(meQuery);
+  const members = useSuspenseQuery(membersQuery(slug));
+  return members.data.some(
+    (m) => m.user.id === me.data.id && m.role === "admin",
+  );
+}
 
 export const agentsQuery = queryOptions({
   queryKey: ["agents"],
