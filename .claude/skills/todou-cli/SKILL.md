@@ -149,9 +149,9 @@ in the terminal so the orchestrator knows to relay as a backstop.
 
 These are affordances, not a licence to write more — **Comment discipline** below still sets the length.
 
-**Attachments.** `todou attach` prints the URL it just created
-(`shot.png → /api/projects/<proj>/attachments/12/download/shot.png`); paste that string verbatim
-rather than rewriting it into an absolute URL.
+**Attachments.** `todou attach` prints the id and the URL it just created
+(`#12 shot.png → /api/projects/<proj>/attachments/12/download/shot.png`); paste the URL verbatim
+rather than rewriting it into an absolute one, and address the id with `attach download`.
 
 - `[name](…/download/name.ext)` links the attachment.
 - `![](…/download/name.ext)` embeds it inline — images, text files and markdown all render in place.

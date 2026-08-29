@@ -301,7 +301,34 @@ describe("comment add", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(posted).toEqual({ body: "a note" });
-    expect(result.stdout).toBe("commented on #7\n");
+    expect(result.stdout).toBe("comment 1 on #7 (#comment-1)\n");
+  });
+
+  it("keeps the --json envelope free of the echoed id line", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "POST",
+        "/api/projects/todou/issues/7/comments",
+        (init: RequestInit) => ({
+          type: "comment",
+          id: 757,
+          author: me,
+          body: jsonBody(init).body,
+          created_at: "2026-08-11T12:00:00Z",
+          edited_at: null,
+        }),
+      ],
+    ]);
+    const result = await runCli(
+      ["comment", "add", "7", "--body", "a note", "--json"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      id: 757,
+      issue_number: 7,
+      issue_ref: "#7",
+    });
   });
 
   it("supports the issue comment alias with a project/number ref", async () => {
@@ -324,7 +351,7 @@ describe("comment add", () => {
       { fetchImpl, env: loggedInEnv() },
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe("commented on #7\n");
+    expect(result.stdout).toBe("comment 1 on #7 (#comment-1)\n");
   });
 });
 
@@ -481,7 +508,7 @@ describe("attach", () => {
     expect(seen).toEqual([
       { filename: "note.txt", issueNumber: "3", type: "text/plain" },
     ]);
-    expect(result.stdout).toBe("note.txt → /attachments/note.txt\n");
+    expect(result.stdout).toBe("#1 note.txt → /attachments/note.txt\n");
   });
 
   it("fails on an unreadable file", async () => {
@@ -559,6 +586,45 @@ describe("attach", () => {
       env: loggedInEnv(),
     });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe("ref.txt → /attachments/ref.txt\n");
+    expect(result.stdout).toBe("#1 ref.txt → /attachments/ref.txt\n");
+  });
+
+  it("keeps the --json envelope free of the id prefix", async () => {
+    const file = join(dir, "envelope.txt");
+    writeFileSync(file, "x");
+    const { fetchImpl } = fakeFetch([
+      [
+        "POST",
+        "/api/projects/todou/attachments/direct-uploads",
+        {
+          __status: 409,
+          body: { error: { code: "direct_upload_unavailable" } },
+        },
+      ],
+      [
+        "POST",
+        "/api/projects/todou/attachments",
+        (init: RequestInit) => {
+          const upload = (init.body as FormData).get("file") as File;
+          return {
+            id: 12,
+            filename: upload.name,
+            content_type: "text/plain",
+            size: 1,
+            url: `/attachments/${upload.name}`,
+            uploader: me,
+            created_at: "2026-08-11T12:00:00Z",
+          };
+        },
+      ],
+    ]);
+    const result = await runCli(["attach", "3", file, "--json"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject([
+      { id: 12, filename: "envelope.txt", url: "/attachments/envelope.txt" },
+    ]);
   });
 });

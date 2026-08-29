@@ -70,7 +70,9 @@ export class AttachCommand extends ProjectCommand {
       this.note(`uploaded ${basename(path)}`);
     }
     this.output(uploaded, () =>
-      uploaded.map((a) => `${a.filename} → ${a.url}`).join("\n"),
+      // `#id` first, the shape `attach list` prints and `attach download`
+      // addresses — an upload otherwise had no way to name what it made.
+      uploaded.map((a) => `#${a.id} ${a.filename} → ${a.url}`).join("\n"),
     );
   }
 }

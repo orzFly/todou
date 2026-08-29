@@ -77,7 +77,9 @@ export class CommentAddCommand extends ProjectCommand {
     );
     this.output(posted, () =>
       component === undefined
-        ? `commented on ${posted.issue_ref}`
+        ? // The id is the permalink anchor and `comment edit`'s argument;
+          // without it here the only way to learn it was a second `--json` call.
+          `comment ${comment.id} on ${posted.issue_ref} (#comment-${comment.id})`
         : `asked ${component.questions.length} question(s) on ${posted.issue_ref} — ` +
           `wait for answers with \`todou question wait ${number} ${comment.id}\``,
     );
