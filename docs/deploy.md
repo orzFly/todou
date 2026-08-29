@@ -177,6 +177,12 @@ placement = "shared"                     # project data lives in the system db
 `project = {id, slug}` in scope — keep it deterministic; per-project moves
 go through the registry's `database_url` override column.
 
+A template that reads `project.slug` would reroute a project the moment
+somebody renames it, so a rename pins that project to the URL it is
+already using by writing `database_url` for it. The project then stops
+following later edits to the template — an `id`-keyed template avoids
+the whole question.
+
 ### Worker-hosted project databases
 
 With `workers` enabled — the default under dedicated placement — each

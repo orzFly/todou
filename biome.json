@@ -38,7 +38,8 @@
         "projects/server/src/config.ts",
         "projects/server/test/config.test.ts",
         "projects/server/test/helpers.ts",
-        "projects/server/test/projects.test.ts"
+        "projects/server/test/projects.test.ts",
+        "projects/server/test/slug-rename.test.ts"
       ],
       "linter": {
         "rules": {

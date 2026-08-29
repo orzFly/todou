@@ -5,12 +5,12 @@ import type {
   RefFormatSetInput,
 } from "@todou/shared";
 import { refToken } from "@todou/shared";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { autolinks, refFormats } from "../db/project-schema.ts";
-import { projects } from "../db/system-schema.ts";
+import { projects, slugHistory } from "../db/system-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
 import { requireProject, routeInfoOf } from "./access.ts";
 import { mirrorRefFormat } from "./reference-directory.ts";
@@ -26,6 +26,10 @@ function overlaps(a: string, b: string): boolean {
  * autolinks. Refused at configuration time rather than left to render as
  * a rule that silently never fires. Only this exact shape collides: any
  * other trailing character keeps the digits from lining up.
+ *
+ * Retired slugs shadow just as hard, because they still resolve (T-156).
+ * The name returned is always the holder's current one, so the message
+ * points at a project the reader can actually go and look at.
  */
 async function shadowedProjectSlug(
   ctx: AppContext,
@@ -34,12 +38,21 @@ async function shadowedProjectSlug(
   const match = /^([a-z0-9][a-z0-9-]*)#$/.exec(prefix);
   const slug = match?.[1];
   if (slug === undefined) return null;
-  const rows = await ctx.router
-    .system()
+  const system = ctx.router.system();
+  const rows = await system
     .select({ slug: projects.slug })
     .from(projects)
     .where(eq(projects.slug, slug));
-  return rows[0]?.slug ?? null;
+  const current = rows[0]?.slug;
+  if (current !== undefined) return current;
+  const historic = await system
+    .select({ slug: projects.slug })
+    .from(slugHistory)
+    .innerJoin(projects, eq(projects.id, slugHistory.projectId))
+    .where(eq(slugHistory.slug, slug))
+    .orderBy(desc(slugHistory.effectiveFrom), desc(slugHistory.id))
+    .limit(1);
+  return historic[0]?.slug ?? null;
 }
 
 async function loadConfig(db: Db, projectId: number): Promise<ReferenceConfig> {

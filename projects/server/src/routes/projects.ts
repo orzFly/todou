@@ -13,6 +13,7 @@ import { listMembers, removeMember, setMember } from "../services/members.ts";
 import {
   createProject,
   deleteProject,
+  formerSlugsOf,
   listProjects,
   toProject,
   updateProject,
@@ -112,13 +113,20 @@ export function projectRoutes() {
   });
 
   app.openapi(getRoute, async (c) => {
+    const ctx = c.get("appCtx");
     const { project } = await requireProject(
-      c.get("appCtx"),
+      ctx,
       c.get("user"),
       c.req.valid("param").slug,
       "reader",
     );
-    return c.json(toProject(project), 200);
+    return c.json(
+      {
+        ...toProject(project),
+        former_slugs: await formerSlugsOf(ctx.router.system(), project),
+      },
+      200,
+    );
   });
 
   app.openapi(patchRoute, async (c) => {
