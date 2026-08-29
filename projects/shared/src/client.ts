@@ -69,6 +69,7 @@ import type {
   TokenListItem,
   VersionInfo,
 } from "./index.ts";
+import { CANONICAL_SLUG_HEADER } from "./schemas/project.ts";
 import { SseDecoder } from "./sse.ts";
 
 export type TodouClientOptions = {
@@ -88,6 +89,13 @@ export type TodouClientOptions = {
    * sequential CLI calls would pay the macrotask delay for nothing.
    */
   batch?: boolean;
+  /**
+   * Called with the project's current slug whenever a response says the
+   * path named a retired one (T-156). Batched sub-requests carry no
+   * headers, so this is a hint for the caller to nudge the user, never
+   * something to depend on for correctness.
+   */
+  onCanonicalSlug?: (canonical: string) => void;
 };
 
 export class TodouError extends Error {
@@ -161,6 +169,7 @@ export class TodouClient {
   #fetch: typeof fetch;
   #batch: boolean;
   #batchQueue: BatchWaiter[] = [];
+  #onCanonicalSlug?: (canonical: string) => void;
   /** Remembered per client: the backend has no batch endpoint. */
   #batchUnavailable = false;
 
@@ -169,6 +178,7 @@ export class TodouClient {
     this.#token = options?.token;
     this.#headers = options?.headers;
     this.#batch = options?.batch ?? false;
+    this.#onCanonicalSlug = options?.onCanonicalSlug;
     // Never store the bare global fetch: calling it as `this.#fetch(...)`
     // rebinds `this` to the client and browsers throw
     // "'fetch' called on an object that does not implement interface Window".
@@ -220,6 +230,10 @@ export class TodouClient {
         // Non-JSON error body; errorFromBody keeps status as message.
       }
       throw errorFromBody(res.status, parsed);
+    }
+    if (this.#onCanonicalSlug !== undefined) {
+      const canonical = res.headers.get(CANONICAL_SLUG_HEADER);
+      if (canonical !== null) this.#onCanonicalSlug(canonical);
     }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
