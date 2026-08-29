@@ -393,8 +393,10 @@ export class SpecStatusCommand extends ProjectCommand {
     description: "Spec overview: version, review state, files",
     details:
       "Errors when the issue has no spec. Under `--json` the full version " +
-      "list rides along; agents watching for a verdict should prefer " +
-      "`todou issue watch <n> --type spec_review`.",
+      "list rides along. Agents waiting for a verdict block on " +
+      "`todou issue watch <n>` (the whole issue) and run this command once " +
+      "per wake-up to judge the result — polling it instead of watching " +
+      "has no wake path.",
   });
 
   number = Option.String({ required: true });

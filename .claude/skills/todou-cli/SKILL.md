@@ -222,6 +222,15 @@ todou spec review <n> --approve | --request-changes [--body …]          # subm
 
 - Review state is computed, never stored: a verdict counts only against the **latest** version, and
   the pusher of a version cannot review it.
-- Wait for the user's verdict with `issue watch <n> --type spec_review --since <cursor>`.
+- Wait for the verdict by watching the whole issue — `issue watch <n> --since <cursor> --debounce 60
+  --timeout 43200 --json` — with no `--type` filter, so a plain comment (an amended requirement, a
+  question back) wakes the waiter too.
+- **The watch wakes; `spec status` judges.** A wake-up is not a verdict: sibling agents on the same
+  machine account pass the self-filter (it is per agent session, see watch above). On exit 0 read
+  `spec status` — `approved` proceeds; `changes_requested` or `unresolved_comments > 0` enters the
+  revision loop; neither means no verdict yet — handle others' comments as feedback, otherwise
+  resume the wait silently. Always resume with the printed `next_cursor` (exit 3/4: same cursor),
+  never a fresh "now" cursor, which would skip whatever landed in the gap. Never poll `spec status`
+  in place of the blocking watch, and never read a verdict off the event stream.
 - Annotations remap across versions (resolved/outdated tracked automatically).
 - The plan workflow on top of this lives in `/todou-plan` and `/todou-impl-plan`.

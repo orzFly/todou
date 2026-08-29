@@ -49,15 +49,27 @@ and fix inline — iterate up to 5 times before presenting.
 ```bash
 todou spec push <n> <dir> -p <proj> --message "plan v1"          # upload the set
 cursor=$(todou watch -p <proj> --poll --json | jq -r .next_cursor)
-todou issue watch <n> -p <proj> --type spec_review --since "$cursor" --timeout 43200 --json
+todou issue watch <n> -p <proj> --since "$cursor" --debounce 60 --timeout 43200 --json
 ```
 
-The watch returns when the user submits a verdict (exit 3 = timeout: re-poll a cursor and wait again).
+The watch covers the whole issue, unfiltered, so a plain comment — the user amending a requirement,
+asking back — wakes you as surely as a verdict does. It also means **not every wake-up is yours**:
+sibling agents on the same machine account pass the self-filter (it is per agent session, see
+/todou-cli). Judge every wake-up (exit 0) with `spec status`, never by reading the event stream:
 
-**Never substitute `spec status` polling for this watch.** A status call issued seconds before the
-verdict lands reports "unreviewed", and an agent that reacts by deciding to "check again in a few
-minutes" has no wake path at all — it goes idle, nothing ever re-invokes it, and the card stalls until
-a human notices. The blocking watch is the only thing that returns *when the verdict exists*.
+1. `todou spec status <n> -p <proj> --json` → `review_status` + `unresolved_comments`.
+2. `approved` → done; leave the loop.
+3. `changes_requested`, or any unresolved annotations → the revision path below.
+4. Neither → no verdict yet. Comments by others in the watch output are feedback: fold them into
+   the documents (update proposal.md, reply if an answer is owed, push if the docs changed).
+   Nothing but sibling-agent activity? Not yours — resume the wait, silently.
+5. Resume with the `next_cursor` the watch printed — never a fresh "now" cursor, which would skip
+   whatever landed in the gap. Exit 3 (timeout) and 4 (outage): rerun with the same cursor.
+
+**Two prohibitions, one per failure mode.** Never replace the blocking watch with `spec status`
+polling — a deferred "check again later" has no wake path; the agent goes idle, the card stalls.
+Never infer the verdict from watch items — an unrelated wake-up misread as approval is worse than
+the idle wait it replaces. The watch wakes; `spec status` judges.
 
 - **request-changes** (or annotations arrive):
   `todou spec comments <n> --unresolved --json` lists inline annotations with file + anchor.
