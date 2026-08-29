@@ -90,7 +90,16 @@ function streamChanges(
     const recompute = async () => {
       const rows = await accessibleProjectRows(ctx, user);
       visible.clear();
-      for (const row of rows) visible.set(row.id, row.slug);
+      for (const row of rows) {
+        if (scope.kind === "all" || row.id === scope.id) {
+          visible.set(row.id, row.slug);
+        }
+      }
+      // The pinned scope carries its own copy for the close-out messages.
+      if (scope.kind === "project") {
+        const slug = visible.get(scope.id);
+        if (slug !== undefined) scope.slug = slug;
+      }
     };
 
     // Flipped instead of breaking out directly so the revocation paths deep
@@ -135,6 +144,17 @@ function streamChanges(
             }
             // Role changes never drop below reader; fall through as an
             // ordinary event.
+          }
+
+          if (event.entity === "project" && event.action === "updated") {
+            // A rename moves the slug every later payload is stamped with,
+            // and nothing else in this loop would ever notice (T-156).
+            try {
+              await recompute();
+            } catch {
+              closed = true;
+              continue;
+            }
           }
 
           if (event.entity === "project" && scope.kind === "all") {

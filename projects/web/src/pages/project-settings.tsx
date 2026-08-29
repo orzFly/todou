@@ -3,7 +3,7 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { useParams } from "@tanstack/react-router";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import {
   formatRef,
   type Member,
@@ -11,6 +11,7 @@ import {
   type ProjectUpdateInput,
   type Status,
   type StatusUpdateInput,
+  type TodouError,
 } from "@todou/shared";
 import {
   ArrowDownIcon,
@@ -85,7 +86,117 @@ export function ProjectSettingsPage() {
       <StatusesSection slug={slug} />
       <LabelsSection slug={slug} />
       <ReferencesSection slug={slug} />
+      <SlugSection slug={slug} />
     </div>
+  );
+}
+
+export function SlugSection({ slug }: { slug: string }) {
+  const project = useSuspenseQuery(projectQuery(slug));
+  const [draft, setDraft] = useState(slug);
+  const [confirming, setConfirming] = useState(false);
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+
+  const target = draft.trim();
+  const dirty = target !== "" && target !== project.data.slug;
+  const formerSlugs = project.data.former_slugs ?? [];
+
+  const rename = useMutation({
+    mutationFn: (reclaim: boolean) =>
+      api.updateProject(slug, {
+        slug: target,
+        ...(reclaim ? { reclaim: true } : {}),
+      }),
+    onSuccess: (updated) => {
+      setConfirming(false);
+      // Every cache key in the app is keyed by slug; none of them are
+      // reachable under the new one, so drop the lot rather than remap.
+      queryClient.invalidateQueries();
+      navigate({
+        to: "/projects/$slug/settings",
+        params: { slug: updated.slug },
+        replace: true,
+      });
+      toast.success(`Renamed to ${updated.slug}`);
+    },
+    onError: (error) => {
+      if ((error as TodouError).code === "slug_reserved") {
+        setConfirming(true);
+        return;
+      }
+      setConfirming(false);
+      toast.error(error.message);
+    },
+  });
+
+  return (
+    <section className="space-y-3">
+      <h2 className="text-lg font-semibold">Slug</h2>
+      <div className="max-w-xl space-y-3 rounded-lg border border-destructive/40 p-4">
+        <p className="text-sm text-muted-foreground">
+          The slug is this project's address: it is in every URL, in the
+          attachment links pasted into old comments, and in the{" "}
+          <code>project link</code> binding on each machine running the CLI.
+          Renaming keeps the old one working — it redirects here until some
+          other project takes it over.
+        </p>
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (dirty) rename.mutate(false);
+          }}
+        >
+          <Input
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value.trim().toLowerCase());
+              setConfirming(false);
+            }}
+            aria-label="project slug"
+            className="w-64 font-mono"
+          />
+          <Button
+            type="submit"
+            size="sm"
+            variant="destructive"
+            disabled={!dirty || rename.isPending}
+          >
+            {rename.isPending ? "Renaming…" : "Rename"}
+          </Button>
+        </form>
+        {confirming && (
+          <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+            <p className="text-sm">
+              <code>{target}</code> still redirects to the project that used it.
+              Taking it over sends that project's existing links — including
+              attachment URLs in its old comments — here instead.
+            </p>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={rename.isPending}
+              onClick={() => rename.mutate(true)}
+            >
+              Take it over anyway
+            </Button>
+          </div>
+        )}
+        {formerSlugs.length > 0 && (
+          <p className="text-sm text-muted-foreground">
+            Also reachable as{" "}
+            {formerSlugs.map((former, i) => (
+              <span key={former}>
+                {i > 0 && ", "}
+                <code>{former}</code>
+              </span>
+            ))}
+            .
+          </p>
+        )}
+      </div>
+    </section>
   );
 }
 

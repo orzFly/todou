@@ -12,6 +12,7 @@ import {
   jsonBodyLimit,
   uploadBodyLimit,
 } from "./middleware/body-limit.ts";
+import { canonicalSlugMiddleware } from "./middleware/canonical-slug.ts";
 import { compressMiddleware } from "./middleware/compress.ts";
 import { activityRoutes } from "./routes/activity.ts";
 import { agentRoutes } from "./routes/agents.ts";
@@ -149,6 +150,9 @@ export function createApp(ctx: AppContext) {
   });
   api.use("*", authMiddleware(ctx));
   api.use("*", agentContextMiddleware());
+  // Both shapes: the bare project endpoints and everything nested under one.
+  api.use("/projects/:slug", canonicalSlugMiddleware());
+  api.use("/projects/:slug/*", canonicalSlugMiddleware());
   api.route("/auth", cliAuthSessionRoutes());
   api.route("/", activityRoutes());
   api.route("/", meRoutes());

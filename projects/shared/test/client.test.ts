@@ -440,3 +440,54 @@ describe("TodouClient change stream (T-123)", () => {
     expect(server.cancelled()).toBe(true);
   });
 });
+
+describe("TodouClient canonical slug notice (T-156)", () => {
+  const withHeader = (canonical?: string): typeof fetch =>
+    (async () =>
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          ...(canonical === undefined
+            ? {}
+            : { "x-todou-canonical-slug": canonical }),
+        },
+      })) as typeof fetch;
+
+  it("reports the current slug when the response carries one", async () => {
+    const seen: string[] = [];
+    const client = new TodouClient({
+      fetch: withHeader("newname"),
+      onCanonicalSlug: (slug) => seen.push(slug),
+    });
+    await client.request("GET", "/projects/oldname");
+    expect(seen).toEqual(["newname"]);
+  });
+
+  it("stays quiet when the slug used is the current one", async () => {
+    const seen: string[] = [];
+    const client = new TodouClient({
+      fetch: withHeader(),
+      onCanonicalSlug: (slug) => seen.push(slug),
+    });
+    await client.request("GET", "/projects/newname");
+    expect(seen).toEqual([]);
+  });
+
+  it("never fires on an error response", async () => {
+    const seen: string[] = [];
+    const client = new TodouClient({
+      fetch: (async () =>
+        new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+          headers: {
+            "content-type": "application/json",
+            "x-todou-canonical-slug": "newname",
+          },
+        })) as typeof fetch,
+      onCanonicalSlug: (slug) => seen.push(slug),
+    });
+    await expect(client.request("GET", "/projects/oldname")).rejects.toThrow();
+    expect(seen).toEqual([]);
+  });
+});

@@ -22,7 +22,7 @@ import { IssueListPage } from "@/pages/issue-list.tsx";
 import { LoginPage } from "@/pages/login.tsx";
 import { NewIssuePage } from "@/pages/new-issue.tsx";
 import { ProfileSettingsPage } from "@/pages/profile-settings.tsx";
-import { ProjectLayout } from "@/pages/project-layout.tsx";
+import { ProjectLayout, ProjectRouteError } from "@/pages/project-layout.tsx";
 import { ProjectSettingsPage } from "@/pages/project-settings.tsx";
 import { ProjectsPage } from "@/pages/projects.tsx";
 import { TokensSettingsPage } from "@/pages/tokens-settings.tsx";
@@ -113,6 +113,7 @@ const projectRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/projects/$slug",
   component: ProjectLayout,
+  errorComponent: ProjectRouteError,
 });
 
 const projectIndexRoute = createRoute({

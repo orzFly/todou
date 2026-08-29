@@ -3,13 +3,19 @@ import type {
   PrefixClaimEntry,
   PrefixDirectory,
   ReferenceDirectory,
+  SlugClaimEntry,
 } from "@todou/shared";
 import { eq } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { refFormats } from "../db/project-schema.ts";
-import { projects, refPrefixes, systemSettings } from "../db/system-schema.ts";
+import {
+  projects,
+  refPrefixes,
+  slugHistory,
+  systemSettings,
+} from "../db/system-schema.ts";
 import {
   accessibleProjectRows,
   type ProjectRow,
@@ -196,6 +202,87 @@ export async function globalPrefixDirectory(
   return { entries: holds.map(entryOf), contested: contestedWindows(holds) };
 }
 
+type SlugHold = {
+  projectId: number;
+  slug: string;
+  canonical: string;
+  from: number;
+  to: number;
+};
+
+/**
+ * One project's slug history turned into holds (T-156). Simpler than the
+ * prefix version in two ways: a project always holds exactly one slug, so
+ * every row closes the one before it, and there is no contested case — the
+ * unique index on projects.slug means a slug has one holder at a time.
+ */
+function slugHoldsOf(
+  projectId: number,
+  canonical: string,
+  history: { slug: string; effectiveFrom: Date }[],
+): SlugHold[] {
+  const sorted = [...history].sort(
+    (a, b) => a.effectiveFrom.getTime() - b.effectiveFrom.getTime(),
+  );
+  const holds: SlugHold[] = [];
+  let open: SlugHold | null = null;
+  for (const row of sorted) {
+    const at = row.effectiveFrom.getTime();
+    if (open !== null && open.slug === row.slug) continue;
+    if (open !== null) open.to = at;
+    open = { projectId, slug: row.slug, canonical, from: at, to: OPEN };
+    holds.push(open);
+  }
+  // A rename inside the same millisecond as the one before it leaves an
+  // interval covering no instant — noise in the payload, and a resolution
+  // that can never fire.
+  return holds.filter((hold) => hold.to > hold.from);
+}
+
+const slugEntryOf = (hold: SlugHold): SlugClaimEntry => ({
+  slug: hold.slug,
+  canonical: hold.canonical,
+  from: new Date(hold.from).toISOString(),
+  to: hold.to === OPEN ? null : new Date(hold.to).toISOString(),
+});
+
+async function allSlugHolds(ctx: AppContext): Promise<SlugHold[]> {
+  const system = ctx.router.system();
+  const [rows, projectRows] = await Promise.all([
+    system
+      .select({
+        projectId: slugHistory.projectId,
+        slug: slugHistory.slug,
+        effectiveFrom: slugHistory.effectiveFrom,
+      })
+      .from(slugHistory),
+    system.select({ id: projects.id, slug: projects.slug }).from(projects),
+  ]);
+
+  const history = new Map<number, { slug: string; effectiveFrom: Date }[]>();
+  for (const row of rows) {
+    const list = history.get(row.projectId) ?? [];
+    list.push(row);
+    history.set(row.projectId, list);
+  }
+
+  const holds: SlugHold[] = [];
+  for (const project of projectRows) {
+    const list = history.get(project.id);
+    if (list !== undefined) {
+      holds.push(...slugHoldsOf(project.id, project.slug, list));
+    }
+  }
+  return holds;
+}
+
+/** Every project's slug holds, for the extraction path. */
+export async function globalSlugEntries(
+  ctx: AppContext,
+): Promise<SlugClaimEntry[]> {
+  return (await allSlugHolds(ctx)).map(slugEntryOf);
+}
+
 /**
  * The prefix directory as this viewer may see it: their own projects'
  * holds by name, and every globally contested window anonymised. Contested
@@ -207,16 +294,23 @@ export async function referenceDirectory(
   actor: UserRow,
 ): Promise<ReferenceDirectory> {
   const system = ctx.router.system();
-  const [holds, readable, since] = await Promise.all([
+  const [holds, slugHolds, readable, since] = await Promise.all([
     allHolds(ctx),
+    allSlugHolds(ctx),
     accessibleProjectRows(ctx, actor),
     crossRefsSince(system),
   ]);
   const visible = new Set(readable.map((row) => row.slug));
+  const visibleIds = new Set(readable.map((row) => row.id));
   return {
     since,
     entries: holds.filter((hold) => visible.has(hold.slug)).map(entryOf),
     contested: contestedWindows(holds),
+    // No contested counterpart: a slug has one holder at a time, so a
+    // viewer who can see the holder can resolve it on their own.
+    slug_entries: slugHolds
+      .filter((hold) => visibleIds.has(hold.projectId))
+      .map(slugEntryOf),
   };
 }
 

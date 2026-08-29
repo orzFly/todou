@@ -2,6 +2,7 @@ import type {
   AgentContext,
   AutolinkRule,
   PrefixDirectory,
+  SlugClaim,
 } from "@todou/shared";
 import { scanReferenceTokens } from "@todou/shared";
 import { and, eq, inArray, ne, or, type SQL, sql } from "drizzle-orm";
@@ -14,12 +15,18 @@ import {
   issueEvents,
   issues,
 } from "../db/project-schema.ts";
-import { projects } from "../db/system-schema.ts";
+import { projects, slugHistory } from "../db/system-schema.ts";
 import { NotFoundError } from "../errors.ts";
-import { getProjectBySlug, projectRoleOf, routeInfoOf } from "./access.ts";
+import {
+  accessibleProjectRows,
+  getProjectBySlug,
+  projectRoleOf,
+  routeInfoOf,
+} from "./access.ts";
 import {
   crossRefsSince,
   globalPrefixDirectory,
+  globalSlugEntries,
 } from "./reference-directory.ts";
 import { refPrefixAt, stripMarkdownCode } from "./references.ts";
 
@@ -37,11 +44,44 @@ export function crossRefVisibleCondition(visibleSlugs: string[]): SQL {
   return or(notCross, inArray(source, visibleSlugs)) as SQL;
 }
 
+/**
+ * The slugs a `cross_referenced` event's `by_project` may match for this
+ * viewer: the projects they can read, spelled every way those projects have
+ * ever been spelled. Without the history, renaming a project would hide
+ * every reference it made before the rename (T-156).
+ *
+ * Known limitation: after a slug changes hands, the old holder's events
+ * stay visible to the new holder's members. The predicate cannot narrow by
+ * event time without a per-row join, and what leaks is one line saying some
+ * project once referenced you.
+ */
+export async function visibleSlugsWithHistory(
+  ctx: AppContext,
+  user: UserRow,
+): Promise<string[]> {
+  const rows = await accessibleProjectRows(ctx, user);
+  if (rows.length === 0) return [];
+  const slugs = new Set(rows.map((row) => row.slug));
+  const history = await ctx.router
+    .system()
+    .select({ slug: slugHistory.slug })
+    .from(slugHistory)
+    .where(
+      inArray(
+        slugHistory.projectId,
+        rows.map((row) => row.id),
+      ),
+    );
+  for (const row of history) slugs.add(row.slug);
+  return [...slugs];
+}
+
 /** Everything the grammar needs beyond the text itself, loaded once per write. */
 export type ReferenceInputs = {
   since: string | null;
   directory: PrefixDirectory;
   slugs: string[];
+  slugEntries: SlugClaim[];
   autolinks: AutolinkRule[];
 };
 
@@ -69,7 +109,7 @@ export async function loadReferenceInputs(
   projectId: number,
 ): Promise<ReferenceInputs> {
   const system = ctx.router.system();
-  const [since, slugRows, links, mirror] = await Promise.all([
+  const [since, slugRows, links, mirror, slugEntries] = await Promise.all([
     crossRefsSince(system),
     system.select({ slug: projects.slug }).from(projects),
     db
@@ -77,11 +117,13 @@ export async function loadReferenceInputs(
       .from(autolinks)
       .where(eq(autolinks.projectId, projectId)),
     globalPrefixDirectory(ctx),
+    globalSlugEntries(ctx),
   ]);
   return {
     since,
     directory: mirror,
     slugs: slugRows.map((row) => row.slug),
+    slugEntries,
     autolinks: links.map((row) => ({
       prefix: row.prefix,
       url_template: row.urlTemplate,
@@ -109,6 +151,7 @@ export async function analyzeReferences(
     cross: {
       slugs: inputs.slugs,
       directory: inputs.directory,
+      slugEntries: inputs.slugEntries,
       since: inputs.since,
       at: contentCreatedAt.toISOString(),
     },

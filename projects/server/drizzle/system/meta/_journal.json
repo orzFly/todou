@@ -50,6 +50,13 @@
       "when": 1787975321303,
       "tag": "0006_cli-auth-requests",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787988200955,
+      "tag": "0007_slug-history",
+      "breakpoints": true
     }
   ]
 }

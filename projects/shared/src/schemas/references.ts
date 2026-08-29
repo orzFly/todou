@@ -61,6 +61,14 @@ export const ContestedInterval = z.object({
 });
 export type ContestedInterval = z.infer<typeof ContestedInterval>;
 
+/** One project's hold on a slug (T-156); `to` null = still its current slug. */
+export const SlugClaimEntry = z.object({
+  slug: z.string(),
+  canonical: ProjectSlug,
+  ...PrefixInterval,
+});
+export type SlugClaimEntry = z.infer<typeof SlugClaimEntry>;
+
 /**
  * What a client needs to resolve a bare `PREFIX-N` (T-150), trimmed to the
  * viewer's readable projects. `since` null means the deployment has no
@@ -70,6 +78,9 @@ export const ReferenceDirectory = z.object({
   since: Timestamp.nullable(),
   entries: z.array(PrefixClaimEntry),
   contested: z.array(ContestedInterval),
+  // Optional so a client talking to a pre-T-156 server degrades to "no
+  // renames ever happened" instead of failing the whole directory.
+  slug_entries: z.array(SlugClaimEntry).optional(),
 });
 export type ReferenceDirectory = z.infer<typeof ReferenceDirectory>;
 

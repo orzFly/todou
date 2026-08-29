@@ -25,6 +25,12 @@ export const Project = z.object({
   name: z.string(),
   description: z.string(),
   created_at: Timestamp,
+  /**
+   * Retired slugs that still route here, oldest first (T-156). Only the
+   * single-project GET carries it; listing every project's history would be
+   * a query per row for something no list view shows.
+   */
+  former_slugs: z.array(ProjectSlug).optional(),
 });
 export type Project = z.infer<typeof Project>;
 
@@ -35,14 +41,31 @@ export const ProjectCreateInput = z.object({
   // Omitted and null both mean `#N`: no format history row is written, so
   // the project claims nothing in the cross-project prefix directory.
   ref_prefix: InternalRefPrefix.optional(),
+  reclaim: z.boolean().optional(),
 });
 export type ProjectCreateInput = z.infer<typeof ProjectCreateInput>;
 
 export const ProjectUpdateInput = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().max(4000).optional(),
+  slug: ProjectSlug.optional(),
+  /**
+   * Take a slug another project used to hold. Required because reclaiming
+   * silently would repoint that project's off-site links — including the
+   * attachment URLs pasted verbatim into old comments, where a same-numbered
+   * attachment in the new project is fetched instead of 404ing.
+   */
+  reclaim: z.boolean().optional(),
 });
 export type ProjectUpdateInput = z.infer<typeof ProjectUpdateInput>;
+
+/**
+ * Set on a 2xx whose path named a retired slug (T-156), carrying the
+ * project's current one. A 3xx would be the obvious spelling and is wrong
+ * here: `fetch` follows redirects silently, so the caller would never learn
+ * the new slug, and a redirect inside a batch sub-request reads as an error.
+ */
+export const CANONICAL_SLUG_HEADER = "x-todou-canonical-slug";
 
 export const MemberRole = z.enum(["admin", "writer", "reader"]);
 export type MemberRole = z.infer<typeof MemberRole>;

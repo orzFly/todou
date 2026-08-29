@@ -45,6 +45,23 @@ export class ConflictError extends DomainError {
   }
 }
 
+/**
+ * Taking a slug a project used to hold needs an explicit `reclaim` (T-156).
+ * The details name the slug and nothing else: who held it before is not a
+ * fact a non-member of that project may learn.
+ */
+export class SlugReservedError extends DomainError {
+  constructor(slug: string) {
+    super(
+      409,
+      "slug_reserved",
+      `slug "${slug}" still routes to the project that used it — ` +
+        "pass reclaim to take it over",
+      { slug },
+    );
+  }
+}
+
 export class ValidationFailedError extends DomainError {
   constructor(message = "validation failed", details?: unknown) {
     super(422, "validation_failed", message, details);

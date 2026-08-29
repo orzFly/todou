@@ -160,6 +160,29 @@ export const refPrefixes = pgTable(
   ],
 );
 
+// Who held which slug, when (T-156). Same append-only shape as ref_prefixes
+// above, and read the same way: a row's holding interval runs to the same
+// project's next row. Unlike ref_prefixes this is not a mirror — it lives
+// beside the projects it describes and is written in the same transaction,
+// so there is no repair pass to run at boot.
+export const slugHistory = pgTable(
+  "slug_history",
+  {
+    id: id(),
+    projectId: bigint("project_id", { mode: "number" })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("slug_history_slug_from_idx").on(t.slug, t.effectiveFrom),
+    index("slug_history_project_from_idx").on(t.projectId, t.effectiveFrom),
+  ],
+);
+
 // Deployment-wide settings, validated at the service layer. Holds
 // `cross_refs_since`: the instant this instance ran the T-150 migration,
 // which is the cutoff the cross-project grammar opens at.

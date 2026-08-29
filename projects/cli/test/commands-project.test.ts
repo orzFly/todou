@@ -385,6 +385,105 @@ describe("project edit", () => {
   });
 });
 
+describe("project edit --slug (T-156)", () => {
+  const renamed: Route = [
+    "PATCH",
+    "/api/projects/dogfood",
+    (init: RequestInit) => ({
+      id: 1,
+      name: "Dogfood",
+      ...JSON.parse(String(init.body)),
+    }),
+  ];
+  const reserved: Route = [
+    "PATCH",
+    "/api/projects/dogfood",
+    {
+      __status: 409,
+      body: {
+        error: {
+          code: "slug_reserved",
+          message: 'slug "taken" still routes to the project that used it',
+          details: { slug: "taken" },
+        },
+      },
+    },
+  ];
+  const patchBody = (calls: Array<{ url: string; init: RequestInit }>) =>
+    JSON.parse(String(calls.find((c) => c.init.method === "PATCH")?.init.body));
+
+  it("renames and says what the old slug still does", async () => {
+    const { home, work } = setup();
+    const { fetchImpl, calls } = fakeFetch([renamed]);
+    const result = await runCli(
+      ["project", "edit", "dogfood", "--slug", "chowchow"],
+      { fetchImpl, env: { ...loggedInEnv(), HOME: home }, cwd: work },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(patchBody(calls)).toEqual({ slug: "chowchow" });
+    expect(result.stdout).toContain("renamed dogfood → chowchow");
+    expect(result.stdout).toContain("todou project link chowchow");
+  });
+
+  it("points at --reclaim when the slug is still reserved", async () => {
+    const { home, work } = setup();
+    const { fetchImpl, calls } = fakeFetch([reserved]);
+    const result = await runCli(
+      ["project", "edit", "dogfood", "--slug", "taken"],
+      { fetchImpl, env: { ...loggedInEnv(), HOME: home }, cwd: work },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("--reclaim");
+    expect(patchBody(calls)).toEqual({ slug: "taken" });
+  });
+
+  it("sends reclaim when asked", async () => {
+    const { home, work } = setup();
+    const { fetchImpl, calls } = fakeFetch([renamed]);
+    const result = await runCli(
+      ["project", "edit", "dogfood", "--slug", "taken", "--reclaim"],
+      { fetchImpl, env: { ...loggedInEnv(), HOME: home }, cwd: work },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(patchBody(calls)).toEqual({ slug: "taken", reclaim: true });
+  });
+
+  it("notes the canonical slug when a command reaches a project by an alias", async () => {
+    const { home, work } = setup();
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/oldname",
+        () =>
+          new Response(
+            JSON.stringify({
+              id: 1,
+              slug: "newname",
+              name: "N",
+              description: "",
+            }),
+            {
+              status: 200,
+              headers: {
+                "content-type": "application/json",
+                "x-todou-canonical-slug": "newname",
+              },
+            },
+          ),
+      ],
+    ]);
+    const result = await runCli(["project", "link", "oldname", "--local"], {
+      fetchImpl,
+      env: { ...loggedInEnv(), HOME: home },
+      cwd: work,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain('is now "newname"');
+    // The binding written is the current spelling, not the one typed.
+    expect(readToml(join(work, ".todou.toml")).project).toBe("newname");
+  });
+});
+
 describe("whoami project source", () => {
   const me = {
     id: 2,

@@ -65,14 +65,22 @@ export class ProjectEditCommand extends ProjectCommand {
     description: "Rename a project or change its description",
     details:
       "The slug positional is optional: without it the project comes from " +
-      "-p/--project, TODOU_PROJECT, or this directory's link. The slug " +
-      "itself cannot be changed — it keys URLs, links and every binding.",
+      "-p/--project, TODOU_PROJECT, or this directory's link. --slug moves " +
+      "the project to a new address; the old one keeps redirecting until " +
+      "another project takes it over, but bindings on other machines are " +
+      "worth updating with `todou project link`.",
   });
 
   slug = Option.String({ required: false });
   name = Option.String("--name", { description: "New display name" });
   description = Option.String("--description", {
     description: 'New description ("" clears it)',
+  });
+  newSlug = Option.String("--slug", {
+    description: "New slug (the project's address in URLs and bindings)",
+  });
+  reclaim = Option.Boolean("--reclaim", false, {
+    description: "Take a slug that still redirects to another project",
   });
 
   protected async run(client: TodouClient): Promise<void> {
@@ -81,14 +89,37 @@ export class ProjectEditCommand extends ProjectCommand {
     const input: ProjectUpdateInput = {};
     if (this.name !== undefined) input.name = this.name;
     if (this.description !== undefined) input.description = this.description;
-    if (Object.keys(input).length === 0) {
-      throw new CliError("nothing to change", "pass --name or --description");
+    if (this.newSlug !== undefined) input.slug = this.newSlug;
+    if (this.reclaim) input.reclaim = true;
+    if (
+      input.name === undefined &&
+      input.description === undefined &&
+      input.slug === undefined
+    ) {
+      throw new CliError(
+        "nothing to change",
+        "pass --name, --description or --slug",
+      );
     }
 
-    const project = await client.updateProject(slug, input);
-    this.output(
-      project,
-      () => `updated project ${project.slug} — ${project.name}`,
+    const project = await client.updateProject(slug, input).catch((error) => {
+      if ((error as { code?: string }).code === "slug_reserved") {
+        throw new CliError(
+          (error as Error).message,
+          "re-run with --reclaim to take it over — that project's existing " +
+            "links, including attachment URLs in its old comments, will " +
+            "point here afterwards",
+        );
+      }
+      throw error;
+    });
+    this.output(project, () =>
+      project.slug === slug
+        ? `updated project ${project.slug} — ${project.name}`
+        : `renamed ${slug} → ${project.slug}\n` +
+          `"${slug}" keeps redirecting here; other machines bound to it ` +
+          `still work — run \`todou project link ${project.slug}\` on each ` +
+          "when convenient",
     );
   }
 
@@ -138,8 +169,10 @@ export class ProjectLinkCommand extends ApiCommand {
       );
     }
     const server = this.ctx.server as string;
-    // Fail on typos now rather than on the first bound command later.
-    await client.getProject(this.slug);
+    // Fail on typos now rather than on the first bound command later. The
+    // response also settles the spelling: linking by a retired slug should
+    // write the one the project answers to today, not the one that was typed.
+    const slug = (await client.getProject(this.slug)).slug;
 
     if (!useLocal) {
       const config = loadCliConfig(this.context.env);
@@ -147,10 +180,10 @@ export class ProjectLinkCommand extends ApiCommand {
       config.bindings.push({
         remote: remote as string,
         server,
-        project: this.slug,
+        project: slug,
       });
       saveCliConfig(config, this.context.env);
-      this.note(`linked ${remote} → ${server} · ${this.slug}`);
+      this.note(`linked ${remote} → ${server} · ${slug}`);
       return;
     }
 
@@ -158,8 +191,8 @@ export class ProjectLinkCommand extends ApiCommand {
     const file = dirConfigFileIn(linkTarget(cwd));
     // A full rewrite: the only legal keys are these two, so anything else
     // in the file was already being ignored on read.
-    writeFileSync(file, `${stringify({ server, project: this.slug })}\n`);
-    this.note(`linked ${displayPath(file, cwd)} → ${server} · ${this.slug}`);
+    writeFileSync(file, `${stringify({ server, project: slug })}\n`);
+    this.note(`linked ${displayPath(file, cwd)} → ${server} · ${slug}`);
     this.note(
       "note: this file is not auto-gitignored and carries the server origin — commit or ignore it deliberately",
     );

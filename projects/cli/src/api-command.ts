@@ -82,6 +82,7 @@ export abstract class ApiCommand extends Command<CliContext> {
         );
       }
       this.agentContext = detectAgentContext(this.context.env);
+      const announced = new Set<string>();
       const code = await this.run(
         new TodouClient({
           baseUrl: this.ctx.server,
@@ -90,6 +91,18 @@ export abstract class ApiCommand extends Command<CliContext> {
             ? { [AGENT_CONTEXT_HEADER]: JSON.stringify(this.agentContext) }
             : undefined,
           fetch: this.context.fetchImpl,
+          onCanonicalSlug: (canonical) => {
+            if (announced.has(canonical)) return;
+            announced.add(canonical);
+            // Deliberately not rewriting .todou.toml / config.toml: the
+            // binding may well be committed to the repository, and that is
+            // the user's file to change.
+            this.note(
+              `note: project "${this.ctx.project ?? "?"}" is now ` +
+                `"${canonical}" — run \`todou project link ${canonical}\` ` +
+                "to update this machine",
+            );
+          },
         }),
       );
       return typeof code === "number" ? code : 0;

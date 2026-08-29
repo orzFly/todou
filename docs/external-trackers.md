@@ -62,6 +62,12 @@ The prefix inside `mirror/M-12` is decoration: the slug decides the
 project and the number decides the issue, so a reference written today
 survives the target changing its format tomorrow.
 
+It survives the target changing its *slug* too. A slug a project has
+retired keeps resolving to it, and text written before the rename is
+read against who held that slug at the time — so if another project
+later takes the spelling over, old references still mean what they said,
+and only new writing goes to the new holder.
+
 A bare foreign prefix also works. Writing `M-12` in another project
 resolves to `mirror#12` when `M` had exactly one holder at the moment the
 text was written. Two projects may share a prefix; while they do, the bare

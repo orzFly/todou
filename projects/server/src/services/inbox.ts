@@ -13,12 +13,14 @@ import {
 } from "../db/project-schema.ts";
 import {
   accessibleProjectRows,
-  accessibleProjectSlugs,
   type ProjectRow,
   requireProject,
   routeInfoOf,
 } from "./access.ts";
-import { crossRefVisibleCondition } from "./cross-references.ts";
+import {
+  crossRefVisibleCondition,
+  visibleSlugsWithHistory,
+} from "./cross-references.ts";
 import { bundleIssues, toIssue } from "./issues.ts";
 import { readPrefs } from "./prefs.ts";
 import { ensureFrontier, unreadIssueState } from "./reads.ts";
@@ -281,7 +283,7 @@ export async function getInbox(
   const prefs = await readPrefs(ctx.router.system(), actor.id);
   // The full readable set, not `scope`: a request narrowed to two projects
   // still gets to see references from every project its caller can read.
-  const visibleSlugs = await accessibleProjectSlugs(ctx, actor);
+  const visibleSlugs = await visibleSlugsWithHistory(ctx, actor);
 
   const items: InboxItem[] = [];
   let truncated = false;
