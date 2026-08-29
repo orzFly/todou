@@ -240,9 +240,15 @@ function QuestionForm({
 }) {
   const toggleOption = (index: number) =>
     onChange((d) => {
+      if (d.selected.has(index)) {
+        const selected = new Set(d.selected);
+        selected.delete(index);
+        // No `declined: false` here — a selection can only exist while it
+        // already is false.
+        return { ...d, selected };
+      }
       const selected = new Set(question.multiple ? d.selected : []);
-      if (question.multiple && d.selected.has(index)) selected.delete(index);
-      else selected.add(index);
+      selected.add(index);
       // Picking any option withdraws a decline — they are exclusive.
       return { ...d, selected, declined: false };
     });

@@ -128,6 +128,52 @@ describe("QuestionsCard (unanswered)", () => {
     expect(declineBtn.getAttribute("aria-pressed")).toBe("false");
   });
 
+  it("re-clicking a selected option clears it, back to unanswered", async () => {
+    stubFetch();
+    const view = renderCard();
+    await view.findByText("awaiting answer");
+
+    const submit = () =>
+      view.container.querySelector<HTMLButtonElement>(
+        ".flex.justify-end > button",
+      ) as HTMLButtonElement;
+
+    // Both questions resolved, so the gate opens…
+    fireEvent.click(optionButton(view, "New entity"));
+    fireEvent.click(optionButton(view, "dev"));
+    expect(optionButton(view, "New entity").getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    await waitFor(() => expect(submit().disabled).toBe(false));
+
+    // …and clearing the single-select pick closes it again (T-181).
+    fireEvent.click(optionButton(view, "New entity"));
+    expect(optionButton(view, "New entity").getAttribute("aria-pressed")).toBe(
+      "false",
+    );
+    await waitFor(() => expect(submit().disabled).toBe(true));
+
+    // Multi-select deselect keeps working.
+    fireEvent.click(optionButton(view, "dev"));
+    expect(optionButton(view, "dev").getAttribute("aria-pressed")).toBe(
+      "false",
+    );
+
+    // Clearing an option does not hand the question back to decline…
+    const declines = view.getAllByText("Decline to answer");
+    const declineBtn = declines[0]?.closest("button") as HTMLButtonElement;
+    fireEvent.click(declineBtn);
+    fireEvent.click(optionButton(view, "Inline"));
+    fireEvent.click(optionButton(view, "Inline"));
+    expect(optionButton(view, "Inline").getAttribute("aria-pressed")).toBe(
+      "false",
+    );
+    expect(declineBtn.getAttribute("aria-pressed")).toBe("false");
+    // …it just stays available.
+    fireEvent.click(declineBtn);
+    expect(declineBtn.getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("submits everything at once, with other text and multi-select", async () => {
     const posts = stubFetch();
     const view = renderCard();
