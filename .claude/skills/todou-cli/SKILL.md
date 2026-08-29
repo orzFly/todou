@@ -28,6 +28,8 @@ todou issue edit 16 --status "In Progress"    # status/title/labels/assignees
 todou issue close 16 --comment "done"
 todou comment add -p <proj> 16 --body-file -  # body from stdin — see Writing bodies
 todou attach -p <proj> 16 file.png ...        # mime inferred from the extension
+todou attach list -p <proj> 16                # id / filename / size / url
+todou attach download -p <proj> 16 <id|name> [-o <path>|-o -]
 todou status list -p <proj>
 todou status init -p <proj>                   # add the missing canonical statuses, sync existing colors
 todou status create -p <proj> --name X --category open|closed [--color '#hex'] [--before Y|--after Y]
@@ -155,6 +157,15 @@ rather than rewriting it into an absolute URL.
 - `![](…/download/name.ext)` embeds it inline — images, text files and markdown all render in place.
 - Single-file demo pages (mockups, prototype HTML) **must** be attached to the relevant issue with
   `todou attach` — never leave them only on local disk.
+- **Reading them back**: `attach list` is the authoritative set (the timeline records upload *events*,
+  a body links only what someone chose to link), and its `#id` column is what `attach download`
+  addresses — by id, or by exact filename when that is unambiguous. Without `-o` the file lands in the
+  current directory under its own name and never overwrites; `-o <dir>` writes into that directory,
+  `-o <file>` writes exactly there, `-o -` streams the bytes to stdout.
+- **Never lift a token out of `config.toml`.** `attach download` and `todou api` both authenticate the
+  way every other command does, and `todou api` streams a non-JSON response through byte for byte, so
+  `todou api get /projects/<proj>/attachments/<id>/download > shot.png` works. A hand-written `curl`
+  carrying a pasted Bearer is a credential leak with nothing left to buy.
 
 **Permalinks.** Every timestamp is a link to that one entry (`#comment-<id>`, `#event-<id>`). Paste one
 to send the reader straight to a specific comment or event.

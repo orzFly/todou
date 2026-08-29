@@ -203,11 +203,19 @@ export class TodouClient {
     return this.#send(method, path, init);
   }
 
-  async #send<T>(
+  /**
+   * Like `request`, but hands back the untouched `Response` — the channel
+   * for bodies that are not JSON (attachment downloads, `todou api` against
+   * a binary endpoint). Auth, headers and error mapping are identical, which
+   * is the point: a consumer that needs raw bytes still never has to
+   * assemble a request, and therefore never has to get hold of the token
+   * (T-176). Never batched — an envelope carries parsed bodies only.
+   */
+  async requestRaw(
     method: string,
     path: string,
     init?: { json?: unknown; form?: FormData; query?: Query },
-  ): Promise<T> {
+  ): Promise<Response> {
     const headers: Record<string, string> = { ...this.#headers };
     if (this.#token) headers.authorization = `Bearer ${this.#token}`;
     let body: string | FormData | undefined;
@@ -235,6 +243,15 @@ export class TodouClient {
       const canonical = res.headers.get(CANONICAL_SLUG_HEADER);
       if (canonical !== null) this.#onCanonicalSlug(canonical);
     }
+    return res;
+  }
+
+  async #send<T>(
+    method: string,
+    path: string,
+    init?: { json?: unknown; form?: FormData; query?: Query },
+  ): Promise<T> {
+    const res = await this.requestRaw(method, path, init);
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   }

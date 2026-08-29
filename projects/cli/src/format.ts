@@ -62,6 +62,23 @@ export function summarize(text: string, max: number): string {
   return `${points.slice(0, max).join("")}…`;
 }
 
+const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
+
+/** A size a person can read: `0 B`, `1023 B`, `12.3 KB`, `4.0 MB`. */
+export function formatBytes(bytes: number): string {
+  let value = bytes;
+  let unit = 0;
+  // The step-up threshold is the rounded value, not the exact one: 1048575
+  // would otherwise print as "1024.0 KB", a quantity that cannot exist.
+  while (value >= 1023.95 && unit < BYTE_UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return unit === 0
+    ? `${value} B`
+    : `${value.toFixed(1)} ${BYTE_UNITS[unit] as string}`;
+}
+
 const STEPS: Array<[limit: number, divisor: number, unit: string]> = [
   [60, 1, "s"],
   [3600, 60, "m"],

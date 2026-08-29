@@ -1,9 +1,12 @@
-import { openAsBlob } from "node:fs";
-import { basename, extname } from "node:path";
+import { createWriteStream, existsSync, openAsBlob, statSync } from "node:fs";
+import { basename, extname, join, resolve } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import type { Attachment, TodouClient } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { CliError } from "../errors.ts";
+import { formatBytes, table } from "../format.ts";
 
 // openAsBlob never fills in a type, and the server stores whatever it gets —
 // without this, every upload lands as application/octet-stream and the web
@@ -36,11 +39,15 @@ export function mimeTypeFor(path: string): string {
 }
 
 export class AttachCommand extends ProjectCommand {
-  static paths = [["attach"]];
+  // `attach add` is what six of the sessions in the T-165 survey reached for
+  // before finding the bare form; both spellings upload.
+  static paths = [["attach"], ["attach", "add"]];
   static usage = Command.Usage({
     description: "Upload files as attachments on an issue",
     details:
-      "`<number>` also accepts `<project>/<number>` or a full issue URL.",
+      "`<number>` also accepts `<project>/<number>` or a full issue URL. " +
+      "See `attach list` for what an issue already carries and " +
+      "`attach download` for getting it back.",
   });
 
   number = Option.String({ required: true });
@@ -65,5 +72,166 @@ export class AttachCommand extends ProjectCommand {
     this.output(uploaded, () =>
       uploaded.map((a) => `${a.filename} → ${a.url}`).join("\n"),
     );
+  }
+}
+
+export class AttachListCommand extends ProjectCommand {
+  static paths = [["attach", "list"]];
+  static usage = Command.Usage({
+    description: "List the attachments on an issue",
+    details:
+      "The authoritative view of what an issue carries: the timeline only " +
+      "records upload *events*, and a body only links what someone chose to " +
+      "link. `--json` prints the raw array of attachment objects. The `#id` " +
+      "column is what `attach download` addresses.",
+    examples: [["List what is attached to issue 16", "$0 attach list 16"]],
+  });
+
+  number = Option.String({ required: true });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const { project, number } = this.resolveIssueRef(this.number);
+    const attachments = await client.listAttachments(project, number);
+    this.output(attachments, () =>
+      attachments.length === 0
+        ? "no attachments"
+        : table(
+            attachments.map((a) => [
+              `#${a.id}`,
+              a.filename,
+              formatBytes(a.size),
+              a.url,
+            ]),
+          ),
+    );
+  }
+}
+
+/**
+ * A digits-only argument is an id first and a filename second, so an
+ * attachment literally named "42" stays reachable once no id matches.
+ * Ambiguity is never broken silently: two files of one name on one issue is
+ * an ordinary thing to have, and guessing would write the wrong bytes.
+ */
+function selectAttachment(list: Attachment[], key: string): Attachment {
+  if (/^\d+$/.test(key)) {
+    const byId = list.find((a) => a.id === Number(key));
+    if (byId !== undefined) return byId;
+  }
+  const named = list.filter((a) => a.filename === key);
+  const first = named[0];
+  if (named.length === 1 && first !== undefined) return first;
+  if (named.length > 1) {
+    throw new CliError(
+      `${named.length} attachments are named "${key}":\n${table(
+        named.map((a) => [`#${a.id}`, formatBytes(a.size), a.created_at]),
+      )}`,
+      "address the one you want by id",
+    );
+  }
+  throw new CliError(
+    `no attachment "${key}" on this issue`,
+    list.length === 0
+      ? "the issue has no attachments"
+      : `attached: ${list.map((a) => `#${a.id} ${a.filename}`).join(", ")}`,
+  );
+}
+
+export class AttachDownloadCommand extends ProjectCommand {
+  static paths = [["attach", "download"]];
+  static usage = Command.Usage({
+    description: "Download an attachment, reusing the stored login",
+    details:
+      "Authenticates the same way every other command does, so there is " +
+      "never a reason to read a token out of the config file and hand-write " +
+      "a request. Permissions are the server's usual ones: whoever can read " +
+      "the issue can download its files.\n\n" +
+      "`<id-or-name>` is an id from `attach list` or an exact filename; a " +
+      "name shared by several attachments is an error listing their ids. " +
+      "Without `-o` the file lands in the current directory under its own " +
+      "name and an existing file is never overwritten. `-o <dir>` writes " +
+      "into that directory under the same rule, `-o <file>` writes exactly " +
+      "there and may overwrite, and `-o -` streams the bytes to stdout.",
+    examples: [
+      ["Download by id", "$0 attach download 16 42"],
+      [
+        "Download by name into a directory",
+        "$0 attach download 16 shot.png -o ./downloads",
+      ],
+      [
+        "Pipe an attachment onward",
+        "$0 attach download 16 shot.png -o - | wc -c",
+      ],
+    ],
+  });
+
+  number = Option.String({ required: true });
+  target = Option.String({ required: true });
+  destination = Option.String("-o,--output", {
+    description: "Destination file, directory, or - for stdout",
+  });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const { project, number } = this.resolveIssueRef(this.number);
+    if (this.destination === "-" && this.json) {
+      throw new CliError(
+        "-o - and --json both want stdout",
+        "drop one — the bytes and the metadata cannot share the stream",
+      );
+    }
+
+    const attachment = selectAttachment(
+      await client.listAttachments(project, number),
+      this.target,
+    );
+    const path = this.destination === "-" ? null : this.pathFor(attachment);
+
+    const res = await client.requestRaw(
+      "GET",
+      `/projects/${project}/attachments/${attachment.id}/download`,
+    );
+    const bytes =
+      res.body === null
+        ? Readable.from([])
+        : Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]);
+    const summary = `${attachment.filename} (${formatBytes(attachment.size)})`;
+
+    if (path === null) {
+      // `end: false`: stdout belongs to the process, not to this pipeline.
+      await pipeline(bytes, this.context.stdout, { end: false });
+      this.note(summary);
+      return;
+    }
+    await pipeline(bytes, createWriteStream(path));
+    this.output(
+      { ...attachment, saved_to: path },
+      () => `${summary} → ${path}`,
+    );
+  }
+
+  private pathFor(attachment: Attachment): string {
+    // basename() over a name the server already sanitized: one stale server
+    // must not be enough to write outside the directory the user picked.
+    const filename = basename(attachment.filename);
+    if (this.destination === undefined) {
+      return this.unoccupied(resolve(this.context.cwd, filename));
+    }
+    const given = resolve(this.context.cwd, this.destination);
+    if (existsSync(given) && statSync(given).isDirectory()) {
+      return this.unoccupied(join(given, filename));
+    }
+    // A path the user typed is a target they chose, so it may be
+    // overwritten; only the paths we derived for them are protected.
+    return given;
+  }
+
+  private unoccupied(path: string): string {
+    if (existsSync(path)) {
+      throw new CliError(
+        `${path} already exists`,
+        "pass -o <path> to write somewhere else",
+      );
+    }
+    return path;
   }
 }

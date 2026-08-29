@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { makePainter, relativeTime, summarize, table } from "../src/format.ts";
+import {
+  formatBytes,
+  makePainter,
+  relativeTime,
+  summarize,
+  table,
+} from "../src/format.ts";
 
 describe("table", () => {
   it("aligns columns and trims trailing padding", () => {
@@ -9,6 +15,22 @@ describe("table", () => {
         ["#20", "a longer title", "closed"],
       ]),
     ).toBe("#1   short           open\n#20  a longer title  closed");
+  });
+});
+
+describe("formatBytes", () => {
+  it.each([
+    [0, "0 B"],
+    [1023, "1023 B"],
+    [1024, "1.0 KB"],
+    [20 * 1024 * 1024, "20.0 MB"],
+    [3 * 1024 ** 3 + 512 * 1024 ** 2, "3.5 GB"],
+  ])("%i → %s", (bytes, expected) => {
+    expect(formatBytes(bytes)).toBe(expected);
+  });
+
+  it("steps up rather than printing a unit's own ceiling", () => {
+    expect(formatBytes(1024 ** 2 - 1)).toBe("1.0 MB");
   });
 });
 

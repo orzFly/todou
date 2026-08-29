@@ -67,6 +67,43 @@ describe("api passthrough", () => {
     expect(bodies).toEqual([{ from: "file" }, { from: "stdin" }]);
   });
 
+  it("streams a non-JSON response through verbatim", async () => {
+    // ASCII on purpose: stdout is captured and re-read as utf8.
+    const bytes = "\x89PNG-stand-in\x00\x01\x02 end\n";
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/demo/attachments/42/download",
+        new Response(bytes, {
+          headers: { "content-type": "application/octet-stream" },
+        }),
+      ],
+    ]);
+    const result = await runCli(
+      ["api", "get", "/projects/demo/attachments/42/download"],
+      { fetchImpl, env: loggedInEnv() },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(bytes);
+  });
+
+  it("still pretty-prints a +json suffix content type", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/health",
+        new Response(JSON.stringify({ ok: true }), {
+          headers: { "content-type": "application/problem+json" },
+        }),
+      ],
+    ]);
+    const result = await runCli(["api", "get", "/health"], {
+      fetchImpl,
+      env: loggedInEnv(),
+    });
+    expect(result.stdout).toBe('{\n  "ok": true\n}\n');
+  });
+
   it("prints nothing for 204 responses", async () => {
     const { fetchImpl } = fakeFetch([
       ["DELETE", "/api/me/tokens/3", { __status: 204 }],
