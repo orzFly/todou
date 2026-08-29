@@ -197,6 +197,68 @@ describe("useSpecReviewDrafts", () => {
     });
     expect(second.result.current.drafts).toHaveLength(0);
   });
+
+  it("rewrites a draft where it stands, id and order intact (T-159)", () => {
+    const hook = renderHook(() => useSpecReviewDrafts("p", 30));
+    const anchor = (line: number) => ({
+      path: "design.md",
+      version: 1,
+      line_start: line,
+      line_end: line,
+      col_start: null,
+      col_end: null,
+    });
+    act(() => {
+      hook.result.current.add({ anchor: anchor(3), quote: "…", body: "one" });
+    });
+    act(() => {
+      hook.result.current.add({ anchor: anchor(9), quote: "…", body: "two" });
+    });
+    const first = hook.result.current.drafts[0];
+    if (first === undefined) throw new Error("nothing staged");
+
+    act(() => {
+      hook.result.current.update(first.id, {
+        // Re-anchored while editing: the same draft now points elsewhere.
+        anchor: { ...anchor(5), col_start: 2, col_end: 8 },
+        quote: "half a line",
+        body: "one, rewritten",
+      });
+    });
+
+    expect(hook.result.current.drafts).toHaveLength(2);
+    expect(hook.result.current.drafts[0]).toEqual({
+      id: first.id,
+      anchor: { ...anchor(5), col_start: 2, col_end: 8 },
+      quote: "half a line",
+      body: "one, rewritten",
+    });
+    expect(hook.result.current.drafts[1]?.body).toBe("two");
+    const stored = JSON.parse(
+      localStorage.getItem("todou-spec-review:p:30") ?? "[]",
+    );
+    expect(stored[0].body).toBe("one, rewritten");
+  });
+
+  it("ignores an update for a draft that is already gone", () => {
+    const hook = renderHook(() => useSpecReviewDrafts("p", 31));
+    act(() => {
+      hook.result.current.update("d-gone", {
+        anchor: {
+          path: "design.md",
+          version: 1,
+          line_start: 3,
+          line_end: 3,
+          col_start: null,
+          col_end: null,
+        },
+        quote: "…",
+        body: "orphan",
+      });
+    });
+    expect(hook.result.current.drafts).toHaveLength(0);
+    expect(localStorage.getItem("todou-spec-review:p:31")).toBeNull();
+  });
 });
 
 describe("SpecCommentAnchorCard", () => {

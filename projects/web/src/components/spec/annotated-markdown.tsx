@@ -19,6 +19,7 @@ import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
+  PopoverClose,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
@@ -311,6 +312,7 @@ export function AnnotatedMarkdown({
   annotations,
   changedRanges = [],
   onStage,
+  onEditDraft,
   onRemoveDraft,
   onResolve,
   resolving = false,
@@ -331,6 +333,8 @@ export function AnnotatedMarkdown({
   changedRanges?: LineRange[];
   /** Stage a draft for the selected source range of the viewed version. */
   onStage: (range: AnchorRange) => void;
+  /** Load a staged draft back into the composer for rewriting (T-159). */
+  onEditDraft: (draft: SpecReviewDraft) => void;
   onRemoveDraft: (id: string) => void;
   onResolve: (commentId: number) => void;
   resolving?: boolean;
@@ -547,6 +551,7 @@ export function AnnotatedMarkdown({
           key={chip.blockKey}
           chip={chip}
           onFlash={flashAnnotation}
+          onEditDraft={onEditDraft}
           onRemoveDraft={onRemoveDraft}
           onResolve={onResolve}
           resolving={resolving}
@@ -592,12 +597,14 @@ export function AnnotatedMarkdown({
 function AnnotationChip({
   chip,
   onFlash,
+  onEditDraft,
   onRemoveDraft,
   onResolve,
   resolving,
 }: {
   chip: Chip;
   onFlash: (annotation: DisplayedAnnotation, blockKey: string) => void;
+  onEditDraft: (draft: SpecReviewDraft) => void;
   onRemoveDraft: (id: string) => void;
   onResolve: (commentId: number) => void;
   resolving: boolean;
@@ -645,6 +652,18 @@ function AnnotationChip({
                 </span>
                 {locate(item)}
                 <span className="ml-auto" />
+                {/* Editing reopens the composer, which the popover would
+                    cover — close it on the way out. */}
+                <PopoverClose asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => onEditDraft(item.draft)}
+                  >
+                    Edit
+                  </Button>
+                </PopoverClose>
                 <Button
                   size="sm"
                   variant="ghost"

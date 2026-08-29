@@ -56,7 +56,11 @@ import {
 } from "@/components/timeline/spec-version-card.tsx";
 import { Button } from "@/components/ui/button";
 import { changedLineRanges } from "@/lib/spec-changes.ts";
-import { useSpecReviewDrafts } from "@/lib/spec-drafts.ts";
+import {
+  type SpecReviewDraft,
+  useSpecReviewDrafts,
+} from "@/lib/spec-drafts.ts";
+import { beginEdit, retarget, type Staging } from "@/lib/spec-staging.ts";
 import {
   computeVersionStats,
   type SpecFileStat,
@@ -93,9 +97,6 @@ export function SpecViewPage() {
     <SpecViewBody slug={slug} issueNumber={issueNumber} spec={spec.data} />
   );
 }
-
-/** A draft in the making: where it anchors and what it quotes. */
-type Staging = ComposerStaging;
 
 const DIFF_WRAP_STORAGE_KEY = "todou-spec-diff-wrap";
 
@@ -166,6 +167,16 @@ function SpecViewBody({
   const [showChanges, setShowChanges] = useState(true);
   const [wrap, setWrap] = useState(readDiffWrap);
   const mainRef = useRef<HTMLDivElement>(null);
+  const sessionRef = useRef(0);
+
+  /** Every anchor gesture — selection, line drag, "Comment file". */
+  const stage = (next: ComposerStaging) => {
+    const session = ++sessionRef.current;
+    setStaging((prev) => retarget(prev, next, session));
+  };
+  const editDraft = (draft: SpecReviewDraft) =>
+    setStaging(beginEdit(draft, ++sessionRef.current));
+  const editingDraft = drafts.drafts.find((d) => d.id === staging?.draftId);
 
   const selectedPath = search.file ?? files.data.files[0]?.path;
   const selected = files.data.files.find((f) => f.path === selectedPath);
@@ -520,7 +531,7 @@ function SpecViewBody({
             size="sm"
             variant="outline"
             onClick={() =>
-              setStaging({
+              stage({
                 path: selected.path,
                 version,
                 lineStart: null,
@@ -548,7 +559,7 @@ function SpecViewBody({
           toFiles={files.data.files}
           toVersion={version}
           comments={comments.data.items}
-          onStage={setStaging}
+          onStage={stage}
           focusPath={search.file}
           wrap={wrap}
         />
@@ -624,6 +635,14 @@ function SpecViewBody({
                         size="sm"
                         variant="ghost"
                         className="h-6 px-2 text-xs"
+                        onClick={() => editDraft(draft)}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-2 text-xs"
                         onClick={() => drafts.remove(draft.id)}
                       >
                         Discard
@@ -651,7 +670,7 @@ function SpecViewBody({
                   annotations={displayed}
                   changedRanges={changedRanges}
                   onStage={(range) =>
-                    setStaging({
+                    stage({
                       path: selected.path,
                       version,
                       lineStart: range.lineStart,
@@ -667,6 +686,7 @@ function SpecViewBody({
                       ),
                     })
                   }
+                  onEditDraft={editDraft}
                   onRemoveDraft={drafts.remove}
                   onResolve={(id) => resolve.mutate(id)}
                   resolving={resolve.isPending}
@@ -694,13 +714,16 @@ function SpecViewBody({
 
       {staging !== null && (
         <SpecComposer
-          // A fresh anchor gets a fresh body.
-          key={`${staging.path}:${staging.lineStart}.${staging.colStart}-${staging.lineEnd}.${staging.colEnd}:${staging.version}`}
+          // A new composer session gets a fresh editor; re-aiming the anchor
+          // within one session keeps what has been typed (T-159).
+          key={staging.session}
           slug={slug}
           staging={staging}
+          initialBody={editingDraft?.body}
+          editing={staging.draftId !== undefined}
           onCancel={() => setStaging(null)}
           onStage={(body) => {
-            drafts.add({
+            const next = {
               anchor: {
                 path: staging.path,
                 version: staging.version,
@@ -711,7 +734,11 @@ function SpecViewBody({
               },
               quote: staging.quote,
               body,
-            });
+            };
+            // Discarded from under the edit: keep the text rather than the
+            // identity, and stage it as a new draft.
+            if (editingDraft === undefined) drafts.add(next);
+            else drafts.update(editingDraft.id, next);
             setStaging(null);
           }}
         />
@@ -802,7 +829,7 @@ function SpecDiff({
   toFiles: SpecFile[];
   toVersion: number;
   comments: SpecCommentItem[];
-  onStage: (staging: Staging) => void;
+  onStage: (staging: ComposerStaging) => void;
   /** Scroll this file's diff into view — the version card's per-file link (T-59). */
   focusPath?: string;
   wrap: boolean;
@@ -882,7 +909,7 @@ function AnnotatedFileDiff({
   fromVersion: number;
   toVersion: number;
   comments: SpecCommentItem[];
-  onStage: (staging: Staging) => void;
+  onStage: (staging: ComposerStaging) => void;
   wrap: boolean;
 }) {
   const oldFile = useMemo(

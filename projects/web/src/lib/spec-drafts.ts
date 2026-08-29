@@ -81,6 +81,17 @@ export function useSpecReviewDrafts(slug: string, issueNumber: number) {
           ...read(key),
           { ...draft, id: `d${Date.now()}-${read(key).length}` },
         ]),
+      // Editing a staged draft (T-159) rewrites it where it stands: the id
+      // and the list position both outlive the edit, so the chip the user
+      // opened keeps its place instead of jumping to the end.
+      update: (id: string, patch: Omit<SpecReviewDraft, "id">) => {
+        const current = read(key);
+        if (!current.some((d) => d.id === id)) return;
+        write(
+          key,
+          current.map((d) => (d.id === id ? { ...patch, id } : d)),
+        );
+      },
       remove: (id: string) =>
         write(
           key,

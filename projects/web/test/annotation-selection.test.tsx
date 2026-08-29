@@ -60,6 +60,7 @@ describe("AnnotatedMarkdown floating button (T-60 root cause B)", () => {
         body={"Alpha beta gamma.\n\nDelta epsilon."}
         annotations={[]}
         onStage={onStage}
+        onEditDraft={() => {}}
         onRemoveDraft={() => {}}
         onResolve={() => {}}
       />,
@@ -100,6 +101,7 @@ describe("AnnotatedMarkdown floating button (T-60 root cause B)", () => {
         body={"Alpha beta gamma."}
         annotations={[]}
         onStage={() => {}}
+        onEditDraft={() => {}}
         onRemoveDraft={() => {}}
         onResolve={() => {}}
       />,
@@ -139,6 +141,7 @@ describe("AnnotatedMarkdown column anchors (T-142)", () => {
         body={body}
         annotations={[]}
         onStage={onStage}
+        onEditDraft={() => {}}
         onRemoveDraft={() => {}}
         onResolve={() => {}}
       />,
@@ -228,6 +231,7 @@ describe("AnnotatedMarkdown column anchors (T-142)", () => {
         body={"Alpha beta gamma.\n"}
         annotations={[]}
         onStage={onStage}
+        onEditDraft={() => {}}
         onRemoveDraft={() => {}}
         onResolve={() => {}}
       />,

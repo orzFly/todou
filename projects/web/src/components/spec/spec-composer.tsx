@@ -24,20 +24,26 @@ export type ComposerStaging = {
  * Comment-composer-style bottom strip for staging a spec comment (T-61) —
  * a sticky in-flow panel like the issue page's composer, never a modal:
  * the document stays visible and scrollable while writing. Key it by the
- * anchor so a new selection starts with an empty body.
+ * composer session so re-aiming the anchor keeps the body (T-159).
  */
 export function SpecComposer({
   slug,
   staging,
+  initialBody,
+  editing = false,
   onCancel,
   onStage,
 }: {
   slug: string;
   staging: ComposerStaging;
+  /** Body to open with — the draft being edited (T-159). Read at mount. */
+  initialBody?: string;
+  /** Rewriting a staged draft rather than staging a new one. */
+  editing?: boolean;
   onCancel: () => void;
   onStage: (body: string) => void;
 }) {
-  const [body, setBody] = useState("");
+  const [body, setBody] = useState(initialBody ?? "");
   const refCompletion = useRefCompletion(slug);
   const fileLevel = staging.lineStart === null;
   const lines = fileLevel
@@ -87,6 +93,7 @@ export function SpecComposer({
             autoFocus
             ariaLabel="Spec comment"
             className="min-h-16"
+            initialValue={initialBody}
             onChange={setBody}
             placeholder={
               fileLevel
@@ -101,7 +108,7 @@ export function SpecComposer({
           />
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">
-              ⌘↵ to stage · esc to cancel
+              ⌘↵ to {editing ? "update" : "stage"} · esc to cancel
             </span>
             <span className="ml-auto" />
             <Button variant="ghost" size="sm" onClick={onCancel}>
@@ -112,7 +119,7 @@ export function SpecComposer({
               disabled={body.trim() === ""}
               onClick={() => onStage(body)}
             >
-              Stage comment
+              {editing ? "Update draft" : "Stage comment"}
             </Button>
           </div>
         </div>

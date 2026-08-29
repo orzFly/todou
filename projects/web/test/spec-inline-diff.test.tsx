@@ -35,6 +35,7 @@ async function renderDiff(
       annotations={annotations}
       changedRanges={changedLineRanges(before, after)}
       onStage={() => {}}
+      onEditDraft={() => {}}
       onRemoveDraft={() => {}}
       onResolve={() => {}}
     />,
@@ -137,6 +138,7 @@ describe("word-level diff in the rendered view (T-142)", () => {
         body={"这是一个中文段落，需要调整其中的措辞。\n"}
         annotations={[]}
         onStage={() => {}}
+        onEditDraft={() => {}}
         onRemoveDraft={() => {}}
         onResolve={() => {}}
       />,
@@ -165,6 +167,7 @@ describe("word-level diff in the rendered view (T-142)", () => {
           annotations={annotations}
           changedRanges={changedLineRanges(before, after)}
           onStage={() => {}}
+          onEditDraft={() => {}}
           onRemoveDraft={() => {}}
           onResolve={() => {}}
         />
