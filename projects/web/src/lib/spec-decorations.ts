@@ -20,7 +20,7 @@ import {
   textRangeOf,
   textRangesOfBlocks,
 } from "./spec-source-index.ts";
-import { wordDiff } from "./word-diff.ts";
+import { coalescedWordDiff } from "./word-diff.ts";
 
 /** An annotation as the document sees it: which slice of source it covers. */
 export type AnchoredAnnotation = {
@@ -83,6 +83,11 @@ function alignGroupsOf(index: SegmentIndex, range: LineRange): AlignGroup[] {
  * are words compared inside each match. A block left without a match is the
  * evidence — it was born, or it went — where before the answer had to be
  * inferred from how far a flat word diff's insertions happened to reach.
+ *
+ * And inside a match, the same question is asked once more of every anchor
+ * the word diff found (T-180): the words are compared through
+ * `coalescedWordDiff`, so an anchor too light to pay for the two boxes it
+ * opens is folded into the change instead of cutting it in half.
  */
 export function changeDecorations(
   baseline: SegmentIndex,
@@ -150,7 +155,7 @@ export function changeDecorations(
     const alignment = alignGroups(oldGroups, newGroups);
 
     for (const matched of alignment.pairs) {
-      const result = wordDiff(matched.old.text, matched.new.text);
+      const result = coalescedWordDiff(matched.old.text, matched.new.text);
       for (const range of result.ins) {
         insert(matched.new.at + range.start, matched.new.at + range.end);
       }

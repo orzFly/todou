@@ -345,6 +345,47 @@ describe("what the engine emits for T-163's repro", () => {
   });
 });
 
+/** T-180's repro, verbatim from the card: one list item rewritten end to end. */
+const REWRITE_BEFORE = [
+  "## 变更",
+  "",
+  "- `format.ts` 增加 `displayWidth()`（East Asian Wide/Fullwidth 区间硬编码，不引依赖），`table()` 改用它补齐。CJK 标题的列表从「必错位」变成对齐可读——这是「可读输出」的字面修复。",
+  "",
+].join("\n");
+const REWRITE_AFTER = [
+  "## 变更",
+  "",
+  "- 引入 [`string-width`](https://github.com/sindresorhus/string-width)（sindresorhus，纯 ESM，无 native 依赖），`table()` 的 padding 改按它计宽。CJK 双宽、emoji、零宽符、ANSI 转义都由库处理，比手搓区间表可靠。CJK 标题的列表从「必错位」变成对齐可读——这是「可读输出」的字面修复。",
+  "",
+].join("\n");
+
+describe("a heavily rewritten line collapses to few coherent chunks (T-180)", () => {
+  it("strikes the old line through in two pieces, not eight", async () => {
+    const { container } = await renderDiff(REWRITE_BEFORE, REWRITE_AFTER);
+    // The card measured eight: `format.ts`→`引入`, `East`→`sindresorhus，纯`
+    // and six more pairings that meant nothing.
+    expect(texts(container, "del.spec-del")).toEqual([
+      "format.ts 增加 displayWidth()（East Asian Wide/Fullwidth 区间硬编码，不引",
+      "改用它补齐。CJK",
+    ]);
+    // The insertion is two spans; the link and its code span cut the first one
+    // into neighbouring elements, which reads as one highlight.
+    expect(texts(container, "ins.spec-ins").join("")).toBe(
+      "引入 string-width（sindresorhus，纯 ESM，无 native 的 padding 改按它计宽。CJK 双宽、emoji、零宽符、ANSI 转义都由库处理，比手搓区间表可靠。CJK ",
+    );
+  });
+
+  it("leaves the anchors that outweigh the rewrite unmarked", async () => {
+    const { container } = await renderDiff(REWRITE_BEFORE, REWRITE_AFTER);
+    const marked = texts(container, "ins.spec-ins, del.spec-del").join("");
+    // The sentence the edit never touched, and the anchor mid-line that ties
+    // with the change beside it and so stands.
+    expect(marked).not.toContain("标题的列表从「必错位」");
+    expect(marked).not.toContain("依赖）");
+    expect(container.querySelector("li.spec-changed")).not.toBeNull();
+  });
+});
+
 function comment(
   commentId: number,
   anchor: Partial<SpecCommentItem["anchor"]>,

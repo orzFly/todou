@@ -39,6 +39,127 @@ export type WordDiffResult = {
   del: WordDiffDeletion[];
 };
 
+/**
+ * The diff as alternating stretches: text both sides kept, and text one or
+ * both of them replaced. jsdiff hands a removal and the insertion that took
+ * its place over as two neighbouring parts; one `edit` holds both, because
+ * what follows weighs a change against its neighbours and a change has two
+ * sides.
+ */
+type EditRun = { kind: "edit"; del: string; ins: string };
+type DiffRun = { kind: "eq"; text: string } | EditRun;
+
+function diffRuns(oldText: string, newText: string): DiffRun[] {
+  const runs: DiffRun[] = [];
+  let edit: EditRun | null = null;
+  for (const part of differ.diff(oldText, newText)) {
+    if (part.added || part.removed) {
+      if (edit === null) {
+        edit = { kind: "edit", del: "", ins: "" };
+        runs.push(edit);
+      }
+      if (part.added) edit.ins += part.value;
+      else edit.del += part.value;
+      continue;
+    }
+    edit = null;
+    const last = runs.at(-1);
+    if (last !== undefined && last.kind === "eq") last.text += part.value;
+    else runs.push({ kind: "eq", text: part.value });
+  }
+  return runs;
+}
+
+/** How much a run of changed text weighs against a neighbouring anchor. */
+function weightOf(run: EditRun): number {
+  return Math.max(run.del.length, run.ins.length);
+}
+
+/**
+ * Word-level edits with the anchors that cost more than they earn folded into
+ * the change around them (T-180).
+ *
+ * A heavily rewritten line still shares spaces, punctuation and the odd single
+ * character with the line it replaced, and every one of those the word diff
+ * keeps cuts the rewrite apart: the reader is told `format.ts` became `引入`
+ * and `East` became `sindresorhus，纯`, pairings that carry no meaning, while
+ * the sentence's genuinely untouched tail drowns among the fragments. An
+ * anchor is only worth drawing around when it outweighs the change on *both*
+ * sides of it; a lighter one is folded in, and the two sides each run together
+ * into a single coherent before and after.
+ *
+ * No threshold is involved, which is the point: a small edit keeps every
+ * anchor it has and comes out word-level exactly as it did before, while a
+ * line rewritten past the last surviving anchor degrades into the whole-block
+ * before/after T-142 already renders for a pair that shares nothing. Weight is
+ * in characters and a tie leaves the anchor standing — the conservative of the
+ * two tiers T-180 weighed, and tightening it later is the one comparison
+ * below.
+ *
+ * `wordDiff` keeps its bare output for `similarity()`: that measures how much
+ * genuinely changed, and folded-in anchors would read as change that is not
+ * there, moving pairs across the floor line T-163 relies on.
+ */
+export function coalescedWordDiff(
+  oldText: string,
+  newText: string,
+): WordDiffResult {
+  if (oldText === newText) return { ins: [], del: [] };
+  const runs = diffRuns(oldText, newText);
+
+  // The first and last run are never anchors with a change on either side, so
+  // the text a line opens and closes with survives however heavy the rewrite
+  // between them — which is how the evidence line keeps its untouched tail.
+  for (let i = 1; i + 1 < runs.length; ) {
+    const anchor = runs[i];
+    const before = runs[i - 1];
+    const after = runs[i + 1];
+    if (
+      anchor?.kind !== "eq" ||
+      before?.kind !== "edit" ||
+      after?.kind !== "edit" ||
+      anchor.text.length >= weightOf(before) ||
+      anchor.text.length >= weightOf(after)
+    ) {
+      i++;
+      continue;
+    }
+    runs.splice(i - 1, 3, {
+      kind: "edit",
+      del: before.del + anchor.text + after.del,
+      ins: before.ins + anchor.text + after.ins,
+    });
+    // Leaving `i` where it is lands on the anchor after the merged run, which
+    // now weighs itself against the heavier thing folding produced — that is
+    // how a run of light anchors collapses together in one pass. An anchor
+    // already found heavy enough is never revisited: letting a growing
+    // neighbour come back for it would erode surviving anchors one at a time
+    // until only the first and last stood, which is the aggressive tier T-180
+    // ruled against.
+  }
+
+  const ins: WordDiffRange[] = [];
+  const del: WordDiffDeletion[] = [];
+  let oldPos = 0;
+  let newPos = 0;
+  for (const run of runs) {
+    if (run.kind === "eq") {
+      oldPos += run.text.length;
+      newPos += run.text.length;
+      continue;
+    }
+    if (run.del !== "") {
+      del.push({ at: newPos, from: oldPos, to: oldPos + run.del.length });
+      oldPos += run.del.length;
+    }
+    if (run.ins !== "") {
+      ins.push({ start: newPos, end: newPos + run.ins.length });
+      newPos += run.ins.length;
+    }
+  }
+  return { ins, del };
+}
+
 /** Word-level edits between two texts, as offsets into each side. */
 export function wordDiff(oldText: string, newText: string): WordDiffResult {
   const ins: WordDiffRange[] = [];
