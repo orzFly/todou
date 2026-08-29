@@ -75,7 +75,7 @@ describe("spec anchor columns (T-142)", () => {
     return (await json(res)).version;
   }
 
-  async function createIssueWithSpec(): Promise<number> {
+  async function createIssueWithSpec(body = V1): Promise<number> {
     const res = await t.app.request(`/api/projects/${slug}/issues`, {
       method: "POST",
       headers: headers(),
@@ -83,7 +83,7 @@ describe("spec anchor columns (T-142)", () => {
     });
     expect(res.status).toBe(201);
     const { number } = await json(res);
-    await push(number, V1);
+    await push(number, body);
     return number;
   }
 
@@ -167,6 +167,77 @@ describe("spec anchor columns (T-142)", () => {
     });
     expect(res.status).toBe(422);
     expect((await json(res)).error.message).toContain("exceeds the anchored");
+  });
+
+  // T-169: `len` is the last legal column, `len + 1` is not the caret at end
+  // of line. Line 1 is 5 characters, line 3 is one, line 4 is 13, and lines
+  // 2 and 5 are empty — every edge of the inclusive contract in one file.
+  describe("the edges of a line (T-169)", () => {
+    const EDGES = ["start", "", "x", "the last line", ""].join("\n");
+
+    it("accepts a column on the last character of its line", async () => {
+      const number = await createIssueWithSpec(EDGES);
+      const res = await review(number, {
+        version: 1,
+        verdict: "request_changes",
+        comments: [
+          annotation(
+            { line_start: 1, line_end: 4, col_start: 5, col_end: 13 },
+            "both ends at a line end",
+          ),
+          annotation(
+            { line_start: 3, line_end: 3, col_start: 1, col_end: 1 },
+            "the whole one-character line",
+          ),
+        ],
+      });
+      expect(res.status).toBe(201);
+
+      const { items } = await listComments(number);
+      const quoteOf = (body: string) =>
+        items.find((i: { body: string }) => i.body === body).anchor.quote;
+      expect(quoteOf("both ends at a line end")).toBe("t\n\nx\nthe last line");
+      expect(quoteOf("the whole one-character line")).toBe("x");
+    });
+
+    it("rejects a start column one past the end of its line", async () => {
+      const number = await createIssueWithSpec(EDGES);
+      const res = await review(number, {
+        version: 1,
+        verdict: "request_changes",
+        comments: [
+          annotation({ line_start: 1, line_end: 4, col_start: 6, col_end: 13 }),
+        ],
+      });
+      expect(res.status).toBe(422);
+      expect((await json(res)).error.message).toContain("exceeds the anchored");
+    });
+
+    it("rejects an end column one past the end of its line", async () => {
+      const number = await createIssueWithSpec(EDGES);
+      const res = await review(number, {
+        version: 1,
+        verdict: "request_changes",
+        comments: [
+          annotation({ line_start: 1, line_end: 4, col_start: 5, col_end: 14 }),
+        ],
+      });
+      expect(res.status).toBe(422);
+      expect((await json(res)).error.message).toContain("exceeds the anchored");
+    });
+
+    it("rejects any column on an empty line", async () => {
+      const number = await createIssueWithSpec(EDGES);
+      const res = await review(number, {
+        version: 1,
+        verdict: "request_changes",
+        comments: [
+          annotation({ line_start: 2, line_end: 2, col_start: 1, col_end: 1 }),
+        ],
+      });
+      expect(res.status).toBe(422);
+      expect((await json(res)).error.message).toContain("exceeds the anchored");
+    });
   });
 
   it("rejects columns on a file-level anchor", async () => {

@@ -1,9 +1,55 @@
-import { QueryClientProvider } from "@tanstack/react-query";
+import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { AnnotatedMarkdown } from "../src/components/spec/annotated-markdown.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
+
+/** Render, select `pick`'s range, and return the floating comment button. */
+async function stageSelection(
+  body: string,
+  pick: (container: HTMLElement) => {
+    node: Node;
+    from: number;
+    to: number;
+    /** Defaults to `node`; give one to select across two blocks. */
+    endNode?: Node;
+  },
+  options: { client?: QueryClient; ready?: string } = {},
+) {
+  const onStage = vi.fn();
+  const view = renderWithProviders(
+    <AnnotatedMarkdown
+      slug="p"
+      issueNumber={1}
+      body={body}
+      annotations={[]}
+      onStage={onStage}
+      onEditDraft={() => {}}
+      onRemoveDraft={() => {}}
+      onResolve={() => {}}
+    />,
+    options.client,
+  );
+  const container = await waitFor(() => {
+    const el = view.getByTestId("annotated-markdown");
+    if (!el.querySelector(options.ready ?? "[data-loc]")) {
+      throw new Error("not rendered");
+    }
+    return el;
+  });
+  const { node, from, to, endNode } = pick(container);
+  const range = document.createRange();
+  range.setStart(node, from);
+  range.setEnd(endNode ?? node, to);
+  const selection = window.getSelection();
+  if (!selection) throw new Error("no selection support");
+  selection.removeAllRanges();
+  selection.addRange(range);
+  fireEvent.mouseUp(container);
+  const button = await view.findByText(/Comment L/);
+  return { view, container, onStage, button };
+}
 
 // T-60: the spec annotation flow died in two places — the comment button's
 // appearance re-rendered the markdown with a fresh component-override map
@@ -129,41 +175,6 @@ describe("AnnotatedMarkdown floating button (T-60 root cause B)", () => {
 // T-142: a selection that stops inside a line anchors to the columns it
 // actually covers, instead of claiming the whole block.
 describe("AnnotatedMarkdown column anchors (T-142)", () => {
-  async function stageSelection(
-    body: string,
-    pick: (container: HTMLElement) => { node: Node; from: number; to: number },
-  ) {
-    const onStage = vi.fn();
-    const view = renderWithProviders(
-      <AnnotatedMarkdown
-        slug="p"
-        issueNumber={1}
-        body={body}
-        annotations={[]}
-        onStage={onStage}
-        onEditDraft={() => {}}
-        onRemoveDraft={() => {}}
-        onResolve={() => {}}
-      />,
-    );
-    const container = await waitFor(() => {
-      const el = view.getByTestId("annotated-markdown");
-      if (!el.querySelector("[data-loc]")) throw new Error("not rendered");
-      return el;
-    });
-    const { node, from, to } = pick(container);
-    const range = document.createRange();
-    range.setStart(node, from);
-    range.setEnd(node, to);
-    const selection = window.getSelection();
-    if (!selection) throw new Error("no selection support");
-    selection.removeAllRanges();
-    selection.addRange(range);
-    fireEvent.mouseUp(container);
-    const button = await view.findByText(/Comment L/);
-    return { view, container, onStage, button };
-  }
-
   it("anchors to the selected columns inside a paragraph", async () => {
     const { onStage, button } = await stageSelection(
       "The quick brown fox jumps.\n",
@@ -255,6 +266,136 @@ describe("AnnotatedMarkdown column anchors (T-142)", () => {
       lineEnd: 1,
       colStart: null,
       colEnd: null,
+    });
+  });
+});
+
+// T-169: an endpoint left sitting on a line's newline used to anchor at
+// column len+1, which the server rejects — the inclusive contract has no
+// way to say "one past the end".
+describe("AnnotatedMarkdown line-end columns (T-169)", () => {
+  // A soft break keeps both lines in one paragraph, so a single text node
+  // holds the newline an endpoint can land on. Line 1 is 4 characters.
+  const SOFT_WRAP = "甲乙丙,\n丁戊己。\n";
+
+  function paragraphText(container: HTMLElement): Node {
+    const node = container.querySelector("p[data-loc]")?.firstChild;
+    if (!node) throw new Error("no paragraph");
+    return node;
+  }
+
+  const inParagraph = (from: number, to: number) => (c: HTMLElement) => ({
+    node: paragraphText(c),
+    from,
+    to,
+  });
+
+  it("moves a start at the end of a line to column 1 of the next", async () => {
+    const { onStage, button } = await stageSelection(
+      SOFT_WRAP,
+      inParagraph(4, 7),
+    );
+    expect(button.textContent).toContain("L2:1–2");
+    fireEvent.click(button);
+    expect(onStage).toHaveBeenCalledWith({
+      lineStart: 2,
+      lineEnd: 2,
+      colStart: 1,
+      colEnd: 2,
+    });
+  });
+
+  it("moves an end past the line's newline back onto its last character", async () => {
+    const { onStage, button } = await stageSelection(
+      SOFT_WRAP,
+      inParagraph(0, 5),
+    );
+    fireEvent.click(button);
+    expect(onStage).toHaveBeenCalledWith({
+      lineStart: 1,
+      lineEnd: 1,
+      colStart: 1,
+      colEnd: 4,
+    });
+  });
+
+  it("falls back to whole lines when the selection is only a newline", async () => {
+    const { onStage, button } = await stageSelection(
+      SOFT_WRAP,
+      inParagraph(4, 5),
+    );
+    fireEvent.click(button);
+    expect(onStage).toHaveBeenCalledWith({
+      lineStart: 1,
+      lineEnd: 2,
+      colStart: null,
+      colEnd: null,
+    });
+  });
+
+  it("anchors one character to one column at both ends", async () => {
+    const { onStage, button } = await stageSelection(
+      SOFT_WRAP,
+      inParagraph(0, 1),
+    );
+    fireEvent.click(button);
+    expect(onStage).toHaveBeenCalledWith({
+      lineStart: 1,
+      lineEnd: 1,
+      colStart: 1,
+      colEnd: 1,
+    });
+  });
+
+  it("never puts a column on a blank line the selection spans", async () => {
+    const { onStage, button } = await stageSelection(
+      "one\n\nthree\n",
+      (container) => {
+        const paragraphs = container.querySelectorAll("p[data-loc]");
+        const start = paragraphs[0]?.firstChild;
+        const end = paragraphs[1]?.firstChild;
+        if (!start || !end) throw new Error("no paragraphs");
+        return { node: start, from: 0, to: 5, endNode: end };
+      },
+    );
+    fireEvent.click(button);
+    expect(onStage).toHaveBeenCalledWith({
+      lineStart: 1,
+      lineEnd: 3,
+      colStart: 1,
+      colEnd: 5,
+    });
+  });
+
+  it("offers no anchor at all for a collapsed selection", async () => {
+    const view = renderWithProviders(
+      <AnnotatedMarkdown
+        slug="p"
+        issueNumber={1}
+        body={SOFT_WRAP}
+        annotations={[]}
+        onStage={() => {}}
+        onEditDraft={() => {}}
+        onRemoveDraft={() => {}}
+        onResolve={() => {}}
+      />,
+    );
+    const container = await waitFor(() => {
+      const el = view.getByTestId("annotated-markdown");
+      if (!el.querySelector("p[data-loc]")) throw new Error("not rendered");
+      return el;
+    });
+    const node = container.querySelector("p[data-loc]")?.firstChild;
+    if (!node) throw new Error("no paragraph");
+    const range = document.createRange();
+    range.setStart(node, 3);
+    range.setEnd(node, 3);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    fireEvent.mouseUp(container);
+    await waitFor(() => {
+      expect(view.queryByText(/Comment L/)).toBeNull();
     });
   });
 });

@@ -513,6 +513,11 @@ export async function submitSpecReview(
         if (colStart !== null && colEnd !== null) {
           const startLen = (lines[lineStart - 1] ?? "").length;
           const endLen = (lines[lineEnd - 1] ?? "").length;
+          // Both columns are 1-based inclusive indexes of a character
+          // (@todou/shared's SpecCommentAnchorInput), which `quoteLines`
+          // then slices with — so `len` is the largest legal one at either
+          // end. `len + 1` is not "the caret at end of line", it is a
+          // producer that failed to step off the newline (T-169).
           if (colStart > startLen || colEnd > endLen) {
             throw new ValidationFailedError(
               `anchor ${comment.anchor.path}:${lineStart}.${colStart}-${lineEnd}.${colEnd} exceeds the anchored lines (${startLen} and ${endLen} characters in v${comment.anchor.version})`,

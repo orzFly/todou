@@ -203,12 +203,18 @@ export function columnsOfSelection(
     "end",
   );
   if (start === null || end === null || end <= start) return null;
-  // Columns are inclusive and must name a real character: a selection that
-  // ran to the end of a line would otherwise land on the newline, which is
-  // past the line the server measures.
+  // Columns name a real character, inclusively (the contract lives in
+  // shared/schemas/spec.ts), so `len + 1` is never one — the server measures
+  // lines without their newline. Both ends therefore step off a newline they
+  // landed on, which makes a selection starting at a line end mean column 1
+  // of the next line rather than one past the end of this one.
+  let first = start;
   let last = end - 1;
-  while (last > start && index.source[last] === "\n") last--;
-  const from = lineColAt(index, start);
+  while (first < last && index.source[first] === "\n") first++;
+  while (last > first && index.source[last] === "\n") last--;
+  // Newlines only: no column can name that, so the whole-line anchor stands.
+  if (index.source[first] === "\n") return null;
+  const from = lineColAt(index, first);
   const to = lineColAt(index, last);
   if (to.line < from.line || (to.line === from.line && to.col < from.col)) {
     return null;
