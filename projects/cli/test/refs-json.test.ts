@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { fakeFetch, loggedInEnv, type Route, runCli } from "./harness.ts";
+import {
+  fakeFetch,
+  loggedInEnv,
+  parseNdjson,
+  type Route,
+  runCli,
+} from "./harness.ts";
 
 /**
  * T-134: `--json` consumers only ever saw `"number": 3` and could not tell
@@ -45,6 +51,19 @@ const json = async (argv: string[], routes: Route[]) => {
     env: loggedInEnv(),
   });
   return { result, parsed: JSON.parse(result.stdout) };
+};
+
+/** Same, for the watch commands: their `--json` is NDJSON (T-175). */
+const ndjson = async <T = Record<string, unknown>>(
+  argv: string[],
+  routes: Route[],
+) => {
+  const { fetchImpl } = fakeFetch(routes);
+  const result = await runCli([...argv, "--json"], {
+    fetchImpl,
+    env: loggedInEnv(),
+  });
+  return { result, ...parseNdjson<T>(result.stdout) };
 };
 
 describe("issue JSON carries the project's ref spelling (T-134)", () => {
@@ -171,7 +190,7 @@ describe("watch JSON carries the ref spelling (T-134)", () => {
   });
 
   it("states the format on `issue watch`, whose entries carry no number", async () => {
-    const { result, parsed } = await json(
+    const { result, cursor } = await ndjson(
       ["issue", "watch", "3", "-p", "todou", "--poll", "--since", "c0"],
       [
         ["GET", "/api/me", me],
@@ -184,11 +203,15 @@ describe("watch JSON carries the ref spelling (T-134)", () => {
       ],
     );
     expect(result.exitCode).toBe(3);
-    expect(parsed.ref_format).toEqual({ prefix: "T", token: "T-" });
+    expect(cursor.ref_format).toEqual({ prefix: "T", token: "T-" });
   });
 
   it("spells each single-project activity item beside its issue_number", async () => {
-    const { parsed } = await json(
+    const { items, cursor } = await ndjson<{
+      issue_number: number;
+      issue_ref: string;
+      project: string;
+    }>(
       ["watch", "-p", "todou", "--poll", "--since", "a0"],
       [
         ["GET", "/api/me", me],
@@ -203,10 +226,10 @@ describe("watch JSON carries the ref spelling (T-134)", () => {
         prefixed("T"),
       ],
     );
-    expect(parsed.items[0].issue_number).toBe(3);
-    expect(parsed.items[0].issue_ref).toBe("T-3");
-    expect(parsed.items[0].project).toBe("todou");
-    expect(parsed.ref_format).toEqual({ prefix: "T", token: "T-" });
+    expect(items[0]?.issue_number).toBe(3);
+    expect(items[0]?.issue_ref).toBe("T-3");
+    expect(items[0]?.project).toBe("todou");
+    expect(cursor.ref_format).toEqual({ prefix: "T", token: "T-" });
   });
 
   it("spells cross-project items per project, and states no single format", async () => {
@@ -247,10 +270,8 @@ describe("watch JSON carries the ref spelling (T-134)", () => {
       { fetchImpl, env: loggedInEnv() },
     );
     expect(result.exitCode).toBe(0);
-    const parsed = JSON.parse(result.stdout);
-    expect(parsed.items.map((i: { issue_ref: string }) => i.issue_ref)).toEqual(
-      ["F-7", "#4"],
-    );
-    expect(parsed.ref_format).toBeUndefined();
+    const { items, cursor } = parseNdjson<{ issue_ref: string }>(result.stdout);
+    expect(items.map((i) => i.issue_ref)).toEqual(["F-7", "#4"]);
+    expect(cursor.ref_format).toBeUndefined();
   });
 });

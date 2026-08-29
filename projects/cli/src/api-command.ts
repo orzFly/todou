@@ -15,6 +15,30 @@ import { discoverDirConfig } from "./dir-config.ts";
 import { CliError, reportError } from "./errors.ts";
 import { detectAgentContext } from "./harness/index.ts";
 import { parseIssueRef } from "./parse.ts";
+import type { RefFormat } from "./refs.ts";
+
+export type CursorRecord = {
+  type: "cursor";
+  next_cursor: string | null;
+  ref_format?: RefFormat;
+};
+
+/**
+ * The record every NDJSON batch ends with: where to resume, and — where
+ * one project owns the stream — how it spells its refs. Being a record of
+ * its own rather than a field on each item is what keeps cursor minting
+ * server-side: cursors are cut per page, not per entry (T-175).
+ */
+export function cursorRecord(
+  cursor: string | undefined,
+  format?: RefFormat,
+): CursorRecord {
+  return {
+    type: "cursor",
+    next_cursor: cursor ?? null,
+    ...(format === undefined ? {} : { ref_format: format }),
+  };
+}
 
 export type CliContext = BaseContext & {
   cwd: string;
@@ -119,6 +143,24 @@ export abstract class ApiCommand extends Command<CliContext> {
   protected output(data: unknown, human: () => string): void {
     const text = this.json ? JSON.stringify(data, null, 2) : human();
     this.context.stdout.write(`${text}\n`);
+  }
+
+  /**
+   * A batch of records: NDJSON under --json, the prose otherwise. One
+   * compact record per line makes a file a consumer appends to parseable
+   * line by line, with no document boundaries to hunt for (T-175) — so an
+   * empty batch prints nothing at all rather than a blank line, which is
+   * the one thing `jq` could not swallow.
+   */
+  protected outputBatch(records: unknown[], human: () => string): void {
+    if (!this.json) {
+      this.context.stdout.write(`${human()}\n`);
+      return;
+    }
+    if (records.length === 0) return;
+    this.context.stdout.write(
+      `${records.map((record) => JSON.stringify(record)).join("\n")}\n`,
+    );
   }
 
   protected note(line: string): void {

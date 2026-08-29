@@ -6,6 +6,7 @@ import { loadCliConfig, saveCliConfig } from "../src/config.ts";
 import {
   fakeFetch,
   loggedInEnv,
+  parseNdjson,
   type Route,
   runCli,
   virtualClock,
@@ -478,12 +479,15 @@ describe("issue watch", () => {
       { fetchImpl, env: loggedInEnv("todou") },
     );
     expect(result.exitCode).toBe(0);
-    const parsed = JSON.parse(result.stdout) as {
-      items: Array<{ body: string }>;
-      next_cursor: string;
-    };
-    expect(parsed.items.map((i) => i.body)).toEqual(["fresh news"]);
-    expect(parsed.next_cursor).toBe("c1");
+    const { items, cursor, lines } = parseNdjson<{ body: string }>(
+      result.stdout,
+    );
+    expect(items.map((i) => i.body)).toEqual(["fresh news"]);
+    // The item line is the timeline entry itself, unchanged from the
+    // envelope days; the cursor rides its own record after it.
+    expect(items[0]).toEqual(newComment);
+    expect(cursor.next_cursor).toBe("c1");
+    expect(lines).toBe(2);
   });
 
   it("--poll with nothing new echoes the cursor and exits 3", async () => {
@@ -495,8 +499,12 @@ describe("issue watch", () => {
       { fetchImpl, env: loggedInEnv("todou") },
     );
     expect(result.exitCode).toBe(3);
-    const parsed = JSON.parse(result.stdout) as { next_cursor: string };
-    expect(parsed.next_cursor).toBe("c0");
+    // One cursor record, nothing else: `--poll --json | jq -r .next_cursor`
+    // still bootstraps a cursor without knowing about NDJSON at all.
+    const { items, cursor, lines } = parseNdjson(result.stdout);
+    expect(items).toEqual([]);
+    expect(lines).toBe(1);
+    expect(cursor.next_cursor).toBe("c0");
   });
 
   it("without --since it baselines at now, then blocks until news", async () => {
@@ -525,13 +533,10 @@ describe("issue watch", () => {
       { fetchImpl, env: loggedInEnv("todou"), clock },
     );
     expect(result.exitCode).toBe(0);
-    const parsed = JSON.parse(result.stdout) as {
-      items: Array<{ body: string }>;
-      next_cursor: string;
-    };
+    const { items, cursor } = parseNdjson<{ body: string }>(result.stdout);
     // History before the baseline is never replayed.
-    expect(parsed.items.map((i) => i.body)).toEqual(["fresh news"]);
-    expect(parsed.next_cursor).toBe("c2");
+    expect(items.map((i) => i.body)).toEqual(["fresh news"]);
+    expect(cursor.next_cursor).toBe("c2");
     expect(calls.some((c) => c.url.includes("last=1"))).toBe(true);
     // Two empty polls at the requested interval, then the news — the
     // cadence is the flag's, not the machine's.
@@ -607,15 +612,9 @@ describe("issue watch", () => {
       { fetchImpl, env: loggedInEnv("todou"), clock },
     );
     expect(result.exitCode).toBe(0);
-    const parsed = JSON.parse(result.stdout) as {
-      items: Array<{ body: string }>;
-      next_cursor: string;
-    };
-    expect(parsed.items.map((i) => i.body)).toEqual([
-      "fresh news",
-      "late news",
-    ]);
-    expect(parsed.next_cursor).toBe("c2");
+    const { items, cursor } = parseNdjson<{ body: string }>(result.stdout);
+    expect(items.map((i) => i.body)).toEqual(["fresh news", "late news"]);
+    expect(cursor.next_cursor).toBe("c2");
     // The window is honored: no early return on the first entry.
     expect(clock.elapsed()).toBe(60_000);
   });
@@ -668,15 +667,12 @@ describe("issue watch", () => {
       { fetchImpl, env: loggedInEnv("todou"), clock },
     );
     expect(result.exitCode).toBe(0);
-    const parsed = JSON.parse(result.stdout) as {
-      items: unknown[];
-      next_cursor: string;
-    };
+    const { items, cursor } = parseNdjson(result.stdout);
     // Ever-fresh entries never push the anchor forward: the window still
     // closes 60s after the *first* batch, so the count is exactly the
     // opening drain plus one per 2s poll inside it.
-    expect(parsed.items).toHaveLength(1 + 60 / 2);
-    expect(parsed.next_cursor).toBe(`b${n}`);
+    expect(items).toHaveLength(1 + 60 / 2);
+    expect(cursor.next_cursor).toBe(`b${n}`);
     expect(clock.elapsed()).toBe(60_000);
   });
 
@@ -718,12 +714,9 @@ describe("issue watch", () => {
     // entry, so it is delivered without idle waiting or re-polling.
     expect(clock.elapsed()).toBe(0);
     expect(c1Calls).toBe(1);
-    const parsed = JSON.parse(result.stdout) as {
-      items: Array<{ body: string }>;
-      next_cursor: string;
-    };
-    expect(parsed.items.map((i) => i.body)).toEqual(["fresh news"]);
-    expect(parsed.next_cursor).toBe("c1");
+    const { items, cursor } = parseNdjson<{ body: string }>(result.stdout);
+    expect(items.map((i) => i.body)).toEqual(["fresh news"]);
+    expect(cursor.next_cursor).toBe("c1");
   });
 
   it("--debounce waits only the remainder of a partially aged window", async () => {
@@ -775,16 +768,10 @@ describe("issue watch", () => {
       { fetchImpl, env: loggedInEnv("todou"), clock },
     );
     expect(result.exitCode).toBe(0);
-    const parsed = JSON.parse(result.stdout) as {
-      items: Array<{ body: string }>;
-      next_cursor: string;
-    };
+    const { items, cursor } = parseNdjson<{ body: string }>(result.stdout);
     // Still inside the window, so collection continues...
-    expect(parsed.items.map((i) => i.body)).toEqual([
-      "fresh news",
-      "late news",
-    ]);
-    expect(parsed.next_cursor).toBe("c2");
+    expect(items.map((i) => i.body)).toEqual(["fresh news", "late news"]);
+    expect(cursor.next_cursor).toBe("c2");
     // ...but 1s of the 2s window was spent before the watch saw the entry:
     // exactly the remainder is waited, not a fresh window.
     expect(clock.elapsed()).toBe(1_000);
@@ -817,9 +804,7 @@ describe("issue watch", () => {
       { fetchImpl, env: loggedInEnv("todou"), clock },
     );
     expect(result.exitCode).toBe(0);
-    expect(
-      (JSON.parse(result.stdout) as { items: unknown[] }).items,
-    ).toHaveLength(1);
+    expect(parseNdjson(result.stdout).items).toHaveLength(1);
     expect(clock.elapsed()).toBe(0);
   });
 

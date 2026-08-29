@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { fakeFetch, loggedInEnv, runCli, virtualClock } from "./harness.ts";
+import {
+  fakeFetch,
+  loggedInEnv,
+  parseNdjson,
+  runCli,
+  virtualClock,
+} from "./harness.ts";
 
 const me = {
   id: 2,
@@ -219,12 +225,11 @@ describe("watch (project-level)", () => {
       { fetchImpl, env: loggedInEnv() },
     );
     expect(result.exitCode).toBe(0);
-    const parsed = JSON.parse(result.stdout) as {
-      items: Array<{ issue_number: number; body: string }>;
-      next_cursor: string;
-    };
-    expect(parsed.items[0]?.issue_number).toBe(3);
-    expect(parsed.next_cursor).toBe("a1");
+    const { items, cursor } = parseNdjson<{ issue_number: number }>(
+      result.stdout,
+    );
+    expect(items[0]?.issue_number).toBe(3);
+    expect(cursor.next_cursor).toBe("a1");
     const activityCall = calls.find((c) => c.url.includes("/activity"));
     expect(activityCall?.url).toContain("exclude_actor=2");
     // No harness, no session to name: the account is the whole answer.
@@ -250,6 +255,72 @@ describe("watch (project-level)", () => {
     expect(result.stdout).toContain("#3 User commented");
     expect(result.stdout).toContain("web comment");
     expect(result.stdout).toContain("cursor: a1");
+  });
+
+  /**
+   * The failure T-175 was filed for: a stream that names the entry type and
+   * stops there is one whose reader never learns what was said. A comment
+   * showing its body is the acceptance criterion, not a nicety.
+   */
+  it("shows the start of a comment body, one line per entry", async () => {
+    const instruction =
+      "要在 dogfood 上开——先把 CLI 发布到镜像里\n\n然后再回来说一声";
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/me", me],
+      [
+        "GET",
+        "/api/projects/todou/activity",
+        (_init: RequestInit, url: URL) =>
+          url.searchParams.get("after") === "a0"
+            ? page(
+                [
+                  { ...webComment, body: instruction },
+                  {
+                    type: "event",
+                    id: 12,
+                    event_type: "status_changed",
+                    actor: other,
+                    payload: { from: { name: "Todo" }, to: { name: "Next" } },
+                    created_at: "2026-08-11T12:00:01Z",
+                    issue_number: 4,
+                  },
+                ],
+                "a1",
+              )
+            : page([], null),
+      ],
+    ]);
+    const result = await runCli(
+      ["watch", "-p", "todou", "--poll", "--since", "a0"],
+      { fetchImpl, env: loggedInEnv() },
+    );
+    expect(result.exitCode).toBe(0);
+    const lines = result.stdout.trimEnd().split("\n");
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toContain("要在 dogfood 上开——先把 CLI 发布到镜像里");
+    // Folded onto its line: the second paragraph rides along, no wrapping.
+    expect(lines[0]).toContain("然后再回来说一声");
+    expect(lines[1]).toMatch(/^#4 User status_changed \(Todo → Next\) /);
+    expect(lines[2]).toBe("cursor: a1");
+  });
+
+  it("--summary caps how much body a line carries", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/me", me],
+      [
+        "GET",
+        "/api/projects/todou/activity",
+        (_init: RequestInit, url: URL) =>
+          url.searchParams.get("after") === "a0"
+            ? page([{ ...webComment, body: "0123456789abcdefghij" }], "a1")
+            : page([], null),
+      ],
+    ]);
+    const result = await runCli(
+      ["watch", "-p", "todou", "--poll", "--since", "a0", "--summary", "10"],
+      { fetchImpl, env: loggedInEnv() },
+    );
+    expect(result.stdout.split("\n")[0]).toMatch(/: 0123456789…$/);
   });
 
   it("--debounce batches a cross-issue burst into one wake-up", async () => {
@@ -304,12 +375,11 @@ describe("watch (project-level)", () => {
       { fetchImpl, env: loggedInEnv(), clock },
     );
     expect(result.exitCode).toBe(0);
-    const parsed = JSON.parse(result.stdout) as {
-      items: Array<{ issue_number: number }>;
-      next_cursor: string;
-    };
-    expect(parsed.items.map((i) => i.issue_number)).toEqual([3, 4]);
-    expect(parsed.next_cursor).toBe("a2");
+    const { items, cursor } = parseNdjson<{ issue_number: number }>(
+      result.stdout,
+    );
+    expect(items.map((i) => i.issue_number)).toEqual([3, 4]);
+    expect(cursor.next_cursor).toBe("a2");
     // The whole window is honored — the second card lands on the second
     // poll, yet the loop keeps collecting to the end instead of returning
     // early. Virtual seconds, so a sentinel-sized window costs no wall time.
@@ -332,8 +402,7 @@ describe("watch (project-level)", () => {
       { fetchImpl, env: loggedInEnv() },
     );
     expect(result.exitCode).toBe(3);
-    const parsed = JSON.parse(result.stdout) as { next_cursor: string };
-    expect(parsed.next_cursor).toBe("a0");
+    expect(parseNdjson(result.stdout).cursor.next_cursor).toBe("a0");
     expect(calls.some((c) => c.url.includes("/api/me"))).toBe(false);
     expect(calls.some((c) => c.url.includes("exclude_actor"))).toBe(false);
     expect(calls.some((c) => c.url.includes("exclude_agent_session"))).toBe(

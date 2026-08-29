@@ -4,6 +4,7 @@ import { openChangeNudges } from "../src/change-nudges.ts";
 import {
   fakeFetch,
   loggedInEnv,
+  parseNdjson,
   runCli,
   type SseStub,
   sseStub,
@@ -204,13 +205,13 @@ describe("watch over the change feed, contract unchanged (T-123)", () => {
       { fetchImpl, env: loggedInEnv(), clock },
     );
     expect(result.exitCode).toBe(0);
-    const parsed = JSON.parse(result.stdout) as {
-      items: Array<{ issue_number: number; project: string }>;
-      next_cursor: string;
-    };
-    expect(parsed.items[0]?.issue_number).toBe(3);
-    expect(parsed.items[0]?.project).toBe("todou");
-    expect(parsed.next_cursor).toBe("a1");
+    const { items, cursor } = parseNdjson<{
+      issue_number: number;
+      project: string;
+    }>(result.stdout);
+    expect(items[0]?.issue_number).toBe(3);
+    expect(items[0]?.project).toBe("todou");
+    expect(cursor.next_cursor).toBe("a1");
     // Not one interval was waited out: the second drain happened because
     // the feed asked for it.
     expect(clock.elapsed()).toBe(0);
@@ -293,11 +294,13 @@ describe("watch over the change feed, contract unchanged (T-123)", () => {
       { fetchImpl, env: loggedInEnv(), clock },
     );
     expect(result.exitCode).toBe(3);
-    expect(JSON.parse(result.stdout)).toEqual({
-      items: [],
-      next_cursor: "a0",
-      ref_format: { prefix: null, token: "#" },
-    });
+    expect(result.stdout).toBe(
+      `${JSON.stringify({
+        type: "cursor",
+        next_cursor: "a0",
+        ref_format: { prefix: null, token: "#" },
+      })}\n`,
+    );
     expect(clock.elapsed()).toBe(10_000);
     // Idling on the feed rather than on a 2s tick: two drains, not six.
     expect(drains).toBe(2);
@@ -398,12 +401,11 @@ describe("watch over the change feed, contract unchanged (T-123)", () => {
       { fetchImpl, env: loggedInEnv(), clock },
     );
     expect(result.exitCode).toBe(0);
-    const parsed = JSON.parse(result.stdout) as {
-      items: Array<{ issue_number: number }>;
-      next_cursor: string;
-    };
-    expect(parsed.items.map((i) => i.issue_number)).toEqual([3, 4]);
-    expect(parsed.next_cursor).toBe("a2");
+    const { items, cursor } = parseNdjson<{ issue_number: number }>(
+      result.stdout,
+    );
+    expect(items.map((i) => i.issue_number)).toEqual([3, 4]);
+    expect(cursor.next_cursor).toBe("a2");
     // The nudge pulled inside the window; it did not shorten it.
     expect(clock.elapsed()).toBe(60_000);
     expect(tail).toBe(2);
@@ -440,8 +442,7 @@ describe("watch over the change feed, contract unchanged (T-123)", () => {
     );
     expect(result.exitCode).toBe(0);
     expect(clock.elapsed()).toBe(0);
-    const parsed = JSON.parse(result.stdout) as { next_cursor: string };
-    expect(parsed.next_cursor).toBe("z1");
+    expect(parseNdjson(result.stdout).cursor.next_cursor).toBe("z1");
     // The watch set lives on the server under --all-projects, so nothing
     // is filtered client-side either.
     expect(calls.some((c) => c.url.includes("/api/events"))).toBe(true);

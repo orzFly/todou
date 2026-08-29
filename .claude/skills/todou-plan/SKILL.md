@@ -48,8 +48,8 @@ and fix inline — iterate up to 5 times before presenting.
 
 ```bash
 todou spec push <n> <dir> -p <proj> --message "plan v1"          # upload the set
-cursor=$(todou watch -p <proj> --poll --json | jq -r .next_cursor)
-todou issue watch <n> -p <proj> --since "$cursor" --debounce 60 --timeout 43200 --json
+cursor=$(todou watch -p <proj> --poll --json | jq -r 'select(.type=="cursor").next_cursor')
+todou issue watch <n> -p <proj> --since "$cursor" --debounce 60 --timeout 43200
 ```
 
 The watch covers the whole issue, unfiltered, so a plain comment — the user amending a requirement,
@@ -63,7 +63,7 @@ sibling agents on the same machine account pass the self-filter (it is per agent
 4. Neither → no verdict yet. Comments by others in the watch output are feedback: fold them into
    the documents (update proposal.md, reply if an answer is owed, push if the docs changed).
    Nothing but sibling-agent activity? Not yours — resume the wait, silently.
-5. Resume with the `next_cursor` the watch printed — never a fresh "now" cursor, which would skip
+5. Resume with the cursor the watch printed on its last line — never a fresh "now" cursor, which would skip
    whatever landed in the gap. Exit 3 (timeout) and 4 (outage): rerun with the same cursor.
 
 **Two prohibitions, one per failure mode.** Never replace the blocking watch with `spec status`

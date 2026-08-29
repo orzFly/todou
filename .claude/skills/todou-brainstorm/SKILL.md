@@ -139,8 +139,8 @@ changed, then wait for the review verdict:
 
 ```bash
 todou spec push <n> <tmpdir> -p <proj> --message "brainstorm v2"
-cursor=$(todou watch -p <proj> --poll --json | jq -r .next_cursor)
-todou issue watch <n> -p <proj> --since "$cursor" --debounce 60 --timeout 43200 --json
+cursor=$(todou watch -p <proj> --poll --json | jq -r 'select(.type=="cursor").next_cursor')
+todou issue watch <n> -p <proj> --since "$cursor" --debounce 60 --timeout 43200
 ```
 
 The watch is unfiltered — plain comments wake you too, and so do sibling agents on the same machine
@@ -153,7 +153,7 @@ account (the self-filter is per agent session). Judge every wake-up with `todou 
   wait again; repeat until approved.
 - User replied in plain comments instead of a verdict → treat it as feedback, revise, and point them
   at the review controls in your next comment.
-- None of the above → not yours; resume the wait silently with the printed `next_cursor` (exit 3/4:
+- None of the above → not yours; resume the wait silently with the cursor the watch printed (exit 3/4:
   same cursor). Never poll `spec status` in place of the blocking watch.
 
 **Implementation:**

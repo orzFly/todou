@@ -18,12 +18,18 @@ Read `/todou-cli` first; full herdr syntax is in the `/herdr` skill. Project-spe
 Keep one running in the background (run_in_background):
 
 ```bash
-todou watch -p <proj> --since <cursor> --timeout 43200 --debounce 60 --json
+todou watch -p <proj> --since <cursor> --timeout 43200 --debounce 60
 ```
+
+**No `--json`.** The default rendering is one line per entry — `<ref> <who> <what> <when>:
+<summary>` — and a comment line carries the start of its body, which is the whole point: a stream
+that only names entry types is one you read past. (`--json` is NDJSON when a script needs it; take
+the cursor with `jq -r 'select(.type=="cursor").next_cursor'`, and never merge stderr into the
+same file — see /todou-cli.)
 
 Every exit wakes you (exit 0 = events, exit 3 = idle tick, exit 4 = the watch already retried a
 network outage for 2+ minutes and gave up — restart it with the same cursor, no events are lost).
-**Handle the items, then immediately restart with next_cursor.** Standard reactions:
+**Handle the items, then immediately restart with the printed cursor.** Standard reactions:
 
 | Event | Reaction |
 |---|---|

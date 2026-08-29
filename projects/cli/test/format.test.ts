@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { makePainter, relativeTime, table } from "../src/format.ts";
+import { makePainter, relativeTime, summarize, table } from "../src/format.ts";
 
 describe("table", () => {
   it("aligns columns and trims trailing padding", () => {
@@ -23,6 +23,31 @@ describe("relativeTime", () => {
     ["2024-08-11T12:00:00Z", "2y ago"],
   ])("%s → %s", (iso, expected) => {
     expect(relativeTime(iso, now)).toBe(expected);
+  });
+});
+
+describe("summarize", () => {
+  it("folds newlines and runs of whitespace into single spaces", () => {
+    expect(summarize("first line\n\n  second\tline  ", 40)).toBe(
+      "first line second line",
+    );
+  });
+
+  it("leaves a body that exactly fits without an ellipsis", () => {
+    expect(summarize("12345", 5)).toBe("12345");
+    expect(summarize("123456", 5)).toBe("12345…");
+  });
+
+  it("counts CJK by character, not by byte", () => {
+    expect(summarize("要在 dogfood 上开先把 CLI 发布到镜像里", 8)).toBe(
+      "要在 dogfo…",
+    );
+  });
+
+  it("never splits a surrogate pair at the cut", () => {
+    const cut = summarize("🐱🐱🐱", 2);
+    expect(cut).toBe("🐱🐱…");
+    expect(cut).not.toContain("�");
   });
 });
 

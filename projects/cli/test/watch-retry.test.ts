@@ -8,7 +8,13 @@ import {
   runWatchLoop,
   watchRetryOptions,
 } from "../src/watch-loop.ts";
-import { fakeFetch, loggedInEnv, runCli, virtualClock } from "./harness.ts";
+import {
+  fakeFetch,
+  loggedInEnv,
+  parseNdjson,
+  runCli,
+  virtualClock,
+} from "./harness.ts";
 
 const fetchFailed = () =>
   new TypeError("fetch failed", {
@@ -278,14 +284,16 @@ describe("watch command network robustness", () => {
     expect(result.exitCode).toBe(0);
     expect(meCalls).toBe(2);
     expect(activityCalls).toBe(3);
-    const parsed = JSON.parse(result.stdout) as {
-      items: Array<{ issue_number: number }>;
-      next_cursor: string;
-    };
-    expect(parsed.items[0]?.issue_number).toBe(3);
-    expect(parsed.next_cursor).toBe("a1");
+    // Every line parses on its own: parseNdjson throws otherwise, which is
+    // the assertion that retry chatter never lands mid-stream. Merging the
+    // two streams with `2>&1` is what forced consumers into defensive
+    // incremental JSON scraping before T-175.
+    const { items, cursor } = parseNdjson<{ issue_number: number }>(
+      result.stdout,
+    );
+    expect(items[0]?.issue_number).toBe(3);
+    expect(cursor.next_cursor).toBe("a1");
     expect(result.stderr).toContain("transient failure 1/3 (HTTP 502)");
-    // Progress notes stay on stderr — stdout must remain parseable JSON.
     expect(result.stdout).not.toContain("transient failure");
   });
 

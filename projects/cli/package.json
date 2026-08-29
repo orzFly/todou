@@ -1,6 +1,6 @@
 {
   "name": "@todou/cli",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "todou client CLI, for humans and agents",
   "private": true,
   "license": "BSD-3-Clause",

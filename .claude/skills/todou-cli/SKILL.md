@@ -82,11 +82,17 @@ recoloring plans and bulk setup, not for clearing the way.
 ## watch / poll (the agent's radar)
 
 ```bash
-todou issue watch 16 --since <cursor> --timeout 43200 --json  # wait on one issue
-todou watch -p <proj> --since <cursor> --timeout 43200 --debounce 60 --json  # wait on the whole project, others only
+todou issue watch 16 --since <cursor> --timeout 43200  # wait on one issue
+todou watch -p <proj> --since <cursor> --timeout 43200 --debounce 60  # wait on the whole project, others only
 ```
 
 Use a 12-hour timeout (43200) and a 60-second debounce as the standard values.
+
+**Leave `--json` off unless a script is consuming the stream.** The default is one line per entry —
+`<ref> <who> <what> <when>: <summary>` — ending with a `cursor:` line, and a comment line shows the
+start of its body. That last part is the point: a stream that names entry types and stops there gets
+read past, and the instruction inside the comment is missed. `--summary <chars>` widens or narrows
+the body a line carries (default 120).
 
 **Never issue a blocking wait bare — wrap it in a re-run loop.** This applies to `issue watch`,
 `todou watch` and `question wait` alike. Exit 3 (timeout) and exit 4 (network give-up) both mean *keep
@@ -109,13 +115,23 @@ cursor*, every time, however often it happens. Nothing is lost across the gap. D
 short-period self-poll — a 6-minute poll burns a whole agent turn per tick — and do say a word about it
 in the terminal so the orchestrator knows to relay as a backstop.
 
-- Exit codes: **0 = new entries** (stdout is `{items, next_cursor, ref_format}`), **3 = timeout with nothing new**
+- Exit codes: **0 = new entries**, **3 = timeout with nothing new**
   (normal, not an error), 1 = fatal error, **4 = gave up on a network outage** after automatic retries
   (a blocking watch retries transient failures — 5xx, refused, reset — for 2+ minutes first; `--poll`
   fails fast after 3 attempts). On exit 4 just rerun with the same cursor; nothing is lost.
+- **`--json` is NDJSON** (CLI ≥ 0.3.0): one compact record per line — the item lines have the shape
+  the old `items[]` elements had, then one `{"type":"cursor","next_cursor":…,"ref_format":…}` record
+  closes the batch. So a file you append a watch to is parseable line by line; resume from the
+  **last** cursor record, and item lines no cursor record follows yet simply replay next run.
+  Take the cursor with `jq -r 'select(.type=="cursor").next_cursor'` (or `tail -n1 | jq -r
+  .next_cursor`), the entries with `jq 'select(.type!="cursor")'`.
+- **stdout is data, stderr is diagnostics** — retry progress goes to stderr. When collecting a watch
+  into a background file, **never `2>&1`**: write `… --json > feed.ndjson 2> feed.err` (or `2>
+  /dev/null`). Merging them is what used to force defensive incremental JSON scraping.
 - Cursors are interchangeable project-wide: `issue view`, watch output, and `--poll` all produce them.
   They survive process restarts, and events during an outage are all delivered on reconnect, without duplicates.
-- Get a "now" cursor: `todou watch -p <proj> --poll --json` (exit 3 with empty items is expected).
+- Get a "now" cursor: `todou watch -p <proj> --poll --json | jq -r .next_cursor` — an empty poll
+  prints the cursor record alone, so the bare `.next_cursor` still reads it (exit 3 is expected).
 - `--debounce N`: after the first new entry, keep collecting for N seconds and return one batch (fewer wake-ups, fewer tokens).
 - Both watches skip **your own agent session's** entries by default, not your whole account — a fleet
   sharing one machine account does wake each other (T-121). Entries carrying no agent session (the web

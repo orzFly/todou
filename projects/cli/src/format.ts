@@ -48,6 +48,20 @@ export function personName(user: {
   return user.display_name?.trim() || user.login;
 }
 
+/**
+ * A body folded onto one line: runs of whitespace (newlines included)
+ * become single spaces, then it is cut to `max`. Counted in code points,
+ * not UTF-16 units — slicing by `.length` would halve a surrogate pair and
+ * emit a lone half, which is exactly what an emoji or a rare CJK glyph at
+ * the cut point would do.
+ */
+export function summarize(text: string, max: number): string {
+  const folded = text.replace(/\s+/g, " ").trim();
+  const points = Array.from(folded);
+  if (points.length <= max) return folded;
+  return `${points.slice(0, max).join("")}…`;
+}
+
 const STEPS: Array<[limit: number, divisor: number, unit: string]> = [
   [60, 1, "s"],
   [3600, 60, "m"],

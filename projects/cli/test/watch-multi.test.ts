@@ -3,6 +3,7 @@ import {
   type Captured,
   fakeFetch,
   loggedInEnv,
+  parseNdjson,
   runCli,
   virtualClock,
 } from "./harness.ts";
@@ -42,7 +43,7 @@ const activityParams = (calls: Captured[]) =>
     .map((c) => new URL(c.url, "http://stub.test").searchParams);
 
 describe("watch: multi-project mode over GET /activity", () => {
-  it("passes the -p list and --since through, returns tagged items and the envelope", async () => {
+  it("passes the -p list and --since through, returns tagged items and the cursor record", async () => {
     const items = [
       comment(1, "backend", 7, "b"),
       comment(2, "frontend", 3, "f"),
@@ -63,12 +64,18 @@ describe("watch: multi-project mode over GET /activity", () => {
       { fetchImpl, env: loggedInEnv() },
     );
     expect(result.exitCode).toBe(0);
-    const parsed = JSON.parse(result.stdout);
-    expect(parsed.items.map((i: { project: string }) => i.project)).toEqual([
-      "backend",
-      "frontend",
-    ]);
-    expect(parsed.next_cursor).toBe(ENV2);
+    const {
+      items: got,
+      cursor,
+      lines,
+    } = parseNdjson<{ project: string }>(result.stdout);
+    expect(got.map((i) => i.project)).toEqual(["backend", "frontend"]);
+    expect(cursor).toEqual({ type: "cursor", next_cursor: ENV2 });
+    // One line per entry plus the cursor record — nothing wraps, nothing
+    // spans, so `tail -n1` and `jq` per line both hold.
+    expect(lines).toBe(items.length + 1);
+    // A cross-project stream has no one ref format to state.
+    expect(cursor.ref_format).toBeUndefined();
     const params = activityParams(calls);
     expect(params.length).toBeGreaterThan(0);
     for (const p of params) {
@@ -94,7 +101,12 @@ describe("watch: multi-project mode over GET /activity", () => {
       env: loggedInEnv(),
     });
     expect(result.exitCode).toBe(3);
-    expect(JSON.parse(result.stdout).next_cursor).toBe(ENV1);
+    // An empty poll is one cursor record and nothing else — which is what
+    // keeps `--poll --json | jq -r .next_cursor` bootstrapping cursors.
+    const { items, cursor, lines } = parseNdjson(result.stdout);
+    expect(items).toEqual([]);
+    expect(lines).toBe(1);
+    expect(cursor.next_cursor).toBe(ENV1);
     const params = activityParams(calls);
     expect(params[0]?.get("last")).toBe("1");
     expect(params[1]?.get("after")).toBe(ENV1);
@@ -205,9 +217,11 @@ describe("watch: multi-project mode over GET /activity", () => {
       { fetchImpl, env: loggedInEnv() },
     );
     expect(result.exitCode).toBe(0);
-    const parsed = JSON.parse(result.stdout);
-    expect(parsed.items[0]?.project).toBe("todou");
-    expect(parsed.next_cursor).toBe("a1");
+    const { items, cursor } = parseNdjson<{ project: string }>(result.stdout);
+    // The item line is the v0.2.0 `items[]` element, unchanged but for the
+    // ref spelling the envelope used to carry.
+    expect(items[0]).toEqual({ ...item, issue_ref: "#3", project: "todou" });
+    expect(cursor.next_cursor).toBe("a1");
     expect(calls.some((c) => c.url.includes("/api/activity?"))).toBe(false);
   });
 });

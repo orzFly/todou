@@ -13,7 +13,7 @@ import {
   TimelineFilterType,
 } from "@todou/shared";
 import { Command, Option } from "clipanion";
-import { ProjectCommand } from "../api-command.ts";
+import { cursorRecord, ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
 import {
@@ -21,6 +21,7 @@ import {
   type Painter,
   personName,
   relativeTime,
+  summarize,
   table,
 } from "../format.ts";
 import { drainPaged } from "../paginate.ts";
@@ -260,11 +261,33 @@ export class IssueWatchCommand extends ProjectCommand {
       Blocks until something new arrives or \`--timeout\` elapses; \`--poll\`
       checks once and returns immediately. Exit codes are loop-friendly:
       0 = new entries were printed, 3 = nothing new (timeout or empty poll),
-      1 = error, 4 = gave up on a network outage (see below). \`--json\`
-      emits \`{ items, next_cursor, ref_format }\`; feed next_cursor back
-      into \`--since\` to never miss or repeat an entry. Timeline entries
-      carry no issue number, so \`ref_format\` (\`{prefix, token}\`) is
-      where this project's ref spelling comes from: \`token + number\`.
+      1 = error, 4 = gave up on a network outage (see below).
+
+      Without \`--json\` every entry prints as exactly one line —
+      \`<ref> <who> <what> <when>: <summary>\` — and a comment shows the
+      start of its body, so a reader of the stream sees what was said and
+      not merely that something was said. \`--summary <chars>\` sets how
+      much body a line carries (default 120). The batch ends with its
+      \`cursor:\` line, as before.
+
+      \`--json\` emits NDJSON: one compact JSON record per line, so a file
+      this is appended to stays parseable line by line. Item lines have the
+      shape they always had, and the batch ends with one
+      \`{"type":"cursor","next_cursor":…,"ref_format":…}\` record; feed
+      that next_cursor back into \`--since\` to never miss or repeat an
+      entry, and resume from the **last** cursor record seen. An empty poll
+      prints that record alone. Timeline entries carry no issue number, so
+      \`ref_format\` (\`{prefix, token}\`) is where this project's ref
+      spelling comes from: \`token + number\`.
+
+      stdout carries data only — retry progress and other notes go to
+      stderr — so redirect them apart (\`> feed.ndjson 2> feed.err\`)
+      rather than merging them with \`2>&1\`. Migrating off the old
+      \`{ items, next_cursor }\` envelope (v0.2.0):
+      \`jq -r .next_cursor\` becomes
+      \`jq -r 'select(.type=="cursor").next_cursor'\`, and \`jq .items[]\`
+      becomes \`jq 'select(.type!="cursor")'\`; bootstrapping a cursor from
+      an empty poll needs no change.
 
       Transient failures (connection refused/reset, timeouts, 5xx) are
       retried with exponential backoff and jitter: a blocking watch keeps
@@ -294,7 +317,11 @@ export class IssueWatchCommand extends ProjectCommand {
       ["Bootstrap a cursor at now", "todou issue watch 33 --poll --json"],
       [
         "Batch a burst of edits into one wake-up",
-        "todou issue watch 33 --timeout 3300 --debounce 45 --json",
+        "todou issue watch 33 --timeout 3300 --debounce 45",
+      ],
+      [
+        "Feed a script, line by line",
+        'todou issue watch 33 --poll --since "$CURSOR" --json | jq -r \'select(.type=="comment").body\'',
       ],
     ],
   });
@@ -325,6 +352,9 @@ export class IssueWatchCommand extends ProjectCommand {
   anyActor = Option.Boolean("--any-actor", false, {
     description: "Include one's own entries too",
   });
+  summary = Option.String("--summary", {
+    description: "Body characters per line in text mode (default 120)",
+  });
 
   protected async run(client: TodouClient): Promise<number> {
     const { project, number } = this.resolveIssueRef(this.number);
@@ -346,6 +376,10 @@ export class IssueWatchCommand extends ProjectCommand {
       this.debounce === undefined
         ? undefined
         : parseSeconds(this.debounce, "--debounce");
+    const summaryChars =
+      this.summary === undefined
+        ? 120
+        : parsePositiveInt(this.summary, "--summary");
 
     // Baseline before the loop: the newest entry regardless of filter, so
     // "from now" never replays history. Also 404s early on a bad number.
@@ -373,29 +407,29 @@ export class IssueWatchCommand extends ProjectCommand {
       drain: (after) =>
         drainTimeline(client, project, number, { after, types, ...self }),
       onItems: (items, cursor) =>
-        this.output({ items, next_cursor: cursor ?? null, ref_format }, () =>
+        this.outputBatch([...items, cursorRecord(cursor, ref_format)], () =>
           [
             ...items.map((item) =>
-              renderTimelineItem(item, paint, {
+              renderActivityLine(item, paint, {
+                refLabel: formatRef(refPrefix, number),
                 issueNumber: number,
                 refPrefix,
+                summaryChars,
               }),
             ),
             paint("dim", `cursor: ${cursor}`),
           ].join("\n"),
         ),
       onEmpty: (cursor) =>
-        this.output(
-          { items: [], next_cursor: cursor ?? null, ref_format },
-          () =>
-            [
-              this.poll
-                ? "no new activity"
-                : `no new activity within ${timeoutSec}s`,
-              ...(cursor === undefined
-                ? []
-                : [paint("dim", `cursor: ${cursor}`)]),
-            ].join("\n"),
+        this.outputBatch([cursorRecord(cursor, ref_format)], () =>
+          [
+            this.poll
+              ? "no new activity"
+              : `no new activity within ${timeoutSec}s`,
+            ...(cursor === undefined
+              ? []
+              : [paint("dim", `cursor: ${cursor}`)]),
+          ].join("\n"),
         ),
     });
   }
@@ -851,12 +885,7 @@ export function renderTimelineItem(
         : "";
     if (item.component?.type === "spec_comment") {
       const anchor = item.component.anchor;
-      const lines =
-        anchor.line_start === null
-          ? "file"
-          : anchor.line_end === anchor.line_start
-            ? `L${anchor.line_start}`
-            : `L${anchor.line_start}-${anchor.line_end}`;
+      const lines = anchorLines(anchor);
       const resolved = item.resolved_at === null ? "unresolved" : "resolved";
       const quote = anchor.quote
         .split("\n")
@@ -886,6 +915,73 @@ export function renderTimelineItem(
   );
 }
 
+/** Where a spec annotation hangs: a line, a range, or the file as a whole. */
+function anchorLines(anchor: {
+  line_start: number | null;
+  line_end: number | null;
+}): string {
+  if (anchor.line_start === null) return "file";
+  return anchor.line_end === anchor.line_start
+    ? `L${anchor.line_start}`
+    : `L${anchor.line_start}-${anchor.line_end}`;
+}
+
+/** Where a one-line entry is being shown, and how much body it may show. */
+export type ActivityLineContext = TimelineRenderContext & {
+  /** The issue's ref as this stream spells it: "T-146", or "backend/7". */
+  refLabel: string;
+  summaryChars: number;
+};
+
+/**
+ * One entry, exactly one line — what a watch prints and a sentinel greps.
+ *
+ * A comment shows the start of its body, not just its type: a stream that
+ * says "user commented" and stops there is one whose reader misses
+ * instructions addressed to them, which is the failure T-175 was filed for.
+ * Events reuse `eventDetail` verbatim so the two renderers cannot drift
+ * apart in how they word a status change.
+ */
+export function renderActivityLine(
+  item: TimelineItem,
+  paint: Painter,
+  ctx: ActivityLineContext,
+): string {
+  const ref = paint("bold", ctx.refLabel);
+  const when = relativeTime(item.created_at);
+  if (item.type === "comment") {
+    const edited = item.edited_at ? " (edited)" : "";
+    const where =
+      item.component?.type === "spec_comment"
+        ? ` on ${item.component.anchor.path}:${anchorLines(item.component.anchor)} (v${item.component.anchor.version}, ${item.resolved_at === null ? "unresolved" : "resolved"})`
+        : "";
+    const questions =
+      item.component?.type === "questions"
+        ? ` [questions ×${item.component.questions.length}]`
+        : "";
+    return `${ref} ${paint("cyan", personName(item.author))} commented${where}${edited} ${when}${questions}: ${summarize(item.body, ctx.summaryChars)}`;
+  }
+  const answered = decodeAnswerEvent(item);
+  if (answered !== null) {
+    const answers = answered.answers
+      .map((a) => {
+        const parts = [
+          ...(a.declined ? ["declined"] : []),
+          ...a.selected.map((s) => s.label),
+          ...(a.other === null ? [] : [a.other]),
+        ];
+        return `${a.key}=${parts.join(", ")}`;
+      })
+      .join("; ");
+    return `${ref} ${paint("cyan", personName(item.actor))} answered comment ${answered.comment_id} ${when}: ${summarize(answers, ctx.summaryChars)}`;
+  }
+  const detail = eventDetail(item, ctx);
+  return `${ref} ${paint(
+    "dim",
+    `${personName(item.actor)} ${item.event_type}${detail ? ` (${detail})` : ""} ${when}`,
+  )}`;
+}
+
 /**
  * The parenthetical after an event's type: what actually changed, plus a
  * follow-up command for spec events. Payloads are untyped over the wire,
@@ -903,6 +999,11 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
       }
       return `${nested(payload.from, "name")} → ${nested(payload.to, "name")}`;
     }
+    // `renderTimelineItem` words this one as prose before ever reaching
+    // here; the one-line renderer has no room for prose and needs the
+    // parenthetical, so the titles live here rather than in a scalar dump.
+    case "title_changed":
+      return `"${String(payload.from)}" → "${String(payload.to)}"`;
     case "label_added":
     case "label_removed":
       return nested(payload.label, "name");

@@ -213,6 +213,40 @@ export function virtualClock(start = "2026-08-11T12:00:00.000Z"): VirtualClock {
   };
 }
 
+export type CursorLine = {
+  type: "cursor";
+  next_cursor: string | null;
+  ref_format?: { prefix: string | null; token: string };
+};
+
+/**
+ * A watch's NDJSON stdout taken apart the way a consumer has to: every
+ * line parsed on its own — that being the whole point of the format, so a
+ * line that is not JSON fails here and names itself — and the batch's last
+ * record read as its cursor.
+ */
+export function parseNdjson<T = Record<string, unknown>>(
+  stdout: string,
+): { items: T[]; cursor: CursorLine; lines: number } {
+  const lines = stdout.split("\n").filter((line) => line !== "");
+  const records = lines.map((line, i) => {
+    try {
+      return JSON.parse(line) as { type: string };
+    } catch {
+      throw new Error(`stdout line ${i + 1} is not JSON: ${line}`);
+    }
+  });
+  const last = records.at(-1);
+  if (last?.type !== "cursor") {
+    throw new Error(`batch does not end with a cursor record:\n${stdout}`);
+  }
+  return {
+    items: records.slice(0, -1) as T[],
+    cursor: last as CursorLine,
+    lines: lines.length,
+  };
+}
+
 /** Context vars for a logged-in session without touching the filesystem. */
 export function loggedInEnv(project?: string): Record<string, string> {
   return {

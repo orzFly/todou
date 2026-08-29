@@ -5,12 +5,12 @@ import type {
 } from "@todou/shared";
 import { formatRef, TimelineFilterType, TodouError } from "@todou/shared";
 import { Command, Option } from "clipanion";
-import { ProjectCommand } from "../api-command.ts";
+import { cursorRecord, ProjectCommand } from "../api-command.ts";
 import { openChangeNudges } from "../change-nudges.ts";
 import { CliError } from "../errors.ts";
 import { makePainter } from "../format.ts";
 import { drainPaged } from "../paginate.ts";
-import { parseSeconds } from "../parse.ts";
+import { parsePositiveInt, parseSeconds } from "../parse.ts";
 import { type RefFormat, refFormat, withIssueRef } from "../refs.ts";
 import { fetchRefPrefix } from "../resolve.ts";
 import {
@@ -22,7 +22,7 @@ import {
   type SelfFilter,
   watchRetryOptions,
 } from "../watch-loop.ts";
-import { renderTimelineItem } from "./issue.ts";
+import { renderActivityLine } from "./issue.ts";
 
 export class WatchCommand extends ProjectCommand {
   static paths = [["watch"]];
@@ -61,16 +61,40 @@ export class WatchCommand extends ProjectCommand {
       \`GET /activity\` (T-93); against an older server it fails with a
       clear error while single-project mode keeps working.
 
+      Without \`--json\` every entry prints as exactly one line —
+      \`<ref> <who> <what> <when>: <summary>\` — and a comment shows the
+      start of its body, so a sentinel reading the stream sees what was
+      said and not merely that something was said. \`--summary <chars>\`
+      sets how much body a line carries (default 120). The batch ends with
+      its \`cursor:\` line, as before.
+
       Exit codes: 0 = new entries were printed (in any watched project),
       3 = nothing new (timeout or empty poll), 1 = error, 4 = gave up on
-      a network outage (see below). \`--json\` emits
-      \`{ items, next_cursor }\` where each item carries \`issue_number\`,
-      \`issue_ref\` (that number in its project's spelling) and
-      \`project\` (its slug); feed next_cursor back into \`--since\`
-      to never miss or repeat an entry. Single-project mode adds
-      \`ref_format\` (\`{prefix, token}\`) to the envelope, so an empty
-      poll still states the spelling; a cross-project stream has no one
-      format and leaves it out.
+      a network outage (see below).
+
+      \`--json\` emits NDJSON: one compact JSON record per line, so a file
+      this is appended to stays parseable line by line. Each item line has
+      the shape it always had — \`issue_number\`, \`issue_ref\` (that
+      number in its project's spelling) and \`project\` (its slug) — and
+      the batch ends with one \`{"type":"cursor","next_cursor":…}\`
+      record; feed that next_cursor back into \`--since\` to never miss or
+      repeat an entry. An empty poll prints that cursor record alone.
+      Single-project mode adds \`ref_format\` (\`{prefix, token}\`) to the
+      cursor record, so an empty poll still states the spelling; a
+      cross-project stream has no one format and leaves it out. Resume
+      from the **last** cursor record seen: item lines no cursor record
+      follows yet are replayed on the next run, never dropped.
+
+      stdout carries data only — retry progress and other notes go to
+      stderr — so redirect them apart (\`> feed.ndjson 2> feed.err\`)
+      rather than merging them with \`2>&1\`.
+
+      Migrating off the old \`{ items, next_cursor }\` envelope (v0.2.0):
+      \`jq -r .next_cursor\` becomes
+      \`jq -r 'select(.type=="cursor").next_cursor'\` (or
+      \`tail -n1 | jq -r .next_cursor\`), and \`jq .items[]\` becomes
+      \`jq 'select(.type!="cursor")'\`. Bootstrapping a cursor from an
+      empty poll needs no change: that output is the single cursor record.
 
       Transient failures (connection refused/reset, timeouts, 5xx) are
       retried with exponential backoff and jitter: a blocking watch keeps
@@ -119,7 +143,11 @@ export class WatchCommand extends ProjectCommand {
       ["Bootstrap a cursor at now", "todou watch --poll --json"],
       [
         "Sentinel: one wake-up per burst of edits",
-        "todou watch -p todou --timeout 3300 --debounce 45 --json",
+        "todou watch -p todou --timeout 3300 --debounce 45",
+      ],
+      [
+        "Feed a script, line by line",
+        'todou watch -p todou --poll --since "$CURSOR" --json | jq -r \'select(.type=="comment") | .issue_ref + ": " + .body\'',
       ],
     ],
   });
@@ -149,6 +177,9 @@ export class WatchCommand extends ProjectCommand {
   allProjects = Option.Boolean("--all-projects", false, {
     description: "Watch every accessible project (conflicts with -p)",
   });
+  summary = Option.String("--summary", {
+    description: "Body characters per line in text mode (default 120)",
+  });
 
   protected async run(client: TodouClient): Promise<number> {
     const slugs = this.resolveSlugs();
@@ -169,6 +200,10 @@ export class WatchCommand extends ProjectCommand {
       this.debounce === undefined
         ? undefined
         : parseSeconds(this.debounce, "--debounce");
+    const summaryChars =
+      this.summary === undefined
+        ? 120
+        : parsePositiveInt(this.summary, "--summary");
     const self = this.anyActor
       ? {}
       : await resolveSelfFilter(client, this.agentContext, retry);
@@ -196,6 +231,7 @@ export class WatchCommand extends ProjectCommand {
         timeoutSec,
         intervalSec,
         debounceSec,
+        summaryChars,
         self,
         paint,
         wait: nudges?.wait,
@@ -214,6 +250,7 @@ export class WatchCommand extends ProjectCommand {
       timeoutSec: number;
       intervalSec: number;
       debounceSec: number | undefined;
+      summaryChars: number;
       self: SelfFilter;
       paint: ReturnType<typeof makePainter>;
       wait: ((maxMs: number) => Promise<void>) | undefined;
@@ -226,6 +263,7 @@ export class WatchCommand extends ProjectCommand {
       timeoutSec,
       intervalSec,
       debounceSec,
+      summaryChars,
       self,
       paint,
     } = opts;
@@ -261,24 +299,23 @@ export class WatchCommand extends ProjectCommand {
         drain: (after) =>
           drainActivity(client, project, { after, types, ...self }),
         onItems: (items, cursor) =>
-          this.output(
-            {
-              items: items.map((item) => ({
+          this.outputBatch(
+            [
+              ...items.map((item) => ({
                 ...withIssueRef(item, refPrefix),
                 project,
               })),
-              next_cursor: cursor ?? null,
-              ref_format,
-            },
+              cursorRecord(cursor, ref_format),
+            ],
             () =>
               [
-                ...items.map(
-                  (item) =>
-                    `${paint("bold", formatRef(refPrefix, item.issue_number))} ${renderTimelineItem(
-                      item,
-                      paint,
-                      { issueNumber: item.issue_number, refPrefix },
-                    )}`,
+                ...items.map((item) =>
+                  renderActivityLine(item, paint, {
+                    refLabel: formatRef(refPrefix, item.issue_number),
+                    issueNumber: item.issue_number,
+                    refPrefix,
+                    summaryChars,
+                  }),
                 ),
                 paint("dim", `cursor: ${cursor}`),
               ].join("\n"),
@@ -354,27 +391,25 @@ export class WatchCommand extends ProjectCommand {
         return page;
       },
       onItems: (items, cursor) =>
-        // No envelope-level ref_format here: the stream spans projects that
-        // may each spell refs differently, so the format lives per item.
-        this.output(
-          {
-            items: items.map((item) =>
+        // No ref_format on the cursor record here: the stream spans
+        // projects that may each spell refs differently, so the format
+        // lives per item.
+        this.outputBatch(
+          [
+            ...items.map((item) =>
               withIssueRef(item, prefixes.get(item.project) ?? null),
             ),
-            next_cursor: cursor ?? null,
-          },
+            cursorRecord(cursor),
+          ],
           () =>
             [
-              ...items.map(
-                (item) =>
-                  `${paint("bold", spell(item))} ${renderTimelineItem(
-                    item,
-                    paint,
-                    {
-                      issueNumber: item.issue_number,
-                      refPrefix: prefixes.get(item.project) ?? null,
-                    },
-                  )}`,
+              ...items.map((item) =>
+                renderActivityLine(item, paint, {
+                  refLabel: spell(item),
+                  issueNumber: item.issue_number,
+                  refPrefix: prefixes.get(item.project) ?? null,
+                  summaryChars,
+                }),
               ),
               paint("dim", `cursor: ${cursor}`),
             ].join("\n"),
@@ -418,19 +453,11 @@ export class WatchCommand extends ProjectCommand {
     paint: ReturnType<typeof makePainter>,
     format?: RefFormat,
   ): void {
-    this.output(
-      {
-        items: [],
-        next_cursor: cursor ?? null,
-        ...(format === undefined ? {} : { ref_format: format }),
-      },
-      () =>
-        [
-          this.poll
-            ? "no new activity"
-            : `no new activity within ${timeoutSec}s`,
-          ...(cursor === undefined ? [] : [paint("dim", `cursor: ${cursor}`)]),
-        ].join("\n"),
+    this.outputBatch([cursorRecord(cursor, format)], () =>
+      [
+        this.poll ? "no new activity" : `no new activity within ${timeoutSec}s`,
+        ...(cursor === undefined ? [] : [paint("dim", `cursor: ${cursor}`)]),
+      ].join("\n"),
     );
   }
 }
