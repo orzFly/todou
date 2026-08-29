@@ -141,16 +141,7 @@ describe("patchIssueStatus (optimistic cache update)", () => {
 describe("presentational chips", () => {
   it("renders status name with its color dot", () => {
     const { getByText } = render(
-      <StatusPill
-        status={{
-          id: 1,
-          name: "In Progress",
-          category: "open",
-          color: "#3b82f6",
-          position: 1,
-          is_default: false,
-        }}
-      />,
+      <StatusPill status={{ name: "In Progress", color: "#3b82f6" }} />,
     );
     expect(getByText("In Progress")).toBeTruthy();
   });
@@ -214,16 +205,7 @@ describe("presentational chips", () => {
 
   it("shares vertical metrics between status pill and label chip (T-98)", () => {
     const pill = render(
-      <StatusPill
-        status={{
-          id: 1,
-          name: "Todo",
-          category: "open",
-          color: "#3b82f6",
-          position: 1,
-          is_default: false,
-        }}
-      />,
+      <StatusPill status={{ name: "Todo", color: "#3b82f6" }} />,
     ).container.firstElementChild;
     const chip = render(
       <LabelChip label={{ id: 1, name: "bug", color: "#ff0000" }} />,

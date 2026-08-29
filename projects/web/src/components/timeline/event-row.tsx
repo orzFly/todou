@@ -1,6 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { formatRef, resolveSlugAt, type TimelineEvent } from "@todou/shared";
+import {
+  formatRef,
+  resolveSlugAt,
+  type SlugClaimEntry,
+  type TimelineEvent,
+} from "@todou/shared";
 import {
   ArchiveRestoreIcon,
   BookOpenTextIcon,
@@ -25,64 +30,257 @@ import {
   referenceDirectoryQuery,
 } from "@/api/references.ts";
 import { AttachmentEventLink } from "@/components/issue/attachment-list.tsx";
+import { LabelChip } from "@/components/issue/label-chip.tsx";
+import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
-import { asName } from "@/components/timeline/group-events.ts";
+import {
+  type EventEntities,
+  resolveLabel,
+  resolveStatus,
+  resolveUser,
+  useEventEntities,
+} from "@/components/timeline/use-event-entities.ts";
 import { type RefConfig, splitIssueRefs } from "@/lib/issue-refs.ts";
 import { commentAnchor, eventAnchor } from "@/lib/timeline-anchors.ts";
 
-type Payload = Record<string, unknown>;
+/** Entity emphasis inside an event sentence, one notch below the actor's. */
+export const IN_SENTENCE = "font-medium text-foreground/75";
+
+export type EventRenderContext = {
+  /** Enables #N → issue link rendering; omit where there is no project. */
+  slug?: string;
+  issueNumber?: number;
+  refConfig: RefConfig;
+  /** Slug claims, so a cross-reference resolves as of the event (T-156). */
+  slugEntries: SlugClaimEntry[];
+  entities: EventEntities;
+};
+
+export function useEventRenderContext(
+  slug?: string,
+  issueNumber?: number,
+): EventRenderContext {
+  // UI strings spell refs in the project's current format (T-80); the
+  // query no-ops (enabled: false) in project-less contexts.
+  const refConfigData = useQuery({
+    ...referenceConfigQuery(slug ?? ""),
+    enabled: slug !== undefined,
+  });
+  const directory = useQuery(referenceDirectoryQuery);
+  const entities = useEventEntities(slug);
+  return {
+    slug,
+    issueNumber,
+    refConfig: refConfigFor(refConfigData.data),
+    slugEntries: directory.data?.slug_entries ?? [],
+    entities,
+  };
+}
 
 /**
- * Human-readable line for a GitHub-style action event. Pure for tests.
- * `refPrefix` spells issue refs in the project's CURRENT format (T-80) —
- * event payloads store bare numbers, so historical events respell freely.
+ * The one place a timeline event turns into a row. `node` is the rich
+ * rendering and `text` its plain-text mirror (tooltip, truncation, tests);
+ * both leave the same switch, so neither can drift from the other.
+ *
+ * Entities render through the same components as the rest of the app —
+ * statuses as pills, labels as chips, users as chips — resolved against
+ * current project metadata rather than the payload snapshot (see
+ * use-event-entities).
  */
-export function describeEvent(
-  type: TimelineEvent["event_type"],
-  payload: Payload,
-  refPrefix: string | null = null,
-): string {
-  switch (type) {
+export function renderEvent(
+  event: TimelineEvent,
+  ctx: EventRenderContext,
+): { node: ReactNode; text: string } {
+  const { payload } = event;
+  const { entities } = ctx;
+  const seg = (text: string, commentId?: number): ReactNode =>
+    ctx.slug === undefined
+      ? text
+      : linkifyIssueRefs(text, ctx.slug, ctx.refConfig, commentId);
+  const plain = (text: string, commentId?: number) => ({
+    node: seg(text, commentId),
+    text,
+  });
+
+  switch (event.event_type) {
     case "opened":
-      return "opened this issue";
+      return plain("opened this issue");
     case "closed":
-      return `closed this (${asName(payload.to)})`;
-    case "reopened":
-      return `reopened this (${asName(payload.to)})`;
-    case "status_changed":
-      return `moved ${asName(payload.from)} → ${asName(payload.to)}`;
-    case "title_changed":
-      return `renamed "${String(payload.from)}" → "${String(payload.to)}"`;
+    case "reopened": {
+      const verb = event.event_type === "closed" ? "closed" : "reopened";
+      const status = resolveStatus(payload.to, entities.statusById);
+      return {
+        node: (
+          <>
+            {`${verb} this `}
+            <StatusPill status={status} className="align-middle" />
+          </>
+        ),
+        // Parentheses are the plain-text stand-in for the pill's outline.
+        text: `${verb} this (${status.name})`,
+      };
+    }
+    case "status_changed": {
+      const from = resolveStatus(payload.from, entities.statusById);
+      const to = resolveStatus(payload.to, entities.statusById);
+      return {
+        node: (
+          <>
+            {"moved "}
+            <StatusPill status={from} className="align-middle" />
+            {" → "}
+            <StatusPill status={to} className="align-middle" />
+          </>
+        ),
+        text: `moved ${from.name} → ${to.name}`,
+      };
+    }
+    case "title_changed": {
+      const from = String(payload.from);
+      const to = String(payload.to);
+      return {
+        node: (
+          <>
+            {"renamed "}
+            <span className="text-muted-foreground/60 line-through">
+              {seg(from)}
+            </span>{" "}
+            <span className={IN_SENTENCE}>{seg(to)}</span>
+          </>
+        ),
+        // The arrow carries in text what the strike-through carries visually.
+        text: `renamed "${from}" → "${to}"`,
+      };
+    }
     case "label_added":
-      return `added label ${asName(payload.label)}`;
-    case "label_removed":
-      return `removed label ${asName(payload.label)}`;
-    case "assigned": {
-      const user = payload.user as { login?: string } | undefined;
-      return `assigned @${user?.login ?? "?"}`;
+    case "label_removed": {
+      const verb = event.event_type === "label_added" ? "added" : "removed";
+      const label = resolveLabel(payload.label, entities.labelById);
+      return {
+        node: (
+          <>
+            {`${verb} label `}
+            <LabelChip label={label} className="align-middle" />
+          </>
+        ),
+        text: `${verb} label ${label.name}`,
+      };
     }
+    case "assigned":
     case "unassigned": {
-      const user = payload.user as { login?: string } | undefined;
-      return `unassigned @${user?.login ?? "?"}`;
+      const verb = event.event_type === "assigned" ? "assigned" : "unassigned";
+      const { user, text } = resolveUser(payload.user, entities.memberById);
+      return {
+        node: (
+          <>
+            {`${verb} `}
+            {user ? (
+              <span className="inline-flex align-middle">
+                <UserChip user={user} nameClassName={IN_SENTENCE} />
+              </span>
+            ) : (
+              <span className={IN_SENTENCE}>{text}</span>
+            )}
+          </>
+        ),
+        text: `${verb} ${text}`,
+      };
     }
-    case "referenced":
-      return `referenced by ${formatRef(refPrefix, Number(payload.by_issue))}`;
-    // Self-contained on purpose: the source lives in another project, so
-    // this project's format would spell a number that means nothing here.
-    case "cross_referenced":
-      return `referenced by ${String(payload.by_project)}#${String(payload.by_issue)}`;
+    case "referenced": {
+      // Deep-links to the referencing comment when the event recorded one;
+      // older events without by_comment link the issue.
+      const commentId =
+        typeof payload.by_comment === "number" ? payload.by_comment : undefined;
+      return plain(
+        `referenced by ${formatRef(ctx.refConfig.internalPrefix, Number(payload.by_issue))}`,
+        commentId,
+      );
+    }
+    case "cross_referenced": {
+      const project = payload.by_project;
+      const number = payload.by_issue;
+      // Self-contained on purpose: the source lives in another project, so
+      // this project's format would spell a number that means nothing here.
+      const text = `referenced by ${String(project)}#${String(number)}`;
+      if (typeof project !== "string" || typeof number !== "number")
+        return plain(text);
+      // The payload keeps the slug the source project had at the time, so a
+      // rename since then has to be resolved away or the link goes nowhere.
+      const slug =
+        resolveSlugAt(ctx.slugEntries, [], project, event.created_at) ??
+        project;
+      return {
+        node: (
+          <>
+            {"referenced by "}
+            <IssueLink
+              slug={slug}
+              number={number}
+              crossProject
+              fallback={`${slug}#${number}`}
+            />
+          </>
+        ),
+        text,
+      };
+    }
     case "attachment_added": {
       const attachment = payload.attachment as
-        | { filename?: string }
+        | { id?: number; filename?: string }
         | undefined;
-      return `attached ${attachment?.filename ?? "a file"}`;
+      const filename = attachment?.filename ?? "a file";
+      const text = `attached ${filename}`;
+      // The preview modal needs the issue's attachment query, so the link
+      // only appears where the context props are there.
+      if (
+        attachment?.id === undefined ||
+        ctx.slug === undefined ||
+        ctx.issueNumber === undefined
+      )
+        return plain(text);
+      return {
+        node: (
+          <>
+            {"attached "}
+            <AttachmentEventLink
+              slug={ctx.slug}
+              issueNumber={ctx.issueNumber}
+              attachmentId={attachment.id}
+              filename={filename}
+            />
+          </>
+        ),
+        text,
+      };
     }
     case "question_answered": {
       const answers = payload.answers as unknown[] | undefined;
       const count = answers?.length ?? 0;
-      return `answered ${count} question${count === 1 ? "" : "s"}`;
+      const text = `answered ${count} question${count === 1 ? "" : "s"}`;
+      const commentId =
+        typeof payload.comment_id === "number" ? payload.comment_id : undefined;
+      if (
+        commentId === undefined ||
+        ctx.slug === undefined ||
+        ctx.issueNumber === undefined
+      )
+        return plain(text);
+      return {
+        node: (
+          <Link
+            to="/projects/$slug/issues/$number"
+            params={{ slug: ctx.slug, number: String(ctx.issueNumber) }}
+            hash={commentAnchor(commentId)}
+            hashScrollIntoView={false}
+            className="hover:underline"
+          >
+            {text}
+          </Link>
+        ),
+        text,
+      };
     }
     case "spec_pushed": {
       const list = (v: unknown) => (Array.isArray(v) ? v.length : 0);
@@ -96,7 +294,9 @@ export function describeEvent(
         .join(", ");
       const message =
         typeof payload.message === "string" ? ` — ${payload.message}` : "";
-      return `pushed spec v${String(payload.version)} (${parts})${message}`;
+      return plain(
+        `pushed spec v${String(payload.version)} (${parts})${message}`,
+      );
     }
     case "spec_review": {
       const verdict =
@@ -104,17 +304,17 @@ export function describeEvent(
       const count = Number(payload.annotation_count ?? 0);
       const suffix =
         count > 0 ? ` with ${count} comment${count === 1 ? "" : "s"}` : "";
-      return `${verdict} spec v${String(payload.version)}${suffix}`;
+      return plain(`${verdict} spec v${String(payload.version)}${suffix}`);
     }
     case "spec_comments_resolved": {
       const ids = payload.comment_ids as unknown[] | undefined;
       const count = ids?.length ?? 0;
-      return `resolved ${count} spec comment${count === 1 ? "" : "s"}`;
+      return plain(`resolved ${count} spec comment${count === 1 ? "" : "s"}`);
     }
     case "deleted":
-      return "moved this to the trash";
+      return plain("moved this to the trash");
     case "restored":
-      return "restored this from the trash";
+      return plain("restored this from the trash");
   }
 }
 
@@ -185,64 +385,8 @@ export function EventRow({
       actor once — sub-rows drop the chip and badge. */
   hideActor?: boolean;
 }) {
-  // UI strings spell refs in the project's current format (T-80); the
-  // query no-ops (enabled: false) in project-less contexts.
-  const refConfigData = useQuery({
-    ...referenceConfigQuery(slug ?? ""),
-    enabled: slug !== undefined,
-  });
-  const refConfig = refConfigFor(refConfigData.data);
-  const action = describeEvent(
-    event.event_type,
-    event.payload,
-    refConfig.internalPrefix,
-  );
-  // Linkable "attached …" needs the issue's attachment query for the
-  // preview modal, so it only upgrades when the context props are there.
-  const attached =
-    event.event_type === "attachment_added" &&
-    slug !== undefined &&
-    issueNumber !== undefined
-      ? (event.payload.attachment as
-          | { id?: number; filename?: string }
-          | undefined)
-      : undefined;
-  // "referenced by #N" deep-links to the referencing comment when the
-  // event recorded one; older events without by_comment link the issue.
-  const refCommentId =
-    event.event_type === "referenced" &&
-    typeof event.payload.by_comment === "number"
-      ? event.payload.by_comment
-      : undefined;
-  // A cross-reference names its source in the payload — this project's
-  // format cannot spell it, so the link is built from the coordinates
-  // rather than tokenized out of the action string. The payload keeps the
-  // slug the source project had at the time, so a rename since then has to
-  // be resolved away or the link would go nowhere (T-156).
-  const directory = useQuery(referenceDirectoryQuery);
-  const crossSource =
-    event.event_type === "cross_referenced" &&
-    typeof event.payload.by_project === "string" &&
-    typeof event.payload.by_issue === "number"
-      ? {
-          slug:
-            resolveSlugAt(
-              directory.data?.slug_entries ?? [],
-              [],
-              event.payload.by_project,
-              event.created_at,
-            ) ?? event.payload.by_project,
-          number: event.payload.by_issue,
-        }
-      : null;
-  // "answered N questions" deep-links back to the question comment.
-  const answeredCommentId =
-    event.event_type === "question_answered" &&
-    typeof event.payload.comment_id === "number" &&
-    slug !== undefined &&
-    issueNumber !== undefined
-      ? event.payload.comment_id
-      : undefined;
+  const ctx = useEventRenderContext(slug, issueNumber);
+  const { node, text } = renderEvent(event, ctx);
   // Below sm the row is plain inline flow — the whole event wraps like a
   // sentence (GitHub mobile), because truncate + title tooltip is unreadable
   // without hover. From sm up it keeps the T-25 single-line grid. The {" "}
@@ -268,42 +412,15 @@ export function EventRow({
           />{" "}
         </>
       )}
-      <span className="min-w-0 flex-1 sm:truncate" title={action}>
-        {attached?.id !== undefined && slug && issueNumber ? (
-          <>
-            attached{" "}
-            <AttachmentEventLink
-              slug={slug}
-              issueNumber={issueNumber}
-              attachmentId={attached.id}
-              filename={attached.filename ?? "a file"}
-            />
-          </>
-        ) : answeredCommentId !== undefined && slug && issueNumber ? (
-          <Link
-            to="/projects/$slug/issues/$number"
-            params={{ slug, number: String(issueNumber) }}
-            hash={commentAnchor(answeredCommentId)}
-            hashScrollIntoView={false}
-            className="hover:underline"
-          >
-            {action}
-          </Link>
-        ) : crossSource !== null ? (
-          <>
-            referenced by{" "}
-            <IssueLink
-              slug={crossSource.slug}
-              number={crossSource.number}
-              crossProject
-              fallback={`${crossSource.slug}#${crossSource.number}`}
-            />
-          </>
-        ) : slug === undefined ? (
-          action
-        ) : (
-          linkifyIssueRefs(action, slug, refConfig, refCommentId)
-        )}
+      {/* The padding/negative-margin pair buys vertical room inside the
+          clipping box — a UserChip's bot badge is positioned outside its
+          line box, and truncate's overflow:hidden would shear it off —
+          while leaving the row exactly as tall as before. */}
+      <span
+        className="min-w-0 flex-1 sm:-my-1 sm:truncate sm:py-1"
+        title={text}
+      >
+        {node}
       </span>{" "}
       {slug !== undefined && issueNumber !== undefined ? (
         <Link

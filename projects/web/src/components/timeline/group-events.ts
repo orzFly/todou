@@ -129,14 +129,23 @@ export const asName = (v: unknown): string =>
     ? String((v as { name: unknown }).name)
     : "?";
 
-const statusId = (v: unknown): unknown =>
-  typeof v === "object" && v !== null && "id" in v
-    ? (v as { id: unknown }).id
-    : null;
+/** One end of a hop, as the payload spells it — the id is what lets the
+    summary look the status up and render it as a pill. */
+export type StatusEnd = { id: number | null; name: string };
+
+const UNKNOWN_END: StatusEnd = { id: null, name: "?" };
+
+const asStatusEnd = (v: unknown): StatusEnd => {
+  const id =
+    typeof v === "object" && v !== null && "id" in v
+      ? (v as { id: unknown }).id
+      : null;
+  return { id: typeof id === "number" ? id : null, name: asName(v) };
+};
 
 export type StatusChain = {
-  hops: { from: string; to: string }[];
-  net: { from: string; to: string };
+  hops: { from: StatusEnd; to: StatusEnd }[];
+  net: { from: StatusEnd; to: StatusEnd };
   /** The chain returns to its start — nothing net happened. */
   isNoop: boolean;
 };
@@ -149,18 +158,16 @@ export type StatusChain = {
  */
 export function netStatusChain(events: TimelineEvent[]): StatusChain {
   const hops = events.map((e) => ({
-    from: asName(e.payload.from),
-    to: asName(e.payload.to),
+    from: asStatusEnd(e.payload.from),
+    to: asStatusEnd(e.payload.to),
   }));
-  const first = events[0];
-  const last = events[events.length - 1];
   const net = {
-    from: hops[0]?.from ?? "?",
-    to: hops[hops.length - 1]?.to ?? "?",
+    from: hops[0]?.from ?? UNKNOWN_END,
+    to: hops[hops.length - 1]?.to ?? UNKNOWN_END,
   };
-  const fromId = first ? statusId(first.payload.from) : null;
-  const toId = last ? statusId(last.payload.to) : null;
   const isNoop =
-    fromId !== null && toId !== null ? fromId === toId : net.from === net.to;
+    net.from.id !== null && net.to.id !== null
+      ? net.from.id === net.to.id
+      : net.from.name === net.to.name;
   return { hops, net, isNoop };
 }

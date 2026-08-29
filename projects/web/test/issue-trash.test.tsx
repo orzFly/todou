@@ -4,7 +4,8 @@ import type { IssueListItem } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
-import { describeEvent, ICONS } from "../src/components/timeline/event-row.tsx";
+import { ICONS, renderEvent } from "../src/components/timeline/event-row.tsx";
+import { NO_ENTITIES } from "../src/components/timeline/use-event-entities.ts";
 import { ConfirmDialog } from "../src/components/ui/confirm-dialog.tsx";
 import { TrashView } from "../src/pages/issue-list.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
@@ -210,9 +211,34 @@ describe("the trash view", () => {
 });
 
 describe("timeline entries for the trash", () => {
+  const sentence = (event_type: "deleted" | "restored") =>
+    renderEvent(
+      {
+        type: "event",
+        id: 1,
+        event_type,
+        actor: {
+          id: 1,
+          login: "u",
+          display_name: "U",
+          kind: "human",
+          avatar_url: null,
+          owner: null,
+        },
+        payload: {},
+        created_at: "2026-08-11T00:00:00Z",
+        agent_context: null,
+      },
+      {
+        refConfig: { internalPrefix: null, autolinks: [] },
+        slugEntries: [],
+        entities: NO_ENTITIES,
+      },
+    ).text;
+
   it("says what happened without naming the card", () => {
-    expect(describeEvent("deleted", {})).toBe("moved this to the trash");
-    expect(describeEvent("restored", {})).toBe("restored this from the trash");
+    expect(sentence("deleted")).toBe("moved this to the trash");
+    expect(sentence("restored")).toBe("restored this from the trash");
     expect(ICONS.deleted).toBeTruthy();
     expect(ICONS.restored).toBeTruthy();
   });

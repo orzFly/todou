@@ -296,11 +296,15 @@ describe("netStatusChain", () => {
       move([1, "Todo"], [2, "Next"], 0),
       move([2, "Next"], [3, "In Progress"], 1000),
     ]);
-    expect(chain.net).toEqual({ from: "Todo", to: "In Progress" });
+    // Both ends keep their id so the summary can pill them (T-171).
+    expect(chain.net).toEqual({
+      from: { id: 1, name: "Todo" },
+      to: { id: 3, name: "In Progress" },
+    });
     expect(chain.isNoop).toBe(false);
     expect(chain.hops).toEqual([
-      { from: "Todo", to: "Next" },
-      { from: "Next", to: "In Progress" },
+      { from: { id: 1, name: "Todo" }, to: { id: 2, name: "Next" } },
+      { from: { id: 2, name: "Next" }, to: { id: 3, name: "In Progress" } },
     ]);
   });
 
@@ -333,6 +337,9 @@ describe("netStatusChain", () => {
     const chain = netStatusChain([
       event({ event_type: "status_changed", payload: {}, atMs: 0 }),
     ]);
-    expect(chain.net).toEqual({ from: "?", to: "?" });
+    expect(chain.net).toEqual({
+      from: { id: null, name: "?" },
+      to: { id: null, name: "?" },
+    });
   });
 });

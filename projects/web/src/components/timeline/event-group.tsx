@@ -1,17 +1,24 @@
 import { Link } from "@tanstack/react-router";
-import type { TimelineEvent } from "@todou/shared";
+import type { Label, TimelineEvent } from "@todou/shared";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useState } from "react";
 import { AttachmentEventLink } from "@/components/issue/attachment-list.tsx";
+import { LabelChips } from "@/components/issue/label-chip.tsx";
+import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { EventRow, ICONS } from "@/components/timeline/event-row.tsx";
 import {
-  asName,
   type MergeFamily,
   netStatusChain,
 } from "@/components/timeline/group-events.ts";
+import {
+  type EventEntities,
+  resolveLabel,
+  resolveStatus,
+  useEventEntities,
+} from "@/components/timeline/use-event-entities.ts";
 import { eventAnchor } from "@/lib/timeline-anchors.ts";
 import { cn } from "@/lib/utils";
 
@@ -19,20 +26,25 @@ import { cn } from "@/lib/utils";
     for the truncation tooltip (the EventRow pattern). */
 type Summary = { node: ReactNode; text: string; dim?: boolean };
 
-const emphasized = (names: string[]): ReactNode =>
-  names.map((name, i) => (
-    // biome-ignore lint/suspicious/noArrayIndexKey: static list, never reorders
-    <Fragment key={i}>
-      {i > 0 && ", "}
-      <span className="font-medium text-foreground/75">{name}</span>
-    </Fragment>
-  ));
+/** Chips carry their own gaps only inside a flex box; the summary row is
+    inline text flow, so the list needs one of its own. */
+const ChipRow = ({ children }: { children: ReactNode }) => (
+  <span className="inline-flex flex-wrap items-center gap-1 align-middle">
+    {children}
+  </span>
+);
+
+/** A label toggled twice in one run would otherwise repeat, keys and all. */
+const distinct = (labels: Label[]): Label[] => [
+  ...new Map(labels.map((l) => [l.id, l])).values(),
+];
 
 function summarize(
   family: Exclude<MergeFamily, "referenced">,
   events: TimelineEvent[],
   slug: string,
   issueNumber: number,
+  entities: EventEntities,
 ): Summary {
   switch (family) {
     case "status": {
@@ -40,42 +52,66 @@ function summarize(
       // A noop chain has no net transition worth printing — show the full
       // path instead, dimmed, so the reader can skip it at a glance (T-92).
       const path = chain.isNoop
-        ? [chain.hops[0]?.from ?? "?", ...chain.hops.map((h) => h.to)]
+        ? [chain.net.from, ...chain.hops.map((h) => h.to)]
         : [chain.net.from, chain.net.to];
-      const text = `moved ${path.join(" → ")}`;
-      return { node: text, text, dim: chain.isNoop };
+      const faces = path.map((end) => resolveStatus(end, entities.statusById));
+      return {
+        node: (
+          <>
+            {"moved "}
+            <ChipRow>
+              {faces.map((face, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: a chain may revisit a status
+                <Fragment key={i}>
+                  {i > 0 && "→"}
+                  <StatusPill status={face} />
+                </Fragment>
+              ))}
+            </ChipRow>
+          </>
+        ),
+        text: `moved ${faces.map((f) => f.name).join(" → ")}`,
+        dim: chain.isNoop,
+      };
     }
     case "labels": {
-      const names = (type: TimelineEvent["event_type"]) =>
-        events
-          .filter((e) => e.event_type === type)
-          .map((e) => asName(e.payload.label));
-      const added = names("label_added");
-      const removed = names("label_removed");
-      const phrase = (verb: string, list: string[]) =>
+      const labels = (type: TimelineEvent["event_type"]) =>
+        distinct(
+          events
+            .filter((e) => e.event_type === type)
+            .map((e) => resolveLabel(e.payload.label, entities.labelById)),
+        );
+      const added = labels("label_added");
+      const removed = labels("label_removed");
+      const phrase = (verb: string, list: Label[]) =>
         `${verb} label${list.length === 1 ? "" : "s"} `;
+      const names = (list: Label[]) => list.map((l) => l.name).join(", ");
       return {
         node: (
           <>
             {added.length > 0 && (
               <>
                 {phrase("added", added)}
-                {emphasized(added)}
+                <ChipRow>
+                  <LabelChips labels={added} />
+                </ChipRow>
               </>
             )}
             {added.length > 0 && removed.length > 0 && " · "}
             {removed.length > 0 && (
               <>
                 {phrase("removed", removed)}
-                {emphasized(removed)}
+                <ChipRow>
+                  <LabelChips labels={removed} />
+                </ChipRow>
               </>
             )}
           </>
         ),
         text: [
-          added.length > 0 ? phrase("added", added) + added.join(", ") : null,
+          added.length > 0 ? phrase("added", added) + names(added) : null,
           removed.length > 0
-            ? phrase("removed", removed) + removed.join(", ")
+            ? phrase("removed", removed) + names(removed)
             : null,
         ]
           .filter(Boolean)
@@ -258,11 +294,13 @@ function CollapsedGroup({
     if (anchorInside) setOpen(true);
   }, [anchorInside]);
 
+  const entities = useEventEntities(slug);
+
   const first = events[0];
   const last = events[events.length - 1];
   if (!first || !last) return null;
 
-  const summary = summarize(family, events, slug, issueNumber);
+  const summary = summarize(family, events, slug, issueNumber, entities);
   const dim = summary.dim ? "text-muted-foreground/60" : undefined;
 
   return (

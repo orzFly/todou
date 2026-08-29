@@ -34,10 +34,11 @@ function event(overrides: Partial<TimelineEvent>): TimelineEvent {
   };
 }
 
+let nextLabelId = 1;
 const label = (name: string, type: "label_added" | "label_removed") =>
   event({
     event_type: type,
-    payload: { label: { id: 1, name, color: "#0f0" } },
+    payload: { label: { id: nextLabelId++, name, color: "#0f0" } },
   });
 
 const move = (from: [number, string], to: [number, string], at: string) =>
@@ -52,7 +53,7 @@ const move = (from: [number, string], to: [number, string], at: string) =>
 
 describe("EventGroup", () => {
   it("summarizes a mixed labels run GitHub-style", async () => {
-    const { findByTestId } = renderWithProviders(
+    const { findByTestId, getByTitle, getAllByTitle } = renderWithProviders(
       <EventGroup
         family="labels"
         events={[
@@ -65,9 +66,36 @@ describe("EventGroup", () => {
       />,
     );
     const group = await findByTestId("event-group");
-    expect(group.textContent).toContain("added labels area:infra, area:docs");
-    expect(group.textContent).toContain("removed label kind:legacy");
     expect(group.textContent).toContain("3 items");
+    // The summary itself is chips now; its plain-text mirror still spells
+    // the names out for the truncation tooltip.
+    expect(
+      getByTitle(
+        "added labels area:infra, area:docs · removed label kind:legacy",
+      ),
+    ).toBeTruthy();
+    // Same prefix grouping as the list: one muted "area:" over value chips.
+    for (const name of ["area:infra", "area:docs", "kind:legacy"]) {
+      expect(getAllByTitle(name).length).toBeGreaterThan(0);
+    }
+    expect(getByTitle("area:infra").textContent).toBe("infra");
+  });
+
+  it("pills every hop of a status summary (T-171)", async () => {
+    const { findByTitle } = renderWithProviders(
+      <EventGroup
+        family="status"
+        events={[
+          move([1, "Todo"], [2, "Next"], "2026-08-13T12:00:11.000Z"),
+          move([2, "Next"], [3, "In Progress"], "2026-08-13T12:02:47.000Z"),
+        ]}
+        slug="p"
+        issueNumber={1}
+      />,
+    );
+    const summary = await findByTitle("moved Todo → In Progress");
+    // One dot per pill; the arrow between them is plain text.
+    expect(summary.querySelectorAll("span[aria-hidden]")).toHaveLength(2);
   });
 
   it("collapses a status chain to its net transition", async () => {
@@ -114,8 +142,10 @@ describe("EventGroup", () => {
     expect(summary.className).toContain("text-muted-foreground/60");
   });
 
+  // A sub-row is now a sentence around a chip, so its plain-text mirror
+  // (the truncation tooltip) is what identifies it, not a single text node.
   it("expands to raw rows without repeating the actor", async () => {
-    const { findByTestId, getByTestId, getAllByText, queryByText } =
+    const { findByTestId, getByTestId, getAllByText, queryByTitle } =
       renderWithProviders(
         <EventGroup
           family="labels"
@@ -128,7 +158,7 @@ describe("EventGroup", () => {
         />,
       );
     await findByTestId("event-group");
-    expect(queryByText("added label area:infra")).toBeNull();
+    expect(queryByTitle("added label area:infra")).toBeNull();
 
     const toggle = getByTestId("event-group-toggle");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
@@ -136,15 +166,15 @@ describe("EventGroup", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
 
     await waitFor(() => {
-      expect(queryByText("added label area:infra")).toBeTruthy();
-      expect(queryByText("added label area:docs")).toBeTruthy();
+      expect(queryByTitle("added label area:infra")).toBeTruthy();
+      expect(queryByTitle("added label area:docs")).toBeTruthy();
     });
     // The header names the actor once; expanded sub-rows must not repeat it.
     expect(getAllByText("Bot One")).toHaveLength(1);
 
     fireEvent.click(toggle);
     await waitFor(() =>
-      expect(queryByText("added label area:infra")).toBeNull(),
+      expect(queryByTitle("added label area:infra")).toBeNull(),
     );
   });
 
@@ -153,7 +183,7 @@ describe("EventGroup", () => {
       label("area:infra", "label_added"),
       label("area:docs", "label_added"),
     ];
-    const { findByText } = renderWithProviders(
+    const { findByTitle } = renderWithProviders(
       <EventGroup
         family="labels"
         events={events}
@@ -162,7 +192,7 @@ describe("EventGroup", () => {
         anchorEventId={events[1]?.id}
       />,
     );
-    await findByText("added label area:docs");
+    await findByTitle("added label area:docs");
   });
 
   it("expands when the hash target arrives after mount", async () => {
@@ -193,15 +223,15 @@ describe("EventGroup", () => {
         </>
       );
     }
-    const { findByTestId, getByTestId, queryByText } = renderWithProviders(
+    const { findByTestId, getByTestId, queryByTitle } = renderWithProviders(
       <Harness />,
     );
     await findByTestId("event-group");
-    expect(queryByText("added label area:docs")).toBeNull();
+    expect(queryByTitle("added label area:docs")).toBeNull();
 
     fireEvent.click(getByTestId("set-anchor"));
     await waitFor(() =>
-      expect(queryByText("added label area:docs")).toBeTruthy(),
+      expect(queryByTitle("added label area:docs")).toBeTruthy(),
     );
   });
 

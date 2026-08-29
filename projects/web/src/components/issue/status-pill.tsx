@@ -4,12 +4,15 @@ import { cn } from "@/lib/utils";
 /**
  * Vertical metrics (text-xs, py-0.5, border) must equal LabelChip's — see the
  * note there (T-98).
+ *
+ * The prop is only the face of a status so that timeline events, whose
+ * payloads are name-and-id snapshots, can render one too.
  */
 export function StatusPill({
   status,
   className,
 }: {
-  status: Status;
+  status: Pick<Status, "name" | "color">;
   className?: string;
 }) {
   return (
