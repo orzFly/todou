@@ -11,6 +11,7 @@ State lives outside the checkout, so `git pull` never touches data:
 ~/todou/                    the checkout (disposable — rebuildable from git)
 ~/todou-data/
 ├── config.toml             configuration
+├── cli-dist/               packed CLI builds, optional — see Serving the CLI
 └── data/
     ├── system/             PGlite database
     └── attachments/        uploaded blobs
@@ -80,6 +81,10 @@ the tip of master, and `sha-*` an exact commit. Every build also carries
 `sha-*` does, but sorting those tags alphabetically sorts them by age, so a
 rollback target is a matter of reading the list rather than of guessing.
 
+The image also carries the CLI builds and hands them out over `/api/cli` —
+see [Serving the CLI](#serving-the-cli). That is what takes the compressed
+image from ~67 MB to ~169 MB.
+
 Everything under [Layout](#layout) that lives in `~/todou-data` lives in the
 `/data` volume here. Configure with `TODOU_*` environment variables (each
 config key has one; see the sections below), or drop a `todou.toml` into the
@@ -105,6 +110,53 @@ there is no second process and no proxy to configure. Hashed files under
 unmatched non-`/api` path returns it so the client router can resolve deep
 links. Because the SPA is then same-origin with the API, the session cookie
 and the SSE stream need no CORS or reverse-proxy buffering setup.
+
+## Serving the CLI
+
+A deployment can hand out the `todou` CLI itself, so any machine that reaches
+the server can fetch a build whose version matches it exactly — no GitHub
+access needed, and `edge`/`sha-*` builds have no release to fetch anyway.
+
+Two public endpoints, unauthenticated like `/api/version` (the binaries are
+public artifacts, and bootstrapping a new machine happens before it has a
+token):
+
+```bash
+curl -fsS https://todou.example/api/cli | jq -r .version   # compare with todou --version
+curl -fsSL --compressed -o todou https://todou.example/api/cli/todou-linux-amd64
+echo "<the sha256 from the manifest>  todou" | sha256sum -c && chmod +x todou
+```
+
+`GET /api/cli` lists every artifact with its `os`, `arch`, uncompressed
+`size`, `sha256` and download URL. `GET /api/cli/<name>` streams that file,
+decompressing it on the way out; its `ETag` is the sha256, so a client that
+already holds the build gets a 304 for free. Clients that accept `zstd`
+(`curl --compressed`) receive the stored bytes instead — a third of the
+transfer, and no decompression on the server.
+
+The docker image ships all five builds and enables this by default. A
+checkout deployment packs them itself:
+
+```bash
+cd ~/todou
+scripts/build-cli.sh                              # dist/, ~337 MB
+scripts/pack-cli.sh dist ~/todou-data/cli-dist    # ~98 MB of .zst + manifest
+```
+
+```toml
+[http]
+cli_dist_dir = "./cli-dist"     # relative to the working directory, absolutised at load
+```
+
+Unset — the default — turns both endpoints into a 404 carrying
+`cli_dist_not_configured`. Set, the manifest is read and verified at startup:
+a missing or truncated artifact refuses the boot rather than failing a
+download weeks later. `pack-cli.sh` needs `zstd` on `PATH`; rerun both
+commands whenever the checkout is updated, or the manifest will keep
+advertising the previous version.
+
+These are the largest public responses the server serves (~94 MB each). If
+that matters on your link, rate-limit `/api/cli/` at the reverse proxy.
 
 ## Database placement
 
@@ -229,6 +281,7 @@ journalctl --user -u todou -n 30        # "todou server listening on :8637 🥔"
 curl -sSI http://localhost:8637/                 # 200 text/html, no-cache
 curl -sSI http://localhost:8637/settings/tokens  # 200 text/html — deep link
 curl -sS  http://localhost:8637/api/version      # {"version":"v0.2.0"} — see docs/release.md
+curl -sS  http://localhost:8637/api/cli          # the CLI manifest, or a 404 if none is packed
 curl -sS  http://localhost:8637/api/openapi.json # the API document
 curl -sS  http://localhost:8637/api/nope         # JSON error, never HTML
 
