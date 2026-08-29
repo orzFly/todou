@@ -40,17 +40,13 @@ import {
 } from "../db/project-schema.ts";
 import { projectMembers } from "../db/system-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
-import {
-  accessibleProjectSlugs,
-  type ProjectRow,
-  requireProject,
-  routeInfoOf,
-} from "./access.ts";
+import { type ProjectRow, requireProject, routeInfoOf } from "./access.ts";
 import {
   analyzeReferences,
   type CrossTarget,
   loadReferenceInputs,
   recordCrossReferences,
+  visibleSlugsWithHistory,
 } from "./cross-references.ts";
 import {
   decodeListCursor as decodeCursor,
@@ -560,7 +556,7 @@ export async function listIssues(
     project.id,
     actor.id,
     page.map((r) => r.id),
-    await accessibleProjectSlugs(ctx, actor),
+    await visibleSlugsWithHistory(ctx, actor),
   );
   return {
     items: bundles.map((b) => ({
