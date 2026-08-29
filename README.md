@@ -164,12 +164,17 @@ The build never mutates the workspace: the prod-only dependency tree that
 `deno compile` needs is staged in a scratch copy under `dist/.stage`, so
 your `node_modules` keeps its devDependencies throughout.
 
-There's no CI pipeline in this repo yet, so these artifacts are built and
-distributed manually for now. `scripts/build-cli.sh` is written to double as
-the future release job: one Linux runner bundling `todou.cjs`, staging the
-prod tree, compiling all four `deno compile` targets, then archiving `dist/*`
-(`.tar.xz` for the executables, since deno's runtime dominates the size and
-compresses well; `.cjs` as-is) onto a release.
+Tagging `v*` runs the same script on a Linux runner and attaches `dist/*`
+plus a `SHA256SUMS` file to the GitHub release
+(`.github/workflows/release.yaml`; the procedure for cutting one is
+[docs/release.md](docs/release.md)).
+
+Releases are not the only source: every deployment hands out the builds it
+was made from, over `GET /api/cli`, so a machine can fetch a CLI that matches
+its server exactly — including `edge` and per-commit builds, which have no
+release to download. The docker image carries all five; a checkout deployment
+opts in with `scripts/pack-cli.sh`. See
+[docs/deploy.md](docs/deploy.md#serving-the-cli).
 
 ### Production
 
