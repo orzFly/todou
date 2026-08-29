@@ -88,11 +88,11 @@ recoloring plans and bulk setup, not for clearing the way.
 ## watch / poll (the agent's radar)
 
 ```bash
-todou issue watch 16 --since <cursor> --timeout 43200  # wait on one issue
-todou watch -p <proj> --since <cursor> --timeout 43200 --debounce 60  # wait on the whole project, others only
+todou issue watch 16 --since <cursor> --forever  # wait on one issue
+todou watch -p <proj> --since <cursor> --debounce 60 --forever  # wait on the whole project, others only
 ```
 
-Use a 12-hour timeout (43200) and a 60-second debounce as the standard values.
+`--forever` is the standard shape of a wait; a 60-second debounce is the standard batching value.
 
 **Leave `--json` off unless a script is consuming the stream.** The default is one line per entry —
 `<ref> <who> <what> <when>: <summary>` — ending with a `cursor:` line, and a comment line shows the
@@ -100,31 +100,33 @@ start of its body. That last part is the point: a stream that names entry types 
 read past, and the instruction inside the comment is missed. `--summary <chars>` widens or narrows
 the body a line carries (default 120).
 
-**Never issue a blocking wait bare — wrap it in a re-run loop.** This applies to `issue watch`,
-`todou watch` and `question wait` alike. Exit 3 (timeout) and exit 4 (network give-up) both mean *keep
-waiting*, and a wait parked in the background can also be lost to process-lifecycle accidents. Any of
-those endings leaves a bare wait returning with no answer — and an agent whose only wake path just
-returned empty goes idle forever:
+**Block with `--forever` — one call, no re-run loop around it.** This applies to `issue watch`,
+`todou watch` and `question wait` alike (CLI ≥ 0.3.0). The flag leaves the command exactly two
+endings: exit 0 with entries in hand, or exit 1 on a fatal error, which you report rather than spin
+on. Timeouts and network outages are ridden out inside the command, always re-draining from the
+cursor it already holds, so nothing that lands in a gap is skipped:
 
 ```bash
-while :; do
-  todou question wait <n> <commentId> -p <proj> --timeout 43200 --json; c=$?
-  [ $c -eq 0 ] && break   # answers in hand
-  [ $c -eq 1 ] && break   # fatal — report it, don't spin
-done                      # 3 (timeout) and 4 (outage) simply loop; nothing is lost
+todou question wait <n> <commentId> -p <proj> --forever   # exit 0 = answers in hand, 1 = fatal
 ```
 
-The loop being **killed** from outside (the harness stopping a background task) is a separate, observed
-failure — it has hit both workers and the orchestrator. It is not fatal and needs no cron: the kill
-notification itself re-invokes you, so the correct reaction is simply *restart the wait with the same
-cursor*, every time, however often it happens. Nothing is lost across the gap. Do not downgrade to a
-short-period self-poll — a 6-minute poll burns a whole agent turn per tick — and do say a word about it
-in the terminal so the orchestrator knows to relay as a backstop.
+Under `--forever`, `--timeout` becomes the heartbeat interval instead (default 600s): one
+`still watching — nothing new in …` line per interval on **stderr**, which is how a reader of a
+background feed tells waiting apart from wedged.
 
-- Exit codes: **0 = new entries**, **3 = timeout with nothing new**
-  (normal, not an error), 1 = fatal error, **4 = gave up on a network outage** after automatic retries
-  (a blocking watch retries transient failures — 5xx, refused, reset — for 2+ minutes first; `--poll`
-  fails fast after 3 attempts). On exit 4 just rerun with the same cursor; nothing is lost.
+The wait being **killed** from outside (the harness stopping a background task) is the one ending
+`--forever` cannot absorb — it has hit both workers and the orchestrator. It is not fatal and needs no
+cron: the kill notification itself re-invokes you, so the correct reaction is simply *restart the wait
+with the same cursor*, every time, however often it happens. Nothing is lost across the gap. Do not
+downgrade to a short-period self-poll — a 6-minute poll burns a whole agent turn per tick — and do say
+a word about it in the terminal so the orchestrator knows to relay as a backstop.
+
+- Exit codes, by mode. **`--forever`**: 0 = new entries, 1 = fatal — nothing else can happen.
+  **Blocking (no flag)**: 0 = new entries, **3 = timeout with nothing new** (normal, not an error),
+  1 = fatal, **4 = gave up on a network outage** after automatic retries (transient failures — 5xx,
+  refused, reset — are retried for 2+ minutes first); on 4 just rerun with the same cursor, nothing is
+  lost. **`--poll`**: 0 = the check finished, news or not (CLI ≥ 0.3.0; it used to exit 3 when empty),
+  1 = fatal, 4 = fails fast after 3 attempts.
 - **`--json` is NDJSON** (CLI ≥ 0.3.0): one compact record per line — the item lines have the shape
   the old `items[]` elements had, then one `{"type":"cursor","next_cursor":…,"ref_format":…}` record
   closes the batch. So a file you append a watch to is parseable line by line; resume from the
@@ -249,14 +251,14 @@ EOF
   "multiple": false}]
 EOF2
 )                          # prints the wait command, comment id filled in
-todou question wait 16 <commentId> -p <proj> --timeout 43200   # blocks until answered
+todou question wait 16 <commentId> -p <proj> --forever   # blocks until answered
 ```
 
 - All text fields are markdown; validation is **strict** — unknown/extra fields fail with the path named.
 - Users answer once, all questions in the comment together; "decline to answer" is a built-in exclusive
   choice; options and free-text "other" can coexist. Answers arrive decoded in the wait output.
 - `question list <n> --unanswered` shows what's still open; `question answer` is the CLI answering side.
-- Exit codes follow the watch convention (0 answered / 3 timeout — re-wait / 1 error).
+- Exit codes follow the watch convention — under `--forever` that is 0 answered or 1 error, nothing else.
 - One comment may carry 2–3 tightly related questions, each with your recommendation and reasoning.
 
 ## Spec documents (plans, proposals, reviewable docs)
@@ -277,7 +279,7 @@ todou spec review <n> --approve | --request-changes [--body …]         # submi
 - Review state is computed, never stored: a verdict counts only against the **latest** version, and
   the pusher of a version cannot review it.
 - Wait for the verdict by watching the whole issue — `issue watch <n> --since <cursor> --debounce 60
-  --timeout 43200` — with no `--type` filter, so a plain comment (an amended requirement, a
+  --forever` — with no `--type` filter, so a plain comment (an amended requirement, a
   question back) wakes the waiter too.
 - **The watch wakes; `spec status` judges.** A wake-up is not a verdict: sibling agents on the same
   machine account pass the self-filter (it is per agent session, see watch above). On exit 0 read

@@ -49,7 +49,7 @@ and fix inline — iterate up to 5 times before presenting.
 ```bash
 todou spec push <n> <dir> -p <proj> --message "plan v1"          # upload the set
 cursor=$(todou watch -p <proj> --poll --print-cursor)
-todou issue watch <n> -p <proj> --since "$cursor" --debounce 60 --timeout 43200
+todou issue watch <n> -p <proj> --since "$cursor" --debounce 60 --forever
 ```
 
 The watch covers the whole issue, unfiltered, so a plain comment — the user amending a requirement,
@@ -64,7 +64,8 @@ sibling agents on the same machine account pass the self-filter (it is per agent
    the documents (update proposal.md, reply if an answer is owed, push if the docs changed).
    Nothing but sibling-agent activity? Not yours — resume the wait, silently.
 5. Resume with the cursor the watch printed on its last line — never a fresh "now" cursor, which would skip
-   whatever landed in the gap. Exit 3 (timeout) and 4 (outage): rerun with the same cursor.
+   whatever landed in the gap. Under `--forever` the watch only ever returns with entries (exit 0) or
+   a fatal error (exit 1); a wait killed from outside is the one case to restart by hand, same cursor.
 
 **Two prohibitions, one per failure mode.** Never replace the blocking watch with `spec status`
 polling — a deferred "check again later" has no wake path; the agent goes idle, the card stalls.

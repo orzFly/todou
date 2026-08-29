@@ -18,7 +18,7 @@ Read `/todou-cli` first; full herdr syntax is in the `/herdr` skill. Project-spe
 Keep one running in the background (run_in_background):
 
 ```bash
-todou watch -p <proj> --since <cursor> --timeout 43200 --debounce 60
+todou watch -p <proj> --since <cursor> --debounce 60 --forever
 ```
 
 **No `--json`.** The default rendering is one line per entry — `<ref> <who> <what> <when>:
@@ -27,8 +27,12 @@ that only names entry types is one you read past. (`--json` is NDJSON when a scr
 the cursor with `jq -r 'select(.type=="cursor").next_cursor'`, and never merge stderr into the
 same file — see /todou-cli.)
 
-Every exit wakes you (exit 0 = events, exit 3 = idle tick, exit 4 = the watch already retried a
-network outage for 2+ minutes and gave up — restart it with the same cursor, no events are lost).
+Under `--forever` the sentinel returns exactly two ways: **exit 0** with events to handle, or
+**exit 1** on a fatal error, which you report rather than restart into. Timeouts and network outages
+are ridden out inside the command, on the cursor it already holds; its liveness shows as stderr
+progress lines (a `still watching …` heartbeat every 600s by default) in the background task's file.
+The harness killing the background task still happens and is not fatal — the kill notification wakes
+you, and the reaction is unchanged: restart with the same cursor.
 **Handle the items, then immediately restart with the printed cursor.** Standard reactions:
 
 | Event | Reaction |
