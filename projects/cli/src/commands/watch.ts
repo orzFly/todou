@@ -72,6 +72,13 @@ export class WatchCommand extends ProjectCommand {
       3 = nothing new (timeout or empty poll), 1 = error, 4 = gave up on
       a network outage (see below).
 
+      \`--poll --print-cursor\` writes the next cursor alone to stdout and
+      exits 0 whether or not anything was new — the cursor is the product,
+      so "nothing new" is not a failure. That is the whole of bootstrapping
+      a position: \`cursor=$(todou watch -p <proj> --poll --print-cursor)\`,
+      with no JSON and no \`jq\` in the way. It conflicts with \`--json\`,
+      which already ends its batch with a cursor record.
+
       \`--json\` emits NDJSON: one compact JSON record per line, so a file
       this is appended to stays parseable line by line. Each item line has
       the shape it always had — \`issue_number\`, \`issue_ref\` (that
@@ -140,7 +147,10 @@ export class WatchCommand extends ProjectCommand {
         "One-shot poll for foreign comments since a cursor",
         'todou watch --poll --since "$CURSOR" --type comment',
       ],
-      ["Bootstrap a cursor at now", "todou watch --poll --json"],
+      [
+        "Bootstrap a cursor at now",
+        "cursor=$(todou watch -p todou --poll --print-cursor)",
+      ],
       [
         "Sentinel: one wake-up per burst of edits",
         "todou watch -p todou --timeout 3300 --debounce 45",
@@ -180,8 +190,23 @@ export class WatchCommand extends ProjectCommand {
   summary = Option.String("--summary", {
     description: "Body characters per line in text mode (default 120)",
   });
+  printCursor = Option.Boolean("--print-cursor", false, {
+    description: "With --poll: print the next cursor alone and exit 0",
+  });
 
   protected async run(client: TodouClient): Promise<number> {
+    if (this.printCursor && !this.poll) {
+      throw new CliError(
+        "--print-cursor only makes sense with --poll",
+        "a blocking watch prints its own `cursor:` line when it returns",
+      );
+    }
+    if (this.printCursor && this.json) {
+      throw new CliError(
+        "--print-cursor and --json both want stdout",
+        "drop one — --json already ends its batch with a cursor record",
+      );
+    }
     const slugs = this.resolveSlugs();
     const retry = watchRetryOptions(
       this.poll,
@@ -224,7 +249,7 @@ export class WatchCommand extends ProjectCommand {
           clock: this.clock,
         });
     try {
-      return await this.watch(client, {
+      const code = await this.watch(client, {
         slugs,
         retry,
         types,
@@ -236,6 +261,10 @@ export class WatchCommand extends ProjectCommand {
         paint,
         wait: nudges?.wait,
       });
+      // Under --print-cursor the cursor is the product, and an empty poll
+      // produced it just as well as a busy one — so 3 ("nothing new") is not
+      // a failure to report. Exit 3 stays the default poll's answer.
+      return this.printCursor ? 0 : code;
     } finally {
       nudges?.close();
     }
@@ -299,27 +328,29 @@ export class WatchCommand extends ProjectCommand {
         drain: (after) =>
           drainActivity(client, project, { after, types, ...self }),
         onItems: (items, cursor) =>
-          this.outputBatch(
-            [
-              ...items.map((item) => ({
-                ...withIssueRef(item, refPrefix),
-                project,
-              })),
-              cursorRecord(cursor, ref_format),
-            ],
-            () =>
-              [
-                ...items.map((item) =>
-                  renderActivityLine(item, paint, {
-                    refLabel: formatRef(refPrefix, item.issue_number),
-                    issueNumber: item.issue_number,
-                    refPrefix,
-                    summaryChars,
-                  }),
-                ),
-                paint("dim", `cursor: ${cursor}`),
-              ].join("\n"),
-          ),
+          this.printCursor
+            ? this.emitCursorOnly(cursor)
+            : this.outputBatch(
+                [
+                  ...items.map((item) => ({
+                    ...withIssueRef(item, refPrefix),
+                    project,
+                  })),
+                  cursorRecord(cursor, ref_format),
+                ],
+                () =>
+                  [
+                    ...items.map((item) =>
+                      renderActivityLine(item, paint, {
+                        refLabel: formatRef(refPrefix, item.issue_number),
+                        issueNumber: item.issue_number,
+                        refPrefix,
+                        summaryChars,
+                      }),
+                    ),
+                    paint("dim", `cursor: ${cursor}`),
+                  ].join("\n"),
+              ),
         onEmpty: (cursor) =>
           this.emitEmpty(cursor, timeoutSec, paint, ref_format),
       });
@@ -394,26 +425,28 @@ export class WatchCommand extends ProjectCommand {
         // No ref_format on the cursor record here: the stream spans
         // projects that may each spell refs differently, so the format
         // lives per item.
-        this.outputBatch(
-          [
-            ...items.map((item) =>
-              withIssueRef(item, prefixes.get(item.project) ?? null),
+        this.printCursor
+          ? this.emitCursorOnly(cursor)
+          : this.outputBatch(
+              [
+                ...items.map((item) =>
+                  withIssueRef(item, prefixes.get(item.project) ?? null),
+                ),
+                cursorRecord(cursor),
+              ],
+              () =>
+                [
+                  ...items.map((item) =>
+                    renderActivityLine(item, paint, {
+                      refLabel: spell(item),
+                      issueNumber: item.issue_number,
+                      refPrefix: prefixes.get(item.project) ?? null,
+                      summaryChars,
+                    }),
+                  ),
+                  paint("dim", `cursor: ${cursor}`),
+                ].join("\n"),
             ),
-            cursorRecord(cursor),
-          ],
-          () =>
-            [
-              ...items.map((item) =>
-                renderActivityLine(item, paint, {
-                  refLabel: spell(item),
-                  issueNumber: item.issue_number,
-                  refPrefix: prefixes.get(item.project) ?? null,
-                  summaryChars,
-                }),
-              ),
-              paint("dim", `cursor: ${cursor}`),
-            ].join("\n"),
-        ),
       onEmpty: (cursor) => this.emitEmpty(cursor, timeoutSec, paint),
     });
   }
@@ -447,12 +480,32 @@ export class WatchCommand extends ProjectCommand {
     return slugs;
   }
 
+  /**
+   * `--print-cursor`: stdout carries the cursor and nothing else, so the
+   * whole output is what a command substitution wants. A watch set with no
+   * activity mints no cursor, and an empty capture silently starting from
+   * "now" is the failure mode this flag exists to remove — so say so.
+   */
+  private emitCursorOnly(cursor: string | undefined): void {
+    if (cursor === undefined) {
+      throw new CliError(
+        "no cursor to print: nothing has happened in the watch set yet",
+        "the first comment or event mints one; until then omit --since, which already means now",
+      );
+    }
+    this.context.stdout.write(`${cursor}\n`);
+  }
+
   private emitEmpty(
     cursor: string | undefined,
     timeoutSec: number,
     paint: ReturnType<typeof makePainter>,
     format?: RefFormat,
   ): void {
+    if (this.printCursor) {
+      this.emitCursorOnly(cursor);
+      return;
+    }
     this.outputBatch([cursorRecord(cursor, format)], () =>
       [
         this.poll ? "no new activity" : `no new activity within ${timeoutSec}s`,

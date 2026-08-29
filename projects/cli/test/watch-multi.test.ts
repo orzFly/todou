@@ -225,3 +225,103 @@ describe("watch: multi-project mode over GET /activity", () => {
     expect(calls.some((c) => c.url.includes("/api/activity?"))).toBe(false);
   });
 });
+
+describe("watch --poll --print-cursor", () => {
+  const soloRoutes = (items: unknown[], cursor: string | null) =>
+    [
+      ["GET", "/api/me", me],
+      ["GET", "/api/projects/todou/references/config", { format: {} }],
+      [
+        "GET",
+        "/api/projects/todou/activity",
+        (_init: RequestInit, url: URL) =>
+          url.searchParams.get("after") === "a0"
+            ? { items, next_cursor: cursor }
+            : { items: [], next_cursor: "a0" },
+      ],
+    ] as Parameters<typeof fakeFetch>[0];
+
+  it("prints the cursor alone and exits 0 on an empty poll", async () => {
+    const { fetchImpl } = fakeFetch(soloRoutes([], null));
+    const result = await runCli(
+      ["watch", "-p", "todou", "--poll", "--since", "a0", "--print-cursor"],
+      { fetchImpl, env: loggedInEnv() },
+    );
+    // The default poll answers 3 here; the cursor was still produced, and
+    // it is the whole product of this flag.
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("a0\n");
+  });
+
+  it("prints the cursor alone when there were entries too", async () => {
+    const item = {
+      type: "comment",
+      id: 9,
+      author,
+      body: "solo",
+      created_at: "2026-08-11T12:00:00Z",
+      edited_at: null,
+      issue_number: 3,
+    };
+    const { fetchImpl } = fakeFetch(soloRoutes([item], "a1"));
+    const result = await runCli(
+      ["watch", "-p", "todou", "--poll", "--since", "a0", "--print-cursor"],
+      { fetchImpl, env: loggedInEnv() },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("a1\n");
+  });
+
+  it("works across a multi-project poll", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/me", me],
+      [
+        "GET",
+        "/api/activity",
+        (_init: RequestInit, url: URL) =>
+          url.searchParams.get("last") === "1"
+            ? { items: [], next_cursor: ENV1 }
+            : { items: [], next_cursor: null },
+      ],
+    ]);
+    const result = await runCli(
+      ["watch", "-p", "aa,bb", "--poll", "--print-cursor"],
+      { fetchImpl, env: loggedInEnv() },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(`${ENV1}\n`);
+  });
+
+  it("refuses --json and a blocking watch", async () => {
+    const { fetchImpl } = fakeFetch(soloRoutes([], null));
+    const withJson = await runCli(
+      ["watch", "-p", "todou", "--poll", "--print-cursor", "--json"],
+      { fetchImpl, env: loggedInEnv() },
+    );
+    expect(withJson.exitCode).toBe(1);
+    expect(withJson.stderr).toContain("both want stdout");
+
+    const blocking = await runCli(["watch", "-p", "todou", "--print-cursor"], {
+      fetchImpl,
+      env: loggedInEnv(),
+    });
+    expect(blocking.exitCode).toBe(1);
+    expect(blocking.stderr).toContain("only makes sense with --poll");
+  });
+
+  it("says so rather than printing an empty cursor", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/me", me],
+      ["GET", "/api/projects/todou/activity", { items: [], next_cursor: null }],
+    ]);
+    const result = await runCli(
+      ["watch", "-p", "todou", "--poll", "--print-cursor"],
+      { fetchImpl, env: loggedInEnv() },
+    );
+    // An empty capture would silently mean "start at now" at the next call,
+    // which is the confusion this flag exists to end.
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("no cursor to print");
+  });
+});
