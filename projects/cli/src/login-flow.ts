@@ -3,6 +3,8 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createInterface } from "node:readline";
 import { type Readable, Writable } from "node:stream";
+import { type TodouClient, TodouError } from "@todou/shared";
+import { type Clock, systemClock } from "./clock.ts";
 import { CliError } from "./errors.ts";
 
 /**
@@ -55,6 +57,54 @@ export function waitForCallback(options: {
       options.onListening((server.address() as AddressInfo).port);
     });
   });
+}
+
+/**
+ * Waits for a browser — anywhere, on any machine — to authorize a pending
+ * request. The counterpart to waitForCallback for the case that has no
+ * loopback to deliver to: nothing listens locally, the CLI only asks.
+ */
+export async function pollForApproval(options: {
+  client: TodouClient;
+  requestId: number;
+  pollSecret: string;
+  intervalMs: number;
+  timeoutMs: number;
+  clock?: Clock;
+}): Promise<string> {
+  const clock = options.clock ?? systemClock;
+  const deadline = clock.now() + options.timeoutMs;
+  while (clock.now() < deadline) {
+    try {
+      const result = await options.client.pollCliAuthRequest(
+        options.requestId,
+        { poll_secret: options.pollSecret },
+      );
+      if (result.status === "approved") return result.token;
+      if (result.status === "denied") {
+        throw new CliError(
+          "login request was denied",
+          "re-run `todou login --no-browser` to ask again",
+        );
+      }
+    } catch (error) {
+      if (error instanceof CliError) throw error;
+      if (error instanceof TodouError && error.status === 404) {
+        throw new CliError(
+          "login request expired or was not found",
+          "re-run `todou login --no-browser`",
+        );
+      }
+      // Anything else is a blip between two polls — a restarted server, a
+      // dropped connection — and must not lose a login the user may already
+      // have authorized. The total timeout is the only thing that gives up.
+    }
+    await clock.sleep(Math.min(options.intervalMs, deadline - clock.now()));
+  }
+  throw new CliError(
+    "login timed out",
+    "re-run `todou login`, or paste a token with --manual",
+  );
 }
 
 /**

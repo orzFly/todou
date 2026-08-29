@@ -43,6 +43,13 @@
       "when": 1787890494319,
       "tag": "0005_cross-refs",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787975321303,
+      "tag": "0006_cli-auth-requests",
+      "breakpoints": true
     }
   ]
 }

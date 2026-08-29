@@ -92,6 +92,10 @@ projects/cli/src/index.ts`); `pnpm --filter @todou/cli exec pnpm link
 # token in ~/.config/todou/config.toml (0600). --manual pastes a token.
 todou login https://todou.example
 
+# On a machine with no browser of its own (SSH, container, headless VM):
+# prints a one-time code to authorize from a browser anywhere, and waits.
+todou login https://todou.example --no-browser
+
 # Bind this git repository to a server/project (stored in the user
 # config, not the repo), then work from anywhere inside it:
 todou project link my-project

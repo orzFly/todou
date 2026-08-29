@@ -14,6 +14,13 @@ import type {
   Autolink,
   AutolinkCreateInput,
   BulkReadInput,
+  CliAuthApproveInput,
+  CliAuthApproveResult,
+  CliAuthPollInput,
+  CliAuthPollResult,
+  CliAuthRequestCreated,
+  CliAuthRequestCreateInput,
+  CliAuthRequestInfo,
   CommandSubmitInput,
   CommandSubmitResult,
   CommentComponentInput,
@@ -307,6 +314,31 @@ export class TodouClient {
     this.request<void>("PUT", "/me/read", { json: input });
   createMyToken = (input: TokenCreateInput) =>
     this.request<TokenCreated>("POST", "/me/tokens", { json: input });
+
+  // — CLI device authorization (T-140) —
+  // The first two are the only calls a not-yet-logged-in CLI makes, so they
+  // run on a token-less client (like authMode); the rest need a web session.
+  createCliAuthRequest = (input: CliAuthRequestCreateInput) =>
+    this.request<CliAuthRequestCreated>("POST", "/auth/cli/requests", {
+      json: input,
+    });
+  pollCliAuthRequest = (id: number, input: CliAuthPollInput) =>
+    this.request<CliAuthPollResult>("POST", `/auth/cli/requests/${id}/poll`, {
+      json: input,
+    });
+  getCliAuthRequestByCode = (code: string) =>
+    this.request<CliAuthRequestInfo>(
+      "GET",
+      `/auth/cli/requests/by-code/${code}`,
+    );
+  approveCliAuthRequest = (id: number, input: CliAuthApproveInput) =>
+    this.request<CliAuthApproveResult>(
+      "POST",
+      `/auth/cli/requests/${id}/approve`,
+      { json: input },
+    );
+  denyCliAuthRequest = (id: number) =>
+    this.request<void>("POST", `/auth/cli/requests/${id}/deny`);
   listMyTokens = () => this.request<TokenListItem[]>("GET", "/me/tokens");
   revokeMyToken = (id: number) =>
     this.request<void>("DELETE", `/me/tokens/${id}`);

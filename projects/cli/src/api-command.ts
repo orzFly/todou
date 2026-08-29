@@ -22,6 +22,8 @@ export type CliContext = BaseContext & {
   fetchImpl?: typeof fetch;
   /** Test seam; production leaves it unset and time is the wall clock. */
   clock?: Clock;
+  /** Test seam; production leaves it unset and spawns the real browser. */
+  openBrowser?: (url: string) => void;
 };
 
 /** Base for every command that talks to a server: context, client, --json. */

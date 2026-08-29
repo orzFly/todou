@@ -18,6 +18,10 @@ import { agentRoutes } from "./routes/agents.ts";
 import { attachmentRoutes } from "./routes/attachments.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { batchRoutes } from "./routes/batch.ts";
+import {
+  cliAuthPublicRoutes,
+  cliAuthSessionRoutes,
+} from "./routes/cli-auth.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
 import { issueRoutes } from "./routes/issues.ts";
 import { labelRoutes } from "./routes/labels.ts";
@@ -117,6 +121,7 @@ export function createApp(ctx: AppContext) {
   // before the auth guard so they work unauthenticated; everything after
   // the guard requires a session cookie or a bearer PAT.
   api.route("/auth", authRoutes(ctx));
+  api.route("/auth", cliAuthPublicRoutes(ctx));
   // Public like /auth/mode: the login page, probes and diagnostics read the
   // version without a session (and the repository is public anyway).
   api.route("/", versionRoutes());
@@ -140,6 +145,7 @@ export function createApp(ctx: AppContext) {
   });
   api.use("*", authMiddleware(ctx));
   api.use("*", agentContextMiddleware());
+  api.route("/auth", cliAuthSessionRoutes());
   api.route("/", activityRoutes());
   api.route("/", meRoutes());
   api.route("/", inboxRoutes());

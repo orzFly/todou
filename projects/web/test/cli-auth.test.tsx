@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, waitFor } from "@testing-library/react";
-import type { Agent, Me } from "@todou/shared";
+import type { Agent, CliAuthRequestInfo, Me } from "@todou/shared";
 import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CliAuthCard,
+  CliAuthCodeCard,
   callbackUrl,
   defaultSelection,
   parseCliAuthSearch,
@@ -53,13 +54,19 @@ function agent(id: number, login: string, disabled = false): Agent {
 describe("parseCliAuthSearch", () => {
   it("accepts a valid request and defaults the name", () => {
     expect(parseCliAuthSearch({ port: 4321, state: "abc" })).toEqual({
+      kind: "loopback",
       port: 4321,
       state: "abc",
       name: "todou CLI",
     });
     expect(
       parseCliAuthSearch({ port: "4321", state: "abc", name: "cli @ bot-one" }),
-    ).toEqual({ port: 4321, state: "abc", name: "cli @ bot-one" });
+    ).toEqual({
+      kind: "loopback",
+      port: 4321,
+      state: "abc",
+      name: "cli @ bot-one",
+    });
   });
 
   it("rejects bad ports and missing state", () => {
@@ -67,6 +74,25 @@ describe("parseCliAuthSearch", () => {
     expect(parseCliAuthSearch({ port: 70000, state: "abc" })).toBeNull();
     expect(parseCliAuthSearch({ port: "x", state: "abc" })).toBeNull();
     expect(parseCliAuthSearch({ port: 4321 })).toBeNull();
+  });
+
+  it("takes a one-time code however the user typed it", () => {
+    expect(parseCliAuthSearch({ code: "AB3D-EFGH" })).toEqual({
+      kind: "code",
+      code: "AB3DEFGH",
+    });
+    expect(parseCliAuthSearch({ code: "ab3defgh" })).toEqual({
+      kind: "code",
+      code: "AB3DEFGH",
+    });
+  });
+
+  it("rejects codes of the wrong shape and mixed-up links", () => {
+    expect(parseCliAuthSearch({ code: "AB3D" })).toBeNull();
+    // I/L/O/U are not in the alphabet, so they cannot be a valid code.
+    expect(parseCliAuthSearch({ code: "ILOUABCD" })).toBeNull();
+    expect(parseCliAuthSearch({ code: "AB3DEFGH", port: 4321 })).toBeNull();
+    expect(parseCliAuthSearch({ code: "AB3DEFGH", state: "abc" })).toBeNull();
   });
 });
 
@@ -249,6 +275,115 @@ describe("CliAuthCard", () => {
     );
     fireEvent.click(getByRole("button", { name: "Cancel" }));
     expect(onCancel).toHaveBeenCalled();
+  });
+});
+
+describe("CliAuthCodeCard", () => {
+  const request: CliAuthRequestInfo = {
+    id: 7,
+    name: "cli @ bot-one",
+    code: "AB3DEFGH",
+    created_at: "2026-08-29T10:00:00.000Z",
+    expires_at: "2026-08-29T10:15:00.000Z",
+  };
+
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("shows the code to compare, then approves for the picked identity", async () => {
+    const approve = vi.fn().mockResolvedValue({ agent_id: 7 });
+    const { getByRole, getByText } = renderWithQuery(
+      <CliAuthCodeCard
+        request={request}
+        me={me}
+        agents={[agent(7, "bot-one")]}
+        approve={approve}
+        refuse={vi.fn()}
+      />,
+    );
+    expect(getByText("AB3D-EFGH")).toBeTruthy();
+    expect(getByText(/cli @ bot-one/)).toBeTruthy();
+
+    fireEvent.click(getByRole("button", { name: "Authorize" }));
+    await waitFor(() => expect(getByText(/Approved/)).toBeTruthy());
+    expect(approve).toHaveBeenCalledWith(7, { kind: "agent", id: 7 });
+    expect(readLastAgentId()).toBe(7);
+  });
+
+  it("remembers an agent created at approval time", async () => {
+    const approve = vi.fn().mockResolvedValue({ agent_id: 42 });
+    const { getByRole, getByText } = renderWithQuery(
+      <CliAuthCodeCard
+        request={request}
+        me={me}
+        agents={[]}
+        approve={approve}
+        refuse={vi.fn()}
+      />,
+    );
+    fireEvent.change(getByRole("textbox", { name: "New agent login" }), {
+      target: { value: "review-bot" },
+    });
+    fireEvent.click(getByRole("button", { name: "Create & authorize" }));
+    await waitFor(() => expect(getByText(/Approved/)).toBeTruthy());
+    expect(approve).toHaveBeenCalledWith(7, {
+      kind: "new",
+      login: "review-bot",
+    });
+    expect(readLastAgentId()).toBe(42);
+  });
+
+  it("does not remember anything when authorizing yourself", async () => {
+    const approve = vi.fn().mockResolvedValue({ agent_id: null });
+    const { getByRole, getByText } = renderWithQuery(
+      <CliAuthCodeCard
+        request={request}
+        me={me}
+        agents={[agent(7, "bot-one")]}
+        approve={approve}
+        refuse={vi.fn()}
+      />,
+    );
+    fireEvent.click(getByRole("radio", { name: "Orz (yourself)" }));
+    fireEvent.click(getByRole("button", { name: "Authorize" }));
+    await waitFor(() => expect(getByText(/Approved/)).toBeTruthy());
+    expect(approve).toHaveBeenCalledWith(7, { kind: "me" });
+    expect(readLastAgentId()).toBeNull();
+  });
+
+  it("denies without issuing anything", async () => {
+    const approve = vi.fn();
+    const refuse = vi.fn().mockResolvedValue(undefined);
+    const { getByRole, getByText } = renderWithQuery(
+      <CliAuthCodeCard
+        request={request}
+        me={me}
+        agents={[agent(7, "bot-one")]}
+        approve={approve}
+        refuse={refuse}
+      />,
+    );
+    fireEvent.click(getByRole("button", { name: "Deny" }));
+    await waitFor(() => expect(getByText(/Denied/)).toBeTruthy());
+    expect(refuse).toHaveBeenCalledWith(7);
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a refused approval and stays on the form", async () => {
+    const approve = vi.fn().mockRejectedValue(new Error("already taken"));
+    const { getByRole, getByText } = renderWithQuery(
+      <CliAuthCodeCard
+        request={request}
+        me={me}
+        agents={[agent(7, "bot-one")]}
+        approve={approve}
+        refuse={vi.fn()}
+      />,
+    );
+    fireEvent.click(getByRole("button", { name: "Authorize" }));
+    await waitFor(() => expect(getByText(/already taken/)).toBeTruthy());
+    expect(getByRole("button", { name: "Deny" })).toBeTruthy();
   });
 });
 

@@ -90,3 +90,13 @@ export const agentsQuery = queryOptions({
   queryKey: ["agents"],
   queryFn: () => api.listAgents(),
 });
+
+// A pending CLI authorization expires in 15 minutes and disappears the
+// moment it is answered, so nothing here is worth caching or retrying.
+export const cliAuthRequestQuery = (code: string) =>
+  queryOptions({
+    queryKey: ["cli-auth-request", code],
+    queryFn: () => api.getCliAuthRequestByCode(code),
+    staleTime: 0,
+    retry: false,
+  });

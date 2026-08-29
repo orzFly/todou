@@ -165,16 +165,31 @@ export async function enableAgent(
   return toAgent(ctx, row);
 }
 
+/**
+ * The one rule set every route that hands an agent a token must apply:
+ * only the owner or an instance admin, and never a disabled agent. Shared
+ * with the CLI device-authorization flow (T-140), which mints for an agent
+ * without going through this file's token endpoint.
+ */
+export async function loadAgentForToken(
+  ctx: AppContext,
+  actor: UserRow,
+  agentId: number,
+): Promise<UserRow> {
+  const agent = await loadManagedAgent(ctx, actor, agentId);
+  if (agent.disabledAt) {
+    throw new ConflictError("agent is disabled");
+  }
+  return agent;
+}
+
 export async function issueAgentToken(
   ctx: AppContext,
   actor: UserRow,
   agentId: number,
   input: TokenCreateInput,
 ): Promise<TokenCreated> {
-  const agent = await loadManagedAgent(ctx, actor, agentId);
-  if (agent.disabledAt) {
-    throw new ConflictError("agent is disabled");
-  }
+  const agent = await loadAgentForToken(ctx, actor, agentId);
   return issueToken(ctx.router.system(), agent.id, input);
 }
 

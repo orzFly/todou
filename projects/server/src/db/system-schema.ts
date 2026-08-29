@@ -82,6 +82,34 @@ export const tokens = pgTable(
   ],
 );
 
+// A CLI login waiting for someone to authorize it in a browser (T-140).
+// Rows are short-lived: they expire after 15 minutes, and poll deletes the
+// row the instant it hands the outcome over. Nothing secret is stored — the
+// poll secret only as a hash, and the PAT is minted at pickup, never here.
+export const cliAuthRequests = pgTable(
+  "cli_auth_requests",
+  {
+    id: id(),
+    // Normalized form (no dashes, uppercase); the dashed form is display only.
+    code: text("code").notNull(),
+    pollSecretHash: text("poll_secret_hash").notNull(),
+    name: text("name").notNull(),
+    status: text("status", { enum: ["pending", "approved", "denied"] })
+      .notNull()
+      .default("pending"),
+    // Whose token this becomes, resolved at approval time.
+    approvedUserId: bigint("approved_user_id", { mode: "number" }).references(
+      () => users.id,
+    ),
+    approvedById: bigint("approved_by_id", { mode: "number" }).references(
+      () => users.id,
+    ),
+    createdAt: createdAt(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [uniqueIndex("cli_auth_requests_code_idx").on(t.code)],
+);
+
 export const userPrefs = pgTable("user_prefs", {
   userId: bigint("user_id", { mode: "number" })
     .primaryKey()

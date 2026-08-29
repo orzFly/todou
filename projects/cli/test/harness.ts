@@ -111,6 +111,7 @@ export async function runCli(
     cwd?: string;
     stdinText?: string;
     clock?: Clock;
+    openBrowser?: (url: string) => void;
   } = {},
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const cli = new Cli<CliContext>({
@@ -145,6 +146,8 @@ export async function runCli(
     cwd: options.cwd ?? "/",
     fetchImpl: options.fetchImpl,
     clock: options.clock,
+    // Unset would spawn a real browser on whoever runs the suite.
+    openBrowser: options.openBrowser ?? (() => {}),
   });
 
   return {
