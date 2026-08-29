@@ -520,6 +520,161 @@ describe("issue view", () => {
   });
 });
 
+describe("issue view slices", () => {
+  const entry = (id: number) => ({
+    type: "comment",
+    id,
+    author: me,
+    body: `entry ${id}`,
+    created_at: `2026-08-11T10:${String(id).padStart(2, "0")}:00Z`,
+    edited_at: null,
+  });
+  const page = {
+    items: [entry(1), entry(2), entry(3), entry(4)],
+    prev_cursor: null,
+    next_cursor: null,
+  };
+  const routes = (): Route[] => [
+    ["GET", "/api/projects/todou/issues/3", issue],
+    ["GET", "/api/projects/todou/issues/3/timeline", page],
+    ["PUT", "/api/projects/todou/issues/3/read", {}],
+  ];
+
+  it("--brief keeps the header and meta, drops body and timeline", async () => {
+    const { fetchImpl } = fakeFetch(routes());
+    const result = await runCli(["issue", "view", "3", "--brief"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("#3 Fix the potato");
+    expect(result.stdout).toContain("status: Todo");
+    expect(result.stdout).toContain("opened by Claude");
+    expect(result.stdout).not.toContain("It sprouted.");
+    expect(result.stdout).not.toContain("── timeline ──");
+    expect(result.stdout).not.toContain("cursor:");
+  });
+
+  it("--brief fetches no timeline and leaves the read marker alone", async () => {
+    const { fetchImpl, calls } = fakeFetch(routes());
+    const result = await runCli(["issue", "view", "3", "--brief"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    // Nothing was shown, so nothing may be marked read — and the timeline
+    // pages are the request this flag exists to skip.
+    expect(calls.filter((c) => c.url.includes("/timeline"))).toHaveLength(0);
+    expect(calls.filter((c) => c.url.includes("/read"))).toHaveLength(0);
+  });
+
+  it("--brief emits issue and ref_format alone under --json", async () => {
+    const { fetchImpl } = fakeFetch(routes());
+    const result = await runCli(["issue", "view", "3", "--brief", "--json"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(Object.keys(parsed).sort()).toEqual(["issue", "ref_format"]);
+  });
+
+  it("--timeline drops the body but keeps the header and cursor", async () => {
+    const { fetchImpl } = fakeFetch(routes());
+    const result = await runCli(["issue", "view", "3", "--timeline"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("#3 Fix the potato");
+    expect(result.stdout).not.toContain("It sprouted.");
+    expect(result.stdout).toContain("── timeline ──");
+    expect(result.stdout).toContain("entry 4");
+  });
+
+  it("--last keeps the newest N and says what it dropped", async () => {
+    const { fetchImpl } = fakeFetch(routes());
+    const result = await runCli(["issue", "view", "3", "--last", "2"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("… 2 earlier entries");
+    expect(result.stdout).toContain("entry 3");
+    expect(result.stdout).toContain("entry 4");
+    expect(result.stdout).not.toContain("entry 1");
+  });
+
+  it("--last says entry in the singular", async () => {
+    const { fetchImpl } = fakeFetch(routes());
+    const result = await runCli(["issue", "view", "3", "--last", "3"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.stdout).toContain("… 1 earlier entry");
+  });
+
+  it("--last past the end elides nothing", async () => {
+    const { fetchImpl } = fakeFetch(routes());
+    const result = await runCli(["issue", "view", "3", "--last", "40"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.stdout).not.toContain("earlier entr");
+    expect(result.stdout).toContain("entry 1");
+  });
+
+  it("--last slices the JSON timeline the same way", async () => {
+    const { fetchImpl } = fakeFetch(routes());
+    const result = await runCli(
+      ["issue", "view", "3", "--last", "2", "--json"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    const parsed = JSON.parse(result.stdout) as {
+      timeline: Array<{ id: number }>;
+    };
+    expect(parsed.timeline.map((i) => i.id)).toEqual([3, 4]);
+  });
+
+  it("still marks read up to the newest entry under --last", async () => {
+    const { fetchImpl, calls } = fakeFetch(routes());
+    await runCli(["issue", "view", "3", "--last", "1"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    const read = calls.find((c) => c.url.includes("/read"));
+    expect(JSON.parse(String(read?.init.body))).toEqual({
+      up_to: "2026-08-11T10:04:00Z",
+    });
+  });
+
+  it("refuses --brief with --timeline or --last", async () => {
+    const { fetchImpl } = fakeFetch(routes());
+    const both = await runCli(["issue", "view", "3", "--brief", "--timeline"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(both.exitCode).toBe(1);
+    expect(both.stderr).toContain("opposite halves");
+
+    const trimmed = await runCli(
+      ["issue", "view", "3", "--brief", "--last", "2"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(trimmed.exitCode).toBe(1);
+    expect(trimmed.stderr).toContain("no timeline for --last to trim");
+  });
+
+  it("rejects a --last that is not a positive integer", async () => {
+    const { fetchImpl } = fakeFetch(routes());
+    const result = await runCli(["issue", "view", "3", "--last", "0"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("--last");
+  });
+});
+
 describe("issue watch", () => {
   const newComment = {
     type: "comment",

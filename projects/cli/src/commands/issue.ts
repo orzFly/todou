@@ -204,22 +204,78 @@ export class IssueViewCommand extends ProjectCommand {
   ];
   static usage = Command.Usage({
     description: "Show an issue with its full timeline",
-    details:
-      "`<number>` also accepts `<project>/<number>` (like `todou/16`) or a full issue URL; `issue show` is an alias of `issue view`.",
+    details: `
+      \`<number>\` also accepts \`<project>/<number>\` (like \`todou/16\`) or
+      a full issue URL; \`issue show\` is an alias of \`issue view\`.
+
+      Three opt-in slices cut what a card costs to read; the default is
+      unchanged and still prints everything.
+
+      \`--brief\` is the header, the status/labels/assignees line and the
+      spec line — no body, no timeline. It fetches no timeline pages and
+      **does not advance the read marker**: nothing was shown, so nothing
+      was read. \`--timeline\` is the other half, dropping the body and
+      keeping the header for context. \`--last <N>\` keeps only the newest
+      N entries and says how many it dropped.
+
+      All three shape \`--json\` the same way they shape the human output:
+      \`--brief\` emits \`{issue, ref_format}\`, and \`--last\` slices the
+      \`timeline\` array.
+    `,
+    examples: [
+      ["Just the header and status", "$0 issue view 16 --brief"],
+      ["What happened lately", "$0 issue view 16 --timeline --last 10"],
+    ],
   });
 
   number = Option.String({ required: true });
+  brief = Option.Boolean("--brief", false, {
+    description: "Header and meta only — no body, no timeline",
+  });
+  timelineOnly = Option.Boolean("--timeline", false, {
+    description: "Skip the body, keep the timeline",
+  });
+  last = Option.String("--last", {
+    description: "Keep only the newest N timeline entries",
+  });
 
   protected async run(client: TodouClient): Promise<void> {
     const { project, number } = this.resolveIssueRef(this.number);
+    if (this.brief && this.timelineOnly) {
+      throw new CliError(
+        "--brief and --timeline ask for opposite halves of the card",
+        "drop one — `--brief` is header+meta, `--timeline` is the timeline",
+      );
+    }
+    if (this.brief && this.last !== undefined) {
+      throw new CliError(
+        "--brief prints no timeline for --last to trim",
+        "use `--timeline --last N` for the newest N entries",
+      );
+    }
+    const last =
+      this.last === undefined
+        ? undefined
+        : parsePositiveInt(this.last, "--last");
+
     const issue = await client.getIssue(project, number);
-    const { items: timeline, cursor } = await drainTimeline(
+    const paint = makePainter(this.context.stdout, this.context.env);
+    const refPrefix = await fetchRefPrefix(client, project);
+
+    if (this.brief) {
+      this.output(
+        { issue: withRef(issue, refPrefix), ref_format: refFormat(refPrefix) },
+        () => renderIssue(issue, [], undefined, paint, refPrefix, {}),
+      );
+      return;
+    }
+
+    const { items: drained, cursor } = await drainTimeline(
       client,
       project,
       number,
     );
-    const paint = makePainter(this.context.stdout, this.context.env);
-    const refPrefix = await fetchRefPrefix(client, project);
+    const timeline = last === undefined ? drained : drained.slice(-last);
     this.output(
       {
         issue: withRef(issue, refPrefix),
@@ -227,7 +283,11 @@ export class IssueViewCommand extends ProjectCommand {
         next_cursor: cursor ?? null,
         ref_format: refFormat(refPrefix),
       },
-      () => renderIssue(issue, timeline, cursor, paint, refPrefix),
+      () =>
+        renderIssue(issue, timeline, cursor, paint, refPrefix, {
+          body: !this.timelineOnly,
+          omitted: drained.length - timeline.length,
+        }),
     );
     // Viewing advances the server-side read position (T-46), pinned to the
     // newest entry actually shown so anything landing after the fetch stays
@@ -795,12 +855,25 @@ export async function drainTimeline(
   );
 }
 
+/**
+ * Which parts of a card `issue view` was asked for. Header and meta are not
+ * optional — a slice with no card on it is not readable, whichever half was
+ * wanted.
+ */
+type IssueSections = {
+  /** Dropped by `--timeline`; `--brief` passes an empty timeline instead. */
+  body?: boolean;
+  /** How many older entries `--last` cut, for the elision line. */
+  omitted?: number;
+};
+
 function renderIssue(
   issue: Issue,
   timeline: TimelineItem[],
   cursor: string | undefined,
   paint: Painter,
   refPrefix: string | null,
+  sections: IssueSections,
 ): string {
   const lines: string[] = [];
   lines.push(
@@ -839,11 +912,17 @@ function renderIssue(
       `spec: v${issue.spec_version} · ${status}${unresolved} (todou spec status/pull/comments)`,
     );
   }
-  if (issue.body.trim() !== "") {
+  if (sections.body && issue.body.trim() !== "") {
     lines.push("", issue.body.trimEnd());
   }
   if (timeline.length > 0) {
     lines.push("", paint("dim", "── timeline ──"));
+    const omitted = sections.omitted ?? 0;
+    if (omitted > 0) {
+      lines.push(
+        paint("dim", `… ${omitted} earlier entr${omitted === 1 ? "y" : "ies"}`),
+      );
+    }
     for (const item of timeline) {
       lines.push(
         renderTimelineItem(item, paint, {
