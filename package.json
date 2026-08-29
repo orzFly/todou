@@ -12,7 +12,7 @@
     "build": "pnpm -r build",
     "build:cli": "scripts/build-cli.sh",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test"
+    "test": "pnpm -r --workspace-concurrency=1 test"
   },
   "devEngines": {
     "packageManager": {

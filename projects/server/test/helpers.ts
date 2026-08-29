@@ -7,6 +7,7 @@ import { type Config, loadConfig } from "../src/config.ts";
 import { DbRouter } from "../src/db/router.ts";
 import { users } from "../src/db/system-schema.ts";
 import { issueToken } from "../src/services/tokens.ts";
+import { createdStorageDirs } from "./setup.ts";
 
 export type PlacementMode = "shared" | "dedicated" | "dedicated-bucketed";
 
@@ -48,6 +49,7 @@ export function testConfig(
 ): Config {
   const run = `r${instance++}`;
   const storageDir = mkdtempSync(join(tmpdir(), "todou-storage-"));
+  createdStorageDirs.push(storageDir);
   const lines = [
     "[storage]",
     `backend = '${overrides?.s3 ? "s3" : "fs"}'`,
