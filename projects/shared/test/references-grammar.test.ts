@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveClaim,
+  resolveSlugAt,
   type ScanConfig,
+  type SlugClaim,
   scanReferenceTokens,
 } from "../src/references-grammar.ts";
 
@@ -341,5 +343,120 @@ describe("resolveClaim", () => {
         AFTER,
       ),
     ).toBeNull();
+  });
+});
+
+const T1 = "2026-02-01T00:00:00Z";
+const BETWEEN = "2026-03-01T00:00:00Z";
+const T2 = "2026-04-01T00:00:00Z";
+
+/**
+ * Two shapes at once: `oldname` was retired and nobody took it, while
+ * `handover` changed hands at T2 — the project that held it renamed itself
+ * to `todou` and another took the spelling over.
+ */
+const SLUG_ENTRIES: SlugClaim[] = [
+  { slug: "oldname", canonical: "todou", from: T1, to: T2 },
+  { slug: "handover", canonical: "todou", from: T1, to: T2 },
+  { slug: "todou", canonical: "todou", from: T2, to: null },
+  { slug: "handover", canonical: "handover", from: T2, to: null },
+];
+
+function historyConfig(at: string, entries = SLUG_ENTRIES): ScanConfig {
+  return {
+    internalPrefix: null,
+    cross: {
+      slugs: ["todou", "handover"],
+      since: SINCE,
+      at,
+      slugEntries: entries,
+    },
+  };
+}
+
+describe("qualified forms through slug history", () => {
+  it("resolves a retired spelling to the project that held it", () => {
+    expect(refs("see oldname#12", historyConfig(BETWEEN))).toEqual([
+      { slug: "todou", number: 12 },
+    ]);
+  });
+
+  it("follows a reused slug across the handover", () => {
+    expect(refs("handover#12", historyConfig(BETWEEN))).toEqual([
+      { slug: "todou", number: 12 },
+    ]);
+    expect(refs("handover#12", historyConfig(AFTER))).toEqual([
+      { slug: "handover", number: 12 },
+    ]);
+  });
+
+  it("resolves an unclaimed old spelling to its last holder", () => {
+    expect(refs("oldname#12", historyConfig(AFTER))).toEqual([
+      { slug: "todou", number: 12 },
+    ]);
+  });
+
+  it("still resolves content older than the project's current slug", () => {
+    expect(refs("todou#12", historyConfig(T1))).toEqual([
+      { slug: "todou", number: 12 },
+    ]);
+  });
+
+  it("stays literal for a slug nobody ever held", () => {
+    expect(refs("nowhere#12", historyConfig(AFTER))).toEqual([]);
+    expect(rendered("nowhere#12", historyConfig(AFTER))).toBe("nowhere#12");
+  });
+
+  it("normalises the token while leaving the author's spelling alone", () => {
+    expect(scanReferenceTokens("oldname/T-12", historyConfig(AFTER))).toEqual([
+      {
+        type: "issue",
+        slug: "todou",
+        number: 12,
+        start: 0,
+        end: 12,
+        text: "oldname/T-12",
+      },
+    ]);
+  });
+
+  it("falls back to the slug set with no history to consult", () => {
+    expect(refs("oldname#12", historyConfig(AFTER, []))).toEqual([]);
+    expect(refs("todou#12", historyConfig(AFTER, []))).toEqual([
+      { slug: "todou", number: 12 },
+    ]);
+    const config = crossConfig();
+    expect(refs("oldname#12", config)).toEqual([]);
+    expect(refs("todou#12", config)).toEqual([{ slug: "todou", number: 12 }]);
+  });
+});
+
+describe("resolveSlugAt", () => {
+  it("prefers the holder at the time over the current one", () => {
+    expect(
+      resolveSlugAt(SLUG_ENTRIES, ["todou", "handover"], "handover", BETWEEN),
+    ).toBe("todou");
+    expect(
+      resolveSlugAt(SLUG_ENTRIES, ["todou", "handover"], "handover", AFTER),
+    ).toBe("handover");
+  });
+
+  it("treats a hold as [from, to)", () => {
+    expect(resolveSlugAt(SLUG_ENTRIES, [], "handover", T1)).toBe("todou");
+    expect(resolveSlugAt(SLUG_ENTRIES, [], "handover", T2)).toBe("handover");
+  });
+
+  it("falls through to the current holder, then the last one", () => {
+    expect(resolveSlugAt(SLUG_ENTRIES, ["todou"], "todou", BEFORE)).toBe(
+      "todou",
+    );
+    expect(resolveSlugAt(SLUG_ENTRIES, [], "oldname", AFTER)).toBe("todou");
+    expect(resolveSlugAt(SLUG_ENTRIES, [], "nowhere", AFTER)).toBeNull();
+  });
+
+  it("still resolves a live slug when the timestamp is unusable", () => {
+    expect(resolveSlugAt(SLUG_ENTRIES, ["todou"], "todou", "not a date")).toBe(
+      "todou",
+    );
   });
 });

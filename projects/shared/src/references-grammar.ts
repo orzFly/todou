@@ -33,6 +33,17 @@ export type PrefixDirectory = {
 };
 
 /**
+ * One project's hold on a slug over `[from, to)`; `to: null` = still its
+ * current slug, in which case `canonical` equals `slug` (T-156).
+ */
+export type SlugClaim = {
+  slug: string;
+  canonical: string;
+  from: string;
+  to: string | null;
+};
+
+/**
  * Cross-project inputs (T-150). Supplying this turns the extended grammar
  * on; leaving it out yields the pre-T-150 token stream exactly.
  */
@@ -41,6 +52,8 @@ export type CrossRefInput = {
   slugs: readonly string[];
   /** Absent = bare `PREFIX-N` never resolves; qualified forms still do. */
   directory?: PrefixDirectory;
+  /** Absent = `slugs` alone decides a qualified form, as before T-156. */
+  slugEntries?: readonly SlugClaim[];
   /** `cross_refs_since`. Null/absent means "unknown", which turns the grammar off. */
   since?: string | null;
   /** When the content was written; omitted reads as now. */
@@ -201,6 +214,47 @@ export function resolveClaim(
 }
 
 /**
+ * The project a qualified `slug#N` names, given who held that slug when the
+ * content was written (T-156). Three tiers, in order:
+ *
+ * 1. **The holder at `at`** — a renamed-away slug keeps pointing at what it
+ *    meant when it was typed, which is the whole reason the history exists.
+ * 2. **The current holder** — content dated before the project existed still
+ *    resolves, the pre-T-156 behaviour this must not regress.
+ * 3. **The last holder** — a slug nobody holds now still resolves to whoever
+ *    had it last, because people keep typing the old name from memory after
+ *    a rename.
+ *
+ * Returns the holder's *current* slug, so callers compare against live slugs
+ * without knowing anything about the history.
+ */
+export function resolveSlugAt(
+  entries: readonly SlugClaim[],
+  slugs: readonly string[],
+  slug: string,
+  at: string,
+): string | null {
+  const time = Date.parse(at);
+  const held = entries.filter((entry) => entry.slug === slug);
+  if (!Number.isNaN(time)) {
+    const covering = held.find(
+      (entry) =>
+        Date.parse(entry.from) <= time &&
+        (entry.to === null || time < Date.parse(entry.to)),
+    );
+    if (covering !== undefined) return covering.canonical;
+  }
+  if (slugs.includes(slug)) return slug;
+  let latest: SlugClaim | null = null;
+  for (const entry of held) {
+    if (latest === null || Date.parse(entry.from) > Date.parse(latest.from)) {
+      latest = entry;
+    }
+  }
+  return latest === null ? null : latest.canonical;
+}
+
+/**
  * The cross grammar only opens for content written at or after the
  * deployment's `cross_refs_since` (the T-80 discipline: existing text
  * never changes meaning under a new syntax). An unknown or unparseable
@@ -245,7 +299,18 @@ function claimAt(
       // A shape naming an unknown project is consumed as literal text
       // rather than re-scanned: `nowhere/T-12` must not fall through and
       // ping this project's own T-12.
-      if (!cross.slugs.includes(qualified.slug)) {
+      const canonical =
+        cross.slugEntries === undefined
+          ? cross.slugs.includes(qualified.slug)
+            ? qualified.slug
+            : null
+          : resolveSlugAt(
+              cross.slugEntries,
+              cross.slugs,
+              qualified.slug,
+              cross.at ?? new Date().toISOString(),
+            );
+      if (canonical === null) {
         return { token: null, end: qualified.end };
       }
       const comment = commentSuffixAt(text, qualified.end);
@@ -253,7 +318,9 @@ function claimAt(
       return {
         token: {
           type: "issue",
-          slug: qualified.slug,
+          // Normalised, so a reference typed with a retired slug compares
+          // equal to the project it actually names.
+          slug: canonical,
           number: qualified.value,
           ...(comment === null ? {} : { commentId: comment.id }),
           ...span(text, at, end),
