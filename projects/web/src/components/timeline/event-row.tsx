@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { formatRef, type TimelineEvent } from "@todou/shared";
+import { formatRef, resolveSlugAt, type TimelineEvent } from "@todou/shared";
 import {
   BookOpenTextIcon,
   CheckIcon,
@@ -17,7 +17,11 @@ import {
   UserPlusIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { refConfigFor, referenceConfigQuery } from "@/api/references.ts";
+import {
+  refConfigFor,
+  referenceConfigQuery,
+  referenceDirectoryQuery,
+} from "@/api/references.ts";
 import { AttachmentEventLink } from "@/components/issue/attachment-list.tsx";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
@@ -204,12 +208,24 @@ export function EventRow({
       : undefined;
   // A cross-reference names its source in the payload — this project's
   // format cannot spell it, so the link is built from the coordinates
-  // rather than tokenized out of the action string.
+  // rather than tokenized out of the action string. The payload keeps the
+  // slug the source project had at the time, so a rename since then has to
+  // be resolved away or the link would go nowhere (T-156).
+  const directory = useQuery(referenceDirectoryQuery);
   const crossSource =
     event.event_type === "cross_referenced" &&
     typeof event.payload.by_project === "string" &&
     typeof event.payload.by_issue === "number"
-      ? { slug: event.payload.by_project, number: event.payload.by_issue }
+      ? {
+          slug:
+            resolveSlugAt(
+              directory.data?.slug_entries ?? [],
+              [],
+              event.payload.by_project,
+              event.created_at,
+            ) ?? event.payload.by_project,
+          number: event.payload.by_issue,
+        }
       : null;
   // "answered N questions" deep-links back to the question comment.
   const answeredCommentId =

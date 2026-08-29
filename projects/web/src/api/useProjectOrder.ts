@@ -51,13 +51,15 @@ export function useProjectOrder(projects: Project[]): OrderedProject[] {
  * Count a visit on entering the project and on in-project navigation;
  * recordVisit's 30-minute window collapses the stream into real visits.
  */
-export function useRecordProjectVisit(slug: string) {
+export function useRecordProjectVisit(slug: string | undefined) {
   const me = useQuery(meQuery);
   const userId = me.data?.id;
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   // biome-ignore lint/correctness/useExhaustiveDependencies(pathname): in-project navigation must re-attempt the visit; the 30-minute window dedupes
   useEffect(() => {
-    if (userId === undefined) return;
+    // Undefined while the caller is still resolving which project this is;
+    // a visit recorded under a guess would outlive the guess (T-156).
+    if (userId === undefined || slug === undefined) return;
     recordVisit(userId, slug, Date.now());
   }, [userId, slug, pathname]);
 }

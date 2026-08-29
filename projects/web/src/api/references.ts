@@ -95,6 +95,9 @@ export function refConfigFor(
     cross: {
       slugs: cross.slugs,
       directory: cross.directory,
+      // Absent on a pre-T-156 server, and an empty list resolves exactly
+      // like no history at all.
+      slugEntries: cross.directory.slug_entries ?? [],
       since: cross.directory.since,
       ...(refDate === undefined ? {} : { at: refDate }),
     },
