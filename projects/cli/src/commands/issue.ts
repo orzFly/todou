@@ -183,10 +183,15 @@ export class IssueListCommand extends ProjectCommand {
           if (this.deleted) return "the trash is empty";
           return this.unread ? "no unread issues" : "no issues";
         }
+        const paint = makePainter(this.context.stdout, this.context.env);
         const body = table(shown.items.map((i) => issueRow(i, refPrefix)));
-        return shown.next_cursor
-          ? `${body}\n… more available (raise --limit)`
-          : body;
+        const n = shown.items.length;
+        // A count nobody has to derive: `--json | jq length` was the only way
+        // to answer "how many", and it re-fetched the page to do it.
+        const footer = shown.next_cursor
+          ? `${n} issue${n === 1 ? "" : "s"} shown · more available (raise --limit)`
+          : `${n} issue${n === 1 ? "" : "s"}`;
+        return `${body}\n${paint("dim", footer)}`;
       },
     );
   }

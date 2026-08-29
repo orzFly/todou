@@ -1,4 +1,5 @@
 import { styleText } from "node:util";
+import stringWidth from "string-width";
 
 type Style = Parameters<typeof styleText>[0];
 export type Painter = (style: Style, text: string) => string;
@@ -16,19 +17,30 @@ export function makePainter(
     enabled ? styleText(style, text, { validateStream: false }) : text;
 }
 
-/** Space-aligned columns; empty trailing cells are not padded. */
+/**
+ * Space-aligned columns; empty trailing cells are not padded.
+ *
+ * Widths are terminal columns, not `.length`: a CJK title occupies two
+ * columns per character and `padEnd` counts UTF-16 units, so every list with
+ * a Chinese title used to come out ragged — the literal unreadability this
+ * card is about. `string-width` also discounts ANSI escapes and zero-width
+ * joiners, neither of which a hand-rolled range table gets right.
+ */
 export function table(rows: string[][]): string {
   const widths: number[] = [];
   for (const row of rows) {
     row.forEach((cell, i) => {
-      widths[i] = Math.max(widths[i] ?? 0, cell.length);
+      widths[i] = Math.max(widths[i] ?? 0, stringWidth(cell));
     });
   }
   return rows
     .map((row) =>
       row
         .map((cell, i) =>
-          i === row.length - 1 ? cell : cell.padEnd(widths[i] ?? 0),
+          i === row.length - 1
+            ? cell
+            : cell +
+              " ".repeat(Math.max(0, (widths[i] ?? 0) - stringWidth(cell))),
         )
         .join("  ")
         .trimEnd(),

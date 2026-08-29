@@ -16,6 +16,36 @@ describe("table", () => {
       ]),
     ).toBe("#1   short           open\n#20  a longer title  closed");
   });
+
+  it("pads CJK by terminal columns, not by code units", () => {
+    // "淡化 JSON" is 8 code units but 11 columns; padding by `.length` put
+    // the next column three spaces too far left on every CJK row.
+    expect(
+      table([
+        ["#1", "淡化 JSON", "open"],
+        ["#2", "plain ascii", "closed"],
+      ]),
+    ).toBe("#1  淡化 JSON    open\n#2  plain ascii  closed");
+  });
+
+  it("counts an emoji as the two columns it occupies", () => {
+    expect(
+      table([
+        ["🥔", "potato"],
+        ["ab", "ascii"],
+      ]),
+    ).toBe("🥔  potato\nab  ascii");
+  });
+
+  it("ignores ANSI escapes when measuring a painted cell", () => {
+    const painted = `\x1b[31mred\x1b[39m`;
+    expect(
+      table([
+        [painted, "x"],
+        ["abcde", "y"],
+      ]),
+    ).toBe(`${painted}    x\nabcde  y`);
+  });
 });
 
 describe("formatBytes", () => {

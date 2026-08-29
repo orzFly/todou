@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import stringWidth from "string-width";
 import { afterAll, describe, expect, it } from "vitest";
 import { loadCliConfig, saveCliConfig } from "../src/config.ts";
 import {
@@ -137,6 +138,81 @@ describe("issue list", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("no project selected");
     expect(result.stderr).toContain("todou project link");
+  });
+
+  it("closes the list with a count", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues",
+        { items: [issue, { ...issue, id: 12, number: 4 }], next_cursor: null },
+      ],
+    ]);
+    const result = await runCli(["issue", "list"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trimEnd().split("\n").at(-1)).toBe("2 issues");
+  });
+
+  it("says one issue in the singular", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues",
+        { items: [issue], next_cursor: null },
+      ],
+    ]);
+    const result = await runCli(["issue", "list"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.stdout.trimEnd().split("\n").at(-1)).toBe("1 issue");
+  });
+
+  it("folds the count into the more-available line", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues",
+        { items: [issue], next_cursor: "c9" },
+      ],
+    ]);
+    const result = await runCli(["issue", "list"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.stdout.trimEnd().split("\n").at(-1)).toBe(
+      "1 issue shown · more available (raise --limit)",
+    );
+  });
+
+  it("aligns a CJK title against an ASCII one", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues",
+        {
+          items: [
+            { ...issue, title: "淡化 JSON 的存在" },
+            { ...issue, id: 12, number: 4, title: "ascii title" },
+          ],
+          next_cursor: null,
+        },
+      ],
+    ]);
+    const result = await runCli(["issue", "list"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    const [first, second] = result.stdout.split("\n");
+    // Terminal columns, not UTF-16 indices: `.indexOf` is exactly the measure
+    // the old padEnd used, and it is the one that left the CJK row six
+    // columns short of its neighbour.
+    const column = (line: string | undefined) =>
+      stringWidth((line ?? "").slice(0, (line ?? "").indexOf("Todo")));
+    expect(column(first)).toBe(column(second));
   });
 });
 
