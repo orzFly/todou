@@ -91,10 +91,13 @@ function ProjectIssueListPage({
       replace: true,
     });
 
-  // Group headers pin below whatever floats above them: app header plus the
-  // toolbar on desktop, the (taller, two-row) app header alone on mobile.
-  // Neither height is knowable in CSS across wrapping and breakpoints, so
-  // measure both into a variable (same approach as the board's fitCanvas).
+  // Group headers pin below whatever floats above them: the toolbar on desktop,
+  // the (taller, two-row) app header alone on mobile. Neither height is knowable
+  // in CSS across wrapping and breakpoints, so measure into a variable (same
+  // approach as the board's fitCanvas). Take the toolbar's pinned bottom edge
+  // rather than adding the two heights: the toolbar sticks at its own top and
+  // tucks under the app header's 1px bottom border, so the sum overshoots by
+  // that border and leaves a 1px strip of the list showing through (T-167).
   const rootRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -103,11 +106,13 @@ function ProjectIssueListPage({
     if (!root || !toolbar) return;
     const appbar = document.querySelector("header");
     const measure = () => {
-      const base = appbar?.getBoundingClientRect().height ?? 0;
-      const floating = window.matchMedia("(min-width: 640px)").matches
-        ? toolbar.offsetHeight
-        : 0;
-      root.style.setProperty("--group-sticky-top", `${base + floating}px`);
+      const pinned = Number.parseFloat(getComputedStyle(toolbar).top);
+      const floats = window.matchMedia("(min-width: 640px)").matches;
+      const top =
+        floats && Number.isFinite(pinned)
+          ? pinned + toolbar.getBoundingClientRect().height
+          : (appbar?.getBoundingClientRect().height ?? 0);
+      root.style.setProperty("--group-sticky-top", `${top}px`);
     };
     measure();
     window.addEventListener("resize", measure);
@@ -421,17 +426,24 @@ function IssueGroup({
 
   return (
     <section aria-label={status.name}>
+      {/* Outside the header's rounded top corners sit two transparent notches;
+          rows passing behind a pinned header show their own border and
+          background through them. The square-cornered shell carries the pin so
+          those notches always fall back to the page colour, the same backdrop
+          the gaps between groups have (T-167). */}
       <div
-        className="sticky z-20 flex items-center gap-2 rounded-t-lg border bg-muted px-3.5 py-2 text-sm"
+        className="sticky z-20 bg-background"
         style={{ top: "var(--group-sticky-top, 56px)" }}
       >
-        <span
-          className="size-2.5 rounded-full"
-          style={{ backgroundColor: status.color }}
-          aria-hidden
-        />
-        <span className="font-medium">{status.name}</span>
-        <span className="text-muted-foreground">{total}</span>
+        <div className="flex items-center gap-2 rounded-t-lg border bg-muted px-3.5 py-2 text-sm">
+          <span
+            className="size-2.5 rounded-full"
+            style={{ backgroundColor: status.color }}
+            aria-hidden
+          />
+          <span className="font-medium">{status.name}</span>
+          <span className="text-muted-foreground">{total}</span>
+        </div>
       </div>
       <ul className={cn("rounded-b-lg border border-t-0", grid)}>
         {group.isPending && (
