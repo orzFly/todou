@@ -39,6 +39,9 @@ const ConfigSchema = z.object({
     .object({
       port: z.coerce.number().int().min(1).max(65535).default(8637),
       static_dir: z.string().optional(),
+      // Directory of packed CLI artifacts (scripts/pack-cli.sh) served by
+      // /api/cli. Unset disables the endpoints entirely.
+      cli_dist_dir: z.string().optional(),
       compression: flexibleBool.default(true),
       // Bounds every API request body except the multipart upload routes,
       // which get storage.max_upload_mb instead. Spec pushes travel as
@@ -201,6 +204,7 @@ const ENV_MAP: Array<[string, string[]]> = [
   ["TODOU_AUTH_MODE", ["auth", "mode"]],
   ["TODOU_HTTP_PORT", ["http", "port"]],
   ["TODOU_HTTP_STATIC_DIR", ["http", "static_dir"]],
+  ["TODOU_HTTP_CLI_DIST_DIR", ["http", "cli_dist_dir"]],
   ["TODOU_HTTP_COMPRESSION", ["http", "compression"]],
   ["TODOU_HTTP_MAX_JSON_BODY_MB", ["http", "max_json_body_mb"]],
   ["TODOU_DATABASE_SYSTEM", ["database", "system"]],
@@ -283,6 +287,9 @@ export function loadConfig(options?: {
   // here keeps the setting independent of where the server was launched from.
   if (config.http.static_dir !== undefined) {
     config.http.static_dir = resolve(config.http.static_dir);
+  }
+  if (config.http.cli_dist_dir !== undefined) {
+    config.http.cli_dist_dir = resolve(config.http.cli_dist_dir);
   }
 
   if (config.auth.mode === "oidc") {

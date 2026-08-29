@@ -63,6 +63,16 @@ export class UpstreamError extends DomainError {
   }
 }
 
+export class CliDistNotConfiguredError extends DomainError {
+  constructor() {
+    super(
+      404,
+      "cli_dist_not_configured",
+      "this deployment carries no CLI artifacts",
+    );
+  }
+}
+
 export class DirectUploadUnavailableError extends DomainError {
   constructor() {
     super(

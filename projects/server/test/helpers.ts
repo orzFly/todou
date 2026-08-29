@@ -29,6 +29,7 @@ export type ConfigOverrides = {
   maxUploadMb?: number;
   workers?: boolean;
   staticDir?: string;
+  cliDistDir?: string;
   /** Raw TOML prepended to the generated document (auth sections etc.). */
   extraToml?: string;
   /** Point storage at a fake S3 (see fake-s3.ts); backend flips to "s3". */
@@ -76,8 +77,15 @@ export function testConfig(
   // Always explicit: the production default (workers on under dedicated
   // placement) would otherwise put every dedicated suite in worker mode.
   lines.push(`workers = ${overrides?.workers ?? false}`);
+  const http: string[] = [];
   if (overrides?.staticDir) {
-    lines.unshift("[http]", `static_dir = '${overrides.staticDir}'`);
+    http.push(`static_dir = '${overrides.staticDir}'`);
+  }
+  if (overrides?.cliDistDir) {
+    http.push(`cli_dist_dir = '${overrides.cliDistDir}'`);
+  }
+  if (http.length > 0) {
+    lines.unshift("[http]", ...http);
   }
   if (overrides?.extraToml) {
     lines.unshift(overrides.extraToml);

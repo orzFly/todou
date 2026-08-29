@@ -56,6 +56,25 @@ describe("loadConfig", () => {
     expect(config.http.static_dir).toBe("/srv/todou/dist");
   });
 
+  it("absolutises a relative cli_dist_dir", () => {
+    const config = loadConfig({
+      tomlSource: ["[http]", "cli_dist_dir = './cli-dist'"].join("\n"),
+      env: {},
+    });
+    expect(config.http.cli_dist_dir).toBe(resolve(process.cwd(), "cli-dist"));
+  });
+
+  it("reads cli_dist_dir from ENV, unset by default", () => {
+    expect(
+      loadConfig({ tomlSource: "", env: {} }).http.cli_dist_dir,
+    ).toBeUndefined();
+    const config = loadConfig({
+      tomlSource: "",
+      env: { TODOU_HTTP_CLI_DIST_DIR: "/app/cli-dist" },
+    });
+    expect(config.http.cli_dist_dir).toBe("/app/cli-dist");
+  });
+
   it("requires issuer, client_id, and client_secret for oidc mode", () => {
     const base = [
       "[auth]",

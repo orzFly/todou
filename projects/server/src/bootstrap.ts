@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { type CliDist, loadCliDist } from "./cli-dist.ts";
 import { type Config, ConfigError } from "./config.ts";
 import type { Db } from "./db/driver.ts";
 import { DbRouter } from "./db/router.ts";
@@ -18,6 +19,8 @@ export type AppContext = {
   router: DbRouter;
   bus: EventBus;
   storage: StorageBackend;
+  /** Loaded once at startup; null unless http.cli_dist_dir is set. */
+  cliDist: CliDist | null;
   /**
    * Aborted once when the process is asked to stop. Long-lived responses
    * (SSE) end themselves on this signal so `server.close()` can complete
@@ -36,6 +39,9 @@ export async function bootstrap(config: Config): Promise<AppContext> {
     router,
     bus: new EventBus(),
     storage: await makeStorage(config),
+    cliDist: config.http.cli_dist_dir
+      ? await loadCliDist(config.http.cli_dist_dir)
+      : null,
     shutdown: new AbortController(),
   };
 }

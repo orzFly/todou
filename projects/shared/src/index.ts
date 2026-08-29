@@ -9,6 +9,7 @@ export * from "./schemas/attachment.ts";
 export * from "./schemas/auth.ts";
 export * from "./schemas/batch.ts";
 export * from "./schemas/cli-auth.ts";
+export * from "./schemas/cli-dist.ts";
 export * from "./schemas/commands.ts";
 export * from "./schemas/common.ts";
 export * from "./schemas/component.ts";

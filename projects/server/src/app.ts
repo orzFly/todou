@@ -22,6 +22,7 @@ import {
   cliAuthPublicRoutes,
   cliAuthSessionRoutes,
 } from "./routes/cli-auth.ts";
+import { cliDistRoutes } from "./routes/cli-dist.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
 import { issueRoutes } from "./routes/issues.ts";
 import { labelRoutes } from "./routes/labels.ts";
@@ -125,6 +126,9 @@ export function createApp(ctx: AppContext) {
   // Public like /auth/mode: the login page, probes and diagnostics read the
   // version without a session (and the repository is public anyway).
   api.route("/", versionRoutes());
+  // Public for the same reason: bootstrapping a machine that has no todou
+  // credentials yet is exactly what these downloads are for.
+  api.route("/", cliDistRoutes());
   // Before the auth guard on purpose: sub-requests re-enter the app and
   // are authorized individually, and an unauthenticated mixed batch (the
   // login page pairs /auth/mode with /me) must degrade per item — a 401
