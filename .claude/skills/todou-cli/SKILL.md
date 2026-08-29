@@ -29,7 +29,7 @@ todou issue close 16 --comment "done"
 todou comment add -p <proj> 16 --body-file f  # long bodies: --body-file /dev/stdin <<'EOF'
 todou attach -p <proj> 16 file.png ...        # mime inferred from the extension
 todou status list -p <proj>
-todou status init -p <proj>                   # create whichever canonical statuses are missing
+todou status init -p <proj>                   # add the missing canonical statuses, sync existing colors
 todou status create -p <proj> --name X --category open|closed [--color '#hex'] [--before Y|--after Y]
 todou status edit X [--name N] [--category C] [--color '#hex'] [--before Y|--after Y] [--default]
 todou status delete X                         # refused (409) while issues still use it
@@ -174,9 +174,9 @@ surprised you) can run long; a triage note cannot. When in doubt, cut it in half
 Backlog → Todo → Next → In Progress → Ready to Ship → Shipped → Done
 ```
 
-(If a project lacks some of these statuses, run `todou status init -p <proj>` — it creates the missing
-ones in canonical order with the standard categories/colors, and pins Todo as the default; one-off
-tweaks go through `status create/edit/delete`.)
+(New projects are seeded with all seven. For a project that predates that, run `todou status init -p
+<proj>` — it creates the missing ones in canonical order, syncs existing ones to the standard colors,
+and pins Todo as the default; one-off tweaks go through `status create/edit/delete`.)
 
 - **Worker agents**: move the card to In Progress when starting; move it to Ready to Ship when development
   is complete (commits on their own branch, not merged), and post a summary comment.

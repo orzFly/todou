@@ -5,7 +5,7 @@ import type {
   StatusUpdateInput,
   TodouClient,
 } from "@todou/shared";
-import { TodouError } from "@todou/shared";
+import { CANONICAL_STATUSES, TodouError } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { CliError } from "../errors.ts";
@@ -253,36 +253,39 @@ export class StatusDeleteCommand extends ProjectCommand {
   }
 }
 
-/** The status set agents expect on every project (see the todou-cli skill). */
-const CANONICAL_STATUSES: ReadonlyArray<
-  Pick<Status, "name" | "category" | "color">
-> = [
-  { name: "Backlog", category: "open", color: "#6b7280" },
-  { name: "Todo", category: "open", color: "#6b7280" },
-  { name: "Next", category: "open", color: "#6b7280" },
-  { name: "In Progress", category: "open", color: "#3b82f6" },
-  { name: "Ready to Ship", category: "open", color: "#f59e0b" },
-  { name: "Shipped", category: "open", color: "#8b5cf6" },
-  { name: "Done", category: "closed", color: "#22c55e" },
-];
-
 export class StatusInitCommand extends ProjectCommand {
   static paths = [["status", "init"]];
   static usage = Command.Usage({
     description:
-      "Create the missing canonical statuses (Backlog → … → Done), in order",
+      "Apply the canonical status set (Backlog → … → Done) to an existing project: create what is missing, sync colors",
   });
 
   protected async run(client: TodouClient): Promise<void> {
     const project = this.requireProject();
     const board = boardOrder(await client.listStatuses(project));
     const created: Status[] = [];
+    const recolored: Status[] = [];
     let previous: Status | undefined;
     for (const canonical of CANONICAL_STATUSES) {
       const existing = board.find(
         (s) => s.name.toLowerCase() === canonical.name.toLowerCase(),
       );
       if (existing !== undefined) {
+        if (existing.color.toLowerCase() !== canonical.color.toLowerCase()) {
+          const updated = await client.updateStatus(project, existing.id, {
+            color: canonical.color,
+          });
+          existing.color = updated.color;
+          recolored.push(existing);
+        }
+        // Category is left alone even when it disagrees: flipping one moves
+        // every issue in it across the --open/--closed divide, so it stays a
+        // human decision.
+        if (existing.category !== canonical.category) {
+          this.note(
+            `${existing.name} is ${existing.category}, canonical is ${canonical.category} — left unchanged`,
+          );
+        }
         previous = existing;
         continue;
       }
@@ -293,9 +296,11 @@ export class StatusInitCommand extends ProjectCommand {
         prev === undefined ? 0 : board.findIndex((s) => s.id === prev.id) + 1;
       const placement = planPlacement(board, index);
       const status = await client.createStatus(project, {
-        ...canonical,
+        name: canonical.name,
+        category: canonical.category,
+        color: canonical.color,
         position: placement.position,
-      } as StatusCreateInput);
+      });
       await applyShifts(client, project, placement.shifts);
       board.splice(index, 0, status);
       created.push(status);
@@ -305,9 +310,12 @@ export class StatusInitCommand extends ProjectCommand {
     // Without an explicit default, new issues fall back to the first status
     // by position (T-14) — which init just changed by putting Backlog ahead
     // of Todo. Pin Todo so the effective default stays put.
+    const defaultName = CANONICAL_STATUSES.find((s) => s.is_default)?.name;
     let defaulted: Status | undefined;
-    if (!board.some((s) => s.is_default)) {
-      const todo = board.find((s) => s.name.toLowerCase() === "todo");
+    if (defaultName !== undefined && !board.some((s) => s.is_default)) {
+      const todo = board.find(
+        (s) => s.name.toLowerCase() === defaultName.toLowerCase(),
+      );
       if (todo !== undefined) {
         defaulted = await client.updateStatus(project, todo.id, {
           is_default: true,
@@ -316,15 +324,24 @@ export class StatusInitCommand extends ProjectCommand {
       }
     }
 
-    this.output({ created: created.map((s) => s.name), statuses: board }, () =>
-      [
-        created.length === 0
-          ? "all canonical statuses already exist"
-          : `created ${created.map((s) => s.name).join(", ")}`,
-        ...(defaulted === undefined
-          ? []
-          : [`made ${defaulted.name} the default status`]),
-      ].join("\n"),
+    this.output(
+      {
+        created: created.map((s) => s.name),
+        recolored: recolored.map((s) => s.name),
+        statuses: board,
+      },
+      () =>
+        [
+          created.length === 0
+            ? "all canonical statuses already exist"
+            : `created ${created.map((s) => s.name).join(", ")}`,
+          ...(recolored.length === 0
+            ? []
+            : [`synced colors on ${recolored.map((s) => s.name).join(", ")}`]),
+          ...(defaulted === undefined
+            ? []
+            : [`made ${defaulted.name} the default status`]),
+        ].join("\n"),
     );
   }
 }

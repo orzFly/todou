@@ -91,6 +91,34 @@ export const StatusUpdateInput = z.object({
 });
 export type StatusUpdateInput = z.infer<typeof StatusUpdateInput>;
 
+/**
+ * The status flow agents work in (see the todou-cli skill). Shared because
+ * two places must agree on it: the server seeds it into every new project,
+ * and `todou status init` applies it to projects that predate it.
+ *
+ * Colors run gray (not started) → cyan/blue (active) → amber (awaiting
+ * delivery) → violet (out) → green (terminal). Category only has two values
+ * and cannot carry that, so it holds one invariant instead: Done, the only
+ * closed status, is green.
+ *
+ * Todo is pinned as the default rather than left to the first-by-position
+ * fallback, which Backlog now sits ahead of.
+ */
+export const CANONICAL_STATUSES: ReadonlyArray<{
+  name: string;
+  category: StatusCategory;
+  color: string;
+  is_default?: true;
+}> = [
+  { name: "Backlog", category: "open", color: "#9ca3af" },
+  { name: "Todo", category: "open", color: "#6b7280", is_default: true },
+  { name: "Next", category: "open", color: "#06b6d4" },
+  { name: "In Progress", category: "open", color: "#3b82f6" },
+  { name: "Ready to Ship", category: "open", color: "#f59e0b" },
+  { name: "Shipped", category: "open", color: "#8b5cf6" },
+  { name: "Done", category: "closed", color: "#22c55e" },
+];
+
 /** The name a label is actually stored under: trimmed, spaces collapsed. */
 export function canonicalizeLabelName(input: string): string {
   return input.trim().replace(/\s+/g, " ");

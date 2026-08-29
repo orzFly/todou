@@ -55,12 +55,28 @@ describe.each(PLACEMENTS)("projects domain (%s placement)", (placement) => {
       headers: { cookie },
     });
     const statuses = await json(statusRes);
-    expect(statuses.map((x: { name: string }) => x.name)).toEqual([
-      "Todo",
-      "In Progress",
-      "Done",
+    expect(
+      statuses.map((x: { name: string; color: string }) => [x.name, x.color]),
+    ).toEqual([
+      ["Backlog", "#9ca3af"],
+      ["Todo", "#6b7280"],
+      ["Next", "#06b6d4"],
+      ["In Progress", "#3b82f6"],
+      ["Ready to Ship", "#f59e0b"],
+      ["Shipped", "#8b5cf6"],
+      ["Done", "#22c55e"],
     ]);
-    expect(statuses[2].category).toBe("closed");
+    expect(
+      statuses
+        .filter((x: { category: string }) => x.category === "closed")
+        .map((x: { name: string }) => x.name),
+    ).toEqual(["Done"]);
+    // Todo is pinned, so new issues land there rather than in Backlog.
+    expect(
+      statuses
+        .filter((x: { is_default: boolean }) => x.is_default)
+        .map((x: { name: string }) => x.name),
+    ).toEqual(["Todo"]);
 
     const members = await json(
       await t.app.request(`/api/projects/${s}/members`, {
@@ -261,7 +277,7 @@ describe.each(PLACEMENTS)("projects domain (%s placement)", (placement) => {
         body: JSON.stringify({ name: "Blocked", category: "open" }),
       }),
     );
-    expect(created.position).toBe(3);
+    expect(created.position).toBe(7);
 
     const rename = await t.app.request(
       `/api/projects/${s}/statuses/${created.id}`,
@@ -318,11 +334,13 @@ describe.each(PLACEMENTS)("projects domain (%s placement)", (placement) => {
         body: JSON.stringify(body),
       });
 
-    // Seeded projects start with no explicit default.
+    // Seeded projects start with exactly one explicit default.
     const seeded = await listStatuses();
-    expect(seeded.every((x: { is_default: boolean }) => !x.is_default)).toBe(
-      true,
-    );
+    expect(
+      seeded
+        .filter((x: { is_default: boolean }) => x.is_default)
+        .map((x: { name: string }) => x.name),
+    ).toEqual(["Todo"]);
     const progress = seeded.find(
       (x: { name: string }) => x.name === "In Progress",
     );

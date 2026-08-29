@@ -4,6 +4,7 @@ import type {
   ProjectCreateInput,
   ProjectUpdateInput,
 } from "@todou/shared";
+import { CANONICAL_STATUSES } from "@todou/shared";
 import { eq, inArray, ne } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -21,12 +22,6 @@ import { projectMembers, projects } from "../db/system-schema.ts";
 import { ConflictError } from "../errors.ts";
 import { type ProjectRow, requireProject, routeInfoOf } from "./access.ts";
 import { mirrorRefFormat } from "./reference-directory.ts";
-
-const DEFAULT_STATUSES = [
-  { name: "Todo", category: "open", color: "#6b7280", position: 0 },
-  { name: "In Progress", category: "open", color: "#3b82f6", position: 1 },
-  { name: "Done", category: "closed", color: "#22c55e", position: 2 },
-] as const;
 
 export function toProject(row: ProjectRow): Project {
   return {
@@ -70,9 +65,16 @@ export async function createProject(
       .insert(projectMeta)
       .values({ projectId: row.id })
       .onConflictDoNothing();
-    await db
-      .insert(statuses)
-      .values(DEFAULT_STATUSES.map((s) => ({ ...s, projectId: row.id })));
+    await db.insert(statuses).values(
+      CANONICAL_STATUSES.map((s, i) => ({
+        projectId: row.id,
+        name: s.name,
+        category: s.category,
+        color: s.color,
+        position: i,
+        isDefault: s.is_default ?? false,
+      })),
+    );
     // Anchored at the registry row's own createdAt, not now(): the history
     // then covers every instant the project could already hold content.
     if (input.ref_prefix != null) {

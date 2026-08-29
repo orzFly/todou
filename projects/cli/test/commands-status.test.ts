@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Route } from "./harness.ts";
 import { fakeFetch, loggedInEnv, runCli } from "./harness.ts";
 
 // The seed every new project gets (contiguous positions, no default).
@@ -28,6 +29,26 @@ const seeded = [
     is_default: false,
   },
 ];
+
+/** What a project seeded by today's server looks like, ids 1..7 in order. */
+function canonicalBoard() {
+  return [
+    ["Backlog", "open", "#9ca3af"],
+    ["Todo", "open", "#6b7280"],
+    ["Next", "open", "#06b6d4"],
+    ["In Progress", "open", "#3b82f6"],
+    ["Ready to Ship", "open", "#f59e0b"],
+    ["Shipped", "open", "#8b5cf6"],
+    ["Done", "closed", "#22c55e"],
+  ].map(([name, category, color], i) => ({
+    id: i + 1,
+    name,
+    category,
+    color,
+    position: i,
+    is_default: name === "Todo",
+  }));
+}
 
 function jsonBody(init: RequestInit): Record<string, unknown> {
   return JSON.parse(String(init.body)) as Record<string, unknown>;
@@ -421,8 +442,8 @@ describe("status init", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(posted).toEqual([
-      { name: "Backlog", category: "open", color: "#6b7280", position: 0 },
-      { name: "Next", category: "open", color: "#6b7280", position: 2 },
+      { name: "Backlog", category: "open", color: "#9ca3af", position: 0 },
+      { name: "Next", category: "open", color: "#06b6d4", position: 2 },
       {
         name: "Ready to Ship",
         category: "open",
@@ -431,6 +452,8 @@ describe("status init", () => {
       },
       { name: "Shipped", category: "open", color: "#8b5cf6", position: 5 },
     ]);
+    // The seeded three already carry their canonical colors, so nothing
+    // here is a `PATCH { color }` — only position shifts and the default.
     expect(patched).toEqual([
       // Backlog lands at 0: the seeded three give way.
       { id: "1", body: { position: 1 } },
@@ -452,24 +475,8 @@ describe("status init", () => {
   });
 
   it("is a no-op when the canonical set already exists", async () => {
-    const canonical = [
-      "Backlog",
-      "Todo",
-      "Next",
-      "In Progress",
-      "Ready to Ship",
-      "Shipped",
-      "Done",
-    ].map((name, i) => ({
-      id: i + 1,
-      name,
-      category: name === "Done" ? "closed" : "open",
-      color: "#6b7280",
-      position: i,
-      is_default: name === "Todo",
-    }));
     const { fetchImpl, calls } = fakeFetch([
-      ["GET", "/api/projects/todou/statuses", canonical],
+      ["GET", "/api/projects/todou/statuses", canonicalBoard()],
     ]);
     const result = await runCli(["status", "init"], {
       fetchImpl,
@@ -478,5 +485,55 @@ describe("status init", () => {
     expect(result.exitCode).toBe(0);
     expect(calls).toHaveLength(1);
     expect(result.stdout).toBe("all canonical statuses already exist\n");
+  });
+
+  it("syncs a drifted color but leaves a drifted category to a human", async () => {
+    const drifted = () =>
+      canonicalBoard().map((s) =>
+        s.name === "Backlog"
+          ? { ...s, color: "#6b7280" }
+          : s.name === "Done"
+            ? { ...s, category: "open" }
+            : s,
+      );
+    // Only Backlog's PATCH route exists: a category PATCH would throw
+    // "unexpected fetch" rather than pass unnoticed.
+    const routes = (patched: Array<Record<string, unknown>>): Route[] => [
+      ["GET", "/api/projects/todou/statuses", drifted()],
+      [
+        "PATCH",
+        "/api/projects/todou/statuses/1",
+        (init: RequestInit) => {
+          patched.push(jsonBody(init));
+          return { ...drifted()[0], ...jsonBody(init) };
+        },
+      ],
+    ];
+
+    const patched: Array<Record<string, unknown>> = [];
+    const { fetchImpl } = fakeFetch(routes(patched));
+    const result = await runCli(["status", "init"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(patched).toEqual([{ color: "#9ca3af" }]);
+    expect(result.stdout).toBe(
+      "all canonical statuses already exist\nsynced colors on Backlog\n",
+    );
+    expect(result.stderr).toContain(
+      "Done is open, canonical is closed — left unchanged",
+    );
+
+    const jsonPatched: Array<Record<string, unknown>> = [];
+    const json = await runCli(["status", "init", "--json"], {
+      fetchImpl: fakeFetch(routes(jsonPatched)).fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(json.exitCode).toBe(0);
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      created: [],
+      recolored: ["Backlog"],
+    });
   });
 });

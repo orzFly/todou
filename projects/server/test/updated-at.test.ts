@@ -439,17 +439,20 @@ describe("issue list ordering under sort=updated T-101", () => {
         headers: { cookie },
       }),
     );
-    // Skip the default status: earlier tests already parked issues there.
-    const [, second, third] = statuses.items ?? statuses;
-    expect(third).toBeDefined();
+    // Any two non-default statuses: earlier tests already parked issues in
+    // the default one.
+    const [own, neighbour] = (statuses.items ?? statuses).filter(
+      (s: { is_default: boolean }) => !s.is_default,
+    );
+    expect(neighbour).toBeDefined();
 
     const x = await createIssue("group x");
     const y = await createIssue("group y");
     const other = await createIssue("other group");
     for (const [n, status] of [
-      [x, second],
-      [y, second],
-      [other, third],
+      [x, own],
+      [y, own],
+      [other, neighbour],
     ] as const) {
       const res = await t.app.request(`/api/projects/${slug}/issues/${n}`, {
         method: "PATCH",
@@ -462,14 +465,14 @@ describe("issue list ordering under sort=updated T-101", () => {
     await plantAt(x, "2021-01-01T00:00:00.000Z");
     await plantAt(y, "2021-01-02T00:00:00.000Z");
     await plantAt(other, "2021-01-03T00:00:00.000Z");
-    const group = `status=${second.id}&sort=updated&order=desc`;
+    const group = `status=${own.id}&sort=updated&order=desc`;
     expect(await order(group)).toEqual([y, x]);
 
     await comment(x, "bumped");
     expect(await order(group)).toEqual([x, y]);
-    expect(await order(`status=${third.id}&sort=updated&order=desc`)).toEqual([
-      other,
-    ]);
+    expect(
+      await order(`status=${neighbour.id}&sort=updated&order=desc`),
+    ).toEqual([other]);
   });
 
   it("drains every issue exactly once while sorted by updated", async () => {

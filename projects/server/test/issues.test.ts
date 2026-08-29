@@ -125,10 +125,11 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
     });
     expect(explicit.status.name).toBe("Done");
 
-    // Clearing the default restores first-by-position behavior.
+    // Clearing the default restores first-by-position behavior — Backlog,
+    // not the seeded default Todo, which pinning In Progress unpinned.
     await setDefault(progress.id, false);
     const fallback = await createIssue({ title: "Back to first" });
-    expect(fallback.status.name).toBe("Todo");
+    expect(fallback.status.name).toBe("Backlog");
   });
 
   it("filters the list by exact numbers", async () => {
