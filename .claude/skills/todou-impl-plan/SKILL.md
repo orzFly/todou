@@ -10,7 +10,7 @@ Execute a plan that lives as an **approved spec set on a todou issue**. Read `/t
 ## Load the spec
 
 ```bash
-todou spec status <n> -p <proj> --json     # confirm the latest version carries an approve verdict
+todou spec status <n> -p <proj>            # confirm the latest version carries an approve verdict
 todou spec pull <n> <dir> -p <proj>        # fetch the set into a scratch dir (never committed)
 ```
 
@@ -46,8 +46,9 @@ report in the terminal.
 The commit message carries a `Spec:` line above the `Co-Authored-By:` line, pointing at the issue
 and spec version the implementation follows. **Write the card reference the way the project writes
 it** — many repos are mirrored to a host that autolinks bare `#N` to its own, unrelated numbering.
-Take the spelling from the card itself (`todou issue view <n> --json | jq -r .issue.ref`, see
-/todou-cli), never from habit; the repo's own convention in AGENTS.md wins where it differs:
+Take the spelling from the card itself — the first line of `todou issue view <n> --brief` is that
+card, spelled (see /todou-cli) — never from habit; the repo's own convention in AGENTS.md wins
+where it differs:
 
 ```
 feat: implement the xyz feature

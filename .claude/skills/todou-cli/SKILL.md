@@ -13,21 +13,25 @@ project, deploy command) live in the host project's CLAUDE.md / memory; `<proj>`
 
 - Just run `todou` — the CLI config auto-selects the machine-account profile prepared for agents; no login flags needed.
 - **Every todou command needs network access**: sandboxed runs get their sockets denied, so always run them with the sandbox disabled.
-- `--json` gives structured output; `todou api <method> <path>` covers anything the CLI lacks.
+- **The human output is the interface — read that, not `--json`.** Every id, ref, count and cursor
+  an agent needs is already in it, at a fraction of the tokens. Reach for `--json` only when a
+  *script* consumes stdout. `todou api <method> <path>` covers anything the CLI lacks.
 - If the deployment has a sandbox project (scratch space), run experiments and guinea-pig tests there — never pollute the real tracker.
 
 ## Command cheat sheet
 
 ```bash
-todou issue list -p <proj> [--open|--closed|--status X|--unread|-q text]
+todou issue list -p <proj> [--open|--closed|--status X|--unread|-q text]  # ends with a count
 todou issue view 16 -p <proj>       # prints a cursor at the end, for watch --since
+todou issue view 16 --brief         # header + status only, no body, no timeline
+todou issue view 16 --timeline --last 10   # drop the body, keep the newest 10 entries
 todou issue create -p <proj> --title T [--body-file -] [--status Next]
 #   ^ when filing on behalf of the user, quote their original words verbatim
 #     in the body (if any) — off-tracker requests have no other trace
 todou issue edit 16 --status "In Progress"    # status/title/labels/assignees
 todou issue close 16 --comment "done"
-todou comment add -p <proj> 16 --body-file -  # body from stdin — see Writing bodies
-todou attach -p <proj> 16 file.png ...        # mime inferred from the extension
+todou comment add -p <proj> 16 --body-file -  # prints the new comment's id
+todou attach -p <proj> 16 file.png ...        # prints `#id name → url`
 todou attach list -p <proj> 16                # id / filename / size / url
 todou attach download -p <proj> 16 <id|name> [-o <path>|-o -]
 todou status list -p <proj>
@@ -132,8 +136,9 @@ in the terminal so the orchestrator knows to relay as a backstop.
   /dev/null`). Merging them is what used to force defensive incremental JSON scraping.
 - Cursors are interchangeable project-wide: `issue view`, watch output, and `--poll` all produce them.
   They survive process restarts, and events during an outage are all delivered on reconnect, without duplicates.
-- Get a "now" cursor: `todou watch -p <proj> --poll --json | jq -r .next_cursor` — an empty poll
-  prints the cursor record alone, so the bare `.next_cursor` still reads it (exit 3 is expected).
+- Get a "now" cursor: `cursor=$(todou watch -p <proj> --poll --print-cursor)` — stdout is the bare
+  cursor and nothing else, and it exits 0 whether or not the poll found anything, so no `; true`
+  and no `jq`. (Conflicts with `--json`, which already ends its batch with a cursor record.)
 - `--debounce N`: after the first new entry, keep collecting for N seconds and return one batch (fewer wake-ups, fewer tokens).
 - Both watches skip **your own agent session's** entries by default, not your whole account — a fleet
   sharing one machine account does wake each other (T-121). Entries carrying no agent session (the web
@@ -171,18 +176,21 @@ rather than rewriting it into an absolute one, and address the id with `attach d
 to send the reader straight to a specific comment or event.
 
 **Issue refs.** **Never presume the spelling.** A project writes its issues either bare (`#12`) or
-with a prefix (`T-12`), it is a per-project setting, and a guessed ref links nowhere. Read the form
-off the CLI — every command that knows an issue number prints its spelled form beside it:
+with a prefix (`T-12`), it is a per-project setting, and a guessed ref links nowhere. You never have
+to ask for it: **every command that knows an issue number already prints it spelled** — the first
+line of `issue view` (`todou issue view <n> --brief` is the cheapest way to see just that), the
+start of every `issue list` row, the start of every watch line, and `comment add`'s echo.
+
+For a *script* that needs the token on its own, the field is there too:
 
 ```bash
-todou issue view <n> -p <proj> --json | jq -r .issue.ref       # this card, spelled
 todou issue list -p <proj> --json | jq -r .ref_format.token    # "#" or "T-" — token + number
 ```
 
 `ref` sits beside `number`, `issue_ref` beside `issue_number`, and `ref_format` rides on the
 `issue list` / `issue view` / `issue watch` / single-project `todou watch` envelopes, so even an
-empty page tells you. Human output spells the same form in its headers. Fenced and inline code are
-exempt from ref parsing, so you can quote a ref without making one.
+empty page tells you. Fenced and inline code are exempt from ref parsing, so you can quote a ref
+without making one.
 
 - **Reference with intent**: a ref notifies the card you point at. Use refs when the link carries
   meaning (a follow-up, a dependency, a dupe); never enumerate incidental cards — a note listing the
@@ -231,7 +239,7 @@ and pins Todo as the default; one-off tweaks go through `status create/edit/dele
 Do not use AskUserQuestion or external review tools — post questions on the issue and wait:
 
 ```bash
-todou comment add -p <proj> 16 --json --body-file <(cat <<'EOF'
+todou comment add -p <proj> 16 --body-file <(cat <<'EOF'
 Context for the questions — full markdown, as long as it needs to be.
 EOF
 ) --questions <(cat <<'EOF2'
@@ -240,8 +248,8 @@ EOF
               {"label": "New entity"}],
   "multiple": false}]
 EOF2
-)                                                                # note the comment id
-todou question wait 16 <commentId> -p <proj> --timeout 43200 --json   # blocks until answered
+)                          # prints the wait command, comment id filled in
+todou question wait 16 <commentId> -p <proj> --timeout 43200   # blocks until answered
 ```
 
 - All text fields are markdown; validation is **strict** — unknown/extra fields fail with the path named.
@@ -260,23 +268,24 @@ dir and pushed; **git never carries them**.
 ```bash
 todou spec push <n> <dir> -p <proj> --message "v2" [--if-version <v>]  # upload/iterate a version
 todou spec pull <n> <dir> -p <proj> [--version <v>] [--prune]          # fetch a version
-todou spec status <n> -p <proj> --json                                  # versions + review verdict
-todou spec comments <n> --unresolved --json                             # inline annotations (file+anchor)
-todou spec resolve <n> <commentIds…>                                    # mark annotations addressed
-todou spec review <n> --approve | --request-changes [--body …]          # submit a verdict
+todou spec status <n> -p <proj>                                        # versions + review verdict
+todou spec comments <n> --unresolved                                   # inline annotations (file+anchor)
+todou spec resolve <n> <commentIds…>                                   # mark annotations addressed
+todou spec review <n> --approve | --request-changes [--body …]         # submit a verdict
 ```
 
 - Review state is computed, never stored: a verdict counts only against the **latest** version, and
   the pusher of a version cannot review it.
 - Wait for the verdict by watching the whole issue — `issue watch <n> --since <cursor> --debounce 60
-  --timeout 43200 --json` — with no `--type` filter, so a plain comment (an amended requirement, a
+  --timeout 43200` — with no `--type` filter, so a plain comment (an amended requirement, a
   question back) wakes the waiter too.
 - **The watch wakes; `spec status` judges.** A wake-up is not a verdict: sibling agents on the same
   machine account pass the self-filter (it is per agent session, see watch above). On exit 0 read
   `spec status` — `approved` proceeds; `changes_requested` or `unresolved_comments > 0` enters the
   revision loop; neither means no verdict yet — handle others' comments as feedback, otherwise
-  resume the wait silently. Always resume with the printed `next_cursor` (exit 3/4: same cursor),
-  never a fresh "now" cursor, which would skip whatever landed in the gap. Never poll `spec status`
-  in place of the blocking watch, and never read a verdict off the event stream.
+  resume the wait silently. Always resume with the cursor the watch printed on its last line
+  (exit 3/4: same cursor), never a fresh "now" cursor, which would skip whatever landed in the
+  gap. Never poll `spec status` in place of the blocking watch, and never read a verdict off the
+  event stream.
 - Annotations remap across versions (resolved/outdated tracked automatically).
 - The plan workflow on top of this lives in `/todou-plan` and `/todou-impl-plan`.

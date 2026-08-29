@@ -48,7 +48,7 @@ and fix inline — iterate up to 5 times before presenting.
 
 ```bash
 todou spec push <n> <dir> -p <proj> --message "plan v1"          # upload the set
-cursor=$(todou watch -p <proj> --poll --json | jq -r 'select(.type=="cursor").next_cursor')
+cursor=$(todou watch -p <proj> --poll --print-cursor)
 todou issue watch <n> -p <proj> --since "$cursor" --debounce 60 --timeout 43200
 ```
 
@@ -57,7 +57,7 @@ asking back — wakes you as surely as a verdict does. It also means **not every
 sibling agents on the same machine account pass the self-filter (it is per agent session, see
 /todou-cli). Judge every wake-up (exit 0) with `spec status`, never by reading the event stream:
 
-1. `todou spec status <n> -p <proj> --json` → `review_status` + `unresolved_comments`.
+1. `todou spec status <n> -p <proj>` → its first line carries the verdict and the unresolved count.
 2. `approved` → done; leave the loop.
 3. `changes_requested`, or any unresolved annotations → the revision path below.
 4. Neither → no verdict yet. Comments by others in the watch output are feedback: fold them into
@@ -72,7 +72,7 @@ Never infer the verdict from watch items — an unrelated wake-up misread as app
 the idle wait it replaces. The watch wakes; `spec status` judges.
 
 - **request-changes** (or annotations arrive):
-  `todou spec comments <n> --unresolved --json` lists inline annotations with file + anchor.
+  `todou spec comments <n> --unresolved` lists inline annotations with id, file + anchor, and body.
   Apply them to the documents, sync requirement changes into proposal.md, then
   `todou spec resolve <n> <commentIds…>` for each addressed annotation and
   `todou spec push <n> <dir> --if-version <v> --message "plan v2"` (the guard catches concurrent

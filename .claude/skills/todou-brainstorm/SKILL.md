@@ -139,16 +139,16 @@ changed, then wait for the review verdict:
 
 ```bash
 todou spec push <n> <tmpdir> -p <proj> --message "brainstorm v2"
-cursor=$(todou watch -p <proj> --poll --json | jq -r 'select(.type=="cursor").next_cursor')
+cursor=$(todou watch -p <proj> --poll --print-cursor)
 todou issue watch <n> -p <proj> --since "$cursor" --debounce 60 --timeout 43200
 ```
 
 The watch is unfiltered — plain comments wake you too, and so do sibling agents on the same machine
-account (the self-filter is per agent session). Judge every wake-up with `todou spec status <n>
---json`, never by reading the event stream (full protocol: /todou-cli, Spec documents):
+account (the self-filter is per agent session). Judge every wake-up with `todou spec status <n>`,
+never by reading the event stream (full protocol: /todou-cli, Spec documents):
 
 - **approve** → proceed.
-- **request-changes** or unresolved annotations → `todou spec comments <n> --unresolved --json`, revise
+- **request-changes** or unresolved annotations → `todou spec comments <n> --unresolved`, revise
   the documents, sync proposal.md, `todou spec resolve` the addressed ones, push the next version,
   wait again; repeat until approved.
 - User replied in plain comments instead of a verdict → treat it as feedback, revise, and point them
