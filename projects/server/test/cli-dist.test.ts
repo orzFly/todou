@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { constants, zstdCompressSync, zstdDecompressSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadCliDist } from "../src/cli-dist.ts";
 import { ConfigError } from "../src/config.ts";
 import { makeTestApp, type TestApp } from "./helpers.ts";
+import { testTmpDir } from "./setup.ts";
 
 type Fixture = {
   name: string;
@@ -54,7 +54,7 @@ function packDist(options?: {
   /** Replace the manifest with this raw text instead of generating one. */
   rawManifest?: string;
 }): string {
-  const dir = mkdtempSync(join(tmpdir(), "todou-cli-dist-"));
+  const dir = testTmpDir("todou-cli-dist-");
   const artifacts = FIXTURES.map((fixture) => {
     const packed = compress(fixture.body);
     if (fixture.name !== options?.omitFile) {
@@ -313,7 +313,7 @@ describe("loadCliDist", () => {
 
   it("refuses a missing, unparseable, or malformed manifest", async () => {
     await expect(
-      loadCliDist(mkdtempSync(join(tmpdir(), "todou-cli-empty-"))),
+      loadCliDist(testTmpDir("todou-cli-empty-")),
     ).rejects.toBeInstanceOf(ConfigError);
     await expect(
       loadCliDist(packDist({ rawManifest: "{not json" })),

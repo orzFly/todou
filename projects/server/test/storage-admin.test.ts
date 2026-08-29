@@ -1,6 +1,3 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Config, loadConfig } from "../src/config.ts";
@@ -15,6 +12,7 @@ import { FsStorage } from "../src/storage/fs.ts";
 import { S3Storage } from "../src/storage/s3.ts";
 import { type FakeS3, startFakeS3 } from "./fake-s3.ts";
 import { makeTestApp, type TestApp } from "./helpers.ts";
+import { testTmpDir } from "./setup.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
@@ -136,7 +134,7 @@ describe("storage migrate primitives", () => {
 
   it("copies s3 → fs into a fresh root byte-for-byte", async () => {
     const keys = await enumerateBlobKeys(t.ctx.router);
-    const freshRoot = mkdtempSync(join(tmpdir(), "todou-migrate-back-"));
+    const freshRoot = testTmpDir("todou-migrate-back-");
     const fsBack = new FsStorage(freshRoot);
     const report = await copyMissing(s3Storage, fsBack, keys, {
       dryRun: false,

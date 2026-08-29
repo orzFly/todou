@@ -1,8 +1,7 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkerPgliteClient } from "../src/db/worker-client.ts";
+import { testTmpDir } from "./setup.ts";
 
 /**
  * Crash policy of the worker-hosted PGlite client: in-flight requests
@@ -20,7 +19,7 @@ describe("worker pglite crash handling", () => {
   }
 
   function freshDir(): string {
-    return join(mkdtempSync(join(tmpdir(), "todou-crash-")), "db");
+    return join(testTmpDir("todou-crash-"), "db");
   }
 
   afterEach(async () => {

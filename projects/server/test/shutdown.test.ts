@@ -1,10 +1,10 @@
 import { type ChildProcessByStdio, spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { testTmpDir } from "./setup.ts";
 
 const SERVER_DIR = fileURLToPath(new URL("..", import.meta.url));
 
@@ -20,7 +20,7 @@ type RunningServer = {
 };
 
 async function startServer(): Promise<RunningServer> {
-  const dir = mkdtempSync(join(tmpdir(), "todou-shutdown-"));
+  const dir = testTmpDir("todou-shutdown-");
   const configPath = join(dir, "config.toml");
   writeFileSync(
     configPath,

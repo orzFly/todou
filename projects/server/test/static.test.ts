@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { makeTestApp, type TestApp } from "./helpers.ts";
+import { testTmpDir } from "./setup.ts";
 
 const INDEX_HTML = '<!doctype html><title>todou</title><div id="root"></div>';
 const ASSET_JS = "console.log('todou')";
@@ -10,7 +10,7 @@ const IMMUTABLE = "public, max-age=31536000, immutable";
 
 /** Stands in for `pnpm --filter @todou/web build` output. */
 function fakeDist(): string {
-  const dir = mkdtempSync(join(tmpdir(), "todou-dist-"));
+  const dir = testTmpDir("todou-dist-");
   writeFileSync(join(dir, "index.html"), INDEX_HTML);
   mkdirSync(join(dir, "assets"));
   writeFileSync(join(dir, "assets", "app-abc123.js"), ASSET_JS);

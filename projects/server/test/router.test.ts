@@ -1,12 +1,10 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ensureBuiltinUser } from "../src/bootstrap.ts";
 import { statuses } from "../src/db/project-schema.ts";
 import type { DbRouter } from "../src/db/router.ts";
 import { users } from "../src/db/system-schema.ts";
 import { makeRouter } from "./helpers.ts";
+import { testTmpDir } from "./setup.ts";
 
 const openRouters: DbRouter[] = [];
 
@@ -96,7 +94,7 @@ describe("dedicated placement", () => {
   });
 
   it("evicts file-backed handles beyond max_open and reopens them", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "todou-router-"));
+    const dir = testTmpDir("todou-router-");
     const { router } = await open("dedicated", {
       maxOpen: 1,
       urlTemplate: `pglite://${dir}/p\${project.id}`,
