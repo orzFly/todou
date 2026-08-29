@@ -142,7 +142,7 @@ export class QuestionWaitCommand extends ProjectCommand {
     examples: [
       [
         "Ask, then block on the reply",
-        'ID=$(todou comment add 19 --body "…" --questions q.json --json | jq .id)\n      todou question wait 19 "$ID" --timeout 600',
+        'ID=$(todou comment add 19 --body "…" --json --questions <(cat <<\'EOF\'\n[…]\nEOF\n) | jq .id)\ntodou question wait 19 "$ID" --timeout 600',
       ],
     ],
   });

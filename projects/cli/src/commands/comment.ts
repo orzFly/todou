@@ -25,11 +25,16 @@ export class CommentAddCommand extends ProjectCommand {
       fields fail with their path named. Readers answer on the issue page
       (or \`todou question answer\`); block on the reply with
       \`todou question wait <issue> <commentId>\`.
+
+      At most one of \`--body-file\`/\`--questions\` may be \`-\` — stdin is a
+      single stream; process substitution (\`<(…)\`) covers the pair.
     `,
     examples: [
       [
-        "Ask a question alongside the comment body",
-        "todou comment add 19 --body-file ctx.md --questions questions.json --json",
+        "Ask a question alongside the comment body, one call (bash/zsh)",
+        // Continuations sit at column 0 on purpose: an indented heredoc
+        // terminator does not terminate, so anything else fails when pasted.
+        "todou comment add 19 --json --body-file <(cat <<'EOF'\n…context…\nEOF\n) --questions <(cat <<'EOF2'\n[…]\nEOF2\n)",
       ],
     ],
   });

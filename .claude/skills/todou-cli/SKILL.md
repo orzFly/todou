@@ -21,12 +21,12 @@ project, deploy command) live in the host project's CLAUDE.md / memory; `<proj>`
 ```bash
 todou issue list -p <proj> [--open|--closed|--status X|--unread|-q text]
 todou issue view 16 -p <proj>       # prints a cursor at the end, for watch --since
-todou issue create -p <proj> --title T [--body-file f] [--status Next]
+todou issue create -p <proj> --title T [--body-file -] [--status Next]
 #   ^ when filing on behalf of the user, quote their original words verbatim
 #     in the body (if any) — off-tracker requests have no other trace
 todou issue edit 16 --status "In Progress"    # status/title/labels/assignees
 todou issue close 16 --comment "done"
-todou comment add -p <proj> 16 --body-file f  # long bodies: --body-file /dev/stdin <<'EOF'
+todou comment add -p <proj> 16 --body-file -  # body from stdin — see Writing bodies
 todou attach -p <proj> 16 file.png ...        # mime inferred from the extension
 todou status list -p <proj>
 todou status init -p <proj>                   # add the missing canonical statuses, sync existing colors
@@ -44,6 +44,22 @@ and every `<number>` positional also accepts `<proj>/16`, `"#16"`, the project's
 (`T-16`), or a full issue URL — input is never picky about the spelling. Output is: see **Issue refs**.
 gh's flag spellings work too — `-t/-b/-F/-l/-a` on `issue create`, `-l/-a/-L/-S/-s --state
 open|closed|all` on `issue list`, `-c` on `issue close`, `@me` wherever a login goes.
+
+## Writing bodies
+
+`--body-file -` reads the body from stdin:
+
+```bash
+todou issue create -p <proj> --title "…" --body-file - <<'EOF'
+Multi-paragraph markdown — code blocks, CJK, blank lines — all survive verbatim.
+
+Second paragraph.
+EOF
+```
+
+`--body-file` and `--questions` also read process substitution (`<(…)`, bash/zsh) — that is how
+body **and** questions travel in one call; stdin is a single stream, so at most one of the two
+may be `-`. See **Asking the user questions** below.
 
 ## Labels
 
@@ -188,14 +204,17 @@ and pins Todo as the default; one-off tweaks go through `status create/edit/dele
 Do not use AskUserQuestion or external review tools — post questions on the issue and wait:
 
 ```bash
-cat > q.json <<'EOF'
+todou comment add -p <proj> 16 --json --body-file <(cat <<'EOF'
+Context for the questions — full markdown, as long as it needs to be.
+EOF
+) --questions <(cat <<'EOF2'
 [{"header": "Storage", "question": "Where should X live?",
   "options": [{"label": "Reuse mechanism A", "description": "pros/cons…"},
               {"label": "New entity"}],
   "multiple": false}]
-EOF
-todou comment add -p <proj> 16 --body-file ctx.md --questions q.json --json   # note the comment id
-todou question wait 16 <commentId> -p <proj> --timeout 43200 --json           # blocks until answered
+EOF2
+)                                                                # note the comment id
+todou question wait 16 <commentId> -p <proj> --timeout 43200 --json   # blocks until answered
 ```
 
 - All text fields are markdown; validation is **strict** — unknown/extra fields fail with the path named.

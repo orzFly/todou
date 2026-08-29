@@ -1,3 +1,4 @@
+import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,6 +36,23 @@ describe("readBody", () => {
     const file = join(dir, "body.md");
     writeFileSync(file, "from file");
     expect(await readBody(opts({ bodyFile: file }))).toBe("from file");
+  });
+
+  // Process substitution (`--body-file <(…)`) hands us a pipe, whose st_size is
+  // 0 — a size-trusting read would silently post an empty body. 200KB overruns
+  // the 64KB pipe buffer, so the writer must still be blocked when we open.
+  it("reads a pipe past the pipe buffer, not its st_size", async () => {
+    const fifo = join(dir, "body.fifo");
+    execFileSync("mkfifo", [fifo]);
+    const writer = spawn("sh", [
+      "-c",
+      `head -c 200000 /dev/zero | tr '\\0' a > ${fifo}`,
+    ]);
+    try {
+      expect(await readBody(opts({ bodyFile: fifo }))).toHaveLength(200000);
+    } finally {
+      writer.kill();
+    }
   });
 
   it("fails fast without a TTY", async () => {
