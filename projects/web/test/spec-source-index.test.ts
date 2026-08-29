@@ -4,13 +4,12 @@ import {
   changedLineRanges,
 } from "../src/lib/spec-changes.ts";
 import {
-  blocksFullyCoveredByText,
   blocksFullyInLines,
+  blocksWhollyInGroups,
   buildSegmentIndex,
-  coversWholeProseBlock,
   lineColAt,
   offsetAt,
-  type SegmentIndex,
+  outermostBlockOfGroup,
   segmentsInLines,
   sourceOffsetOfRendered,
   sourceOffsetOfText,
@@ -152,6 +151,18 @@ describe("buildSegmentIndex", () => {
     expect(new Set(row.map((s) => s.group)).size).toBe(2);
   });
 
+  it("records the leaf block each group came from", () => {
+    expect(index.groupTypes).toEqual([
+      "heading",
+      "paragraph",
+      "tableCell",
+      "tableCell",
+      "tableCell",
+      "tableCell",
+      "paragraph",
+    ]);
+  });
+
   it("marks inline code and escapes inexact", () => {
     const inexact = index.segments.filter((s) => !s.exact).map((s) => s.text);
     expect(inexact).toEqual(["code", " 与 *转义* 文本。"]);
@@ -216,11 +227,6 @@ describe("buildSegmentIndex", () => {
     expect(sourceOffsetOfText(index, at)).toBe(source.indexOf("的段落"));
   });
 });
-
-/** The prose range covering everything the index holds. */
-function wholeText(index: SegmentIndex): Array<{ start: number; end: number }> {
-  return [{ start: 0, end: index.text.length }];
-}
 
 describe("the block table (T-158)", () => {
   const source = [
@@ -321,59 +327,54 @@ describe("the block table (T-158)", () => {
     });
   });
 
-  describe("prose-coverage evidence", () => {
-    it("walks up to the largest fully covered block", () => {
-      const table = buildSegmentIndex(
-        "| 甲 | 乙 |\n| --- | --- |\n| 一 | 二 |\n",
-      );
-      const found = blocksFullyCoveredByText(table, wholeText(table));
+  describe("alignment evidence (T-163)", () => {
+    it("walks up to the largest block built only of unmatched groups", () => {
+      // 甲 乙 一 二 are groups 2…5; the heading and paragraph are 0 and 1.
+      const found = blocksWhollyInGroups(index, new Set([2, 3, 4, 5]));
       expect(found.map((b) => b.type)).toEqual(["table"]);
     });
 
-    it("ignores a block whose prose is only partly covered", () => {
-      const doc = buildSegmentIndex("这是一个中文段落，需要调整其中的措辞。\n");
-      const at = doc.text.indexOf("调整");
-      expect(
-        blocksFullyCoveredByText(doc, [{ start: at, end: at + 2 }]),
-      ).toEqual([]);
+    it("drops to the row when only that row's cells are unmatched", () => {
+      const found = blocksWhollyInGroups(index, new Set([4, 5]));
+      expect(found.map((b) => b.type)).toEqual(["tableRow"]);
+      expect(found[0]?.line).toBe(7);
     });
 
-    it("reads an exactly-covered single group as a rewrite, not a new block", () => {
-      // The single-line trap: a one-word paragraph whose word was replaced
-      // is covered end to end, and word-level marks are what it wants.
-      const doc = buildSegmentIndex("段落。\n");
-      expect(blocksFullyCoveredByText(doc, wholeText(doc))).toEqual([]);
+    it("stops at the cell when its neighbour in the row was matched", () => {
+      const found = blocksWhollyInGroups(index, new Set([4]));
+      expect(found.map((b) => b.type)).toEqual(["tableCell"]);
     });
 
-    it("takes the block when the insertion spills past its prose", () => {
-      const doc = buildSegmentIndex("标题\n\n段落。\n");
-      const at = doc.text.indexOf("段落。");
-      const found = blocksFullyCoveredByText(doc, [
-        { start: at - 1, end: doc.text.length },
-      ]);
-      expect(found.map((b) => b.type)).toEqual(["paragraph"]);
+    it("finds nothing when no block is unmatched throughout", () => {
+      expect(blocksWhollyInGroups(index, new Set())).toEqual([]);
+    });
+
+    it("lets a group with no prose abstain instead of veto", () => {
+      const doc = buildSegmentIndex("| 甲 |  |\n| --- | --- |\n| 一 | 二 |\n");
+      // Group 1 is the empty header cell — it has no prose to be new.
+      const found = blocksWhollyInGroups(doc, new Set([0, 2, 3]));
+      expect(found.map((b) => b.type)).toEqual(["table"]);
     });
 
     it("refuses a block holding content it cannot see", () => {
       const doc = buildSegmentIndex("> 引言。\n>\n> ```js\n> a();\n> ```\n");
-      const found = blocksFullyCoveredByText(doc, wholeText(doc));
+      const found = blocksWhollyInGroups(doc, new Set([0]));
       expect(found.map((b) => b.type)).not.toContain("blockquote");
     });
   });
 
-  describe("whole-prose-block deletions", () => {
-    it("sees a paragraph swallowed whole", () => {
-      const doc = buildSegmentIndex("段落甲。\n\n段落乙。\n");
-      const at = doc.text.indexOf("段落乙。");
-      expect(coversWholeProseBlock(doc, at - 1, doc.text.length)).toBe(true);
-      expect(coversWholeProseBlock(doc, at + 1, doc.text.length)).toBe(false);
+  describe("outermostBlockOfGroup", () => {
+    it("climbs from a cell to the table that holds it", () => {
+      const block = outermostBlockOfGroup(index, 5);
+      expect(block?.type).toBe("table");
     });
 
-    it("does not count a table cell — the cell outlives the edit", () => {
-      const doc = buildSegmentIndex(
-        "| 甲 | 乙 |\n| --- | --- |\n| 一 | 二 |\n",
-      );
-      expect(coversWholeProseBlock(doc, 0, doc.text.length)).toBe(false);
+    it("stops at a top-level leaf, which is its own outermost", () => {
+      expect(outermostBlockOfGroup(index, 1)?.type).toBe("paragraph");
+    });
+
+    it("has no answer for a group no block owns", () => {
+      expect(outermostBlockOfGroup(index, 99)).toBeNull();
     });
   });
 });

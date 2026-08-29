@@ -97,6 +97,8 @@ export type SegmentIndex = {
   lineStarts: number[];
   /** Block structure in document order: a parent always precedes its children. */
   blocks: SourceBlock[];
+  /** The leaf block each group came from, indexed by group number. */
+  groupTypes: SourceBlockType[];
 };
 
 function lineStartsOf(source: string): number[] {
@@ -120,6 +122,7 @@ function lineStartsOf(source: string): number[] {
 export function buildSegmentIndex(source: string): SegmentIndex {
   const segments: SourceSegment[] = [];
   const blocks: SourceBlock[] = [];
+  const groupTypes: SourceBlockType[] = [];
   let text = "";
   let groups = 0;
   let group = -1;
@@ -187,7 +190,10 @@ export function buildSegmentIndex(source: string): SegmentIndex {
       : null;
     if (index !== null) parent = index;
     const firstGroup = groups;
-    if (LEAF_BLOCKS.has(node.type)) group = groups++;
+    if (LEAF_BLOCKS.has(node.type)) {
+      group = groups++;
+      groupTypes[group] = node.type as SourceBlockType;
+    }
     for (const child of node.children) visit(child);
     const block = index === null ? undefined : blocks[index];
     if (block !== undefined && groups > firstGroup) {
@@ -199,7 +205,14 @@ export function buildSegmentIndex(source: string): SegmentIndex {
   };
 
   visit(processor.parse(source));
-  return { source, text, segments, lineStarts: lineStartsOf(source), blocks };
+  return {
+    source,
+    text,
+    segments,
+    lineStarts: lineStartsOf(source),
+    blocks,
+    groupTypes,
+  };
 }
 
 /** Segments whose source span touches a 1-based inclusive line range. */
@@ -255,22 +268,6 @@ export function sourceRangesOfText(
     }
   }
   return ranges;
-}
-
-/** How many leaf blocks a flattened-text range reaches across. */
-export function groupSpanOfText(
-  index: SegmentIndex,
-  from: number,
-  to: number,
-): number {
-  const groups = new Set<number>();
-  for (const segment of index.segments) {
-    const segEnd = segment.at + segment.text.length;
-    if (segEnd <= from) continue;
-    if (segment.at >= to) break;
-    groups.add(segment.group);
-  }
-  return groups.size;
 }
 
 /** Flattened-text extent of each leaf group; holes where a group has no prose. */
@@ -333,42 +330,49 @@ export function blocksFullyInLines(
 }
 
 /**
- * Outermost blocks whose every scrap of prose lies inside `covered`. This is
- * the evidence left when jsdiff merged a real edit and an adjacent brand-new
- * block into one rewrite pair, so the pair's line range proves nothing about
- * either half (T-158).
+ * Outermost blocks every one of whose leaf groups is in `groups`. This is the
+ * evidence a rewrite pair carries once its two sides are aligned block by
+ * block (T-163): a group nothing on the old side matched is new, and a block
+ * built only out of such groups was born whole.
  *
- * A block holding exactly one leaf group, covered exactly and no further, is
- * excluded: that is a block whose words were replaced, not a block that was
- * born — and word-level marks are the whole point there. Multi-group blocks
- * and blocks the insertion spills past are genuinely new structure.
+ * Groups holding no prose abstain rather than veto — an empty table cell says
+ * nothing about whether its table is new.
  */
-export function blocksFullyCoveredByText(
+export function blocksWhollyInGroups(
   index: SegmentIndex,
-  covered: SourceRange[],
+  groups: ReadonlySet<number>,
 ): SourceBlock[] {
-  const union = mergeRanges(covered);
   const groupRanges = groupRangesOf(index);
   const qualifies = index.blocks.map((block) => {
     if (block.opaque || block.firstGroup < 0) return false;
     let any = false;
     for (let g = block.firstGroup; g <= block.lastGroup; g++) {
-      const range = groupRanges[g];
-      if (range === undefined) continue;
-      if (!union.some((u) => u.start <= range.start && u.end >= range.end)) {
-        return false;
-      }
+      if (groupRanges[g] === undefined) continue;
+      if (!groups.has(g)) return false;
       any = true;
     }
-    if (!any) return false;
-    if (block.lastGroup > block.firstGroup) return true;
-    const prose = proseRangeOf(block, groupRanges);
-    return (
-      prose !== null &&
-      union.some((u) => u.start < prose.start || u.end > prose.end)
-    );
+    return any;
   });
   return outermost(index, qualifies);
+}
+
+/**
+ * The outermost block a leaf group sits in; null when no block owns it.
+ * Blocks sharing a group are always nested and a parent always precedes its
+ * children, so the first match in document order is the top of that nest.
+ */
+export function outermostBlockOfGroup(
+  index: SegmentIndex,
+  group: number,
+): SourceBlock | null {
+  return (
+    index.blocks.find(
+      (block) =>
+        block.firstGroup >= 0 &&
+        block.firstGroup <= group &&
+        block.lastGroup >= group,
+    ) ?? null
+  );
 }
 
 /** The `SegmentIndex.text` ranges a run of blocks occupies. */
@@ -383,26 +387,6 @@ export function textRangesOfBlocks(
     if (prose !== null) ranges.push(prose);
   }
   return ranges;
-}
-
-/**
- * Whether a flattened-text range swallows some paragraph or heading whole.
- * Table cells are deliberately off the list: the cell outlives the edit, so
- * its `<del>` has a home and stays inline where the reader can compare it
- * with what replaced it (T-158).
- */
-export function coversWholeProseBlock(
-  index: SegmentIndex,
-  from: number,
-  to: number,
-): boolean {
-  const groupRanges = groupRangesOf(index);
-  for (const block of index.blocks) {
-    if (block.type !== "paragraph" && block.type !== "heading") continue;
-    const prose = proseRangeOf(block, groupRanges);
-    if (prose !== null && prose.start >= from && prose.end <= to) return true;
-  }
-  return false;
 }
 
 /** Sorted, non-overlapping union of half-open ranges. */

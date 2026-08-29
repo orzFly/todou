@@ -7,6 +7,8 @@ import {
   type DisplayedAnnotation,
 } from "../src/components/spec/annotated-markdown.tsx";
 import { changedLineRanges } from "../src/lib/spec-changes.ts";
+import { changeDecorations } from "../src/lib/spec-decorations.ts";
+import { buildSegmentIndex } from "../src/lib/spec-source-index.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 // Same pin as spec-review-web: fences go through pierre's lazy CodeView.
@@ -49,6 +51,19 @@ async function renderDiff(
 
 const texts = (container: HTMLElement, selector: string) =>
   [...container.querySelectorAll(selector)].map((el) => el.textContent);
+
+/** T-163's repro, verbatim from the card: a paragraph replaced by a table. */
+const REPRO_BEFORE =
+  "## 结论\n\n这一段会被整段删掉，用来看纯删除的 marker 还在不在。\n";
+const REPRO_AFTER = [
+  "## 结论",
+  "",
+  "| 引擎 | 渠道 | 判定 |",
+  "| --- | --- | --- |",
+  "| 行证据 | 纯新增 pair | `blocksFullyInLines` |",
+  "| 覆盖证据 | 重写 pair | `blocksFullyCoveredByText` |",
+  "",
+].join("\n");
 
 describe("word-level diff in the rendered view (T-142)", () => {
   it("marks the edited Chinese word instead of the paragraph", async () => {
@@ -254,6 +269,9 @@ describe("wholly-new blocks get one highlight (T-158)", () => {
     const marker = container.querySelector("del.spec-del-block");
     expect(marker?.textContent).toContain("段落乙");
     expect(texts(container, "del.spec-del")).not.toContain("段落乙。");
+    // Nothing new follows it, so it settles after the block that stayed —
+    // which is where the paragraph it stands for used to be.
+    expect(marker?.previousElementSibling?.textContent).toBe("段落甲改。");
   });
 
   it("carries the block class across the pre → CodeBlock swap", async () => {
@@ -263,6 +281,18 @@ describe("wholly-new blocks get one highlight (T-158)", () => {
     );
     const wrapper = container.querySelector("div[data-loc].spec-ins-block");
     expect(wrapper?.querySelector("pre")).not.toBeNull();
+  });
+
+  it("takes the whole table when a paragraph became one (T-163)", async () => {
+    const { container } = await renderDiff(REPRO_BEFORE, REPRO_AFTER);
+    expect(container.querySelector("table.spec-ins-block")).not.toBeNull();
+    // The old paragraph's words used to match into the cells, leaving word
+    // boxes behind and striking the paragraph through the header row.
+    expect(container.querySelector("table .spec-ins")).toBeNull();
+    expect(container.querySelector("table .spec-del")).toBeNull();
+    const markers = container.querySelectorAll("del.spec-del-block");
+    expect(markers).toHaveLength(1);
+    expect(markers[0]?.getAttribute("title")).toContain("纯删除的 marker");
   });
 
   it("still paints an annotation anchored inside a wholly-new block", async () => {
@@ -286,6 +316,29 @@ describe("wholly-new blocks get one highlight (T-158)", () => {
     expect(added?.querySelector("mark.spec-mark-comment")?.textContent).toBe(
       "这是",
     );
+  });
+});
+
+describe("what the engine emits for T-163's repro", () => {
+  it("has one block deletion, one whole block, and no word marks", () => {
+    // The card measured 11 word boxes on T-142 and 4 on T-158, with the same
+    // 4 inline `<del>`s throughout. Aligning the two sides first takes all of
+    // them: nothing pairs a paragraph with a cell, so nothing is left to mark.
+    const decorations = changeDecorations(
+      buildSegmentIndex(REPRO_BEFORE),
+      buildSegmentIndex(REPRO_AFTER),
+    );
+    expect(decorations.spans).toEqual([]);
+    expect(decorations.deletions).toHaveLength(1);
+    expect(decorations.deletions[0]?.block).toBe(true);
+    expect(decorations.deletions[0]?.text).toContain("纯删除的 marker");
+    expect(decorations.blocks).toHaveLength(1);
+    const block = decorations.blocks[0];
+    expect(REPRO_AFTER.slice(block?.start ?? 0, block?.end ?? 0)).toBe(
+      REPRO_AFTER.trimEnd().split("\n").slice(2).join("\n"),
+    );
+    // The marker goes at the table's top-level seam, never inside it.
+    expect(decorations.deletions[0]?.at).toBe(block?.start);
   });
 });
 

@@ -1,15 +1,15 @@
+import { type AlignGroup, alignGroups } from "./group-align.ts";
 import type {
   Decorations,
   DeletionDecoration,
   SpanDecoration,
 } from "./rehype-decorations.ts";
-import { changedBlockPairs } from "./spec-changes.ts";
+import { changedBlockPairs, type LineRange } from "./spec-changes.ts";
 import {
-  blocksFullyCoveredByText,
   blocksFullyInLines,
-  coversWholeProseBlock,
-  groupSpanOfText,
+  blocksWhollyInGroups,
   offsetAt,
+  outermostBlockOfGroup,
   type SegmentIndex,
   type SourceBlock,
   type SourceRange,
@@ -44,6 +44,29 @@ function linesOf(index: SegmentIndex, start: number, end: number): string {
 }
 
 /**
+ * The leaf blocks a line range touches, one entry per block, in document
+ * order. Segments of one group are contiguous in the flattened text, so a
+ * group is a slice of it and needs no reassembly.
+ */
+function alignGroupsOf(index: SegmentIndex, range: LineRange): AlignGroup[] {
+  const groups: AlignGroup[] = [];
+  for (const segment of segmentsInLines(index, range)) {
+    const last = groups.at(-1);
+    if (last !== undefined && last.group === segment.group) {
+      last.text = index.text.slice(last.at, segment.at + segment.text.length);
+      continue;
+    }
+    groups.push({
+      group: segment.group,
+      type: index.groupTypes[segment.group] ?? null,
+      text: segment.text,
+      at: segment.at,
+    });
+  }
+  return groups;
+}
+
+/**
  * Word-level diff of two versions, as decorations on the newer one (T-142).
  * The block-level "changed since vN" wash stays where it is and keeps
  * driving the ↑↓ navigation; this is what tells the reader *which words*
@@ -54,6 +77,12 @@ function linesOf(index: SegmentIndex, start: number, end: number): string {
  * inner marks (T-158): a brand-new table sliced into a box per cell says
  * nothing the single box around the table doesn't, and shatters the layout
  * to say it.
+ *
+ * Which of them stayed is answered per leaf block, not per edit (T-163): a
+ * rewrite's two sides are aligned block against block first, and only then
+ * are words compared inside each match. A block left without a match is the
+ * evidence — it was born, or it went — where before the answer had to be
+ * inferred from how far a flat word diff's insertions happened to reach.
  */
 export function changeDecorations(
   baseline: SegmentIndex,
@@ -95,16 +124,14 @@ export function changeDecorations(
       continue;
     }
     const after = textRangeOf(segmentsInLines(current, pair.new));
-    const before =
-      pair.old === null
-        ? null
-        : textRangeOf(segmentsInLines(baseline, pair.old));
+    const oldGroups =
+      pair.old === null ? [] : alignGroupsOf(baseline, pair.old);
 
     // Nothing on the old side to diff against — either a pure insertion, or
     // a rewrite of lines that held no prose at all (a fence, a table rule).
     // Every line here is new, so line evidence decides, and it is the only
     // evidence a code block will ever get.
-    if (before === null) {
+    if (oldGroups.length === 0) {
       const whole = blocksFullyInLines(current, pair.new);
       absorb(after === null ? [] : [after], whole);
       continue;
@@ -113,40 +140,101 @@ export function changeDecorations(
     // keeps the plain "changed" highlight.
     if (after === null) continue;
 
-    const result = wordDiff(
-      baseline.text.slice(before.start, before.end),
-      current.text.slice(after.start, after.end),
-    );
-    const inserted = result.ins.map((range) => ({
-      start: after.start + range.start,
-      end: after.start + range.end,
-    }));
-    absorb(inserted, blocksFullyCoveredByText(current, inserted));
-    for (const gone of result.del) {
-      const from = before.start + gone.from;
-      const to = before.start + gone.to;
-      const text = baseline.text.slice(from, to);
-      if (text.trim() === "") continue;
-      const at = sourceOffsetOfText(current, after.start + gone.at);
-      if (at === null) continue;
-      // A deletion that took the pair's whole old side is a replacement:
-      // whatever stands in its place is right there to carry the inline
-      // `<del>`, however much of it went.
-      const replaced = from <= before.start && to >= before.end;
+    // Align the two sides block by block before diffing any words (T-163).
+    // A rewrite pair can hold a paragraph on one side and a table on the
+    // other; one flat word diff across all of it matches prose into blocks
+    // that never held it, which both keeps word boxes inside a block that is
+    // new in its entirety and strikes the old text through a cell it never
+    // lived in.
+    const newGroups = alignGroupsOf(current, pair.new);
+    const alignment = alignGroups(oldGroups, newGroups);
+
+    for (const matched of alignment.pairs) {
+      const result = wordDiff(matched.old.text, matched.new.text);
+      for (const range of result.ins) {
+        insert(matched.new.at + range.start, matched.new.at + range.end);
+      }
+      for (const gone of result.del) {
+        const text = matched.old.text.slice(gone.from, gone.to);
+        if (text.trim() === "") continue;
+        const at = sourceOffsetOfText(current, matched.new.at + gone.at);
+        if (at === null) continue;
+        // Always inline: the pair is one leaf block against one leaf block,
+        // so whatever went — a word or the block's whole contents — the
+        // block that replaced it is standing right there to carry the
+        // strike-through (T-158's ruling for a rewritten table cell).
+        deletions.push({ at, text: text.trim(), block: false });
+      }
+    }
+
+    const born = new Set(alignment.newOnly.map((group) => group.group));
+    const whole = blocksWhollyInGroups(current, born);
+    const absorbed = new Set<number>();
+    for (const block of whole) {
+      blocks.push({ start: block.start, end: block.end });
+      for (let g = block.firstGroup; g <= block.lastGroup; g++) {
+        absorbed.add(g);
+      }
+    }
+    for (const group of alignment.newOnly) {
+      if (absorbed.has(group.group)) continue;
+      insert(group.at, group.at + group.text.length);
+    }
+
+    // Old blocks with no counterpart have nowhere to be struck through, so
+    // they degrade to a marker at the seam. Neighbours with nothing new
+    // between them share one.
+    for (const cluster of clusterDeletions(alignment.oldOnly)) {
+      const text = cluster.texts.join("\n").trim();
+      if (text === "") continue;
       deletions.push({
-        at,
-        text: text.trim(),
-        // Text with no single line left to strike through — a whole
-        // paragraph or table row went away — degrades to a marker (T-142
-        // Q1). One paragraph taken whole counts too, which the leaf-block
-        // span alone misses (T-158).
-        block:
-          groupSpanOfText(baseline, from, to) > 1 ||
-          (!replaced && coversWholeProseBlock(baseline, from, to)),
+        at: seamAt(current, newGroups, cluster.newIndex, pair.at),
+        text,
+        block: true,
       });
     }
   }
   return { spans, deletions, blocks };
+}
+
+/** Unmatched old blocks that sit at the same seam, merged into one marker. */
+function clusterDeletions(
+  oldOnly: Array<{ group: AlignGroup; newIndex: number }>,
+): Array<{ newIndex: number; texts: string[] }> {
+  const clusters: Array<{ newIndex: number; texts: string[] }> = [];
+  for (const entry of oldOnly) {
+    const last = clusters.at(-1);
+    if (last !== undefined && last.newIndex === entry.newIndex) {
+      last.texts.push(entry.group.text);
+    } else
+      clusters.push({ newIndex: entry.newIndex, texts: [entry.group.text] });
+  }
+  return clusters;
+}
+
+/**
+ * Where a structural marker goes, in the new document's coordinates. The
+ * rehype pass splices these between top-level elements, so the answer has to
+ * be a top-level seam: the start of the outermost block that follows the
+ * deletion, or the end of the one before it when nothing follows.
+ */
+function seamAt(
+  index: SegmentIndex,
+  newGroups: AlignGroup[],
+  newIndex: number,
+  fallbackLine: number,
+): number {
+  const after = newGroups[newIndex];
+  if (after !== undefined) {
+    const block = outermostBlockOfGroup(index, after.group);
+    if (block !== null) return block.start;
+  }
+  const before = newGroups[newIndex - 1];
+  if (before !== undefined) {
+    const block = outermostBlockOfGroup(index, before.group);
+    if (block !== null) return block.end;
+  }
+  return offsetAt(index, fallbackLine, 1) ?? index.source.length;
 }
 
 /**
