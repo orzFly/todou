@@ -1,6 +1,8 @@
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, waitFor } from "@testing-library/react";
+import type { IssueListItem } from "@todou/shared";
 import { describe, expect, it, vi } from "vitest";
+import { issueRefQuery } from "../src/api/issue-refs.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { AnnotatedMarkdown } from "../src/components/spec/annotated-markdown.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
@@ -396,6 +398,114 @@ describe("AnnotatedMarkdown line-end columns (T-169)", () => {
     fireEvent.mouseUp(container);
     await waitFor(() => {
       expect(view.queryByText(/Comment L/)).toBeNull();
+    });
+  });
+});
+
+const refItem = (number: number, title: string): IssueListItem => ({
+  id: number,
+  number,
+  title,
+  status: {
+    id: 1,
+    name: "In Progress",
+    category: "open",
+    color: "#bf8700",
+    position: 2,
+    is_default: false,
+  },
+  author: {
+    id: 1,
+    login: "user",
+    display_name: "User",
+    kind: "human",
+    avatar_url: null,
+    owner: null,
+  },
+  assignees: [],
+  labels: [],
+  created_at: "2026-08-12T00:00:00Z",
+  updated_at: "2026-08-12T00:00:00Z",
+  body_edited_at: null,
+  open_questions: 0,
+  spec_version: null,
+  spec_review_status: null,
+  spec_unresolved_comments: 0,
+  deleted_at: null,
+  deleted_by: null,
+  unread: false,
+  unread_comments: 0,
+});
+
+// Reverse mapping (selection → source line and column) block kind by block
+// kind. What matters per kind is whether it may carry columns at all: the
+// ones that can must be exact, and the ones that cannot must widen to the
+// whole line rather than name a column they cannot prove.
+describe("AnnotatedMarkdown reverse mapping by block kind", () => {
+  it("anchors inside one list item, on that item's source line", async () => {
+    const { onStage, button } = await stageSelection(
+      "- alpha one\n- beta two\n",
+      (container) => {
+        const node = container.querySelectorAll("li[data-loc]")[1]?.firstChild;
+        if (!node) throw new Error("no second item");
+        return { node, from: 0, to: 4 };
+      },
+    );
+    fireEvent.click(button);
+    // "- beta two" — the word "beta" occupies columns 3 through 6.
+    expect(onStage).toHaveBeenCalledWith({
+      lineStart: 2,
+      lineEnd: 2,
+      colStart: 3,
+      colEnd: 6,
+    });
+  });
+
+  it("widens to the quoted prose inside a blockquote", async () => {
+    const { onStage, button } = await stageSelection(
+      "> first line\n> second line\n",
+      (container) => {
+        const node = container.querySelector("blockquote p")?.firstChild;
+        if (!node) throw new Error("no quoted paragraph");
+        return { node, from: 11, to: 17 };
+      },
+    );
+    fireEvent.click(button);
+    // The "> " prefixes make the source span longer than the text it
+    // renders, so the segment cannot be entered and the anchor grows to
+    // its edges: in-bounds on both lines, and containing the selection.
+    expect(onStage).toHaveBeenCalledWith({
+      lineStart: 1,
+      lineEnd: 2,
+      colStart: 3,
+      colEnd: 13,
+    });
+  });
+
+  it("gives up columns on a line holding a ref chip", async () => {
+    const client = testQueryClient();
+    client.setQueryData(
+      issueRefQuery("p", 12).queryKey,
+      refItem(12, "A referenced issue"),
+    );
+    const { container, onStage, button } = await stageSelection(
+      "see #12 here\n",
+      (c) => {
+        const node = c.querySelector("p[data-loc]")?.firstChild;
+        if (!node) throw new Error("no paragraph");
+        return { node, from: 0, to: 3 };
+      },
+      { client, ready: "a[data-issue-link]" },
+    );
+    // The chip renders the issue's title where the source says "#12", so
+    // rendered offsets no longer line up with source ones at all.
+    expect(container.textContent).toContain("A referenced issue");
+    fireEvent.click(button);
+    expect(onStage).toHaveBeenCalledWith({
+      lineStart: 1,
+      lineEnd: 1,
+      colStart: null,
+      colEnd: null,
     });
   });
 });

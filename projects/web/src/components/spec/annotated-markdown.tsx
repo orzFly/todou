@@ -304,6 +304,17 @@ export function blockForLine(
 }
 
 /**
+ * A block's top within the annotation container. `offsetTop` agrees for a
+ * paragraph but lies for a `<tr>`: HTML cuts the offsetParent chain at
+ * table/td/th, so a row reports its offset inside its own table — 36px for
+ * a row sitting 581px down the page. Rects have no such blind spot, and the
+ * two of them move together under scroll.
+ */
+export function chipTop(containerRect: { top: number }, el: Element): number {
+  return el.getBoundingClientRect().top - containerRect.top;
+}
+
+/**
  * Rendered markdown with the annotation layer of the spec review view:
  * selecting text floats a "comment" button (the anchor is derived from the
  * blocks' stamped source lines), staged drafts and submitted comments hang
@@ -391,6 +402,7 @@ export function AnnotatedMarkdown({
   const layout = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
+    const containerRect = container.getBoundingClientRect();
     const els = [
       ...container.querySelectorAll<HTMLElement>(`[${SOURCE_LINE_ATTR}]`),
     ];
@@ -440,7 +452,7 @@ export function AnnotatedMarkdown({
       }
       next.push({
         blockKey: `${block.start}-${block.end}`,
-        top: block.el.offsetTop,
+        top: chipTop(containerRect, block.el),
         items,
       });
     }

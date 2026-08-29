@@ -11,6 +11,8 @@ import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import {
   anchorRangeForNode,
   blockForLine,
+  chipTop,
+  columnsOfSelection,
 } from "../src/components/spec/annotated-markdown.tsx";
 import { ReviewSubmitDialog } from "../src/components/spec/review-submit.tsx";
 import { SpecCommentAnchorCard } from "../src/components/timeline/spec-comment-card.tsx";
@@ -19,6 +21,7 @@ import {
   rehypeSourceLines,
 } from "../src/lib/rehype-source-lines.ts";
 import { useSpecReviewDrafts } from "../src/lib/spec-drafts.ts";
+import { buildSegmentIndex } from "../src/lib/spec-source-index.ts";
 import { cmSetValue } from "./cm.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
@@ -121,6 +124,42 @@ describe("anchorRangeForNode", () => {
     shadow.innerHTML = `<div data-line="9"><span>tail</span></div>`;
     const node = shadow.querySelector("span")?.firstChild;
     expect(node && anchorRangeForNode(node)).toEqual({ start: 4, end: 4 });
+  });
+});
+
+describe("columnsOfSelection", () => {
+  it("produces no columns inside a code block", () => {
+    const md = "intro\n\n```ts\nconst a = 1;\n```\n";
+    const host = document.createElement("div");
+    // What MarkdownView renders once the fence swaps to CodeBlock (T-52).
+    host.innerHTML =
+      '<div data-loc="3-5" data-loc-content-start="4">' +
+      "<pre><code>const a = 1;</code></pre></div>";
+    const text = host.querySelector("code")?.firstChild;
+    if (!text) throw new Error("no code text");
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, 5);
+    expect(columnsOfSelection(buildSegmentIndex(md), range)).toBeNull();
+  });
+});
+
+// T-172: chips hung on a table row landed at the top of the document.
+describe("chipTop", () => {
+  const block = (top: number, offsetTop: number): Element =>
+    ({
+      offsetTop,
+      getBoundingClientRect: () => ({ top }),
+    }) as unknown as Element;
+
+  it("measures against the container, not the offsetParent", () => {
+    // A <tr> 581px down the container whose offsetParent is its own table,
+    // so offsetTop reports the 36px it sits below the table's own top.
+    expect(chipTop({ top: 36 }, block(617, 36))).toBe(581);
+  });
+
+  it("is unmoved by scrolling, both rects shifting together", () => {
+    expect(chipTop({ top: -200 }, block(381, 36))).toBe(581);
   });
 });
 
