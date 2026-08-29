@@ -353,7 +353,7 @@ describe("watch over the change feed, contract unchanged (T-123)", () => {
       ["watch", "-p", "todou", "--poll", "--since", "a0", "--json"],
       { fetchImpl, env: loggedInEnv() },
     );
-    expect(result.exitCode).toBe(3);
+    expect(result.exitCode).toBe(0);
     expect(calls.some((c) => c.url.includes("/api/events"))).toBe(false);
   });
 

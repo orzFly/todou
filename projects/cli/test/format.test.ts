@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatBytes,
+  formatDuration,
   makePainter,
   relativeTime,
   summarize,
@@ -61,6 +62,24 @@ describe("formatBytes", () => {
 
   it("steps up rather than printing a unit's own ceiling", () => {
     expect(formatBytes(1024 ** 2 - 1)).toBe("1.0 MB");
+  });
+});
+
+describe("formatDuration", () => {
+  it.each([
+    [0, "0s"],
+    [45_000, "45s"],
+    [59_999, "59s"],
+    [60_000, "1m"],
+    [12 * 60_000, "12m"],
+    [2 * 3600_000, "2h"],
+    [2 * 3600_000 + 10 * 60_000, "2h10m"],
+    [24 * 3600_000, "1d"],
+    [27 * 3600_000, "1d3h"],
+    // A watch that started before the clock did still reads as "just now".
+    [-5_000, "0s"],
+  ])("%i ms → %s", (ms, expected) => {
+    expect(formatDuration(ms)).toBe(expected);
   });
 });
 

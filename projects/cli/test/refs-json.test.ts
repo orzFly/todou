@@ -202,7 +202,7 @@ describe("watch JSON carries the ref spelling (T-134)", () => {
         prefixed("T"),
       ],
     );
-    expect(result.exitCode).toBe(3);
+    expect(result.exitCode).toBe(0);
     expect(cursor.ref_format).toEqual({ prefix: "T", token: "T-" });
   });
 

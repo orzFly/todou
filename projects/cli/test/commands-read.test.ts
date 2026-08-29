@@ -721,7 +721,7 @@ describe("issue watch", () => {
     expect(lines).toBe(2);
   });
 
-  it("--poll with nothing new echoes the cursor and exits 3", async () => {
+  it("--poll with nothing new echoes the cursor and exits 0", async () => {
     const { fetchImpl } = watchFetch([
       ["GET", "/api/projects/todou/issues/3/timeline", pageWith([], null)],
     ]);
@@ -729,7 +729,9 @@ describe("issue watch", () => {
       ["issue", "watch", "3", "--poll", "--since", "c0", "--json"],
       { fetchImpl, env: loggedInEnv("todou") },
     );
-    expect(result.exitCode).toBe(3);
+    // A finished check is a success, however quiet: the caller reads the
+    // output to learn whether there was news (T-173).
+    expect(result.exitCode).toBe(0);
     // One cursor record, nothing else: `--poll --json | jq -r .next_cursor`
     // still bootstraps a cursor without knowing about NDJSON at all.
     const { items, cursor, lines } = parseNdjson(result.stdout);
@@ -1087,7 +1089,7 @@ describe("issue watch", () => {
         },
       },
     );
-    expect(result.exitCode).toBe(3);
+    expect(result.exitCode).toBe(0);
     const timelineCall = calls.find((c) => c.url.includes("/timeline"));
     expect(timelineCall?.url).toContain("exclude_actor=2");
     expect(timelineCall?.url).toContain(
@@ -1103,7 +1105,7 @@ describe("issue watch", () => {
       ["issue", "watch", "3", "--poll", "--since", "c0", "--any-actor"],
       { fetchImpl, env: loggedInEnv("todou") },
     );
-    expect(result.exitCode).toBe(3);
+    expect(result.exitCode).toBe(0);
     expect(calls.some((c) => c.url.includes("/api/me"))).toBe(false);
     expect(calls.some((c) => c.url.includes("exclude_"))).toBe(false);
   });

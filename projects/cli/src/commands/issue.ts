@@ -49,12 +49,15 @@ import {
 } from "../resolve.ts";
 import {
   normalizeTypes,
+  quietNote,
   type RetryOptions,
   resolveSelfFilter,
   retryTransient,
   runWatchLoop,
   type SelfFilter,
+  watchMode,
   watchRetryOptions,
+  watchTimeoutSec,
 } from "../watch-loop.ts";
 
 function issueRow(issue: IssueListItem, refPrefix: string | null): string[] {
@@ -324,9 +327,11 @@ export class IssueWatchCommand extends ProjectCommand {
       default with one named account.
 
       Blocks until something new arrives or \`--timeout\` elapses; \`--poll\`
-      checks once and returns immediately. Exit codes are loop-friendly:
-      0 = new entries were printed, 3 = nothing new (timeout or empty poll),
-      1 = error, 4 = gave up on a network outage (see below).
+      checks once and returns immediately. Exit codes: 0 = new entries were
+      printed, or a \`--poll\` finished its one check, news or not;
+      3 = a blocking watch timed out with nothing new; 1 = error; 4 = gave
+      up on a network outage (see below). Under \`--forever\` only 0 and 1
+      remain.
 
       Without \`--json\` every entry prints as exactly one line —
       \`<ref> <who> <what> <when>: <summary>\` — and a comment shows the
@@ -361,6 +366,16 @@ export class IssueWatchCommand extends ProjectCommand {
       Exhausting the budget exits 4 — unlike 1, just rerun with the same
       \`--since\` cursor and nothing is missed or repeated.
 
+      \`--forever\` makes the wait one trustworthy call, with no re-run loop
+      around it: it never exits on a timeout and never gives up on an
+      outage, so it returns only with entries (0) or a fatal error (1).
+      Across every retry and every quiet phase it re-drains from the cursor
+      it already holds, never a fresh "now", so entries landing in a gap are
+      delivered rather than skipped. \`--timeout\` then means the heartbeat
+      interval (default 600s): one \`still watching — nothing new in …\`
+      line to stderr per elapsed interval, which is how a reader tells
+      waiting apart from wedged. Conflicts with \`--poll\`.
+
       \`--debounce N\` batches a burst into one wake-up: keep collecting
       until N seconds after the newest entry of the first batch *happened*
       (its \`created_at\`, never extended), then return everything at once.
@@ -385,6 +400,10 @@ export class IssueWatchCommand extends ProjectCommand {
         "todou issue watch 33 --timeout 3300 --debounce 45",
       ],
       [
+        "Wait for a verdict, however long it takes",
+        'todou issue watch 33 --since "$CURSOR" --debounce 60 --forever',
+      ],
+      [
         "Feed a script, line by line",
         'todou issue watch 33 --poll --since "$CURSOR" --json | jq -r \'select(.type=="comment").body\'',
       ],
@@ -398,8 +417,13 @@ export class IssueWatchCommand extends ProjectCommand {
   poll = Option.Boolean("--poll", false, {
     description: "Check once and exit instead of blocking",
   });
+  forever = Option.Boolean("--forever", false, {
+    description:
+      "Wait until entries arrive or a fatal error — never time out, retry outages indefinitely (conflicts with --poll)",
+  });
   timeout = Option.String("--timeout", {
-    description: "Give up after this many seconds (default 60)",
+    description:
+      "Give up after this many seconds (default 60; with --forever, seconds between heartbeats, default 600)",
   });
   interval = Option.String("--interval", {
     description: "Seconds between server polls (default 2)",
@@ -423,16 +447,16 @@ export class IssueWatchCommand extends ProjectCommand {
 
   protected async run(client: TodouClient): Promise<number> {
     const { project, number } = this.resolveIssueRef(this.number);
+    const mode = watchMode(this.poll, this.forever);
     const retry = watchRetryOptions(
-      this.poll,
+      mode,
       (line) => this.note(line),
       this.clock,
     );
     const types =
       this.types === undefined ? undefined : normalizeTypes(this.types);
     const self = await this.resolveFilter(client, project, retry);
-    const timeoutSec =
-      this.timeout === undefined ? 60 : parseSeconds(this.timeout, "--timeout");
+    const timeoutSec = watchTimeoutSec(this.timeout, mode);
     const intervalSec =
       this.interval === undefined
         ? 2
@@ -462,13 +486,15 @@ export class IssueWatchCommand extends ProjectCommand {
     const ref_format = refFormat(refPrefix);
 
     return runWatchLoop<TimelineItem>({
-      poll: this.poll,
+      ...mode,
       timeoutSec,
       intervalSec,
       debounceSec,
       baseline,
       retry,
       clock: this.clock,
+      onQuiet: (_cursor, totalMs) =>
+        this.note(quietNote("still watching", timeoutSec, totalMs)),
       drain: (after) =>
         drainTimeline(client, project, number, { after, types, ...self }),
       onItems: (items, cursor) =>

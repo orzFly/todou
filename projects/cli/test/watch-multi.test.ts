@@ -100,7 +100,7 @@ describe("watch: multi-project mode over GET /activity", () => {
       fetchImpl,
       env: loggedInEnv(),
     });
-    expect(result.exitCode).toBe(3);
+    expect(result.exitCode).toBe(0);
     // An empty poll is one cursor record and nothing else — which is what
     // keeps `--poll --json | jq -r .next_cursor` bootstrapping cursors.
     const { items, cursor, lines } = parseNdjson(result.stdout);
@@ -121,7 +121,7 @@ describe("watch: multi-project mode over GET /activity", () => {
       ["watch", "--all-projects", "--poll", "--since", ENV1, "--json"],
       { fetchImpl, env: loggedInEnv() },
     );
-    expect(ok.exitCode).toBe(3);
+    expect(ok.exitCode).toBe(0);
     for (const p of activityParams(calls)) {
       expect(p.get("projects")).toBeNull();
     }

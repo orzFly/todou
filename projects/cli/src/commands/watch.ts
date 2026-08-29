@@ -15,12 +15,16 @@ import { type RefFormat, refFormat, withIssueRef } from "../refs.ts";
 import { fetchRefPrefix } from "../resolve.ts";
 import {
   normalizeTypes,
+  quietNote,
   type RetryOptions,
   resolveSelfFilter,
   retryTransient,
   runWatchLoop,
   type SelfFilter,
+  type WatchMode,
+  watchMode,
   watchRetryOptions,
+  watchTimeoutSec,
 } from "../watch-loop.ts";
 import { renderActivityLine } from "./issue.ts";
 
@@ -68,9 +72,10 @@ export class WatchCommand extends ProjectCommand {
       sets how much body a line carries (default 120). The batch ends with
       its \`cursor:\` line, as before.
 
-      Exit codes: 0 = new entries were printed (in any watched project),
-      3 = nothing new (timeout or empty poll), 1 = error, 4 = gave up on
-      a network outage (see below).
+      Exit codes: 0 = new entries were printed (in any watched project) or
+      a \`--poll\` finished its one check, news or not; 3 = a blocking watch
+      timed out with nothing new; 1 = error; 4 = gave up on a network
+      outage (see below). Under \`--forever\` only 0 and 1 remain.
 
       \`--poll --print-cursor\` writes the next cursor alone to stdout and
       exits 0 whether or not anything was new — the cursor is the product,
@@ -109,6 +114,16 @@ export class WatchCommand extends ProjectCommand {
       to ride out a slow deploy restart); \`--poll\` fails fast after 3.
       Exhausting the budget exits 4 — unlike 1, just rerun with the same
       \`--since\` cursor and nothing is missed or repeated.
+
+      \`--forever\` makes the wait one trustworthy call, with no re-run loop
+      around it: it never exits on a timeout and never gives up on an
+      outage, so it returns only with entries (0) or a fatal error (1).
+      Across every retry and every quiet phase it re-drains from the cursor
+      it already holds, never a fresh "now", so entries landing in a gap are
+      delivered rather than skipped. \`--timeout\` then means the heartbeat
+      interval (default 600s): one \`still watching — nothing new in …\`
+      line to stderr per elapsed interval, which is how a reader tells
+      waiting apart from wedged. Conflicts with \`--poll\`.
 
       Where the server offers a change feed, a blocking watch subscribes
       to it and reacts the moment something lands instead of waiting out
@@ -156,6 +171,10 @@ export class WatchCommand extends ProjectCommand {
         "todou watch -p todou --timeout 3300 --debounce 45",
       ],
       [
+        "Sentinel that only ever returns with news",
+        'todou watch -p todou --since "$CURSOR" --debounce 60 --forever',
+      ],
+      [
         "Feed a script, line by line",
         'todou watch -p todou --poll --since "$CURSOR" --json | jq -r \'select(.type=="comment") | .issue_ref + ": " + .body\'',
       ],
@@ -168,8 +187,13 @@ export class WatchCommand extends ProjectCommand {
   poll = Option.Boolean("--poll", false, {
     description: "Check once and exit instead of blocking",
   });
+  forever = Option.Boolean("--forever", false, {
+    description:
+      "Wait until entries arrive or a fatal error — never time out, retry outages indefinitely (conflicts with --poll)",
+  });
   timeout = Option.String("--timeout", {
-    description: "Give up after this many seconds (default 60)",
+    description:
+      "Give up after this many seconds (default 60; with --forever, seconds between heartbeats, default 600)",
   });
   interval = Option.String("--interval", {
     description: "Seconds between server polls (default 2)",
@@ -208,15 +232,15 @@ export class WatchCommand extends ProjectCommand {
       );
     }
     const slugs = this.resolveSlugs();
+    const mode = watchMode(this.poll, this.forever);
     const retry = watchRetryOptions(
-      this.poll,
+      mode,
       (line) => this.note(line),
       this.clock,
     );
     const types =
       this.types === undefined ? undefined : normalizeTypes(this.types);
-    const timeoutSec =
-      this.timeout === undefined ? 60 : parseSeconds(this.timeout, "--timeout");
+    const timeoutSec = watchTimeoutSec(this.timeout, mode);
     const intervalSec =
       this.interval === undefined
         ? 2
@@ -251,6 +275,7 @@ export class WatchCommand extends ProjectCommand {
     try {
       const code = await this.watch(client, {
         slugs,
+        mode,
         retry,
         types,
         timeoutSec,
@@ -274,6 +299,7 @@ export class WatchCommand extends ProjectCommand {
     client: TodouClient,
     opts: {
       slugs: string[] | null;
+      mode: WatchMode;
       retry: RetryOptions;
       types: string | undefined;
       timeoutSec: number;
@@ -287,6 +313,7 @@ export class WatchCommand extends ProjectCommand {
   ): Promise<number> {
     const {
       slugs,
+      mode,
       retry,
       types,
       timeoutSec,
@@ -296,6 +323,8 @@ export class WatchCommand extends ProjectCommand {
       self,
       paint,
     } = opts;
+    const onQuiet = (_cursor: string | undefined, totalMs: number) =>
+      this.note(quietNote("still watching", timeoutSec, totalMs));
 
     if (slugs !== null && slugs.length === 1) {
       // Single-project mode: the published v0.1.0 contract — a plain
@@ -317,7 +346,7 @@ export class WatchCommand extends ProjectCommand {
       const ref_format = refFormat(refPrefix);
 
       return runWatchLoop<ActivityItem>({
-        poll: this.poll,
+        ...mode,
         timeoutSec,
         intervalSec,
         debounceSec,
@@ -325,6 +354,7 @@ export class WatchCommand extends ProjectCommand {
         retry,
         clock: this.clock,
         wait: opts.wait,
+        onQuiet,
         drain: (after) =>
           drainActivity(client, project, { after, types, ...self }),
         onItems: (items, cursor) =>
@@ -404,7 +434,7 @@ export class WatchCommand extends ProjectCommand {
       undefined;
 
     return runWatchLoop<CrossActivityItem>({
-      poll: this.poll,
+      ...mode,
       timeoutSec,
       intervalSec,
       debounceSec,
@@ -412,6 +442,7 @@ export class WatchCommand extends ProjectCommand {
       retry,
       clock: this.clock,
       wait: opts.wait,
+      onQuiet,
       drain: async (after) => {
         const page = await drainCrossActivity(client, projects, {
           after,

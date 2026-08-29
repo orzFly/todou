@@ -29,9 +29,12 @@ import {
 } from "../questions.ts";
 import { fetchRefPrefix } from "../resolve.ts";
 import {
+  quietNote,
   retryTransient,
   runWatchLoop,
+  watchMode,
   watchRetryOptions,
+  watchTimeoutSec,
 } from "../watch-loop.ts";
 import { drainTimeline } from "./issue.ts";
 
@@ -135,14 +138,27 @@ export class QuestionWaitCommand extends ProjectCommand {
       once, exactly once). Already-answered comments return immediately.
 
       Exit codes follow \`issue watch\`: 0 = answers delivered (printed,
-      decoded, as JSON under \`--json\`), 3 = timeout with no answer,
-      1 = error, 4 = gave up on a network outage after automatic retries
+      decoded, as JSON under \`--json\`), or a \`--poll\` finished its one
+      check, answered or not; 3 = a blocking wait timed out with no answer;
+      1 = error; 4 = gave up on a network outage after automatic retries
       (rerun the same command; nothing is lost).
+
+      \`--forever\` makes the wait one trustworthy call, with no re-run loop
+      around it: it never exits on a timeout and never gives up on an
+      outage, so it returns only with the answers (0) or a fatal error (1) —
+      the shape a question that may sit unread for hours actually needs.
+      \`--timeout\` then means the heartbeat interval (default 600s): one
+      \`still waiting for an answer — nothing new in …\` line to stderr per
+      elapsed interval. Conflicts with \`--poll\`.
     `,
     examples: [
       [
         "Ask, then block on the reply",
         'ID=$(todou comment add 19 --body "…" --json --questions <(cat <<\'EOF\'\n[…]\nEOF\n) | jq .id)\ntodou question wait 19 "$ID" --timeout 600',
+      ],
+      [
+        "Block until answered, however long that takes",
+        'todou question wait 19 "$ID" --forever',
       ],
     ],
   });
@@ -150,7 +166,8 @@ export class QuestionWaitCommand extends ProjectCommand {
   number = Option.String({ required: true });
   commentId = Option.String({ required: true });
   timeout = Option.String("--timeout", {
-    description: "Give up after this many seconds (default 60)",
+    description:
+      "Give up after this many seconds (default 60; with --forever, seconds between heartbeats, default 600)",
   });
   interval = Option.String("--interval", {
     description: "Seconds between server polls (default 2)",
@@ -158,17 +175,21 @@ export class QuestionWaitCommand extends ProjectCommand {
   poll = Option.Boolean("--poll", false, {
     description: "Check once and exit instead of blocking",
   });
+  forever = Option.Boolean("--forever", false, {
+    description:
+      "Wait until the answers arrive or a fatal error — never time out, retry outages indefinitely (conflicts with --poll)",
+  });
 
   protected async run(client: TodouClient): Promise<number> {
     const { project, number } = this.resolveIssueRef(this.number);
     const commentId = parsePositiveInt(this.commentId, "comment id");
+    const mode = watchMode(this.poll, this.forever);
     const retry = watchRetryOptions(
-      this.poll,
+      mode,
       (line) => this.note(line),
       this.clock,
     );
-    const timeoutSec =
-      this.timeout === undefined ? 60 : parseSeconds(this.timeout, "--timeout");
+    const timeoutSec = watchTimeoutSec(this.timeout, mode);
     const intervalSec =
       this.interval === undefined
         ? 2
@@ -202,12 +223,16 @@ export class QuestionWaitCommand extends ProjectCommand {
     }
 
     return runWatchLoop<AnswerResult>({
-      poll: this.poll,
+      ...mode,
       timeoutSec,
       intervalSec,
       baseline,
       retry,
       clock: this.clock,
+      onQuiet: (_cursor, totalMs) =>
+        this.note(
+          quietNote("still waiting for an answer", timeoutSec, totalMs),
+        ),
       drain: async (after) => {
         const page = await drainTimeline(client, project, number, {
           after,

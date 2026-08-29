@@ -2,6 +2,8 @@ import type { AgentContext, TodouClient } from "@todou/shared";
 import { TimelineFilterType, TodouError } from "@todou/shared";
 import { type Clock, systemClock } from "./clock.ts";
 import { CliError, RetriesExhaustedError } from "./errors.ts";
+import { formatDuration } from "./format.ts";
+import { parseSeconds } from "./parse.ts";
 
 /** Validates a comma-separated --type list, returning it normalized. */
 export function normalizeTypes(raw: string): string {
@@ -61,6 +63,38 @@ export type RetryOptions = {
   random?: () => number;
 };
 
+/** Which waiting mode a command is in; picks the retry budget below. */
+export type WatchMode = { poll: boolean; forever?: boolean };
+
+/**
+ * The mode the flags asked for. `--poll` wants one check and out,
+ * `--forever` wants never to come back empty-handed: asking for both is a
+ * contradiction rather than a question of precedence.
+ */
+export function watchMode(poll: boolean, forever: boolean): WatchMode {
+  if (poll && forever) {
+    throw new CliError(
+      "--forever conflicts with --poll",
+      "--poll checks once and leaves; --forever blocks until entries arrive or a fatal error",
+    );
+  }
+  return { poll, forever };
+}
+
+/**
+ * How much quiet the watch tolerates: the timeout a blocking watch exits 3
+ * at, or under `--forever` the gap between heartbeats. That is why the
+ * default splits — 60s is a fair bound to give up at, and far too shrill a
+ * pulse for the twelve-hour waits `--forever` exists for.
+ */
+export function watchTimeoutSec(
+  raw: string | undefined,
+  mode: WatchMode,
+): number {
+  if (raw !== undefined) return parseSeconds(raw, "--timeout");
+  return mode.forever ? 600 : 60;
+}
+
 /**
  * The retry budgets behind watch/poll commands. A blocking watch is a
  * sentinel: it must ride out a full deploy restart, and on dogfood the
@@ -68,16 +102,24 @@ export type RetryOptions = {
  * restart a ~92s outage. 14 attempts guarantee ≥135s of retrying even at
  * the jitter floor (~200s typical) before giving up with exit code 4.
  * `--poll` callers expect promptness, so a blip gets two quick retries and
- * a real outage fails fast.
+ * a real outage fails fast. `--forever` asked for exactly one ending —
+ * entries or a fatal error — so it drops the ceiling and keeps the same
+ * capped backoff, which puts exit code 4 out of reach.
  */
 export function watchRetryOptions(
-  poll: boolean,
+  mode: WatchMode,
   onRetry?: (line: string) => void,
   clock: Clock = systemClock,
 ): RetryOptions {
-  const budget = poll
-    ? { maxAttempts: 3, baseDelayMs: 500, maxDelayMs: 1000 }
-    : { maxAttempts: 14, baseDelayMs: 1000, maxDelayMs: 30_000 };
+  const budget = mode.forever
+    ? {
+        maxAttempts: Number.POSITIVE_INFINITY,
+        baseDelayMs: 1000,
+        maxDelayMs: 30_000,
+      }
+    : mode.poll
+      ? { maxAttempts: 3, baseDelayMs: 500, maxDelayMs: 1000 }
+      : { maxAttempts: 14, baseDelayMs: 1000, maxDelayMs: 30_000 };
   return { ...budget, onRetry, sleep: clock.sleep };
 }
 
@@ -85,7 +127,9 @@ export function watchRetryOptions(
  * Runs `fn`, retrying transient failures with exponential backoff and
  * jitter (delay drawn from [cap/2, cap), cap doubling up to maxDelayMs).
  * Non-transient errors pass through untouched; the `maxAttempts`th
- * consecutive failure throws RetriesExhaustedError (exit code 4).
+ * consecutive failure throws RetriesExhaustedError (exit code 4). An
+ * infinite `maxAttempts` never reaches that throw, so `--forever` needs no
+ * branch of its own here — only a progress line with no denominator.
  */
 export async function retryTransient<T>(
   fn: () => Promise<T>,
@@ -111,12 +155,28 @@ export async function retryTransient<T>(
         opts.baseDelayMs * 2 ** (failures - 1),
       );
       const delayMs = cap / 2 + random() * (cap / 2);
+      const budget = Number.isFinite(opts.maxAttempts)
+        ? `${failures}/${opts.maxAttempts}`
+        : `${failures}`;
       opts.onRetry?.(
-        `transient failure ${failures}/${opts.maxAttempts} (${describeError(error)}); retrying in ${(delayMs / 1000).toFixed(1)}s`,
+        `transient failure ${budget} (${describeError(error)}); retrying in ${(delayMs / 1000).toFixed(1)}s`,
       );
       await wait(delayMs);
     }
   }
+}
+
+/**
+ * The `--forever` heartbeat line, one shape for all three waiting commands
+ * so a reader of two feeds side by side is reading the same thing; only
+ * `subject` names what this one is waiting on.
+ */
+export function quietNote(
+  subject: string,
+  timeoutSec: number,
+  totalMs: number,
+): string {
+  return `${subject} — nothing new in ${timeoutSec}s (${formatDuration(totalMs)} total)`;
 }
 
 /** Query parameters that spell "not mine" for the watch endpoints. */
@@ -146,8 +206,10 @@ export async function resolveSelfFilter(
 
 /**
  * The shared poll-until-news loop behind `issue watch` and `watch`.
- * Returns the process exit code: 0 when entries were delivered, 3 when the
- * poll came back empty or the timeout elapsed (loop-friendly "no news").
+ * Returns the process exit code: 0 when entries were delivered or a poll
+ * finished its one check, 3 when a blocking watch timed out with nothing
+ * (loop-friendly "no news"). Under `forever` there is no 3: the timeout
+ * becomes a heartbeat interval and the quiet phase re-arms instead.
  *
  * `timeoutSec` bounds the quiet phase only; once the first entries arrive,
  * `debounceSec` (when set) takes over and keeps batching until the window
@@ -158,6 +220,8 @@ export async function resolveSelfFilter(
  */
 export async function runWatchLoop<T extends { created_at: string }>(opts: {
   poll: boolean;
+  /** Never return empty-handed: re-arm the quiet phase instead of exiting 3. */
+  forever?: boolean;
   timeoutSec: number;
   intervalSec: number;
   /** Batch window after the first batch's newest `created_at`; undefined = emit immediately. */
@@ -168,6 +232,8 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
   ) => Promise<{ items: T[]; cursor: string | undefined }>;
   onItems: (items: T[], cursor: string | undefined) => void;
   onEmpty: (cursor: string | undefined) => void;
+  /** `forever` only: one heartbeat per elapsed quiet phase, for stderr. */
+  onQuiet?: (cursor: string | undefined, totalMs: number) => void;
   /** Overrides the poll-derived transient-failure budget. */
   retry?: RetryOptions;
   /**
@@ -187,8 +253,15 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
 }): Promise<number> {
   let cursor = opts.baseline;
   const clock = opts.clock ?? systemClock;
-  const deadline = clock.now() + opts.timeoutSec * 1000;
-  const retry = opts.retry ?? watchRetryOptions(opts.poll, undefined, clock);
+  const start = clock.now();
+  let deadline = start + opts.timeoutSec * 1000;
+  const retry =
+    opts.retry ??
+    watchRetryOptions(
+      { poll: opts.poll, forever: opts.forever },
+      undefined,
+      clock,
+    );
   const wait =
     opts.wait ??
     ((maxMs) => clock.sleep(Math.min(opts.intervalSec * 1000, maxMs)));
@@ -235,8 +308,21 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
       opts.onItems(items, cursor);
       return 0;
     }
+    if (opts.poll) {
+      opts.onEmpty(cursor);
+      return 0;
+    }
     const remaining = deadline - clock.now();
-    if (opts.poll || remaining <= 0) {
+    if (remaining <= 0) {
+      if (opts.forever) {
+        // Re-arm and carry on with the cursor the loop already holds:
+        // asking the server for a fresh "now" position here would skip
+        // whatever landed while it was quiet. The heartbeat exists so a
+        // reader of the stderr feed can tell waiting apart from wedged.
+        opts.onQuiet?.(cursor, clock.now() - start);
+        deadline = clock.now() + opts.timeoutSec * 1000;
+        continue;
+      }
       opts.onEmpty(cursor);
       return 3;
     }

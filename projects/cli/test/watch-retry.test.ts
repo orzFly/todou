@@ -1,12 +1,14 @@
 import { TodouError } from "@todou/shared";
 import { describe, expect, it } from "vitest";
-import { RetriesExhaustedError } from "../src/errors.ts";
+import { CliError, RetriesExhaustedError } from "../src/errors.ts";
 import {
   isTransientError,
   type RetryOptions,
   retryTransient,
   runWatchLoop,
+  watchMode,
   watchRetryOptions,
+  watchTimeoutSec,
 } from "../src/watch-loop.ts";
 import {
   fakeFetch,
@@ -61,10 +63,43 @@ describe("watchRetryOptions", () => {
   it("blocking budget outlasts a slow deploy restart, poll stays snappy", () => {
     // A dogfood restart is a measured ~92s outage (SIGTERM ignored, systemd
     // kills at 90s); the sentinel must never give up inside that window.
-    expect(guaranteedRideOutMs(watchRetryOptions(false))).toBeGreaterThan(
-      120_000,
+    expect(
+      guaranteedRideOutMs(watchRetryOptions({ poll: false })),
+    ).toBeGreaterThan(120_000);
+    expect(guaranteedRideOutMs(watchRetryOptions({ poll: true }))).toBeLessThan(
+      3_000,
     );
-    expect(guaranteedRideOutMs(watchRetryOptions(true))).toBeLessThan(3_000);
+  });
+
+  it("--forever lifts the ceiling and keeps the blocking backoff", () => {
+    const forever = watchRetryOptions({ poll: false, forever: true });
+    expect(forever.maxAttempts).toBe(Number.POSITIVE_INFINITY);
+    expect(forever.baseDelayMs).toBe(1000);
+    expect(forever.maxDelayMs).toBe(30_000);
+  });
+});
+
+describe("watchMode / watchTimeoutSec", () => {
+  it("refuses --forever together with --poll", () => {
+    const error: unknown = (() => {
+      try {
+        return watchMode(true, true);
+      } catch (e) {
+        return e;
+      }
+    })();
+    expect(error).toBeInstanceOf(CliError);
+    expect((error as CliError).message).toBe("--forever conflicts with --poll");
+  });
+
+  it("defaults the quiet window to 60s, or 600s as a heartbeat", () => {
+    expect(watchTimeoutSec(undefined, { poll: false })).toBe(60);
+    expect(watchTimeoutSec(undefined, { poll: true })).toBe(60);
+    expect(watchTimeoutSec(undefined, { poll: false, forever: true })).toBe(
+      600,
+    );
+    // An explicit --timeout is honoured in either mode.
+    expect(watchTimeoutSec("45", { poll: false, forever: true })).toBe(45);
   });
 });
 
@@ -101,6 +136,30 @@ describe("retryTransient", () => {
     );
     expect((error as Error).message).toContain("ECONNREFUSED");
     expect(calls).toBe(3);
+  });
+
+  it("keeps going on an infinite budget, and drops the denominator", async () => {
+    let calls = 0;
+    const notes: string[] = [];
+    const result = await retryTransient(
+      async () => {
+        calls += 1;
+        if (calls < 21) throw http(502);
+        return "ok";
+      },
+      fastRetry({
+        maxAttempts: Number.POSITIVE_INFINITY,
+        onRetry: (line) => notes.push(line),
+      }),
+    );
+    // Twenty consecutive failures — past the 14 a blocking watch tolerates,
+    // and seven times --poll's — still deliver: exit 4 is out of reach.
+    expect(result).toBe("ok");
+    expect(calls).toBe(21);
+    expect(notes).toHaveLength(20);
+    expect(notes[14]).toContain("transient failure 15 (");
+    // No "n/Infinity", and no denominator of any other shape either.
+    expect(notes[14]).not.toContain("/");
   });
 
   it("lets fatal errors through immediately, without retrying", async () => {
@@ -233,6 +292,102 @@ describe("runWatchLoop retry integration", () => {
     expect(error).toBe(fatal);
     expect(drained).toBe(1);
   });
+
+  it("a --poll that finds nothing still exits 0", async () => {
+    let reported: string | undefined | "unset" = "unset";
+    const code = await runWatchLoop({
+      poll: true,
+      timeoutSec: 5,
+      intervalSec: 0.001,
+      baseline: "c0",
+      retry: fastRetry(),
+      drain: () => Promise.resolve(page([])),
+      onItems: () => {
+        throw new Error("nothing was there to deliver");
+      },
+      onEmpty: (cursor) => {
+        reported = cursor;
+      },
+    });
+    // The check completed; whether it found anything is the output's job
+    // to say, which is what frees callers of `; true` after a bootstrap.
+    expect(code).toBe(0);
+    expect(reported).toBe("c0");
+  });
+
+  it("--forever rides out an outage and a quiet spell on its held cursor", async () => {
+    const clock = virtualClock();
+    const seen: Array<string | undefined> = [];
+    const quiet: number[] = [];
+    const notes: string[] = [];
+    let drains = 0;
+    let delivered: unknown[] = [];
+    let deliveredCursor: string | undefined;
+    const code = await runWatchLoop({
+      poll: false,
+      forever: true,
+      timeoutSec: 10,
+      intervalSec: 5,
+      baseline: "c0",
+      retry: fastRetry({
+        maxAttempts: Number.POSITIVE_INFINITY,
+        onRetry: (line) => notes.push(line),
+      }),
+      clock,
+      drain: (after) => {
+        seen.push(after);
+        drains += 1;
+        if (drains <= 6) return Promise.reject(http(502));
+        // Two full quiet phases of nothing, then the entry that landed
+        // while the watcher was blind.
+        if (drains <= 12) return Promise.resolve(page([]));
+        return Promise.resolve(page([entry], "c1"));
+      },
+      onItems: (items, cursor) => {
+        delivered = items;
+        deliveredCursor = cursor;
+      },
+      onEmpty: () => {
+        throw new Error("--forever must never report an empty verdict");
+      },
+      onQuiet: (_cursor, totalMs) => quiet.push(totalMs),
+    });
+
+    expect(code).toBe(0);
+    // Six consecutive failures, twice the budget this retry was handed a
+    // finite version of, and it never gave up.
+    expect(notes).toHaveLength(6);
+    expect(notes[5]).toContain("transient failure 6 (");
+    // The gap entry is delivered, and every drain along the way asked from
+    // the cursor the loop already held — the one thing that would have
+    // skipped it is re-reading "now" after the outage.
+    expect(delivered).toEqual([entry]);
+    expect(deliveredCursor).toBe("c1");
+    expect(new Set(seen)).toEqual(new Set(["c0"]));
+    expect(quiet).toEqual([10_000, 20_000]);
+    expect(clock.elapsed()).toBe(20_000);
+  });
+
+  it("--forever still aborts on the first fatal error", async () => {
+    let drained = 0;
+    const fatal = http(404, "gone");
+    const error: unknown = await runWatchLoop({
+      poll: false,
+      forever: true,
+      timeoutSec: 5,
+      intervalSec: 0.001,
+      baseline: undefined,
+      retry: fastRetry({ maxAttempts: Number.POSITIVE_INFINITY }),
+      drain: () => {
+        drained += 1;
+        return Promise.reject(fatal);
+      },
+      onItems: () => {},
+      onEmpty: () => {},
+    }).catch((e: unknown) => e);
+    expect(error).toBe(fatal);
+    expect(drained).toBe(1);
+  });
 });
 
 describe("watch command network robustness", () => {
@@ -295,6 +450,176 @@ describe("watch command network robustness", () => {
     expect(cursor.next_cursor).toBe("a1");
     expect(result.stderr).toContain("transient failure 1/3 (HTTP 502)");
     expect(result.stdout).not.toContain("transient failure");
+  });
+
+  it("--forever outlasts the blocking budget and says so on stderr only", async () => {
+    const clock = virtualClock();
+    let activityCalls = 0;
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/me", me],
+      ["GET", "/api/events", { __status: 404 }],
+      [
+        "GET",
+        "/api/projects/todou/activity",
+        () => {
+          activityCalls += 1;
+          // Twenty consecutive 502s: past the 14 a blocking watch rides out
+          // and far past --poll's 3, so getting through them at all is the
+          // proof that --forever picked the unbounded budget.
+          if (activityCalls <= 20) return { __status: 502 };
+          return activityCalls < 25
+            ? { items: [], next_cursor: null }
+            : { items: [comment], next_cursor: "a1" };
+        },
+      ],
+    ]);
+    const result = await runCli(
+      [
+        "watch",
+        "-p",
+        "todou",
+        "--since",
+        "a0",
+        "--forever",
+        "--timeout",
+        "10",
+        "--interval",
+        "5",
+        "--json",
+      ],
+      { fetchImpl, env: loggedInEnv(), clock },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain("transient failure 20 (HTTP 502)");
+    expect(result.stderr).toContain("still watching — nothing new in 10s");
+    // stdout stays the data stream T-175 made it: every line parses, and
+    // neither kind of progress line leaked into it.
+    const { items, cursor } = parseNdjson<{ issue_number: number }>(
+      result.stdout,
+    );
+    expect(items[0]?.issue_number).toBe(3);
+    expect(cursor.next_cursor).toBe("a1");
+    expect(result.stdout).not.toContain("transient failure");
+    expect(result.stdout).not.toContain("still watching");
+  });
+
+  it("refuses --forever together with --poll, in all three commands", async () => {
+    for (const argv of [
+      ["watch", "-p", "todou", "--forever", "--poll"],
+      ["issue", "watch", "3", "-p", "todou", "--forever", "--poll"],
+      ["question", "wait", "19", "42", "-p", "todou", "--forever", "--poll"],
+    ]) {
+      const { fetchImpl, calls } = fakeFetch([]);
+      const result = await runCli(argv, { fetchImpl, env: loggedInEnv() });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("--forever conflicts with --poll");
+      // The contradiction is settled before anything is asked of the server.
+      expect(calls).toHaveLength(0);
+    }
+  });
+
+  it("question wait --forever heartbeats until the answer lands", async () => {
+    const clock = virtualClock();
+    const user = {
+      id: 5,
+      login: "user",
+      display_name: "User",
+      kind: "human",
+      owner: null,
+    };
+    let polls = 0;
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues/19/timeline",
+        (_init: RequestInit, url: URL) => {
+          if (url.searchParams.get("last") === "1") {
+            return { items: [], prev_cursor: null, next_cursor: "C0" };
+          }
+          polls += 1;
+          // Four quiet minutes at a 120s heartbeat: two beats, then the
+          // answer — the shape of a question asked while nobody is looking.
+          if (polls < 7) {
+            return { items: [], prev_cursor: null, next_cursor: null };
+          }
+          return {
+            items: [
+              {
+                type: "event",
+                id: 7,
+                event_type: "question_answered",
+                actor: user,
+                payload: {
+                  comment_id: 42,
+                  answers: [
+                    {
+                      key: "schema",
+                      selected: [{ index: 0, label: "New entity" }],
+                      other: null,
+                      declined: false,
+                    },
+                  ],
+                },
+                created_at: "2026-08-12T01:00:00Z",
+                agent_context: null,
+              },
+            ],
+            prev_cursor: null,
+            next_cursor: null,
+          };
+        },
+      ],
+      [
+        "GET",
+        "/api/projects/todou/issues/19/questions",
+        {
+          items: [
+            {
+              comment_id: 42,
+              author: user,
+              created_at: "2026-08-12T00:00:00Z",
+              questions: [
+                {
+                  key: "schema",
+                  header: "Data model",
+                  question: "Where does the payload live?",
+                  multiple: false,
+                  options: [{ label: "New entity" }, { label: "Inline" }],
+                },
+              ],
+              answer: null,
+            },
+          ],
+          open: 1,
+        },
+      ],
+    ]);
+    const result = await runCli(
+      [
+        "question",
+        "wait",
+        "19",
+        "42",
+        "-p",
+        "todou",
+        "--forever",
+        "--timeout",
+        "120",
+        "--interval",
+        "60",
+        "--json",
+      ],
+      { fetchImpl, env: loggedInEnv(), clock },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).event_id).toBe(7);
+    expect(result.stderr).toContain(
+      "still waiting for an answer — nothing new in 120s (2m total)",
+    );
+    expect(result.stderr).toContain("(4m total)");
+    expect(clock.elapsed()).toBe(240_000);
   });
 
   it("exits 4 with a clear message when the server stays down", async () => {

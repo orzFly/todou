@@ -99,6 +99,20 @@ const STEPS: Array<[limit: number, divisor: number, unit: string]> = [
   [31536000, 2592000, "mo"],
 ];
 
+/** An elapsed span a person can read: `45s`, `12m`, `2h10m`, `1d3h`. */
+export function formatDuration(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  const hours = Math.floor(seconds / 3600);
+  if (hours < 24) {
+    const minutes = Math.floor((seconds % 3600) / 60);
+    return minutes === 0 ? `${hours}h` : `${hours}h${minutes}m`;
+  }
+  const days = Math.floor(hours / 24);
+  return hours % 24 === 0 ? `${days}d` : `${days}d${hours % 24}h`;
+}
+
 export function relativeTime(iso: string, now: number = Date.now()): string {
   const seconds = Math.max(0, Math.floor((now - Date.parse(iso)) / 1000));
   for (const [limit, divisor, unit] of STEPS) {

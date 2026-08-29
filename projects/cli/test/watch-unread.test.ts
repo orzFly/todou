@@ -401,7 +401,7 @@ describe("watch (project-level)", () => {
       ["watch", "-p", "todou", "--poll", "--any-actor", "--json"],
       { fetchImpl, env: loggedInEnv() },
     );
-    expect(result.exitCode).toBe(3);
+    expect(result.exitCode).toBe(0);
     expect(parseNdjson(result.stdout).cursor.next_cursor).toBe("a0");
     expect(calls.some((c) => c.url.includes("/api/me"))).toBe(false);
     expect(calls.some((c) => c.url.includes("exclude_actor"))).toBe(false);
@@ -426,7 +426,7 @@ describe("watch (project-level)", () => {
       ["watch", "-p", "todou,other", "--poll", "--since", "a0", "--json"],
     ]) {
       const result = await runCli(argv, { fetchImpl, env: harnessEnv });
-      expect(result.exitCode).toBe(3);
+      expect(result.exitCode).toBe(0);
     }
     // Both axes ride along on both endpoints: the session names this
     // watcher, the account catches entries claiming no session at all.
