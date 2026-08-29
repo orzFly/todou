@@ -1,10 +1,13 @@
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, waitFor } from "@testing-library/react";
 import type { IssueListItem } from "@todou/shared";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
-import { AnnotatedMarkdown } from "../src/components/spec/annotated-markdown.tsx";
+import {
+  AnnotatedMarkdown,
+  selectionEndpoints,
+} from "../src/components/spec/annotated-markdown.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 /** Render, select `pick`'s range, and return the floating comment button. */
@@ -507,5 +510,181 @@ describe("AnnotatedMarkdown reverse mapping by block kind", () => {
       colStart: null,
       colEnd: null,
     });
+  });
+});
+
+// T-164: pierre renders code inside an open shadow root, and the legacy
+// Selection API clamps any endpoint landing in there onto the host.
+// Dragging backwards out of a code block is the loud case — the selection
+// reports itself collapsed while `toString()` still returns the code, so
+// the comment button never appeared at all.
+describe("selection endpoints across a shadow boundary (T-164)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** A container holding one paragraph and one open shadow root. */
+  function scene() {
+    const container = document.createElement("div");
+    const prose = document.createElement("p");
+    prose.textContent = "abc";
+    const host = document.createElement("div");
+    const shadow = host.attachShadow({ mode: "open" });
+    const row = document.createElement("span");
+    row.textContent = "$ hello";
+    shadow.append(row);
+    container.append(prose, host);
+    document.body.append(container);
+    return {
+      container,
+      host,
+      shadow,
+      prose: prose.firstChild as Node,
+      code: row.firstChild as Node,
+    };
+  }
+
+  type StaticRangeLike = {
+    startContainer: Node;
+    startOffset: number;
+    endContainer: Node;
+    endOffset: number;
+    collapsed: boolean;
+  };
+
+  /** A Selection whose legacy view is whatever the browser clamped it to. */
+  function stubSelection(over: {
+    anchorNode: Node;
+    anchorOffset?: number;
+    focusNode: Node;
+    focusOffset?: number;
+    isCollapsed: boolean;
+    composed?: StaticRangeLike[];
+    onComposed?: (options: { shadowRoots?: ShadowRoot[] }) => void;
+  }): Selection {
+    const range = document.createRange();
+    range.setStart(over.anchorNode, over.anchorOffset ?? 0);
+    range.setEnd(over.focusNode, over.focusOffset ?? 0);
+    const composed = over.composed;
+    return {
+      anchorNode: over.anchorNode,
+      anchorOffset: over.anchorOffset ?? 0,
+      focusNode: over.focusNode,
+      focusOffset: over.focusOffset ?? 0,
+      isCollapsed: over.isCollapsed,
+      rangeCount: 1,
+      getRangeAt: () => range,
+      ...(composed === undefined
+        ? {}
+        : {
+            getComposedRanges: (
+              options: { shadowRoots?: ShadowRoot[] } = {},
+            ) => {
+              over.onComposed?.(options);
+              return composed;
+            },
+          }),
+    } as unknown as Selection;
+  }
+
+  it("falls back to the legacy endpoints where the API is missing", () => {
+    const { container, prose, host } = scene();
+    const endpoints = selectionEndpoints(
+      stubSelection({
+        anchorNode: prose,
+        anchorOffset: 1,
+        focusNode: host,
+        isCollapsed: false,
+      }),
+      container,
+    );
+    expect(endpoints?.start).toEqual({ node: prose, offset: 1 });
+    expect(endpoints?.end).toEqual({ node: host, offset: 0 });
+    expect(endpoints?.collapsed).toBe(false);
+  });
+
+  it("hands every open shadow root under the container to the API", () => {
+    const { container, prose, shadow } = scene();
+    let seen: ShadowRoot[] | undefined;
+    selectionEndpoints(
+      stubSelection({
+        anchorNode: prose,
+        focusNode: prose,
+        isCollapsed: false,
+        composed: [],
+        onComposed: (options) => {
+          seen = options.shadowRoots;
+        },
+      }),
+      container,
+    );
+    expect(seen).toEqual([shadow]);
+  });
+
+  it("believes the composed range over a legacy collapse that lies", () => {
+    const { container, host, prose, code } = scene();
+    const endpoints = selectionEndpoints(
+      stubSelection({
+        // What Chromium reports for a backwards drag out of a code block:
+        // both ends clamped onto the host, and isCollapsed true.
+        anchorNode: host,
+        focusNode: host,
+        isCollapsed: true,
+        composed: [
+          {
+            startContainer: prose,
+            startOffset: 1,
+            endContainer: code,
+            endOffset: 7,
+            collapsed: false,
+          },
+        ],
+      }),
+      container,
+    );
+    expect(endpoints?.collapsed).toBe(false);
+    expect(endpoints?.start.node).toBe(prose);
+    expect(endpoints?.end).toEqual({ node: code, offset: 7 });
+  });
+
+  it("still offers the comment button for a drag the browser collapsed", async () => {
+    const view = renderWithProviders(
+      <AnnotatedMarkdown
+        slug="p"
+        issueNumber={1}
+        body={"first paragraph.\n\nsecond paragraph.\n"}
+        annotations={[]}
+        onStage={() => {}}
+        onEditDraft={() => {}}
+        onRemoveDraft={() => {}}
+        onResolve={() => {}}
+      />,
+    );
+    const container = await waitFor(() => {
+      const el = view.getByTestId("annotated-markdown");
+      if (!el.querySelector("p[data-loc]")) throw new Error("not rendered");
+      return el;
+    });
+    const paragraphs = container.querySelectorAll("p[data-loc]");
+    const start = paragraphs[0]?.firstChild as Node;
+    const end = paragraphs[1]?.firstChild as Node;
+    vi.spyOn(window, "getSelection").mockReturnValue(
+      stubSelection({
+        anchorNode: container,
+        focusNode: container,
+        isCollapsed: true,
+        composed: [
+          {
+            startContainer: start,
+            startOffset: 0,
+            endContainer: end,
+            endOffset: 6,
+            collapsed: false,
+          },
+        ],
+      }),
+    );
+    fireEvent.mouseUp(container);
+    expect(await view.findByText(/Comment L1–3/)).not.toBeNull();
   });
 });

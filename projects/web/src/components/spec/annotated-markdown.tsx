@@ -93,6 +93,11 @@ export type AnchorRange = {
 
 type PendingSelection = AnchorRange & { top: number };
 
+/** The element a node is, or the one holding it. */
+function elementNear(node: Node): Element | null {
+  return node instanceof Element ? node : node.parentElement;
+}
+
 /**
  * The block a selection endpoint sits in, when that block can carry column
  * precision. Code blocks are excluded on purpose: their text reaches the
@@ -102,8 +107,7 @@ type PendingSelection = AnchorRange & { top: number };
 function columnBlockOf(
   node: Node,
 ): { el: Element; loc: { start: number; end: number } } | null {
-  const from = node instanceof Element ? node : node.parentElement;
-  const stamped = from?.closest(`[${SOURCE_LINE_ATTR}]`) ?? null;
+  const stamped = elementNear(node)?.closest(`[${SOURCE_LINE_ATTR}]`) ?? null;
   if (stamped === null) return null;
   if (stamped.hasAttribute(CODE_CONTENT_START_ATTR)) return null;
   const loc = parseSourceLoc(stamped.getAttribute(SOURCE_LINE_ATTR));
@@ -238,8 +242,7 @@ export function columnsOfSelection(
 export function anchorRangeForNode(
   node: Node,
 ): { start: number; end: number } | null {
-  let el: Element | null =
-    node instanceof Element ? node : (node.parentElement ?? null);
+  let el = elementNear(node);
   let row: Element | null = null;
   while (el !== null) {
     row ??= el.closest("[data-line]");
@@ -279,6 +282,65 @@ function composedContains(container: Element, node: Node): boolean {
     current = root instanceof ShadowRoot ? root.host : null;
   }
   return false;
+}
+
+/** Every open shadow root under `root`, nested ones included. */
+function openShadowRoots(root: Element | ShadowRoot): ShadowRoot[] {
+  const found: ShadowRoot[] = [];
+  for (const el of root.querySelectorAll("*")) {
+    if (el.shadowRoot === null) continue;
+    found.push(el.shadowRoot, ...openShadowRoots(el.shadowRoot));
+  }
+  return found;
+}
+
+export type SelectionEndpoints = {
+  start: { node: Node; offset: number };
+  end: { node: Node; offset: number };
+  collapsed: boolean;
+};
+
+/**
+ * Both ends of a selection, seen through open shadow roots (T-164). pierre
+ * renders code inside one, and the legacy endpoints misreport anything that
+ * lands in there: dragging from prose *into* a code line puts the focus on
+ * the shadow host, which costs the anchor its line precision, and dragging
+ * the other way collapses the whole selection to one empty div — while
+ * `toString()` still returns the selected code. The collapse is why a
+ * backwards drag out of a fence offered no comment button at all.
+ *
+ * `getComposedRanges` answers with the real endpoints. Where it does not
+ * exist (jsdom, older browsers) the legacy ones stand exactly as before.
+ */
+export function selectionEndpoints(
+  selection: Selection,
+  container: Element,
+): SelectionEndpoints | null {
+  if (typeof selection.getComposedRanges === "function") {
+    const composed = selection.getComposedRanges({
+      shadowRoots: openShadowRoots(container),
+    })[0];
+    if (composed !== undefined) {
+      return {
+        start: { node: composed.startContainer, offset: composed.startOffset },
+        end: { node: composed.endContainer, offset: composed.endOffset },
+        collapsed: composed.collapsed,
+      };
+    }
+  }
+  if (selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  return {
+    start: {
+      node: selection.anchorNode ?? range.startContainer,
+      offset: selection.anchorOffset,
+    },
+    end: {
+      node: selection.focusNode ?? range.endContainer,
+      offset: selection.focusOffset,
+    },
+    collapsed: selection.isCollapsed,
+  };
 }
 
 /**
@@ -513,24 +575,33 @@ export function AnnotatedMarkdown({
       const container = containerRef.current;
       if (!container) return;
       const selection = window.getSelection();
-      if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      if (!selection || selection.rangeCount === 0) {
         setPending(null);
         return;
       }
-      const range = selection.getRangeAt(0);
-      // Chrome re-targets getRangeAt endpoints to the shadow host while
-      // anchor/focus keep pointing inside the open shadow root — prefer
-      // those (direction doesn't matter, min/max below absorbs it).
-      const startNode = selection.anchorNode ?? range.startContainer;
-      const endNode = selection.focusNode ?? range.endContainer;
-      if (!composedContains(container, startNode)) return;
-      const from = anchorRangeForNode(startNode);
-      const to = anchorRangeForNode(endNode);
+      // Direction doesn't matter here; the min/max below absorbs it.
+      const ends = selectionEndpoints(selection, container);
+      if (ends === null || ends.collapsed) {
+        setPending(null);
+        return;
+      }
+      if (!composedContains(container, ends.start.node)) return;
+      const from = anchorRangeForNode(ends.start.node);
+      const to = anchorRangeForNode(ends.end.node);
       if (!from || !to) {
         setPending(null);
         return;
       }
-      const rect = range.getBoundingClientRect();
+      // The legacy range still measures the button's position, and still
+      // decides the columns — a selection with one end in code has no
+      // columns to give, and falls back to the line anchor by design. But
+      // when it is the clamped one, its rect is an empty box at the shadow
+      // host; the endpoint's own element is then what says where to sit.
+      const range = selection.getRangeAt(0);
+      const rect =
+        (range.collapsed
+          ? elementNear(ends.end.node)?.getBoundingClientRect()
+          : null) ?? range.getBoundingClientRect();
       const containerRect = container.getBoundingClientRect();
       setPending({
         top: rect.bottom - containerRect.top + 6,

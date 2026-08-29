@@ -52,6 +52,13 @@ export const MARK_KEY_ATTR = "data-mark-key";
 
 export const INS_BLOCK_CLASS = "spec-ins-block";
 
+/**
+ * Whole-block stand-ins for the marks, worn by an element whose insides
+ * cannot carry one (T-164). Only code blocks need them so far.
+ */
+export const COMMENT_BLOCK_CLASS = "spec-mark-comment-block";
+export const DRAFT_BLOCK_CLASS = "spec-mark-draft-block";
+
 const CLASS_OF: Record<SpanKind, string> = {
   ins: "spec-ins",
   comment: "spec-mark-comment",
@@ -70,8 +77,12 @@ const NESTING: SpanKind[] = ["ins", "comment", "draft"];
 /** How much of a structural deletion the marker shows before its tooltip. */
 const BLOCK_PREVIEW = 48;
 
-function wrap(value: string, kinds: SpanKind[], key: string | undefined) {
-  let content: ElementContent[] = [{ type: "text", value }];
+function wrap(
+  children: ElementContent[],
+  kinds: SpanKind[],
+  key: string | undefined,
+) {
+  let content = children;
   for (const kind of [...kinds].reverse()) {
     const element: Element = {
       type: "element",
@@ -87,6 +98,19 @@ function wrap(value: string, kinds: SpanKind[], key: string | undefined) {
     content = [element];
   }
   return content;
+}
+
+/** Spans overlapping a node's half-open source range. */
+function hitsOf(
+  spans: SpanDecoration[],
+  from: number,
+  to: number,
+): SpanDecoration[] {
+  return spans.filter((s) => s.start < to && s.end > from);
+}
+
+function kindsOf(hits: SpanDecoration[]): SpanKind[] {
+  return NESTING.filter((k) => hits.some((h) => h.kind === k));
 }
 
 function addClass(element: Element, name: string): void {
@@ -144,7 +168,7 @@ function decorateText(
   const to = node.position?.end.offset;
   if (from === undefined || to === undefined) return null;
 
-  const hits = spans.filter((s) => s.start < to && s.end > from);
+  const hits = hitsOf(spans, from, to);
   const cuts = deletions.filter(
     (d) => !placed.has(d) && d.at >= from && d.at <= to,
   );
@@ -154,8 +178,11 @@ function decorateText(
   // offsets inside the node mean nothing. Decorate it whole or not at all.
   if (to - from !== node.value.length) {
     if (hits.length === 0) return null;
-    const kinds = NESTING.filter((k) => hits.some((h) => h.kind === k));
-    return wrap(node.value, kinds, hits.find((h) => h.key !== undefined)?.key);
+    return wrap(
+      [{ type: "text", value: node.value }],
+      kindsOf(hits),
+      hits.find((h) => h.key !== undefined)?.key,
+    );
   }
 
   const points = new Set<number>([0, node.value.length]);
@@ -180,15 +207,79 @@ function decorateText(
     const covering = hits.filter(
       (h) => h.start - from <= at && h.end - from >= next,
     );
-    const kinds = NESTING.filter((k) => covering.some((h) => h.kind === k));
-    const piece = node.value.slice(at, next);
-    if (kinds.length === 0) out.push({ type: "text", value: piece });
+    const kinds = kindsOf(covering);
+    const piece: Text = { type: "text", value: node.value.slice(at, next) };
+    if (kinds.length === 0) out.push(piece);
     else
       out.push(
-        ...wrap(piece, kinds, covering.find((h) => h.key !== undefined)?.key),
+        ...wrap([piece], kinds, covering.find((h) => h.key !== undefined)?.key),
       );
   }
   return out;
+}
+
+/**
+ * Decorate an element without entering it — the whole thing is marked, or
+ * none of it is. Returns null when nothing applies, so untouched elements
+ * keep their identity the way untouched text nodes do.
+ *
+ * Links take this route because their rendered contents are not their
+ * source contents: `IssueLink` drops the children and renders the title it
+ * fetched, so a mark painted inside is thrown away with them, and
+ * `MarkdownLink` reads `node.children[0]` as a single text node to decide
+ * whether a bare URL becomes a chip — a mark spliced in there quietly
+ * downgrades the link (T-164). Marking part of a link would say little
+ * anyway: it is one thing to click, and the anchor keeps the exact columns
+ * regardless.
+ */
+function decorateAtomic(
+  element: Element,
+  spans: SpanDecoration[],
+  deletions: DeletionDecoration[],
+  placed: Set<DeletionDecoration>,
+): ElementContent[] | null {
+  const from = element.position?.start.offset;
+  const to = element.position?.end.offset;
+  if (from === undefined || to === undefined) return null;
+
+  const hits = hitsOf(spans, from, to);
+  // Strictly inside: a caret on either edge belongs to the neighbouring
+  // text node, which claims it under the same closed interval as always.
+  const cuts = deletions.filter(
+    (d) => !placed.has(d) && d.at > from && d.at < to,
+  );
+  if (hits.length === 0 && cuts.length === 0) return null;
+
+  const out: ElementContent[] = wrap(
+    [element],
+    kindsOf(hits),
+    hits.find((h) => h.key !== undefined)?.key,
+  );
+  for (const cut of cuts) {
+    placed.add(cut);
+    out.push(inlineDeletion(cut));
+  }
+  return out;
+}
+
+/**
+ * The whole-block class a `<pre>` wears when a mark reaches into it, or
+ * null. pierre owns the inside of a code block (T-31), so a span crossing
+ * one has no text node to land on and the block itself has to say it.
+ * Insertions are already covered: a wholly-new fence gets INS_BLOCK_CLASS
+ * from `blocks`, and word-level diffs only ever map onto prose.
+ */
+function markBlockClass(
+  element: Element,
+  spans: SpanDecoration[],
+): string | null {
+  const from = element.position?.start.offset;
+  const to = element.position?.end.offset;
+  if (from === undefined || to === undefined) return null;
+  const kinds = kindsOf(hitsOf(spans, from, to));
+  // Outermost of NESTING wins, as it would if the two could nest here.
+  if (kinds.includes("comment")) return COMMENT_BLOCK_CLASS;
+  return kinds.includes("draft") ? DRAFT_BLOCK_CLASS : null;
 }
 
 /**
@@ -197,10 +288,13 @@ function decorateText(
  * node to land on is dropped in silence, and the document then reads
  * exactly as it did before — block-level highlight and all.
  *
- * The inside of a code block is never touched. `MarkdownPre` hands its text
- * to pierre's CodeView by concatenating the `<pre>`'s text children (T-31);
- * an injected `<ins>` in there would silently delete code from the display.
- * The `<pre>` itself can still carry a whole-block class.
+ * Two kinds of element are decorated whole instead of entered — code
+ * blocks, whose contents belong to pierre, and links, whose contents
+ * belong to `IssueLink`. `MarkdownPre` hands its text to pierre's CodeView
+ * by concatenating the `<pre>`'s text children (T-31); an injected `<ins>`
+ * in there would silently delete code from the display. Both still carry
+ * an outer class or wrapper, which is how a mark reaching into either
+ * still shows (T-164).
  */
 export function rehypeDecorations(options: Decorations = NO_DECORATIONS) {
   const spans = options.spans;
@@ -226,7 +320,22 @@ export function rehypeDecorations(options: Decorations = NO_DECORATIONS) {
             addClass(child, INS_BLOCK_CLASS);
             added = true;
           }
-          if (child.tagName !== "pre") visit(child, added);
+          if (child.tagName === "a") {
+            const pieces = decorateAtomic(child, spans, inline, placed);
+            if (pieces === null) next.push(child);
+            else {
+              next.push(...pieces);
+              changed = true;
+            }
+            continue;
+          }
+          if (child.tagName === "pre") {
+            const wash = markBlockClass(child, spans);
+            if (wash !== null) addClass(child, wash);
+            next.push(child);
+            continue;
+          }
+          visit(child, added);
           next.push(child);
           continue;
         }

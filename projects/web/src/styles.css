@@ -1046,6 +1046,50 @@ diffs-container {
     );
   }
 
+  /* The same two marks worn by a whole block, for the one element that
+     cannot carry them inside: pierre owns a code block's contents (T-164),
+     so a comment reaching into a fence lands on the fence. Sized like the
+     block layer rather than the mark layer — a 30% amber over a whole
+     listing would bury the syntax colours under it — and specific enough to
+     outrank the .spec-annotated wash, which says less about the same block. */
+  .markdown-body .spec-mark-comment-block,
+  .markdown-body .spec-mark-draft-block {
+    border-left: 3px solid transparent;
+    padding-left: 0.5rem;
+    border-radius: var(--radius-sm);
+  }
+  .markdown-body .spec-mark-comment-block {
+    border-left-color: color-mix(
+      in oklab,
+      var(--color-amber-500) 60%,
+      transparent
+    );
+    background-color: color-mix(
+      in oklab,
+      var(--color-amber-500) 12%,
+      transparent
+    );
+  }
+  .markdown-body .spec-mark-draft-block {
+    border-left-color: color-mix(
+      in oklab,
+      var(--color-indigo-500) 60%,
+      transparent
+    );
+    background-color: color-mix(
+      in oklab,
+      var(--color-indigo-500) 12%,
+      transparent
+    );
+  }
+  .markdown-body .spec-annotated.spec-mark-draft-block {
+    border-left-color: color-mix(
+      in oklab,
+      var(--color-indigo-500) 60%,
+      var(--color-amber-500)
+    );
+  }
+
   /* Code styling stays intentionally shallow: T-31 swaps <pre>/<code>
      for pierre CodeView, and these rules must be trivial to delete. */
   .markdown-body code {
