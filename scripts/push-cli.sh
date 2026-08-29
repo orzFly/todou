@@ -6,7 +6,14 @@
 #
 # The build belongs on a dev machine: the host runs the server and has neither
 # deno nor zstd, and installing them would turn a runtime into a build machine.
-# The whole sequence, host side included, is in docs/deploy.md.
+#
+# The same goes for the checking. A non-interactive ssh lands on a PATH like
+# /usr/local/bin:/usr/bin:/bin:/usr/games, and a per-user toolchain — mise,
+# nvm, asdf — is on none of it; the unit reaches its own node by absolute path.
+# So every step that reads a manifest runs here, and the host is asked for
+# nothing but coreutils. The preflight below states that requirement out loud
+# instead of discovering it halfway through an upload. The whole sequence,
+# host side included, is in docs/deploy.md.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -24,7 +31,9 @@ usage: scripts/push-cli.sh [user@]host [options]
   --force            build and upload even when HEAD is off origin/master, the
                      tree is dirty, or the host already holds this drop
   --dry-run          print every state-changing command instead of running it;
-                     failed preconditions warn only
+                     failed preconditions warn only. The remote preflight is
+                     still carried out for real — it reads nothing and it is
+                     the half a rehearsal is worth having.
 
 TODOU_DEPLOY_PORT (default 8637) is the port --activate polls on the host.
 Remote paths reach a shell as written: keep them free of spaces and glob
@@ -84,6 +93,30 @@ for tool in git pnpm deno zstd node ssh scp; do
     || { echo "error: $tool is not on PATH — build on a dev machine" >&2; exit 1; }
 done
 
+REMOTE_TOOLS="cat find mkdir mv rm wc"
+if [ "$ACTIVATE" = 1 ]; then
+  REMOTE_TOOLS="$REMOTE_TOOLS curl git seq sleep systemctl"
+fi
+PROBE="echo \"path: \$PATH\"
+for c in $REMOTE_TOOLS; do command -v \$c >/dev/null || echo \"missing: \$c\"; done"
+if [ "$ACTIVATE" = 1 ]; then
+  # Reachability, not liveness: a stopped unit still answers. What this catches
+  # is a session bus the non-interactive ssh cannot see, which would make the
+  # restart fail after the drop is already live.
+  PROBE="$PROBE
+systemctl --user show -p Id --value todou >/dev/null 2>&1 \
+  || echo \"missing: a usable 'systemctl --user' (no session bus over ssh?)\""
+fi
+
+echo "+ ssh $HOST <preflight: $REMOTE_TOOLS>"
+REPORT="$(ssh "$HOST" "$PROBE")" \
+  || { echo "error: cannot reach $HOST over ssh" >&2; exit 1; }
+if printf '%s\n' "$REPORT" | grep -q '^missing: '; then
+  echo "error: $HOST cannot run this script's remote half:" >&2
+  printf '%s\n' "$REPORT" | sed 's/^/  /' >&2
+  exit 1
+fi
+
 # build-cli.sh stages the working tree through `git ls-files` and bakes
 # `git describe` into every artifact, so uncommitted edits and a HEAD off
 # origin/master both produce a drop whose version lies about what the host
@@ -109,28 +142,36 @@ STAGING="$WORK/cli-dist"
 REMOTE_MANIFEST="$WORK/remote-manifest.json"
 REMOTE_STAGE="$DATA_DIR/cli-dist.staging.$$"
 
-# The same check the server runs at startup (cli-dist.ts), plus a file count:
-# an artifact still in flight, or one that never arrived, must not reach
-# cli-dist.new — the server refuses to boot on a truncated drop.
-VERIFY_JS='
+# The same check the server makes at startup (cli-dist.ts) — every artifact
+# present at exactly the size the manifest declares — plus the reverse, that
+# nothing else is in the directory. The host contributes one `wc -c` per file
+# and this side does the judging, so an artifact still in flight, or one that
+# never arrived, cannot reach cli-dist.new and take the boot down with it.
+CHECK_DROP_JS='
 const fs = require("node:fs");
-const dir = process.argv[1];
-const m = JSON.parse(fs.readFileSync(dir + "/manifest.json", "utf8"));
-const bad = [];
-for (const a of m.artifacts) {
-  const size = fs.statSync(dir + "/" + a.name + ".zst", { throwIfNoEntry: false })?.size ?? -1;
-  if (size !== a.compressed_size)
-    bad.push(a.name + ".zst is " + size + " bytes, the manifest declares " + a.compressed_size);
+const [manifestPath, manifestBytes, listing] = process.argv.slice(1);
+const m = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+const want = new Map(m.artifacts.map((a) => [a.name + ".zst", a.compressed_size]));
+want.set("manifest.json", Number(manifestBytes));
+const got = new Map();
+for (const line of listing.split("\n")) {
+  const cut = line.indexOf(" ");
+  if (cut > 0) got.set(line.slice(cut + 1), Number(line.slice(0, cut)));
 }
-const n = fs.readdirSync(dir).length;
-if (n !== m.artifacts.length + 1)
-  bad.push(n + " files present, the manifest implies " + (m.artifacts.length + 1));
+const bad = [];
+for (const [name, size] of want) {
+  if (!got.has(name)) bad.push(name + " never arrived");
+  else if (got.get(name) !== size)
+    bad.push(name + " is " + got.get(name) + " bytes, the manifest declares " + size);
+}
+for (const name of got.keys())
+  if (!want.has(name)) bad.push(name + " does not belong to this drop");
 if (bad.length) { console.error("incomplete drop:\n  " + bad.join("\n  ")); process.exit(1); }
 console.log("verified " + m.artifacts.length + " artifacts at version " + m.version);
 '
 
-# Read with `node -p` rather than jq: node is the one interpreter a todou host
-# is guaranteed to have.
+# Applied to manifests read back from the host, always in a local node: the
+# host is asked for the bytes, never for an opinion about them.
 MANIFEST_VERSION_JS='JSON.parse(require("fs").readFileSync(0, "utf8")).version'
 
 REMOTE_SOURCE=""
@@ -144,6 +185,16 @@ fetch_remote_manifest() {
     fi
   done
   return 1
+}
+
+verify_remote_drop() { # <remote dir>
+  echo "+ ssh $HOST 'cd $1 && wc -c *'"
+  local listing
+  listing="$(ssh "$HOST" "cd $(rq "$1") || exit 1
+for f in *; do [ -f \"\$f\" ] || continue; printf '%s %s\n' \$(wc -c <\"\$f\") \"\$f\"; done")" \
+    || return 1
+  node -e "$CHECK_DROP_JS" "$STAGING/manifest.json" \
+    "$(wc -c <"$STAGING/manifest.json")" "$listing"
 }
 
 announce_skip() {
@@ -178,7 +229,9 @@ run ssh "$HOST" "find $(rq "$DATA_DIR") -maxdepth 1 -name 'cli-dist.staging.*' -
 run scp -q "$STAGING"/*.zst "$HOST:$REMOTE_STAGE/"
 run scp -q "$STAGING/manifest.json" "$HOST:$REMOTE_STAGE/"
 
-if ! run ssh "$HOST" "node -e $(rq "$VERIFY_JS") $(rq "$REMOTE_STAGE")"; then
+if [ "$DRY_RUN" = 1 ]; then
+  echo "+ ssh $HOST 'cd $REMOTE_STAGE && wc -c *'   # compared against the manifest here"
+elif ! verify_remote_drop "$REMOTE_STAGE"; then
   run ssh "$HOST" "rm -rf $(rq "$REMOTE_STAGE")"
   fail "the upload to $HOST is incomplete — nothing was staged"
 fi
@@ -195,7 +248,11 @@ fi
 
 # Same sequence deploy.sh runs, for a CLI-only refresh that skips a deploy.
 # cli-dist.old survives until the served version has been confirmed.
-run ssh "$HOST" "node -e $(rq "$VERIFY_JS") $(rq "$DATA_DIR/cli-dist.new")"
+if [ "$DRY_RUN" = 1 ]; then
+  echo "+ ssh $HOST 'cd $DATA_DIR/cli-dist.new && wc -c *'"
+else
+  verify_remote_drop "$DATA_DIR/cli-dist.new"
+fi
 run ssh "$HOST" "d=$(rq "$DATA_DIR"); rm -rf \"\$d/cli-dist.old\"; if [ -d \"\$d/cli-dist\" ]; then mv \"\$d/cli-dist\" \"\$d/cli-dist.old\" || exit 1; fi; mv \"\$d/cli-dist.new\" \"\$d/cli-dist\""
 run ssh "$HOST" "systemctl --user restart todou"
 

@@ -152,10 +152,20 @@ script activates it with one `rename` (see [Updating](#updating)), which
 fixes the order for free: push, then deploy, and the manifest ends up
 describing the commit that is actually running.
 
-`--activate` performs that swap, the restart and the version check from here
-instead, for a CLI refresh with no deploy behind it. `--dry-run` prints the
-whole remote sequence and touches nothing; `--data-dir` / `--checkout` move
-the remote paths, and `TODOU_DEPLOY_HOST` stands in for the argument.
+The host end asks for nothing beyond coreutils — `wc`, `mv`, `find` and
+friends — and a preflight says so before anything is built. That is not
+frugality for its own sake: `ssh host <command>` runs with
+`PATH=/usr/local/bin:/usr/bin:/bin:/usr/games`, and a toolchain installed
+through mise or nvm is on none of it, so the drop's contents are read and
+judged on the machine that packed them.
+
+`--activate` performs the swap, the restart and the version check from here
+instead, for a CLI refresh with no deploy behind it — it additionally wants
+`curl`, `git` and a `systemctl --user` whose session bus the ssh session can
+see, and checks for those too. `--dry-run` prints the whole remote sequence
+without touching anything, but still runs the preflight for real; `--data-dir`
+/ `--checkout` move the remote paths, and `TODOU_DEPLOY_HOST` stands in for
+the argument.
 
 ```toml
 [http]
@@ -285,6 +295,12 @@ follows is the reference for what that script has to contain:
 
 ```bash
 set -e
+# `ssh host ./deploy.sh` runs with PATH=/usr/local/bin:/usr/bin:/bin:/usr/games,
+# which holds neither pnpm nor node when the toolchain came from mise — and the
+# shims are not on a non-interactive login shell's PATH either. Say where they
+# are rather than depending on how the script was invoked.
+PATH="$HOME/.local/share/mise/shims:$PATH"
+
 cd ~/todou
 git pull --ff-only
 pnpm install --frozen-lockfile
