@@ -69,6 +69,30 @@ scratch directory and on the tracker; it never enters the repository, not even a
    Co-Authored-By: GPT 5.3 Codex <noreply@openai.com>
    ```
 
+## Scratch space
+
+- Verification artifacts — e2e checkouts, packed tarballs, screenshots, logs — go in `.tmp/` at the
+  repository root (gitignored), never in `/tmp`. On the dev machines `/tmp` is a RAM-backed tmpfs
+  that nothing cleans between sessions; `.tmp/` disappears with the worktree.
+- Tests do use `/tmp` on purpose (tmpfs is fast), which makes cleanup non-negotiable: every dir a
+  test creates is removed by the same run. In `projects/server`, call `testTmpDir()` from
+  `test/setup.ts` instead of `mkdtempSync` — it registers the dir for `afterAll` removal.
+
+## Reading a test run
+
+- Judge a run by its real exit code — `pnpm test > .tmp/test.log 2>&1; echo $?`. A pipe such as
+  `pnpm test | tail` reports the filter's exit code, always 0, and hides which package failed.
+- A failing run with **zero assertion failures** is the environment, not the code:
+
+| Symptom | Cause | Verify |
+|---|---|---|
+| `Hook/Test timed out in 20000ms`, different files each run | CPU contention | `uptime` |
+| `Worker exited unexpectedly` | Out of memory | `free -h`; `journalctl -k \| grep -i oom` |
+| Mass failures at collection, `ENOSPC` | tmpfs full | `df -h /tmp` |
+
+- After verifying in a real browser, close the tabs and kill the dev servers you started — leaked
+  Chromium profiles and occupied ports are the other agents' next environment failure.
+
 ## Navigation is links
 
 Anything whose job is to take the user somewhere else must be a real link — `<a href>`, or the

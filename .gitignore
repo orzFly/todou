@@ -3,6 +3,7 @@
 /.env
 /.env.*
 /.research/
+/.tmp/
 /.opencode/
 node_modules/
 dist/
