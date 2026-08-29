@@ -102,6 +102,20 @@ function handlePostRender(container: HTMLElement): void {
   }
 }
 
+/**
+ * pierre defaults to "shiki-js", which transpiles the TextMate grammars'
+ * Oniguruma patterns into native RegExp through oniguruma-to-es. That
+ * transpiler is a recursive-descent pass over patterns, and the TypeScript
+ * grammar's giant lookaheads overflow SpiderMonkey's much shallower stack:
+ * Firefox rendered `too much recursion` in place of every ```ts block
+ * (T-177). The wasm build is real Oniguruma and never runs that pass.
+ *
+ * pierre's highlighter is a module singleton whose engine is fixed by
+ * whichever surface creates it first, so every options object in the app has
+ * to name the same one — snippets, files, and the revision diff alike.
+ */
+export const PIERRE_HIGHLIGHTER = "shiki-wasm" as const;
+
 // Module-scope per the library's props-stability guidance — now one object
 // per theme rather than one overall, so a surface only re-renders when the
 // theme it is rendered under actually changes.
@@ -117,6 +131,7 @@ function snippetOptions(theme: SyntaxTheme): CodeViewProps["options"] {
     disableFileHeader: true,
     disableLineNumbers: true,
     overflow: "wrap",
+    preferredHighlighter: PIERRE_HIGHLIGHTER,
     onPostRender: handlePostRender,
   } as const;
   SNIPPET_OPTIONS.set(theme, options);
@@ -130,6 +145,7 @@ function fileOptions(theme: SyntaxTheme): CodeViewProps["options"] {
     theme,
     themeType: PIERRE_THEME_TYPE,
     disableFileHeader: true,
+    preferredHighlighter: PIERRE_HIGHLIGHTER,
     onPostRender: handlePostRender,
   } as const;
   FILE_OPTIONS.set(theme, options);

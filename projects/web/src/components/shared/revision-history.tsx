@@ -4,6 +4,7 @@ import { Suspense, useMemo, useState } from "react";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import {
   LazyMultiFileDiff,
+  PIERRE_HIGHLIGHTER,
   PIERRE_THEME_TYPE,
   useSyntaxTheme,
 } from "@/components/shared/pierre.tsx";
@@ -139,6 +140,7 @@ function RevisionDiff({
       theme: syntaxTheme,
       themeType: PIERRE_THEME_TYPE,
       diffStyle: "unified" as const,
+      preferredHighlighter: PIERRE_HIGHLIGHTER,
     }),
     [syntaxTheme],
   );

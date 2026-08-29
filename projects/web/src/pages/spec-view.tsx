@@ -37,6 +37,7 @@ import { useRefPrefix } from "@/api/references.ts";
 import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
 import { SpecStatusBadge } from "@/components/issue/spec-entry.tsx";
 import {
+  PIERRE_HIGHLIGHTER,
   PIERRE_THEME_TYPE,
   useSyntaxTheme,
 } from "@/components/shared/pierre.tsx";
@@ -927,6 +928,7 @@ function AnnotatedFileDiff({
       themeType: PIERRE_THEME_TYPE,
       diffStyle: "unified" as const,
       overflow: wrap ? ("wrap" as const) : ("scroll" as const),
+      preferredHighlighter: PIERRE_HIGHLIGHTER,
       enableLineSelection: true,
       onLineSelectionEnd: (range: SelectedLineRange | null) => {
         if (!range) return;
