@@ -29,10 +29,37 @@ RUN [ -z "$TODOU_BUILD_VERSION" ] || printf \
 # from a stage that could chown it (distroless nonroot = uid 65532).
 RUN mkdir -p /data && chown 65532:65532 /data
 
+# The CLI builds the image hands out over /api/cli (T-146). Both arch runners
+# build the whole set — the artifacts a deployment serves have nothing to do
+# with the platform it runs on, and a deployment that could only serve its own
+# platform would be useless to everyone else's laptop.
+FROM node:24-trixie-slim AS cli-build
+RUN npm install -g pnpm@11
+# deno publishes a multi-arch bin image, so this resolves to the builder's own
+# platform; the four compile targets are cross-built from there.
+COPY --from=denoland/deno:bin-2.8.3 /deno /usr/local/bin/deno
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends zstd ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY . .
+# Dev dependencies included, unlike server-deps: build-cli.sh bundles
+# todou.cjs with the root esbuild. The prod-only tree `deno compile` needs is
+# staged separately by the script, so no dev package reaches an artifact.
+RUN CI=true pnpm install --frozen-lockfile --filter '@todou/cli...'
+# Read by build-cli.sh, which injects it into build-info.ts in its own staged
+# copy — same mechanism, same file as the server stage's printf above.
+ARG TODOU_BUILD_VERSION=""
+# `copy` staging because the context carries no .git to list; .dockerignore
+# has already made it equivalent to the tracked tree.
+RUN scripts/build-cli.sh --stage-mode copy \
+ && scripts/pack-cli.sh dist /cli-dist
+
 FROM gcr.io/distroless/nodejs24-debian13:nonroot
 COPY --from=server-deps --chown=65532:65532 /data /data
 COPY --from=server-deps /app /app
 COPY --from=web-build /app/projects/web/dist /app/projects/web/dist
+COPY --from=cli-build /cli-dist /app/cli-dist
 # There is no shell to interpret a wrapper, but the kernel execs shebang
 # interpreters directly, so an absolute-path shebang gives the image a real
 # `todou-server` command. argv stays [node, wrapper, ...args] — the same
@@ -44,7 +71,8 @@ EOF
 ENV NODE_ENV=production \
     TODOU_DATABASE_SYSTEM=pglite:///data/system \
     TODOU_STORAGE_PATH=/data/attachments \
-    TODOU_HTTP_STATIC_DIR=/app/projects/web/dist
+    TODOU_HTTP_STATIC_DIR=/app/projects/web/dist \
+    TODOU_HTTP_CLI_DIST_DIR=/app/cli-dist
 # WORKDIR /data keeps relative database/storage paths — and the optional
 # ./todou.toml — inside the volume; env vars still win over the file.
 WORKDIR /data

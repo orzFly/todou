@@ -8,6 +8,21 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 OUT=dist
 STAGE="$OUT/.stage"
 
+# `git` stages through `git ls-files`; `copy` copies the working tree instead,
+# for build contexts that carry no .git — the docker image build (T-146).
+STAGE_MODE=git
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --stage-mode) STAGE_MODE="${2-}"; shift $(($# > 1 ? 2 : 1)) ;;
+    --stage-mode=*) STAGE_MODE="${1#*=}"; shift ;;
+    *) echo "usage: build-cli.sh [--stage-mode git|copy]" >&2; exit 2 ;;
+  esac
+done
+case "$STAGE_MODE" in
+  git | copy) ;;
+  *) echo "build-cli.sh: --stage-mode must be git or copy" >&2; exit 2 ;;
+esac
+
 # Plain string pairs rather than `declare -A`: associative arrays need bash 4,
 # and macOS still ships bash 3.2.
 TARGETS="
@@ -19,8 +34,12 @@ windows-amd64:x86_64-pc-windows-msvc
 
 # Computed before anything else touches the tree; --dirty reflects the same
 # working-tree content `git ls-files` stages below, so the suffix is truthful
-# about what actually enters the artifacts.
-VERSION="$(git describe --tags --always --dirty)"
+# about what actually enters the artifacts. TODOU_BUILD_VERSION wins, for
+# builds where git cannot answer — the docker stage has no .git and no git.
+VERSION="${TODOU_BUILD_VERSION:-}"
+if [ -z "$VERSION" ]; then
+  VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo unknown)"
+fi
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
@@ -35,9 +54,19 @@ trap 'rm -rf "$STAGE"' EXIT
 # `git ls-files` copies tracked files with their current working-tree content
 # (so uncommitted edits are built) while leaving node_modules, dist/ and data/
 # behind. Brand-new untracked files are not picked up — `git add` them first.
-echo "==> staging a prod-only tree in $STAGE"
+echo "==> staging a prod-only tree in $STAGE ($STAGE_MODE mode)"
 mkdir -p "$STAGE"
-git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$STAGE"
+if [ "$STAGE_MODE" = git ]; then
+  git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$STAGE"
+else
+  # Nothing to list without .git: docker's `COPY . .` has already applied
+  # .dockerignore, whose stated purpose is to make the context equal the
+  # tracked tree. node_modules and dist are excluded because the image build
+  # creates them after that copy; .git because a copy-mode run outside docker
+  # would otherwise duplicate the whole object store for nothing.
+  tar --exclude ./node_modules --exclude ./dist --exclude ./.git -cf - . \
+    | tar -xf - -C "$STAGE"
+fi
 (cd "$STAGE" && CI=true pnpm install --prod --frozen-lockfile --filter '@todou/cli...')
 
 # Overwriting the tracked placeholder in the staged copy — never the working
