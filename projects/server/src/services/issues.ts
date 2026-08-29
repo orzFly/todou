@@ -47,12 +47,7 @@ import {
   NotFoundError,
   ValidationFailedError,
 } from "../errors.ts";
-import {
-  accessibleProjectSlugs,
-  type ProjectRow,
-  requireProject,
-  routeInfoOf,
-} from "./access.ts";
+import { type ProjectRow, requireProject, routeInfoOf } from "./access.ts";
 import {
   analyzeReferences,
   type CrossTarget,
