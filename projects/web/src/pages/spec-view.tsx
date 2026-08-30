@@ -27,11 +27,13 @@ import {
   ArrowDownIcon,
   ArrowLeftIcon,
   ArrowUpIcon,
+  ChevronDownIcon,
   FileTextIcon,
   WrapTextIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { issueQuery } from "@/api/issues.ts";
 import { api } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
@@ -51,11 +53,17 @@ import {
   type ComposerStaging,
   SpecComposer,
 } from "@/components/spec/spec-composer.tsx";
+import { SpecVersionPicker } from "@/components/spec/spec-version-picker.tsx";
 import {
   DiffstatBar,
   StatNumbers,
 } from "@/components/timeline/spec-version-card.tsx";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { changedLineRanges } from "@/lib/spec-changes.ts";
 import {
   type SpecReviewDraft,
@@ -66,10 +74,14 @@ import {
   computeVersionStats,
   type SpecFileStat,
 } from "@/lib/spec-version-stats.ts";
+import { useElementHeight, useHeaderHeight } from "@/lib/use-header-height.ts";
 import { cn } from "@/lib/utils.ts";
 
 /** What ↑↓ stops on: both kinds of "changed since the baseline" mark (T-158). */
 const CHANGED_SELECTOR = ".spec-changed, .spec-ins-block";
+
+/** One toolbar row, until the measurement lands. */
+const TOOLBAR_FALLBACK_HEIGHT = 48;
 
 export function SpecViewPage() {
   const { slug, number: numberParam } = useParams({
@@ -167,8 +179,19 @@ function SpecViewBody({
   const [finishOpen, setFinishOpen] = useState(false);
   const [showChanges, setShowChanges] = useState(true);
   const [wrap, setWrap] = useState(readDiffWrap);
+  const [filesOpen, setFilesOpen] = useState(false);
   const mainRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef(0);
+
+  // The sticky stack: shell header, then this page's toolbar. Both heights
+  // are runtime values — the header grows a nav row below sm, the toolbar
+  // wraps to two lines when its buttons no longer fit (T-178).
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const headerHeight = useHeaderHeight();
+  const toolbarHeight = useElementHeight(toolbarRef, TOOLBAR_FALLBACK_HEIGHT);
+  const stickyTop = headerHeight + toolbarHeight;
+
+  const issue = useQuery(issueQuery(slug, issueNumber));
 
   /** Every anchor gesture — selection, line drag, "Comment file". */
   const stage = (next: ComposerStaging) => {
@@ -422,48 +445,41 @@ function SpecViewBody({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button asChild size="sm" variant="ghost">
+      {/* Sticky rather than in-flow: version switching, the change toggles
+          and Finish review are all mid-read actions, and a document long
+          enough to need them is long enough to have scrolled them away
+          (T-178). Same surface as the issue page's floating title bar. */}
+      <div
+        ref={toolbarRef}
+        style={{ top: headerHeight }}
+        className="sticky z-30 -mx-2 flex flex-wrap items-center gap-2 border-b bg-background/95 px-2 py-2 backdrop-blur"
+      >
+        <Button asChild size="sm" variant="ghost" className="shrink-0">
           <Link to="/projects/$slug/issues/$number" params={params}>
             <ArrowLeftIcon className="size-4" />
             {formatRef(refPrefix, issueNumber)}
           </Link>
         </Button>
-        <span className="font-semibold">Spec</span>
-        <SpecStatusBadge status={spec.review_status} />
-        <span className="mx-2 h-4 w-px bg-border" aria-hidden />
-        {spec.versions.map((v) => (
-          <Link
-            key={v.number}
-            to="/projects/$slug/issues/$number/spec"
-            params={params}
-            search={{ file: search.file, v: v.number }}
-            title={v.message ?? undefined}
-            className={cn(
-              "rounded-full border px-2.5 py-0.5 font-mono text-xs",
-              v.number === version && compare === undefined
-                ? "border-foreground bg-foreground text-background"
-                : "text-muted-foreground hover:border-foreground/50",
-            )}
+        {issue.data !== undefined && (
+          // basis-0, or the untruncated title would be the flex base size
+          // and push every button onto a second row before it ever shrinks.
+          <span
+            title={issue.data.title}
+            className="hidden min-w-0 flex-1 basis-0 truncate text-sm text-muted-foreground lg:block"
           >
-            v{v.number}
-          </Link>
-        ))}
-        {version > 1 && (
-          <Link
-            to="/projects/$slug/issues/$number/spec"
-            params={params}
-            search={{ file: search.file, v: version, compare: version - 1 }}
-            className={cn(
-              "rounded-full border px-2.5 py-0.5 text-xs",
-              compare !== undefined
-                ? "border-foreground bg-foreground text-background"
-                : "text-muted-foreground hover:border-foreground/50",
-            )}
-          >
-            diff v{version - 1}…v{version}
-          </Link>
+            {issue.data.title}
+          </span>
         )}
+        <SpecStatusBadge status={spec.review_status} />
+        <span className="mx-1 h-4 w-px shrink-0 bg-border" aria-hidden />
+        <SpecVersionPicker
+          slug={slug}
+          issueNumber={issueNumber}
+          versions={spec.versions}
+          version={version}
+          compare={compare}
+          file={search.file}
+        />
         {compare !== undefined && (
           <button
             type="button"
@@ -527,10 +543,41 @@ function SpecViewBody({
           </>
         )}
         <span className="ml-auto" />
+        {/* Below lg the file rail is gone from the flow; this is where it
+            went. Compare mode has no rail to fold away. */}
+        {compare === undefined && (
+          <Popover open={filesOpen} onOpenChange={setFilesOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                size="sm"
+                variant="outline"
+                className="shrink-0 lg:hidden"
+              >
+                Files ({files.data.files.length})
+                <ChevronDownIcon className="size-3.5" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              className="max-h-[55vh] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto"
+            >
+              <SpecFileList
+                files={files.data.files}
+                selectedPath={selectedPath}
+                params={params}
+                v={search.v}
+                unresolvedByPath={unresolvedByPath}
+                sidebarStats={sidebarStats}
+                onNavigate={() => setFilesOpen(false)}
+              />
+            </PopoverContent>
+          </Popover>
+        )}
         {compare === undefined && selected !== undefined && (
           <Button
             size="sm"
             variant="outline"
+            className="shrink-0"
             onClick={() =>
               stage({
                 path: selected.path,
@@ -563,51 +610,33 @@ function SpecViewBody({
           onStage={stage}
           focusPath={search.file}
           wrap={wrap}
+          stickyTop={stickyTop}
         />
       ) : (
-        <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
-          <aside className="space-y-1">
-            {files.data.files.map((file) => {
-              const unresolved = unresolvedByPath.get(file.path) ?? 0;
-              return (
-                <Link
-                  key={file.path}
-                  to="/projects/$slug/issues/$number/spec"
-                  params={params}
-                  search={{ file: file.path, v: search.v }}
-                  className={cn(
-                    "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm",
-                    file.path === selectedPath
-                      ? "bg-muted font-medium"
-                      : "text-muted-foreground hover:bg-muted/50",
-                  )}
-                >
-                  <FileTextIcon className="size-4 shrink-0" />
-                  <span className="truncate font-mono text-xs">
-                    {file.path}
-                  </span>
-                  <span className="ml-auto inline-flex shrink-0 items-center gap-1.5">
-                    {unresolved > 0 && (
-                      <span className="rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 text-xs text-amber-700 dark:text-amber-400">
-                        {unresolved}
-                      </span>
-                    )}
-                    {(() => {
-                      const stat = sidebarStats.get(file.path);
-                      if (!stat) return null;
-                      return (
-                        <span className="inline-flex items-center gap-1.5 text-[11px]">
-                          <StatNumbers stat={stat} />
-                          <DiffstatBar stat={stat} />
-                        </span>
-                      );
-                    })()}
-                  </span>
-                </Link>
-              );
-            })}
+        <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
+          {/* self-start, or the grid would stretch the rail to the row's
+              height and leave sticky nothing to travel through. */}
+          <aside
+            style={{
+              top: stickyTop + 16,
+              maxHeight: `calc(100vh - ${stickyTop + 32}px)`,
+            }}
+            className="hidden self-start space-y-1 overflow-y-auto overscroll-contain lg:sticky lg:block"
+          >
+            <SpecFileList
+              files={files.data.files}
+              selectedPath={selectedPath}
+              params={params}
+              v={search.v}
+              unresolvedByPath={unresolvedByPath}
+              sidebarStats={sidebarStats}
+            />
           </aside>
-          <main className="min-w-0 space-y-4" ref={mainRef}>
+          <main
+            className="min-w-0 space-y-4"
+            style={{ scrollMarginTop: stickyTop + 8 }}
+            ref={mainRef}
+          >
             {(fileLevel.length > 0 || fileLevelDrafts.length > 0) && (
               <div className="space-y-2 rounded-lg border px-4 py-3">
                 <h3 className="text-xs font-medium text-muted-foreground uppercase">
@@ -761,6 +790,84 @@ function SpecViewBody({
   );
 }
 
+/**
+ * The file rail, rendered twice: as the sticky aside from lg up, and inside
+ * the toolbar's Files popover below it (T-178).
+ */
+function SpecFileList({
+  files,
+  selectedPath,
+  params,
+  v,
+  unresolvedByPath,
+  sidebarStats,
+  onNavigate,
+}: {
+  files: SpecFile[];
+  selectedPath?: string;
+  params: { slug: string; number: string };
+  /** The `v` search param as it stands, so switching file keeps the version. */
+  v?: number;
+  unresolvedByPath: Map<string, number>;
+  sidebarStats: Map<string, SpecFileStat>;
+  onNavigate?: () => void;
+}) {
+  return (
+    <div className="space-y-1">
+      {files.map((file) => {
+        const unresolved = unresolvedByPath.get(file.path) ?? 0;
+        return (
+          <Link
+            key={file.path}
+            to="/projects/$slug/issues/$number/spec"
+            params={params}
+            search={{ file: file.path, v }}
+            onClick={(event) => {
+              // A modified click opens a background tab; tearing the
+              // popover down under the reader's cursor would be wrong.
+              if (
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              ) {
+                return;
+              }
+              onNavigate?.();
+            }}
+            className={cn(
+              "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm",
+              file.path === selectedPath
+                ? "bg-muted font-medium"
+                : "text-muted-foreground hover:bg-muted/50",
+            )}
+          >
+            <FileTextIcon className="size-4 shrink-0" />
+            <span className="truncate font-mono text-xs">{file.path}</span>
+            <span className="ml-auto inline-flex shrink-0 items-center gap-1.5">
+              {unresolved > 0 && (
+                <span className="rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 text-xs text-amber-700 dark:text-amber-400">
+                  {unresolved}
+                </span>
+              )}
+              {(() => {
+                const stat = sidebarStats.get(file.path);
+                if (!stat) return null;
+                return (
+                  <span className="inline-flex items-center gap-1.5 text-[11px]">
+                    <StatNumbers stat={stat} />
+                    <DiffstatBar stat={stat} />
+                  </span>
+                );
+              })()}
+            </span>
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
 function UnplacedComment({
   item,
   onResolve,
@@ -823,6 +930,7 @@ function SpecDiff({
   onStage,
   focusPath,
   wrap,
+  stickyTop,
 }: {
   slug: string;
   issueNumber: number;
@@ -834,6 +942,8 @@ function SpecDiff({
   /** Scroll this file's diff into view — the version card's per-file link (T-59). */
   focusPath?: string;
   wrap: boolean;
+  /** Height of the shell header plus the page toolbar (T-178). */
+  stickyTop: number;
 }) {
   const from = useSuspenseQuery(specFilesQuery(slug, issueNumber, fromVersion));
   const focusRef = useRef<HTMLDivElement>(null);
@@ -876,7 +986,7 @@ function SpecDiff({
         <div
           key={pair.path}
           ref={pair.path === focusPath ? focusRef : undefined}
-          className="scroll-mt-4"
+          style={{ scrollMarginTop: stickyTop + 8 }}
         >
           <AnnotatedFileDiff
             path={pair.path}
@@ -887,6 +997,7 @@ function SpecDiff({
             comments={comments.filter((c) => c.anchor.path === pair.path)}
             onStage={onStage}
             wrap={wrap}
+            stickyTop={stickyTop}
           />
         </div>
       ))}
@@ -903,6 +1014,7 @@ function AnnotatedFileDiff({
   comments,
   onStage,
   wrap,
+  stickyTop,
 }: {
   path: string;
   oldBody: string;
@@ -912,6 +1024,7 @@ function AnnotatedFileDiff({
   comments: SpecCommentItem[];
   onStage: (staging: ComposerStaging) => void;
   wrap: boolean;
+  stickyTop: number;
 }) {
   const oldFile = useMemo(
     () => ({ name: path, contents: oldBody }),
@@ -981,8 +1094,15 @@ function AnnotatedFileDiff({
   );
 
   return (
-    <div className="overflow-hidden rounded-lg border">
-      <div className="border-b bg-muted/40 px-3 py-1.5 font-mono text-xs">
+    // `clip` rather than `hidden`: both round the corners the same way, but
+    // an `overflow: hidden` ancestor becomes the scrollport its sticky
+    // descendants are measured against, which pins the path header to the
+    // top of the diff instead of the viewport (T-178).
+    <div className="overflow-clip rounded-lg border">
+      <div
+        style={{ top: stickyTop }}
+        className="sticky z-20 border-b bg-background/95 px-3 py-1.5 font-mono text-xs backdrop-blur"
+      >
         {path}
       </div>
       <MultiFileDiff<SpecCommentItem>

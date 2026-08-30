@@ -76,10 +76,12 @@ function mockSpec() {
   );
   const comments: SpecComments = { current_version: 2, items: [] };
   vi.spyOn(api, "getSpecComments").mockResolvedValue(comments);
+  // A real ReferenceConfig, not a cast: the annotated document resolves the
+  // ref prefix as of the version's date, which reads `format.history`.
   vi.spyOn(api, "getReferenceConfig").mockResolvedValue({
-    format: { prefix: "T-" },
-    autolink: [],
-  } as never);
+    format: { prefix: "T-", history: [] },
+    autolinks: [],
+  });
 }
 
 /** The spec page under a router mirroring the real route ids it reads from. */
@@ -137,9 +139,7 @@ describe("spec diff wrap toggle (T-143)", () => {
   it("is absent outside compare mode", async () => {
     mockSpec();
     const view = renderSpecView("?v=2");
-    await waitFor(() => {
-      expect(view.container.textContent).toContain("Spec");
-    });
+    await view.findByRole("button", { name: /finish review/i });
     expect(view.queryByRole("button", { name: /wrap/i })).toBeNull();
   });
 

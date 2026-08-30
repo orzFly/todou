@@ -2,10 +2,8 @@ import { formatRef, type Issue } from "@todou/shared";
 import { type RefObject, useEffect, useState } from "react";
 import { useRefPlacement } from "@/api/prefs.ts";
 import { useRefPrefix } from "@/api/references.ts";
+import { useHeaderHeight } from "@/lib/use-header-height.ts";
 import { cn } from "@/lib/utils";
-
-/** The shell header's desktop height, until the measurement lands. */
-const FALLBACK_HEADER_HEIGHT = 56;
 
 /**
  * The issue title, floating below the shell header once the real title
@@ -23,27 +21,8 @@ export function FloatingTitleBar({
 }) {
   const refPrefix = useRefPrefix(slug);
   const refLeads = useRefPlacement("detail") === "before";
-  const [headerHeight, setHeaderHeight] = useState(FALLBACK_HEADER_HEIGHT);
+  const headerHeight = useHeaderHeight();
   const [shown, setShown] = useState(false);
-
-  // The shell header carries a second row of nav below sm, so its height is a
-  // runtime value no CSS offset can name — measure it, as the issue list's
-  // group headers do.
-  useEffect(() => {
-    const appbar = document.querySelector("header");
-    if (appbar === null) return;
-    const measure = () =>
-      setHeaderHeight(appbar.getBoundingClientRect().height);
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    window.addEventListener("resize", measure);
-    const observer = new ResizeObserver(measure);
-    observer.observe(appbar);
-    return () => {
-      window.removeEventListener("resize", measure);
-      observer.disconnect();
-    };
-  }, []);
 
   useEffect(() => {
     const target = watchTarget.current;
