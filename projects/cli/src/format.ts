@@ -60,6 +60,23 @@ export function personName(user: {
   return user.display_name?.trim() || user.login;
 }
 
+/** The noun a count takes: `plural(1, "comment")` is "comment". */
+export function plural(n: number, singular: string, many?: string): string {
+  return n === 1 ? singular : (many ?? `${singular}s`);
+}
+
+/**
+ * What a `--last` slice left behind. Shared so the commands that trim a
+ * timeline cannot end up wording the same omission three ways.
+ */
+export function elision(
+  omitted: number,
+  singular: string,
+  many?: string,
+): string {
+  return `… ${omitted} earlier ${plural(omitted, singular, many)}`;
+}
+
 /**
  * A body folded onto one line: runs of whitespace (newlines included)
  * become single spaces, then it is cut to `max`. Counted in code points,

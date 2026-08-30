@@ -6,12 +6,19 @@ import {
   AttachDownloadCommand,
   AttachListCommand,
 } from "./attach.ts";
-import { CommentAddCommand, CommentEditCommand } from "./comment.ts";
+import {
+  CommentAddCommand,
+  CommentDeleteCommand,
+  CommentEditCommand,
+  CommentListCommand,
+  CommentViewCommand,
+} from "./comment.ts";
 import {
   IssueCloseCommand,
   IssueCreateCommand,
   IssueDeleteCommand,
   IssueEditCommand,
+  IssueEventsCommand,
   IssueListCommand,
   IssueRestoreCommand,
   IssueViewCommand,
@@ -64,13 +71,17 @@ export const commands: Array<CommandClass<CliContext>> = [
   IssueListCommand,
   IssueCreateCommand,
   IssueViewCommand,
+  IssueEventsCommand,
   IssueWatchCommand,
   IssueEditCommand,
   IssueCloseCommand,
   IssueDeleteCommand,
   IssueRestoreCommand,
   CommentAddCommand,
+  CommentListCommand,
+  CommentViewCommand,
   CommentEditCommand,
+  CommentDeleteCommand,
   QuestionListCommand,
   QuestionWaitCommand,
   QuestionAnswerCommand,

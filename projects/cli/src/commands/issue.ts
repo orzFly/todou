@@ -17,6 +17,7 @@ import { cursorRecord, ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
 import {
+  elision,
   makePainter,
   type Painter,
   personName,
@@ -306,6 +307,111 @@ export class IssueViewCommand extends ProjectCommand {
     } catch {
       // Markers refresh on the next successful view.
     }
+  }
+}
+
+export class IssueEventsCommand extends ProjectCommand {
+  static paths = [["issue", "events"]];
+  static usage = Command.Usage({
+    description: "Show an issue's events — the timeline minus the comments",
+    details: `
+      \`<number>\` also accepts \`<project>/<number>\` or a full issue URL.
+
+      The audit half of a card: who moved the status, who assigned whom,
+      which spec version landed. Every line starts with \`event <id> ·\`,
+      the id \`#event-<id>\` links to — spelled out because comment ids and
+      event ids are separate sequences and a bare number would be
+      ambiguous. The other half is \`comment list\`.
+
+      \`--type\` takes \`issue watch\`'s spellings and filters server-side,
+      \`comment\` included when that is what you want. Without it the drain
+      is unfiltered and the comments are dropped here instead — asking the
+      server for every event type by name would silently miss whichever
+      type it learned after this CLI was built.
+
+      Like \`issue view --brief\`, this **does not advance the read
+      marker**: half a card is not a read card. \`--json\` emits one
+      document — \`{events, next_cursor, ref_format}\` — not the NDJSON a
+      watch streams, because this read is bounded.
+    `,
+    examples: [
+      ["Who touched this card, and when", "$0 issue events 16"],
+      ["Only the links in", "$0 issue events 16 --type referenced"],
+      ["The last thing that happened", "$0 issue events 16 --last 1"],
+    ],
+  });
+
+  number = Option.String({ required: true });
+  types = Option.String("--type", {
+    description: `Comma-separated filter: ${TimelineFilterType.options.join(", ")}`,
+  });
+  last = Option.String("--last", {
+    description: "Keep only the newest N events",
+  });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const { project, number } = this.resolveIssueRef(this.number);
+    const last =
+      this.last === undefined
+        ? undefined
+        : parsePositiveInt(this.last, "--last");
+    const types =
+      this.types === undefined ? undefined : normalizeTypes(this.types);
+
+    const { items, cursor } = await drainTimeline(client, project, number, {
+      types,
+    });
+    // An explicit --type is the caller's own list and is left alone; the
+    // default drops exactly what `comment list` covers.
+    const matched =
+      types === undefined ? items.filter((i) => i.type !== "comment") : items;
+    const events = last === undefined ? matched : matched.slice(-last);
+    const omitted = matched.length - events.length;
+
+    const refPrefix = await fetchRefPrefix(client, project);
+    const paint = makePainter(this.context.stdout, this.context.env);
+    this.output(
+      {
+        events,
+        next_cursor: cursor ?? null,
+        ref_format: refFormat(refPrefix),
+      },
+      () =>
+        [
+          ...(events.length === 0
+            ? [types === undefined ? "no events" : "nothing matches --type"]
+            : []),
+          ...(omitted > 0 ? [paint("dim", elision(omitted, "event"))] : []),
+          // "event 3", not a bare "3": comment ids and event ids are
+          // separate sequences that overlap, so an unqualified number reads
+          // as whichever kind the reader happened to expect. A `--type
+          // comment` entry keeps the comment renderer's own head line, for
+          // the same reason and in the same spelling.
+          ...events.map((item) =>
+            item.type === "comment"
+              ? renderTimelineItem(item, paint, {
+                  issueNumber: number,
+                  refPrefix,
+                  showId: true,
+                })
+              : `${paint("dim", `event ${item.id} ·`)} ${renderTimelineItem(
+                  item,
+                  paint,
+                  { issueNumber: number, refPrefix },
+                )}`,
+          ),
+          ...(cursor === undefined
+            ? []
+            : [
+                paint(
+                  "dim",
+                  `cursor: ${cursor} (issue watch --since <cursor>)`,
+                ),
+              ]),
+        ].join("\n"),
+    );
+    // No markIssueRead: like `--brief`, a slice that hides every comment
+    // cannot be what marks the card read (T-183).
   }
 }
 
@@ -945,9 +1051,7 @@ function renderIssue(
     lines.push("", paint("dim", "── timeline ──"));
     const omitted = sections.omitted ?? 0;
     if (omitted > 0) {
-      lines.push(
-        paint("dim", `… ${omitted} earlier entr${omitted === 1 ? "y" : "ies"}`),
-      );
+      lines.push(paint("dim", elision(omitted, "entry", "entries")));
     }
     for (const item of timeline) {
       lines.push(
@@ -968,9 +1072,17 @@ function renderIssue(
 }
 
 /** Where the item is being shown from, for refs and command hints. */
-type TimelineRenderContext = {
+export type TimelineRenderContext = {
   issueNumber: number;
   refPrefix: string | null;
+  /**
+   * Head a comment block with `comment <id> ·`. Off everywhere the block
+   * sits inside a card the reader is looking at whole — there the id is
+   * noise. `comment list`/`view` turn it on because handing the id back is
+   * what they exist for: it is `comment edit/delete/view`'s argument and
+   * the `#comment-<id>` permalink (T-183).
+   */
+  showId?: boolean;
 };
 
 export function renderTimelineItem(
@@ -985,6 +1097,7 @@ export function renderTimelineItem(
       .split("\n")
       .map((line) => `  ${line}`)
       .join("\n");
+    const id = ctx.showId ? `${paint("dim", `comment ${item.id} ·`)} ` : "";
     const edited = item.edited_at ? " (edited)" : "";
     const questions =
       item.component?.type === "questions"
@@ -1001,9 +1114,9 @@ export function renderTimelineItem(
         .split("\n")
         .map((line) => paint("dim", `  > ${line}`))
         .join("\n");
-      return `${paint("cyan", personName(item.author))} commented on ${anchor.path}:${lines} (v${anchor.version}, ${resolved})${edited} ${when}:\n${quote}\n${body}`;
+      return `${id}${paint("cyan", personName(item.author))} commented on ${anchor.path}:${lines} (v${anchor.version}, ${resolved})${edited} ${when}:\n${quote}\n${body}`;
     }
-    return `${paint("cyan", personName(item.author))} commented${edited} ${when}:\n${body}${questions}`;
+    return `${id}${paint("cyan", personName(item.author))} commented${edited} ${when}:\n${body}${questions}`;
   }
   const answered = item.type === "event" ? decodeAnswerEvent(item) : null;
   if (answered !== null) {

@@ -1,12 +1,41 @@
-import type { TodouClient } from "@todou/shared";
+import type { TimelineComment, TodouClient } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
+import { elision, makePainter, personName, summarize } from "../format.ts";
 import { parsePositiveInt } from "../parse.ts";
+import { confirm } from "../prompt.ts";
 import { readQuestionsInput } from "../questions.ts";
-import { withIssueRef } from "../refs.ts";
-import { fetchRefPrefix } from "../resolve.ts";
+import { refFormat, withIssueRef } from "../refs.ts";
+import { fetchRefPrefix, resolveAssignees } from "../resolve.ts";
+import { drainTimeline, renderTimelineItem } from "./issue.ts";
+
+function isTTY(stream: unknown): boolean {
+  return Boolean((stream as { isTTY?: boolean })?.isTTY);
+}
+
+/** A comment id, bare or as the web spells it in a permalink fragment. */
+const COMMENT_ANCHOR = /^#?comment-(\d{1,9})$/;
+
+/**
+ * `#comment-123` is what a reader copies out of the address bar, so it has
+ * to paste back in wherever the bare number goes (T-183).
+ */
+function parseCommentId(raw: string): number {
+  return parsePositiveInt(COMMENT_ANCHOR.exec(raw)?.[1] ?? raw, "comment id");
+}
+
+/** The comment a whole permalink points at, fragment included. */
+function permalinkCommentId(ref: string): number | undefined {
+  if (!/^https?:\/\//i.test(ref)) return undefined;
+  try {
+    const id = COMMENT_ANCHOR.exec(new URL(ref).hash)?.[1];
+    return id === undefined ? undefined : Number(id);
+  } catch {
+    return undefined;
+  }
+}
 
 export class CommentAddCommand extends ProjectCommand {
   static paths = [
@@ -57,7 +86,7 @@ export class CommentAddCommand extends ProjectCommand {
       body: this.body,
       bodyFile: this.bodyFile,
       stdin: this.context.stdin,
-      isTTY: Boolean((this.context.stdin as { isTTY?: boolean }).isTTY),
+      isTTY: isTTY(this.context.stdin),
       env: this.context.env,
     });
     const component =
@@ -86,6 +115,166 @@ export class CommentAddCommand extends ProjectCommand {
   }
 }
 
+export class CommentListCommand extends ProjectCommand {
+  static paths = [["comment", "list"]];
+  static usage = Command.Usage({
+    description: "List an issue's comments in full, each with its id",
+    details: `
+      \`<number>\` also accepts \`<project>/<number>\` or a full issue URL.
+
+      The comment half of the timeline, printed whole: **bodies are never
+      truncated**, and every block is headed \`comment <id> ·\` — the id
+      \`comment view/edit/delete\` takes and \`#comment-<id>\` links to.
+      The other half is \`issue events\`.
+
+      \`--author\`, \`-q\` and \`--last\` narrow the set after the timeline
+      is drained, so they compose freely. Unlike \`issue view\`, this
+      **does not advance the read marker**: a filtered slice is not the
+      card.
+
+      \`--json\` emits one document — \`{comments, next_cursor,
+      ref_format}\` — and \`next_cursor\` is the cursor \`issue watch
+      --since\` takes.
+    `,
+    examples: [
+      ["Everything said on the card", "$0 comment list 16"],
+      ["The last thing I said", "$0 comment list 16 --author @me --last 1"],
+      ["Find where a decision was made", "$0 comment list 16 -q 'migration'"],
+    ],
+  });
+
+  number = Option.String({ required: true });
+  author = Option.String("--author", {
+    description: "Only comments by this login (or `me`/`@me`)",
+  });
+  query = Option.String("-q,--query", {
+    description: "Only comments whose body contains this text",
+  });
+  last = Option.String("--last", {
+    description: "Keep only the newest N comments",
+  });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const { project, number } = this.resolveIssueRef(this.number);
+    const last =
+      this.last === undefined
+        ? undefined
+        : parsePositiveInt(this.last, "--last");
+    const author =
+      this.author === undefined
+        ? undefined
+        : (await resolveAssignees(client, project, [this.author]))[0];
+    const needle = this.query?.toLowerCase();
+
+    // One unfiltered drain, then filter here: the server's `types` filter
+    // has no author or full-text axis, and the timeline is bounded anyway.
+    const { items, cursor } = await drainTimeline(client, project, number);
+    const matched = items.filter(
+      (item): item is TimelineComment =>
+        item.type === "comment" &&
+        (author === undefined || item.author.id === author) &&
+        (needle === undefined || item.body.toLowerCase().includes(needle)),
+    );
+    const comments = last === undefined ? matched : matched.slice(-last);
+    const omitted = matched.length - comments.length;
+
+    const refPrefix = await fetchRefPrefix(client, project);
+    const paint = makePainter(this.context.stdout, this.context.env);
+    this.output(
+      {
+        comments,
+        next_cursor: cursor ?? null,
+        ref_format: refFormat(refPrefix),
+      },
+      () =>
+        [
+          ...(comments.length === 0
+            ? [
+                items.some((i) => i.type === "comment")
+                  ? "no comments match"
+                  : "no comments",
+              ]
+            : []),
+          ...(omitted > 0 ? [paint("dim", elision(omitted, "comment"))] : []),
+          ...comments.map((comment) =>
+            renderTimelineItem(comment, paint, {
+              issueNumber: number,
+              refPrefix,
+              showId: true,
+            }),
+          ),
+          ...(cursor === undefined
+            ? []
+            : [
+                paint(
+                  "dim",
+                  `cursor: ${cursor} (issue watch --since <cursor>)`,
+                ),
+              ]),
+        ].join("\n\n"),
+    );
+    // No markIssueRead: the same reasoning as `issue view --brief` — what
+    // was never shown was never read (T-183).
+  }
+}
+
+export class CommentViewCommand extends ProjectCommand {
+  static paths = [["comment", "view"]];
+  static usage = Command.Usage({
+    description: "Show one comment in full, by id",
+    details: `
+      The id comes from \`comment list\`, from what \`comment add\` echoed,
+      or from a \`#comment-<id>\` permalink — which pastes in whole, so a
+      link copied off the web page needs no taking apart:
+      \`todou comment view <server>/projects/<proj>/issues/16#comment-123\`.
+
+      \`--json\` is the comment object itself, \`issue_number\` and
+      \`issue_ref\` alongside — the shape \`comment add\` echoes. This is
+      the one place a script should reach for it: reading a body by id is
+      what \`--json | jq -r .body\` is for.
+    `,
+    examples: [
+      ["Read one comment", "$0 comment view 16 123"],
+      [
+        "Feed a body to a script",
+        "$0 comment view 16 123 --json | jq -r .body",
+      ],
+    ],
+  });
+
+  number = Option.String({ required: true });
+  commentId = Option.String({ required: false });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const { project, number } = this.resolveIssueRef(this.number);
+    const commentId = this.resolveCommentId();
+    const comment = await client.getComment(project, number, commentId);
+    const refPrefix = await fetchRefPrefix(client, project);
+    const paint = makePainter(this.context.stdout, this.context.env);
+    this.output(
+      withIssueRef({ ...comment, issue_number: number }, refPrefix),
+      () =>
+        renderTimelineItem(comment, paint, {
+          issueNumber: number,
+          refPrefix,
+          showId: true,
+        }),
+    );
+  }
+
+  /** The id argument, or the one a pasted permalink already carries. */
+  private resolveCommentId(): number {
+    if (this.commentId !== undefined) return parseCommentId(this.commentId);
+    const anchored = permalinkCommentId(this.number);
+    if (anchored !== undefined) return anchored;
+    throw new CliError(
+      `"${this.number}" names an issue but no comment`,
+      `pass the id as a second argument (\`todou comment view ${this.number} 123\`), ` +
+        "or paste the permalink whole, `#comment-<id>` fragment included",
+    );
+  }
+}
+
 export class CommentEditCommand extends ProjectCommand {
   static paths = [["comment", "edit"]];
   static usage = Command.Usage({
@@ -103,12 +292,12 @@ export class CommentEditCommand extends ProjectCommand {
 
   protected async run(client: TodouClient): Promise<void> {
     const { project, number } = this.resolveIssueRef(this.number);
-    const commentId = parsePositiveInt(this.commentId, "comment id");
+    const commentId = parseCommentId(this.commentId);
     const body = await readBody({
       body: this.body,
       bodyFile: this.bodyFile,
       stdin: this.context.stdin,
-      isTTY: Boolean((this.context.stdin as { isTTY?: boolean }).isTTY),
+      isTTY: isTTY(this.context.stdin),
       env: this.context.env,
     });
     const comment = await client.updateComment(
@@ -126,5 +315,65 @@ export class CommentEditCommand extends ProjectCommand {
       edited,
       () => `edited comment ${commentId} on ${edited.issue_ref}`,
     );
+  }
+}
+
+export class CommentDeleteCommand extends ProjectCommand {
+  static paths = [["comment", "delete"]];
+  static usage = Command.Usage({
+    description: "Delete a comment (author or project admin)",
+    details:
+      "For the comment that went to the wrong card, or the one whose body " +
+      "should never have been posted. **Not reversible**: comments have no " +
+      "trash the way issues do, and the edit history goes with the comment.\n\n" +
+      "Prompts unless `-y/--yes` is given, and refuses to run unprompted " +
+      "off a TTY. `<id>` also accepts the `#comment-<id>` spelling, and " +
+      "`<number>` also accepts `<project>/<number>` or a full issue URL.",
+    examples: [["Take back a misfired comment", "$0 comment delete 16 123 -y"]],
+  });
+
+  number = Option.String({ required: true });
+  commentId = Option.String({ required: true });
+  yes = Option.Boolean("-y,--yes", false, {
+    description: "Skip the confirmation prompt",
+  });
+
+  protected async run(client: TodouClient): Promise<number> {
+    const { project, number } = this.resolveIssueRef(this.number);
+    const commentId = parseCommentId(this.commentId);
+    // Fetched before the delete, so a wrong id fails as a 404 rather than
+    // as a prompt about a comment nobody can see, and so the confirmation
+    // can quote what is about to go.
+    const comment = await client.getComment(project, number, commentId);
+    const target = withIssueRef(
+      { ...comment, issue_number: number },
+      await fetchRefPrefix(client, project),
+    );
+
+    if (!this.yes) {
+      if (!isTTY(this.context.stdin)) {
+        throw new CliError(
+          "refusing to delete without a confirmation",
+          `pass -y/--yes: todou comment delete ${this.number} ${this.commentId} -y`,
+        );
+      }
+      const ok = await confirm(
+        this.context.stdin,
+        this.context.stderr,
+        `Delete comment ${commentId} by ${personName(comment.author)} on ` +
+          `${target.issue_ref}? "${summarize(comment.body, 80)}"`,
+      );
+      if (!ok) {
+        this.note("cancelled");
+        return 1;
+      }
+    }
+
+    await client.deleteComment(project, number, commentId);
+    this.output(
+      { ...target, deleted: true },
+      () => `deleted comment ${commentId} on ${target.issue_ref}`,
+    );
+    return 0;
   }
 }
