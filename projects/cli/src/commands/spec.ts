@@ -9,6 +9,7 @@ import {
 import { dirname, join } from "node:path";
 import type { SpecFileInput, TodouClient } from "@todou/shared";
 import {
+  formatRef,
   SPEC_MAX_FILE_CHARS,
   SPEC_MAX_FILES,
   SpecPushInput,
@@ -18,13 +19,31 @@ import { z } from "zod";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
-import { makePainter, personName } from "../format.ts";
+import { makePainter, personName, plural, table } from "../format.ts";
+import { drainPaged } from "../paginate.ts";
+import { parseChoice } from "../parse.ts";
+import { refFormat, withRef } from "../refs.ts";
 import { fetchRefPrefix } from "../resolve.ts";
 import {
   assertWriteCursorFlags,
   collectWriteCursor,
   emitWriteResult,
 } from "../write-cursor.ts";
+
+/**
+ * How a review verdict is worded wherever a person reads one. Shared so
+ * the list, the status command and the card header cannot drift apart on
+ * what `changes_requested` is called.
+ */
+export function specVerdict(
+  status: "unreviewed" | "approved" | "changes_requested" | null,
+): string {
+  return {
+    unreviewed: "awaiting review",
+    approved: "approved",
+    changes_requested: "changes requested",
+  }[status ?? "unreviewed"];
+}
 
 const WRONG_DIR_HINT =
   "if that path is not part of your spec, this push ran from the wrong " +
@@ -457,6 +476,93 @@ export class SpecReviewCommand extends ProjectCommand {
   }
 }
 
+export class SpecListCommand extends ProjectCommand {
+  static paths = [["spec", "list"]];
+  static usage = Command.Usage({
+    description: "Every card in the project that carries a spec",
+    details: `
+      One table: ref, title, the card's status, the spec's version, the
+      verdict on that version, and how many inline annotations are still
+      unresolved. Newest activity first, so what an orchestration round
+      wants to look at is at the top.
+
+      **Closed cards are left out by default** — a shipped spec is
+      history, not work in progress. \`--state closed\` or \`--state all\`
+      is the way back to it, for an audit.
+
+      This answers "which cards have specs at all", which is what you have
+      to know before \`spec status <n>\` can tell you about one of them in
+      depth. \`--json\` emits \`{items, ref_format}\`, the issue list rows
+      as they come, filtered.
+    `,
+    examples: [
+      ["Specs in flight", "$0 spec list -p <proj>"],
+      ["Including shipped ones", "$0 spec list -p <proj> --state all"],
+    ],
+  });
+
+  state = Option.String("-s,--state", "open", {
+    description: "open | closed | all (default: open)",
+  });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const project = this.requireProject();
+    const state = parseChoice(
+      this.state.toLowerCase(),
+      ["open", "closed", "all"],
+      "--state",
+    );
+
+    // `spec_version` rides on every list row already (T-23's denormalized
+    // fields), so the whole table is a client-side filter over pages the
+    // server can serve today. A `has_spec` query parameter would be the
+    // first server change this command needs, and at one or two pages of
+    // open cards it would buy nothing.
+    const { items } = await drainPaged("issue", undefined, (cursor) =>
+      client.listIssues(project, {
+        category: state === "all" ? undefined : state,
+        sort: "updated",
+        order: "desc",
+        limit: 100,
+        cursor,
+      }),
+    );
+    const specs = items.filter((item) => item.spec_version !== null);
+
+    const refPrefix = await fetchRefPrefix(client, project);
+    this.output(
+      {
+        items: specs.map((item) => withRef(item, refPrefix)),
+        ref_format: refFormat(refPrefix),
+      },
+      () => {
+        const paint = makePainter(this.context.stdout, this.context.env);
+        if (specs.length === 0) {
+          return state === "open"
+            ? `no specs\n${paint("dim", "--state all also looks at closed cards")}`
+            : "no specs";
+        }
+        const body = table(
+          specs.map((item) => [
+            formatRef(refPrefix, item.number),
+            item.title,
+            item.status.name,
+            `v${item.spec_version}`,
+            specVerdict(item.spec_review_status),
+            // Zero is the quiet case and reads as a column of noughts;
+            // the point of the column is the cards that need attention.
+            item.spec_unresolved_comments > 0
+              ? `${item.spec_unresolved_comments} unresolved`
+              : "",
+          ]),
+        );
+        const n = specs.length;
+        return `${body}\n${paint("dim", `${n} ${plural(n, "spec")}`)}`;
+      },
+    );
+  }
+}
+
 export class SpecStatusCommand extends ProjectCommand {
   static paths = [["spec", "status"]];
   static usage = Command.Usage({
@@ -475,11 +581,7 @@ export class SpecStatusCommand extends ProjectCommand {
     const { project, number } = this.resolveIssueRef(this.number);
     const info = await client.getSpec(project, number);
     this.output(info, () => {
-      const status = {
-        unreviewed: "awaiting review",
-        approved: "approved",
-        changes_requested: "changes requested",
-      }[info.review_status];
+      const status = specVerdict(info.review_status);
       const lines = [
         `spec v${info.current_version} · ${status} · ${info.unresolved_comments} unresolved comment(s)`,
         ...info.files.map((f) => `  ${f.path} (${f.size} bytes)`),

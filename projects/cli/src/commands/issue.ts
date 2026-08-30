@@ -63,6 +63,7 @@ import {
   watchRetryOptions,
   watchTimeoutSec,
 } from "../watch-loop.ts";
+import { specVerdict } from "./spec.ts";
 
 function issueRow(issue: IssueListItem, refPrefix: string | null): string[] {
   // Old servers omit both fields entirely; undefined reads as "not unread"
@@ -1340,11 +1341,7 @@ function renderIssue(
     ),
   );
   if (issue.spec_version !== null) {
-    const status = {
-      unreviewed: "awaiting review",
-      approved: "approved",
-      changes_requested: "changes requested",
-    }[issue.spec_review_status ?? "unreviewed"];
+    const status = specVerdict(issue.spec_review_status);
     const unresolved =
       issue.spec_unresolved_comments > 0
         ? ` · ${issue.spec_unresolved_comments} unresolved comment(s)`

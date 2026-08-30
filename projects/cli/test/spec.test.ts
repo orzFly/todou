@@ -248,6 +248,166 @@ describe("spec pull", () => {
   });
 });
 
+describe("spec list (T-184)", () => {
+  const author = { id: 2, login: "claude-agent", display_name: "Claude Agent" };
+  const row = (
+    number: number,
+    title: string,
+    spec: Record<string, unknown>,
+    statusName = "In Progress",
+  ) => ({
+    id: number * 10,
+    number,
+    title,
+    status: {
+      id: 1,
+      name: statusName,
+      category: "open",
+      color: "#3b82f6",
+      position: 0,
+    },
+    author,
+    assignees: [],
+    labels: [],
+    created_at: "2026-08-12T05:00:00.000Z",
+    updated_at: "2026-08-12T06:00:00.000Z",
+    body_edited_at: null,
+    spec_version: null,
+    spec_review_status: null,
+    spec_unresolved_comments: 0,
+    ...spec,
+  });
+
+  it("keeps the cards with a spec and drops the ones without", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/proj/issues",
+        {
+          items: [
+            row(23, "Sprout the potato", {
+              spec_version: 3,
+              spec_review_status: "unreviewed",
+              spec_unresolved_comments: 2,
+            }),
+            row(9, "No spec here", {}),
+            row(24, "Water the field", {
+              spec_version: 5,
+              spec_review_status: "approved",
+            }),
+          ],
+          next_cursor: null,
+        },
+      ],
+    ]);
+    const run = await runCli(["spec", "list"], { fetchImpl, env: ENV });
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).not.toContain("No spec here");
+    const line = (n: number) =>
+      run.stdout.split("\n").find((l) => l.startsWith(`#${n} `));
+    expect(line(23)).toContain("v3");
+    expect(line(23)).toContain("awaiting review");
+    expect(line(23)).toContain("2 unresolved");
+    expect(line(24)).toContain("v5");
+    expect(line(24)).toContain("approved");
+    // Zero unresolved is the quiet case; the column stays empty for it.
+    expect(line(24)).not.toContain("unresolved");
+    expect(run.stdout.trimEnd().split("\n").at(-1)).toBe("2 specs");
+  });
+
+  it("asks for open cards by default and drops the filter on --state all", async () => {
+    const seen: string[] = [];
+    const routes = (): Route[] => [
+      [
+        "GET",
+        "/api/projects/proj/issues",
+        (_init: RequestInit, url: URL) => {
+          seen.push(url.searchParams.get("category") ?? "(none)");
+          return { items: [], next_cursor: null };
+        },
+      ],
+    ];
+    const { fetchImpl } = fakeFetch(routes());
+    await runCli(["spec", "list"], { fetchImpl, env: ENV });
+    await runCli(["spec", "list", "--state", "closed"], {
+      fetchImpl,
+      env: ENV,
+    });
+    await runCli(["spec", "list", "--state", "all"], { fetchImpl, env: ENV });
+    expect(seen).toEqual(["open", "closed", "(none)"]);
+  });
+
+  it("drains every page", async () => {
+    let page = 0;
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/proj/issues",
+        () => {
+          page += 1;
+          return page === 1
+            ? {
+                items: [row(1, "First page", { spec_version: 1 })],
+                next_cursor: "p2",
+              }
+            : {
+                items: [row(2, "Second page", { spec_version: 2 })],
+                next_cursor: null,
+              };
+        },
+      ],
+    ]);
+    const run = await runCli(["spec", "list"], { fetchImpl, env: ENV });
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toContain("First page");
+    expect(run.stdout).toContain("Second page");
+  });
+
+  it("points an empty default listing at the closed cards", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/proj/issues", { items: [], next_cursor: null }],
+    ]);
+    const open = await runCli(["spec", "list"], { fetchImpl, env: ENV });
+    expect(open.exitCode).toBe(0);
+    expect(open.stdout).toBe(
+      "no specs\n--state all also looks at closed cards\n",
+    );
+
+    const all = await runCli(["spec", "list", "--state", "all"], {
+      fetchImpl,
+      env: ENV,
+    });
+    expect(all.stdout).toBe("no specs\n");
+  });
+
+  it("emits the filtered rows under --json", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/proj/issues",
+        {
+          items: [
+            row(23, "Sprout the potato", { spec_version: 3 }),
+            row(9, "No spec here", {}),
+          ],
+          next_cursor: null,
+        },
+      ],
+    ]);
+    const run = await runCli(["spec", "list", "--json"], {
+      fetchImpl,
+      env: ENV,
+    });
+    const parsed = JSON.parse(run.stdout) as {
+      items: Array<{ number: number; ref: string }>;
+      ref_format: unknown;
+    };
+    expect(Object.keys(parsed).sort()).toEqual(["items", "ref_format"]);
+    expect(parsed.items.map((i) => i.number)).toEqual([23]);
+    expect(parsed.items[0]?.ref).toBe("#23");
+  });
+});
+
 describe("spec status", () => {
   it("renders version, review state, and files", async () => {
     const { fetchImpl } = fakeFetch([
