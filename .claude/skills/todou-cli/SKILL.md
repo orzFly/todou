@@ -25,6 +25,8 @@ project, deploy command) live in the host project's CLAUDE.md / memory; `<proj>`
 ## Command cheat sheet
 
 ```bash
+todou search <terms…> -p <proj> [--in issues,comments,specs] [--status X] [--limit N]
+#   ^ the only read that sees comments and specs; substring, so 中文 works
 todou issue list -p <proj> [--open|--closed|--status X|--unread|-q text]  # ends with a count
 todou issue view 16 -p <proj>       # prints a cursor at the end, for watch --since
 todou issue view 16 --brief         # header + status only, no body, no timeline
@@ -59,6 +61,32 @@ and every `<number>` positional also accepts `<proj>/16`, `"#16"`, the project's
 (`T-16`), or a full issue URL — input is never picky about the spelling. Output is: see **Issue refs**.
 gh's flag spellings work too — `-t/-b/-F/-l/-a` on `issue create`, `-l/-a/-L/-S/-s --state
 open|closed|all` on `issue list`, `-c` on `issue close`, `@me` wherever a login goes.
+
+## Searching a project
+
+`todou search` is the only read that reaches **comments and spec documents**,
+which is where conclusions, verdicts and measurements actually live —
+`issue list -q` sees titles and bodies and nothing else. Reach for it before
+paging through cards by hand.
+
+```bash
+todou search 全文搜索 -p <proj>              # anywhere in the project
+todou search cursor 语义 -p <proj>           # both terms, any distance apart
+todou search "中文分词" -p <proj>             # one phrase, in that order
+todou search pg_trgm --in comments -p <proj> # only what was said in comments
+```
+
+- **Terms are ANDed, and each is a case-insensitive substring.** So `搜索`
+  finds it inside a longer run of Chinese, `WordDiff` finds
+  `coalescedWordDiff`, and there is no stemming to reason about. Quote a
+  phrase to keep it together; unquoted, the words may land anywhere in the
+  same hit — and for an issue the title and the body count as one place.
+- **Each line is `<ref>  <where>  <snippet>`**, and `<where>` is what to read
+  next: `comment <id>` → `comment view`, `spec <path>` → `spec pull`, plain
+  `issue` → `issue view`. Terms are highlighted in the snippet.
+- `--status` / `--label` / `--assignee` narrow exactly as on `issue list`.
+  Nothing in the trash is searchable, and only a spec's **newest** version is.
+- Finding nothing exits 0, like every other read.
 
 ## Writing bodies
 

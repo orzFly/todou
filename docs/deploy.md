@@ -67,6 +67,32 @@ For PostgreSQL, set `database.system` to a `postgres://` URL and apply
 migrations explicitly: `todou-server migrate` applies pending migrations to
 the system database and every project database.
 
+### What project search needs from PostgreSQL
+
+Project search runs on `pg_trgm`, so a `postgres://` deployment has two
+requirements. Neither applies to PGlite, which links the extension into its
+own bundle.
+
+- **`contrib` must be installed.** The project migrations run `CREATE
+  EXTENSION IF NOT EXISTS pg_trgm`, and without the contrib package (the
+  standard `postgresql-contrib` on every distribution, already present in the
+  official images) that statement fails and the migration stops. The
+  extension is *trusted*, so the database owner can create it — no superuser
+  needed.
+- **The database needs a UTF-8 ctype.** Trigram extraction goes through the
+  database's ctype, and under `lc_ctype=C` a multi-byte character is not a
+  word character: `show_trgm('全局搜索')` comes back empty, so no Chinese
+  query can be answered from the index and every one of them falls back to
+  scanning. Results stay correct — this is a speed cliff, not a wrong
+  answer — but nothing reports it, so check it when creating the database:
+
+  ```sql
+  SELECT datctype FROM pg_database WHERE datname = current_database();
+  -- want en_US.utf8, C.UTF-8, or any other UTF-8 ctype; plain "C" is the bad one
+  ```
+
+  ASCII, including code identifiers, indexes fine either way.
+
 ## Docker
 
 The same server + built SPA, prepackaged:
