@@ -48,6 +48,7 @@ import {
   resolveClosedStatus,
   resolveLabels,
   resolveStatus,
+  resolveStatuses,
   shellArg,
 } from "../resolve.ts";
 import {
@@ -90,10 +91,12 @@ export class IssueListCommand extends ProjectCommand {
   static usage = Command.Usage({
     description: "List issues with filters",
     details:
-      "gh's spellings work too: `-l/--label`, `-a/--assignee`, `-L/--limit`, `-S/--search`, and `-s/--state open|closed|all`. Label flags are repeatable and comma-splittable (`--label 'area:cli,kind:bug'`), and match **any** of the named labels.",
+      "gh's spellings work too: `-l/--label`, `-a/--assignee`, `-L/--limit`, `-S/--search`, and `-s/--state open|closed|all`. `--status` and the label flags are repeatable and comma-splittable (`--status Next,'In Progress'`), and match **any** of the named values — a card has one status, so several can only mean \"any of these\".",
   });
 
-  status = Option.String("--status", { description: "Filter by status name" });
+  status = Option.Array("--status", [], {
+    description: "Filter by status name (repeatable; matches any)",
+  });
   state = Option.String("-s,--state", {
     description: "open | closed | all (gh's spelling of --open/--closed)",
   });
@@ -126,9 +129,13 @@ export class IssueListCommand extends ProjectCommand {
 
   protected async run(client: TodouClient): Promise<void> {
     const project = this.requireProject();
-    const pickers = [this.status, this.state, this.open, this.closed].filter(
-      Boolean,
-    ).length;
+    const statusNames = splitCommaList(this.status);
+    const pickers = [
+      statusNames.length > 0,
+      this.state,
+      this.open,
+      this.closed,
+    ].filter(Boolean).length;
     if (pickers > 1) {
       throw new CliError(
         "--status, --state, --open, and --closed are mutually exclusive",
@@ -144,9 +151,13 @@ export class IssueListCommand extends ProjectCommand {
             "--state",
           );
 
-    const status = this.status
-      ? [(await resolveStatus(client, project, this.status)).id]
-      : undefined;
+    // The protocol has taken a list here all along (`status` is csvIds
+    // server-side, and the client joins arrays with commas) — the single
+    // value was the CLI's own restriction.
+    const status =
+      statusNames.length > 0
+        ? (await resolveStatuses(client, project, statusNames)).map((s) => s.id)
+        : undefined;
     const labelNames = splitCommaList(this.labels);
     const label =
       labelNames.length > 0

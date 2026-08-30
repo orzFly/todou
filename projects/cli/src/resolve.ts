@@ -48,6 +48,17 @@ export async function resolveStatus(
   return byName(await client.listStatuses(project), name, "status");
 }
 
+/** Several names off one listing, for filters that match any of them. */
+export async function resolveStatuses(
+  client: TodouClient,
+  project: string,
+  names: string[],
+): Promise<Status[]> {
+  if (names.length === 0) return [];
+  const statuses = await client.listStatuses(project);
+  return names.map((name) => byName(statuses, name, "status"));
+}
+
 /** `--status` override wins; otherwise the first closed-category status. */
 export async function resolveClosedStatus(
   client: TodouClient,

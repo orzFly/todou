@@ -110,6 +110,65 @@ describe("issue list", () => {
     expect(result.stdout).toContain("Fix the potato");
   });
 
+  it("takes --status repeated or comma-split, as one filter (T-184)", async () => {
+    const twoStatuses = [
+      ...statuses,
+      { id: 3, name: "In Progress", category: "open", color: "#3b82f6" },
+    ];
+    const listRoutes = (): Route[] => [
+      ["GET", "/api/projects/todou/statuses", twoStatuses],
+      [
+        "GET",
+        "/api/projects/todou/issues",
+        { items: [issue], next_cursor: null },
+      ],
+    ];
+    const statusParam = async (argv: string[]) => {
+      const { fetchImpl, calls } = fakeFetch(listRoutes());
+      const result = await runCli(argv, {
+        fetchImpl,
+        env: loggedInEnv("todou"),
+      });
+      expect(result.exitCode).toBe(0);
+      const listCall = calls.find((c) => c.url.includes("/issues?"));
+      return new URL(listCall?.url ?? "", "http://stub.test").searchParams.get(
+        "status",
+      );
+    };
+
+    const repeated = await statusParam([
+      "issue",
+      "list",
+      "--status",
+      "Todo",
+      "--status",
+      "In Progress",
+    ]);
+    const split = await statusParam([
+      "issue",
+      "list",
+      "--status",
+      "Todo,In Progress",
+    ]);
+    expect(repeated).toBe("1,3");
+    expect(split).toBe(repeated);
+    // A single value still spells the query string it always did.
+    expect(await statusParam(["issue", "list", "--status", "todo"])).toBe("1");
+  });
+
+  it("still refuses --status alongside --open (T-184)", async () => {
+    const { fetchImpl } = fakeFetch([]);
+    const result = await runCli(
+      ["issue", "list", "--status", "Todo", "--open"],
+      {
+        fetchImpl,
+        env: loggedInEnv("todou"),
+      },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("mutually exclusive");
+  });
+
   it("maps --open/--closed to the category param and rejects combos", async () => {
     const { fetchImpl, calls } = fakeFetch([
       ["GET", "/api/projects/todou/issues", { items: [], next_cursor: null }],
