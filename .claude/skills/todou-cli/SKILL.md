@@ -27,15 +27,17 @@ project, deploy command) live in the host project's CLAUDE.md / memory; `<proj>`
 ```bash
 todou search <terms…> -p <proj> [--in issues,comments,specs] [--status X] [--limit N]
 #   ^ the only read that sees comments and specs; substring, so 中文 works
-todou issue list -p <proj> [--open|--closed|--status X|--unread|-q text]  # ends with a count
+todou issue list -p <proj> [--open|--closed|--status X,Y|--unread|-q text]  # ends with a count
 todou issue view 16 -p <proj>       # prints a cursor at the end, for watch --since
 todou issue view 16 --brief         # header + status only, no body, no timeline
+todou issue view 12 15 23 --brief   # several cards at once; a bad number errors in place, exit 1
 todou issue view 16 --timeline --last 10   # drop the body, keep the newest 10 entries
 todou issue events 16 [--type referenced] [--last 5]   # timeline minus comments, event id first
 todou issue create -p <proj> --title T [--body-file -] [--status Next]
 #   ^ when filing on behalf of the user, quote their original words verbatim
 #     in the body (if any) — off-tracker requests have no other trace
 todou issue edit 16 --status "In Progress"    # status/title/labels/assignees
+todou issue edit 12 15 23 --status Next       # one set of flags, every card; checked before it writes
 todou issue close 16 --comment "done"
 todou comment add -p <proj> 16 --body-file -  # prints the new comment's id + a wait cursor
 todou comment list 16 [--author @me] [-q text] [--last 5]   # full bodies, each headed by its id
@@ -61,6 +63,32 @@ and every `<number>` positional also accepts `<proj>/16`, `"#16"`, the project's
 (`T-16`), or a full issue URL — input is never picky about the spelling. Output is: see **Issue refs**.
 gh's flag spellings work too — `-t/-b/-F/-l/-a` on `issue create`, `-l/-a/-L/-S/-s --state
 open|closed|all` on `issue list`, `-c` on `issue close`, `@me` wherever a login goes.
+
+## Scanning a batch
+
+Two calls answer "what is in flight, and where has each card got to" — the
+question an orchestration round asks every time:
+
+```bash
+todou issue list -p <proj> --status Next,'In Progress'   # which cards are moving
+todou issue view 12 15 23 --brief                        # where each one stands
+todou issue edit 12 15 23 --status Next                  # move them together
+```
+
+- **`--status` is a list**, repeatable or comma-split, matching any of the names —
+  same as `--label`. A card has one status, so several can only mean "any of these".
+- **`view` takes several numbers**, space-separated, one project, each in whatever
+  ref spelling you like. Cards print in the order given with their own cursors; a
+  number that cannot be read prints an error in its place, the rest print anyway,
+  and the exit code is 1. `--brief` on a batch is the cheapest in-flight scan there
+  is. `--json` keeps its old shape for exactly one number and switches to
+  `{items, ref_format}` for two or more.
+- **`edit` applies one set of flags to every card.** It reads them all before it
+  writes any — a mistyped number fails the command with nothing written — then
+  writes in order, printing each `ref updated` as it lands, and stops at the first
+  failure naming what it did not attempt. Rerunning the whole list is safe (the
+  same flags twice are a no-op). `--title`/`--body` are refused on a batch.
+- Not batched, on purpose: `close`, `delete`, `comment add`, `spec status`.
 
 ## Searching a project
 
@@ -338,6 +366,7 @@ dir and pushed; **git never carries them**.
 ```bash
 todou spec push <n> <dir> -p <proj> --message "v2" [--if-version <v>]  # upload/iterate a version
 todou spec pull <n> <dir> -p <proj> [--version <v>] [--prune]          # fetch a version
+todou spec list -p <proj> [--state open|closed|all]                    # which cards have specs, and where each stands
 todou spec status <n> -p <proj>                                        # versions + review verdict
 todou spec comments <n> --unresolved                                   # inline annotations (file+anchor)
 todou spec resolve <n> <commentIds…>                                   # mark annotations addressed
@@ -346,6 +375,9 @@ todou spec review <n> --approve | --request-changes [--body …]         # submi
 
 - Review state is computed, never stored: a verdict counts only against the **latest** version, and
   the pusher of a version cannot review it.
+- `spec list` is the one read that answers **which** cards have specs — version, verdict and
+  unresolved-annotation count in one table, open cards only unless `--state closed|all`. `spec
+  status <n>` goes deep on one card and presumes you already know which.
 - **The review gate is two lines, and the push mints the cursor:**
   ```bash
   cursor=$(todou spec push <n> <dir> -p <proj> --message "v2" --print-cursor)
