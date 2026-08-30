@@ -24,8 +24,10 @@ Read whichever of these exist (ignore missing ones):
 If the latest version is **not** approved, stop and run the review loop from `/todou-plan` instead of
 implementing an unapproved plan — meaning **block on `todou issue watch <n> --since <cursor>`** (the
 whole issue, no type filter) and judge each wake-up with `spec status`, never with the event stream.
-Never plan to re-check `spec status` later instead of blocking: a deferred re-check has no wake
-path — the agent goes idle forever.
+Where the cursor comes from matters: a push mints it (`cursor=$(todou spec push … --print-cursor)`),
+and only when there is no write to take it from is a "now" cursor right. Never plan to re-check
+`spec status` later instead of blocking: a deferred re-check has no wake path — the agent goes idle
+forever.
 
 ## Execute
 

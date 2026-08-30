@@ -138,10 +138,14 @@ After the self-review passes, push the spec set and post a short pointer comment
 changed, then wait for the review verdict:
 
 ```bash
-todou spec push <n> <tmpdir> -p <proj> --message "brainstorm v2"
-cursor=$(todou watch -p <proj> --poll --print-cursor)
+cursor=$(todou spec push <n> <tmpdir> -p <proj> --message "brainstorm v2" --print-cursor)
 todou issue watch <n> -p <proj> --since "$cursor" --debounce 60 --forever
 ```
+
+The push hands back the cursor it just made; a "now" cursor taken after it instead leaves a window
+the verdict can land in, and a wait that starts past its own verdict never ends. **Re-entering the
+wait after a crash or a killed shell: run `todou spec status <n>` first and only block while no
+verdict is in** — otherwise you block on something that already happened.
 
 The watch is unfiltered — plain comments wake you too, and so do sibling agents on the same machine
 account (the self-filter is per agent session). Judge every wake-up with `todou spec status <n>`,

@@ -146,6 +146,12 @@ fresh, or `/new` first. Unrelated old context is a liability, not an asset.
 **Wait management**: a `--wait` timeout (herdr returns a timeout error) ≠ failure — run `herdr agent get`
 first; if it is working, just re-attach with `herdr agent wait`. Never poke an agent that is working.
 
+**`working` is not progress.** The status says a process is running, and a blocked foreground wait is
+a running process — an agent stuck on a wait that will never return reads exactly like one that is
+busy. What tells them apart is the tail of its terminal: a `--forever` wait prints a
+`still watching — nothing new in …` heartbeat to stderr, so a feed with no heartbeat and no new
+output for hours is wedged, not working. Check the tail before assuming a long `working` is fine.
+
 **Throttling — at most 3 workers at once** (unless the user sets a different number). Count live
 worker agents, not subagents you spawn for merges or investigations. When the cap is full and another
 card lands in Next, **leave it in Next and say so** — Next *is* the queue, so nothing is lost and the

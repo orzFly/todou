@@ -16,6 +16,10 @@ project, deploy command) live in the host project's CLAUDE.md / memory; `<proj>`
 - **The human output is the interface — read that, not `--json`.** Every id, ref, count and cursor
   an agent needs is already in it, at a fraction of the tokens. Reach for `--json` only when a
   *script* consumes stdout. `todou api <method> <path>` covers anything the CLI lacks.
+- **A write tells you where to wait from.** `spec push` and `comment add` end with a `cursor:` line —
+  the position of the write itself, so everything that answers it is strictly after. Wait from that,
+  never from a cursor taken afterwards: the reply can land in between, and a wait started past its
+  own answer never returns. `--print-cursor` is the script form (see **watch / poll**).
 - If the deployment has a sandbox project (scratch space), run experiments and guinea-pig tests there — never pollute the real tracker.
 
 ## Command cheat sheet
@@ -30,7 +34,7 @@ todou issue create -p <proj> --title T [--body-file -] [--status Next]
 #     in the body (if any) — off-tracker requests have no other trace
 todou issue edit 16 --status "In Progress"    # status/title/labels/assignees
 todou issue close 16 --comment "done"
-todou comment add -p <proj> 16 --body-file -  # prints the new comment's id
+todou comment add -p <proj> 16 --body-file -  # prints the new comment's id + a wait cursor
 todou attach -p <proj> 16 file.png ...        # prints `#id name → url`
 todou attach list -p <proj> 16                # id / filename / size / url
 todou attach download -p <proj> 16 <id|name> [-o <path>|-o -]
@@ -121,6 +125,13 @@ with the same cursor*, every time, however often it happens. Nothing is lost acr
 downgrade to a short-period self-poll — a 6-minute poll burns a whole agent turn per tick — and do say
 a word about it in the terminal so the orchestrator knows to relay as a backstop.
 
+**A wait only ever wakes you for the future.** Whenever what you are waiting on is a *state* — a spec
+verdict, an answer, a card's status — that state may already hold before you block. Read it once
+before entering the wait (`spec status`, `question list --unanswered`, `issue view --brief`) and
+block only while it says "not yet". Resuming from a cursor you already hold is safe by itself, gap
+and all; entering a wait on a *freshly taken* cursor without that check is how an agent spends hours
+waiting for something that landed a second earlier.
+
 - Exit codes, by mode. **`--forever`**: 0 = new entries, 1 = fatal — nothing else can happen.
   **Blocking (no flag)**: 0 = new entries, **3 = timeout with nothing new** (normal, not an error),
   1 = fatal, **4 = gave up on a network outage** after automatic retries (transient failures — 5xx,
@@ -141,6 +152,15 @@ a word about it in the terminal so the orchestrator knows to relay as a backstop
 - Get a "now" cursor: `cursor=$(todou watch -p <proj> --poll --print-cursor)` — stdout is the bare
   cursor and nothing else, and it exits 0 whether or not the poll found anything, so no `; true`
   and no `jq`. (Conflicts with `--json`, which already ends its batch with a cursor record.)
+  **Only for a wait with no write in front of it** — a sentinel starting cold. When you are waiting
+  on an answer to something you just wrote, the write already handed you the right cursor; taking a
+  fresh "now" one instead reopens exactly the window this avoids.
+- Take it from the write instead: `spec push` and `comment add` accept `--print-cursor` with the
+  same shape — bare cursor on stdout, summary moved to stderr, conflicts with `--json`. They also
+  take `--since <cursor>`: the write runs regardless, and the entries between that cursor and now
+  are listed on stderr (`missed` under `--json`), so a stale reader learns what it wrote over. Under
+  `--since` the cursor reported back is your own, echoed — whatever it showed you is delivered again
+  by a watch resuming there.
 - `--debounce N`: after the first new entry, keep collecting for N seconds and return one batch (fewer wake-ups, fewer tokens).
 - Both watches skip **your own agent session's** entries by default, not your whole account — a fleet
   sharing one machine account does wake each other (T-121). Entries carrying no agent session (the web
@@ -254,6 +274,12 @@ EOF2
 todou question wait 16 <commentId> -p <proj> --forever   # blocks until answered
 ```
 
+`question wait` needs no cursor of its own: it reads the answer state before it blocks, so an answer
+that arrived first is returned rather than waited for. The `cursor:` line the comment prints is for
+the other case — waiting on a plain reply rather than a component answer, with
+`todou issue watch 16 --since "$cursor" --forever`; `--print-cursor` puts that cursor alone on stdout
+for a script to capture.
+
 - All text fields are markdown; validation is **strict** — unknown/extra fields fail with the path named.
 - Users answer once, all questions in the comment together; "decline to answer" is a built-in exclusive
   choice; options and free-text "other" can coexist. Answers arrive decoded in the wait output.
@@ -278,9 +304,15 @@ todou spec review <n> --approve | --request-changes [--body …]         # submi
 
 - Review state is computed, never stored: a verdict counts only against the **latest** version, and
   the pusher of a version cannot review it.
-- Wait for the verdict by watching the whole issue — `issue watch <n> --since <cursor> --debounce 60
-  --forever` — with no `--type` filter, so a plain comment (an amended requirement, a
-  question back) wakes the waiter too.
+- **The review gate is two lines, and the push mints the cursor:**
+  ```bash
+  cursor=$(todou spec push <n> <dir> -p <proj> --message "v2" --print-cursor)
+  todou issue watch <n> -p <proj> --since "$cursor" --debounce 60 --forever
+  ```
+  No `--type` filter: a plain comment — an amended requirement, a question back — must wake the
+  waiter too. Taking the cursor *after* the push instead is the classic way to wait forever; the
+  verdict lands in the window between the two calls and the watch never sees it. Re-entering the
+  wait after a crash: `spec status` first, block only while no verdict is in.
 - **The watch wakes; `spec status` judges.** A wake-up is not a verdict: sibling agents on the same
   machine account pass the self-filter (it is per agent session, see watch above). On exit 0 read
   `spec status` — `approved` proceeds; `changes_requested` or `unresolved_comments > 0` enters the

@@ -47,10 +47,14 @@ and fix inline — iterate up to 5 times before presenting.
 ## Push and the review loop
 
 ```bash
-todou spec push <n> <dir> -p <proj> --message "plan v1"          # upload the set
-cursor=$(todou watch -p <proj> --poll --print-cursor)
+# The push answers with the cursor to wait from — no separate "now" cursor,
+# and therefore no window between the two calls for the verdict to hide in.
+cursor=$(todou spec push <n> <dir> -p <proj> --message "plan v1" --print-cursor)
 todou issue watch <n> -p <proj> --since "$cursor" --debounce 60 --forever
 ```
+
+**Re-entering the wait after a crash or a killed shell: `todou spec status <n>` first, and only
+block while no verdict is in.** A wait is a bet that the thing you want is still in the future.
 
 The watch covers the whole issue, unfiltered, so a plain comment — the user amending a requirement,
 asking back — wakes you as surely as a verdict does. It also means **not every wake-up is yours**:
