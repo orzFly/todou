@@ -61,10 +61,15 @@ export function renderWithProviders(
     getParentRoute: () => projectRoute,
     path: "issues/$number/spec",
   });
+  const searchRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "search",
+    validateSearch: (search: Record<string, unknown>) => search,
+  });
   const router = createRouter({
     routeTree: rootRoute.addChildren([
       indexRoute,
-      projectRoute.addChildren([issueRoute, specRoute]),
+      projectRoute.addChildren([issueRoute, specRoute, searchRoute]),
     ]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
