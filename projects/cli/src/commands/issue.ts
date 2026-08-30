@@ -727,11 +727,16 @@ export class IssueCreateCommand extends ProjectCommand {
 }
 
 export class IssueEditCommand extends ProjectCommand {
-  static paths = [["issue", "edit"]];
+  static paths = [
+    ["issue", "edit"],
+    ["issue", "update"],
+  ];
   static usage = Command.Usage({
     description: "Edit an issue's fields, labels, or assignees",
     details: `
-      \`<number>\` also accepts \`<project>/<number>\` or a full issue URL.
+      \`<number>\` also accepts \`<project>/<number>\` or a full issue URL;
+      \`issue update\` is an alias of \`issue edit\`. To change only the
+      status there is also \`issue status <number> <status>\`.
 
       Two ways to write labels, and they cannot be mixed:
       \`--add-label\`/\`--remove-label\` edit the set in place (gh's flags),
@@ -868,6 +873,49 @@ export class IssueEditCommand extends ProjectCommand {
     return [...new Set([...current, ...added])].filter(
       (id) => !removed.has(id),
     );
+  }
+}
+
+/**
+ * Not a third path on `IssueEditCommand`: the spelling agents reach for puts
+ * the status in a second positional, and edit has only one (T-187).
+ */
+export class IssueStatusCommand extends ProjectCommand {
+  static paths = [
+    ["issue", "status"],
+    ["issue", "move"],
+  ];
+  static usage = Command.Usage({
+    description:
+      "Move an issue to a status — an alias for `issue edit --status`",
+    details: `
+      \`<number>\` also accepts \`<project>/<number>\` or a full issue URL;
+      \`issue move\` is an alias of \`issue status\`. Status names resolve
+      exactly as they do on \`issue edit --status\`, and an unknown one is
+      refused with the same error.
+
+      Both positionals are required. The current status is read back with
+      \`issue view --brief\`; letting a missing second argument turn this
+      into a read would make writing and reading differ by nothing more
+      visible than the number of arguments.
+    `,
+    examples: [
+      ["Start work on a card", "todou issue status 16 'In Progress'"],
+      ["Put it back in the queue", "todou issue move 16 Next"],
+    ],
+  });
+
+  number = Option.String({ required: true });
+  status = Option.String({ required: true });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const { project, number } = this.resolveIssueRef(this.number);
+    const target = await resolveStatus(client, project, this.status);
+    const issue = await client.updateIssue(project, number, {
+      status_id: target.id,
+    });
+    const updated = withRef(issue, await fetchRefPrefix(client, project));
+    this.output(updated, () => `${updated.ref} updated`);
   }
 }
 

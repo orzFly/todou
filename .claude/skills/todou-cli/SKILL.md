@@ -57,6 +57,7 @@ todou label delete <name>
 ```
 
 Forgiving forms (gh habits all work): `issue show` = `view`, `issue comment` = `comment add`,
+`issue update` = `edit`, `issue status <n> <status>` = `issue move <n> <status>` = `edit --status`,
 and every `<number>` positional also accepts `<proj>/16`, `"#16"`, the project's own ref form
 (`T-16`), or a full issue URL — input is never picky about the spelling. Output is: see **Issue refs**.
 gh's flag spellings work too — `-t/-b/-F/-l/-a` on `issue create`, `-l/-a/-L/-S/-s --state
