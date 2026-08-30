@@ -81,6 +81,30 @@ describe("comment add --questions", () => {
     expect(calls.filter((c) => c.init.method === "POST")).toHaveLength(1);
   });
 
+  it("still closes with the cursor the answer will land after (T-182)", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "POST",
+        "/api/projects/todou/issues/19/comments",
+        (init: RequestInit) => ({
+          type: "comment",
+          id: 42,
+          body: JSON.parse(String(init.body)).body,
+          cursor: "3:hlsw2ffv8g.0.16",
+        }),
+      ],
+    ]);
+    const result = await runCli(
+      ["comment", "add", "19", "--body", "ctx", "--questions", "-"],
+      { fetchImpl, env: loggedInEnv("todou"), stdinText: QUESTIONS_JSON },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("question wait 19 42");
+    expect(result.stdout.trimEnd().split("\n").at(-1)).toBe(
+      "cursor: 3:hlsw2ffv8g.0.16 (issue watch --since <cursor>)",
+    );
+  });
+
   it("rejects hallucinated fields locally, naming the path", async () => {
     const { fetchImpl, calls } = fakeFetch([]);
     const result = await runCli(

@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SPEC_MAX_FILE_CHARS, SPEC_MAX_FILES } from "@todou/shared";
 import { describe, expect, it } from "vitest";
-import { fakeFetch, runCli } from "./harness.ts";
+import { fakeFetch, type Route, runCli } from "./harness.ts";
 
 const ENV = {
   TODOU_SERVER: "http://stub.test",
@@ -485,5 +485,158 @@ describe("spec review", () => {
       body: "rework §2",
       comments: [],
     });
+  });
+});
+
+/**
+ * T-182: the push used to hand the pusher nothing, so the review gate took
+ * its cursor afterwards and could not see a verdict that landed in between.
+ */
+describe("spec push cursor", () => {
+  const me = {
+    id: 2,
+    login: "claude-agent",
+    display_name: "Claude Agent",
+    kind: "machine",
+    owner: null,
+  };
+  const CURSOR = "3:hlsw2ffv8g.1.3pz";
+
+  const pushRoute = (cursor: string | undefined): Route => [
+    "POST",
+    "/api/projects/proj/issues/23/spec/push",
+    {
+      unchanged: false,
+      version: 2,
+      added: [],
+      changed: ["design.md"],
+      removed: [],
+      ...(cursor === undefined ? {} : { cursor }),
+    },
+  ];
+  const reviewComment = {
+    type: "comment",
+    id: 41,
+    author: { id: 3, login: "user", display_name: "User", kind: "human" },
+    body: "hold on, one more thing",
+    component: null,
+    created_at: "2026-08-11T12:00:00Z",
+    edited_at: null,
+    resolved_at: null,
+    agent_context: null,
+  };
+  const gapRoutes = (items: unknown[]): Route[] => [
+    ["GET", "/api/me", me],
+    [
+      "GET",
+      "/api/projects/proj/issues/23/timeline",
+      { items, next_cursor: items.length === 0 ? null : "3:z.0.29" },
+    ],
+    [
+      "GET",
+      "/api/projects/proj/references/config",
+      { format: { prefix: "T", history: [] }, autolinks: [] },
+    ],
+  ];
+
+  const push = async (argv: string[], routes: Route[]) => {
+    const { fetchImpl, calls } = fakeFetch(routes);
+    const run = await runCli(
+      ["spec", "push", "23", specDir({ "design.md": "x\n" }), ...argv],
+      { fetchImpl, env: ENV },
+    );
+    return { run, calls };
+  };
+
+  it("closes the human output with the cursor to wait from", async () => {
+    const { run } = await push([], [pushRoute(CURSOR)]);
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout.trimEnd().split("\n").at(-1)).toBe(
+      `cursor: ${CURSOR} (issue watch --since <cursor>)`,
+    );
+  });
+
+  it("--print-cursor leaves stdout to the cursor and nothing else", async () => {
+    const { run } = await push(["--print-cursor"], [pushRoute(CURSOR)]);
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toBe(`${CURSOR}\n`);
+    expect(run.stderr).toContain("spec v2 pushed");
+  });
+
+  it("--print-cursor and --json both want stdout, so neither pushes", async () => {
+    const { run, calls } = await push(
+      ["--print-cursor", "--json"],
+      [pushRoute(CURSOR)],
+    );
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr).toContain("both want stdout");
+    // The clash is caught before the write: a rejected flag pair must not
+    // leave a spec version behind.
+    expect(calls).toHaveLength(0);
+  });
+
+  it("--json carries the cursor as a field", async () => {
+    const { run } = await push(["--json"], [pushRoute(CURSOR)]);
+    expect(JSON.parse(run.stdout)).toMatchObject({
+      version: 2,
+      cursor: CURSOR,
+    });
+  });
+
+  it("--since echoes the given cursor and reports the gap on stderr", async () => {
+    const { run } = await push(
+      ["--since", "3:old.0.1"],
+      [pushRoute(CURSOR), ...gapRoutes([reviewComment])],
+    );
+    expect(run.exitCode).toBe(0);
+    // The echo, not the server's newer position: everything just reported
+    // is still ahead of it, so a watch resuming there replays it.
+    expect(run.stdout).toContain("cursor: 3:old.0.1 ");
+    expect(run.stdout).not.toContain(CURSOR);
+    expect(run.stderr).toContain("1 entry landed since --since");
+    expect(run.stderr).toContain("hold on, one more thing");
+  });
+
+  it("--json --since reports the gap as missed", async () => {
+    const { run } = await push(
+      ["--json", "--since", "3:old.0.1"],
+      [pushRoute(CURSOR), ...gapRoutes([reviewComment])],
+    );
+    const parsed = JSON.parse(run.stdout);
+    expect(parsed.cursor).toBe("3:old.0.1");
+    expect(parsed.missed.map((i: { id: number }) => i.id)).toEqual([41]);
+  });
+
+  it("says nothing extra when the gap is empty", async () => {
+    const { run } = await push(
+      ["--json", "--since", "3:old.0.1"],
+      [pushRoute(CURSOR), ...gapRoutes([])],
+    );
+    expect(JSON.parse(run.stdout).missed).toEqual([]);
+    expect(run.stderr).not.toContain("landed since");
+  });
+
+  it("drops the cursor line against a server that mints none", async () => {
+    const { run } = await push([], [pushRoute(undefined)]);
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toBe(
+      "spec v2 pushed: 0 added, 1 changed, 0 removed\n  ~ design.md\n",
+    );
+  });
+
+  it("--print-cursor says so when the server minted none", async () => {
+    const { run } = await push(["--print-cursor"], [pushRoute(undefined)]);
+    expect(run.exitCode).toBe(1);
+    expect(run.stdout).toBe("");
+    expect(run.stderr).toContain("no cursor to print");
+    // The push happened; its summary must still reach the caller.
+    expect(run.stderr).toContain("spec v2 pushed");
+  });
+
+  it("refuses an empty --since before the push runs", async () => {
+    const { run, calls } = await push(["--since", ""], [pushRoute(CURSOR)]);
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr).toContain("empty cursor");
+    expect(calls).toHaveLength(0);
   });
 });

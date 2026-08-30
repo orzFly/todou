@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { fakeFetch, loggedInEnv, runCli } from "./harness.ts";
+import { fakeFetch, loggedInEnv, type Route, runCli } from "./harness.ts";
 
 const me = {
   id: 2,
@@ -352,6 +352,81 @@ describe("comment add", () => {
     );
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe("comment 1 on #7 (#comment-1)\n");
+  });
+});
+
+/** T-182: the reply to a comment is what follows the comment's own position. */
+describe("comment add cursor", () => {
+  const CURSOR = "3:hlsw2ffv8g.0.5k";
+  const created: Route = [
+    "POST",
+    "/api/projects/todou/issues/7/comments",
+    (init: RequestInit) => ({
+      type: "comment",
+      id: 51,
+      author: me,
+      body: jsonBody(init).body,
+      created_at: "2026-08-11T12:00:00Z",
+      edited_at: null,
+      cursor: CURSOR,
+    }),
+  ];
+  const reply = {
+    type: "comment",
+    id: 52,
+    author: { id: 3, login: "user", display_name: "User", kind: "human" },
+    body: "answered elsewhere already",
+    component: null,
+    created_at: "2026-08-11T11:00:00Z",
+    edited_at: null,
+    resolved_at: null,
+    agent_context: null,
+  };
+
+  const add = async (argv: string[], routes: Route[] = []) => {
+    const { fetchImpl, calls } = fakeFetch([created, ...routes]);
+    const run = await runCli(
+      ["comment", "add", "7", "--body", "a note", ...argv],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    return { run, calls };
+  };
+
+  it("closes the human output with the cursor to wait from", async () => {
+    const { run } = await add([]);
+    expect(run.stdout).toBe(
+      `comment 51 on #7 (#comment-51)\ncursor: ${CURSOR} (issue watch --since <cursor>)\n`,
+    );
+  });
+
+  it("--print-cursor leaves stdout to the cursor and nothing else", async () => {
+    const { run } = await add(["--print-cursor"]);
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toBe(`${CURSOR}\n`);
+    expect(run.stderr).toContain("comment 51 on #7");
+  });
+
+  it("--print-cursor and --json both want stdout, so nothing is posted", async () => {
+    const { run, calls } = await add(["--print-cursor", "--json"]);
+    expect(run.exitCode).toBe(1);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("--since echoes the cursor and reports what it had not seen", async () => {
+    const { run } = await add(
+      ["--json", "--since", "3:old.0.1"],
+      [
+        ["GET", "/api/me", me],
+        [
+          "GET",
+          "/api/projects/todou/issues/7/timeline",
+          { items: [reply], next_cursor: "3:z.0.34" },
+        ],
+      ],
+    );
+    const parsed = JSON.parse(run.stdout);
+    expect(parsed.cursor).toBe("3:old.0.1");
+    expect(parsed.missed.map((i: { id: number }) => i.id)).toEqual([52]);
   });
 });
 

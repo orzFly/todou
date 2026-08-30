@@ -18,7 +18,13 @@ import { z } from "zod";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
-import { personName } from "../format.ts";
+import { makePainter, personName } from "../format.ts";
+import { fetchRefPrefix } from "../resolve.ts";
+import {
+  assertWriteCursorFlags,
+  collectWriteCursor,
+  emitWriteResult,
+} from "../write-cursor.ts";
 
 const WRONG_DIR_HINT =
   "if that path is not part of your spec, this push ran from the wrong " +
@@ -97,17 +103,46 @@ export class SpecPushCommand extends ProjectCommand {
   static paths = [["spec", "push"]];
   static usage = Command.Usage({
     description: "Replace an issue's spec with a directory of markdown",
-    details:
-      "Collects every .md under `<dir>` (recursively) and syncs the whole " +
-      "set as one new version: files absent from the directory are removed " +
-      "from the spec. `<dir>` is deliberately required — a stray push from " +
-      "a repository root must not become the spec. No difference → no new " +
-      "version. `--if-version N` fails with a conflict unless the current " +
-      "version is N (optimistic lock for concurrent agents).",
+    details: `
+      Collects every .md under \`<dir>\` (recursively) and syncs the whole
+      set as one new version: files absent from the directory are removed
+      from the spec. \`<dir>\` is deliberately required — a stray push from
+      a repository root must not become the spec. No difference → no new
+      version. \`--if-version N\` fails with a conflict unless the current
+      version is N (optimistic lock for concurrent agents).
+
+      The push answers with the cursor to wait for the verdict from: every
+      timeline entry created after it is delivered by
+      \`issue watch --since <cursor>\`, the push's own event excluded. It
+      is printed as the last line, sits in \`--json\` as \`cursor\`, and
+      \`--print-cursor\` puts it alone on stdout with the summary moved to
+      stderr — that last form is the two-line review gate:
+
+      \`\`\`
+      cursor=$(todou spec push 23 ./spec -p <proj> --message "v2" --print-cursor)
+      todou issue watch 23 -p <proj> --since "$cursor" --debounce 60 --forever
+      \`\`\`
+
+      Waiting on a cursor taken *after* the push is the race this removes:
+      a verdict landing in between is already in the past when the wait
+      begins, and the wait never ends.
+
+      \`--since <cursor>\` says where the pusher last looked. The push runs
+      regardless; afterwards the entries between that cursor and now —
+      other people's only, as watches count them — are listed on stderr
+      (or as \`missed\` under \`--json\`), and the reported cursor is the
+      given one echoed back, so anything shown here is delivered again by
+      a watch resuming from it. \`--print-cursor\` conflicts with
+      \`--json\`; both want stdout.
+    `,
     examples: [
       [
         "Push the spec set of issue 23",
         "$0 spec push 23 ./specs/spec-feature --message 'address review'",
+      ],
+      [
+        "Push, then wait for the verdict with no gap in between",
+        'cursor=$($0 spec push 23 ./spec --print-cursor) && $0 issue watch 23 --since "$cursor" --debounce 60 --forever',
       ],
     ],
   });
@@ -120,8 +155,17 @@ export class SpecPushCommand extends ProjectCommand {
   ifVersion = Option.String("--if-version", {
     description: "Fail unless the current version matches",
   });
+  printCursor = Option.Boolean("--print-cursor", false, {
+    description:
+      "Print the waiting-start cursor alone on stdout, summary to stderr",
+  });
+  since = Option.String("--since", {
+    description:
+      "Report what landed since this cursor (echoed back as the cursor)",
+  });
 
   protected async run(client: TodouClient): Promise<void> {
+    assertWriteCursorFlags(this);
     const { project, number } = this.resolveIssueRef(this.number);
     const { files, skipped } = collectMarkdown(this.dir, { pushLimits: true });
     const input = SpecPushInput.safeParse({
@@ -139,14 +183,40 @@ export class SpecPushCommand extends ProjectCommand {
     for (const path of skipped) this.note(`skipped (not .md): ${path}`);
 
     const result = await client.pushSpec(project, number, input.data);
-    this.output(result, () =>
-      result.unchanged
-        ? `no changes — spec stays at v${result.version}`
-        : [
-            `spec v${result.version} pushed: ${result.added.length} added, ` +
-              `${result.changed.length} changed, ${result.removed.length} removed`,
-            ...changeLines(result),
-          ].join("\n"),
+    const outcome = await collectWriteCursor({
+      client,
+      project,
+      number,
+      served: result.cursor,
+      since: this.since,
+      agentContext: this.agentContext,
+      note: (line) => this.note(line),
+      clock: this.clock,
+    });
+    emitWriteResult(
+      {
+        json: this.json,
+        printCursor: this.printCursor,
+        paint: makePainter(this.context.stdout, this.context.env),
+        // Only the missed lines spell a ref, so a push with nothing to
+        // report spends no round-trip learning how.
+        refPrefix: outcome.missed?.length
+          ? await fetchRefPrefix(client, project)
+          : null,
+        issueNumber: number,
+        write: (text) => this.context.stdout.write(`${text}\n`),
+        note: (line) => this.note(line),
+      },
+      outcome,
+      result,
+      () =>
+        result.unchanged
+          ? `no changes — spec stays at v${result.version}`
+          : [
+              `spec v${result.version} pushed: ${result.added.length} added, ` +
+                `${result.changed.length} changed, ${result.removed.length} removed`,
+              ...changeLines(result),
+            ].join("\n"),
     );
   }
 }

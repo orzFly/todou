@@ -38,7 +38,7 @@ export function isTransientError(error: unknown): boolean {
   return error instanceof TypeError;
 }
 
-function describeError(error: unknown): string {
+export function describeError(error: unknown): string {
   if (error instanceof TodouError) {
     return error.message === String(error.status)
       ? `HTTP ${error.status}`
