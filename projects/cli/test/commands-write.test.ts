@@ -195,6 +195,201 @@ describe("issue edit", () => {
   });
 });
 
+describe("issue edit, several numbers (T-184)", () => {
+  const card = (number: number, extra: Record<string, unknown> = {}) =>
+    issueWith({ id: number * 10, number, ...extra });
+  const gone = {
+    __status: 404,
+    body: { error: { code: "not_found", message: "issue not found" } },
+  };
+
+  it("applies one set of flags card by card, in order", async () => {
+    const patched: Array<[number, Record<string, unknown>]> = [];
+    const patchRoute = (number: number): Route => [
+      "PATCH",
+      `/api/projects/todou/issues/${number}`,
+      (init: RequestInit) => {
+        patched.push([number, jsonBody(init)]);
+        return card(number, { status: statuses[1] });
+      },
+    ];
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/statuses", statuses],
+      ["GET", "/api/projects/todou/issues/3", card(3)],
+      ["GET", "/api/projects/todou/issues/4", card(4)],
+      ["GET", "/api/projects/todou/issues/5", card(5)],
+      patchRoute(3),
+      patchRoute(4),
+      patchRoute(5),
+    ]);
+    const result = await runCli(
+      ["issue", "edit", "4", "3", "5", "--status", "Done"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(patched.map(([n]) => n)).toEqual([4, 3, 5]);
+    expect(patched.every(([, body]) => body.status_id === 2)).toBe(true);
+    expect(result.stdout).toBe("#4 updated\n#3 updated\n#5 updated\n");
+  });
+
+  it("emits an items envelope under --json", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/statuses", statuses],
+      ["GET", "/api/projects/todou/issues/3", card(3)],
+      ["GET", "/api/projects/todou/issues/4", card(4)],
+      ["PATCH", "/api/projects/todou/issues/3", () => card(3)],
+      ["PATCH", "/api/projects/todou/issues/4", () => card(4)],
+    ]);
+    const result = await runCli(
+      ["issue", "edit", "3", "4", "--status", "Done", "--json"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      items: Array<{ number: number; ref: string }>;
+      ref_format: unknown;
+    };
+    expect(Object.keys(parsed).sort()).toEqual(["items", "ref_format"]);
+    expect(parsed.items.map((i) => i.number)).toEqual([3, 4]);
+    expect(parsed.items[0]?.ref).toBe("#3");
+  });
+
+  it("writes nothing at all when one number cannot be read", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      ["GET", "/api/projects/todou/statuses", statuses],
+      ["GET", "/api/projects/todou/issues/3", card(3)],
+      ["GET", "/api/projects/todou/issues/9", gone],
+      ["PATCH", "/api/projects/todou/issues/3", () => card(3)],
+    ]);
+    const result = await runCli(
+      ["issue", "edit", "3", "9", "--status", "Done"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("cannot read 9");
+    expect(result.stderr).toContain("nothing was written");
+    // The point of the pre-read: no card carries an event from this run.
+    expect(calls.filter((c) => c.init.method === "PATCH")).toHaveLength(0);
+  });
+
+  it("stops at the first write that fails and names what it skipped", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      ["GET", "/api/projects/todou/statuses", statuses],
+      ["GET", "/api/projects/todou/issues/3", card(3)],
+      ["GET", "/api/projects/todou/issues/4", card(4)],
+      ["GET", "/api/projects/todou/issues/5", card(5)],
+      ["PATCH", "/api/projects/todou/issues/3", () => card(3)],
+      [
+        "PATCH",
+        "/api/projects/todou/issues/4",
+        {
+          __status: 409,
+          body: {
+            error: { code: "conflict", message: "issue is in the trash" },
+          },
+        },
+      ],
+      ["PATCH", "/api/projects/todou/issues/5", () => card(5)],
+    ]);
+    const result = await runCli(
+      ["issue", "edit", "3", "4", "5", "--status", "Done"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(1);
+    // The card that landed already said so on stdout.
+    expect(result.stdout).toBe("#3 updated\n");
+    expect(result.stderr).toContain(
+      "failed on #4: issue is in the trash; not attempted: #5",
+    );
+    expect(
+      calls.filter(
+        (c) => c.url.endsWith("/issues/5") && c.init.method === "PATCH",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("gives --json a full account of a partial batch", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/statuses", statuses],
+      ["GET", "/api/projects/todou/issues/3", card(3)],
+      ["GET", "/api/projects/todou/issues/4", card(4)],
+      ["GET", "/api/projects/todou/issues/5", card(5)],
+      ["PATCH", "/api/projects/todou/issues/3", () => card(3)],
+      [
+        "PATCH",
+        "/api/projects/todou/issues/4",
+        {
+          __status: 409,
+          body: {
+            error: { code: "conflict", message: "issue is in the trash" },
+          },
+        },
+      ],
+    ]);
+    const result = await runCli(
+      ["issue", "edit", "3", "4", "5", "--status", "Done", "--json"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(1);
+    const parsed = JSON.parse(result.stdout) as {
+      items: Array<{ number: number }>;
+      error: Record<string, unknown>;
+      not_attempted: number[];
+    };
+    expect(parsed.items.map((i) => i.number)).toEqual([3]);
+    expect(parsed.error).toEqual({
+      number: 4,
+      status: 409,
+      code: "conflict",
+      message: "issue is in the trash",
+    });
+    expect(parsed.not_attempted).toEqual([5]);
+  });
+
+  it("refuses --title and --body on a batch", async () => {
+    const { fetchImpl } = fakeFetch([]);
+    const titled = await runCli(
+      ["issue", "edit", "3", "4", "--title", "Same for both"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(titled.exitCode).toBe(1);
+    expect(titled.stderr).toContain("names several cards");
+
+    const bodied = await runCli(["issue", "edit", "3", "4", "--body", "x"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(bodied.exitCode).toBe(1);
+    expect(bodied.stderr).toContain("names several cards");
+  });
+
+  it("computes label ids from each card's own set", async () => {
+    const patched: Record<number, unknown> = {};
+    const patchRoute = (number: number): Route => [
+      "PATCH",
+      `/api/projects/todou/issues/${number}`,
+      (init: RequestInit) => {
+        patched[number] = jsonBody(init).label_ids;
+        return card(number);
+      },
+    ];
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/labels", labels],
+      ["GET", "/api/projects/todou/issues/3", card(3, { labels: [labels[0]] })],
+      ["GET", "/api/projects/todou/issues/4", card(4, { labels: [] })],
+      patchRoute(3),
+      patchRoute(4),
+    ]);
+    const result = await runCli(
+      ["issue", "edit", "3", "4", "--add-label", "chore"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    // Shared: what "chore" means. Per-card: what the card ends up with.
+    expect(patched).toEqual({ 3: [7, 8], 4: [8] });
+  });
+});
+
 describe("issue close", () => {
   it("comments first, then moves to the first closed status", async () => {
     const order: string[] = [];

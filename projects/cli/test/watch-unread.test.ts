@@ -3,6 +3,7 @@ import {
   fakeFetch,
   loggedInEnv,
   parseNdjson,
+  type Route,
   runCli,
   virtualClock,
 } from "./harness.ts";
@@ -165,6 +166,59 @@ describe("unread markers (server state)", () => {
     const viewed = await runCli(["issue", "view", "3"], { fetchImpl, env });
     expect(viewed.exitCode).toBe(0);
     expect(putBody).toEqual({});
+  });
+
+  it("marks each card of a batch read at its own tail (T-184)", async () => {
+    const comment = (id: number, at: string) => ({
+      type: "comment",
+      id,
+      author: other,
+      body: `entry ${id}`,
+      created_at: at,
+      edited_at: null,
+    });
+    const put: Record<string, unknown> = {};
+    const readRoute = (number: number): Route => [
+      "PUT",
+      `/api/projects/todou/issues/${number}/read`,
+      (init: RequestInit) => {
+        put[number] = JSON.parse(String(init.body));
+        return { __status: 204 };
+      },
+    ];
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues/3",
+        { ...listItem(3, "One"), body: "" },
+      ],
+      [
+        "GET",
+        "/api/projects/todou/issues/4",
+        { ...listItem(4, "Two"), body: "" },
+      ],
+      [
+        "GET",
+        "/api/projects/todou/issues/3/timeline",
+        page([comment(1, "2026-08-11T12:00:00Z")], null),
+      ],
+      [
+        "GET",
+        "/api/projects/todou/issues/4/timeline",
+        page([comment(2, "2026-08-11T13:30:00Z")], null),
+      ],
+      readRoute(3),
+      readRoute(4),
+    ]);
+    const viewed = await runCli(["issue", "view", "3", "4"], {
+      fetchImpl,
+      env,
+    });
+    expect(viewed.exitCode).toBe(0);
+    expect(put).toEqual({
+      3: { up_to: "2026-08-11T12:00:00Z" },
+      4: { up_to: "2026-08-11T13:30:00Z" },
+    });
   });
 
   it("degrades silently on servers without read state", async () => {
