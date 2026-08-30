@@ -1155,6 +1155,51 @@ describe("issue events", () => {
   });
 });
 
+describe("project members", () => {
+  const members = [
+    { user: me, role: "admin", created_at: "2026-08-01T00:00:00Z" },
+    { user: botOne, role: "writer", created_at: "2026-08-02T00:00:00Z" },
+  ];
+
+  it("prints login, display name and role, then a count", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/members", members],
+    ]);
+    const result = await runCli(["project", "members"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    const lines = result.stdout.trimEnd().split("\n");
+    // login first: it is the column `-a` and `--exclude-actor` accept.
+    expect(lines[0]).toMatch(/^claude\s+Claude\s+admin$/);
+    expect(lines[1]).toMatch(/^bot-one\s+Bot One\s+writer$/);
+    expect(lines.at(-1)).toBe("2 members");
+  });
+
+  it("says one member in the singular", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/members", [members[0]]],
+    ]);
+    const result = await runCli(["project", "members"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.stdout.trimEnd().split("\n").at(-1)).toBe("1 member");
+  });
+
+  it("--json passes the array through", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/members", members],
+    ]);
+    const result = await runCli(["project", "members", "--json"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(JSON.parse(result.stdout)).toEqual(members);
+  });
+});
+
 describe("issue watch", () => {
   const newComment = {
     type: "comment",
