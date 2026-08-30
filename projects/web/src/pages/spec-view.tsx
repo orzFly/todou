@@ -955,6 +955,32 @@ function SpecDiff({
     el.classList.remove("anchor-flash");
     void el.offsetWidth;
     el.classList.add("anchor-flash");
+    // The scroll just set is about to be pushed around: MultiFileDiff lays
+    // out asynchronously, so at this point every diff above the target is
+    // still ~0px tall and the viewport ends up back at the page top (T-188).
+    // Re-anchor on each container growth, and hand the viewport back at the
+    // user's first input — after that, re-anchoring would fight them.
+    // (No settle timeout instead: highlight chunks land with unbounded gaps,
+    // and a timer that fires inside one re-opens the race.)
+    if (typeof ResizeObserver === "undefined") return; // happy-dom
+    const container = el.parentElement ?? el;
+    const observer = new ResizeObserver(() => {
+      el.scrollIntoView({ block: "start" });
+    });
+    observer.observe(container);
+    const controller = new AbortController();
+    const release = () => {
+      observer.disconnect();
+      controller.abort();
+    };
+    for (const type of ["wheel", "touchstart", "pointerdown", "keydown"]) {
+      window.addEventListener(type, release, {
+        capture: true,
+        passive: true,
+        signal: controller.signal,
+      });
+    }
+    return release;
   }, [focusPath]);
   const pairs = useMemo(() => {
     const before = new Map(from.data.files.map((f) => [f.path, f.body]));
