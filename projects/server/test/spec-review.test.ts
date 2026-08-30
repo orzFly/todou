@@ -189,6 +189,40 @@ describe("spec review loop T-23", () => {
     });
   });
 
+  it("delivers the verdict to a watcher waiting from the push cursor", async () => {
+    // The failure this closes (T-182): a pusher that takes its cursor
+    // *after* the push can miss a verdict that landed in between and then
+    // waits for an event already in the past.
+    const create = await t.app.request(`/api/projects/${slug}/issues`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ title: "verdict delivery" }),
+    });
+    const { number } = await json(create);
+    const pushed = await json(
+      await t.app.request(`/api/projects/${slug}/issues/${number}/spec/push`, {
+        method: "POST",
+        headers: asAgent(),
+        body: JSON.stringify({
+          files: [{ path: "design.md", body: DESIGN_V1 }],
+        }),
+      }),
+    );
+
+    expect(await review(number, { version: 1, verdict: "approve" })).toEqual(
+      expect.objectContaining({ status: 201 }),
+    );
+    const page = await json(
+      await t.app.request(
+        `/api/projects/${slug}/issues/${number}/timeline?after=${encodeURIComponent(pushed.cursor)}`,
+        { headers: asAgent() },
+      ),
+    );
+    expect(
+      page.items.map((i: { event_type?: string }) => i.event_type),
+    ).toContain("spec_review");
+  });
+
   it("rejects the pusher reviewing their own version", async () => {
     const number = await createIssueWithSpec();
     const res = await review(

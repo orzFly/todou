@@ -3,6 +3,7 @@ import type {
   ChangeEvent,
   CommentComponent,
   CommentCreateInput,
+  CommentCreateResult,
   CommentLocation,
   CommentUpdateInput,
   TimelineComment,
@@ -22,9 +23,11 @@ import {
   type ReferenceInputs,
   recordCrossReferences,
 } from "./cross-references.ts";
+import { encodeTimelineCursor } from "./cursor.ts";
 import { canonicalizeComponent, questionCount } from "./questions.ts";
 import { recordReferences, refPrefixAt } from "./references.ts";
 import { deleteRevisionsFor, recordRevision } from "./revisions.ts";
+import { microIso } from "./timeline.ts";
 import { assertIssueReadable, assertIssueWritable } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
@@ -167,7 +170,7 @@ export async function createComment(
   issueNumber: number,
   input: CommentCreateInput,
   agentContext: AgentContext | null = null,
-): Promise<TimelineComment> {
+): Promise<CommentCreateResult> {
   const { project, role } = await requireProject(ctx, actor, slug, "writer");
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(db, project.id, issueNumber);
@@ -181,7 +184,7 @@ export async function createComment(
   const refInputs = await loadReferenceInputs(ctx, db, project.id);
   let crossTargets: CrossTarget[] = [];
   const events: ChangeEvent[] = [];
-  const row = await db.transaction(async (tx) => {
+  const { row, ts } = await db.transaction(async (tx) => {
     const result = await insertCommentInTx(tx, {
       project,
       issue: { id: issue.id, number: issueNumber },
@@ -201,7 +204,15 @@ export async function createComment(
       action: "updated",
       issue_number: issueNumber,
     });
-    return result.comment;
+    // Read back at µs precision rather than reusing the row's Date, which
+    // holds milliseconds: a cursor that cannot separate two entries of the
+    // same millisecond either repeats one or drops one.
+    const [position] = await tx
+      .select({ ts: microIso(comments.createdAt) })
+      .from(comments)
+      .where(eq(comments.id, result.comment.id));
+    if (!position) throw new Error("comment row vanished mid-insert");
+    return { row: result.comment, ts: position.ts };
   });
 
   for (const e of events) ctx.bus.publish(project.id, e);
@@ -213,7 +224,12 @@ export async function createComment(
     crossTargets,
     agentContext,
   );
-  return toTimelineComment(ctx, row);
+  return {
+    ...(await toTimelineComment(ctx, row)),
+    // The comment's own position: what follows it is the answer to it,
+    // and the comment itself is already in the caller's hands (T-182).
+    cursor: encodeTimelineCursor({ t: ts, k: 0, i: row.id }),
+  };
 }
 
 /** Fetch one comment by id, scoped to its issue (permalink resolution). */

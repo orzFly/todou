@@ -466,6 +466,40 @@ describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
     expect(ref.payload.by_comment).toBe(comment.id);
   });
 
+  it("a new comment carries the cursor its own answer arrives after", async () => {
+    const issue = await createIssue({ title: "Question host" });
+    const post = async (body: string) =>
+      json(
+        await t.app.request(
+          `/api/projects/${slug}/issues/${issue.number}/comments`,
+          {
+            method: "POST",
+            headers: headers(),
+            body: JSON.stringify({ body }),
+          },
+        ),
+      );
+
+    const asked = await post("which one?");
+    expect(typeof asked.cursor).toBe("string");
+    // The question is behind its own cursor; the reply is ahead of it.
+    expect(
+      (
+        await timelineOf(
+          issue.number,
+          `?after=${encodeURIComponent(asked.cursor)}`,
+        )
+      ).items,
+    ).toEqual([]);
+
+    const replied = await post("the second one");
+    const since = await timelineOf(
+      issue.number,
+      `?after=${encodeURIComponent(asked.cursor)}`,
+    );
+    expect(since.items.map((i: { id: number }) => i.id)).toEqual([replied.id]);
+  });
+
   it("fetches a single comment by id, scoped to its issue", async () => {
     const issue = await createIssue({ title: "Permalink host" });
     const other = await createIssue({ title: "Permalink other" });

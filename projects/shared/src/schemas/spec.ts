@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Id, Timestamp } from "./common.ts";
+import { Cursor, Id, Timestamp } from "./common.ts";
 import { UserRef } from "./user.ts";
 
 // Spec documents (T-23): a set of markdown files attached to an issue, where
@@ -67,6 +67,14 @@ export const SpecPushResult = z.object({
   added: z.array(z.string()),
   changed: z.array(z.string()),
   removed: z.array(z.string()),
+  /**
+   * Where to start waiting for the verdict (T-182): every timeline entry
+   * created after this push is strictly after this cursor, and the push's
+   * own event is not. Taking a "now" cursor *after* the push instead is
+   * the race this field removes — the review can land in between, and a
+   * watch from the later cursor then waits for something already past.
+   */
+  cursor: Cursor,
 });
 export type SpecPushResult = z.infer<typeof SpecPushResult>;
 

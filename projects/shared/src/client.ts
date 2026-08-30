@@ -24,6 +24,7 @@ import type {
   CommandSubmitInput,
   CommandSubmitResult,
   CommentComponentInput,
+  CommentCreateResult,
   CommentLocation,
   CrossActivityPage,
   DirectUploadTicket,
@@ -540,7 +541,7 @@ export class TodouClient {
     body: string,
     component?: CommentComponentInput,
   ) =>
-    this.request<TimelineComment>(
+    this.request<CommentCreateResult>(
       "POST",
       `/projects/${slug}/issues/${number}/comments`,
       { json: component === undefined ? { body } : { body, component } },

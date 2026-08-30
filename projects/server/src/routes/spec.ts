@@ -51,6 +51,14 @@ const specPushRoute = createRoute({
   summary:
     "Replace the spec with the pushed file set (writer); a change becomes " +
     "one new whole-set version, no change is a no-op",
+  description:
+    "The result carries a `cursor` (T-182): resume a timeline read or a " +
+    "watch from it — `--since <cursor>` — and every entry created after " +
+    "this push is delivered, the push's own event excluded. That is the " +
+    "cursor to wait for the review verdict from; one taken after the push " +
+    "returns leaves a window the verdict can land in unseen. An unchanged " +
+    "push mints no event, so its cursor is the lower bound of the current " +
+    "version's instant and may re-deliver entries of that same instant.",
   request: { params: issueParams, body: jsonBody(SpecPushInput) },
   responses: { 200: { description: "Result", ...jsonBody(SpecPushResult) } },
 });

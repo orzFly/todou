@@ -32,6 +32,8 @@ import {
   ValidationFailedError,
 } from "../errors.ts";
 import { requireProject, routeInfoOf } from "./access.ts";
+import { encodeTimelineCursor } from "./cursor.ts";
+import { microIso } from "./timeline.ts";
 import { assertIssueReadable, assertIssueWritable } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
@@ -140,12 +142,26 @@ export async function pushSpec(
       .sort();
 
     if (added.length === 0 && removed.length === 0 && changed.length === 0) {
+      // A push carries at least one file, so an issue with no spec yet
+      // always adds one: reaching here means `current` exists.
+      if (!current) throw new Error("unchanged push against no version");
+      const [version] = await tx
+        .select({ ts: microIso(specVersions.createdAt) })
+        .from(specVersions)
+        .where(eq(specVersions.id, current.id));
+      if (!version) throw new Error("spec version row vanished mid-push");
       return {
         unchanged: true,
         version: currentNumber,
         added,
         changed,
         removed,
+        // No new event to point at, so the waiting start is the lower
+        // bound of the version's own instant: (t, 0, 0) sorts before every
+        // real entry of that microsecond. Entries already at that instant
+        // may be re-delivered — one extra wake-up, judged by state and
+        // dismissed — which is the safe direction to err in.
+        cursor: encodeTimelineCursor({ t: version.ts, k: 0, i: 0 }),
       };
     }
 
@@ -189,7 +205,10 @@ export async function pushSpec(
         },
         agentContext,
       })
-      .returning();
+      // `created_at` comes back as µs text, not as the driver's Date: a
+      // Date carries milliseconds only, and entries sharing a millisecond
+      // are exactly what a cursor has to be able to tell apart.
+      .returning({ id: issueEvents.id, ts: microIso(issueEvents.createdAt) });
     const event = eventRows[0];
     if (!event) throw new Error("event insert returned no row");
 
@@ -230,6 +249,10 @@ export async function pushSpec(
       added,
       changed,
       removed,
+      // The push event's own position. "Strictly greater" then excludes
+      // the push itself and includes everything it will provoke — the
+      // review verdict above all (T-182).
+      cursor: encodeTimelineCursor({ t: event.ts, k: 1, i: event.id }),
     };
   });
 

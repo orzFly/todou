@@ -6,6 +6,7 @@ import {
   CommandSubmitInput,
   CommandSubmitResult,
   CommentCreateInput,
+  CommentCreateResult,
   CommentLocation,
   CommentUpdateInput,
   Issue,
@@ -149,8 +150,16 @@ const createCommentRoute = createRoute({
   method: "post",
   path: "/{slug}/issues/{number}/comments",
   summary: "Comment on an issue (writer)",
+  description:
+    "The response carries the comment plus a `cursor` (T-182): resume a " +
+    "timeline read or a watch from it — `--since <cursor>` — and every " +
+    "entry created after this comment is delivered, this comment itself " +
+    "excluded. Taking a cursor after the write instead leaves a window in " +
+    "which the very answer being waited for can land unseen.",
   request: { params: issueParams, body: jsonBody(CommentCreateInput) },
-  responses: { 201: { description: "Created", ...jsonBody(TimelineComment) } },
+  responses: {
+    201: { description: "Created", ...jsonBody(CommentCreateResult) },
+  },
 });
 
 const createCommandsRoute = createRoute({

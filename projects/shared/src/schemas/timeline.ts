@@ -48,6 +48,22 @@ export const TimelineComment = z.object({
 export type TimelineComment = z.infer<typeof TimelineComment>;
 
 /**
+ * What POST …/comments answers with: the comment, plus where to start
+ * waiting for a reply to it (T-182). A superset of TimelineComment, so
+ * only the creation endpoint carries it — timeline entries and
+ * GET/PATCH of one comment stay exactly as they were, and a client that
+ * knows nothing of the field reads the response as before.
+ */
+export const CommentCreateResult = TimelineComment.extend({
+  /**
+   * The comment's own position, so the entries strictly after it are the
+   * replies and verdicts that answer it — this comment itself excluded.
+   */
+  cursor: Cursor,
+});
+export type CommentCreateResult = z.infer<typeof CommentCreateResult>;
+
+/**
  * A comment plus the issue carrying it — what a bare `#comment-M` needs
  * before it can be rendered as a deep link (T-150).
  */

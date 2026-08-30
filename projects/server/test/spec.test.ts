@@ -49,6 +49,30 @@ describe.each(PLACEMENTS)("spec T-23 (%s placement)", (placement) => {
     });
   }
 
+  async function comment(number: number, body: string): Promise<Response> {
+    return t.app.request(`/api/projects/${slug}/issues/${number}/comments`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ body }),
+    });
+  }
+
+  /** Everything strictly after `cursor`, as the CLI's `--since` reads it. */
+  async function since(number: number, cursor: string): Promise<string[]> {
+    const res = await t.app.request(
+      `/api/projects/${slug}/issues/${number}/timeline?after=${encodeURIComponent(cursor)}`,
+      { headers: headers() },
+    );
+    expect(res.status).toBe(200);
+    const page = await json(res);
+    return page.items.map(
+      (item: { type: string; body?: string; event_type?: string }) =>
+        item.type === "comment"
+          ? `comment:${item.body}`
+          : `event:${item.event_type}`,
+    );
+  }
+
   it("first push creates v1 with every file added", async () => {
     const { number } = await createIssue();
     const res = await push(number, { files: V1, message: "initial" });
@@ -161,6 +185,34 @@ describe.each(PLACEMENTS)("spec T-23 (%s placement)", (placement) => {
       }),
     );
     expect(info.versions).toHaveLength(1);
+  });
+
+  it("the push cursor starts after the push's own event", async () => {
+    const { number } = await createIssue();
+    const pushed = await json(await push(number, { files: V1 }));
+    expect(typeof pushed.cursor).toBe("string");
+
+    // The push event itself is behind the cursor: waiting on it must not
+    // return the wait's own cause (T-182).
+    expect(await since(number, pushed.cursor)).toEqual([]);
+
+    expect((await comment(number, "the verdict")).status).toBe(201);
+    expect(await since(number, pushed.cursor)).toEqual(["comment:the verdict"]);
+  });
+
+  it("an unchanged push answers with a cursor that still catches up", async () => {
+    const { number } = await createIssue();
+    expect((await push(number, { files: V1 })).status).toBe(200);
+    const again = await json(await push(number, { files: V1 }));
+    expect(again).toMatchObject({ unchanged: true, version: 1 });
+
+    // No new event to anchor on, so the cursor is the version's own
+    // instant: entries of that instant may repeat, later ones cannot be
+    // missed — which is the direction that keeps a waiter awake.
+    expect((await comment(number, "after the no-op")).status).toBe(201);
+    expect(await since(number, again.cursor)).toContain(
+      "comment:after the no-op",
+    );
   });
 
   it("if_version mismatches conflict with the current number named", async () => {
