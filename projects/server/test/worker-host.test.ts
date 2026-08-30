@@ -77,6 +77,21 @@ describe("worker-hosted pglite", () => {
     expect(new Set(numbers).size).toBe(numbers.length);
   });
 
+  it("searches through a worker-hosted database", async () => {
+    // The worker builds its own PGlite instance, so it needs pg_trgm linked
+    // in separately from the two sites in driver.ts (T-141) — miss it and
+    // migration 0010's CREATE EXTENSION fails on this path alone, which is
+    // the one the dogfood deployment runs on.
+    const res = await t.app.request(
+      `/api/projects/workerized/search?q=${encodeURIComponent("other thread")}`,
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(200);
+    const { items } = await json(res);
+    expect(items).toHaveLength(1);
+    expect(items[0].kind).toBe("comment");
+  });
+
   it("parallelizes across two project databases (smoke benchmark)", async () => {
     for (const slug of ["bench-a", "bench-b"]) {
       await t.app.request("/api/projects", {

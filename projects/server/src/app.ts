@@ -30,6 +30,7 @@ import { labelRoutes } from "./routes/labels.ts";
 import { meRoutes } from "./routes/me.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { referenceRoutes } from "./routes/references.ts";
+import { searchRoutes } from "./routes/search.ts";
 import { specRoutes } from "./routes/spec.ts";
 import { sseRoutes } from "./routes/sse.ts";
 import { statusRoutes } from "./routes/statuses.ts";
@@ -164,6 +165,7 @@ export function createApp(ctx: AppContext) {
   api.route("/projects", referenceRoutes());
   api.route("/projects", labelRoutes());
   api.route("/projects", issueRoutes());
+  api.route("/projects", searchRoutes());
   api.route("/projects", specRoutes());
   api.route("/projects", attachmentRoutes());
   // Mounted at the root: sseRoutes carries both the user-level /events feed

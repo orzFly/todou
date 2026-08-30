@@ -7,6 +7,7 @@ import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import { migrate as migratePglite } from "drizzle-orm/pglite/migrator";
 import pg from "pg";
+import { PGLITE_EXTENSIONS } from "./pglite-extensions.ts";
 import { WorkerPgliteClient } from "./worker-client.ts";
 
 /** Driver-agnostic database type both pglite and node-postgres satisfy. */
@@ -79,8 +80,8 @@ export async function openDb(
           isMemory ? undefined : target,
         ) as unknown as PGlite)
       : isMemory
-        ? new PGlite()
-        : new PGlite(target);
+        ? new PGlite({ extensions: PGLITE_EXTENSIONS })
+        : new PGlite(target, { extensions: PGLITE_EXTENSIONS });
     const db = drizzlePglite(client);
     return {
       db: db as unknown as Db,

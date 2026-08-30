@@ -20,6 +20,7 @@ export * from "./schemas/prefs.ts";
 export * from "./schemas/project.ts";
 export * from "./schemas/references.ts";
 export * from "./schemas/revision.ts";
+export * from "./schemas/search.ts";
 export * from "./schemas/spec.ts";
 export * from "./schemas/timeline.ts";
 export * from "./schemas/token.ts";

@@ -5,6 +5,7 @@
 // otherwise burns main-thread CPU.
 import { parentPort, workerData } from "node:worker_threads";
 import { PGlite, type Transaction } from "@electric-sql/pglite";
+import { PGLITE_EXTENSIONS } from "./pglite-extensions.ts";
 
 type Request = {
   id: number;
@@ -43,7 +44,9 @@ const port = parentPort;
 if (!port) throw new Error("pglite-worker must run inside a worker thread");
 
 const dataDir = (workerData as { dataDir?: string })?.dataDir;
-const client = dataDir ? new PGlite(dataDir) : new PGlite();
+const client = dataDir
+  ? new PGlite(dataDir, { extensions: PGLITE_EXTENSIONS })
+  : new PGlite({ extensions: PGLITE_EXTENSIONS });
 
 type TxEntry = { tx: Transaction; finish: () => void };
 const txs = new Map<number, TxEntry>();
