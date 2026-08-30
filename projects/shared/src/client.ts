@@ -52,6 +52,7 @@ import type {
   ReferenceDirectory,
   RefFormatSetInput,
   RevisionPage,
+  SearchPage,
   SpecComments,
   SpecFiles,
   SpecInfo,
@@ -489,6 +490,10 @@ export class TodouClient {
     this.request<void>("PUT", `/projects/${slug}/issues/${number}/read`, {
       json: input,
     });
+
+  // — search —
+  search = (slug: string, query: Query) =>
+    this.request<SearchPage>("GET", `/projects/${slug}/search`, { query });
 
   // — timeline / comments —
   getTimeline = (

@@ -106,6 +106,11 @@ todou project link my-project
 # and filesystem boundaries. --local/--global force either behavior.
 cd ~/scratch/notes && todou project link my-project
 todou issue list --open
+# Search titles, bodies, comments and spec documents at once. Terms are
+# ANDed and each is a substring, so a word inside a run of Chinese is found
+# and `WordDiff` finds `coalescedWordDiff`; quote a phrase to keep it whole.
+todou search 全文搜索
+todou search pg_trgm --in comments
 todou issue create --title "Fix the potato" --body "It sprouted."
 todou issue view 1
 todou issue view my-project/1   # project/number, "#1", "T-1", or an issue

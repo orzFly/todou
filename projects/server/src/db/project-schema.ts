@@ -5,7 +5,9 @@
 // one target database. References to users are LOGICAL ids into the system
 // database — no foreign keys are possible across databases.
 import type { AgentContext, CommentComponent } from "@todou/shared";
+import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   index,
@@ -17,6 +19,20 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+
+/**
+ * A trigram GIN index over one searchable text column (T-141).
+ *
+ * Project search is `ILIKE '%…%'` — substring, which is what a Chinese
+ * query means, and what finding `WordDiff` inside `coalescedWordDiff`
+ * needs. Postgres cannot use a btree index for a leading-wildcard pattern
+ * at all, so without this every search is a sequential scan of the column;
+ * with it a pattern of three characters or more (CJK included) plans as a
+ * bitmap index scan. Shorter patterns still fall back to a scan — correct,
+ * just not fast, see the note on the search service.
+ */
+const trigramIndex = (name: string, column: AnyPgColumn) =>
+  index(name).using("gin", sql`${column} gin_trgm_ops`);
 
 const id = () =>
   bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey();
@@ -142,6 +158,8 @@ export const issues = pgTable(
     uniqueIndex("issues_project_number_idx").on(t.projectId, t.number),
     index("issues_project_status_idx").on(t.projectId, t.statusId),
     index("issues_project_updated_idx").on(t.projectId, t.updatedAt),
+    trigramIndex("issues_title_trgm_idx", t.title),
+    trigramIndex("issues_body_trgm_idx", t.body),
   ],
 );
 
@@ -192,7 +210,10 @@ export const comments = pgTable(
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     resolvedBy: bigint("resolved_by", { mode: "number" }),
   },
-  (t) => [index("comments_issue_created_idx").on(t.issueId, t.createdAt)],
+  (t) => [
+    index("comments_issue_created_idx").on(t.issueId, t.createdAt),
+    trigramIndex("comments_body_trgm_idx", t.body),
+  ],
 );
 
 export const issueEvents = pgTable(
@@ -306,6 +327,7 @@ export const specVersionFiles = pgTable(
   },
   (t) => [
     uniqueIndex("spec_version_files_version_path_idx").on(t.versionId, t.path),
+    trigramIndex("spec_version_files_body_trgm_idx", t.body),
   ],
 );
 

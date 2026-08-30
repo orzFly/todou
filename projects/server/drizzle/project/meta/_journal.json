@@ -71,6 +71,13 @@
       "when": 1787987898923,
       "tag": "0009_issue_trash",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788078950401,
+      "tag": "0010_search_trgm",
+      "breakpoints": true
     }
   ]
 }

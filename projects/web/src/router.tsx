@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-router";
 import { issueSearchSchema } from "@/api/issues.ts";
 import { meQuery } from "@/api/queries.ts";
+import { searchPageSchema } from "@/api/search.ts";
 import { AppShell } from "@/components/shell.tsx";
 import { TitleController } from "@/components/title-controller.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,6 +26,7 @@ import { ProfileSettingsPage } from "@/pages/profile-settings.tsx";
 import { ProjectLayout, ProjectRouteError } from "@/pages/project-layout.tsx";
 import { ProjectSettingsPage } from "@/pages/project-settings.tsx";
 import { ProjectsPage } from "@/pages/projects.tsx";
+import { SearchPage } from "@/pages/search.tsx";
 import { TokensSettingsPage } from "@/pages/tokens-settings.tsx";
 
 const rootRoute = createRootRoute({
@@ -138,6 +140,13 @@ const projectBoardRoute = createRoute({
   staticData: { fillsViewport: true },
 });
 
+const projectSearchRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "search",
+  component: SearchPage,
+  validateSearch: (search) => searchPageSchema.parse(search),
+});
+
 // Registered before issues/$number so the static segment wins the match.
 const newIssueRoute = createRoute({
   getParentRoute: () => projectRoute,
@@ -222,6 +231,7 @@ const routeTree = rootRoute.addChildren([
     projectRoute.addChildren([
       projectIndexRoute,
       projectBoardRoute,
+      projectSearchRoute,
       newIssueRoute,
       issueRoute,
       specViewRoute,

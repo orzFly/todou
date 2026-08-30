@@ -464,15 +464,17 @@ function timeAdvance(
 }
 
 /**
- * WHERE clauses for the category-neutral list filters, shared by list and
- * counts. Returns null when a filter provably matches nothing.
+ * WHERE clauses for the category-neutral list filters, shared by list,
+ * counts and search (T-141 — every search branch joins `issues`, so the
+ * same conditions narrow all three domains). Returns null when a filter
+ * provably matches nothing.
  *
  * `trash` swaps the default "live cards only" for the trash view: only
  * deleted cards, narrowed to the ones this viewer may see there. An author
  * with no deleted cards gets an empty page rather than an error — the trash
  * is a view, not a privilege one passes or fails.
  */
-async function issueFilterConditions(
+export async function issueFilterConditions(
   db: Db,
   projectId: number,
   query: IssueCountsQuery,

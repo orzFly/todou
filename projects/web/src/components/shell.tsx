@@ -13,6 +13,7 @@ import { VersionFooter } from "@/components/footer.tsx";
 import { InboxButton } from "@/components/inbox-button.tsx";
 import { ProjectNav } from "@/components/project-nav.tsx";
 import { ProjectSwitcher } from "@/components/project-switcher.tsx";
+import { SearchBox } from "@/components/search-box.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { ThemeMenu } from "@/components/theme-menu.tsx";
 import { Button } from "@/components/ui/button";
@@ -92,6 +93,12 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
             )}
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            {/* Wide screens only. Narrower than `md` the header already has
+                a second row, and the box moves down to it rather than
+                squeezing the project name out of this one. */}
+            {slug != null && (
+              <SearchBox slug={slug} className="hidden w-48 md:block" />
+            )}
             <InboxButton />
             <ThemeMenu />
             <DropdownMenu>
@@ -127,10 +134,10 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
           </div>
         </div>
         {slug != null && (
-          <ProjectNav
-            slug={slug}
-            className="mx-auto max-w-6xl px-4 pb-2 sm:hidden"
-          />
+          <div className="mx-auto flex max-w-6xl items-center gap-2 px-4 pb-2 md:hidden">
+            <ProjectNav slug={slug} className="flex-1 sm:hidden" />
+            <SearchBox slug={slug} className="max-w-48 flex-1 sm:max-w-none" />
+          </div>
         )}
       </header>
       <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
