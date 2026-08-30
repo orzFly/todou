@@ -29,15 +29,20 @@ todou issue list -p <proj> [--open|--closed|--status X|--unread|-q text]  # ends
 todou issue view 16 -p <proj>       # prints a cursor at the end, for watch --since
 todou issue view 16 --brief         # header + status only, no body, no timeline
 todou issue view 16 --timeline --last 10   # drop the body, keep the newest 10 entries
+todou issue events 16 [--type referenced] [--last 5]   # timeline minus comments, event id first
 todou issue create -p <proj> --title T [--body-file -] [--status Next]
 #   ^ when filing on behalf of the user, quote their original words verbatim
 #     in the body (if any) — off-tracker requests have no other trace
 todou issue edit 16 --status "In Progress"    # status/title/labels/assignees
 todou issue close 16 --comment "done"
 todou comment add -p <proj> 16 --body-file -  # prints the new comment's id + a wait cursor
+todou comment list 16 [--author @me] [-q text] [--last 5]   # full bodies, each headed by its id
+todou comment view 16 123                     # one comment by id (`#comment-123` and permalinks work)
+todou comment delete 16 123 -y                # take back a misfire; not reversible, no trash
 todou attach -p <proj> 16 file.png ...        # prints `#id name → url`
 todou attach list -p <proj> 16                # id / filename / size / url
 todou attach download -p <proj> 16 <id|name> [-o <path>|-o -]
+todou project members -p <proj>               # logins for -a/--assignee and --exclude-actor
 todou status list -p <proj>
 todou status init -p <proj>                   # add the missing canonical statuses, sync existing colors
 todou status create -p <proj> --name X --category open|closed [--color '#hex'] [--before Y|--after Y]
@@ -195,7 +200,16 @@ rather than rewriting it into an absolute one, and address the id with `attach d
   carrying a pasted Bearer is a credential leak with nothing left to buy.
 
 **Permalinks.** Every timestamp is a link to that one entry (`#comment-<id>`, `#event-<id>`). Paste one
-to send the reader straight to a specific comment or event.
+to send the reader straight to a specific comment or event — and paste one back into
+`todou comment view <url-with-fragment>` to read that comment without taking the link apart. The ids
+come from `comment list` and `issue events`, which is also where a body too long for a watch line is
+read in full.
+
+**Reading comments back.** `comment list` is the one read whose `--json` is a real interface rather
+than a fallback: `comment view <n> <id> --json | jq -r .body` is how a *script* gets a body by id.
+For a person the default output already carries the ids, the whole bodies and the cursor, so keep
+`--json` off unless something is parsing stdout. Neither `comment list` nor `issue events` marks the
+card read — only `issue view` does.
 
 **Issue refs.** **Never presume the spelling.** A project writes its issues either bare (`#12`) or
 with a prefix (`T-12`), it is a per-project setting, and a guessed ref links nowhere. You never have

@@ -675,6 +675,531 @@ describe("issue view slices", () => {
   });
 });
 
+const botOne = {
+  id: 5,
+  login: "bot-one",
+  display_name: "Bot One",
+  kind: "machine",
+  owner: null,
+};
+
+describe("comment list", () => {
+  const comment = (id: number, author: typeof me, body: string) => ({
+    type: "comment",
+    id,
+    author,
+    body,
+    created_at: `2026-08-11T10:${String(id).padStart(2, "0")}:00Z`,
+    edited_at: null,
+  });
+  const statusEvent = {
+    type: "event",
+    id: 40,
+    event_type: "status_changed",
+    actor: me,
+    payload: { from: { id: 1, name: "Todo" }, to: { id: 2, name: "Done" } },
+    created_at: "2026-08-11T10:50:00Z",
+  };
+  const pages = [
+    {
+      items: [comment(1, me, "first\n\nsecond paragraph"), statusEvent],
+      prev_cursor: null,
+      next_cursor: "c1",
+    },
+    {
+      items: [
+        comment(2, botOne, "a reply about migrations"),
+        comment(3, me, "third"),
+      ],
+      prev_cursor: "c1",
+      next_cursor: null,
+    },
+  ];
+  // Fresh per test: the stub walks the pages by call order, the way a
+  // forward drain asks for them.
+  const timelineRoute = (): Route => {
+    let page = 0;
+    return [
+      "GET",
+      "/api/projects/todou/issues/3/timeline",
+      () => {
+        const reply = pages[page];
+        page += 1;
+        return reply;
+      },
+    ];
+  };
+
+  it("prints every comment whole, each headed by its id", async () => {
+    const { fetchImpl, calls } = fakeFetch([timelineRoute()]);
+    const result = await runCli(["comment", "list", "3"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("comment 1 · Claude commented");
+    expect(result.stdout).toContain("comment 2 · Bot One commented");
+    // The whole body, not the one-line summary a watch prints — the point
+    // of the command is reading what was said without truncation.
+    expect(result.stdout).toContain("second paragraph");
+    // Events are `issue events`' half.
+    expect(result.stdout).not.toContain("status_changed");
+    expect(result.stdout).toContain("cursor: c1");
+    // A slice of the card is not a read card.
+    expect(calls.filter((c) => c.url.includes("/read"))).toHaveLength(0);
+  });
+
+  it("filters by author, resolving @me through the token", async () => {
+    const { fetchImpl } = fakeFetch([["GET", "/api/me", me], timelineRoute()]);
+    const result = await runCli(["comment", "list", "3", "--author", "@me"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("comment 1 ·");
+    expect(result.stdout).toContain("comment 3 ·");
+    expect(result.stdout).not.toContain("comment 2 ·");
+  });
+
+  it("filters by a named login", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/members",
+        [
+          { user: me, role: "admin", created_at: "2026-08-01T00:00:00Z" },
+          { user: botOne, role: "writer", created_at: "2026-08-02T00:00:00Z" },
+        ],
+      ],
+      timelineRoute(),
+    ]);
+    const result = await runCli(
+      ["comment", "list", "3", "--author", "bot-one"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("comment 2 ·");
+    expect(result.stdout).not.toContain("comment 1 ·");
+  });
+
+  it("filters by body text, case-insensitively", async () => {
+    const { fetchImpl } = fakeFetch([timelineRoute()]);
+    const result = await runCli(["comment", "list", "3", "-q", "MIGRATIONS"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("comment 2 ·");
+    expect(result.stdout).not.toContain("comment 1 ·");
+  });
+
+  it("distinguishes a card with no comments from filters that miss", async () => {
+    const missed = fakeFetch([timelineRoute()]);
+    const nothing = await runCli(["comment", "list", "3", "-q", "potato"], {
+      fetchImpl: missed.fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(nothing.stdout).toContain("no comments match");
+
+    const bare = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues/3/timeline",
+        { items: [statusEvent], prev_cursor: null, next_cursor: null },
+      ],
+    ]);
+    const quiet = await runCli(["comment", "list", "3"], {
+      fetchImpl: bare.fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(quiet.stdout).toContain("no comments");
+    expect(quiet.stdout).not.toContain("match");
+  });
+
+  it("--last keeps the newest N and says how many it dropped", async () => {
+    const two = fakeFetch([timelineRoute()]);
+    const newest = await runCli(["comment", "list", "3", "--last", "1"], {
+      fetchImpl: two.fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(newest.stdout).toContain("… 2 earlier comments");
+    expect(newest.stdout).toContain("comment 3 ·");
+    expect(newest.stdout).not.toContain("comment 1 ·");
+
+    const one = fakeFetch([timelineRoute()]);
+    const singular = await runCli(["comment", "list", "3", "--last", "2"], {
+      fetchImpl: one.fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(singular.stdout).toContain("… 1 earlier comment");
+  });
+
+  it("--json emits one bounded document, not NDJSON", async () => {
+    const { fetchImpl } = fakeFetch([timelineRoute()]);
+    const result = await runCli(["comment", "list", "3", "--json"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    const parsed = JSON.parse(result.stdout) as {
+      comments: Array<{ id: number; body: string }>;
+      next_cursor: string | null;
+    };
+    expect(Object.keys(parsed).sort()).toEqual([
+      "comments",
+      "next_cursor",
+      "ref_format",
+    ]);
+    expect(parsed.comments.map((c) => c.id)).toEqual([1, 2, 3]);
+    expect(parsed.next_cursor).toBe("c1");
+  });
+});
+
+describe("comment view", () => {
+  const comment = {
+    type: "comment",
+    id: 123,
+    author: me,
+    body: "the decision was to migrate",
+    created_at: "2026-08-11T10:30:00Z",
+    edited_at: null,
+  };
+  const routes = (): Route[] => [
+    ["GET", "/api/projects/todou/issues/3/comments/123", comment],
+  ];
+
+  it("takes a bare id, the #comment- spelling, and a whole permalink", async () => {
+    const spellings = [
+      ["comment", "view", "3", "123"],
+      ["comment", "view", "3", "#comment-123"],
+      // What copying a timestamp off the web page puts on the clipboard.
+      [
+        "comment",
+        "view",
+        "http://stub.test/projects/todou/issues/3#comment-123",
+      ],
+    ];
+    for (const argv of spellings) {
+      const { fetchImpl } = fakeFetch(routes());
+      const result = await runCli(argv, {
+        fetchImpl,
+        env: loggedInEnv("todou"),
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("comment 123 · Claude commented");
+      expect(result.stdout).toContain("the decision was to migrate");
+    }
+  });
+
+  it("hands a body straight to a script under --json", async () => {
+    const { fetchImpl } = fakeFetch(routes());
+    const result = await runCli(["comment", "view", "3", "123", "--json"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    const parsed = JSON.parse(result.stdout) as {
+      body: string;
+      issue_number: number;
+      issue_ref: string;
+    };
+    expect(parsed.body).toBe("the decision was to migrate");
+    expect(parsed.issue_number).toBe(3);
+    expect(parsed.issue_ref).toBe("#3");
+  });
+
+  it("asks for the id when only an issue was named", async () => {
+    const { fetchImpl } = fakeFetch(routes());
+    const result = await runCli(["comment", "view", "3"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("names an issue but no comment");
+    expect(result.stderr).toContain("#comment-<id>");
+  });
+
+  it("reports a comment that is not there", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues/3/comments/999",
+        {
+          __status: 404,
+          body: { error: { code: "not_found", message: "comment not found" } },
+        },
+      ],
+    ]);
+    const result = await runCli(["comment", "view", "3", "999"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("not_found");
+  });
+});
+
+describe("comment delete", () => {
+  const comment = {
+    type: "comment",
+    id: 123,
+    author: me,
+    body: "posted on the wrong card",
+    created_at: "2026-08-11T10:30:00Z",
+    edited_at: null,
+  };
+  const routes = (): Route[] => [
+    ["GET", "/api/projects/todou/issues/3/comments/123", comment],
+    ["DELETE", "/api/projects/todou/issues/3/comments/123", { __status: 204 }],
+  ];
+
+  it("refuses to delete unprompted off a TTY", async () => {
+    const { fetchImpl, calls } = fakeFetch(routes());
+    const result = await runCli(["comment", "delete", "3", "123"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      "refusing to delete without a confirmation",
+    );
+    // The hint is the command that would have worked, verbatim.
+    expect(result.stderr).toContain("todou comment delete 3 123 -y");
+    expect(calls.some((c) => c.init.method === "DELETE")).toBe(false);
+  });
+
+  it("-y deletes and names what went", async () => {
+    const { fetchImpl, calls } = fakeFetch(routes());
+    const result = await runCli(["comment", "delete", "3", "123", "-y"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("deleted comment 123 on #3\n");
+    expect(
+      calls.some(
+        (c) =>
+          c.init.method === "DELETE" &&
+          c.url.includes("/issues/3/comments/123"),
+      ),
+    ).toBe(true);
+  });
+
+  it("--json says the comment is gone", async () => {
+    const { fetchImpl } = fakeFetch(routes());
+    const result = await runCli(
+      ["comment", "delete", "3", "123", "-y", "--json"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    const parsed = JSON.parse(result.stdout) as {
+      id: number;
+      deleted: boolean;
+      issue_ref: string;
+    };
+    expect(parsed).toMatchObject({ id: 123, deleted: true, issue_ref: "#3" });
+  });
+
+  it("quotes the body in the prompt, and a refusal deletes nothing", async () => {
+    const { fetchImpl, calls } = fakeFetch(routes());
+    const result = await runCli(["comment", "delete", "3", "123"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+      stdinIsTTY: true,
+      stdinText: "\n",
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("cancelled");
+    // The prompt names author, card and body, so the wrong id is caught here.
+    expect(result.stderr).toContain(
+      'Delete comment 123 by Claude on #3? "posted on the wrong card"',
+    );
+    expect(calls.some((c) => c.init.method === "DELETE")).toBe(false);
+  });
+});
+
+describe("issue events", () => {
+  const event = (id: number, event_type: string, payload: unknown) => ({
+    type: "event",
+    id,
+    event_type,
+    actor: me,
+    payload,
+    created_at: "2026-08-11T10:45:00Z",
+  });
+  const chatter = {
+    type: "comment",
+    id: 1,
+    author: me,
+    body: "chatter",
+    created_at: "2026-08-11T10:30:00Z",
+    edited_at: null,
+  };
+  const referenced = event(3, "referenced", { by_issue: 9 });
+  const page = {
+    items: [
+      chatter,
+      event(2, "status_changed", {
+        from: { id: 1, name: "Todo" },
+        to: { id: 2, name: "Done" },
+      }),
+      referenced,
+      // A type this CLI predates: the scalar fallback has to carry it
+      // rather than crash, which is why the default drain is unfiltered.
+      event(4, "moon_phase_changed", { phase: "waxing" }),
+    ],
+    prev_cursor: null,
+    next_cursor: "c9",
+    has_more: false,
+  };
+
+  it("drops the comments and keeps every event, unknown types included", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3/timeline", page],
+    ]);
+    const result = await runCli(["issue", "events", "3"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain("chatter");
+    expect(result.stdout).toContain(
+      "event 2 · Claude status_changed (Todo → Done)",
+    );
+    expect(result.stdout).toContain("event 3 · Claude referenced (by #9)");
+    expect(result.stdout).toContain(
+      "event 4 · Claude moon_phase_changed (phase=waxing)",
+    );
+    expect(result.stdout).toContain("cursor: c9");
+    // Same rule as `--brief`: half a card is not a read card.
+    expect(calls.filter((c) => c.url.includes("/read"))).toHaveLength(0);
+  });
+
+  it("--type filters server-side", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues/3/timeline",
+        { ...page, items: [referenced] },
+      ],
+    ]);
+    const result = await runCli(
+      ["issue", "events", "3", "--type", "referenced"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(calls.find((c) => c.url.includes("/timeline"))?.url).toContain(
+      "types=referenced",
+    );
+    expect(result.stdout).toContain("event 3 · Claude referenced (by #9)");
+  });
+
+  it("keeps the comment spelling when --type asks for comments", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        "/api/projects/todou/issues/3/timeline",
+        { ...page, items: [chatter] },
+      ],
+    ]);
+    const result = await runCli(["issue", "events", "3", "--type", "comment"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    // Comment ids and event ids overlap, so the kind is always named.
+    expect(result.stdout).toContain("comment 1 · Claude commented");
+    expect(result.stdout).not.toContain("event 1 ·");
+  });
+
+  it("--last keeps the newest and says what it dropped", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3/timeline", page],
+    ]);
+    const result = await runCli(["issue", "events", "3", "--last", "1"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.stdout).toContain("… 2 earlier events");
+    expect(result.stdout).toContain("event 4 · Claude moon_phase_changed");
+    expect(result.stdout).not.toContain("event 2 · Claude status_changed");
+  });
+
+  it("--json emits one bounded document", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3/timeline", page],
+    ]);
+    const result = await runCli(["issue", "events", "3", "--json"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    const parsed = JSON.parse(result.stdout) as {
+      events: Array<{ id: number }>;
+      next_cursor: string | null;
+    };
+    expect(Object.keys(parsed).sort()).toEqual([
+      "events",
+      "next_cursor",
+      "ref_format",
+    ]);
+    expect(parsed.events.map((e) => e.id)).toEqual([2, 3, 4]);
+    expect(parsed.next_cursor).toBe("c9");
+  });
+
+  it("rejects an unknown --type before calling the server", async () => {
+    const { fetchImpl, calls } = fakeFetch([]);
+    const result = await runCli(["issue", "events", "3", "--type", "bogus"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('unknown --type "bogus"');
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("project members", () => {
+  const members = [
+    { user: me, role: "admin", created_at: "2026-08-01T00:00:00Z" },
+    { user: botOne, role: "writer", created_at: "2026-08-02T00:00:00Z" },
+  ];
+
+  it("prints login, display name and role, then a count", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/members", members],
+    ]);
+    const result = await runCli(["project", "members"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    const lines = result.stdout.trimEnd().split("\n");
+    // login first: it is the column `-a` and `--exclude-actor` accept.
+    expect(lines[0]).toMatch(/^claude\s+Claude\s+admin$/);
+    expect(lines[1]).toMatch(/^bot-one\s+Bot One\s+writer$/);
+    expect(lines.at(-1)).toBe("2 members");
+  });
+
+  it("says one member in the singular", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/members", [members[0]]],
+    ]);
+    const result = await runCli(["project", "members"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.stdout.trimEnd().split("\n").at(-1)).toBe("1 member");
+  });
+
+  it("--json passes the array through", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/members", members],
+    ]);
+    const result = await runCli(["project", "members", "--json"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(JSON.parse(result.stdout)).toEqual(members);
+  });
+});
+
 describe("issue watch", () => {
   const newComment = {
     type: "comment",

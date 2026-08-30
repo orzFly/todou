@@ -12,7 +12,7 @@ import {
   displayPath,
 } from "../dir-config.ts";
 import { CliError, reportError } from "../errors.ts";
-import { table } from "../format.ts";
+import { makePainter, plural, table } from "../format.ts";
 
 function statOrNull(path: string) {
   try {
@@ -56,6 +56,33 @@ export class ProjectListCommand extends ApiCommand {
     this.output(projects, () =>
       table(projects.map((p) => [p.slug, p.name, p.description])),
     );
+  }
+}
+
+export class ProjectMembersCommand extends ProjectCommand {
+  static paths = [["project", "members"]];
+  static usage = Command.Usage({
+    description: "List a project's members, their names and their roles",
+    details:
+      "Where a login comes from. The `login` column is what `issue edit " +
+      "-a/--assignee`, `issue list -a` and `issue watch --exclude-actor` " +
+      "take — display names are not accepted there, and guessing one from " +
+      "a name in the timeline is how an assignment ends up on nobody.\n\n" +
+      "`--json` prints the raw array of member objects.",
+    examples: [["Who can be assigned here", "$0 project members -p todou"]],
+  });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const members = await client.listMembers(this.requireProject());
+    const paint = makePainter(this.context.stdout, this.context.env);
+    this.output(members, () => {
+      if (members.length === 0) return "no members";
+      const rows = table(
+        members.map((m) => [m.user.login, m.user.display_name ?? "", m.role]),
+      );
+      const count = `${members.length} ${plural(members.length, "member")}`;
+      return `${rows}\n${paint("dim", count)}`;
+    });
   }
 }
 
