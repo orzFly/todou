@@ -20,7 +20,12 @@ function VersionChip({ number, active }: { number: number; active: boolean }) {
         CHIP,
         "shrink-0",
         active
-          ? "border-foreground bg-foreground text-background"
+          ? // The important group-focus variant holds the chip's text color
+            // against DropdownMenuItem's focus:**:text-accent-foreground
+            // descendant override: the chip keeps its own filled background,
+            // so recoloring only its text crushes the contrast to ~1:1 in
+            // every theme (T-191).
+            "border-foreground bg-foreground text-background group-focus/dropdown-menu-item:text-background!"
           : "text-muted-foreground",
       )}
     >
