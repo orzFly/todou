@@ -822,7 +822,7 @@ export class IssueCreateCommand extends ProjectCommand {
   static usage = Command.Usage({
     description: "Create an issue",
     details:
-      "gh's short flags work too (`-t`, `-b`, `-F`, `-l`, `-a`). A `--label` the project does not have yet is created on the spot, with a color derived from its name.",
+      "gh's short flags work too (`-t`, `-b`, `-F`, `-l`, `-a`). A `--label` the project does not have yet is created on the spot, with a color derived from its name.\n\n`issue edit`'s `--add-label`/`--add-assignee` are accepted here as plain aliases of `--label`/`--assignee` — a new issue has no existing set, so adding and setting coincide. `--remove-label`/`--remove-assignee` are refused for the same reason: there is nothing yet to remove.",
   });
 
   title = Option.String("-t,--title", { required: true });
@@ -830,14 +830,37 @@ export class IssueCreateCommand extends ProjectCommand {
   bodyFile = Option.String("-F,--body-file", {
     description: "Body from a file, or - for stdin",
   });
-  labels = Option.Array("-l,--label,--labels", [], {
+  // `--add-label` is `issue edit`'s spelling, carried over as a pure alias:
+  // with no existing set to add to, "add these" and "set these" are the same
+  // request, and refusing the habit only costs a retry (T-193).
+  labels = Option.Array("-l,--label,--labels,--add-label,--add-labels", [], {
     description: "Repeatable and comma-splittable; unknown names are created",
   });
-  assignees = Option.Array("-a,--assignee,--assignees", []);
+  assignees = Option.Array(
+    "-a,--assignee,--assignees,--add-assignee,--add-assignees",
+    [],
+  );
   status = Option.String("--status");
+  // Declared only to be refused with a pointer: clipanion's own rejection
+  // ("Unsupported option name") names no alternative, and this is the other
+  // half of the edit habit --add-label answers above (T-193).
+  removeLabels = Option.Array("--remove-label,--remove-labels", []);
+  removeAssignees = Option.Array("--remove-assignee,--remove-assignees", []);
 
   protected async run(client: TodouClient): Promise<void> {
     const project = this.requireProject();
+    if (this.removeLabels.length > 0) {
+      throw new CliError(
+        "a new issue has no labels to remove",
+        "--remove-label belongs to `issue edit`; on create, `--label` names the labels the issue starts with",
+      );
+    }
+    if (this.removeAssignees.length > 0) {
+      throw new CliError(
+        "a new issue has no assignees to remove",
+        "--remove-assignee belongs to `issue edit`; on create, `--assignee` names the assignees the issue starts with",
+      );
+    }
     const body = await readBody({
       body: this.body,
       bodyFile: this.bodyFile,
