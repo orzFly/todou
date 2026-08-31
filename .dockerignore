@@ -3,8 +3,12 @@
 .git
 .github
 .claude
+.mcp.json
+.opencode
 .local
 .research
+.tmp
+.direnv
 .nix
 .envrc
 .env

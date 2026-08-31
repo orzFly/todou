@@ -37,7 +37,7 @@ FROM node:24-trixie-slim AS cli-build
 RUN npm install -g pnpm@11
 # deno publishes a multi-arch bin image, so this resolves to the builder's own
 # platform; the four compile targets are cross-built from there.
-COPY --from=denoland/deno:bin-2.8.3 /deno /usr/local/bin/deno
+COPY --from=docker.io/denoland/deno:bin-2.8.3 /deno /usr/local/bin/deno
 RUN apt-get update \
  && apt-get install -y --no-install-recommends zstd ca-certificates \
  && rm -rf /var/lib/apt/lists/*
