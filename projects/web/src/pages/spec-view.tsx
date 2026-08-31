@@ -96,11 +96,13 @@ const TOOLBAR_FALLBACK_HEIGHT = 78;
 
 /**
  * The one content slot in the toolbar's second row: `wrap` and the new-file
- * note render as this same box, wide enough for the longer of them. Swapping
- * the content therefore moves nothing beside it — the whole point of T-190.
+ * note render as this same box, sized to whichever is showing. That leaves the
+ * slot ~8px narrower on `wrap` than on the note, and since the slot is anchored
+ * right, swapping them shifts it by that much — accepted on T-194 in exchange
+ * for the 61px of hollow the old fixed width cost on every other state.
  */
 const DISPLAY_SLOT =
-  "inline-flex min-w-32 shrink-0 items-center justify-center gap-1 rounded-full border px-2.5 py-0.5 text-xs";
+  "inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-full border px-2.5 text-xs";
 const DISPLAY_SLOT_ON =
   "border-emerald-600/60 bg-emerald-600/10 text-emerald-700 dark:text-emerald-400";
 const DISPLAY_SLOT_OFF = "text-muted-foreground hover:border-foreground/50";
@@ -796,18 +798,15 @@ function SpecViewBody({
 
         {/* Row B — what is being read, what against, and how. Version, the
             baseline and the presentation switch sit left of the row's one
-            elastic gap; the display slot and ↑↓ are anchored right and do
-            not move as the mode changes (T-190 §8, T-192). */}
+            elastic gap, each sized to its own content; the display slot and
+            ↑↓ are anchored right (T-192). The left cluster does shift when
+            the push message's length changes, which only happens on a
+            version switch — a whole-document reload anyway (T-194). */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Fixed from lg up, where the push message is visible: the
-              message is the row's variable text, and pinning the slot is
-              what stops a short one from sliding the baseline and the
-              presentation switch left (T-190 rule 3). Below lg only the
-              chip shows, which is fixed-width already. */}
-          <ToolbarSlot
-            name="version"
-            className="min-w-0 shrink lg:w-80 lg:shrink-0"
-          >
+          {/* shrink, not shrink-0: the trigger's own max-w-80 caps a long
+              push message, and this is what lets it truncate rather than
+              push the right-anchored cluster off the row. */}
+          <ToolbarSlot name="version" className="min-w-0 shrink">
             <SpecVersionPicker
               slug={slug}
               issueNumber={issueNumber}

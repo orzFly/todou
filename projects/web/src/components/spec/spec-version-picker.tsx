@@ -81,18 +81,20 @@ export function SpecVersionPicker({
       <DropdownMenuTrigger
         className={
           // Capped, so a paragraph-long push message cannot wrap the
-          // toolbar it sits in; the message truncates instead.
-          "flex min-w-0 max-w-80 cursor-pointer items-center gap-2 rounded-full border py-0.5 pr-2 pl-0.5 text-left text-xs hover:border-foreground/50"
+          // toolbar it sits in; the message truncates instead. h-7 rather
+          // than padding, or the chip inside would be deciding the row's
+          // height (T-194).
+          "flex h-7 min-w-0 max-w-80 cursor-pointer items-center gap-2 rounded-full border pr-2 pl-0.5 text-left text-xs hover:border-foreground/50"
         }
         title={current?.message ?? undefined}
         aria-label={`viewing v${version}, switch version`}
       >
-        {/* Fixed width, so a two- or three-digit version does not re-lay the
-            row out around it (T-190). */}
+        {/* tabular-nums, so the digits of a two- or three-digit version stay
+            column-aligned with the menu's chips below it. */}
         <VersionChip
           label={`v${version}`}
           active
-          className="min-w-14 text-center tabular-nums"
+          className="text-center tabular-nums"
         />
         <span className="hidden min-w-0 truncate lg:block">
           <MessageText message={current?.message ?? null} />

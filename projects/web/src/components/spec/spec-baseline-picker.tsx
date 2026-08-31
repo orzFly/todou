@@ -10,11 +10,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils.ts";
 
-// min-w sized for `no baseline`, the longest label: a fixed width is what
-// keeps the presentation switch beside it from sliding as the baseline
-// changes (T-190 rule 2).
+// h-7 rather than padding: row B's controls have three different natural
+// heights, and only a shared one lines them up (T-194).
 const TRIGGER =
-  "flex min-w-32 shrink-0 items-center justify-center gap-1.5 rounded-full border py-0.5 pr-2 pl-2.5 text-xs tabular-nums";
+  "flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-full border pr-2 pl-2.5 text-xs tabular-nums";
 
 /**
  * Which version the document on screen is read against (T-192).

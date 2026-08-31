@@ -21,9 +21,6 @@ const SEGMENT =
 /**
  * How a comparison is drawn: the rendered document with its changed blocks
  * washed, or the unified diff of the source (T-192).
- *
- * Fixed width by design — the toolbar's slot geometry has to survive both
- * labels and both states (T-190).
  */
 export function SpecViewToggle({
   slug,
@@ -45,7 +42,10 @@ export function SpecViewToggle({
       // The tooltip hangs on the group: disabled buttons swallow pointer
       // events, their own `title` included.
       title={disabled ? "Pick a baseline to compare against" : undefined}
-      className="inline-flex w-36 shrink-0 rounded-full border p-0.5"
+      // items-center rather than the default stretch: a segment is 24px tall
+      // and h-7 leaves a 22px padding box, so stretching flattens the pill
+      // instead of letting it overhang the padding evenly (T-194).
+      className="inline-flex h-7 shrink-0 items-center rounded-full border p-0.5"
       aria-label="comparison view"
     >
       {OPTIONS.map((option) =>

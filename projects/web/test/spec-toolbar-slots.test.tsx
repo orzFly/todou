@@ -231,17 +231,27 @@ describe("spec toolbar fixed slots (T-190)", () => {
     );
   });
 
-  it("pins the widths the two new slots stand on (T-192)", async () => {
-    // Rect equality across states is a browser measurement; happy-dom lays
-    // nothing out, so what a suite can hold is the declaration that made it
-    // true. Without these three the baseline label and the version's push
-    // message slide everything to their right.
+  it("sizes row B's controls to their content, at one shared height (T-194)", async () => {
+    // Geometry is a browser measurement and happy-dom lays nothing out, so
+    // what a suite can hold is the declaration behind it. These three widths
+    // bought stillness with hollow boxes — 61px of it in the display slot —
+    // and T-194 traded them back.
     const view = await toolbar("?v=2&file=design.md");
     const cls = (selector: string) =>
       view.container.querySelector(selector)?.className ?? "";
-    expect(cls('[data-toolbar-slot="version"]')).toContain("lg:w-80");
-    expect(cls('[data-toolbar-slot="baseline"] button')).toContain("min-w-32");
-    expect(cls('[data-toolbar-slot="view-toggle"] fieldset')).toContain("w-36");
+    expect(cls('[data-toolbar-slot="version"]')).not.toContain("lg:w-80");
+    expect(cls('[data-toolbar-slot="baseline"] button')).not.toContain(
+      "min-w-32",
+    );
+    expect(cls('[data-toolbar-slot="view-toggle"] fieldset')).not.toContain(
+      "w-36",
+    );
+    // One height across the row, or the pills line up on nothing: their
+    // natural heights are 22, 28 and 30px.
+    expect(cls('[data-toolbar-slot="version"] button')).toContain("h-7");
+    expect(cls('[data-toolbar-slot="baseline"] button')).toContain("h-7");
+    expect(cls('[data-toolbar-slot="view-toggle"] fieldset')).toContain("h-7");
+    expect(cls('[data-toolbar-slot="display-toggle"] > *')).toContain("h-7");
   });
 
   it("keeps wrap in the display slot, disabled outside the source diff", async () => {

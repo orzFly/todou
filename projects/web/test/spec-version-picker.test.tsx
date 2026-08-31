@@ -84,14 +84,15 @@ describe("SpecVersionPicker (T-178)", () => {
     expect(trigger.getAttribute("title")).toBe("plan v1: nine steps");
   });
 
-  it("holds the version chip at a fixed width (T-190)", async () => {
-    // What it is compared against moved to the baseline picker (T-192), so
-    // the chip only ever spells one version — and the digits must not move
-    // the message and the caret beside it.
+  it("sizes the version chip to its digits, keeping them tabular (T-194)", async () => {
+    // The chip only ever spells one version (T-192 moved the comparison to
+    // the baseline picker), so the min-width it used to carry was 20px of
+    // padding around `v1` and nothing else. tabular-nums stays: it is what
+    // keeps the digits column-aligned with the menu's chips.
     const view = renderPicker({ version: 1 });
     const chip = (await view.findByRole("button")).firstElementChild;
     expect(chip?.textContent).toBe("v1");
-    expect(chip?.className).toContain("min-w-14");
+    expect(chip?.className).not.toContain("min-w-14");
     expect(chip?.className).toContain("tabular-nums");
   });
 
