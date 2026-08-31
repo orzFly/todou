@@ -13,7 +13,15 @@ import { cn } from "@/lib/utils.ts";
 
 const CHIP = "rounded-full border px-2.5 py-0.5 font-mono text-xs";
 
-function VersionChip({ number, active }: { number: number; active: boolean }) {
+function VersionChip({
+  label,
+  active,
+  className,
+}: {
+  label: string;
+  active: boolean;
+  className?: string;
+}) {
   return (
     <span
       className={cn(
@@ -27,9 +35,10 @@ function VersionChip({ number, active }: { number: number; active: boolean }) {
             // every theme (T-191).
             "border-foreground bg-foreground text-background group-focus/dropdown-menu-item:text-background!"
           : "text-muted-foreground",
+        className,
       )}
     >
-      v{number}
+      {label}
     </span>
   );
 }
@@ -78,25 +87,26 @@ export function SpecVersionPicker({
           "flex min-w-0 max-w-80 cursor-pointer items-center gap-2 rounded-full border py-0.5 pr-2 pl-0.5 text-left text-xs hover:border-foreground/50",
           comparing && "border-foreground/50",
         )}
-        title={comparing ? undefined : (current?.message ?? undefined)}
+        title={current?.message ?? undefined}
         aria-label={
           comparing
             ? `comparing v${compare} to v${version}, switch version`
             : `viewing v${version}, switch version`
         }
       >
-        {comparing ? (
-          <span className={cn(CHIP, "shrink-0 border-transparent")}>
-            diff v{compare}…v{version}
-          </span>
-        ) : (
-          <>
-            <VersionChip number={version} active />
-            <span className="hidden min-w-0 truncate lg:block">
-              <MessageText message={current?.message ?? null} />
-            </span>
-          </>
-        )}
+        {/* Same two parts in both modes, and the chip is sized for the wider
+            `vN…vM` variant: entering compare mode must not re-lay the row
+            out around it (T-190). The message belongs to the version being
+            viewed either way — in compare mode that is the diff's right
+            side, which is what the reader is judging. */}
+        <VersionChip
+          label={comparing ? `v${compare}…v${version}` : `v${version}`}
+          active
+          className="min-w-18 text-center tabular-nums"
+        />
+        <span className="hidden min-w-0 truncate lg:block">
+          <MessageText message={current?.message ?? null} />
+        </span>
         <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -118,7 +128,7 @@ export function SpecVersionPicker({
                   aria-hidden
                   className={cn("mt-0.5 size-3.5", !active && "invisible")}
                 />
-                <VersionChip number={v.number} active={active} />
+                <VersionChip label={`v${v.number}`} active={active} />
                 <span className="min-w-0 flex-1">
                   <span className="line-clamp-2">
                     <MessageText message={v.message} />

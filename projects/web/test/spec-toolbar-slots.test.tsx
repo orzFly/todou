@@ -1,0 +1,250 @@
+import { QueryClientProvider } from "@tanstack/react-query";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
+import { fireEvent, render, waitFor } from "@testing-library/react";
+import type { SpecComments, SpecFiles, SpecInfo } from "@todou/shared";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { api } from "../src/api/queries.ts";
+import { SpecViewPage } from "../src/pages/spec-view.tsx";
+import { testQueryClient } from "./render.tsx";
+
+vi.mock("@pierre/diffs/react", () => ({
+  MultiFileDiff: () => <div data-testid="diff" />,
+  CodeView: () => null,
+}));
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  localStorage.clear();
+});
+
+const AUTHOR = {
+  id: 1,
+  login: "bot-one",
+  display_name: "Bot One",
+  kind: "machine" as const,
+  avatar_url: null,
+  owner: null,
+};
+
+// design.md is edited by v2, stable.md is carried over untouched, and
+// fresh.md appears in v2 — one file per rendered-mode matrix column.
+const BODIES: Record<number, Record<string, string>> = {
+  1: { "design.md": "line one\n", "stable.md": "unchanged\n" },
+  2: {
+    "design.md": "line one, rewritten\n",
+    "stable.md": "unchanged\n",
+    "fresh.md": "brand new\n",
+  },
+};
+
+function mockSpec() {
+  const info: SpecInfo = {
+    current_version: 2,
+    review_status: "unreviewed",
+    unresolved_comments: 0,
+    files: Object.entries(BODIES[2] ?? {}).map(([path, body]) => ({
+      path,
+      size: body.length,
+    })),
+    versions: [1, 2].map((number) => ({
+      number,
+      author: AUTHOR,
+      message: `v${number}`,
+      created_at: `2026-01-0${number}T00:00:00Z`,
+    })),
+  };
+  vi.spyOn(api, "getSpec").mockResolvedValue(info);
+  vi.spyOn(api, "getSpecFiles").mockImplementation(
+    (_slug, _number, version): Promise<SpecFiles> => {
+      const v = version ?? 2;
+      return Promise.resolve({
+        version: v,
+        files: Object.entries(BODIES[v] ?? {}).map(([path, body]) => ({
+          path,
+          body,
+          size: body.length,
+        })),
+      });
+    },
+  );
+  const comments: SpecComments = { current_version: 2, items: [] };
+  vi.spyOn(api, "getSpecComments").mockResolvedValue(comments);
+  vi.spyOn(api, "getReferenceConfig").mockResolvedValue({
+    format: { prefix: "T-", history: [] },
+    autolinks: [],
+  });
+}
+
+function renderSpecView(search: string) {
+  const rootRoute = createRootRoute();
+  const authedRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    id: "authed",
+  });
+  const projectRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: "/projects/$slug",
+  });
+  const issueRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "issues/$number",
+  });
+  const specRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "issues/$number/spec",
+    component: SpecViewPage,
+    validateSearch: (
+      s: Record<string, unknown>,
+    ): { file?: string; v?: number; compare?: number } => {
+      const num = (v: unknown) => {
+        const n = Number(v);
+        return Number.isInteger(n) && n > 0 ? n : undefined;
+      };
+      return {
+        file: typeof s.file === "string" ? s.file : undefined,
+        v: num(s.v),
+        compare: num(s.compare),
+      };
+    },
+  });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([
+      authedRoute.addChildren([
+        projectRoute.addChildren([issueRoute, specRoute]),
+      ]),
+    ]),
+    history: createMemoryHistory({
+      initialEntries: [`/projects/demo/issues/1/spec${search}`],
+    }),
+    defaultPendingMs: 0,
+  });
+  return render(
+    <QueryClientProvider client={testQueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+}
+
+/** The toolbar, once its data has landed. */
+async function toolbar(search: string) {
+  mockSpec();
+  const view = renderSpecView(search);
+  await view.findByRole("button", { name: /finish review/i });
+  // The baseline snapshot decides several slots' state; wait for it rather
+  // than assert against the moment before it arrives.
+  await waitFor(() =>
+    expect(api.getSpecFiles).toHaveBeenCalledWith("demo", 1, 1),
+  );
+  return view;
+}
+
+const slotNames = (view: { container: HTMLElement }) =>
+  [...view.container.querySelectorAll("[data-toolbar-slot]")].map(
+    (el) => el.getAttribute("data-toolbar-slot") ?? "",
+  );
+
+const jumpButtons = (view: ReturnType<typeof renderSpecView>) => ({
+  prev: view.getByRole("button", { name: /^previous / }),
+  next: view.getByRole("button", { name: /^next / }),
+});
+
+/** The six columns of the T-190 state matrix. */
+const STATES: [label: string, search: string][] = [
+  ["R1 · v1", "?v=1"],
+  ["R2 · modified file", "?v=2&file=design.md"],
+  ["RN · new file", "?v=2&file=fresh.md"],
+  ["RU · untouched file", "?v=2&file=stable.md"],
+  ["C · source diff", "?v=2&compare=1"],
+];
+
+describe("spec toolbar fixed slots (T-190)", () => {
+  it("renders the same slots in every state", async () => {
+    const seen: string[][] = [];
+    for (const [, search] of STATES) {
+      const view = await toolbar(search);
+      seen.push(slotNames(view));
+      view.unmount();
+      vi.restoreAllMocks();
+    }
+    // Every column of the matrix, including the two the old toolbar
+    // unmounted controls for: switching file or entering compare mode.
+    expect(seen[0]).toEqual([
+      "back",
+      "title",
+      "review-status",
+      "files",
+      "comment-file",
+      "finish-review",
+      "version",
+      "display-toggle",
+      "prev-change",
+      "next-change",
+    ]);
+    for (const names of seen.slice(1)) expect(names).toEqual(seen[0]);
+  });
+
+  it("keeps the changes toggle in its slot when it is turned off", async () => {
+    const view = await toolbar("?v=2&file=design.md");
+    const before = slotNames(view);
+    fireEvent.click(view.getByRole("button", { name: /changes since v1/ }));
+    expect(slotNames(view)).toEqual(before);
+  });
+
+  it("disables ↑↓ at v1 rather than dropping them", async () => {
+    const view = await toolbar("?v=1");
+    const { prev, next } = jumpButtons(view);
+    expect(prev.hasAttribute("disabled")).toBe(true);
+    expect(next.hasAttribute("disabled")).toBe(true);
+    expect(prev.getAttribute("aria-label")).toContain("first version");
+  });
+
+  it("steps changes on a modified file, and stops when the highlight is off", async () => {
+    const view = await toolbar("?v=2&file=design.md");
+    expect(jumpButtons(view).next.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(view.getByRole("button", { name: /changes since v1/ }));
+    const { next } = jumpButtons(view);
+    expect(next.hasAttribute("disabled")).toBe(true);
+    expect(next.getAttribute("aria-label")).toContain("Turn on");
+  });
+
+  it("keeps ↑↓ usable on a file that is new in this version", async () => {
+    // The named bug: `new in v2` used to unmount the buttons outright, so
+    // there was no way to step off a brand-new file.
+    const view = await toolbar("?v=2&file=fresh.md");
+    expect(view.getByText("new in v2")).toBeTruthy();
+    const { prev, next } = jumpButtons(view);
+    expect(next.hasAttribute("disabled")).toBe(false);
+    expect(prev.getAttribute("aria-label")).toBe("previous changed file");
+  });
+
+  it("steps whole file diffs in source-diff mode", async () => {
+    const view = await toolbar("?v=2&compare=1");
+    const { prev, next } = jumpButtons(view);
+    expect(next.hasAttribute("disabled")).toBe(false);
+    expect(prev.getAttribute("aria-label")).toBe("previous file diff");
+    expect(view.container.querySelectorAll("[data-file-diff]")).toHaveLength(2);
+  });
+
+  it("disables Comment file in source-diff mode instead of hiding it", async () => {
+    const view = await toolbar("?v=2&compare=1");
+    const button = view.getByRole("button", { name: /^Comment file/ });
+    expect(button.hasAttribute("disabled")).toBe(true);
+    expect(button.getAttribute("aria-label")).toContain("line numbers");
+  });
+
+  it("lists the differing files in source-diff mode, carrying compare", async () => {
+    const view = await toolbar("?v=2&compare=1");
+    expect(view.getByRole("button", { name: /Files \(2\)/ })).toBeTruthy();
+    fireEvent.click(view.getByRole("button", { name: /Files \(2\)/ }));
+    const link = await view.findByRole("link", { name: /fresh\.md/ });
+    expect(link.getAttribute("href")).toBe(
+      "/projects/demo/issues/1/spec?file=fresh.md&v=2&compare=1",
+    );
+  });
+});

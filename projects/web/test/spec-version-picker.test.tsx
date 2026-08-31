@@ -74,11 +74,15 @@ describe("SpecVersionPicker (T-178)", () => {
     expect(trigger.getAttribute("title")).toBe("plan v1: nine steps");
   });
 
-  it("names the two versions being compared instead", async () => {
+  it("names the two versions being compared, keeping the same two parts", async () => {
     const view = renderPicker({ compare: 2 });
     const trigger = await view.findByRole("button");
-    expect(trigger.textContent).toContain("diff v2…v3");
-    expect(trigger.textContent).not.toContain("plan v1");
+    expect(trigger.textContent).toContain("v2…v3");
+    // Chip plus message in both modes, so entering compare mode re-lays
+    // nothing out around the trigger (T-190). The message belongs to the
+    // version being viewed — the diff's right-hand side.
+    expect(trigger.textContent).toContain("plan v1: nine steps");
+    expect(trigger.getAttribute("title")).toBe("plan v1: nine steps");
   });
 
   it("lists versions newest first with message, pusher and time", async () => {
