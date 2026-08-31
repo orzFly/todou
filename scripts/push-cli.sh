@@ -26,6 +26,11 @@ usage: scripts/push-cli.sh [user@]host [options]
                      (default: todou-data)
   --checkout <path>  remote checkout (default: todou); read for the version
                      comparison under --activate
+  --deploy-script <path>
+                     the host's update script, relative to the remote home
+                     (default: deploy.sh). The preflight reads it and warns
+                     when it carries no cli-dist activation step; empty turns
+                     that warning off.
   --activate         swap the drop in, restart the unit and compare the served
                      version here, instead of leaving all three to deploy.sh
   --force            build and upload even when HEAD is off origin/master, the
@@ -45,6 +50,7 @@ EOF
 HOST=""
 DATA_DIR=todou-data
 CHECKOUT=todou
+DEPLOY_SCRIPT=deploy.sh
 ACTIVATE=0
 FORCE=0
 DRY_RUN=0
@@ -52,6 +58,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --data-dir) DATA_DIR="${2:?}"; shift 2 ;;
     --checkout) CHECKOUT="${2:?}"; shift 2 ;;
+    # Not :? — an empty value is how the check is turned off.
+    --deploy-script) DEPLOY_SCRIPT="${2?}"; shift 2 ;;
     --activate) ACTIVATE=1; shift ;;
     --force) FORCE=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
@@ -106,6 +114,21 @@ if [ "$ACTIVATE" = 1 ]; then
   PROBE="$PROBE
 systemctl --user show -p Id --value todou >/dev/null 2>&1 \
   || echo \"missing: a usable 'systemctl --user' (no session bus over ssh?)\""
+elif [ -n "$DEPLOY_SCRIPT" ]; then
+  # The failure this exists for is silent on both ends: a host whose update
+  # script never grew the activation step takes the drop, leaves it staged
+  # forever, and goes on serving the CLI it served before. Nothing downstream
+  # notices, because a stale /api/cli answers exactly like a current one.
+  # Read with cat and matched by the shell, so the host is still asked for
+  # nothing but the tools the probe already requires.
+  PROBE="$PROBE
+if [ -f $(rq "$DEPLOY_SCRIPT") ]; then
+  case \"\$(cat $(rq "$DEPLOY_SCRIPT"))\" in
+    *cli-dist*) ;;
+    *) echo \"note: $DEPLOY_SCRIPT has no cli-dist activation step - this drop\
+ will stay staged (see docs/deploy.md, Updating)\" ;;
+  esac
+fi"
 fi
 
 echo "+ ssh $HOST <preflight: $REMOTE_TOOLS>"
@@ -116,6 +139,9 @@ if printf '%s\n' "$REPORT" | grep -q '^missing: '; then
   printf '%s\n' "$REPORT" | sed 's/^/  /' >&2
   exit 1
 fi
+# Advisory, never fatal: this script cannot know how a host activates a drop —
+# docker images carry their own, and --activate does it from here.
+printf '%s\n' "$REPORT" | sed -n "s|^note: |warn: $HOST:|p" >&2
 
 # build-cli.sh stages the working tree through `git ls-files` and bakes
 # `git describe` into every artifact, so uncommitted edits and a HEAD off

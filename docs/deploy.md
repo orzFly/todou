@@ -174,9 +174,10 @@ make one command work. So the script builds here — refusing, unless
 version it bakes in would then describe something the host will never run —
 and leaves the packed result on the far side as `~/todou-data/cli-dist.new`,
 after checking every uploaded file against its own manifest. The update
-script activates it with one `rename` (see [Updating](#updating)), which
-fixes the order for free: push, then deploy, and the manifest ends up
-describing the commit that is actually running.
+script activates it with one `rename`, and refuses to deploy at all when no
+drop names the commit it is about to move to (see [Updating](#updating)) —
+so push, then deploy, and the manifest ends up describing the commit that is
+actually running whether or not anybody remembered the order.
 
 The host end asks for nothing beyond coreutils — `wc`, `mv`, `find` and
 friends — and a preflight says so before anything is built. That is not
@@ -185,13 +186,21 @@ frugality for its own sake: `ssh host <command>` runs with
 through mise or nvm is on none of it, so the drop's contents are read and
 judged on the machine that packed them.
 
+The preflight also reads the host's own update script — `deploy.sh` in the
+remote home, or whatever `--deploy-script` names — and warns when it carries
+no `cli-dist` activation step. That host takes the upload and then never
+swaps it in, so `/api/cli` goes on serving the previous build; a stale
+manifest answers exactly like a current one, and without this warning
+nothing in the pipeline is in a position to notice.
+
 `--activate` performs the swap, the restart and the version check from here
 instead, for a CLI refresh with no deploy behind it — it additionally wants
 `curl`, `git` and a `systemctl --user` whose session bus the ssh session can
-see, and checks for those too. `--dry-run` prints the whole remote sequence
-without touching anything, but still runs the preflight for real; `--data-dir`
-/ `--checkout` move the remote paths, and `TODOU_DEPLOY_HOST` stands in for
-the argument.
+see, and checks for those too (the update-script warning is skipped there:
+that path does the activating itself). `--dry-run` prints the whole remote
+sequence without touching anything, but still runs the preflight for real;
+`--data-dir` / `--checkout` / `--deploy-script` move the remote paths, and
+`TODOU_DEPLOY_HOST` stands in for the argument.
 
 ```toml
 [http]
@@ -320,25 +329,69 @@ Keep this as a script on the host rather than in the repo — a script that
 follows is the reference for what that script has to contain:
 
 ```bash
-set -e
+set -eu
 # `ssh host ./deploy.sh` runs with PATH=/usr/local/bin:/usr/bin:/bin:/usr/games,
 # which holds neither pnpm nor node when the toolchain came from mise — and the
 # shims are not on a non-interactive login shell's PATH either. Say where they
 # are rather than depending on how the script was invoked.
-PATH="$HOME/.local/share/mise/shims:$PATH"
+export PATH="$HOME/.local/share/mise/shims:$PATH"
 
-cd ~/todou
-git pull --ff-only
+DATA="$HOME/todou-data"
+PORT=8637
+cd "$HOME/todou"
+
+manifest_version() {  # <dir> — empty when there is no readable manifest there
+  node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1] + "/manifest.json", "utf8")).version' "$1" 2>/dev/null
+}
+
+# The CLI blocks below only mean something where /api/cli is switched on: with
+# cli_dist_dir unset nothing is ever staged and the endpoint is a 404 by design.
+if grep -Eq '^[[:space:]]*cli_dist_dir[[:space:]]*=' "$DATA/config.toml"; then
+  CLI=1
+else
+  CLI=0
+fi
+if [ "${TODOU_DEPLOY_SKIP_CLI:-0}" != 0 ]; then
+  echo "warn: TODOU_DEPLOY_SKIP_CLI is set — deploying the server alone" >&2
+  CLI=0
+fi
+
+# Fetched rather than pulled, so the drop can be judged against the commit this
+# run is about to move to while the checkout is still untouched.
+git fetch origin
+TARGET="$(git describe --tags --always origin/master)"
+
+# Refuse before anything moves. A deploy with no drop for TARGET succeeds at
+# everything it was asked to do and still leaves /api/cli handing out an older
+# commit's CLI, with nothing anywhere saying so.
+if [ "$CLI" = 1 ]; then
+  STAGED="$(manifest_version "$DATA/cli-dist.new")" || STAGED=""
+  LIVE="$(manifest_version "$DATA/cli-dist")" || LIVE=""
+  # A stale staging directory is its own failure: activating it would downgrade
+  # the served CLI, and it does so silently whenever cli-dist already happens
+  # to hold TARGET.
+  if [ -n "$STAGED" ] && [ "$STAGED" != "$TARGET" ]; then
+    echo "error: the drop staged here is $STAGED, but this deploy moves to $TARGET" >&2
+    echo "       rerun scripts/push-cli.sh <host> from the commit being deployed" >&2
+    exit 1
+  fi
+  if [ -z "$STAGED" ] && [ "$LIVE" != "$TARGET" ]; then
+    echo "error: no CLI drop for $TARGET (serving: ${LIVE:-none})" >&2
+    echo "       run scripts/push-cli.sh <host> on a dev machine, then rerun this" >&2
+    echo "       TODOU_DEPLOY_SKIP_CLI=1 ./deploy.sh deploys the server without it" >&2
+    exit 1
+  fi
+fi
+
+git merge --ff-only origin/master
 pnpm install --frozen-lockfile
 pnpm build
-
-DATA=~/todou-data
 
 # Activate a CLI drop staged by scripts/push-cli.sh, if one is waiting. Its
 # manifest is uploaded last and describes the rest, so a directory holding it
 # plus exactly its artifacts is a whole one; anything else must not go live,
 # because the server refuses to boot on an incomplete distribution.
-if [ -d "$DATA/cli-dist.new" ]; then
+if [ "$CLI" = 1 ] && [ -d "$DATA/cli-dist.new" ]; then
   node -e '
     const fs = require("node:fs"), dir = process.argv[1];
     const m = JSON.parse(fs.readFileSync(dir + "/manifest.json", "utf8"));
@@ -354,30 +407,44 @@ fi
 
 systemctl --user restart todou
 
-# The manifest has to name the commit now running. When it does not, /api/cli
-# is handing out a CLI built from some other state of the tree — which is what
-# happens by default, since a deploy moves the checkout and nothing else.
-deployed=$(git describe --tags --always)
-served=
-for _ in $(seq 30); do
-  if served=$(curl -fsS localhost:8637/api/cli \
-    | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version'); then break; fi
-  sleep 1
-done
-if [ "$served" != "$deployed" ]; then
-  echo "ALARM: /api/cli serves ${served:-nothing}, the checkout is at $deployed" >&2
-  echo "       run scripts/push-cli.sh from a dev machine, then rerun this" >&2
-  exit 1
+# The check before the build read a manifest; this one asks the process that
+# had to boot on it. cli-dist.old outlives the restart for exactly this window.
+if [ "$CLI" = 1 ]; then
+  DEPLOYED="$(git describe --tags --always)"
+  SERVED=""
+  for _ in $(seq 30); do
+    if SERVED="$(curl -fsS "localhost:$PORT/api/cli" \
+      | node -p 'JSON.parse(require("node:fs").readFileSync(0, "utf8")).version')"; then break; fi
+    sleep 1
+  done
+  if [ "$SERVED" != "$DEPLOYED" ]; then
+    echo "ALARM: /api/cli serves ${SERVED:-nothing}, the checkout is at $DEPLOYED" >&2
+    echo "       $DATA/cli-dist.old is kept — put it back if the server refused to boot" >&2
+    exit 1
+  fi
+  rm -rf "$DATA/cli-dist.old"
 fi
-rm -rf "$DATA/cli-dist.old"
 ```
+
+**The order is push, then deploy, and the script enforces it.** Run
+`scripts/push-cli.sh <host>` on a dev machine first. Without a drop naming the
+commit being deployed, the refusal above fires while the checkout is still
+where it was: nothing is fetched into the working tree, nothing is built,
+nothing is restarted, and rerunning after the push is all it takes.
+`TODOU_DEPLOY_SKIP_CLI=1 ./deploy.sh` is the way past it when only the server
+needs to go out — it leaves `/api/cli` serving whatever it was already serving.
+
+That refusal is the whole reason `git pull --ff-only` is split into a `fetch`
+and a `merge`: the target version has to be readable before the checkout moves,
+or the check has nowhere to stand that costs nothing to fail from.
 
 Both CLI blocks belong to deployments that set `http.cli_dist_dir`; without
 it nothing is ever staged and `/api/cli` is a 404 by design. Two edges to
 know before the first run:
 
 - **The first push** finds no `cli-dist` to move aside, so the inner `mv` is
-  skipped and the drop simply becomes the first one.
+  skipped and the drop simply becomes the first one. The refusal does not fire
+  for it either: a staged drop for the target commit is all it asks for.
 - **A refused boot** — `journalctl --user -u todou` naming a missing or
   short artifact — is why `cli-dist.old` outlives the restart and is only
   removed once the served version has been confirmed. Put it back and rerun
