@@ -182,6 +182,7 @@ describe("guardUnknownCommand", () => {
       "  todou issue list",
       "  todou comment list",
       "  todou question list",
+      "  todou spec list",
       "  todou label list",
       "  todou status list",
       "  todou attach list",
