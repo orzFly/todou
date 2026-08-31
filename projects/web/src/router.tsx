@@ -14,6 +14,7 @@ import { AppShell } from "@/components/shell.tsx";
 import { TitleController } from "@/components/title-controller.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/sonner";
+import { parseSpecSearch } from "@/lib/spec-search.ts";
 import { AgentsSettingsPage } from "@/pages/agents-settings.tsx";
 import { BoardPage } from "@/pages/board.tsx";
 import { CliAuthPage } from "@/pages/cli-auth.tsx";
@@ -162,8 +163,8 @@ const issueRoute = createRoute({
 
 // Lazy: the spec view drags @pierre/diffs and the annotation layer along —
 // none of which the rest of the app needs on first paint (T-24 direction).
-// The search parser stays inline so the page module is not statically
-// reachable from the route table.
+// The search parser lives in its own module so the page stays unreachable
+// from the route table.
 const specViewRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "issues/$number/spec",
@@ -171,19 +172,7 @@ const specViewRoute = createRoute({
     () => import("@/pages/spec-view.tsx"),
     "SpecViewPage",
   ),
-  validateSearch: (
-    search: Record<string, unknown>,
-  ): { file?: string; v?: number; compare?: number } => {
-    const num = (v: unknown): number | undefined => {
-      const n = Number(v);
-      return Number.isInteger(n) && n > 0 ? n : undefined;
-    };
-    return {
-      file: typeof search.file === "string" ? search.file : undefined,
-      v: num(search.v),
-      compare: num(search.compare),
-    };
-  },
+  validateSearch: parseSpecSearch,
 });
 
 const projectSettingsRoute = createRoute({

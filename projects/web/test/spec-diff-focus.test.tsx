@@ -10,6 +10,7 @@ import { fireEvent, render, waitFor } from "@testing-library/react";
 import type { SpecComments, SpecFiles, SpecInfo } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
+import { parseSpecSearch } from "../src/lib/spec-search.ts";
 import { SpecViewPage } from "../src/pages/spec-view.tsx";
 import { testQueryClient } from "./render.tsx";
 
@@ -114,19 +115,7 @@ function renderSpecView(search: string) {
     getParentRoute: () => projectRoute,
     path: "issues/$number/spec",
     component: SpecViewPage,
-    validateSearch: (
-      s: Record<string, unknown>,
-    ): { file?: string; v?: number; compare?: number } => {
-      const num = (v: unknown) => {
-        const n = Number(v);
-        return Number.isInteger(n) && n > 0 ? n : undefined;
-      };
-      return {
-        file: typeof s.file === "string" ? s.file : undefined,
-        v: num(s.v),
-        compare: num(s.compare),
-      };
-    },
+    validateSearch: parseSpecSearch,
   });
   const router = createRouter({
     routeTree: rootRoute.addChildren([

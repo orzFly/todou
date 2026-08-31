@@ -6,10 +6,17 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { SpecComments, SpecFiles, SpecInfo } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
+import { parseSpecSearch } from "../src/lib/spec-search.ts";
 import { SpecViewPage } from "../src/pages/spec-view.tsx";
 import { testQueryClient } from "./render.tsx";
 
@@ -99,19 +106,7 @@ function renderSpecView(search: string) {
     getParentRoute: () => projectRoute,
     path: "issues/$number/spec",
     component: SpecViewPage,
-    validateSearch: (
-      s: Record<string, unknown>,
-    ): { file?: string; v?: number; compare?: number } => {
-      const num = (v: unknown) => {
-        const n = Number(v);
-        return Number.isInteger(n) && n > 0 ? n : undefined;
-      };
-      return {
-        file: typeof s.file === "string" ? s.file : undefined,
-        v: num(s.v),
-        compare: num(s.compare),
-      };
-    },
+    validateSearch: parseSpecSearch,
   });
   const router = createRouter({
     routeTree: rootRoute.addChildren([
@@ -154,14 +149,27 @@ const jumpButtons = (view: ReturnType<typeof renderSpecView>) => ({
   next: view.getByRole("button", { name: /^next / }),
 });
 
-/** The six columns of the T-190 state matrix. */
+/** The columns of the T-190 state matrix, as T-192 re-cut them. */
 const STATES: [label: string, search: string][] = [
-  ["R1 · v1", "?v=1"],
+  ["R1 · v1, no baseline possible", "?v=1"],
   ["R2 · modified file", "?v=2&file=design.md"],
   ["RN · new file", "?v=2&file=fresh.md"],
   ["RU · untouched file", "?v=2&file=stable.md"],
   ["C · source diff", "?v=2&compare=1"],
 ];
+
+/** Moves the baseline picker to a position, by the text of its entry. */
+async function pickBaseline(
+  view: ReturnType<typeof renderSpecView>,
+  name: RegExp,
+) {
+  const trigger = view.getByRole("button", {
+    name: /baseline|comparing against/i,
+  });
+  fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+  await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
+  fireEvent.click(screen.getByRole("menuitemradio", { name }));
+}
 
 describe("spec toolbar fixed slots (T-190)", () => {
   it("renders the same slots in every state", async () => {
@@ -182,6 +190,8 @@ describe("spec toolbar fixed slots (T-190)", () => {
       "comment-file",
       "finish-review",
       "version",
+      "baseline",
+      "view-toggle",
       "display-toggle",
       "prev-change",
       "next-change",
@@ -189,10 +199,15 @@ describe("spec toolbar fixed slots (T-190)", () => {
     for (const names of seen.slice(1)) expect(names).toEqual(seen[0]);
   });
 
-  it("keeps the changes toggle in its slot when it is turned off", async () => {
+  it("keeps every slot in place when the baseline goes off (T-192)", async () => {
     const view = await toolbar("?v=2&file=design.md");
     const before = slotNames(view);
-    fireEvent.click(view.getByRole("button", { name: /changes since v1/ }));
+    await pickBaseline(view, /no baseline/i);
+    await waitFor(() =>
+      expect(
+        view.getByRole("button", { name: "source" }).hasAttribute("disabled"),
+      ).toBe(true),
+    );
     expect(slotNames(view)).toEqual(before);
   });
 
@@ -204,13 +219,36 @@ describe("spec toolbar fixed slots (T-190)", () => {
     expect(prev.getAttribute("aria-label")).toContain("first version");
   });
 
-  it("steps changes on a modified file, and stops when the highlight is off", async () => {
+  it("steps changes on a modified file, and stops when the baseline goes off", async () => {
     const view = await toolbar("?v=2&file=design.md");
     expect(jumpButtons(view).next.hasAttribute("disabled")).toBe(false);
-    fireEvent.click(view.getByRole("button", { name: /changes since v1/ }));
-    const { next } = jumpButtons(view);
-    expect(next.hasAttribute("disabled")).toBe(true);
-    expect(next.getAttribute("aria-label")).toContain("Turn on");
+    await pickBaseline(view, /no baseline/i);
+    await waitFor(() =>
+      expect(jumpButtons(view).next.hasAttribute("disabled")).toBe(true),
+    );
+    expect(jumpButtons(view).next.getAttribute("aria-label")).toContain(
+      "Pick a baseline",
+    );
+  });
+
+  it("pins the widths the two new slots stand on (T-192)", async () => {
+    // Rect equality across states is a browser measurement; happy-dom lays
+    // nothing out, so what a suite can hold is the declaration that made it
+    // true. Without these three the baseline label and the version's push
+    // message slide everything to their right.
+    const view = await toolbar("?v=2&file=design.md");
+    const cls = (selector: string) =>
+      view.container.querySelector(selector)?.className ?? "";
+    expect(cls('[data-toolbar-slot="version"]')).toContain("lg:w-80");
+    expect(cls('[data-toolbar-slot="baseline"] button')).toContain("min-w-32");
+    expect(cls('[data-toolbar-slot="view-toggle"] fieldset')).toContain("w-36");
+  });
+
+  it("keeps wrap in the display slot, disabled outside the source diff", async () => {
+    const view = await toolbar("?v=2&file=design.md");
+    const wrap = view.getByRole("button", { name: /^wrap/ });
+    expect(wrap.hasAttribute("disabled")).toBe(true);
+    expect(wrap.getAttribute("aria-label")).toContain("source diff");
   });
 
   it("keeps ↑↓ usable on a file that is new in this version", async () => {
@@ -238,11 +276,14 @@ describe("spec toolbar fixed slots (T-190)", () => {
     expect(button.getAttribute("aria-label")).toContain("line numbers");
   });
 
-  it("lists the differing files in source-diff mode, carrying compare", async () => {
+  it("lists the differing files in source-diff mode, carrying the baseline", async () => {
     const view = await toolbar("?v=2&compare=1");
     expect(view.getByRole("button", { name: /Files \(2\)/ })).toBeTruthy();
+    // The rail renders the same list from lg up, so scope to the popover
+    // rather than picking one of two identical links (T-192).
     fireEvent.click(view.getByRole("button", { name: /Files \(2\)/ }));
-    const link = await view.findByRole("link", { name: /fresh\.md/ });
+    const popover = await screen.findByRole("dialog");
+    const link = within(popover).getByRole("link", { name: /fresh\.md/ });
     expect(link.getAttribute("href")).toBe(
       "/projects/demo/issues/1/spec?file=fresh.md&v=2&compare=1",
     );

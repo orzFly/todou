@@ -1,14 +1,14 @@
 import { Link } from "@tanstack/react-router";
 import type { SpecVersionInfo } from "@todou/shared";
-import { CheckIcon, ChevronDownIcon, GitCompareIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon } from "lucide-react";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import type { SpecSearch } from "@/lib/spec-search.ts";
 import { cn } from "@/lib/utils.ts";
 
 const CHIP = "rounded-full border px-2.5 py-0.5 font-mono text-xs";
@@ -54,14 +54,16 @@ function MessageText({ message }: { message: string | null }) {
  * Version switcher for the spec page. The push message is the only place a
  * version says what it changed, and it used to live in a `title` tooltip on
  * a pill — here it is the version's headline (T-178).
+ *
+ * Which version is on screen is all this control says; what it is compared
+ * against belongs to the baseline picker beside it (T-192).
  */
 export function SpecVersionPicker({
   slug,
   issueNumber,
   versions,
   version,
-  compare,
-  file,
+  searchFor,
 }: {
   slug: string;
   issueNumber: number;
@@ -69,40 +71,28 @@ export function SpecVersionPicker({
   versions: SpecVersionInfo[];
   /** The version being viewed. */
   version: number;
-  /** The baseline of the diff, when the page is in compare mode. */
-  compare?: number;
-  /** Kept across every switch so the reader stays on the same document. */
-  file?: string;
+  searchFor: (version: number) => SpecSearch;
 }) {
   const params = { slug, number: String(issueNumber) };
-  const comparing = compare !== undefined;
   const current = versions.find((v) => v.number === version);
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className={cn(
+        className={
           // Capped, so a paragraph-long push message cannot wrap the
           // toolbar it sits in; the message truncates instead.
-          "flex min-w-0 max-w-80 cursor-pointer items-center gap-2 rounded-full border py-0.5 pr-2 pl-0.5 text-left text-xs hover:border-foreground/50",
-          comparing && "border-foreground/50",
-        )}
-        title={current?.message ?? undefined}
-        aria-label={
-          comparing
-            ? `comparing v${compare} to v${version}, switch version`
-            : `viewing v${version}, switch version`
+          "flex min-w-0 max-w-80 cursor-pointer items-center gap-2 rounded-full border py-0.5 pr-2 pl-0.5 text-left text-xs hover:border-foreground/50"
         }
+        title={current?.message ?? undefined}
+        aria-label={`viewing v${version}, switch version`}
       >
-        {/* Same two parts in both modes, and the chip is sized for the wider
-            `vN…vM` variant: entering compare mode must not re-lay the row
-            out around it (T-190). The message belongs to the version being
-            viewed either way — in compare mode that is the diff's right
-            side, which is what the reader is judging. */}
+        {/* Fixed width, so a two- or three-digit version does not re-lay the
+            row out around it (T-190). */}
         <VersionChip
-          label={comparing ? `v${compare}…v${version}` : `v${version}`}
+          label={`v${version}`}
           active
-          className="min-w-18 text-center tabular-nums"
+          className="min-w-14 text-center tabular-nums"
         />
         <span className="hidden min-w-0 truncate lg:block">
           <MessageText message={current?.message ?? null} />
@@ -114,13 +104,13 @@ export function SpecVersionPicker({
         className="max-h-[60vh] w-[min(26rem,calc(100vw-2rem))]"
       >
         {[...versions].reverse().map((v) => {
-          const active = v.number === version && !comparing;
+          const active = v.number === version;
           return (
             <DropdownMenuItem key={v.number} asChild>
               <Link
                 to="/projects/$slug/issues/$number/spec"
                 params={params}
-                search={{ file, v: v.number }}
+                search={searchFor(v.number)}
                 aria-current={active ? "true" : undefined}
                 className="items-start gap-2 py-1.5"
               >
@@ -149,22 +139,6 @@ export function SpecVersionPicker({
             </DropdownMenuItem>
           );
         })}
-        {version > 1 && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem asChild>
-              <Link
-                to="/projects/$slug/issues/$number/spec"
-                params={params}
-                search={{ file, v: version, compare: version - 1 }}
-                className="gap-2 py-1.5"
-              >
-                <GitCompareIcon className="size-3.5 text-muted-foreground" />
-                diff v{version - 1}…v{version}
-              </Link>
-            </DropdownMenuItem>
-          </>
-        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

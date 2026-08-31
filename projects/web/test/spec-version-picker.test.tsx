@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { SpecVersionInfo, UserRef } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import { SpecVersionPicker } from "../src/components/spec/spec-version-picker.tsx";
+import { specSearchFor } from "../src/lib/spec-search.ts";
 import { renderWithProviders } from "./render.tsx";
 
 const AUTHOR: UserRef = {
@@ -43,6 +44,15 @@ function renderPicker(
       issueNumber={7}
       versions={VERSIONS}
       version={3}
+      searchFor={(target) =>
+        specSearchFor({
+          file: "design.md",
+          v: target,
+          version: target,
+          baseline: null,
+          view: "rendered",
+        })
+      }
       {...props}
     />,
   );
@@ -74,15 +84,15 @@ describe("SpecVersionPicker (T-178)", () => {
     expect(trigger.getAttribute("title")).toBe("plan v1: nine steps");
   });
 
-  it("names the two versions being compared, keeping the same two parts", async () => {
-    const view = renderPicker({ compare: 2 });
-    const trigger = await view.findByRole("button");
-    expect(trigger.textContent).toContain("v2…v3");
-    // Chip plus message in both modes, so entering compare mode re-lays
-    // nothing out around the trigger (T-190). The message belongs to the
-    // version being viewed — the diff's right-hand side.
-    expect(trigger.textContent).toContain("plan v1: nine steps");
-    expect(trigger.getAttribute("title")).toBe("plan v1: nine steps");
+  it("holds the version chip at a fixed width (T-190)", async () => {
+    // What it is compared against moved to the baseline picker (T-192), so
+    // the chip only ever spells one version — and the digits must not move
+    // the message and the caret beside it.
+    const view = renderPicker({ version: 1 });
+    const chip = (await view.findByRole("button")).firstElementChild;
+    expect(chip?.textContent).toBe("v1");
+    expect(chip?.className).toContain("min-w-14");
+    expect(chip?.className).toContain("tabular-nums");
   });
 
   it("lists versions newest first with message, pusher and time", async () => {
@@ -119,31 +129,29 @@ describe("SpecVersionPicker (T-178)", () => {
     expect(current[0]?.textContent?.slice(0, 2)).toBe("v3");
   });
 
-  it("marks no version while comparing — the diff is what is on screen", async () => {
-    await openMenu({ compare: 2 });
-    expect(
-      versionLinks().filter((i) => i.getAttribute("aria-current") === "true"),
-    ).toHaveLength(0);
-  });
-
-  it("keeps the file and drops compare when switching version", async () => {
-    await openMenu({ compare: 2, file: "design.md" });
-    const target = versionLinks()[2];
-    expect(target?.getAttribute("href")).toBe(
+  it("points every item at the url its caller builds", async () => {
+    await openMenu();
+    expect(versionLinks()[2]?.getAttribute("href")).toBe(
       "/projects/demo/issues/7/spec?file=design.md&v=1",
     );
   });
 
-  it("offers the diff against the previous version", async () => {
-    await openMenu({ file: "design.md" });
-    const diff = screen.getByRole("menuitem", { name: /diff v2…v3/ });
-    expect(diff.getAttribute("href")).toBe(
-      "/projects/demo/issues/7/spec?file=design.md&v=3&compare=2",
+  it("carries the comparison across a version switch (T-192)", async () => {
+    await openMenu({
+      searchFor: (target) =>
+        specSearchFor({
+          file: "design.md",
+          v: target,
+          version: target,
+          baseline: target > 1 ? target - 1 : null,
+          view: "source",
+        }),
+    });
+    expect(versionLinks()[1]?.getAttribute("href")).toBe(
+      "/projects/demo/issues/7/spec?file=design.md&v=2&compare=1",
     );
-  });
-
-  it("has no diff entry at v1 — there is nothing behind it", async () => {
-    await openMenu({ version: 1 });
-    expect(screen.queryByRole("menuitem", { name: /diff/ })).toBeNull();
+    expect(versionLinks()[2]?.getAttribute("href")).toBe(
+      "/projects/demo/issues/7/spec?file=design.md&v=1",
+    );
   });
 });

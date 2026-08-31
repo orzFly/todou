@@ -10,6 +10,7 @@ import { fireEvent, render, waitFor } from "@testing-library/react";
 import type { SpecComments, SpecFiles, SpecInfo } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
+import { parseSpecSearch } from "../src/lib/spec-search.ts";
 import { SpecViewPage } from "../src/pages/spec-view.tsx";
 import { testQueryClient } from "./render.tsx";
 
@@ -103,19 +104,7 @@ function renderSpecView(search: string) {
     getParentRoute: () => projectRoute,
     path: "issues/$number/spec",
     component: SpecViewPage,
-    validateSearch: (
-      s: Record<string, unknown>,
-    ): { file?: string; v?: number; compare?: number } => {
-      const num = (v: unknown) => {
-        const n = Number(v);
-        return Number.isInteger(n) && n > 0 ? n : undefined;
-      };
-      return {
-        file: typeof s.file === "string" ? s.file : undefined,
-        v: num(s.v),
-        compare: num(s.compare),
-      };
-    },
+    validateSearch: parseSpecSearch,
   });
   const router = createRouter({
     routeTree: rootRoute.addChildren([
@@ -136,11 +125,14 @@ function renderSpecView(search: string) {
 }
 
 describe("spec diff wrap toggle (T-143)", () => {
-  it("is absent outside compare mode", async () => {
+  it("is disabled outside the source diff, not unmounted", async () => {
+    // It holds the display slot in every state now, because a slot that
+    // empties out is a slot that moves things (T-190, T-192).
     mockSpec();
     const view = renderSpecView("?v=2");
     await view.findByRole("button", { name: /finish review/i });
-    expect(view.queryByRole("button", { name: /wrap/i })).toBeNull();
+    const toggle = view.getByRole("button", { name: /^wrap/ });
+    expect(toggle.hasAttribute("disabled")).toBe(true);
   });
 
   it("defaults to on and wraps the diff", async () => {

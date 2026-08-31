@@ -31,14 +31,7 @@ import {
   FileTextIcon,
   WrapTextIcon,
 } from "lucide-react";
-import {
-  type ReactNode,
-  type Ref,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { issueQuery } from "@/api/issues.ts";
 import { api } from "@/api/queries.ts";
@@ -56,11 +49,13 @@ import {
   type DisplayedAnnotation,
 } from "@/components/spec/annotated-markdown.tsx";
 import { ReviewSubmitDialog } from "@/components/spec/review-submit.tsx";
+import { SpecBaselinePicker } from "@/components/spec/spec-baseline-picker.tsx";
 import {
   type ComposerStaging,
   SpecComposer,
 } from "@/components/spec/spec-composer.tsx";
 import { SpecVersionPicker } from "@/components/spec/spec-version-picker.tsx";
+import { SpecViewToggle } from "@/components/spec/spec-view-toggle.tsx";
 import {
   DiffstatBar,
   StatNumbers,
@@ -76,6 +71,12 @@ import {
   type SpecReviewDraft,
   useSpecReviewDrafts,
 } from "@/lib/spec-drafts.ts";
+import {
+  type SpecSearch,
+  type SpecView,
+  specMode,
+  specSearchFor,
+} from "@/lib/spec-search.ts";
 import { beginEdit, retarget, type Staging } from "@/lib/spec-staging.ts";
 import {
   computeVersionStats,
@@ -94,10 +95,9 @@ const FILE_DIFF_SELECTOR = "[data-file-diff]";
 const TOOLBAR_FALLBACK_HEIGHT = 78;
 
 /**
- * The one content slot in the toolbar's second row: the `changes` toggle,
- * `wrap`, and the new-file note all render as this same box, wide enough for
- * the longest of them. Swapping the content therefore moves nothing beside
- * it — the whole point of T-190.
+ * The one content slot in the toolbar's second row: `wrap` and the new-file
+ * note render as this same box, wide enough for the longer of them. Swapping
+ * the content therefore moves nothing beside it — the whole point of T-190.
  */
 const DISPLAY_SLOT =
   "inline-flex min-w-32 shrink-0 items-center justify-center gap-1 rounded-full border px-2.5 py-0.5 text-xs";
@@ -231,17 +231,23 @@ function SpecViewBody({
     from: "/authed/projects/$slug/issues/$number/spec",
   });
   const version = search.v ?? spec.current_version;
-  const compare = search.compare;
   const files = useSuspenseQuery(specFilesQuery(slug, issueNumber, version));
   const comments = useSuspenseQuery(specCommentsQuery(slug, issueNumber));
   const drafts = useSpecReviewDrafts(slug, issueNumber);
   const [staging, setStaging] = useState<Staging | null>(null);
   const [finishOpen, setFinishOpen] = useState(false);
-  const [showChanges, setShowChanges] = useState(true);
+  // The baseline picker's "off" position: a reading stance for this session,
+  // which is why it stays out of the URL. A link that pins a baseline still
+  // wins over it, so shared diff links open as their sender saw them (T-192).
+  const [compareOff, setCompareOff] = useState(false);
   const [wrap, setWrap] = useState(readDiffWrap);
   const [filesOpen, setFilesOpen] = useState(false);
-  const mainRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLElement>(null);
   const sessionRef = useRef(0);
+
+  const { baseline, view } = specMode(search, version, compareOff);
+  const comparing = baseline !== null;
+  const sourceMode = comparing && view === "source";
 
   // The sticky stack: shell header, then this page's toolbar. Both heights
   // are runtime values — the header grows a nav row below sm, the toolbar
@@ -262,38 +268,77 @@ function SpecViewBody({
     setStaging(beginEdit(draft, ++sessionRef.current));
   const editingDraft = drafts.drafts.find((d) => d.id === staging?.draftId);
 
-  const selectedPath = search.file ?? files.data.files[0]?.path;
+  // Source mode stacks every differing file at once, so the rail marks a
+  // file only once the reader has actually asked for one.
+  const selectedPath = sourceMode
+    ? search.file
+    : (search.file ?? files.data.files[0]?.path);
   const selected = files.data.files.find((f) => f.path === selectedPath);
   const params = { slug, number: String(issueNumber) };
 
-  // Re-review aid: highlight what changed since the previous version. The
-  // baseline snapshot also feeds the sidebar diff stats and the new-file
-  // detection (T-61), so it loads whenever a previous version exists.
-  const highlightEnabled = version > 1 && showChanges && compare === undefined;
-  // In compare mode the same snapshot answers a different question — what
-  // the diff on screen is against — so the file list and its diffstat agree
-  // with the diff instead of with the previous version (T-190 §9).
-  const baselineVersion = compare ?? version - 1;
-  const baseline = useQuery({
-    ...specFilesQuery(slug, issueNumber, baselineVersion),
-    enabled: baselineVersion >= 1,
+  const fileSearch = (path: string): SpecSearch =>
+    specSearchFor({ file: path, v: search.v, version, baseline, view });
+  const baselineSearch = (next: number | null): SpecSearch =>
+    specSearchFor({
+      file: search.file,
+      v: search.v,
+      version,
+      baseline: next,
+      view,
+    });
+  const viewSearch = (next: SpecView): SpecSearch =>
+    specSearchFor({
+      file: search.file,
+      v: search.v,
+      version,
+      baseline,
+      view: next,
+    });
+  const versionSearch = (target: number): SpecSearch => {
+    // A baseline the reader pinned survives the switch as long as it still
+    // sits behind the version being opened; otherwise the previous version
+    // takes over, which is what the automatic posture would have picked.
+    const pinned = search.compare;
+    const next =
+      !comparing || target <= 1
+        ? null
+        : pinned !== undefined && pinned < target
+          ? pinned
+          : target - 1;
+    return specSearchFor({
+      file: search.file,
+      v: target,
+      version: target,
+      baseline: next,
+      view,
+    });
+  };
+
+  // Re-review aid: highlight what changed since the baseline. The same
+  // snapshot answers the file list's diffstat and the new-file detection
+  // (T-61), and in source mode it is the diff's left-hand side — one query
+  // whichever way the comparison is drawn.
+  const renderedCompare = comparing && view === "rendered";
+  const baselineQuery = useQuery({
+    ...specFilesQuery(slug, issueNumber, baseline ?? 0),
+    enabled: comparing,
   });
+  const baselineFiles = comparing ? baselineQuery.data : undefined;
   // A file with no baseline counterpart is brand new: highlighting every
   // block tells the reviewer nothing (T-61) — render it normally and say
   // "new file" instead.
   const isNewFile =
-    version > 1 &&
-    baseline.data !== undefined &&
+    baselineFiles !== undefined &&
     selected !== undefined &&
-    !baseline.data.files.some((f) => f.path === selected.path);
+    !baselineFiles.files.some((f) => f.path === selected.path);
   // The baseline body drives BOTH aids: line ranges for the block-level
   // wash and the ↑↓ nav, and the word-level diff inside those blocks (T-142).
   const baselineBody = useMemo(() => {
-    if (!highlightEnabled || selected === undefined || !baseline.data) {
+    if (!renderedCompare || selected === undefined || !baselineFiles) {
       return undefined;
     }
-    return baseline.data.files.find((f) => f.path === selected.path)?.body;
-  }, [highlightEnabled, selected, baseline.data]);
+    return baselineFiles.files.find((f) => f.path === selected.path)?.body;
+  }, [renderedCompare, selected, baselineFiles]);
   const changedRanges = useMemo(() => {
     if (baselineBody === undefined || selected === undefined) return [];
     return changedLineRanges(baselineBody, selected.body);
@@ -303,32 +348,54 @@ function SpecViewBody({
   // modified), in sidebar order — the rail the change navigation rides
   // across file boundaries (T-61).
   const changedFiles = useMemo(() => {
-    if (!baseline.data) return [];
-    const before = new Map(baseline.data.files.map((f) => [f.path, f.body]));
+    if (!baselineFiles) return [];
+    const before = new Map(baselineFiles.files.map((f) => [f.path, f.body]));
     return files.data.files
       .filter((f) => before.get(f.path) !== f.body)
       .map((f) => f.path);
-  }, [baseline.data, files.data.files]);
+  }, [baselineFiles, files.data.files]);
 
-  // Source-diff mode: the file pairs `SpecDiff` will render, computed here
-  // too so the toolbar's file list and its ↑↓ cannot disagree with what is
-  // on screen. Unlike changedFiles this keeps removed files, which have a
-  // diff but no row in the viewed version.
+  // Source mode: the file pairs `SpecDiff` will render, computed here too so
+  // the file list and its ↑↓ cannot disagree with what is on screen. Unlike
+  // changedFiles this keeps removed files, which have a diff but no row in
+  // the viewed version.
   const comparePaths = useMemo(() => {
-    if (compare === undefined || !baseline.data) return [];
-    return diffPaths(baseline.data.files, files.data.files);
-  }, [compare, baseline.data, files.data.files]);
-  const listedPaths =
-    compare === undefined ? files.data.files.map((f) => f.path) : comparePaths;
+    if (!baselineFiles) return [];
+    return diffPaths(baselineFiles.files, files.data.files);
+  }, [baselineFiles, files.data.files]);
 
-  // Sidebar diff stats vs the baseline, same visuals as the T-59 version
-  // card. Removed files have no sidebar row to annotate — the version
-  // card in the timeline still accounts for them.
-  const sidebarStats = useMemo(() => {
-    if (!baseline.data) {
-      return new Map<string, SpecFileStat>();
+  // Files the baseline had and this version does not. The rendered view has
+  // no way to draw one, so the rail carries them to a notice that hands the
+  // reader over to the source diff (T-192).
+  const removedFiles = useMemo(() => {
+    if (!baselineFiles) return [];
+    const present = new Set(files.data.files.map((f) => f.path));
+    return baselineFiles.files
+      .filter((f) => !present.has(f.path))
+      .map((f) => f.path);
+  }, [baselineFiles, files.data.files]);
+
+  // The rail is the same element in every state; only its contents change.
+  // Source mode narrows it to what the diff stack renders, in that stack's
+  // own path order (T-192).
+  const railEntries = useMemo(() => {
+    const present = new Set(files.data.files.map((f) => f.path));
+    if (sourceMode) {
+      return comparePaths.map((path) => ({
+        path,
+        removed: !present.has(path),
+      }));
     }
-    const before = new Map(baseline.data.files.map((f) => [f.path, f.body]));
+    return [
+      ...files.data.files.map((f) => ({ path: f.path, removed: false })),
+      ...removedFiles.map((path) => ({ path, removed: true })),
+    ];
+  }, [sourceMode, files.data.files, comparePaths, removedFiles]);
+
+  // Diffstat beside every rail row, same visuals as the T-59 version card.
+  const sidebarStats = useMemo(() => {
+    if (!baselineFiles) return new Map<string, SpecFileStat>();
+    const before = new Map(baselineFiles.files.map((f) => [f.path, f.body]));
     const after = new Map(files.data.files.map((f) => [f.path, f.body]));
     const stats = computeVersionStats(
       {
@@ -341,14 +408,14 @@ function SpecViewBody({
             return old !== undefined && old !== f.body;
           })
           .map((f) => f.path),
-        removed: [],
+        removed: [...before.keys()].filter((path) => !after.has(path)),
       },
       before,
       after,
       diffLines,
     );
     return new Map(stats.map((s) => [s.path, s]));
-  }, [baseline.data, files.data.files]);
+  }, [baselineFiles, files.data.files]);
 
   const flashTo = (
     target: HTMLElement,
@@ -369,7 +436,7 @@ function SpecViewBody({
    * element it had just centered and the navigation jammed (T-61).
    */
   const jumpWithin = (direction: 1 | -1): boolean => {
-    const root = mainRef.current;
+    const root = contentRef.current;
     if (!root) return false;
     const els = [...root.querySelectorAll<HTMLElement>(CHANGED_SELECTOR)];
     if (els.length === 0) return false;
@@ -407,20 +474,19 @@ function SpecViewBody({
     void navigate({
       to: "/projects/$slug/issues/$number/spec",
       params,
-      search: { file: nextPath, v: search.v },
+      search: fileSearch(nextPath),
     });
   };
 
-  const diffRootRef = useRef<HTMLDivElement>(null);
   /**
-   * The source-diff half of ↑↓ (T-190 §5). Tops against the resting line
-   * rather than centers against the viewport's: a file diff is routinely
-   * taller than the viewport, and what the reader wants under the toolbar
-   * is its path header — which is also where `scrollMarginTop` parks it, so
-   * the diff already at rest still excludes itself from both directions.
+   * The source half of ↑↓ (T-190 §5). Tops against the resting line rather
+   * than centers against the viewport's: a file diff is routinely taller
+   * than the viewport, and what the reader wants under the toolbar is its
+   * path header — which is also where `scrollMarginTop` parks it, so the
+   * diff already at rest still excludes itself from both directions.
    */
   const jumpFileDiff = (direction: 1 | -1) => {
-    const root = diffRootRef.current;
+    const root = contentRef.current;
     if (!root) return;
     const els = [...root.querySelectorAll<HTMLElement>(FILE_DIFF_SELECTOR)];
     if (els.length === 0) return;
@@ -442,7 +508,7 @@ function SpecViewBody({
    * whether there is anything to step over, changes with the state.
    */
   const changeNav = ((): { unit: string; reason?: string } => {
-    if (compare !== undefined) {
+    if (sourceMode) {
       return comparePaths.length > 1
         ? { unit: "file diff" }
         : {
@@ -456,17 +522,14 @@ function SpecViewBody({
         reason: "v1 is the first version — nothing has changed yet",
       };
     }
-    if (!showChanges) {
+    if (baseline === null) {
       return {
         unit: "change",
-        reason: "Turn on the changes highlight to step through them",
+        reason: "Pick a baseline to step through what changed since it",
       };
     }
     if (changedFiles.length === 0) {
-      return {
-        unit: "change",
-        reason: `Nothing changed since v${version - 1}`,
-      };
+      return { unit: "change", reason: `Nothing changed since v${baseline}` };
     }
     // A file with no highlighted block of its own — brand new in this
     // version, or untouched by it — steps across file boundaries instead,
@@ -474,24 +537,32 @@ function SpecViewBody({
     return { unit: changedRanges.length === 0 ? "changed file" : "change" };
   })();
 
-  const displaySlotReason =
-    compare === undefined && version === 1
-      ? "v1 is the first version — there is nothing to compare against"
+  /** The display slot holds `wrap`, which only the source diff can honour. */
+  const wrapReason = sourceMode
+    ? undefined
+    : "Only the source diff wraps long lines";
+
+  const baselineReason =
+    version === 1
+      ? `v${version} has no earlier version to compare against`
       : undefined;
 
-  const commentFileReason =
-    compare !== undefined
-      ? "Drag across the diff's line numbers to comment on a range"
-      : selected === undefined
-        ? `This file is not part of v${version}`
-        : undefined;
+  const modeReason = comparing
+    ? undefined
+    : "Pick a baseline to choose how the comparison is drawn";
+
+  const commentFileReason = sourceMode
+    ? "Drag across the diff's line numbers to comment on a range"
+    : selected === undefined
+      ? `This file is not part of v${version}`
+      : undefined;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: changedRanges signals that the new file's highlights are stamped
   useEffect(() => {
     const direction = pendingJumpRef.current;
     if (direction === null) return;
     pendingJumpRef.current = null;
-    const root = mainRef.current;
+    const root = contentRef.current;
     if (!root) return;
     const els = [...root.querySelectorAll<HTMLElement>(CHANGED_SELECTOR)];
     const target = direction === 1 ? els[0] : els[els.length - 1];
@@ -638,8 +709,8 @@ function SpecViewBody({
           </ToolbarSlot>
           <span className="ml-auto" />
           {/* Below lg the file rail is gone from the flow; this is where it
-              went. In source-diff mode it lists the files that differ, and
-              its links carry `compare` so they land on that file's diff. */}
+              went. In source mode it lists the files that differ, and its
+              links carry the baseline so they land on that file's diff. */}
           <Popover open={filesOpen} onOpenChange={setFilesOpen}>
             <PopoverTrigger asChild>
               <Button
@@ -649,7 +720,7 @@ function SpecViewBody({
                 data-toolbar-slot="files"
               >
                 <span className="tabular-nums">
-                  Files ({listedPaths.length})
+                  Files ({railEntries.length})
                 </span>
                 <ChevronDownIcon className="size-3.5" />
               </Button>
@@ -659,11 +730,10 @@ function SpecViewBody({
               className="max-h-[55vh] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto"
             >
               <SpecFileList
-                paths={listedPaths}
+                entries={railEntries}
                 selectedPath={selectedPath}
                 params={params}
-                v={search.v}
-                compare={compare}
+                searchFor={fileSearch}
                 unresolvedByPath={unresolvedByPath}
                 sidebarStats={sidebarStats}
                 onNavigate={() => setFilesOpen(false)}
@@ -724,258 +794,299 @@ function SpecViewBody({
           </Button>
         </div>
 
-        {/* Row B — what is being read, then how. Version on the left with
-            the push message absorbing every width change; the display slot
-            and ↑↓ anchored right. T-192's baseline selector and
-            rendered|source switch land between the two, and nothing to the
-            right of the gap moves when they arrive (T-190 §8). */}
+        {/* Row B — what is being read, what against, and how. Version, the
+            baseline and the presentation switch sit left of the row's one
+            elastic gap; the display slot and ↑↓ are anchored right and do
+            not move as the mode changes (T-190 §8, T-192). */}
         <div className="flex flex-wrap items-center gap-2">
-          <ToolbarSlot name="version" className="min-w-0 shrink">
+          {/* Fixed from lg up, where the push message is visible: the
+              message is the row's variable text, and pinning the slot is
+              what stops a short one from sliding the baseline and the
+              presentation switch left (T-190 rule 3). Below lg only the
+              chip shows, which is fixed-width already. */}
+          <ToolbarSlot
+            name="version"
+            className="min-w-0 shrink lg:w-80 lg:shrink-0"
+          >
             <SpecVersionPicker
               slug={slug}
               issueNumber={issueNumber}
               versions={spec.versions}
               version={version}
-              compare={compare}
-              file={search.file}
+              searchFor={versionSearch}
+            />
+          </ToolbarSlot>
+          <ToolbarSlot name="baseline" title={baselineReason}>
+            <SpecBaselinePicker
+              versions={spec.versions}
+              version={version}
+              baseline={baseline}
+              onChange={(next) => {
+                setCompareOff(next === null);
+                void navigate({
+                  to: "/projects/$slug/issues/$number/spec",
+                  params,
+                  search: baselineSearch(next),
+                });
+              }}
+            />
+          </ToolbarSlot>
+          <ToolbarSlot name="view-toggle" title={modeReason}>
+            <SpecViewToggle
+              slug={slug}
+              issueNumber={issueNumber}
+              view={view}
+              disabled={!comparing}
+              searchFor={viewSearch}
             />
           </ToolbarSlot>
           <span className="ml-auto" />
-          <ToolbarSlot name="display-toggle" title={displaySlotReason}>
-            {compare !== undefined ? (
+          <ToolbarSlot name="display-toggle" title={wrapReason}>
+            {renderedCompare && isNewFile ? (
+              // Nothing is highlighted on a file the baseline never had, and
+              // saying why beats leaving the reader to wonder.
+              <span
+                className={cn(DISPLAY_SLOT, DISPLAY_SLOT_ON)}
+                title={`This file does not exist in v${baseline}`}
+              >
+                new in v{version}
+              </span>
+            ) : (
               <button
                 type="button"
                 aria-pressed={wrap}
+                disabled={!sourceMode}
+                aria-label={
+                  sourceMode ? "wrap long lines" : `wrap — ${wrapReason}`
+                }
                 onClick={() => {
                   setWrap(!wrap);
                   writeDiffWrap(!wrap);
                 }}
                 className={cn(
                   DISPLAY_SLOT,
-                  "cursor-pointer",
-                  wrap ? DISPLAY_SLOT_ON : DISPLAY_SLOT_OFF,
+                  sourceMode
+                    ? cn(
+                        "cursor-pointer",
+                        wrap ? DISPLAY_SLOT_ON : DISPLAY_SLOT_OFF,
+                      )
+                    : DISPLAY_SLOT_DISABLED,
                 )}
-                title="Wrap long lines instead of scrolling horizontally"
+                title={
+                  sourceMode
+                    ? "Wrap long lines instead of scrolling horizontally"
+                    : undefined
+                }
               >
                 <WrapTextIcon className="size-3.5" />
                 wrap
               </button>
-            ) : isNewFile ? (
-              // The highlight toggle is a version-wide setting and survives
-              // untouched; on a file that has no baseline there is simply
-              // nothing for it to do, and saying so beats an inert switch.
-              <span
-                className={cn(DISPLAY_SLOT, DISPLAY_SLOT_ON)}
-                title={`This file does not exist in v${version - 1}`}
-              >
-                new in v{version}
-              </span>
-            ) : version === 1 ? (
-              <button
-                type="button"
-                disabled
-                aria-pressed={false}
-                aria-label={`highlight changes — ${displaySlotReason}`}
-                className={cn(DISPLAY_SLOT, DISPLAY_SLOT_DISABLED)}
-              >
-                changes
-              </button>
-            ) : (
-              <button
-                type="button"
-                aria-pressed={showChanges}
-                onClick={() => setShowChanges(!showChanges)}
-                className={cn(
-                  DISPLAY_SLOT,
-                  "cursor-pointer",
-                  showChanges ? DISPLAY_SLOT_ON : DISPLAY_SLOT_OFF,
-                )}
-                title={`Highlight blocks changed since v${version - 1}`}
-              >
-                changes since v{version - 1}
-              </button>
             )}
           </ToolbarSlot>
-          <ToolbarSlot name="prev-change" title={changeNav.reason}>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              disabled={changeNav.reason !== undefined}
-              aria-label={
-                changeNav.reason === undefined
-                  ? `previous ${changeNav.unit}`
-                  : `previous ${changeNav.unit} — ${changeNav.reason}`
-              }
-              onClick={() =>
-                compare === undefined ? jumpChange(-1) : jumpFileDiff(-1)
-              }
-            >
-              <ArrowUpIcon className="size-4" />
-            </Button>
-          </ToolbarSlot>
-          <ToolbarSlot name="next-change" title={changeNav.reason}>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              disabled={changeNav.reason !== undefined}
-              aria-label={
-                changeNav.reason === undefined
-                  ? `next ${changeNav.unit}`
-                  : `next ${changeNav.unit} — ${changeNav.reason}`
-              }
-              onClick={() =>
-                compare === undefined ? jumpChange(1) : jumpFileDiff(1)
-              }
-            >
-              <ArrowDownIcon className="size-4" />
-            </Button>
-          </ToolbarSlot>
+          {/* One wrapping unit: two more controls landed in this row, and a
+              narrow viewport was breaking the pair apart, stranding ↓ on a
+              line of its own. */}
+          <span className="inline-flex shrink-0 items-center gap-2">
+            <ToolbarSlot name="prev-change" title={changeNav.reason}>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                disabled={changeNav.reason !== undefined}
+                aria-label={
+                  changeNav.reason === undefined
+                    ? `previous ${changeNav.unit}`
+                    : `previous ${changeNav.unit} — ${changeNav.reason}`
+                }
+                onClick={() => (sourceMode ? jumpFileDiff(-1) : jumpChange(-1))}
+              >
+                <ArrowUpIcon className="size-4" />
+              </Button>
+            </ToolbarSlot>
+            <ToolbarSlot name="next-change" title={changeNav.reason}>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                disabled={changeNav.reason !== undefined}
+                aria-label={
+                  changeNav.reason === undefined
+                    ? `next ${changeNav.unit}`
+                    : `next ${changeNav.unit} — ${changeNav.reason}`
+                }
+                onClick={() => (sourceMode ? jumpFileDiff(1) : jumpChange(1))}
+              >
+                <ArrowDownIcon className="size-4" />
+              </Button>
+            </ToolbarSlot>
+          </span>
         </div>
       </div>
 
-      {compare !== undefined ? (
-        <SpecDiff
-          slug={slug}
-          issueNumber={issueNumber}
-          fromVersion={compare}
-          toFiles={files.data.files}
-          toVersion={version}
-          comments={comments.data.items}
-          onStage={stage}
-          focusPath={search.file}
-          wrap={wrap}
-          stickyTop={stickyTop}
-          rootRef={diffRootRef}
-        />
-      ) : (
-        <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
-          {/* self-start, or the grid would stretch the rail to the row's
-              height and leave sticky nothing to travel through. */}
-          <aside
-            style={{
-              top: stickyTop + 16,
-              maxHeight: `calc(100vh - ${stickyTop + 32}px)`,
-            }}
-            className="hidden self-start space-y-1 overflow-y-auto overscroll-contain lg:sticky lg:block"
-          >
-            <SpecFileList
-              paths={listedPaths}
-              selectedPath={selectedPath}
-              params={params}
-              v={search.v}
-              unresolvedByPath={unresolvedByPath}
-              sidebarStats={sidebarStats}
+      {/* One skeleton behind both presentations: the rail stays put across a
+          rendered↔source switch, only its contents narrow (T-192). That also
+          keeps the Files popover's "below lg only" rule true in every state,
+          which is what T-190 §5 wanted from the rail. */}
+      <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
+        {/* self-start, or the grid would stretch the rail to the row's
+            height and leave sticky nothing to travel through. */}
+        <aside
+          style={{
+            top: stickyTop + 16,
+            maxHeight: `calc(100vh - ${stickyTop + 32}px)`,
+          }}
+          className="hidden self-start space-y-1 overflow-y-auto overscroll-contain lg:sticky lg:block"
+        >
+          <SpecFileList
+            entries={railEntries}
+            selectedPath={selectedPath}
+            params={params}
+            searchFor={fileSearch}
+            unresolvedByPath={unresolvedByPath}
+            sidebarStats={sidebarStats}
+          />
+        </aside>
+        <main
+          className="min-w-0 space-y-4"
+          style={{ scrollMarginTop: stickyTop + 8 }}
+          ref={contentRef}
+        >
+          {sourceMode && baseline !== null ? (
+            <SpecDiff
+              slug={slug}
+              issueNumber={issueNumber}
+              fromVersion={baseline}
+              toFiles={files.data.files}
+              toVersion={version}
+              comments={comments.data.items}
+              onStage={stage}
+              focusPath={search.file}
+              wrap={wrap}
+              stickyTop={stickyTop}
             />
-          </aside>
-          <main
-            className="min-w-0 space-y-4"
-            style={{ scrollMarginTop: stickyTop + 8 }}
-            ref={mainRef}
-          >
-            {(fileLevel.length > 0 || fileLevelDrafts.length > 0) && (
-              <div className="space-y-2 rounded-lg border px-4 py-3">
-                <h3 className="text-xs font-medium text-muted-foreground uppercase">
-                  File comments
-                </h3>
-                {fileLevel.map((item) => (
-                  <UnplacedComment
-                    key={item.comment_id}
-                    item={item}
-                    onResolve={(id) => resolve.mutate(id)}
-                    resolving={resolve.isPending}
-                  />
-                ))}
-                {fileLevelDrafts.map((draft) => (
-                  <div
-                    key={draft.id}
-                    className="rounded-md border border-indigo-500/40 p-2 text-sm"
-                  >
-                    <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
-                      <span className="font-medium text-indigo-700 dark:text-indigo-400">
-                        draft
-                      </span>
-                      file comment
-                      <span className="ml-auto" />
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 px-2 text-xs"
-                        onClick={() => editDraft(draft)}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 px-2 text-xs"
-                        onClick={() => drafts.remove(draft.id)}
-                      >
-                        Discard
-                      </Button>
+          ) : (
+            <>
+              {(fileLevel.length > 0 || fileLevelDrafts.length > 0) && (
+                <div className="space-y-2 rounded-lg border px-4 py-3">
+                  <h3 className="text-xs font-medium text-muted-foreground uppercase">
+                    File comments
+                  </h3>
+                  {fileLevel.map((item) => (
+                    <UnplacedComment
+                      key={item.comment_id}
+                      item={item}
+                      onResolve={(id) => resolve.mutate(id)}
+                      resolving={resolve.isPending}
+                    />
+                  ))}
+                  {fileLevelDrafts.map((draft) => (
+                    <div
+                      key={draft.id}
+                      className="rounded-md border border-indigo-500/40 p-2 text-sm"
+                    >
+                      <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+                        <span className="font-medium text-indigo-700 dark:text-indigo-400">
+                          draft
+                        </span>
+                        file comment
+                        <span className="ml-auto" />
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-2 text-xs"
+                          onClick={() => editDraft(draft)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-2 text-xs"
+                          onClick={() => drafts.remove(draft.id)}
+                        >
+                          Discard
+                        </Button>
+                      </div>
+                      <p className="whitespace-pre-wrap">{draft.body}</p>
                     </div>
-                    <p className="whitespace-pre-wrap">{draft.body}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="rounded-lg border px-5 py-4">
-              {selected === undefined ? (
-                <p className="text-sm text-muted-foreground italic">
-                  File not found in v{version}.
-                </p>
-              ) : (
-                <AnnotatedMarkdown
-                  slug={slug}
-                  issueNumber={issueNumber}
-                  body={selected.body}
-                  baselineBody={baselineBody}
-                  refDate={
-                    spec.versions.find((v) => v.number === version)?.created_at
-                  }
-                  annotations={displayed}
-                  changedRanges={changedRanges}
-                  onStage={(range) =>
-                    stage({
-                      path: selected.path,
-                      version,
-                      lineStart: range.lineStart,
-                      lineEnd: range.lineEnd,
-                      colStart: range.colStart,
-                      colEnd: range.colEnd,
-                      quote: quoteOf(
-                        selected.body,
-                        range.lineStart,
-                        range.lineEnd,
-                        range.colStart,
-                        range.colEnd,
-                      ),
-                    })
-                  }
-                  onEditDraft={editDraft}
-                  onRemoveDraft={drafts.remove}
-                  onResolve={(id) => resolve.mutate(id)}
-                  resolving={resolve.isPending}
-                />
+                  ))}
+                </div>
               )}
-            </div>
-            {unplaced.length > 0 && (
-              <div className="space-y-2 rounded-lg border px-4 py-3">
-                <h3 className="text-xs font-medium text-muted-foreground uppercase">
-                  Comments without a place in v{version}
-                </h3>
-                {unplaced.map((item) => (
-                  <UnplacedComment
-                    key={item.comment_id}
-                    item={item}
+              <div className="rounded-lg border px-5 py-4">
+                {selected === undefined ? (
+                  selectedPath !== undefined &&
+                  baseline !== null &&
+                  removedFiles.includes(selectedPath) ? (
+                    <RemovedFileNotice
+                      path={selectedPath}
+                      version={version}
+                      params={params}
+                      search={specSearchFor({
+                        file: selectedPath,
+                        v: search.v,
+                        version,
+                        baseline,
+                        view: "source",
+                      })}
+                    />
+                  ) : (
+                    <p className="text-sm text-muted-foreground italic">
+                      File not found in v{version}.
+                    </p>
+                  )
+                ) : (
+                  <AnnotatedMarkdown
+                    slug={slug}
+                    issueNumber={issueNumber}
+                    body={selected.body}
+                    baselineBody={baselineBody}
+                    refDate={
+                      spec.versions.find((v) => v.number === version)
+                        ?.created_at
+                    }
+                    annotations={displayed}
+                    changedRanges={changedRanges}
+                    onStage={(range) =>
+                      stage({
+                        path: selected.path,
+                        version,
+                        lineStart: range.lineStart,
+                        lineEnd: range.lineEnd,
+                        colStart: range.colStart,
+                        colEnd: range.colEnd,
+                        quote: quoteOf(
+                          selected.body,
+                          range.lineStart,
+                          range.lineEnd,
+                          range.colStart,
+                          range.colEnd,
+                        ),
+                      })
+                    }
+                    onEditDraft={editDraft}
+                    onRemoveDraft={drafts.remove}
                     onResolve={(id) => resolve.mutate(id)}
                     resolving={resolve.isPending}
                   />
-                ))}
+                )}
               </div>
-            )}
-          </main>
-        </div>
-      )}
+              {unplaced.length > 0 && (
+                <div className="space-y-2 rounded-lg border px-4 py-3">
+                  <h3 className="text-xs font-medium text-muted-foreground uppercase">
+                    Comments without a place in v{version}
+                  </h3>
+                  {unplaced.map((item) => (
+                    <UnplacedComment
+                      key={item.comment_id}
+                      item={item}
+                      onResolve={(id) => resolve.mutate(id)}
+                      resolving={resolve.isPending}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </main>
+      </div>
 
       {staging !== null && (
         <SpecComposer
@@ -1025,41 +1136,43 @@ function SpecViewBody({
   );
 }
 
+/** One rail row: a file of the viewed version, or one the baseline had. */
+type RailEntry = { path: string; removed: boolean };
+
 /**
  * The file rail, rendered twice: as the sticky aside from lg up, and inside
  * the toolbar's Files popover below it (T-178).
  */
 function SpecFileList({
-  paths,
+  entries,
   selectedPath,
   params,
-  v,
-  compare,
+  searchFor,
   unresolvedByPath,
   sidebarStats,
   onNavigate,
 }: {
-  paths: string[];
+  entries: RailEntry[];
   selectedPath?: string;
   params: { slug: string; number: string };
-  /** The `v` search param as it stands, so switching file keeps the version. */
-  v?: number;
-  /** Kept too, so a click in source-diff mode focuses that file's diff. */
-  compare?: number;
+  /** Carries the version, baseline and presentation across a file switch. */
+  searchFor: (path: string) => SpecSearch;
   unresolvedByPath: Map<string, number>;
   sidebarStats: Map<string, SpecFileStat>;
   onNavigate?: () => void;
 }) {
   return (
     <div className="space-y-1">
-      {paths.map((path) => {
-        const unresolved = unresolvedByPath.get(path) ?? 0;
+      {entries.map((entry) => {
+        const unresolved = unresolvedByPath.get(entry.path) ?? 0;
+        const stat = sidebarStats.get(entry.path);
         return (
           <Link
-            key={path}
+            key={entry.path}
             to="/projects/$slug/issues/$number/spec"
             params={params}
-            search={{ file: path, v, compare }}
+            search={searchFor(entry.path)}
+            title={entry.removed ? `${entry.path} (removed)` : entry.path}
             onClick={(event) => {
               // A modified click opens a background tab; tearing the
               // popover down under the reader's cursor would be wrong.
@@ -1075,33 +1188,73 @@ function SpecFileList({
             }}
             className={cn(
               "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm",
-              path === selectedPath
+              entry.path === selectedPath
                 ? "bg-muted font-medium"
                 : "text-muted-foreground hover:bg-muted/50",
             )}
           >
             <FileTextIcon className="size-4 shrink-0" />
-            <span className="truncate font-mono text-xs">{path}</span>
+            <span
+              className={cn(
+                "truncate font-mono text-xs",
+                entry.removed && "text-muted-foreground line-through",
+              )}
+            >
+              {entry.path}
+            </span>
             <span className="ml-auto inline-flex shrink-0 items-center gap-1.5">
               {unresolved > 0 && (
                 <span className="rounded-full border border-amber-500/60 bg-amber-500/10 px-1.5 text-xs text-amber-700 dark:text-amber-400">
                   {unresolved}
                 </span>
               )}
-              {(() => {
-                const stat = sidebarStats.get(path);
-                if (!stat) return null;
-                return (
-                  <span className="inline-flex items-center gap-1.5 text-[11px]">
-                    <StatNumbers stat={stat} />
-                    <DiffstatBar stat={stat} />
-                  </span>
-                );
-              })()}
+              {stat && (
+                <span className="inline-flex items-center gap-1.5 text-[11px]">
+                  <StatNumbers stat={stat} />
+                  <DiffstatBar stat={stat} />
+                </span>
+              )}
             </span>
           </Link>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * Stand-in for a file the baseline had and this version does not. A rendered
+ * document cannot draw a deletion, so the rail's removed rows land here and
+ * hand the reader over to the one presentation that can (T-192).
+ */
+function RemovedFileNotice({
+  path,
+  version,
+  params,
+  search,
+}: {
+  path: string;
+  version: number;
+  params: { slug: string; number: string };
+  search: SpecSearch;
+}) {
+  return (
+    <div className="space-y-3 py-2 text-sm">
+      <p>
+        <span className="font-mono">{path}</span> was removed in v{version}.
+      </p>
+      <p className="text-muted-foreground">
+        What it held is still readable as a deletion in the source diff.
+      </p>
+      <Button asChild size="sm" variant="outline">
+        <Link
+          to="/projects/$slug/issues/$number/spec"
+          params={params}
+          search={search}
+        >
+          Open the source diff
+        </Link>
+      </Button>
     </div>
   );
 }
@@ -1169,7 +1322,6 @@ function SpecDiff({
   focusPath,
   wrap,
   stickyTop,
-  rootRef,
 }: {
   slug: string;
   issueNumber: number;
@@ -1183,8 +1335,6 @@ function SpecDiff({
   wrap: boolean;
   /** Height of the shell header plus the page toolbar (T-178). */
   stickyTop: number;
-  /** Where the toolbar's ↑↓ look for the file diffs to step over (T-190). */
-  rootRef: Ref<HTMLDivElement>;
 }) {
   const from = useSuspenseQuery(specFilesQuery(slug, issueNumber, fromVersion));
   const focusRef = useRef<HTMLDivElement>(null);
@@ -1241,7 +1391,7 @@ function SpecDiff({
     );
   }
   return (
-    <div className="space-y-4" ref={rootRef}>
+    <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
         Drag across line numbers to comment on a range (old side anchors to v
         {fromVersion}, new side to v{toVersion}).
