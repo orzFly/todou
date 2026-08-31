@@ -21,6 +21,7 @@ import {
   IssueEventsCommand,
   IssueListCommand,
   IssueRestoreCommand,
+  IssueStatusCommand,
   IssueViewCommand,
   IssueWatchCommand,
 } from "./issue.ts";
@@ -78,6 +79,7 @@ export const commands: Array<CommandClass<CliContext>> = [
   IssueEventsCommand,
   IssueWatchCommand,
   IssueEditCommand,
+  IssueStatusCommand,
   IssueCloseCommand,
   IssueDeleteCommand,
   IssueRestoreCommand,

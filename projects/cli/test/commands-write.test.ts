@@ -390,6 +390,86 @@ describe("issue edit, several numbers (T-184)", () => {
   });
 });
 
+describe("issue update/status/move", () => {
+  it("routes `issue update` to the same edit", async () => {
+    const patched: Array<Record<string, unknown>> = [];
+    const { fetchImpl } = fakeFetch([
+      [
+        "PATCH",
+        "/api/projects/todou/issues/3",
+        (init: RequestInit) => {
+          patched.push(jsonBody(init));
+          return issueWith({ title: "Renamed" });
+        },
+      ],
+    ]);
+    for (const verb of ["edit", "update"]) {
+      const result = await runCli(["issue", verb, "3", "-t", "Renamed"], {
+        fetchImpl,
+        env: loggedInEnv("todou"),
+      });
+      expect(result.exitCode).toBe(0);
+    }
+    expect(patched).toEqual([{ title: "Renamed" }, { title: "Renamed" }]);
+  });
+
+  it("takes the status as a second positional", async () => {
+    let patched: Record<string, unknown> | undefined;
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/statuses", statuses],
+      [
+        "PATCH",
+        "/api/projects/todou/issues/3",
+        (init: RequestInit) => {
+          patched = jsonBody(init);
+          return issueWith({ status: statuses[1] });
+        },
+      ],
+    ]);
+    const result = await runCli(["issue", "status", "3", "Done"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(patched).toEqual({ status_id: 2 });
+    expect(result.stdout.trim()).toBe("#3 updated");
+  });
+
+  it("answers to `issue move` as well", async () => {
+    let patched: Record<string, unknown> | undefined;
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/statuses", statuses],
+      [
+        "PATCH",
+        "/api/projects/todou/issues/3",
+        (init: RequestInit) => {
+          patched = jsonBody(init);
+          return issueWith({});
+        },
+      ],
+    ]);
+    const result = await runCli(["issue", "move", "3", "Todo"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(patched).toEqual({ status_id: 1 });
+  });
+
+  it("refuses an unknown status the way `edit --status` does", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/statuses", statuses],
+    ]);
+    const result = await runCli(["issue", "status", "3", "Nope"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('unknown status "Nope"');
+    expect(result.stderr).toContain("available: Todo, Done, Wontfix");
+  });
+});
+
 describe("issue close", () => {
   it("comments first, then moves to the first closed status", async () => {
     const order: string[] = [];
