@@ -117,6 +117,11 @@ todou issue view my-project/1   # project/number, "#1", "T-1", or an issue
                                 # URL work anywhere <number> does; `show` = `view`
 todou issue close 1 --comment "done"
 
+# Which server, which profile, why this project — resolved, with the
+# source of each. Purely local, so it answers when nothing is configured
+# and when the server is down; it never prints a token value.
+todou config show
+
 # Agents/CI need no config file, and every command takes --json:
 TODOU_SERVER=… TODOU_TOKEN=todou_pat_… TODOU_PROJECT=… todou issue list --json
 

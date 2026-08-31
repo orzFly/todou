@@ -96,13 +96,18 @@ export abstract class ApiCommand extends Command<CliContext> {
       if (!this.ctx.server) {
         throw new CliError(
           "no server configured",
-          "pass --server <origin>, set TODOU_SERVER, or run `todou login <origin>`",
+          "pass --server <origin>, set TODOU_SERVER, or run `todou login <origin>`; " +
+            "run `todou config show` to see what is configured",
         );
       }
       if (!this.ctx.token) {
+        // Both hints name `config show` because these two failures are
+        // exactly when someone reaches for config.toml by hand, and a token
+        // read out of that file is a leak with nothing left to buy (T-185).
         throw new CliError(
           `not logged in to ${this.ctx.server}`,
-          `run \`todou login ${this.ctx.server}\` or set TODOU_TOKEN`,
+          `run \`todou login ${this.ctx.server}\` or set TODOU_TOKEN; ` +
+            "run `todou config show` to see what is configured",
         );
       }
       this.agentContext = detectAgentContext(this.context.env);

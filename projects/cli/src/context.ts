@@ -49,8 +49,17 @@ const SHARED_HARNESS_PROFILE = "harness";
 
 export type ProjectSource = "flag" | "env" | "dir-config" | "binding";
 
+export type ServerSource =
+  | "flag"
+  | "env"
+  | "dir-config"
+  | "binding"
+  | "default_server";
+
 export type ResolvedContext = {
   server?: string;
+  /** Where `server` came from; null when it stayed unresolved. */
+  serverSource: ServerSource | null;
   token?: string;
   tokenSource: TokenSource | null;
   /** Profile name when tokenSource is a profile (incl. both auto rules). */
@@ -147,12 +156,23 @@ export function resolveContext(input: {
   // one local source at a time, never a blend of file and binding fields —
   // so a file without a server key falls through to default_server, not to
   // the binding's server.
+  const localServer = dirConfig ? dirConfig.server : binding?.server;
   const server = normalizeIfSet(
-    flags.server ||
-      env.TODOU_SERVER ||
-      (dirConfig ? dirConfig.server : binding?.server) ||
-      config.default_server,
+    flags.server || env.TODOU_SERVER || localServer || config.default_server,
   );
+  // Mirrors the chain above, falsy-for-falsy, so `config show` reports the
+  // step that actually won rather than a second opinion about it (T-185).
+  const serverSource: ServerSource | null = flags.server
+    ? "flag"
+    : env.TODOU_SERVER
+      ? "env"
+      : localServer
+        ? dirConfig
+          ? "dir-config"
+          : "binding"
+        : config.default_server
+          ? "default_server"
+          : null;
   const picked = pickToken(
     flags.profile,
     env,
@@ -184,6 +204,7 @@ export function resolveContext(input: {
 
   return {
     server,
+    serverSource,
     ...picked,
     project,
     projectSource,
