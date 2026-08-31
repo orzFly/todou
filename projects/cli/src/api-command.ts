@@ -216,4 +216,48 @@ export abstract class ProjectCommand extends ApiCommand {
     }
     return { project: ref.project, number: ref.number };
   }
+
+  /**
+   * Several `<number>` positionals as one batch (T-184). Every spelling
+   * `resolveIssueRef` takes is taken here too, one at a time.
+   *
+   * The batch must name a single project: `ref_format` and the status/label
+   * vocabulary are per-project, so a mixed call would need a separate
+   * environment per card and the output could no longer state either once.
+   * A repeat is dropped rather than refused — the same card twice has no
+   * use, so it is a slip in how the list was assembled, and the caller is
+   * told rather than stopped.
+   */
+  protected resolveIssueRefs(raws: string[]): {
+    project: string;
+    /** Input order, first occurrence kept; parallel to `spellings`. */
+    numbers: number[];
+    /** How the caller wrote each kept number, for hints that paste back. */
+    spellings: string[];
+  } {
+    let project: string | undefined;
+    let owner: string | undefined;
+    const numbers: number[] = [];
+    const spellings: string[] = [];
+    for (const raw of raws) {
+      const ref = this.resolveIssueRef(raw);
+      if (project === undefined) {
+        project = ref.project;
+        owner = raw;
+      } else if (ref.project !== project) {
+        throw new CliError(
+          `"${owner}" says project "${project}" but "${raw}" says "${ref.project}"`,
+          "one call reads one project — split them into two",
+        );
+      }
+      if (numbers.includes(ref.number)) {
+        this.note(`duplicate ${raw} ignored`);
+        continue;
+      }
+      numbers.push(ref.number);
+      spellings.push(raw);
+    }
+    if (project === undefined) throw new CliError("no issue number given");
+    return { project, numbers, spellings };
+  }
 }

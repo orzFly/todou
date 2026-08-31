@@ -46,6 +46,7 @@ import {
 import { SearchCommand } from "./search.ts";
 import {
   SpecCommentsCommand,
+  SpecListCommand,
   SpecPullCommand,
   SpecPushCommand,
   SpecResolveCommand,
@@ -91,6 +92,7 @@ export const commands: Array<CommandClass<CliContext>> = [
   QuestionAnswerCommand,
   SpecPushCommand,
   SpecPullCommand,
+  SpecListCommand,
   SpecStatusCommand,
   SpecCommentsCommand,
   SpecResolveCommand,

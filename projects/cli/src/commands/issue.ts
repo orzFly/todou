@@ -2,6 +2,7 @@ import type {
   Issue,
   IssueListItem,
   IssueUpdateInput,
+  Label,
   TimelineEvent,
   TimelineItem,
   TodouClient,
@@ -11,6 +12,7 @@ import {
   SpecPushedPayload,
   SpecReviewPayload,
   TimelineFilterType,
+  TodouError,
 } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { cursorRecord, ProjectCommand } from "../api-command.ts";
@@ -46,6 +48,7 @@ import {
   resolveClosedStatus,
   resolveLabels,
   resolveStatus,
+  resolveStatuses,
   shellArg,
 } from "../resolve.ts";
 import {
@@ -60,6 +63,7 @@ import {
   watchRetryOptions,
   watchTimeoutSec,
 } from "../watch-loop.ts";
+import { specVerdict } from "./spec.ts";
 
 function issueRow(issue: IssueListItem, refPrefix: string | null): string[] {
   // Old servers omit both fields entirely; undefined reads as "not unread"
@@ -88,10 +92,12 @@ export class IssueListCommand extends ProjectCommand {
   static usage = Command.Usage({
     description: "List issues with filters",
     details:
-      "gh's spellings work too: `-l/--label`, `-a/--assignee`, `-L/--limit`, `-S/--search`, and `-s/--state open|closed|all`. Label flags are repeatable and comma-splittable (`--label 'area:cli,kind:bug'`), and match **any** of the named labels.",
+      "gh's spellings work too: `-l/--label`, `-a/--assignee`, `-L/--limit`, `-S/--search`, and `-s/--state open|closed|all`. `--status` and the label flags are repeatable and comma-splittable (`--status Next,'In Progress'`), and match **any** of the named values — a card has one status, so several can only mean \"any of these\".",
   });
 
-  status = Option.String("--status", { description: "Filter by status name" });
+  status = Option.Array("--status", [], {
+    description: "Filter by status name (repeatable; matches any)",
+  });
   state = Option.String("-s,--state", {
     description: "open | closed | all (gh's spelling of --open/--closed)",
   });
@@ -124,9 +130,13 @@ export class IssueListCommand extends ProjectCommand {
 
   protected async run(client: TodouClient): Promise<void> {
     const project = this.requireProject();
-    const pickers = [this.status, this.state, this.open, this.closed].filter(
-      Boolean,
-    ).length;
+    const statusNames = splitCommaList(this.status);
+    const pickers = [
+      statusNames.length > 0,
+      this.state,
+      this.open,
+      this.closed,
+    ].filter(Boolean).length;
     if (pickers > 1) {
       throw new CliError(
         "--status, --state, --open, and --closed are mutually exclusive",
@@ -142,9 +152,13 @@ export class IssueListCommand extends ProjectCommand {
             "--state",
           );
 
-    const status = this.status
-      ? [(await resolveStatus(client, project, this.status)).id]
-      : undefined;
+    // The protocol has taken a list here all along (`status` is csvIds
+    // server-side, and the client joins arrays with commas) — the single
+    // value was the CLI's own restriction.
+    const status =
+      statusNames.length > 0
+        ? (await resolveStatuses(client, project, statusNames)).map((s) => s.id)
+        : undefined;
     const labelNames = splitCommaList(this.labels);
     const label =
       labelNames.length > 0
@@ -201,16 +215,42 @@ export class IssueListCommand extends ProjectCommand {
   }
 }
 
+/** One card as `issue view` got it: read, or the reason it could not be. */
+type ViewedIssue = {
+  number: number;
+  /** Undefined exactly when `error` is set. */
+  issue?: Issue;
+  /** Empty under `--brief`, which fetches no timeline at all. */
+  timeline: TimelineItem[];
+  /** How many older entries `--last` cut off this card. */
+  omitted: number;
+  /** Where a watch on this card would resume; never set under `--brief`. */
+  cursor?: string;
+  error?: TodouError;
+};
+
+/** Between two cards of a batch, in `── timeline ──`'s visual language. */
+const CARD_DIVIDER = "────────";
+
 export class IssueViewCommand extends ProjectCommand {
   static paths = [
     ["issue", "view"],
     ["issue", "show"],
   ];
   static usage = Command.Usage({
-    description: "Show an issue with its full timeline",
+    description: "Show one or more issues with their full timeline",
     details: `
-      \`<number>\` also accepts \`<project>/<number>\` (like \`todou/16\`) or
-      a full issue URL; \`issue show\` is an alias of \`issue view\`.
+      Each \`<number>\` also accepts \`<project>/<number>\` (like
+      \`todou/16\`) or a full issue URL; \`issue show\` is an alias of
+      \`issue view\`.
+
+      **Several numbers read several cards in one call** — space-separated,
+      all in the same project. They are fetched concurrently and printed in
+      the order given, separated by a dim rule, each with its own cursor
+      line. A number that cannot be read (deleted, never existed, no access)
+      prints an error line **in its own place** and the other cards are
+      printed anyway; the exit code is then 1, so a typo is never mistaken
+      for a quiet card. A number repeated within one call is read once.
 
       Three opt-in slices cut what a card costs to read; the default is
       unchanged and still prints everything.
@@ -220,19 +260,24 @@ export class IssueViewCommand extends ProjectCommand {
       **does not advance the read marker**: nothing was shown, so nothing
       was read. \`--timeline\` is the other half, dropping the body and
       keeping the header for context. \`--last <N>\` keeps only the newest
-      N entries and says how many it dropped.
+      N entries and says how many it dropped. One set of flags applies to
+      every card of the batch.
 
       All three shape \`--json\` the same way they shape the human output:
       \`--brief\` emits \`{issue, ref_format}\`, and \`--last\` slices the
-      \`timeline\` array.
+      \`timeline\` array. **Exactly one number keeps that shape unchanged**;
+      two or more emit one document \`{items, ref_format}\` instead, where
+      each item is \`{number, issue, timeline, next_cursor}\` or
+      \`{number, error: {status, code, message}}\`, in the order asked for.
     `,
     examples: [
       ["Just the header and status", "$0 issue view 16 --brief"],
       ["What happened lately", "$0 issue view 16 --timeline --last 10"],
+      ["Scan a whole batch at once", "$0 issue view 12 15 23 --brief"],
     ],
   });
 
-  number = Option.String({ required: true });
+  numbers = Option.Rest({ required: 1 });
   brief = Option.Boolean("--brief", false, {
     description: "Header and meta only — no body, no timeline",
   });
@@ -243,8 +288,7 @@ export class IssueViewCommand extends ProjectCommand {
     description: "Keep only the newest N timeline entries",
   });
 
-  protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+  protected async run(client: TodouClient): Promise<number> {
     if (this.brief && this.timelineOnly) {
       throw new CliError(
         "--brief and --timeline ask for opposite halves of the card",
@@ -261,47 +305,144 @@ export class IssueViewCommand extends ProjectCommand {
       this.last === undefined
         ? undefined
         : parsePositiveInt(this.last, "--last");
+    const { project, numbers } = this.resolveIssueRefs(this.numbers);
 
-    const issue = await client.getIssue(project, number);
     const paint = makePainter(this.context.stdout, this.context.env);
-    const refPrefix = await fetchRefPrefix(client, project);
+    // Concurrent, because the whole point of a batch is not paying for it
+    // card by card; the input order is restored for output either way.
+    const [refPrefix, cards] = await Promise.all([
+      fetchRefPrefix(client, project),
+      Promise.all(numbers.map((n) => this.fetchCard(client, project, n, last))),
+    ]);
 
-    if (this.brief) {
-      this.output(
-        { issue: withRef(issue, refPrefix), ref_format: refFormat(refPrefix) },
-        () => renderIssue(issue, [], undefined, paint, refPrefix, {}),
+    // One number is the old command, down to the byte: the failure is the
+    // command's failure, and the payload keeps the shape scripts read.
+    const only = cards.length === 1 ? (cards[0] as ViewedIssue) : undefined;
+    if (only !== undefined) {
+      if (only.error !== undefined) throw only.error;
+      this.output(this.jsonCard(only, refPrefix, { envelope: true }), () =>
+        this.renderCard(only, paint, refPrefix),
       );
-      return;
+      await this.markRead(client, project, only);
+      return 0;
     }
 
-    const { items: drained, cursor } = await drainTimeline(
-      client,
-      project,
-      number,
-    );
-    const timeline = last === undefined ? drained : drained.slice(-last);
     this.output(
       {
-        issue: withRef(issue, refPrefix),
-        timeline,
-        next_cursor: cursor ?? null,
+        items: cards.map((card) => this.jsonCard(card, refPrefix, {})),
         ref_format: refFormat(refPrefix),
       },
       () =>
-        renderIssue(issue, timeline, cursor, paint, refPrefix, {
-          body: !this.timelineOnly,
-          omitted: drained.length - timeline.length,
-        }),
+        cards
+          .map((card) => this.renderCard(card, paint, refPrefix))
+          .join(`\n\n${paint("dim", CARD_DIVIDER)}\n\n`),
     );
-    // Viewing advances the server-side read position (T-46), pinned to the
-    // newest entry actually shown so anything landing after the fetch stays
-    // unread. After the output on purpose, and best-effort: an old server
-    // (404) or a network blip must never fail the view itself.
-    const tail = timeline.at(-1)?.created_at;
+    for (const card of cards) await this.markRead(client, project, card);
+    return cards.some((card) => card.error !== undefined) ? 1 : 0;
+  }
+
+  /**
+   * One card's payload. A `TodouError` is the card's own outcome, not the
+   * batch's — anything else is a bug or an outage and is left to blow up.
+   */
+  private async fetchCard(
+    client: TodouClient,
+    project: string,
+    number: number,
+    last: number | undefined,
+  ): Promise<ViewedIssue> {
+    try {
+      const issue = await client.getIssue(project, number);
+      if (this.brief) return { number, issue, timeline: [], omitted: 0 };
+      const { items: drained, cursor } = await drainTimeline(
+        client,
+        project,
+        number,
+      );
+      const timeline = last === undefined ? drained : drained.slice(-last);
+      return {
+        number,
+        issue,
+        timeline,
+        omitted: drained.length - timeline.length,
+        ...(cursor === undefined ? {} : { cursor }),
+      };
+    } catch (error) {
+      if (!(error instanceof TodouError)) throw error;
+      return { number, timeline: [], omitted: 0, error };
+    }
+  }
+
+  private renderCard(
+    card: ViewedIssue,
+    paint: Painter,
+    refPrefix: string | null,
+  ): string {
+    const ref = paint("bold", formatRef(refPrefix, card.number));
+    if (card.issue === undefined) {
+      const error = card.error as TodouError;
+      return `${ref} · error: ${error.message} (${error.status})`;
+    }
+    return renderIssue(
+      card.issue,
+      card.timeline,
+      card.cursor,
+      paint,
+      refPrefix,
+      this.brief ? {} : { body: !this.timelineOnly, omitted: card.omitted },
+    );
+  }
+
+  private jsonCard(
+    card: ViewedIssue,
+    refPrefix: string | null,
+    opts: { envelope?: boolean },
+  ): Record<string, unknown> {
+    const head = opts.envelope ? {} : { number: card.number };
+    const tail = opts.envelope ? { ref_format: refFormat(refPrefix) } : {};
+    if (card.issue === undefined) {
+      const error = card.error as TodouError;
+      return {
+        ...head,
+        error: {
+          status: error.status,
+          code: error.code,
+          message: error.message,
+        },
+        ...tail,
+      };
+    }
+    return {
+      ...head,
+      issue: withRef(card.issue, refPrefix),
+      // `--brief` fetched no timeline, so it reports none — the same
+      // omission the human output makes.
+      ...(this.brief
+        ? {}
+        : { timeline: card.timeline, next_cursor: card.cursor ?? null }),
+      ...tail,
+    };
+  }
+
+  /**
+   * Viewing advances the server-side read position (T-46), pinned to the
+   * newest entry actually shown so anything landing after the fetch stays
+   * unread. After the output on purpose, and best-effort: an old server
+   * (404) or a network blip must never fail the view itself. A card that
+   * failed to load, and every card under `--brief`, showed nothing and so
+   * read nothing.
+   */
+  private async markRead(
+    client: TodouClient,
+    project: string,
+    card: ViewedIssue,
+  ): Promise<void> {
+    if (this.brief || card.issue === undefined) return;
+    const tail = card.timeline.at(-1)?.created_at;
     try {
       await client.markIssueRead(
         project,
-        number,
+        card.number,
         tail === undefined ? {} : { up_to: tail },
       );
     } catch {
@@ -729,16 +870,39 @@ export class IssueCreateCommand extends ProjectCommand {
 export class IssueEditCommand extends ProjectCommand {
   static paths = [["issue", "edit"]];
   static usage = Command.Usage({
-    description: "Edit an issue's fields, labels, or assignees",
+    description: "Edit one or more issues' fields, labels, or assignees",
     details: `
-      \`<number>\` also accepts \`<project>/<number>\` or a full issue URL.
+      Each \`<number>\` also accepts \`<project>/<number>\` or a full issue
+      URL.
+
+      **Several numbers apply one set of flags to every card**, in the order
+      given, all in the same project: \`issue edit 12 15 23 --status Next\`
+      is the same as running the single-card edit three times. There is no
+      per-card value — for different changes, make different calls — and
+      \`--title\`/\`--body\` are refused outright on a batch, since one title
+      across several cards has no honest use.
+
+      A batch is **checked before it writes**: every card is read first, and
+      a number that cannot be read fails the whole command with nothing
+      written. Once writing starts it goes card by card in order, printing
+      each \`ref updated\` as it lands, and **stops at the first failure** —
+      naming the card that failed and the ones not attempted, so a rerun is
+      the remaining numbers. Applying the same flags twice is a no-op, so
+      rerunning the whole list is safe too.
 
       Two ways to write labels, and they cannot be mixed:
       \`--add-label\`/\`--remove-label\` edit the set in place (gh's flags),
       while \`--label\`/\`--labels\` **replace** it wholesale — anything not
       named is dropped, and the dropped names are printed. Both spellings
       are repeatable and comma-splittable, and any label the project does
-      not have yet is created on the spot.
+      not have yet is created on the spot. On a batch the names are resolved
+      once, but which ids each card ends up with is computed from that
+      card's own current set.
+
+      \`--json\` on a single number is unchanged (the updated issue). Two or
+      more emit \`{items, ref_format}\`; a batch that fails partway emits
+      \`{items, error, not_attempted, ref_format}\` and exits 1, so the
+      account is complete either way.
     `,
     examples: [
       [
@@ -749,10 +913,11 @@ export class IssueEditCommand extends ProjectCommand {
         "Make these the only labels",
         "todou issue edit 3 --labels 'area:cli,kind:bug'",
       ],
+      ["Move a batch along", "todou issue edit 12 15 23 --status Next"],
     ],
   });
 
-  number = Option.String({ required: true });
+  numbers = Option.Rest({ required: 1 });
   title = Option.String("-t,--title");
   body = Option.String("-b,--body");
   bodyFile = Option.String("-F,--body-file");
@@ -765,13 +930,49 @@ export class IssueEditCommand extends ProjectCommand {
   addAssignees = Option.Array("--add-assignee,--add-assignees", []);
   removeAssignees = Option.Array("--remove-assignee,--remove-assignees", []);
 
-  protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
-    const input: IssueUpdateInput = {};
+  protected async run(client: TodouClient): Promise<number> {
+    const set = splitCommaList(this.setLabels);
+    const add = splitCommaList(this.addLabels);
+    const remove = splitCommaList(this.removeLabels);
+    const addAssignees = splitCommaList(this.addAssignees);
+    const removeAssignees = splitCommaList(this.removeAssignees);
+    // Both label styles are read-modify-write — the API only takes whole
+    // lists — but they answer different questions, so mixing them is
+    // refused rather than resolved in some order the caller would have to
+    // guess (T-135). Before any request: this is a usage error, not an
+    // outcome.
+    if (set.length > 0 && (add.length > 0 || remove.length > 0)) {
+      throw new CliError(
+        "--label/--labels replaces the whole label set; --add-label/--remove-label edit it",
+        "pass one style or the other, not both",
+      );
+    }
+    const editsLabels = set.length + add.length + remove.length > 0;
+    const editsAssignees = addAssignees.length + removeAssignees.length > 0;
+    const writesBody = this.body !== undefined || this.bodyFile !== undefined;
 
-    if (this.title !== undefined) input.title = this.title;
-    if (this.body !== undefined || this.bodyFile !== undefined) {
-      input.body = await readBody({
+    const { project, numbers, spellings } = this.resolveIssueRefs(this.numbers);
+    if (
+      this.title === undefined &&
+      !writesBody &&
+      this.status === undefined &&
+      !editsLabels &&
+      !editsAssignees
+    ) {
+      throw new CliError("nothing to change", "pass at least one edit flag");
+    }
+    if (numbers.length > 1 && (this.title !== undefined || writesBody)) {
+      throw new CliError(
+        "--title/--body sets one value, and this call names several cards",
+        "give them their own titles one call at a time — a batch is for status, labels and assignees",
+      );
+    }
+
+    // What every card gets, resolved once however many cards there are.
+    const shared: IssueUpdateInput = {};
+    if (this.title !== undefined) shared.title = this.title;
+    if (writesBody) {
+      shared.body = await readBody({
         body: this.body,
         bodyFile: this.bodyFile,
         stdin: this.context.stdin,
@@ -780,63 +981,185 @@ export class IssueEditCommand extends ProjectCommand {
       });
     }
     if (this.status !== undefined) {
-      input.status_id = (await resolveStatus(client, project, this.status)).id;
+      shared.status_id = (await resolveStatus(client, project, this.status)).id;
+    }
+    const note = (line: string) => this.note(line);
+    const replace =
+      set.length > 0 ? await ensureLabels(client, project, set, note) : null;
+    const addedLabels = (await ensureLabels(client, project, add, note)).map(
+      (l) => l.id,
+    );
+    // Removals stay strict: inventing a label just to drop it is a no-op
+    // that hides the typo behind it.
+    const removedLabels = new Set(
+      (await resolveLabels(client, project, remove)).map((l) => l.id),
+    );
+    const addedPeople = await resolveAssignees(client, project, addAssignees);
+    const removedPeople = new Set(
+      await resolveAssignees(client, project, removeAssignees),
+    );
+
+    // Reading first buys two things: the base of every read-modify-write,
+    // and — for a batch — the guarantee that a mistyped number is caught
+    // before any card has an event on it. A lone card with neither
+    // read-modify-write flag needs neither, and pays for neither.
+    const before =
+      editsLabels || editsAssignees || numbers.length > 1
+        ? await this.readAll(client, project, numbers, spellings)
+        : [];
+
+    const refPrefix = await fetchRefPrefix(client, project);
+    const written: Array<Issue & { ref: string }> = [];
+    for (const [i, number] of numbers.entries()) {
+      const current = before[i];
+      const input: IssueUpdateInput = { ...shared };
+      if (editsLabels && current !== undefined) {
+        input.label_ids = this.labelIdsFor(current, spellings[i] ?? "", {
+          project,
+          replace,
+          added: addedLabels,
+          removed: removedLabels,
+        });
+      }
+      if (editsAssignees && current !== undefined) {
+        input.assignee_ids = [
+          ...new Set([...current.assignees.map((a) => a.id), ...addedPeople]),
+        ].filter((id) => !removedPeople.has(id));
+      }
+
+      let issue: Issue;
+      try {
+        issue = await client.updateIssue(project, number, input);
+      } catch (error) {
+        // One card's failure is the command's failure, worded as it always
+        // was. A batch has partial work to account for instead.
+        if (numbers.length === 1 || !(error instanceof TodouError)) throw error;
+        return this.reportPartial(
+          error,
+          number,
+          numbers.slice(i + 1),
+          written,
+          refPrefix,
+        );
+      }
+      const row = withRef(issue, refPrefix);
+      written.push(row);
+      // Streamed, not collected: a batch that dies on card four has
+      // already told stdout which three landed.
+      if (numbers.length > 1 && !this.json) {
+        this.context.stdout.write(`${row.ref} updated\n`);
+      }
     }
 
-    const labelIds = await this.resolveLabelEdit(client, project, number);
-    if (labelIds !== undefined) input.label_ids = labelIds;
-
-    // Assignee edits are read-modify-write: the API takes whole lists.
-    const addAssignees = splitCommaList(this.addAssignees);
-    const removeAssignees = splitCommaList(this.removeAssignees);
-    if (addAssignees.length > 0 || removeAssignees.length > 0) {
-      const current = (await client.getIssue(project, number)).assignees.map(
-        (a) => a.id,
-      );
-      const add = await resolveAssignees(client, project, addAssignees);
-      const remove = new Set(
-        await resolveAssignees(client, project, removeAssignees),
-      );
-      input.assignee_ids = [...new Set([...current, ...add])].filter(
-        (id) => !remove.has(id),
+    const single = numbers.length === 1 ? written[0] : undefined;
+    if (single !== undefined) {
+      this.output(single, () => `${single.ref} updated`);
+      return 0;
+    }
+    if (this.json) {
+      this.context.stdout.write(
+        `${JSON.stringify(
+          { items: written, ref_format: refFormat(refPrefix) },
+          null,
+          2,
+        )}\n`,
       );
     }
-
-    if (Object.keys(input).length === 0) {
-      throw new CliError("nothing to change", "pass at least one edit flag");
-    }
-    const issue = await client.updateIssue(project, number, input);
-    const updated = withRef(issue, await fetchRefPrefix(client, project));
-    this.output(updated, () => `${updated.ref} updated`);
+    return 0;
   }
 
   /**
-   * The issue's new label set, or undefined when no label flag was passed.
-   * Both styles are read-modify-write — the API only takes whole lists —
-   * but they answer different questions, so mixing them is refused rather
-   * than resolved in some order the caller would have to guess (T-135).
+   * Every target card, or a refusal naming all the numbers that could not
+   * be read. All-or-nothing on purpose: a typo in a list of a dozen must
+   * not leave the first eight edited.
    */
-  private async resolveLabelEdit(
+  private async readAll(
     client: TodouClient,
     project: string,
-    number: number,
-  ): Promise<number[] | undefined> {
-    const set = splitCommaList(this.setLabels);
-    const add = splitCommaList(this.addLabels);
-    const remove = splitCommaList(this.removeLabels);
-    const note = (line: string) => this.note(line);
-
-    if (set.length > 0 && (add.length > 0 || remove.length > 0)) {
-      throw new CliError(
-        "--label/--labels replaces the whole label set; --add-label/--remove-label edit it",
-        "pass one style or the other, not both",
-      );
+    numbers: number[],
+    spellings: string[],
+  ): Promise<Issue[]> {
+    const settled = await Promise.allSettled(
+      numbers.map((number) => client.getIssue(project, number)),
+    );
+    const bad = settled.flatMap((result, i) =>
+      result.status === "rejected"
+        ? [{ raw: spellings[i] ?? String(numbers[i]), reason: result.reason }]
+        : [],
+    );
+    const first = bad[0];
+    if (first === undefined) {
+      return settled.map((r) => (r as PromiseFulfilledResult<Issue>).value);
     }
-    if (set.length > 0) {
-      const current = (await client.getIssue(project, number)).labels;
-      const desired = await ensureLabels(client, project, set, note);
-      const kept = new Set(desired.map((l) => l.id));
-      const dropped = current.filter((l) => !kept.has(l.id));
+    if (numbers.length === 1 || !(first.reason instanceof TodouError)) {
+      throw first.reason;
+    }
+    throw new CliError(
+      `cannot read ${bad.map((b) => b.raw).join(", ")}: ${first.reason.message}`,
+      "nothing was written — a batch reads every card before it edits any",
+    );
+  }
+
+  /** stdout gets the account, stderr the diagnosis, and the run exits 1. */
+  private reportPartial(
+    error: TodouError,
+    number: number,
+    notAttempted: number[],
+    written: Array<Issue & { ref: string }>,
+    refPrefix: string | null,
+  ): number {
+    if (this.json) {
+      this.context.stdout.write(
+        `${JSON.stringify(
+          {
+            items: written,
+            error: {
+              number,
+              status: error.status,
+              code: error.code,
+              message: error.message,
+            },
+            not_attempted: notAttempted,
+            ref_format: refFormat(refPrefix),
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      return 1;
+    }
+    const rest =
+      notAttempted.length === 0
+        ? ""
+        : `; not attempted: ${notAttempted
+            .map((n) => formatRef(refPrefix, n))
+            .join(", ")}`;
+    throw new CliError(
+      `failed on ${formatRef(refPrefix, number)}: ${error.message}${rest}`,
+      notAttempted.length === 0
+        ? undefined
+        : "rerun with the numbers that were not attempted — the same flags twice are a no-op",
+    );
+  }
+
+  /**
+   * One card's new label set. Names were resolved once for the whole batch;
+   * what stays per-card is which ids this card ends up with, since both
+   * styles start from the set it already carries.
+   */
+  private labelIdsFor(
+    issue: Issue,
+    spelling: string,
+    plan: {
+      project: string;
+      replace: Label[] | null;
+      added: number[];
+      removed: Set<number>;
+    },
+  ): number[] {
+    if (plan.replace !== null) {
+      const kept = new Set(plan.replace.map((l) => l.id));
+      const dropped = issue.labels.filter((l) => !kept.has(l.id));
       if (dropped.length > 0) {
         // The flag is one agents reach for meaning "add" (T-135), so the
         // one chance to catch a mistaken wipe is the moment it happens.
@@ -846,28 +1169,15 @@ export class IssueEditCommand extends ProjectCommand {
             .join(", ")}`,
         );
         this.note(
-          `to add without replacing: todou issue edit ${this.number} -p ${project} ` +
+          `to add without replacing: todou issue edit ${spelling} -p ${plan.project} ` +
             `--add-label ${shellArg(dropped[0]?.name ?? "<name>")}`,
         );
       }
-      return desired.map((l) => l.id);
+      return plan.replace.map((l) => l.id);
     }
-    if (add.length === 0 && remove.length === 0) return undefined;
-
-    const current = (await client.getIssue(project, number)).labels.map(
-      (l) => l.id,
-    );
-    const added = (await ensureLabels(client, project, add, note)).map(
-      (l) => l.id,
-    );
-    // Removals stay strict: inventing a label just to drop it is a no-op
-    // that hides the typo behind it.
-    const removed = new Set(
-      (await resolveLabels(client, project, remove)).map((l) => l.id),
-    );
-    return [...new Set([...current, ...added])].filter(
-      (id) => !removed.has(id),
-    );
+    return [
+      ...new Set([...issue.labels.map((l) => l.id), ...plan.added]),
+    ].filter((id) => !plan.removed.has(id));
   }
 }
 
@@ -1031,11 +1341,7 @@ function renderIssue(
     ),
   );
   if (issue.spec_version !== null) {
-    const status = {
-      unreviewed: "awaiting review",
-      approved: "approved",
-      changes_requested: "changes requested",
-    }[issue.spec_review_status ?? "unreviewed"];
+    const status = specVerdict(issue.spec_review_status);
     const unresolved =
       issue.spec_unresolved_comments > 0
         ? ` · ${issue.spec_unresolved_comments} unresolved comment(s)`

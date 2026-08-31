@@ -110,6 +110,65 @@ describe("issue list", () => {
     expect(result.stdout).toContain("Fix the potato");
   });
 
+  it("takes --status repeated or comma-split, as one filter (T-184)", async () => {
+    const twoStatuses = [
+      ...statuses,
+      { id: 3, name: "In Progress", category: "open", color: "#3b82f6" },
+    ];
+    const listRoutes = (): Route[] => [
+      ["GET", "/api/projects/todou/statuses", twoStatuses],
+      [
+        "GET",
+        "/api/projects/todou/issues",
+        { items: [issue], next_cursor: null },
+      ],
+    ];
+    const statusParam = async (argv: string[]) => {
+      const { fetchImpl, calls } = fakeFetch(listRoutes());
+      const result = await runCli(argv, {
+        fetchImpl,
+        env: loggedInEnv("todou"),
+      });
+      expect(result.exitCode).toBe(0);
+      const listCall = calls.find((c) => c.url.includes("/issues?"));
+      return new URL(listCall?.url ?? "", "http://stub.test").searchParams.get(
+        "status",
+      );
+    };
+
+    const repeated = await statusParam([
+      "issue",
+      "list",
+      "--status",
+      "Todo",
+      "--status",
+      "In Progress",
+    ]);
+    const split = await statusParam([
+      "issue",
+      "list",
+      "--status",
+      "Todo,In Progress",
+    ]);
+    expect(repeated).toBe("1,3");
+    expect(split).toBe(repeated);
+    // A single value still spells the query string it always did.
+    expect(await statusParam(["issue", "list", "--status", "todo"])).toBe("1");
+  });
+
+  it("still refuses --status alongside --open (T-184)", async () => {
+    const { fetchImpl } = fakeFetch([]);
+    const result = await runCli(
+      ["issue", "list", "--status", "Todo", "--open"],
+      {
+        fetchImpl,
+        env: loggedInEnv("todou"),
+      },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("mutually exclusive");
+  });
+
   it("maps --open/--closed to the category param and rejects combos", async () => {
     const { fetchImpl, calls } = fakeFetch([
       ["GET", "/api/projects/todou/issues", { items: [], next_cursor: null }],
@@ -672,6 +731,161 @@ describe("issue view slices", () => {
     });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("--last");
+  });
+});
+
+describe("issue view, several numbers (T-184)", () => {
+  const card = (number: number, title: string) => ({
+    ...issue,
+    id: number * 10,
+    number,
+    title,
+  });
+  const entry = (number: number, at: string) => ({
+    type: "comment",
+    id: number,
+    author: me,
+    body: `on ${number}`,
+    created_at: at,
+    edited_at: null,
+  });
+  const gone = {
+    __status: 404,
+    body: { error: { code: "not_found", message: "issue not found" } },
+  };
+  const routes = (): Route[] => [
+    ["GET", "/api/projects/todou/issues/3", card(3, "Fix the potato")],
+    ["GET", "/api/projects/todou/issues/4", card(4, "Water the field")],
+    [
+      "GET",
+      "/api/projects/todou/issues/3/timeline",
+      {
+        items: [entry(3, "2026-08-11T10:30:00Z")],
+        prev_cursor: null,
+        next_cursor: "c3",
+      },
+    ],
+    [
+      "GET",
+      "/api/projects/todou/issues/4/timeline",
+      {
+        items: [entry(4, "2026-08-11T10:40:00Z")],
+        prev_cursor: null,
+        next_cursor: "c4",
+      },
+    ],
+    ["PUT", "/api/projects/todou/issues/3/read", { __status: 204 }],
+    ["PUT", "/api/projects/todou/issues/4/read", { __status: 204 }],
+  ];
+
+  it("prints the cards in the order asked for, ruled apart", async () => {
+    const { fetchImpl } = fakeFetch(routes());
+    const result = await runCli(["issue", "view", "4", "3"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.indexOf("#4 Water the field")).toBeLessThan(
+      result.stdout.indexOf("#3 Fix the potato"),
+    );
+    expect(result.stdout).toContain("────────");
+    // Each card keeps its own resume point — one batch, two watches.
+    expect(result.stdout).toContain("cursor: c4");
+    expect(result.stdout).toContain("cursor: c3");
+  });
+
+  it("reports a bad number in place, keeps the rest, and exits 1", async () => {
+    const { fetchImpl } = fakeFetch([
+      ...routes(),
+      ["GET", "/api/projects/todou/issues/9", gone],
+    ]);
+    const result = await runCli(["issue", "view", "3", "9", "4"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    // A typo must never read as "that card is quiet".
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("#9 · error: issue not found (404)");
+    expect(result.stdout).toContain("#3 Fix the potato");
+    expect(result.stdout).toContain("#4 Water the field");
+  });
+
+  it("keeps the single-number --json shape untouched", async () => {
+    const { fetchImpl } = fakeFetch(routes());
+    const result = await runCli(["issue", "view", "3", "--json"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(Object.keys(parsed).sort()).toEqual([
+      "issue",
+      "next_cursor",
+      "ref_format",
+      "timeline",
+    ]);
+    expect(parsed.next_cursor).toBe("c3");
+  });
+
+  it("wraps two or more in an items envelope, failures included", async () => {
+    const { fetchImpl } = fakeFetch([
+      ...routes(),
+      ["GET", "/api/projects/todou/issues/9", gone],
+    ]);
+    const result = await runCli(["issue", "view", "3", "9", "--json"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(1);
+    const parsed = JSON.parse(result.stdout) as {
+      items: Array<Record<string, unknown>>;
+      ref_format: unknown;
+    };
+    expect(Object.keys(parsed).sort()).toEqual(["items", "ref_format"]);
+    expect(parsed.items.map((i) => i.number)).toEqual([3, 9]);
+    expect(parsed.items[0]?.next_cursor).toBe("c3");
+    expect(parsed.items[1]?.error).toEqual({
+      status: 404,
+      code: "not_found",
+      message: "issue not found",
+    });
+  });
+
+  it("--brief on a batch fetches no timeline and marks nothing read", async () => {
+    const { fetchImpl, calls } = fakeFetch(routes());
+    const result = await runCli(["issue", "view", "3", "4", "--brief"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("#3 Fix the potato");
+    expect(result.stdout).toContain("#4 Water the field");
+    expect(calls.filter((c) => c.url.includes("/timeline"))).toHaveLength(0);
+    expect(calls.filter((c) => c.url.includes("/read"))).toHaveLength(0);
+  });
+
+  it("reads a repeated number once and says so", async () => {
+    const { fetchImpl, calls } = fakeFetch(routes());
+    const result = await runCli(["issue", "view", "3", "4", "3"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain("duplicate 3 ignored");
+    expect(
+      calls.filter((c) => c.url.endsWith("/api/projects/todou/issues/3")),
+    ).toHaveLength(1);
+  });
+
+  it("refuses a batch that spans two projects", async () => {
+    const { fetchImpl } = fakeFetch([]);
+    const result = await runCli(["issue", "view", "todou/3", "dogfood/4"], {
+      fetchImpl,
+      env: loggedInEnv(),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      '"todou/3" says project "todou" but "dogfood/4" says "dogfood"',
+    );
   });
 });
 
