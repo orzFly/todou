@@ -13,6 +13,7 @@ import {
   CommentListCommand,
   CommentViewCommand,
 } from "./comment.ts";
+import { ConfigShowCommand } from "./config.ts";
 import {
   IssueCloseCommand,
   IssueCreateCommand,
@@ -68,6 +69,7 @@ import { WhoamiCommand } from "./whoami.ts";
 export const commands: Array<CommandClass<CliContext>> = [
   LoginCommand,
   WhoamiCommand,
+  ConfigShowCommand,
   ProjectListCommand,
   ProjectMembersCommand,
   ProjectEditCommand,

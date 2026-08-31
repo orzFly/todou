@@ -77,6 +77,7 @@ describe("resolveContext", () => {
     });
     expect(ctx).toEqual({
       server: "https://todou.example",
+      serverSource: "binding",
       token: "todou_pat_bound",
       tokenSource: "default",
       project: "todou",
@@ -141,6 +142,68 @@ describe("resolveContext", () => {
     });
     expect(ctx.server).toBeUndefined();
     expect(ctx.token).toBeUndefined();
+    expect(ctx.serverSource).toBeNull();
+  });
+});
+
+describe("serverSource", () => {
+  const source = (input: {
+    flags?: { server?: string };
+    env?: Record<string, string>;
+    remoteUrl?: string | null;
+    dirConfig?: { path: string; project: string; server?: string } | null;
+  }) =>
+    resolveContext({
+      flags: input.flags ?? {},
+      env: input.env ?? {},
+      config,
+      remoteUrl: input.remoteUrl ?? null,
+      dirConfig: input.dirConfig ?? null,
+    }).serverSource;
+
+  const remote = "git@example.com:me/repo.git";
+
+  it("names each step of the chain that won", () => {
+    expect(source({ flags: { server: "https://flag.example" } })).toBe("flag");
+    expect(source({ env: { TODOU_SERVER: "https://env.example" } })).toBe(
+      "env",
+    );
+    expect(
+      source({
+        dirConfig: {
+          path: "/work/scratch/.todou.toml",
+          project: "dirproj",
+          server: "https://todou.example",
+        },
+      }),
+    ).toBe("dir-config");
+    expect(source({ remoteUrl: remote })).toBe("binding");
+    expect(source({})).toBe("default_server");
+  });
+
+  it("says default_server for a directory config with no server key", () => {
+    // The file replaces the binding outright, so the binding is not the
+    // source even though it exists and matched this remote.
+    expect(
+      source({
+        remoteUrl: remote,
+        dirConfig: { path: "/work/scratch/.todou.toml", project: "dirproj" },
+      }),
+    ).toBe("default_server");
+  });
+
+  it("never says binding without a binding to point at", () => {
+    // "binding" is what the human output turns into `git binding <remote>`,
+    // so it may only appear when there is a remote that matched one.
+    const ctx = resolveContext({
+      flags: {},
+      env: {},
+      config,
+      remoteUrl: "git@example.com:me/unbound.git",
+      dirConfig: null,
+    });
+    expect(ctx.binding).toBeNull();
+    expect(ctx.serverSource).toBe("default_server");
   });
 });
 

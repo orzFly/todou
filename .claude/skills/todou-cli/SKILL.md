@@ -46,6 +46,8 @@ todou comment delete 16 123 -y                # take back a misfire; not reversi
 todou attach -p <proj> 16 file.png ...        # prints `#id name → url`
 todou attach list -p <proj> 16                # id / filename / size / url
 todou attach download -p <proj> 16 <id|name> [-o <path>|-o -]
+todou config show [--json]                    # resolved config and where each part came from;
+#                                               purely local, and never prints a token value
 todou project members -p <proj>               # logins for -a/--assignee and --exclude-actor
 todou status list -p <proj>
 todou status init -p <proj>                   # add the missing canonical statuses, sync existing colors
@@ -254,7 +256,9 @@ rather than rewriting it into an absolute one, and address the id with `attach d
 - **Never lift a token out of `config.toml`.** `attach download` and `todou api` both authenticate the
   way every other command does, and `todou api` streams a non-JSON response through byte for byte, so
   `todou api get /projects/<proj>/attachments/<id>/download > shot.png` works. A hand-written `curl`
-  carrying a pasted Bearer is a credential leak with nothing left to buy.
+  carrying a pasted Bearer is a credential leak with nothing left to buy. And to *look* at the
+  configuration — which server, which profile, why this project — run `todou config show` rather than
+  opening the file: it answers offline and logged-out, and it prints no token value in any form.
 
 **Permalinks.** Every timestamp is a link to that one entry (`#comment-<id>`, `#event-<id>`). Paste one
 to send the reader straight to a specific comment or event — and paste one back into
