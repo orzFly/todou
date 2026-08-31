@@ -498,6 +498,91 @@ describe("gh-shaped flags (T-135)", () => {
   });
 });
 
+describe("issue create takes edit's add-flags (T-193)", () => {
+  const routes = (onPost: (init: RequestInit) => unknown): Route[] => [
+    ["GET", "/api/projects/todou/labels", [bug, chore]],
+    ["GET", "/api/me", me],
+    ["POST", "/api/projects/todou/issues", onPost],
+  ];
+
+  it("reads --add-label and --add-assignee as the initial set", async () => {
+    let posted: Record<string, unknown> | undefined;
+    const { fetchImpl } = fakeFetch(
+      routes((init) => {
+        posted = jsonBody(init);
+        return issueWith({ number: 9, title: "New one" });
+      }),
+    );
+    const result = await runCli(
+      [
+        "issue",
+        "create",
+        "-t",
+        "New one",
+        "-b",
+        "x",
+        "--add-label",
+        "bug,chore",
+        "--add-assignee",
+        "@me",
+      ],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(posted?.label_ids).toEqual([7, 8]);
+    expect(posted?.assignee_ids).toEqual([2]);
+  });
+
+  it("merges the two spellings instead of refusing the mix", async () => {
+    // On edit the pair is refused because the two flags answer different
+    // questions; on create they are one flag, so a mix is just one list.
+    let posted: Record<string, unknown> | undefined;
+    const { fetchImpl } = fakeFetch(
+      routes((init) => {
+        posted = jsonBody(init);
+        return issueWith({ number: 9 });
+      }),
+    );
+    const result = await runCli(
+      [
+        "issue",
+        "create",
+        "-t",
+        "T",
+        "-b",
+        "x",
+        "-l",
+        "bug",
+        "--add-label",
+        "chore",
+      ],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(posted?.label_ids).toEqual([7, 8]);
+  });
+
+  it("refuses the remove flags with a pointer, before any request", async () => {
+    const { fetchImpl, calls } = fakeFetch([]);
+    const labels = await runCli(
+      ["issue", "create", "-t", "T", "--remove-label", "bug"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(labels.exitCode).toBe(1);
+    expect(labels.stderr).toContain("no labels to remove");
+    expect(labels.stderr).toContain("`--label`");
+
+    const people = await runCli(
+      ["issue", "create", "-t", "T", "--remove-assignee", "@me"],
+      { fetchImpl, env: loggedInEnv("todou") },
+    );
+    expect(people.exitCode).toBe(1);
+    expect(people.stderr).toContain("no assignees to remove");
+    expect(people.stderr).toContain("`--assignee`");
+    expect(calls).toHaveLength(0);
+  });
+});
+
 describe("label create/delete, gh shapes", () => {
   it("takes the name as a positional and derives a color", async () => {
     let posted: Record<string, unknown> | undefined;
