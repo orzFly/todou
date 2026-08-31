@@ -42,6 +42,14 @@ describe("issueSearchSchema (filter state ↔ URL)", () => {
     expect(issueSearchSchema.safeParse({ status: "1,x" }).success).toBe(false);
   });
 
+  it("survives params the router already read as numbers", () => {
+    // `?q=1`, `?status=3`, `?label=5` reach validateSearch as numbers, and a
+    // bare z.string() there throws the whole route away (T-189).
+    expect(issueSearchSchema.parse({ q: 1 }).q).toBe("1");
+    expect(issueSearchSchema.parse({ status: 3 }).status).toBe("3");
+    expect(issueSearchSchema.parse({ label: 5 }).label).toBe("5");
+  });
+
   it("accepts the explicit 'all' category", () => {
     expect(issueSearchSchema.parse({ category: "all" }).category).toBe("all");
   });

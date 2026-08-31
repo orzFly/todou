@@ -13,19 +13,26 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { api } from "@/api/queries.ts";
 
+export const ID_CSV = /^\d+(,\d+)*$/;
+
+/**
+ * A param that is textual even when it looks numeric. The router parses the
+ * query string before any schema sees it, so `?q=141` — a reader pasting a
+ * card number — arrives as the number 141 and a bare `z.string()` throws
+ * the whole route away (T-189).
+ */
+export const textParam = z.preprocess(
+  (v) => (typeof v === "number" ? String(v) : v),
+  z.string(),
+);
+
 /** URL search params for the list view — shareable filter state. */
 export const issueSearchSchema = z.object({
-  q: z.string().optional(),
+  q: textParam.optional(),
   // "all" is explicit because the absence of the param means "open".
   category: z.enum(["open", "closed", "all"]).optional(),
-  status: z
-    .string()
-    .regex(/^\d+(,\d+)*$/)
-    .optional(),
-  label: z
-    .string()
-    .regex(/^\d+(,\d+)*$/)
-    .optional(),
+  status: textParam.refine((v) => ID_CSV.test(v)).optional(),
+  label: textParam.refine((v) => ID_CSV.test(v)).optional(),
   assignee: z.coerce.number().int().positive().optional(),
   sort: z.enum(["created", "updated", "number"]).optional(),
   order: z.enum(["asc", "desc"]).optional(),

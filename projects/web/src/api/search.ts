@@ -1,22 +1,10 @@
 import { queryOptions } from "@tanstack/react-query";
 import type { SearchDomain } from "@todou/shared";
 import { z } from "zod";
-import { csvToIds } from "@/api/issues.ts";
+import { csvToIds, ID_CSV, textParam } from "@/api/issues.ts";
 import { api } from "@/api/queries.ts";
 
 const DOMAIN_CSV = /^(issues|comments|specs)(,(issues|comments|specs))*$/;
-const ID_CSV = /^\d+(,\d+)*$/;
-
-/**
- * A param that is textual even when it looks numeric. The router parses the
- * query string before this schema sees it, so `?q=141` — a reader pasting a
- * card number, which is exactly what `refShortcut` below is for — arrives as
- * the number 141 and a bare `z.string()` throws the whole route away.
- */
-const textParam = z.preprocess(
-  (v) => (typeof v === "number" ? String(v) : v),
-  z.string(),
-);
 
 /** URL search params for the results page — shareable, like the list's. */
 export const searchPageSchema = z.object({
