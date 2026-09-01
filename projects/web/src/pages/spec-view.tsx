@@ -741,8 +741,17 @@ function SpecViewBody({
         {/* Row A — who and what, then the actions. The row's one elastic gap
             sits after the review badge, so the title truncates instead of
             pushing the action cluster around: nothing to the right of the
-            gap moves, in any state (T-190). */}
-        <div className="flex flex-wrap items-center gap-2">
+            gap moves, in any state (T-190).
+
+            `lg:flex-nowrap` is what lets the truncation T-190 asked for
+            actually happen: line breaking runs before flex shrinking and
+            measures each item unshrunk, so a title wide enough to need an
+            ellipsis pushed Finish review onto a second line instead — the row
+            "fit" by wrapping, which left the title nothing to shrink for
+            (T-206). Wrapping stays on below lg, where the title is display:none
+            and every remaining item is shrink-0: with no elastic item to give,
+            a wrap is the only graceful answer left. */}
+        <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
           <Button
             asChild
             size="sm"
@@ -756,7 +765,11 @@ function SpecViewBody({
             </Link>
           </Button>
           {/* Shrink-only (the flex default), not flex-1: a short title lets
-              the badge sit right beside it rather than stranding it. */}
+              the badge sit right beside it rather than stranding it. `flex-1
+              basis-0` would stop the row wrapping too — a zero flex basis is
+              a zero hypothetical size, so line breaking never sees the title
+              — but at the price of that adjacency, since a grown title eats
+              the free space the elastic gap is there to hold. */}
           <span
             data-toolbar-slot="title"
             title={issue.data?.title}
@@ -800,58 +813,66 @@ function SpecViewBody({
               />
             </PopoverContent>
           </Popover>
-          <ToolbarSlot name="comment-file" title={commentFileReason}>
+          {/* One wrapping unit, as row B does for ↑↓: below lg the row may
+              still wrap, and between roughly 415 and 520px it was breaking
+              the pair apart and stranding Finish review on a line of its own
+              — the same shape T-206 reported at desktop width. Held together,
+              the only break left falls on the elastic gap above, which is the
+              row's own seam: identity and navigation, then actions. */}
+          <span className="inline-flex shrink-0 items-center gap-2">
+            <ToolbarSlot name="comment-file" title={commentFileReason}>
+              <Button
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                disabled={commentFileReason !== undefined}
+                aria-label={
+                  commentFileReason === undefined
+                    ? "Comment file"
+                    : `Comment file — ${commentFileReason}`
+                }
+                onClick={() => {
+                  if (selected === undefined) return;
+                  stage({
+                    path: selected.path,
+                    version,
+                    lineStart: null,
+                    lineEnd: null,
+                    colStart: null,
+                    colEnd: null,
+                    quote: "",
+                  });
+                }}
+              >
+                Comment file
+              </Button>
+            </ToolbarSlot>
             <Button
               size="sm"
-              variant="outline"
+              data-toolbar-slot="finish-review"
               className="shrink-0"
-              disabled={commentFileReason !== undefined}
               aria-label={
-                commentFileReason === undefined
-                  ? "Comment file"
-                  : `Comment file — ${commentFileReason}`
+                drafts.drafts.length > 0
+                  ? `Finish review (${drafts.drafts.length} staged)`
+                  : "Finish review"
               }
-              onClick={() => {
-                if (selected === undefined) return;
-                stage({
-                  path: selected.path,
-                  version,
-                  lineStart: null,
-                  lineEnd: null,
-                  colStart: null,
-                  colEnd: null,
-                  quote: "",
-                });
-              }}
+              onClick={() => setFinishOpen(true)}
             >
-              Comment file
+              Finish review
+              {/* T-190 reserved this box so staging the first draft would not
+                  widen the button — at the cost of 24px of hollow beside
+                  `Finish review` on every page with no drafts, which is every
+                  page most of the time. T-200 takes the one-off shift. */}
+              {drafts.drafts.length > 0 && (
+                <span
+                  aria-hidden
+                  className="inline-flex min-w-6 justify-center rounded-full bg-primary-foreground/20 px-1 tabular-nums"
+                >
+                  {drafts.drafts.length}
+                </span>
+              )}
             </Button>
-          </ToolbarSlot>
-          <Button
-            size="sm"
-            data-toolbar-slot="finish-review"
-            className="shrink-0"
-            aria-label={
-              drafts.drafts.length > 0
-                ? `Finish review (${drafts.drafts.length} staged)`
-                : "Finish review"
-            }
-            onClick={() => setFinishOpen(true)}
-          >
-            Finish review
-            {/* T-190 reserved this box so staging the first draft would not
-                widen the button — at the cost of 24px of hollow beside
-                `Finish review` on every page with no drafts, which is every
-                page most of the time. T-200 takes the one-off shift. */}
-            {drafts.drafts.length > 0 && (
-              <span
-                aria-hidden
-                className="inline-flex min-w-6 justify-center rounded-full bg-primary-foreground/20 px-1 tabular-nums"
-              >
-                {drafts.drafts.length}
-              </span>
-            )}
-          </Button>
+          </span>
         </div>
 
         {/* Row B — how the document is drawn, then what is being read

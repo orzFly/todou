@@ -317,6 +317,40 @@ describe("spec toolbar fixed slots (T-190)", () => {
     expect(cls('[data-toolbar-slot="display-toggle"] > *')).toContain("h-7");
   });
 
+  it("keeps row A on one line from lg up, where the title can shrink (T-206)", async () => {
+    // Line breaking runs before flex shrinking and measures each item
+    // unshrunk, so with `flex-wrap` on at lg the row met a long title by
+    // pushing Finish review onto a second line — and the title, having caused
+    // no overflow, never truncated. Same reason as T-194 above for asserting
+    // the declaration: happy-dom lays nothing out.
+    const view = await toolbar("?v=2&file=design.md");
+    const cls = (selector: string) =>
+      view.container.querySelector(selector)?.className ?? "";
+    const rowA = view.container.querySelector(
+      '[data-toolbar-slot="back"]',
+    )?.parentElement;
+    expect(rowA?.className).toContain("lg:flex-nowrap");
+    // Below lg the title is display:none and every other item is shrink-0:
+    // nothing left to give, so wrapping stays the graceful answer there.
+    expect(rowA?.className).toContain("flex-wrap");
+    // The ellipsis needs both halves, and neither may become a fixed width
+    // (T-194) or a grown flex child, which would strand the review badge.
+    expect(cls('[data-toolbar-slot="title"]')).toContain("min-w-0");
+    expect(cls('[data-toolbar-slot="title"]')).toContain("truncate");
+    expect(cls('[data-toolbar-slot="title"]')).not.toMatch(/\bflex-1\b|basis-/);
+    expect(cls('[data-toolbar-slot="title"]')).not.toMatch(/(^|\s)(w-|max-w-)/);
+    // One wrapping unit, so the wrap left below lg cannot stage the same
+    // stranding it was just fixed for.
+    const commentFile = view.container.querySelector(
+      '[data-toolbar-slot="comment-file"]',
+    );
+    const finish = view.container.querySelector(
+      '[data-toolbar-slot="finish-review"]',
+    );
+    expect(finish?.parentElement).toBe(commentFile?.parentElement);
+    expect(finish?.parentElement).not.toBe(rowA);
+  });
+
   it("keeps wrap in the display slot, disabled outside the source views", async () => {
     const view = await toolbar("?v=2&file=design.md");
     const wrap = view.getByRole("button", { name: /^wrap/ });
