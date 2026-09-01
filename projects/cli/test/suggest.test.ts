@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { commands } from "../src/commands/index.ts";
 import {
   commandTable,
+  guardDashLeadingValue,
   guardUnknownCommand,
   normalizeToken,
   osaDistance,
@@ -215,5 +216,54 @@ describe("guardUnknownCommand", () => {
     expect(guard(["issue", "move", "3", "Next"])).toBeNull();
     expect(guard(["comment", "list", "3"])).toBeNull();
     expect(guard(["issue", "search", "term"])).toBeNull();
+  });
+});
+
+describe("guardDashLeadingValue", () => {
+  it("names the attached form for a value that starts with --", () => {
+    expect(
+      guardDashLeadingValue(["issue", "create", "--title", "--body", "text"]),
+    ).toEqual([
+      "error: --title has no value: '--body' starts with --, so it is read as another option",
+      "write the value attached instead: --title=<value>",
+    ]);
+  });
+
+  it("answers for every flag whose value can start with --", () => {
+    for (const flag of ["-t", "-b", "--body", "--message", "-q", "--query"]) {
+      expect(
+        guardDashLeadingValue(["comment", "add", "7", flag, "--x"])?.[0],
+      ).toContain(`${flag} has no value`);
+    }
+  });
+
+  it("reports the first slip only", () => {
+    const lines = guardDashLeadingValue([
+      "issue",
+      "create",
+      "--title",
+      "--body",
+      "-q",
+      "--json",
+    ]);
+    expect(lines?.[0]).toContain("--title has no value");
+  });
+
+  it("stays out of the way of anything clipanion would accept", () => {
+    // One dash is not two, an attached value is already the answer, a run of
+    // booleans is ordinary, and -h belongs to the help builtin. The last one
+    // is a value clipanion reports missing on its own, where `=` is no fix.
+    const cases = [
+      ["issue", "view", "3", "--last", "-1"],
+      ["issue", "create", "--title=--body"],
+      ["watch", "--json", "--forever"],
+      ["issue", "create", "--title", "-h"],
+      ["--version"],
+      [],
+      ["comment", "add", "7", "--body"],
+    ];
+    for (const argv of cases) {
+      expect(guardDashLeadingValue(argv)).toBeNull();
+    }
   });
 });

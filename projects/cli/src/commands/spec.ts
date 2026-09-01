@@ -436,6 +436,9 @@ export class SpecReviewCommand extends ProjectCommand {
   bodyFile = Option.String("--body-file", {
     description: "Summary from a file, or - for stdin",
   });
+  allowBodyPath = Option.Boolean("--allow-body-path", false, {
+    description: "Post a --body that is a path as literal text",
+  });
   version = Option.String("--version", {
     description: "Version being reviewed (default: current)",
   });
@@ -456,6 +459,9 @@ export class SpecReviewCommand extends ProjectCommand {
         stdin: this.context.stdin,
         isTTY: false,
         env: this.context.env,
+        cwd: this.context.cwd,
+        allowBodyPath: this.allowBodyPath,
+        note: (line) => this.note(line),
       });
     }
     const version =

@@ -576,7 +576,9 @@ describe("comment add", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(posted).toEqual({ body: "a note" });
-    expect(result.stdout).toBe("comment 1 on #7 (#comment-1)\n");
+    expect(result.stdout).toBe(
+      "comment 1 on #7 (#comment-1) · 6 chars: a note\n",
+    );
   });
 
   it("keeps the --json envelope free of the echoed id line", async () => {
@@ -626,7 +628,92 @@ describe("comment add", () => {
       { fetchImpl, env: loggedInEnv() },
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe("comment 1 on #7 (#comment-1)\n");
+    expect(result.stdout).toBe(
+      "comment 1 on #7 (#comment-1) · 6 chars: a note\n",
+    );
+  });
+});
+
+/** T-198: a --body that is really a --body-file argument. */
+describe("comment add, --body given a path", () => {
+  const dir = mkdtempSync(join(tmpdir(), "todou-bodypath-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, "draft.md"), "the body that was meant");
+
+  const post = (): Route => [
+    "POST",
+    "/api/projects/todou/issues/7/comments",
+    (init: RequestInit) => ({
+      type: "comment",
+      id: 1,
+      author: me,
+      body: jsonBody(init).body,
+      created_at: "2026-08-11T12:00:00Z",
+      edited_at: null,
+    }),
+  ];
+
+  it("refuses a stream path without reaching the server", async () => {
+    const { fetchImpl, calls } = fakeFetch([post()]);
+    const result = await runCli(
+      ["comment", "add", "7", "--body", "/dev/stdin"],
+      { fetchImpl, env: loggedInEnv("todou"), cwd: dir },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(calls.filter((c) => c.init.method === "POST")).toHaveLength(0);
+    expect(result.stderr).toContain("nothing was written");
+  });
+
+  it("warns on an existing file and posts the path anyway", async () => {
+    let posted: Record<string, unknown> | undefined;
+    const { fetchImpl } = fakeFetch([
+      [
+        "POST",
+        "/api/projects/todou/issues/7/comments",
+        (init: RequestInit) => {
+          posted = jsonBody(init);
+          return {
+            type: "comment",
+            id: 1,
+            author: me,
+            body: posted.body,
+            created_at: "2026-08-11T12:00:00Z",
+            edited_at: null,
+          };
+        },
+      ],
+    ]);
+    const result = await runCli(["comment", "add", "7", "--body", "draft.md"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+      cwd: dir,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(posted).toEqual({ body: "draft.md" });
+    expect(result.stderr).toContain("warning: --body was given draft.md");
+    expect(result.stderr).toContain("not refused, the write goes ahead");
+  });
+
+  it("--allow-body-path silences it", async () => {
+    const { fetchImpl } = fakeFetch([post()]);
+    const result = await runCli(
+      ["comment", "add", "7", "--body", "draft.md", "--allow-body-path"],
+      { fetchImpl, env: loggedInEnv("todou"), cwd: dir },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("echoes the body's size and opening, counted in code points", async () => {
+    const { fetchImpl } = fakeFetch([post()]);
+    const result = await runCli(
+      ["comment", "add", "7", "--body", "守法落地了\n\n第二段"],
+      { fetchImpl, env: loggedInEnv("todou"), cwd: dir },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(
+      "comment 1 on #7 (#comment-1) · 10 chars: 守法落地了 第二段\n",
+    );
   });
 });
 
@@ -670,7 +757,7 @@ describe("comment add cursor", () => {
   it("closes the human output with the cursor to wait from", async () => {
     const { run } = await add([]);
     expect(run.stdout).toBe(
-      `comment 51 on #7 (#comment-51)\ncursor: ${CURSOR} (issue watch --since <cursor>)\n`,
+      `comment 51 on #7 (#comment-51) · 6 chars: a note\ncursor: ${CURSOR} (issue watch --since <cursor>)\n`,
     );
   });
 

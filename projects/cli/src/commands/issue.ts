@@ -830,6 +830,9 @@ export class IssueCreateCommand extends ProjectCommand {
   bodyFile = Option.String("-F,--body-file", {
     description: "Body from a file, or - for stdin",
   });
+  allowBodyPath = Option.Boolean("--allow-body-path", false, {
+    description: "Post a --body that is a path as literal text",
+  });
   // `--add-label` is `issue edit`'s spelling, carried over as a pure alias:
   // with no existing set to add to, "add these" and "set these" are the same
   // request, and refusing the habit only costs a retry (T-193).
@@ -867,6 +870,9 @@ export class IssueCreateCommand extends ProjectCommand {
       stdin: this.context.stdin,
       isTTY: isTTY(this.context.stdin),
       env: this.context.env,
+      cwd: this.context.cwd,
+      allowBodyPath: this.allowBodyPath,
+      note: (line) => this.note(line),
     });
     const issue = await client.createIssue(project, {
       title: this.title,
@@ -948,6 +954,9 @@ export class IssueEditCommand extends ProjectCommand {
   title = Option.String("-t,--title");
   body = Option.String("-b,--body");
   bodyFile = Option.String("-F,--body-file");
+  allowBodyPath = Option.Boolean("--allow-body-path", false, {
+    description: "Post a --body that is a path as literal text",
+  });
   status = Option.String("--status");
   setLabels = Option.Array("-l,--label,--labels", [], {
     description: "Replace the whole label set with these",
@@ -1005,6 +1014,9 @@ export class IssueEditCommand extends ProjectCommand {
         stdin: this.context.stdin,
         isTTY: false,
         env: this.context.env,
+        cwd: this.context.cwd,
+        allowBodyPath: this.allowBodyPath,
+        note: (line) => this.note(line),
       });
     }
     if (this.status !== undefined) {

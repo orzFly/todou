@@ -192,6 +192,52 @@ export function guardUnknownCommand(
   ];
 }
 
+/**
+ * Flags whose value can plausibly start with `--` — the one thing the
+ * separated form cannot carry, since clipanion reads the next token as
+ * another option and then reports the value as missing.
+ *
+ * Written down rather than derived from `cli.definitions()`, the way the
+ * command table is derived from `paths`: that call reports only options
+ * carrying a `description`, and `-t,--title` — the flag this exists for —
+ * has none. Drift fails in the safe direction, because a name missing here
+ * costs the hint and nothing else, and none of these can become a boolean.
+ */
+const DASH_VALUE_FLAGS = [
+  "-t",
+  "--title",
+  "-b",
+  "--body",
+  "--message",
+  "-q",
+  "--query",
+];
+
+/**
+ * The error lines for `todou issue create --title --body …`, where the value
+ * itself starts with `--` and has to be attached with `=`.
+ *
+ * Refusing here changes no verdict: clipanion rejects every separated
+ * `--`-leading value, `--body '--- hi'` included. All this adds is the way
+ * out, which its own message ("Not enough arguments to option --title")
+ * does not name.
+ */
+export function guardDashLeadingValue(
+  argv: readonly string[],
+): string[] | null {
+  if (argv.length === 0 || argv[0].startsWith("-")) return null;
+  if (argv.some((token) => token === "-h" || token === "--help")) return null;
+  for (let i = 0; i < argv.length - 1; i++) {
+    if (!DASH_VALUE_FLAGS.includes(argv[i])) continue;
+    if (!argv[i + 1].startsWith("--")) continue;
+    return [
+      `error: ${argv[i]} has no value: '${argv[i + 1]}' starts with --, so it is read as another option`,
+      `write the value attached instead: ${argv[i]}=<value>`,
+    ];
+  }
+  return null;
+}
+
 function unknownFirstWord(first: string, table: CommandTable): string[] {
   const head = `error: unknown command '${first}'`;
   // `todou list` names a verb several groups share; which group was meant is

@@ -3,7 +3,13 @@ import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
-import { elision, makePainter, personName, summarize } from "../format.ts";
+import {
+  elision,
+  makePainter,
+  personName,
+  plural,
+  summarize,
+} from "../format.ts";
 import { parsePositiveInt } from "../parse.ts";
 import { confirm } from "../prompt.ts";
 import { readQuestionsInput } from "../questions.ts";
@@ -15,6 +21,12 @@ import {
   emitWriteResult,
 } from "../write-cursor.ts";
 import { drainTimeline, renderTimelineItem } from "./issue.ts";
+
+/** Size and opening of a body, counted in code points like `summarize`. */
+function bodyShape(body: string): string {
+  const count = Array.from(body).length;
+  return `${count} ${plural(count, "char")}: ${summarize(body, 60)}`;
+}
 
 function isTTY(stream: unknown): boolean {
   return Boolean((stream as { isTTY?: boolean })?.isTTY);
@@ -100,6 +112,9 @@ export class CommentAddCommand extends ProjectCommand {
   bodyFile = Option.String("--body-file", {
     description: "Body from a file, or - for stdin",
   });
+  allowBodyPath = Option.Boolean("--allow-body-path", false, {
+    description: "Post a --body that is a path as literal text",
+  });
   questions = Option.String("--questions", {
     description: "Questions as a JSON array from a file, or - for stdin",
   });
@@ -124,6 +139,9 @@ export class CommentAddCommand extends ProjectCommand {
       stdin: this.context.stdin,
       isTTY: isTTY(this.context.stdin),
       env: this.context.env,
+      cwd: this.context.cwd,
+      allowBodyPath: this.allowBodyPath,
+      note: (line) => this.note(line),
     });
     const component =
       this.questions === undefined
@@ -166,7 +184,12 @@ export class CommentAddCommand extends ProjectCommand {
         component === undefined
           ? // The id is the permalink anchor and `comment edit`'s argument;
             // without it here the only way to learn it was a second `--json` call.
-            `comment ${comment.id} on ${posted.issue_ref} (#comment-${comment.id})`
+            // The body's size and first line ride along because a body that
+            // went wrong — a mistyped flag, an empty heredoc — otherwise has
+            // no echo at all, and the writer is the one person who can still
+            // tell (T-198).
+            `comment ${comment.id} on ${posted.issue_ref} (#comment-${comment.id})` +
+            ` · ${bodyShape(body)}`
           : `asked ${component.questions.length} question(s) on ${posted.issue_ref} — ` +
             `wait for answers with \`todou question wait ${number} ${comment.id}\``,
     );
@@ -347,6 +370,9 @@ export class CommentEditCommand extends ProjectCommand {
   bodyFile = Option.String("--body-file", {
     description: "Body from a file, or - for stdin",
   });
+  allowBodyPath = Option.Boolean("--allow-body-path", false, {
+    description: "Post a --body that is a path as literal text",
+  });
 
   protected async run(client: TodouClient): Promise<void> {
     const { project, number } = this.resolveIssueRef(this.number);
@@ -357,6 +383,9 @@ export class CommentEditCommand extends ProjectCommand {
       stdin: this.context.stdin,
       isTTY: isTTY(this.context.stdin),
       env: this.context.env,
+      cwd: this.context.cwd,
+      allowBodyPath: this.allowBodyPath,
+      note: (line) => this.note(line),
     });
     const comment = await client.updateComment(
       project,

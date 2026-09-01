@@ -135,6 +135,15 @@ EOF
 body **and** questions travel in one call; stdin is a single stream, so at most one of the two
 may be `-`. See **Asking the user questions** below.
 
+**Giving `--body` a path is caught**, because the cost of that one-word slip is the whole body.
+`--body /dev/stdin`, `--body -` and `--body /dev/fd/63` are refused with nothing written; `--body
+some/existing/file.md` still posts, with a warning, since a body that is one filename is rare but
+real. `--allow-body-path` silences both. `comment add` also echoes the body's size and opening
+beside the new id — that line, not the exit code, is the proof of what actually landed.
+
+**A value that starts with `--` has to be attached**: `--title=--body …`. Written apart, the next
+token is read as another option and the value is reported missing.
+
 ## Labels
 
 **Never pre-create a label.** Any label flag on a write creates what it doesn't find, prints

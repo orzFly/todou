@@ -2,14 +2,20 @@ import { resolveVersion } from "@todou/shared/version";
 import { Builtins, Cli } from "clipanion";
 import type { CliContext } from "./api-command.ts";
 import { commands } from "./commands/index.ts";
-import { commandTable, guardUnknownCommand } from "./suggest.ts";
+import {
+  commandTable,
+  guardDashLeadingValue,
+  guardUnknownCommand,
+} from "./suggest.ts";
+
+const argv = process.argv.slice(2);
 
 // Ahead of clipanion, whose answer to an unknown command is every usage line
-// it can reach (T-187). Plain text and exit 1, matching `reportError`.
-const guard = guardUnknownCommand(
-  process.argv.slice(2),
-  commandTable(commands),
-);
+// it can reach (T-187), and whose answer to a `--`-leading option value names
+// no way to pass one (T-198). Plain text and exit 1, matching `reportError`.
+const guard =
+  guardUnknownCommand(argv, commandTable(commands)) ??
+  guardDashLeadingValue(argv);
 
 if (guard) {
   process.stderr.write(`${guard.join("\n")}\n`);
@@ -29,5 +35,5 @@ if (guard) {
   cli.register(Builtins.HelpCommand);
   cli.register(Builtins.VersionCommand);
 
-  cli.runExit(process.argv.slice(2), { cwd: process.cwd() });
+  cli.runExit(argv, { cwd: process.cwd() });
 }
