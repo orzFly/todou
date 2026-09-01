@@ -42,6 +42,7 @@ export function testQueryClient(): QueryClient {
 export function renderWithProviders(
   ui: ReactElement,
   client: QueryClient = testQueryClient(),
+  { initialEntry = "/" }: { initialEntry?: string } = {},
 ) {
   const rootRoute = createRootRoute();
   const indexRoute = createRoute({
@@ -71,7 +72,7 @@ export function renderWithProviders(
       indexRoute,
       projectRoute.addChildren([issueRoute, specRoute, searchRoute]),
     ]),
-    history: createMemoryHistory({ initialEntries: ["/"] }),
+    history: createMemoryHistory({ initialEntries: [initialEntry] }),
   });
   return render(
     <QueryClientProvider client={client}>

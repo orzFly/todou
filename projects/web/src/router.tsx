@@ -197,6 +197,10 @@ const agentsSettingsRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/settings/agents",
   component: AgentsSettingsPage,
+  // ?state=deactivated selects the Deactivated segment; Active is the default
+  // and stays out of the URL.
+  validateSearch: (search): { state?: "deactivated" } =>
+    search.state === "deactivated" ? { state: "deactivated" } : {},
 });
 
 const tokensSettingsRoute = createRoute({

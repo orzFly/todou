@@ -4,6 +4,7 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { Agent, AgentUpdateInput, TokenCreated } from "@todou/shared";
 import {
   KeyIcon,
@@ -43,9 +44,22 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
+
+type AgentSegment = "active" | "deactivated";
 
 export function AgentsSettingsPage() {
   const agents = useSuspenseQuery(agentsQuery);
+  // `strict: false` because the tests mount this page under a shim route tree
+  // where a `from:` path does not exist (same reason as cli-auth / login).
+  const search = useSearch({ strict: false }) as Record<string, unknown>;
+  const navigate = useNavigate();
+  const segment: AgentSegment =
+    search.state === "deactivated" ? "deactivated" : "active";
+
+  const active = agents.data.filter((a) => a.disabled_at === null);
+  const deactivated = agents.data.filter((a) => a.disabled_at !== null);
+  const shown = segment === "active" ? active : deactivated;
 
   return (
     <div className="space-y-6">
@@ -64,24 +78,84 @@ export function AgentsSettingsPage() {
           No agents yet. 造一个帮你挖土豆的机器人吧 🤖🥔
         </div>
       ) : (
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Agent</TableHead>
-                <TableHead>Display name</TableHead>
-                <TableHead className="w-28">State</TableHead>
-                <TableHead className="w-56" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {agents.data.map((agent) => (
-                <AgentRow key={agent.id} agent={agent} />
-              ))}
-            </TableBody>
-          </Table>
+        <div className="space-y-4">
+          <AgentStateSegment
+            counts={{ active: active.length, deactivated: deactivated.length }}
+            active={segment}
+            onSelect={(next) =>
+              navigate({
+                to: ".",
+                // Active is the default, so it maps to a clean URL.
+                search: next === "active" ? {} : { state: "deactivated" },
+                // Flipping a segment is a view state, not a place to go back to.
+                replace: true,
+              })
+            }
+          />
+          {shown.length === 0 ? (
+            <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
+              {segment === "deactivated"
+                ? "No deactivated agents. Disabling an agent revokes its tokens and moves it here."
+                : "No active agents."}
+            </div>
+          ) : (
+            <div className="rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Agent</TableHead>
+                    <TableHead>Handle</TableHead>
+                    <TableHead className="w-56" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {shown.map((agent) => (
+                    <AgentRow key={agent.id} agent={agent} />
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+function AgentStateSegment({
+  counts,
+  active,
+  onSelect,
+}: {
+  counts: { active: number; deactivated: number };
+  active: AgentSegment;
+  onSelect: (segment: AgentSegment) => void;
+}) {
+  const seg = (selected: boolean) =>
+    cn(
+      "flex h-8 cursor-pointer items-center gap-1.5 border-l px-2.5 text-sm first:border-l-0",
+      selected
+        ? "bg-muted font-semibold text-foreground"
+        : "text-muted-foreground hover:text-foreground",
+    );
+  return (
+    <div className="inline-flex overflow-hidden rounded-md border">
+      <button
+        type="button"
+        className={seg(active === "active")}
+        onClick={() => onSelect("active")}
+      >
+        <PowerIcon className="size-4" />
+        Active {counts.active}
+      </button>
+      <button
+        type="button"
+        className={seg(active === "deactivated")}
+        onClick={() => onSelect("deactivated")}
+      >
+        <PowerOffIcon className="size-4" />
+        Deactivated {counts.deactivated}
+      </button>
     </div>
   );
 }
@@ -109,17 +183,12 @@ function AgentRow({ agent }: { agent: Agent }) {
 
   const disabled = agent.disabled_at !== null;
   return (
-    <TableRow className={disabled ? "opacity-50" : undefined}>
+    <TableRow>
       <TableCell>
         <UserChip user={agent} />
       </TableCell>
-      <TableCell>{agent.display_name}</TableCell>
       <TableCell>
-        {disabled ? (
-          <span className="text-xs text-destructive">disabled</span>
-        ) : (
-          <span className="text-xs text-green-600">active</span>
-        )}
+        <span className="text-sm text-muted-foreground">@{agent.login}</span>
       </TableCell>
       <TableCell>
         <div className="flex justify-end gap-2">
