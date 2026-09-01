@@ -29,7 +29,7 @@ describe("parseSpecSearch", () => {
   });
 });
 
-describe("specMode (T-192)", () => {
+describe("specMode (T-192, orthogonalised by T-200)", () => {
   it("defaults to the previous version, rendered", () => {
     expect(specMode({}, 3, false)).toEqual({ baseline: 2, view: "rendered" });
   });
@@ -46,14 +46,22 @@ describe("specMode (T-192)", () => {
       baseline: 1,
       view: "rendered",
     });
+    expect(specMode({ view: "source" }, 3, false)).toEqual({
+      baseline: 2,
+      view: "source",
+    });
   });
 
-  it("has no baseline at v1, and none while the picker is off", () => {
-    expect(specMode({}, 1, false)).toEqual({
+  it("leaves the view to the page whenever there is no baseline", () => {
+    // Both ways of having none: nothing earlier to compare against, and
+    // comparing switched off. The URL says nothing about how a single
+    // version is drawn, so neither does this.
+    expect(specMode({}, 1, false)).toEqual({ baseline: null, view: null });
+    expect(specMode({}, 3, true)).toEqual({ baseline: null, view: null });
+    expect(specMode({ view: "source" }, 3, true)).toEqual({
       baseline: null,
-      view: "rendered",
+      view: null,
     });
-    expect(specMode({}, 3, true)).toEqual({ baseline: null, view: "rendered" });
   });
 
   it("lets a pinned baseline outrank the off position", () => {
@@ -71,6 +79,11 @@ describe("specMode (T-192)", () => {
     expect(specMode({ compare: 9 }, 2, false)).toEqual({
       baseline: 1,
       view: "rendered",
+    });
+    // …and an invalid one at v1 still leaves nothing to compare against.
+    expect(specMode({ compare: 5 }, 1, false)).toEqual({
+      baseline: null,
+      view: null,
     });
   });
 });
@@ -117,9 +130,11 @@ describe("specSearchFor (T-192)", () => {
       for (const view of ["rendered", "source"] as const) {
         const written = specSearchFor({ ...base, baseline, view });
         const read = specMode(written, 3, baseline === null);
-        expect({ baseline: read.baseline, view: read.view }).toEqual({
+        // A null baseline takes the view with it: neither half of the off
+        // position is shareable, so neither survives the round trip.
+        expect(read).toEqual({
           baseline,
-          view: baseline === null ? "rendered" : view,
+          view: baseline === null ? null : view,
         });
       }
     }

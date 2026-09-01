@@ -1,6 +1,8 @@
 /**
  * The spec page's URL model: which version is on screen, what it is compared
- * against, and how that comparison is drawn (T-192).
+ * against, and how that comparison is drawn (T-192). Only a comparison is
+ * ever spelled out here — reading without one, and the presentation picked
+ * while doing so, stay session state (T-200).
  *
  * Kept out of the page module so the route table can validate the search
  * params without pulling @pierre/diffs into the main bundle.
@@ -34,7 +36,12 @@ export function parseSpecSearch(search: Record<string, unknown>): SpecSearch {
 export type SpecMode = {
   /** null while the page is read without comparing. */
   baseline: number | null;
-  view: SpecView;
+  /**
+   * null exactly when `baseline` is: with comparing off the presentation is
+   * a session stance the URL deliberately does not carry, so the page falls
+   * back to its own state rather than to a value invented here (T-200).
+   */
+  view: SpecView | null;
 };
 
 /**
@@ -57,7 +64,7 @@ export function specMode(
       ? search.compare
       : undefined;
   const baseline = pinned ?? (off || version <= 1 ? null : version - 1);
-  if (baseline === null) return { baseline, view: "rendered" };
+  if (baseline === null) return { baseline, view: null };
   if (search.view !== undefined) return { baseline, view: search.view };
   return { baseline, view: pinned === undefined ? "rendered" : "source" };
 }

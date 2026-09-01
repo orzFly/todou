@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils.ts";
 
 const CHIP = "rounded-full border px-2.5 py-0.5 font-mono text-xs";
 
-function VersionChip({
+export function VersionChip({
   label,
   active,
   className,
@@ -43,11 +43,64 @@ function VersionChip({
   );
 }
 
-function MessageText({ message }: { message: string | null }) {
+export function MessageText({ message }: { message: string | null }) {
   if (message === null) {
     return <span className="text-muted-foreground italic">no message</span>;
   }
   return <>{message}</>;
+}
+
+/**
+ * One row of a version menu: chip, push message, who and when.
+ *
+ * Shared with the baseline picker, which asks the same question about the
+ * same objects — the chip's fill and the trailing tag are the whole of the
+ * difference between the two menus (T-200).
+ */
+export function SpecVersionMenuRow({
+  version,
+  message,
+  author,
+  createdAt,
+  active,
+  ghostChip = false,
+  tag,
+}: {
+  version: number;
+  message: string | null;
+  author: SpecVersionInfo["author"];
+  createdAt: string;
+  active: boolean;
+  /** Baseline rows: the filled chip belongs to the version being read. */
+  ghostChip?: boolean;
+  tag?: string;
+}) {
+  return (
+    <>
+      <CheckIcon
+        aria-hidden
+        className={cn("mt-0.5 size-3.5", !active && "invisible")}
+      />
+      <VersionChip label={`v${version}`} active={active && !ghostChip} />
+      <span className="min-w-0 flex-1">
+        <span className="line-clamp-2">
+          <MessageText message={message} />
+        </span>
+        <span className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <UserChip user={author} nameClassName="text-xs" />
+          <span aria-hidden>·</span>
+          <time dateTime={createdAt} title={createdAt} className="truncate">
+            {new Date(createdAt).toLocaleString()}
+          </time>
+        </span>
+      </span>
+      {tag !== undefined && (
+        <span className="mt-0.5 shrink-0 text-muted-foreground text-xs">
+          {tag}
+        </span>
+      )}
+    </>
+  );
 }
 
 /**
@@ -80,12 +133,13 @@ export function SpecVersionPicker({
     <DropdownMenu>
       <DropdownMenuTrigger
         className={
-          // Capped, so a paragraph-long push message cannot wrap the
-          // toolbar it sits in; the message truncates instead. h-7 rather
-          // than padding, or the chip inside would be deciding the row's
-          // height (T-194).
-          "flex h-7 min-w-0 max-w-80 cursor-pointer items-center gap-2 rounded-full border pr-2 pl-0.5 text-left text-xs hover:border-foreground/50"
+          // h-7 rather than padding, or the chip inside would be deciding
+          // the row's height (T-194). The message's cap now lives on the
+          // span itself, because the baseline trigger's cap is derived from
+          // whatever this one measures out to (T-200).
+          "flex h-7 min-w-0 cursor-pointer items-center gap-2 rounded-full border pr-2 pl-0.5 text-left text-xs hover:border-foreground/50"
         }
+        data-linked-trigger
         title={current?.message ?? undefined}
         aria-label={`viewing v${version}, switch version`}
       >
@@ -96,7 +150,10 @@ export function SpecVersionPicker({
           active
           className="text-center tabular-nums"
         />
-        <span className="hidden min-w-0 truncate lg:block">
+        <span
+          data-linked-msg="version"
+          className="hidden min-w-0 max-w-[var(--spec-vmsg-max,20rem)] truncate lg:block"
+        >
           <MessageText message={current?.message ?? null} />
         </span>
         <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -116,27 +173,13 @@ export function SpecVersionPicker({
                 aria-current={active ? "true" : undefined}
                 className="items-start gap-2 py-1.5"
               >
-                <CheckIcon
-                  aria-hidden
-                  className={cn("mt-0.5 size-3.5", !active && "invisible")}
+                <SpecVersionMenuRow
+                  version={v.number}
+                  message={v.message}
+                  author={v.author}
+                  createdAt={v.created_at}
+                  active={active}
                 />
-                <VersionChip label={`v${v.number}`} active={active} />
-                <span className="min-w-0 flex-1">
-                  <span className="line-clamp-2">
-                    <MessageText message={v.message} />
-                  </span>
-                  <span className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <UserChip user={v.author} nameClassName="text-xs" />
-                    <span aria-hidden>·</span>
-                    <time
-                      dateTime={v.created_at}
-                      title={v.created_at}
-                      className="truncate"
-                    >
-                      {new Date(v.created_at).toLocaleString()}
-                    </time>
-                  </span>
-                </span>
               </Link>
             </DropdownMenuItem>
           );

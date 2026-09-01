@@ -6,7 +6,13 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { SpecComments, SpecFiles, SpecInfo } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
@@ -18,6 +24,7 @@ import { testQueryClient } from "./render.tsx";
 // suite only asks which presentation is on screen.
 vi.mock("@pierre/diffs/react", () => ({
   MultiFileDiff: () => <div data-testid="diff" />,
+  File: () => <div data-testid="file-view" />,
   CodeView: () => null,
 }));
 
@@ -131,11 +138,20 @@ async function ready(view: ReturnType<typeof renderSpecView>) {
   await view.findByRole("button", { name: /finish review/i });
 }
 
-// Anchored, or the ↑↓ buttons' "pick a baseline" explanation matches too.
+/** The baseline picker's trigger; absent while comparing is off (T-200). */
 const baselineTrigger = () =>
-  screen.getByRole("button", {
-    name: /^(reading without a baseline|comparing against|no baseline)/i,
-  });
+  screen.getByRole("button", { name: /pick another baseline$/i });
+
+// Anchored on both ends: the baseline trigger's label also opens with
+// "comparing against vN", and ↑↓ explain themselves with "Turn comparing on".
+const TOGGLE_LABEL = /^turn comparing on$|turn comparing off$|^compare —/i;
+const compareToggle = () => screen.getByRole("button", { name: TOGGLE_LABEL });
+
+/** A presentation segment — a link while comparing, a button while off. */
+const segment = (label: "rendered" | "source"): HTMLElement =>
+  within(screen.getByRole("group", { name: "comparison view" })).getByText(
+    label,
+  );
 
 /** The rail rows, in order, as plain paths. */
 function railPaths(view: ReturnType<typeof renderSpecView>): string[] {
@@ -153,7 +169,10 @@ describe("spec compare controls (T-192)", () => {
     mockSpec();
     const view = renderSpecView("?v=3");
     await ready(view);
-    expect(baselineTrigger().textContent).toContain("vs v2");
+    expect(baselineTrigger().getAttribute("aria-label")).toBe(
+      "comparing against v2, pick another baseline",
+    );
+    expect(compareToggle().getAttribute("aria-pressed")).toBe("true");
     expect(
       view.getByRole("link", { name: "rendered" }).getAttribute("aria-current"),
     ).toBe("page");
@@ -188,20 +207,50 @@ describe("spec compare controls (T-192)", () => {
     mockSpec();
     const view = renderSpecView("?v=3&compare=1&view=rendered");
     await ready(view);
-    expect(baselineTrigger().textContent).toContain("vs v1");
+    expect(baselineTrigger().getAttribute("aria-label")).toBe(
+      "comparing against v1, pick another baseline",
+    );
     expect(
       view.getByRole("link", { name: "source" }).getAttribute("href"),
     ).toBe("/projects/demo/issues/1/spec?v=3&compare=1");
   });
 
-  it("disables the presentation toggle while there is no baseline", async () => {
+  it("lists every earlier version as its own link (T-200)", async () => {
+    mockSpec();
+    const view = renderSpecView("?v=3&compare=1&view=rendered");
+    await ready(view);
+    fireEvent.pointerDown(baselineTrigger(), {
+      button: 0,
+      pointerType: "mouse",
+    });
+    await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
+    const entries = screen.getAllByRole("menuitem");
+    expect(entries.map((e) => e.getAttribute("href"))).toEqual([
+      // The previous version, rendered, is the parameterless posture (T-192).
+      "/projects/demo/issues/1/spec?v=3",
+      "/projects/demo/issues/1/spec?v=3&compare=1&view=rendered",
+    ]);
+    // The previous version is called out; nothing offers to leave comparing.
+    expect(
+      within(entries[0] as HTMLElement).getByText("previous"),
+    ).toBeTruthy();
+    expect(screen.queryByText(/no baseline/i)).toBeNull();
+  });
+
+  it("disables the compare toggle at v1 but keeps the presentation usable", async () => {
     mockSpec();
     const view = renderSpecView("?v=1");
     await ready(view);
-    expect(baselineTrigger().textContent).toContain("no baseline");
-    for (const label of ["rendered", "source"]) {
-      const segment = view.getByRole("button", { name: label });
-      expect(segment.hasAttribute("disabled")).toBe(true);
+    expect(
+      screen.queryByRole("button", { name: /pick another baseline/i }),
+    ).toBeNull();
+    expect(compareToggle().hasAttribute("disabled")).toBe(true);
+    expect(compareToggle().getAttribute("aria-label")).toContain(
+      "no earlier version",
+    );
+    // The presentation is orthogonal to comparing, so it stays live (T-200).
+    for (const label of ["rendered", "source"] as const) {
+      expect(segment(label).hasAttribute("disabled")).toBe(false);
     }
     // ↑↓ keep their slots and explain themselves instead (T-190).
     const prev = view.getByRole("button", { name: /^previous / });
@@ -209,26 +258,117 @@ describe("spec compare controls (T-192)", () => {
     expect(prev.getAttribute("aria-label")).toContain("first version");
   });
 
-  it("takes the baseline off without putting the choice in the url", async () => {
+  it("turns comparing off without putting the choice in the url", async () => {
     mockSpec();
     const view = renderSpecView("?v=3");
     await ready(view);
-    fireEvent.pointerDown(baselineTrigger(), {
-      button: 0,
-      pointerType: "mouse",
-    });
-    await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
-    fireEvent.click(
-      screen.getByRole("menuitemradio", { name: /no baseline/i }),
-    );
+    fireEvent.click(compareToggle());
 
     await waitFor(() =>
-      expect(baselineTrigger().textContent).toContain("no baseline"),
+      expect(compareToggle().getAttribute("aria-pressed")).toBe("false"),
+    );
+    expect(
+      screen.queryByRole("button", { name: /pick another baseline/i }),
+    ).toBeNull();
+    expect(view.router.state.location.search).toEqual({ v: 3 });
+    expect(segment("source").hasAttribute("disabled")).toBe(false);
+  });
+
+  it("comes back to the baseline it left, not to the previous version", async () => {
+    mockSpec();
+    const view = renderSpecView("?v=3&compare=1");
+    await ready(view);
+    fireEvent.click(compareToggle());
+    await waitFor(() =>
+      expect(compareToggle().getAttribute("aria-pressed")).toBe("false"),
     );
     expect(view.router.state.location.search).toEqual({ v: 3 });
+
+    fireEvent.click(compareToggle());
+    await waitFor(() =>
+      expect(baselineTrigger().getAttribute("aria-label")).toBe(
+        "comparing against v1, pick another baseline",
+      ),
+    );
+    expect(view.router.state.location.search).toEqual({ v: 3, compare: 1 });
+  });
+
+  it("drops a remembered baseline that is no longer behind", async () => {
+    mockSpec();
+    const view = renderSpecView("?v=3");
+    await ready(view);
+    fireEvent.click(compareToggle());
+    await waitFor(() =>
+      expect(compareToggle().getAttribute("aria-pressed")).toBe("false"),
+    );
+
+    // Down to v2 while off — v2 was the remembered baseline, and a version
+    // cannot be compared against itself.
+    const versionTrigger = view.getByRole("button", {
+      name: /switch version/i,
+    });
+    fireEvent.pointerDown(versionTrigger, { button: 0, pointerType: "mouse" });
+    await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
+    const toV2 = screen
+      .getAllByRole("menuitem")
+      .find(
+        (e) => e.getAttribute("href") === "/projects/demo/issues/1/spec?v=2",
+      );
+    fireEvent.click(toV2 as HTMLElement);
+    await waitFor(() =>
+      expect(view.router.state.location.search).toEqual({ v: 2 }),
+    );
+
+    fireEvent.click(compareToggle());
+    await waitFor(() =>
+      expect(baselineTrigger().getAttribute("aria-label")).toBe(
+        "comparing against v1, pick another baseline",
+      ),
+    );
+  });
+
+  it("shows the whole source of one version with comparing off (T-200)", async () => {
+    mockSpec();
+    const view = renderSpecView("?v=3&file=a.md");
+    await ready(view);
+    fireEvent.click(compareToggle());
+    await waitFor(() =>
+      expect(compareToggle().getAttribute("aria-pressed")).toBe("false"),
+    );
+    fireEvent.click(segment("source"));
+
+    await waitFor(() =>
+      expect(view.getAllByTestId("file-view")).toHaveLength(1),
+    );
+    // Neither half of the off position reaches the URL.
+    expect(view.router.state.location.search).toEqual({ v: 3, file: "a.md" });
+    // wrap works on any source view now; ↑↓ point back at the toggle.
     expect(
-      view.getByRole("button", { name: "source" }).hasAttribute("disabled"),
-    ).toBe(true);
+      view.getByRole("button", { name: /^wrap/ }).hasAttribute("disabled"),
+    ).toBe(false);
+    const next = view.getByRole("button", { name: /^next / });
+    expect(next.hasAttribute("disabled")).toBe(true);
+    expect(next.getAttribute("aria-label")).toContain("Turn comparing on");
+  });
+
+  it("carries the presentation across the toggle in both directions", async () => {
+    mockSpec();
+    const view = renderSpecView("?v=3&compare=2");
+    await ready(view);
+    await waitFor(() =>
+      expect(view.getAllByTestId("diff").length).toBeGreaterThan(0),
+    );
+    // source diff → off keeps source, so the whole file shows…
+    fireEvent.click(compareToggle());
+    await waitFor(() =>
+      expect(view.getAllByTestId("file-view")).toHaveLength(1),
+    );
+    // …and back on lands straight on the diff again.
+    fireEvent.click(compareToggle());
+    await waitFor(() =>
+      expect(view.getAllByTestId("diff").length).toBeGreaterThan(0),
+    );
+    expect(view.router.state.location.search).toEqual({ v: 3, compare: 2 });
   });
 
   it("narrows the rail to the diffed files in source mode", async () => {

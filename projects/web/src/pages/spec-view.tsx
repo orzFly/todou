@@ -2,7 +2,9 @@ import type { SelectedLineRange } from "@pierre/diffs";
 // Imported directly rather than through the lazy wrapper in pierre.tsx: this
 // whole page is route-lazy, so pierre never reaches the main bundle through
 // it anyway (T-31).
-import { MultiFileDiff } from "@pierre/diffs/react";
+// `File` is aliased: unqualified it would shadow the DOM global for the whole
+// module.
+import { MultiFileDiff, File as PierreFile } from "@pierre/diffs/react";
 import {
   useMutation,
   useQuery,
@@ -50,12 +52,14 @@ import {
 } from "@/components/spec/annotated-markdown.tsx";
 import { ReviewSubmitDialog } from "@/components/spec/review-submit.tsx";
 import { SpecBaselinePicker } from "@/components/spec/spec-baseline-picker.tsx";
+import { SpecCompareToggle } from "@/components/spec/spec-compare-toggle.tsx";
 import {
   type ComposerStaging,
   SpecComposer,
 } from "@/components/spec/spec-composer.tsx";
 import { SpecVersionPicker } from "@/components/spec/spec-version-picker.tsx";
 import { SpecViewToggle } from "@/components/spec/spec-view-toggle.tsx";
+import { useLinkedTriggerWidths } from "@/components/spec/use-linked-trigger-widths.ts";
 import {
   DiffstatBar,
   StatNumbers,
@@ -113,6 +117,10 @@ const DISPLAY_SLOT_DISABLED = "border-dashed text-muted-foreground/60";
  * so a control that does not apply is disabled rather than unmounted — and a
  * disabled element fires no pointer events, which is why the explanation
  * hangs on this wrapper instead of on the control itself.
+ *
+ * The baseline slot is the one exception: with comparing off there is no
+ * baseline to disable a picker against, and an empty box in the middle of a
+ * range is worse than a shorter range (T-200).
  */
 function ToolbarSlot({
   name,
@@ -238,18 +246,45 @@ function SpecViewBody({
   const drafts = useSpecReviewDrafts(slug, issueNumber);
   const [staging, setStaging] = useState<Staging | null>(null);
   const [finishOpen, setFinishOpen] = useState(false);
-  // The baseline picker's "off" position: a reading stance for this session,
+  // The compare toggle's "off" position: a reading stance for this session,
   // which is why it stays out of the URL. A link that pins a baseline still
   // wins over it, so shared diff links open as their sender saw them (T-192).
   const [compareOff, setCompareOff] = useState(false);
+  // …and the presentation picked while off, for the same reason: the URL
+  // spells out comparisons only, so this quadrant needs its own home (T-200).
+  const [offView, setOffView] = useState<SpecView>("rendered");
   const [wrap, setWrap] = useState(readDiffWrap);
   const [filesOpen, setFilesOpen] = useState(false);
   const contentRef = useRef<HTMLElement>(null);
   const sessionRef = useRef(0);
+  const rowBRef = useRef<HTMLDivElement>(null);
 
-  const { baseline, view } = specMode(search, version, compareOff);
+  const { baseline, view: urlView } = specMode(search, version, compareOff);
   const comparing = baseline !== null;
-  const sourceMode = comparing && view === "source";
+  const view = urlView ?? offView;
+  /** Two versions side by side… */
+  const sourceDiff = comparing && view === "source";
+  /** …against one version's markdown, whole (T-200). */
+  const fullSource = !comparing && view === "source";
+
+  // Whatever the baseline came from — the menu, a link, or the automatic
+  // previous version — turning comparing back on returns to it.
+  const lastBaselineRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (baseline !== null) lastBaselineRef.current = baseline;
+  }, [baseline]);
+
+  const messageOf = (n: number | null) =>
+    n === null
+      ? null
+      : (spec.versions.find((v) => v.number === n)?.message ?? null);
+  // The two triggers are sized against each other, which no CSS can express.
+  useLinkedTriggerWidths(rowBRef, [
+    version,
+    baseline,
+    messageOf(version),
+    messageOf(baseline),
+  ]);
 
   // The sticky stack: shell header, then this page's toolbar. Both heights
   // are runtime values — the header grows a nav row below sm, the toolbar
@@ -260,6 +295,7 @@ function SpecViewBody({
   const stickyTop = headerHeight + toolbarHeight;
 
   const issue = useQuery(issueQuery(slug, issueNumber));
+  const navigate = useNavigate();
 
   /** Every anchor gesture — selection, line drag, "Comment file". */
   const stage = (next: ComposerStaging) => {
@@ -270,9 +306,9 @@ function SpecViewBody({
     setStaging(beginEdit(draft, ++sessionRef.current));
   const editingDraft = drafts.drafts.find((d) => d.id === staging?.draftId);
 
-  // Source mode stacks every differing file at once, so the rail marks a
+  // The source diff stacks every differing file at once, so the rail marks a
   // file only once the reader has actually asked for one.
-  const selectedPath = sourceMode
+  const selectedPath = sourceDiff
     ? search.file
     : (search.file ?? files.data.files[0]?.path);
   const selected = files.data.files.find((f) => f.path === selectedPath);
@@ -288,6 +324,7 @@ function SpecViewBody({
       baseline: next,
       view,
     });
+  /** Only ever called while comparing: off has no URL to write. */
   const viewSearch = (next: SpecView): SpecSearch =>
     specSearchFor({
       file: search.file,
@@ -296,6 +333,33 @@ function SpecViewBody({
       baseline,
       view: next,
     });
+  /**
+   * The one way in and out of comparing (T-200). Off is session state, so
+   * only the way in writes a baseline to the URL; both carry the current
+   * presentation across, which is what makes off↔on symmetric on either
+   * side of the rendered/source switch.
+   */
+  const toggleComparing = () => {
+    if (comparing) {
+      setOffView(view);
+      setCompareOff(true);
+      void navigate({
+        to: "/projects/$slug/issues/$number/spec",
+        params,
+        search: baselineSearch(null),
+      });
+      return;
+    }
+    const last = lastBaselineRef.current;
+    const next = last !== null && last < version ? last : version - 1;
+    setCompareOff(false);
+    void navigate({
+      to: "/projects/$slug/issues/$number/spec",
+      params,
+      search: baselineSearch(next),
+    });
+  };
+
   const versionSearch = (target: number): SpecSearch => {
     // A baseline the reader pinned survives the switch as long as it still
     // sits behind the version being opened; otherwise the previous version
@@ -378,11 +442,11 @@ function SpecViewBody({
   }, [baselineFiles, files.data.files]);
 
   // The rail is the same element in every state; only its contents change.
-  // Source mode narrows it to what the diff stack renders, in that stack's
-  // own path order (T-192).
+  // The source diff narrows it to what the diff stack renders, in that
+  // stack's own path order (T-192).
   const railEntries = useMemo(() => {
     const present = new Set(files.data.files.map((f) => f.path));
-    if (sourceMode) {
+    if (sourceDiff) {
       return comparePaths.map((path) => ({
         path,
         removed: !present.has(path),
@@ -392,7 +456,7 @@ function SpecViewBody({
       ...files.data.files.map((f) => ({ path: f.path, removed: false })),
       ...removedFiles.map((path) => ({ path, removed: true })),
     ];
-  }, [sourceMode, files.data.files, comparePaths, removedFiles]);
+  }, [sourceDiff, files.data.files, comparePaths, removedFiles]);
 
   // Diffstat beside every rail row, same visuals as the T-59 version card.
   const sidebarStats = useMemo(() => {
@@ -460,7 +524,6 @@ function SpecViewBody({
   // Set before a cross-file hop; consumed once the new file's changed
   // blocks are stamped, landing on its first (next) or last (prev) change.
   const pendingJumpRef = useRef<1 | -1 | null>(null);
-  const navigate = useNavigate();
   const jumpChange = (direction: 1 | -1) => {
     if (jumpWithin(direction)) return;
     if (selectedPath === undefined || changedFiles.length === 0) return;
@@ -510,7 +573,7 @@ function SpecViewBody({
    * whether there is anything to step over, changes with the state.
    */
   const changeNav = ((): { unit: string; reason?: string } => {
-    if (sourceMode) {
+    if (sourceDiff) {
       return comparePaths.length > 1
         ? { unit: "file diff" }
         : {
@@ -524,10 +587,10 @@ function SpecViewBody({
         reason: "v1 is the first version — nothing has changed yet",
       };
     }
-    if (baseline === null) {
+    if (!comparing) {
       return {
         unit: "change",
-        reason: "Pick a baseline to step through what changed since it",
+        reason: "Turn comparing on to step through what changed",
       };
     }
     if (changedFiles.length === 0) {
@@ -539,21 +602,16 @@ function SpecViewBody({
     return { unit: changedRanges.length === 0 ? "changed file" : "change" };
   })();
 
-  /** The display slot holds `wrap`, which only the source diff can honour. */
-  const wrapReason = sourceMode
-    ? undefined
-    : "Only the source diff wraps long lines";
+  /** The display slot holds `wrap`, which only a source view can honour. */
+  const wrapReason =
+    view === "source" ? undefined : "Only the source view wraps long lines";
 
-  const baselineReason =
+  const compareReason =
     version === 1
       ? `v${version} has no earlier version to compare against`
       : undefined;
 
-  const modeReason = comparing
-    ? undefined
-    : "Pick a baseline to choose how the comparison is drawn";
-
-  const commentFileReason = sourceMode
+  const commentFileReason = sourceDiff
     ? "Drag across the diff's line numbers to comment on a range"
     : selected === undefined
       ? `This file is not part of v${version}`
@@ -781,31 +839,41 @@ function SpecViewBody({
             onClick={() => setFinishOpen(true)}
           >
             Finish review
-            {/* Reserved rather than conditional, and wide enough for two
-                digits: staging the first draft would otherwise widen the
-                button and slide the rest of the cluster along with it. */}
-            <span
-              aria-hidden
-              className={cn(
-                "inline-flex min-w-6 justify-center rounded-full bg-primary-foreground/20 px-1 tabular-nums",
-                drafts.drafts.length === 0 && "invisible",
-              )}
-            >
-              {drafts.drafts.length}
-            </span>
+            {/* T-190 reserved this box so staging the first draft would not
+                widen the button — at the cost of 24px of hollow beside
+                `Finish review` on every page with no drafts, which is every
+                page most of the time. T-200 takes the one-off shift. */}
+            {drafts.drafts.length > 0 && (
+              <span
+                aria-hidden
+                className="inline-flex min-w-6 justify-center rounded-full bg-primary-foreground/20 px-1 tabular-nums"
+              >
+                {drafts.drafts.length}
+              </span>
+            )}
           </Button>
         </div>
 
-        {/* Row B — what is being read, what against, and how. Version, the
-            baseline and the presentation switch sit left of the row's one
-            elastic gap, each sized to its own content; the display slot and
-            ↑↓ are anchored right (T-192). The left cluster does shift when
-            the push message's length changes, which only happens on a
-            version switch — a whole-document reload anyway (T-194). */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* shrink, not shrink-0: the trigger's own max-w-80 caps a long
-              push message, and this is what lets it truncate rather than
-              push the right-anchored cluster off the row. */}
+        {/* Row B — how the document is drawn, then what is being read
+            against what. The presentation switch, the version range and the
+            compare toggle sit left of the row's one elastic gap, each sized
+            to its own content; the display slot and ↑↓ are anchored right
+            (T-192, reordered by T-200). */}
+        <div ref={rowBRef} className="flex flex-wrap items-center gap-2">
+          <ToolbarSlot name="view-toggle">
+            <SpecViewToggle
+              slug={slug}
+              issueNumber={issueNumber}
+              view={view}
+              {...(comparing
+                ? { searchFor: viewSearch }
+                : { onSelect: setOffView })}
+            />
+          </ToolbarSlot>
+          {/* shrink, not shrink-0: the message span's capped max-width is
+              what a long push message truncates against, and this is what
+              lets that happen rather than push the right-anchored cluster
+              off the row. */}
           <ToolbarSlot name="version" className="min-w-0 shrink">
             <SpecVersionPicker
               slug={slug}
@@ -815,30 +883,26 @@ function SpecViewBody({
               searchFor={versionSearch}
             />
           </ToolbarSlot>
-          <ToolbarSlot name="baseline" title={baselineReason}>
-            <SpecBaselinePicker
-              versions={spec.versions}
-              version={version}
+          <ToolbarSlot name="compare" title={compareReason}>
+            <SpecCompareToggle
+              comparing={comparing}
               baseline={baseline}
-              onChange={(next) => {
-                setCompareOff(next === null);
-                void navigate({
-                  to: "/projects/$slug/issues/$number/spec",
-                  params,
-                  search: baselineSearch(next),
-                });
-              }}
+              disabledReason={compareReason}
+              onToggle={toggleComparing}
             />
           </ToolbarSlot>
-          <ToolbarSlot name="view-toggle" title={modeReason}>
-            <SpecViewToggle
-              slug={slug}
-              issueNumber={issueNumber}
-              view={view}
-              disabled={!comparing}
-              searchFor={viewSearch}
-            />
-          </ToolbarSlot>
+          {baseline !== null && (
+            <ToolbarSlot name="baseline" className="min-w-0 shrink">
+              <SpecBaselinePicker
+                slug={slug}
+                issueNumber={issueNumber}
+                versions={spec.versions}
+                version={version}
+                baseline={baseline}
+                searchFor={baselineSearch}
+              />
+            </ToolbarSlot>
+          )}
           <span className="ml-auto" />
           <ToolbarSlot name="display-toggle" title={wrapReason}>
             {renderedCompare && isNewFile ? (
@@ -854,9 +918,11 @@ function SpecViewBody({
               <button
                 type="button"
                 aria-pressed={wrap}
-                disabled={!sourceMode}
+                disabled={wrapReason !== undefined}
                 aria-label={
-                  sourceMode ? "wrap long lines" : `wrap — ${wrapReason}`
+                  wrapReason === undefined
+                    ? "wrap long lines"
+                    : `wrap — ${wrapReason}`
                 }
                 onClick={() => {
                   setWrap(!wrap);
@@ -864,7 +930,7 @@ function SpecViewBody({
                 }}
                 className={cn(
                   DISPLAY_SLOT,
-                  sourceMode
+                  wrapReason === undefined
                     ? cn(
                         "cursor-pointer",
                         wrap ? DISPLAY_SLOT_ON : DISPLAY_SLOT_OFF,
@@ -872,7 +938,7 @@ function SpecViewBody({
                     : DISPLAY_SLOT_DISABLED,
                 )}
                 title={
-                  sourceMode
+                  wrapReason === undefined
                     ? "Wrap long lines instead of scrolling horizontally"
                     : undefined
                 }
@@ -896,7 +962,7 @@ function SpecViewBody({
                     ? `previous ${changeNav.unit}`
                     : `previous ${changeNav.unit} — ${changeNav.reason}`
                 }
-                onClick={() => (sourceMode ? jumpFileDiff(-1) : jumpChange(-1))}
+                onClick={() => (sourceDiff ? jumpFileDiff(-1) : jumpChange(-1))}
               >
                 <ArrowUpIcon className="size-4" />
               </Button>
@@ -911,7 +977,7 @@ function SpecViewBody({
                     ? `next ${changeNav.unit}`
                     : `next ${changeNav.unit} — ${changeNav.reason}`
                 }
-                onClick={() => (sourceMode ? jumpFileDiff(1) : jumpChange(1))}
+                onClick={() => (sourceDiff ? jumpFileDiff(1) : jumpChange(1))}
               >
                 <ArrowDownIcon className="size-4" />
               </Button>
@@ -948,7 +1014,7 @@ function SpecViewBody({
           style={{ scrollMarginTop: stickyTop + 8 }}
           ref={contentRef}
         >
-          {sourceMode && baseline !== null ? (
+          {sourceDiff && baseline !== null ? (
             <SpecDiff
               slug={slug}
               issueNumber={issueNumber}
@@ -1009,64 +1075,77 @@ function SpecViewBody({
                   ))}
                 </div>
               )}
-              <div className="rounded-lg border px-5 py-4">
-                {selected === undefined ? (
-                  selectedPath !== undefined &&
-                  baseline !== null &&
-                  removedFiles.includes(selectedPath) ? (
-                    <RemovedFileNotice
-                      path={selectedPath}
-                      version={version}
-                      params={params}
-                      search={specSearchFor({
-                        file: selectedPath,
-                        v: search.v,
-                        version,
-                        baseline,
-                        view: "source",
-                      })}
-                    />
+              {fullSource && selected !== undefined ? (
+                // Brings its own frame, so it stands outside the prose box.
+                <SpecSourceFile
+                  path={selected.path}
+                  body={selected.body}
+                  version={version}
+                  annotations={displayed}
+                  onStage={stage}
+                  wrap={wrap}
+                  stickyTop={stickyTop}
+                />
+              ) : (
+                <div className="rounded-lg border px-5 py-4">
+                  {selected === undefined ? (
+                    selectedPath !== undefined &&
+                    baseline !== null &&
+                    removedFiles.includes(selectedPath) ? (
+                      <RemovedFileNotice
+                        path={selectedPath}
+                        version={version}
+                        params={params}
+                        search={specSearchFor({
+                          file: selectedPath,
+                          v: search.v,
+                          version,
+                          baseline,
+                          view: "source",
+                        })}
+                      />
+                    ) : (
+                      <p className="text-sm text-muted-foreground italic">
+                        File not found in v{version}.
+                      </p>
+                    )
                   ) : (
-                    <p className="text-sm text-muted-foreground italic">
-                      File not found in v{version}.
-                    </p>
-                  )
-                ) : (
-                  <AnnotatedMarkdown
-                    slug={slug}
-                    issueNumber={issueNumber}
-                    body={selected.body}
-                    baselineBody={baselineBody}
-                    refDate={
-                      spec.versions.find((v) => v.number === version)
-                        ?.created_at
-                    }
-                    annotations={displayed}
-                    changedRanges={changedRanges}
-                    onStage={(range) =>
-                      stage({
-                        path: selected.path,
-                        version,
-                        lineStart: range.lineStart,
-                        lineEnd: range.lineEnd,
-                        colStart: range.colStart,
-                        colEnd: range.colEnd,
-                        quote: quoteOf(
-                          selected.body,
-                          range.lineStart,
-                          range.lineEnd,
-                          range.colStart,
-                          range.colEnd,
-                        ),
-                      })
-                    }
-                    onEditDraft={editDraft}
-                    onRemoveDraft={drafts.remove}
-                    onResolve={(id) => resolve.mutate(id)}
-                    resolving={resolve.isPending}
-                  />
-                )}
-              </div>
+                    <AnnotatedMarkdown
+                      slug={slug}
+                      issueNumber={issueNumber}
+                      body={selected.body}
+                      baselineBody={baselineBody}
+                      refDate={
+                        spec.versions.find((v) => v.number === version)
+                          ?.created_at
+                      }
+                      annotations={displayed}
+                      changedRanges={changedRanges}
+                      onStage={(range) =>
+                        stage({
+                          path: selected.path,
+                          version,
+                          lineStart: range.lineStart,
+                          lineEnd: range.lineEnd,
+                          colStart: range.colStart,
+                          colEnd: range.colEnd,
+                          quote: quoteOf(
+                            selected.body,
+                            range.lineStart,
+                            range.lineEnd,
+                            range.colStart,
+                            range.colEnd,
+                          ),
+                        })
+                      }
+                      onEditDraft={editDraft}
+                      onRemoveDraft={drafts.remove}
+                      onResolve={(id) => resolve.mutate(id)}
+                      resolving={resolve.isPending}
+                    />
+                  )}
+                </div>
+              )}
               {unplaced.length > 0 && (
                 <div className="space-y-2 rounded-lg border px-4 py-3">
                   <h3 className="text-xs font-medium text-muted-foreground uppercase">
@@ -1528,6 +1607,123 @@ function AnnotatedFileDiff({
           <DiffAnnotation item={annotation.metadata} />
         )}
       />
+    </div>
+  );
+}
+
+/**
+ * One version's markdown, whole — the source view with nothing to compare
+ * against (T-200).
+ *
+ * pierre's `File` rather than a diff of the file against itself: identical
+ * sides produce zero hunks, and a hunkless `MultiFileDiff` renders its header
+ * and nothing else (`expandUnchanged` expands the context around hunks, so it
+ * has nothing to work with either). `File` costs nothing in return — line
+ * selection, annotations and wrapping all behave as they do in the diff.
+ */
+function SpecSourceFile({
+  path,
+  body,
+  version,
+  annotations,
+  onStage,
+  wrap,
+  stickyTop,
+}: {
+  path: string;
+  body: string;
+  version: number;
+  /** As remapped for the rendered view — the same comments, same lines. */
+  annotations: DisplayedAnnotation[];
+  onStage: (staging: ComposerStaging) => void;
+  wrap: boolean;
+  /** Height of the shell header plus the page toolbar (T-178). */
+  stickyTop: number;
+}) {
+  const file = useMemo(() => ({ name: path, contents: body }), [path, body]);
+  const syntaxTheme = useSyntaxTheme();
+  const options = useMemo(
+    () => ({
+      theme: syntaxTheme,
+      themeType: PIERRE_THEME_TYPE,
+      overflow: wrap ? ("wrap" as const) : ("scroll" as const),
+      preferredHighlighter: PIERRE_HIGHLIGHTER,
+      disableFileHeader: true,
+      /**
+       * pierre's `File` abandons its first render while the shared
+       * highlighter is still loading, and re-arms itself only through the
+       * header: a remount finds the empty `<pre>` the abandoned render left
+       * behind, and with the header disabled it concludes there is nothing
+       * left to draw and takes the already-hydrated path — where the
+       * highlighter's completion callback can no longer reach it. The box
+       * then stays blank for good. Any remount does it and StrictMode
+       * remounts everything, so in development it is the normal case. One
+       * `rerender` puts the instance back on the path the diff components,
+       * which keep their header, never leave.
+       */
+      onPostRender: (
+        node: HTMLElement,
+        instance: { rerender: () => void },
+        phase: "mount" | "update" | "unmount",
+      ) => {
+        if (phase === "unmount" || body.length === 0) return;
+        const pre = node.shadowRoot?.querySelector("pre");
+        if (pre == null || pre.childElementCount > 0) return;
+        instance.rerender();
+      },
+      enableLineSelection: true,
+      onLineSelectionEnd: (range: SelectedLineRange | null) => {
+        if (!range) return;
+        const lineStart = Math.min(range.start, range.end);
+        const lineEnd = Math.max(range.start, range.end);
+        onStage({
+          path,
+          version,
+          lineStart,
+          lineEnd,
+          // pierre selects by line number; an in-line anchor comes from the
+          // rendered view (T-142 §9).
+          colStart: null,
+          colEnd: null,
+          quote: quoteOf(body, lineStart, lineEnd),
+        });
+      },
+    }),
+    [path, body, version, onStage, syntaxTheme, wrap],
+  );
+  // Drafts stay out, as they do in the source diff; file-level comments have
+  // their own strip above and never reach `annotations`.
+  const lineAnnotations = useMemo(
+    () =>
+      annotations
+        .filter((a) => a.kind === "comment")
+        .map((a) => ({ lineNumber: a.start, metadata: a.item })),
+    [annotations],
+  );
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-muted-foreground">
+        Drag across line numbers to comment on a range (anchors to v{version}).
+      </p>
+      {/* `clip` rather than `hidden`, for the sticky path header — see
+          AnnotatedFileDiff. */}
+      <div className="overflow-clip rounded-lg border">
+        <div
+          style={{ top: stickyTop }}
+          className="sticky z-20 border-b bg-background/95 px-3 py-1.5 font-mono text-xs backdrop-blur"
+        >
+          {path}
+        </div>
+        <PierreFile<SpecCommentItem>
+          file={file}
+          options={options}
+          lineAnnotations={lineAnnotations}
+          renderAnnotation={(annotation) => (
+            <DiffAnnotation item={annotation.metadata} />
+          )}
+        />
+      </div>
     </div>
   );
 }

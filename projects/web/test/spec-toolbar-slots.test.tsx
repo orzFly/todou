@@ -22,6 +22,7 @@ import { testQueryClient } from "./render.tsx";
 
 vi.mock("@pierre/diffs/react", () => ({
   MultiFileDiff: () => <div data-testid="diff" />,
+  File: () => <div data-testid="file-view" />,
   CodeView: () => null,
 }));
 
@@ -119,11 +120,12 @@ function renderSpecView(search: string) {
     }),
     defaultPendingMs: 0,
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={testQueryClient()}>
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
+  return { ...view, router };
 }
 
 /** The toolbar, once its data has landed. */
@@ -151,28 +153,38 @@ const jumpButtons = (view: ReturnType<typeof renderSpecView>) => ({
 
 /** The columns of the T-190 state matrix, as T-192 re-cut them. */
 const STATES: [label: string, search: string][] = [
-  ["R1 · v1, no baseline possible", "?v=1"],
   ["R2 · modified file", "?v=2&file=design.md"],
   ["RN · new file", "?v=2&file=fresh.md"],
   ["RU · untouched file", "?v=2&file=stable.md"],
   ["C · source diff", "?v=2&compare=1"],
 ];
 
-/** Moves the baseline picker to a position, by the text of its entry. */
-async function pickBaseline(
-  view: ReturnType<typeof renderSpecView>,
-  name: RegExp,
-) {
-  const trigger = view.getByRole("button", {
-    name: /baseline|comparing against/i,
-  });
-  fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
-  await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
-  fireEvent.click(screen.getByRole("menuitemradio", { name }));
-}
+// Anchored on both ends: the baseline trigger's label also opens with
+// "comparing against vN", and ↑↓ explain themselves with "Turn comparing on".
+const TOGGLE_LABEL = /^turn comparing on$|turn comparing off$|^compare —/i;
+const compareToggle = (view: ReturnType<typeof renderSpecView>) =>
+  view.getByRole("button", { name: TOGGLE_LABEL });
+
+const SLOTS_COMPARING = [
+  "back",
+  "title",
+  "review-status",
+  "files",
+  "comment-file",
+  "finish-review",
+  "view-toggle",
+  "version",
+  "compare",
+  "baseline",
+  "display-toggle",
+  "prev-change",
+  "next-change",
+];
+
+const SLOTS_PLAIN = SLOTS_COMPARING.filter((name) => name !== "baseline");
 
 describe("spec toolbar fixed slots (T-190)", () => {
-  it("renders the same slots in every state", async () => {
+  it("renders the same slots in every state that compares", async () => {
     const seen: string[][] = [];
     for (const [, search] of STATES) {
       const view = await toolbar(search);
@@ -182,33 +194,71 @@ describe("spec toolbar fixed slots (T-190)", () => {
     }
     // Every column of the matrix, including the two the old toolbar
     // unmounted controls for: switching file or entering compare mode.
-    expect(seen[0]).toEqual([
-      "back",
-      "title",
-      "review-status",
-      "files",
-      "comment-file",
-      "finish-review",
-      "version",
-      "baseline",
-      "view-toggle",
-      "display-toggle",
-      "prev-change",
-      "next-change",
-    ]);
-    for (const names of seen.slice(1)) expect(names).toEqual(seen[0]);
+    for (const names of seen) expect(names).toEqual(SLOTS_COMPARING);
   });
 
-  it("keeps every slot in place when the baseline goes off (T-192)", async () => {
+  it("drops the baseline slot alone when comparing goes off (T-200)", async () => {
+    // The one exception to "every slot in every state": there is no baseline
+    // to disable a picker against, and a hollow box mid-range reads worse
+    // than a shorter range. Everything else keeps its place.
     const view = await toolbar("?v=2&file=design.md");
-    const before = slotNames(view);
-    await pickBaseline(view, /no baseline/i);
+    fireEvent.click(compareToggle(view));
+    await waitFor(() => expect(slotNames(view)).toEqual(SLOTS_PLAIN));
+    expect(view.router.state.location.search).toEqual({
+      v: 2,
+      file: "design.md",
+    });
+  });
+
+  it("has no baseline slot at v1 either, and disables the toggle there", async () => {
+    const view = await toolbar("?v=1");
+    expect(slotNames(view)).toEqual(SLOTS_PLAIN);
+    const toggle = compareToggle(view);
+    expect(toggle.hasAttribute("disabled")).toBe(true);
+    expect(toggle.getAttribute("aria-label")).toContain("no earlier version");
+  });
+
+  it("presses the compare toggle in and out (T-200)", async () => {
+    const view = await toolbar("?v=2&file=design.md");
+    expect(compareToggle(view).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(compareToggle(view));
     await waitFor(() =>
-      expect(
-        view.getByRole("button", { name: "source" }).hasAttribute("disabled"),
-      ).toBe(true),
+      expect(compareToggle(view).getAttribute("aria-pressed")).toBe("false"),
     );
-    expect(slotNames(view)).toEqual(before);
+    fireEvent.click(compareToggle(view));
+    await waitFor(() =>
+      expect(compareToggle(view).getAttribute("aria-pressed")).toBe("true"),
+    );
+  });
+
+  it("drops the draft count until there is a draft (T-200)", async () => {
+    // T-190 reserved the box to hold the button still; the hollow it left on
+    // every draftless page is what the card was opened about.
+    const view = await toolbar("?v=2&file=design.md");
+    const button = view.container.querySelector(
+      '[data-toolbar-slot="finish-review"]',
+    );
+    expect(button?.textContent).toBe("Finish review");
+    expect(button?.querySelector(".tabular-nums")).toBeNull();
+  });
+
+  it("offers no way back into comparing from the baseline menu", async () => {
+    // The toggle is the only entry point, so the menu only answers "against
+    // which version" (T-200).
+    const view = await toolbar("?v=2&file=design.md");
+    const trigger = view.getByRole("button", {
+      name: /pick another baseline/i,
+    });
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
+    expect(screen.queryByText(/no baseline/i)).toBeNull();
+    expect(screen.queryAllByRole("menuitemradio")).toHaveLength(0);
+    // Every baseline has a URL of its own now, so the entries are links.
+    const entries = screen.getAllByRole("menuitem");
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.getAttribute("href")).toBe(
+      "/projects/demo/issues/1/spec?file=design.md&v=2",
+    );
   });
 
   it("disables ↑↓ at v1 rather than dropping them", async () => {
@@ -219,15 +269,15 @@ describe("spec toolbar fixed slots (T-190)", () => {
     expect(prev.getAttribute("aria-label")).toContain("first version");
   });
 
-  it("steps changes on a modified file, and stops when the baseline goes off", async () => {
+  it("steps changes on a modified file, and stops when comparing goes off", async () => {
     const view = await toolbar("?v=2&file=design.md");
     expect(jumpButtons(view).next.hasAttribute("disabled")).toBe(false);
-    await pickBaseline(view, /no baseline/i);
+    fireEvent.click(compareToggle(view));
     await waitFor(() =>
       expect(jumpButtons(view).next.hasAttribute("disabled")).toBe(true),
     );
     expect(jumpButtons(view).next.getAttribute("aria-label")).toContain(
-      "Pick a baseline",
+      "Turn comparing on",
     );
   });
 
@@ -246,19 +296,32 @@ describe("spec toolbar fixed slots (T-190)", () => {
     expect(cls('[data-toolbar-slot="view-toggle"] fieldset')).not.toContain(
       "w-36",
     );
+    // The version trigger's own cap moved onto the message span, because the
+    // baseline's cap is computed from whatever this one measures out to
+    // (T-200) — and a button-level cap would hide that measurement.
+    expect(cls('[data-toolbar-slot="version"] button')).not.toContain(
+      "max-w-80",
+    );
+    expect(cls('[data-linked-msg="version"]')).toContain(
+      "max-w-[var(--spec-vmsg-max,20rem)]",
+    );
+    expect(cls('[data-linked-msg="baseline"]')).toContain(
+      "max-w-[var(--spec-bmsg-max,8rem)]",
+    );
     // One height across the row, or the pills line up on nothing: their
     // natural heights are 22, 28 and 30px.
     expect(cls('[data-toolbar-slot="version"] button')).toContain("h-7");
     expect(cls('[data-toolbar-slot="baseline"] button')).toContain("h-7");
+    expect(cls('[data-toolbar-slot="compare"] button')).toContain("h-7");
     expect(cls('[data-toolbar-slot="view-toggle"] fieldset')).toContain("h-7");
     expect(cls('[data-toolbar-slot="display-toggle"] > *')).toContain("h-7");
   });
 
-  it("keeps wrap in the display slot, disabled outside the source diff", async () => {
+  it("keeps wrap in the display slot, disabled outside the source views", async () => {
     const view = await toolbar("?v=2&file=design.md");
     const wrap = view.getByRole("button", { name: /^wrap/ });
     expect(wrap.hasAttribute("disabled")).toBe(true);
-    expect(wrap.getAttribute("aria-label")).toContain("source diff");
+    expect(wrap.getAttribute("aria-label")).toContain("source view");
   });
 
   it("keeps ↑↓ usable on a file that is new in this version", async () => {
