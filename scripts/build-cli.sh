@@ -45,11 +45,9 @@ rm -rf "$OUT"
 mkdir -p "$OUT"
 trap 'rm -rf "$STAGE"' EXIT
 
-# `deno compile` embeds whole package directories without tree-shaking, so a
-# dev-dependency tree would ship typescript, vitest and @types/node inside
-# every executable (~7 MB). It needs a prod-only node_modules — built here in
-# a scratch copy, because pruning the developer's own tree to get one is not
-# an acceptable side effect of running a build.
+# The scratch copy exists so the version injection below can overwrite a
+# tracked file without dirtying the developer's checkout; `--prod --filter`
+# narrows the install to what esbuild needs to resolve the CLI's imports.
 #
 # `git ls-files` copies tracked files with their current working-tree content
 # (so uncommitted edits are built) while leaving node_modules, dist/ and data/
@@ -77,11 +75,11 @@ printf 'export const BUILD_VERSION: string | null = "%s";\n' "$VERSION" \
   > "$STAGE/projects/shared/src/build-info.ts"
 
 # esbuild bundles from the stage rather than the workspace tree so the version
-# injection above reaches the bundle through the same file deno compile reads —
-# one mechanism for every artifact. `.cjs` rather than `.js` because the bundle
-# is CommonJS: a bare `.js` is read as ESM whenever the nearest package.json
-# says `"type": "module"`, which breaks the moment someone drops the file into
-# a modern project. The extension is unconditional.
+# injected above is the one that lands in the bundle — and every other artifact
+# is compiled from that bundle. `.cjs` rather than `.js` because the bundle is
+# CommonJS: a bare `.js` is read as ESM whenever the nearest package.json says
+# `"type": "module"`, which breaks the moment someone drops the file into a
+# modern project. The extension is unconditional.
 echo "==> esbuild single-file todou.cjs (bring-your-own-Node)"
 pnpm exec esbuild "$STAGE/projects/cli/src/index.ts" \
   --bundle --platform=node --format=cjs \
@@ -89,24 +87,55 @@ pnpm exec esbuild "$STAGE/projects/cli/src/index.ts" \
   --outfile="$OUT/todou.cjs"
 chmod +x "$OUT/todou.cjs"
 
-# --no-check: type checking is `pnpm typecheck`'s job, and running it here
-# would demand @types/node — a dev dependency, absent from the staged tree by
-# design. Deno reacts to that resolution failure by silently rewriting
-# package.json with a migrated workspace config, so removing this flag breaks
-# the build and dirties a tracked file at the same time.
+# Compiling the bundle above, not the TS entry: the VFS snapshot `deno compile`
+# takes of a pnpm tree drops the links that live inside `.pnpm`, so a
+# transitive import compiles clean and fails at startup (T-204). A bundle has
+# no imports left to resolve, and every artifact then ships the same code.
 echo "==> deno compile"
 while IFS=: read -r name target; do
   [ -n "$name" ] || continue
   out="$OUT/todou-$name"
   case "$name" in windows-*) out="$out.exe" ;; esac
   echo "  -> $name ($target)"
-  deno compile --no-check --allow-all --target "$target" --output "$out" \
-    "$STAGE/projects/cli/src/index.ts"
+  # --node-modules-dir=none: deno otherwise walks up to the nearest
+  # package.json and embeds the node_modules beside it, which takes the
+  # executable from 86 MB to 464.
+  deno compile --node-modules-dir=none --allow-all --target "$target" \
+    --output "$out" "$OUT/todou.cjs"
 done <<EOF
 $TARGETS
 EOF
 
 rm -rf "$STAGE"
+
+# sha256 proves the bytes, not that they start: T-204 shipped four executables
+# that compiled without a single warning and then died on every invocation.
+# Comparing the printed version verbatim also rules out a stale artifact.
+echo "==> smoke: --version must print $VERSION"
+smoke() { # <label> <command…>
+  # `local got` separate from the assignment: `local got="$(…)"` would make
+  # `local`'s own exit code the one $? reports, hiding a crashed artifact.
+  local label="$1" got
+  shift
+  if ! got="$("$@" --version 2>&1)" || [ "$got" != "$VERSION" ]; then
+    echo "smoke failed: $label printed '${got:-<nothing>}' (want '$VERSION')" >&2
+    exit 1
+  fi
+  echo "  ok: $label"
+}
+smoke todou.cjs node "$OUT/todou.cjs"
+# Only the artifact matching the build host can run; the other targets stay
+# compile-only, which the two-architecture docker build already covers for
+# linux. Windows has no build host at all — the scripts are bash.
+case "$(uname -s)/$(uname -m)" in
+  Linux/x86_64) smoke todou-linux-amd64 "$OUT/todou-linux-amd64" ;;
+  Linux/aarch64) smoke todou-linux-arm64 "$OUT/todou-linux-arm64" ;;
+  Darwin/arm64) smoke todou-macos-arm64 "$OUT/todou-macos-arm64" ;;
+  *)
+    echo "  warn: no deno artifact runs on $(uname -s)/$(uname -m)" \
+      "— only todou.cjs smoked" >&2
+    ;;
+esac
 
 echo
 echo "==> dist/ artifact sizes"
