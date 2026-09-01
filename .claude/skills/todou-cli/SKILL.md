@@ -144,6 +144,20 @@ beside the new id — that line, not the exit code, is the proof of what actuall
 **A value that starts with `--` has to be attached**: `--title=--body …`. Written apart, the next
 token is read as another option and the value is reported missing.
 
+## Filing what the user asked for
+
+A request to file a card is a request for the *card*, not for a report.
+
+- **File first, dig later.** Don't read code, reproduce, or scope the fix before creating — the card
+  is where any of that will be recorded, so it has to exist first. The one read worth doing up front
+  is `todou search`: something already filed on the same thing takes a comment, not a twin.
+- **Their words are the record.** Carry the original text into the body verbatim (see the note on
+  `issue create` above); your own reading of it goes above the quote, never in place of it.
+- **One line is not one card.** A message dropped in mid-thought is rarely already shaped like a card
+  set — two unrelated complaints in one sentence are two cards, three bullets about the same surface
+  are one. Sort what was said into its natural units of work first, then create, and report back
+  which card got which part.
+
 ## Labels
 
 **Never pre-create a label.** Any label flag on a write creates what it doesn't find, prints
