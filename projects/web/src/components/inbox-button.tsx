@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { InboxIcon } from "lucide-react";
 import { inboxQuery } from "@/api/inbox.ts";
 import { Button } from "@/components/ui/button";
+import { UnreadBadge } from "@/components/unread-badge.tsx";
 
 /**
  * Navbar inbox entry (T-97). Mounted in the shell, so the inbox query lives
@@ -25,14 +26,7 @@ export function InboxButton() {
     >
       <Link to="/inbox">
         <InboxIcon />
-        {count > 0 && (
-          <span
-            aria-hidden
-            className="absolute top-0.5 right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] leading-none font-semibold text-white tabular-nums dark:bg-blue-500"
-          >
-            {count > 99 ? "99+" : count}
-          </span>
-        )}
+        <UnreadBadge count={count} className="absolute top-0.5 right-0.5" />
       </Link>
     </Button>
   );

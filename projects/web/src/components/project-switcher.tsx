@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { CheckIcon, ChevronsUpDownIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { inboxQuery } from "@/api/inbox.ts";
 import { projectsQuery } from "@/api/queries.ts";
 import { type OrderedProject, useProjectOrder } from "@/api/useProjectOrder.ts";
 import { projectTabs } from "@/components/project-nav.tsx";
@@ -11,6 +12,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { UnreadBadge } from "@/components/unread-badge.tsx";
 import { cn } from "@/lib/utils";
 
 /** Below this the search box is noise (T-76 design §3). */
@@ -33,6 +35,20 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
 
   const projects = useQuery(projectsQuery);
   const ordered = useProjectOrder(projects.data ?? []);
+
+  // The shell keeps this query alive for the whole session, so subscribing
+  // here costs no request — opening the picker never waits on the network,
+  // and the per-row counts can never drift from the navbar badge they are
+  // summed out of (T-202). Loading or failed inbox = empty map = no badges.
+  const inbox = useQuery(inboxQuery);
+  const unreadCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of inbox.data?.items ?? []) {
+      counts.set(item.project.slug, (counts.get(item.project.slug) ?? 0) + 1);
+    }
+    return counts;
+  }, [inbox.data]);
+
   const showSearch = (projects.data?.length ?? 0) >= SEARCH_THRESHOLD;
   const q = query.trim().toLowerCase();
   const items = q
@@ -152,42 +168,55 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
               没有匹配的项目
             </div>
           ) : (
-            items.map((item, idx) => (
-              // A link, not a div: middle-click, right-click → open in new tab,
-              // ⌘/Ctrl-click and the status-bar URL preview all come free, and
-              // role="option" keeps the listbox semantics intact (T-117).
-              // tabIndex -1 because aria-activedescendant does the walking.
-              <Link
-                key={item.project.slug}
-                to={target}
-                params={{ slug: item.project.slug }}
-                id={`project-option-${item.project.slug}`}
-                data-idx={idx}
-                role="option"
-                tabIndex={-1}
-                aria-selected={item.project.slug === slug}
-                className={cn(
-                  "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm",
-                  idx === hl && "bg-accent",
-                )}
-                onMouseMove={() => setHighlight(idx)}
-                onClick={closeUnlessNewTab}
-              >
-                <span className="w-3.5 shrink-0">
-                  {item.project.slug === slug && (
-                    <CheckIcon className="size-3.5" />
-                  )}
-                </span>
-                <span
+            items.map((item, idx) => {
+              const count = unreadCounts.get(item.project.slug) ?? 0;
+              return (
+                // A link, not a div: middle-click, right-click → open in new
+                // tab, ⌘/Ctrl-click and the status-bar URL preview all come
+                // free, and role="option" keeps the listbox semantics intact
+                // (T-117). tabIndex -1 because aria-activedescendant walks.
+                <Link
+                  key={item.project.slug}
+                  to={target}
+                  params={{ slug: item.project.slug }}
+                  id={`project-option-${item.project.slug}`}
+                  data-idx={idx}
+                  role="option"
+                  tabIndex={-1}
+                  aria-selected={item.project.slug === slug}
+                  // Only when there is something to announce: the badge is
+                  // aria-hidden (a bare number reads as noise), and an
+                  // unconditional label would put "— 0 未读" into every
+                  // activedescendant announcement while arrowing the list.
+                  aria-label={
+                    count > 0
+                      ? `${item.project.name} — ${count} 未读`
+                      : undefined
+                  }
                   className={cn(
-                    "truncate",
-                    item.neverVisited && "text-muted-foreground",
+                    "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm",
+                    idx === hl && "bg-accent",
                   )}
+                  onMouseMove={() => setHighlight(idx)}
+                  onClick={closeUnlessNewTab}
                 >
-                  {item.project.name}
-                </span>
-              </Link>
-            ))
+                  <span className="w-3.5 shrink-0">
+                    {item.project.slug === slug && (
+                      <CheckIcon className="size-3.5" />
+                    )}
+                  </span>
+                  <span
+                    className={cn(
+                      "truncate",
+                      item.neverVisited && "text-muted-foreground",
+                    )}
+                  >
+                    {item.project.name}
+                  </span>
+                  <UnreadBadge count={count} className="ml-auto shrink-0" />
+                </Link>
+              );
+            })
           )}
         </div>
         <div className="flex border-t p-1">

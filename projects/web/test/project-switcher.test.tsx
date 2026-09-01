@@ -8,7 +8,7 @@ import {
   useParams,
 } from "@tanstack/react-router";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { Project } from "@todou/shared";
+import type { InboxItem, Project } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
 import { ProjectSwitcher } from "../src/components/project-switcher.tsx";
@@ -39,16 +39,59 @@ const me = {
   created_at: "2026-01-01T00:00:00Z",
 };
 
+/** One inbox row, trimmed to what the switcher's per-slug tally reads. */
+function inboxItem(slug: string, number: number): InboxItem {
+  return {
+    id: number,
+    number,
+    title: `issue ${number}`,
+    status: {
+      id: 1,
+      name: "Todo",
+      category: "open",
+      color: "#000000",
+      position: 1,
+      is_default: false,
+    },
+    author: me,
+    assignees: [],
+    labels: [],
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    body_edited_at: null,
+    open_questions: 0,
+    spec_version: null,
+    spec_review_status: null,
+    spec_unresolved_comments: 0,
+    deleted_at: null,
+    deleted_by: null,
+    unread: true,
+    unread_comments: 1,
+    project: { slug, name: slug },
+    last_activity_at: "2026-01-02T00:00:00Z",
+    pending_spec_review: false,
+  };
+}
+
 /**
  * The switcher needs live routes to land its navigations somewhere; the
  * project subtree mirrors the app's so module keeping sees the real shapes.
  */
-function renderSwitcher(projects: Project[], at = "/") {
+function renderSwitcher(projects: Project[], at = "/", inbox?: InboxItem[]) {
   const c = testQueryClient();
   c.setQueryData(["me"], me);
   c.setQueryData(["projects"], projects);
   vi.spyOn(api, "me").mockResolvedValue(me);
   vi.spyOn(api, "listProjects").mockResolvedValue(projects);
+  // Left unseeded elsewhere on purpose: the shell owns this query in the app,
+  // so a switcher rendered alone sees exactly the loading/failed shape.
+  if (inbox) {
+    c.setQueryData(["inbox"], { items: inbox, truncated: false });
+    vi.spyOn(api, "getInbox").mockResolvedValue({
+      items: inbox,
+      truncated: false,
+    });
+  }
 
   function SwitcherAtSlug() {
     const { slug } = useParams({ strict: false });
@@ -284,5 +327,52 @@ describe("ProjectSwitcher keeps the nav module (T-94)", () => {
     await waitFor(() =>
       expect(router.state.location.pathname).toBe("/projects/beta"),
     );
+  });
+});
+
+/** The badge text of a row, or null when the row carries no badge. */
+function badgeOf(name: string) {
+  const option = screen
+    .getAllByRole("option")
+    .find((el) => el.textContent?.includes(name));
+  if (!option) throw new Error(`no option for ${name}`);
+  return option.querySelector("span[aria-hidden]")?.textContent ?? null;
+}
+
+describe("ProjectSwitcher unread badges (T-202)", () => {
+  it("counts the project's inbox rows, and leaves quiet projects bare", async () => {
+    renderSwitcher(fewProjects, "/", [
+      inboxItem("alpha", 1),
+      inboxItem("beta", 2),
+      inboxItem("alpha", 3),
+    ]);
+    await openSwitcher();
+    expect(badgeOf("alpha")).toBe("2");
+    expect(badgeOf("beta")).toBe("1");
+    expect(badgeOf("gamma")).toBeNull();
+  });
+
+  it("shows no badge at all while the inbox is unavailable", async () => {
+    const router = renderSwitcher(fewProjects);
+    await openSwitcher();
+    expect(screen.getAllByRole("option")).toHaveLength(3);
+    for (const name of ["alpha", "beta", "gamma"]) {
+      expect(badgeOf(name)).toBeNull();
+    }
+    // The picker still does its job with the count missing.
+    await pickProject("beta");
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/projects/beta"),
+    );
+  });
+
+  it("announces the count only on rows that have one", async () => {
+    renderSwitcher(fewProjects, "/", [
+      inboxItem("beta", 1),
+      inboxItem("beta", 2),
+    ]);
+    await openSwitcher();
+    expect(screen.getByRole("option", { name: "beta — 2 未读" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "alpha" })).toBeTruthy();
   });
 });
