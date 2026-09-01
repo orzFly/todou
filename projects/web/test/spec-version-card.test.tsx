@@ -31,6 +31,44 @@ describe("computeVersionStats", () => {
       { path: "gone.md", change: "removed", plus: 0, minus: 2 },
     ]);
   });
+
+  it("collapses a paired removal and addition into one renamed row (T-203)", () => {
+    expect(
+      computeVersionStats(
+        { added: ["docs/design.md"], changed: [], removed: ["design.md"] },
+        new Map([["design.md", "a\nb\nc\n"]]),
+        new Map([["docs/design.md", "a\nb\nc\n"]]),
+        diffLines,
+      ),
+    ).toEqual([
+      {
+        path: "docs/design.md",
+        change: "renamed",
+        from: "design.md",
+        plus: 0,
+        minus: 0,
+      },
+    ]);
+  });
+
+  it("counts a renamed file's edits, not its whole body", () => {
+    expect(
+      computeVersionStats(
+        { added: ["docs/design.md"], changed: [], removed: ["design.md"] },
+        new Map([["design.md", "a\nb\nc\nd\n"]]),
+        new Map([["docs/design.md", "a\nB\nc\nd\n"]]),
+        diffLines,
+      ),
+    ).toEqual([
+      {
+        path: "docs/design.md",
+        change: "renamed",
+        from: "design.md",
+        plus: 1,
+        minus: 1,
+      },
+    ]);
+  });
 });
 
 describe("diffstatCells", () => {
@@ -228,6 +266,56 @@ describe("SpecVersionCard", () => {
       expect(view.queryByTestId("spec-review-cta"), name).toBeNull();
       view.unmount();
     }
+  });
+
+  it("merges the A and D rows of a rename into one R row (T-203)", async () => {
+    // The payload cannot know: it carries added/removed, and the pairing only
+    // becomes visible once both snapshots are in hand.
+    vi.stubGlobal("fetch", async (input: unknown) => {
+      const url = new URL(String(input), "http://test");
+      if (url.pathname.endsWith("/me")) {
+        return Response.json({ id: 1, login: "user", kind: "human" });
+      }
+      if (url.pathname.endsWith("/spec/files")) {
+        return Response.json(
+          url.searchParams.get("version") === "1"
+            ? {
+                version: 1,
+                files: [{ path: "old.md", body: "a\nb\n", size: 4 }],
+              }
+            : {
+                version: 2,
+                files: [{ path: "docs/new.md", body: "a\nb\n", size: 4 }],
+              },
+        );
+      }
+      if (url.pathname.endsWith("/spec/comments")) {
+        return Response.json({ current_version: 2, items: [] });
+      }
+      if (url.pathname.endsWith("/spec")) return Response.json(SPEC_INFO);
+      throw new Error(`unexpected fetch: ${url.pathname}`);
+    });
+    const view = renderWithProviders(
+      <SpecVersionCard
+        slug="p"
+        issueNumber={1}
+        payload={{
+          version: 2,
+          message: null,
+          added: ["docs/new.md"],
+          changed: [],
+          removed: ["old.md"],
+        }}
+      />,
+    );
+    const row = await view.findByText("R");
+    const line = row.closest("li");
+    expect(line?.textContent).toContain("old.md");
+    expect(line?.textContent).toContain("docs/new.md");
+    expect(view.container.textContent).not.toContain("D");
+    expect(
+      view.getByRole("link", { name: "docs/new.md" }).getAttribute("href"),
+    ).toBe("/projects/p/issues/1/spec?file=docs%2Fnew.md&v=2");
   });
 
   it("renders nothing for a malformed payload", async () => {

@@ -26,6 +26,7 @@ const CHANGE_BADGE: Record<
   added: { glyph: "A", className: "bg-green-600/15 text-green-700" },
   modified: { glyph: "M", className: "bg-yellow-500/20 text-yellow-700" },
   removed: { glyph: "D", className: "bg-red-600/15 text-red-700" },
+  renamed: { glyph: "R", className: "bg-blue-600/15 text-blue-700" },
 };
 
 /**
@@ -94,7 +95,14 @@ function SpecVersionCardBody({
     info.review_status === "unreviewed" &&
     !isPusher;
 
-  const rows: Array<{ path: string; change: SpecFileStat["change"] }> = [
+  // A rename exists only once both snapshots are in hand, and the payload is
+  // added/removed all the way down — so the two rows merge into one when the
+  // stats land, rather than the event carrying a pairing it cannot make.
+  const rows: Array<{
+    path: string;
+    change: SpecFileStat["change"];
+    from?: string;
+  }> = stats.data ?? [
     ...payload.added.map((path) => ({ path, change: "added" as const })),
     ...payload.changed.map((path) => ({ path, change: "modified" as const })),
     ...payload.removed.map((path) => ({ path, change: "removed" as const })),
@@ -201,6 +209,14 @@ function SpecVersionCardBody({
                 >
                   {badge.glyph}
                 </span>
+                {row.from !== undefined && (
+                  <>
+                    <span className="truncate font-mono text-muted-foreground">
+                      {row.from}
+                    </span>
+                    <span className="shrink-0 text-muted-foreground">→</span>
+                  </>
+                )}
                 {nameSearch ? (
                   <Link
                     to="/projects/$slug/issues/$number/spec"

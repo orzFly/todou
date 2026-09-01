@@ -383,12 +383,13 @@ describe("spec toolbar fixed slots (T-190)", () => {
     expect(button.getAttribute("aria-label")).toContain("line numbers");
   });
 
-  it("lists the differing files in source-diff mode, carrying the baseline", async () => {
+  it("lists the whole file set in source-diff mode, carrying the baseline", async () => {
     const view = await toolbar("?v=2&compare=1");
-    expect(view.getByRole("button", { name: /Files \(2\)/ })).toBeTruthy();
+    // design.md changed, fresh.md is new, stable.md did not move (T-203).
+    expect(view.getByRole("button", { name: /Files \(3\)/ })).toBeTruthy();
     // The rail renders the same list from lg up, so scope to the popover
     // rather than picking one of two identical links (T-192).
-    fireEvent.click(view.getByRole("button", { name: /Files \(2\)/ }));
+    fireEvent.click(view.getByRole("button", { name: /Files \(3\)/ }));
     const popover = await screen.findByRole("dialog");
     const link = within(popover).getByRole("link", { name: /fresh\.md/ });
     expect(link.getAttribute("href")).toBe(

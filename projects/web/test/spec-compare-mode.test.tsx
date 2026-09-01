@@ -371,13 +371,14 @@ describe("spec compare controls (T-192)", () => {
     expect(view.router.state.location.search).toEqual({ v: 3, compare: 2 });
   });
 
-  it("narrows the rail to the diffed files in source mode", async () => {
+  it("lists every file of both versions in source mode", async () => {
     mockSpec();
     const view = renderSpecView("?v=3&compare=2");
     await ready(view);
-    // b.md is identical across v2 and v3, so it has no diff to scroll to.
+    // b.md is identical across v2 and v3 and still gets a row: the stack
+    // draws it as a foldable block, so the rail has somewhere to send it.
     await waitFor(() =>
-      expect(railPaths(view)).toEqual(["a.md", "c.md", "d.md"]),
+      expect(railPaths(view)).toEqual(["a.md", "b.md", "c.md", "d.md"]),
     );
   });
 

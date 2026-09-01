@@ -72,18 +72,27 @@ describe("specMode (T-192, orthogonalised by T-200)", () => {
   });
 
   it("falls back to the automatic baseline when the pinned one is not behind", () => {
+    // The baseline degrades, the presentation does not: a URL that spells
+    // out a comparison keeps drawing one (T-203).
     expect(specMode({ compare: 3 }, 3, false)).toEqual({
       baseline: 2,
-      view: "rendered",
+      view: "source",
     });
     expect(specMode({ compare: 9 }, 2, false)).toEqual({
       baseline: 1,
-      view: "rendered",
+      view: "source",
     });
     // …and an invalid one at v1 still leaves nothing to compare against.
     expect(specMode({ compare: 5 }, 1, false)).toEqual({
       baseline: null,
       view: null,
+    });
+  });
+
+  it("lets an explicit view outrank a stale compare", () => {
+    expect(specMode({ compare: 7, view: "rendered" }, 5, false)).toEqual({
+      baseline: 4,
+      view: "rendered",
     });
   });
 });

@@ -1,4 +1,4 @@
-import type { SpecPushedPayload } from "@todou/shared";
+import { detectRenames, type SpecPushedPayload } from "@todou/shared";
 
 // Per-file git-stats for a spec version card (T-59). Line counts are
 // derived on demand from the immutable version snapshots — the
@@ -6,8 +6,11 @@ import type { SpecPushedPayload } from "@todou/shared";
 // predate this feature too.
 
 export type SpecFileStat = {
+  /** The path in the later version; for a rename, the one it moved to. */
   path: string;
-  change: "added" | "modified" | "removed";
+  change: "added" | "modified" | "removed" | "renamed";
+  /** The path it moved from — `renamed` only. */
+  from?: string;
   plus: number;
   minus: number;
 };
@@ -23,14 +26,51 @@ function lineCount(body: string): number {
   return body.split("\n").length - (body.endsWith("\n") ? 1 : 0);
 }
 
+/**
+ * The one place a rename is inferred for the web app: every surface that
+ * shows per-file diff stats — the timeline version card, the issue page's
+ * spec entry, the spec page's file rail — reads them from here, so a
+ * deterministic pairing here is the same pairing everywhere (T-203).
+ */
 export function computeVersionStats(
   payload: Pick<SpecPushedPayload, "added" | "changed" | "removed">,
   before: Map<string, string>,
   after: Map<string, string>,
   diffLines: DiffLines,
 ): SpecFileStat[] {
+  const countDiff = (from: string, to: string) => {
+    let plus = 0;
+    let minus = 0;
+    for (const part of diffLines(from, to)) {
+      if (part.added) plus += part.count ?? 0;
+      else if (part.removed) minus += part.count ?? 0;
+    }
+    return { plus, minus };
+  };
+
+  // The payload decides what counts as added and removed; the snapshots only
+  // supply the bodies. Pairing outside those lists would collapse a removed
+  // row into a renamed row that never gets rendered.
+  const addedPaths = new Set(payload.added);
+  const removedPaths = new Set(payload.removed);
+  const renames = detectRenames(before, after).filter(
+    (rename) => removedPaths.has(rename.from) && addedPaths.has(rename.to),
+  );
+  const renamedFrom = new Map(renames.map((r) => [r.to, r.from]));
+  const renamedAway = new Set(renames.map((r) => r.from));
+
   const stats: SpecFileStat[] = [];
   for (const path of payload.added) {
+    const from = renamedFrom.get(path);
+    if (from !== undefined) {
+      stats.push({
+        path,
+        change: "renamed",
+        from,
+        ...countDiff(before.get(from) ?? "", after.get(path) ?? ""),
+      });
+      continue;
+    }
     stats.push({
       path,
       change: "added",
@@ -39,18 +79,14 @@ export function computeVersionStats(
     });
   }
   for (const path of payload.changed) {
-    let plus = 0;
-    let minus = 0;
-    for (const part of diffLines(
-      before.get(path) ?? "",
-      after.get(path) ?? "",
-    )) {
-      if (part.added) plus += part.count ?? 0;
-      else if (part.removed) minus += part.count ?? 0;
-    }
-    stats.push({ path, change: "modified", plus, minus });
+    stats.push({
+      path,
+      change: "modified",
+      ...countDiff(before.get(path) ?? "", after.get(path) ?? ""),
+    });
   }
   for (const path of payload.removed) {
+    if (renamedAway.has(path)) continue;
     stats.push({
       path,
       change: "removed",

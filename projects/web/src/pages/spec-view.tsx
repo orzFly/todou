@@ -18,6 +18,7 @@ import {
   useSearch,
 } from "@tanstack/react-router";
 import {
+  detectRenames,
   formatAnchorRange,
   formatRef,
   type SpecCommentItem,
@@ -30,6 +31,7 @@ import {
   ArrowLeftIcon,
   ArrowUpIcon,
   ChevronDownIcon,
+  ChevronRightIcon,
   FileTextIcon,
   WrapTextIcon,
 } from "lucide-react";
@@ -144,13 +146,57 @@ function ToolbarSlot({
   );
 }
 
-/** Paths whose body differs between two versions — one file diff each. */
-function diffPaths(before: SpecFile[], after: SpecFile[]): string[] {
+type SpecDiffEntry = {
+  /** The path in the viewed version; the baseline's for a removed file. */
+  path: string;
+  kind: "added" | "removed" | "changed" | "renamed" | "unchanged";
+  /** The baseline path a renamed file moved from. */
+  from?: string;
+  oldBody: string;
+  newBody: string;
+};
+
+/**
+ * Every file of either version, classified. The source stack draws the whole
+ * set rather than the differing subset, so a file neither version touched is
+ * a collapsed placeholder instead of an absence (T-203) — and presence, not
+ * body text, is what separates a class from a class, which is how an empty
+ * file's addition stops reading as "these versions are identical".
+ */
+function diffEntries(before: SpecFile[], after: SpecFile[]): SpecDiffEntry[] {
   const from = new Map(before.map((f) => [f.path, f.body]));
   const to = new Map(after.map((f) => [f.path, f.body]));
+  const renames = detectRenames(from, to);
+  const renamedFrom = new Map(renames.map((r) => [r.to, r.from]));
+  const renamedAway = new Set(renames.map((r) => r.from));
   return [...new Set([...from.keys(), ...to.keys()])]
+    .filter((path) => !renamedAway.has(path))
     .sort()
-    .filter((path) => (from.get(path) ?? "") !== (to.get(path) ?? ""));
+    .map((path): SpecDiffEntry => {
+      const source = renamedFrom.get(path) ?? path;
+      const oldBody = from.get(source);
+      const newBody = to.get(path);
+      if (oldBody === undefined) {
+        return { path, kind: "added", oldBody: "", newBody: newBody ?? "" };
+      }
+      if (newBody === undefined) {
+        return { path, kind: "removed", oldBody, newBody: "" };
+      }
+      if (source !== path) {
+        return { path, kind: "renamed", from: source, oldBody, newBody };
+      }
+      return {
+        path,
+        kind: oldBody === newBody ? "unchanged" : "changed",
+        oldBody,
+        newBody,
+      };
+    });
+}
+
+/** What the stack draws as a difference, and what ↑↓ therefore steps over. */
+function isDifference(entry: SpecDiffEntry): boolean {
+  return entry.kind !== "unchanged";
 }
 
 export function SpecViewPage() {
@@ -346,7 +392,16 @@ function SpecViewBody({
       void navigate({
         to: "/projects/$slug/issues/$number/spec",
         params,
-        search: baselineSearch(null),
+        // A file only the baseline had has nowhere to land once the baseline
+        // is gone; carrying it across would strand the reader on "File not
+        // found" with no way back (T-203).
+        search: specSearchFor({
+          file: selected === undefined ? undefined : search.file,
+          v: search.v,
+          version,
+          baseline: null,
+          view,
+        }),
       });
       return;
     }
@@ -390,6 +445,24 @@ function SpecViewBody({
     enabled: comparing,
   });
   const baselineFiles = comparing ? baselineQuery.data : undefined;
+
+  // Every file of the two versions, classified — computed here as well as in
+  // `SpecDiff` so the rail and its ↑↓ cannot disagree with what is on screen.
+  const entries = useMemo(() => {
+    if (!baselineFiles) return [];
+    return diffEntries(baselineFiles.files, files.data.files);
+  }, [baselineFiles, files.data.files]);
+  const differing = useMemo(() => entries.filter(isDifference), [entries]);
+  const renamedFrom = useMemo(
+    () =>
+      new Map(
+        entries.flatMap((entry) =>
+          entry.from === undefined ? [] : [[entry.path, entry.from] as const],
+        ),
+      ),
+    [entries],
+  );
+
   // A file with no baseline counterpart is brand new: highlighting every
   // block tells the reviewer nothing (T-61) — render it normally and say
   // "new file" instead.
@@ -397,14 +470,19 @@ function SpecViewBody({
     baselineFiles !== undefined &&
     selected !== undefined &&
     !baselineFiles.files.some((f) => f.path === selected.path);
+  const renamedSource =
+    selected === undefined ? undefined : renamedFrom.get(selected.path);
   // The baseline body drives BOTH aids: line ranges for the block-level
   // wash and the ↑↓ nav, and the word-level diff inside those blocks (T-142).
+  // A renamed file takes it from the path it moved from, or every block of it
+  // would wash up as new (T-203).
   const baselineBody = useMemo(() => {
     if (!renderedCompare || selected === undefined || !baselineFiles) {
       return undefined;
     }
-    return baselineFiles.files.find((f) => f.path === selected.path)?.body;
-  }, [renderedCompare, selected, baselineFiles]);
+    const source = renamedFrom.get(selected.path) ?? selected.path;
+    return baselineFiles.files.find((f) => f.path === source)?.body;
+  }, [renderedCompare, selected, baselineFiles, renamedFrom]);
   const changedRanges = useMemo(() => {
     if (baselineBody === undefined || selected === undefined) return [];
     return changedLineRanges(baselineBody, selected.body);
@@ -421,42 +499,40 @@ function SpecViewBody({
       .map((f) => f.path);
   }, [baselineFiles, files.data.files]);
 
-  // Source mode: the file pairs `SpecDiff` will render, computed here too so
-  // the file list and its ↑↓ cannot disagree with what is on screen. Unlike
-  // changedFiles this keeps removed files, which have a diff but no row in
-  // the viewed version.
-  const comparePaths = useMemo(() => {
-    if (!baselineFiles) return [];
-    return diffPaths(baselineFiles.files, files.data.files);
-  }, [baselineFiles, files.data.files]);
-
-  // Files the baseline had and this version does not. The rendered view has
-  // no way to draw one, so the rail carries them to a notice that hands the
-  // reader over to the source diff (T-192).
-  const removedFiles = useMemo(() => {
-    if (!baselineFiles) return [];
-    const present = new Set(files.data.files.map((f) => f.path));
-    return baselineFiles.files
-      .filter((f) => !present.has(f.path))
-      .map((f) => f.path);
-  }, [baselineFiles, files.data.files]);
+  // Files the baseline had and this version does not — a path the rename
+  // pairing claimed is not one of them. The rendered view has no way to draw
+  // a deletion, so the rail carries these to a notice that hands the reader
+  // over to the source diff (T-192).
+  const removedFiles = useMemo(
+    () =>
+      entries.filter((e) => e.kind === "removed").map((entry) => entry.path),
+    [entries],
+  );
 
   // The rail is the same element in every state; only its contents change.
-  // The source diff narrows it to what the diff stack renders, in that
-  // stack's own path order (T-192).
+  // The source diff follows the stack, file for file and in its order — the
+  // stack holds every file now, so nothing is missing from either (T-203).
   const railEntries = useMemo(() => {
-    const present = new Set(files.data.files.map((f) => f.path));
     if (sourceDiff) {
-      return comparePaths.map((path) => ({
-        path,
-        removed: !present.has(path),
+      return entries.map((entry) => ({
+        path: entry.path,
+        removed: entry.kind === "removed",
+        from: entry.from,
       }));
     }
     return [
-      ...files.data.files.map((f) => ({ path: f.path, removed: false })),
-      ...removedFiles.map((path) => ({ path, removed: true })),
+      ...files.data.files.map((f) => ({
+        path: f.path,
+        removed: false,
+        from: renamedFrom.get(f.path),
+      })),
+      ...removedFiles.map((path) => ({
+        path,
+        removed: true,
+        from: undefined,
+      })),
     ];
-  }, [sourceDiff, files.data.files, comparePaths, removedFiles]);
+  }, [sourceDiff, files.data.files, entries, removedFiles, renamedFrom]);
 
   // Diffstat beside every rail row, same visuals as the T-59 version card.
   const sidebarStats = useMemo(() => {
@@ -574,12 +650,14 @@ function SpecViewBody({
    */
   const changeNav = ((): { unit: string; reason?: string } => {
     if (sourceDiff) {
-      return comparePaths.length > 1
-        ? { unit: "file diff" }
-        : {
-            unit: "file diff",
-            reason: "Only one file differs between these versions",
-          };
+      if (differing.length > 1) return { unit: "file diff" };
+      return {
+        unit: "file diff",
+        reason:
+          differing.length === 1
+            ? "Only one file differs between these versions"
+            : `Nothing changed since v${baseline}`,
+      };
     }
     if (version === 1) {
       return {
@@ -928,12 +1006,19 @@ function SpecViewBody({
           <ToolbarSlot name="display-toggle" title={wrapReason}>
             {renderedCompare && isNewFile ? (
               // Nothing is highlighted on a file the baseline never had, and
-              // saying why beats leaving the reader to wonder.
+              // saying why beats leaving the reader to wonder. A renamed one
+              // does have a baseline — under its old name (T-203).
               <span
                 className={cn(DISPLAY_SLOT, DISPLAY_SLOT_ON)}
-                title={`This file does not exist in v${baseline}`}
+                title={
+                  renamedSource === undefined
+                    ? `This file does not exist in v${baseline}`
+                    : `In v${baseline} this file was ${renamedSource}`
+                }
               >
-                new in v{version}
+                {renamedSource === undefined
+                  ? `new in v${version}`
+                  : `renamed from ${renamedSource}`}
               </span>
             ) : (
               <button
@@ -1236,7 +1321,7 @@ function SpecViewBody({
 }
 
 /** One rail row: a file of the viewed version, or one the baseline had. */
-type RailEntry = { path: string; removed: boolean };
+type RailEntry = { path: string; removed: boolean; from?: string };
 
 /**
  * The file rail, rendered twice: as the sticky aside from lg up, and inside
@@ -1271,7 +1356,13 @@ function SpecFileList({
             to="/projects/$slug/issues/$number/spec"
             params={params}
             search={searchFor(entry.path)}
-            title={entry.removed ? `${entry.path} (removed)` : entry.path}
+            title={
+              entry.removed
+                ? `${entry.path} (removed)`
+                : entry.from !== undefined
+                  ? `${entry.path} (renamed from ${entry.from})`
+                  : entry.path
+            }
             onClick={(event) => {
               // A modified click opens a background tab; tearing the
               // popover down under the reader's cursor would be wrong.
@@ -1293,13 +1384,23 @@ function SpecFileList({
             )}
           >
             <FileTextIcon className="size-4 shrink-0" />
-            <span
-              className={cn(
-                "truncate font-mono text-xs",
-                entry.removed && "text-muted-foreground line-through",
+            {/* The old path goes on its own line rather than inline before
+                the new one: at the rail's width `old → new` truncates away
+                the half that is the file's current name. */}
+            <span className="min-w-0 flex-1">
+              <span
+                className={cn(
+                  "block truncate font-mono text-xs",
+                  entry.removed && "text-muted-foreground line-through",
+                )}
+              >
+                {entry.path}
+              </span>
+              {entry.from !== undefined && (
+                <span className="block truncate font-mono text-[10px] text-muted-foreground">
+                  ← {entry.from}
+                </span>
               )}
-            >
-              {entry.path}
             </span>
             <span className="ml-auto inline-flex shrink-0 items-center gap-1.5">
               {unresolved > 0 && (
@@ -1409,7 +1510,7 @@ function UnplacedComment({
   );
 }
 
-/** All file pairs that differ between two versions, one diff per file. */
+/** Every file of two versions, one stack entry each — diff, note, or block. */
 function SpecDiff({
   slug,
   issueNumber,
@@ -1472,44 +1573,42 @@ function SpecDiff({
     }
     return release;
   }, [focusPath]);
-  const pairs = useMemo(() => {
-    const before = new Map(from.data.files.map((f) => [f.path, f.body]));
-    const after = new Map(toFiles.map((f) => [f.path, f.body]));
-    return diffPaths(from.data.files, toFiles).map((path) => ({
-      path,
-      oldBody: before.get(path) ?? "",
-      newBody: after.get(path) ?? "",
-    }));
-  }, [from.data.files, toFiles]);
+  const entries = useMemo(
+    () => diffEntries(from.data.files, toFiles),
+    [from.data.files, toFiles],
+  );
+  const differing = entries.filter(isDifference);
 
-  if (pairs.length === 0) {
-    return (
-      <p className="py-10 text-center text-sm text-muted-foreground">
-        v{fromVersion} and v{toVersion} are identical.
-      </p>
-    );
-  }
   return (
     <div className="space-y-4">
-      <p className="text-xs text-muted-foreground">
-        Drag across line numbers to comment on a range (old side anchors to v
-        {fromVersion}, new side to v{toVersion}).
-      </p>
-      {pairs.map((pair) => (
+      {differing.length === 0 ? (
+        <p className="text-center text-sm text-muted-foreground">
+          v{fromVersion} and v{toVersion} are identical.
+        </p>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          Drag across line numbers to comment on a range (old side anchors to v
+          {fromVersion}, new side to v{toVersion}).
+        </p>
+      )}
+      {entries.map((entry) => (
         <div
-          key={pair.path}
-          data-file-diff={pair.path}
-          ref={pair.path === focusPath ? focusRef : undefined}
+          key={entry.path}
+          // ↑↓ step over `data-file-diff`, so a file with nothing to show for
+          // itself is marked apart rather than joining the rotation.
+          {...(entry.kind === "unchanged"
+            ? { "data-file-unchanged": entry.path }
+            : { "data-file-diff": entry.path })}
+          ref={entry.path === focusPath ? focusRef : undefined}
           style={{ scrollMarginTop: stickyTop + 8 }}
         >
-          <AnnotatedFileDiff
-            path={pair.path}
-            oldBody={pair.oldBody}
-            newBody={pair.newBody}
+          <SpecStackEntry
+            entry={entry}
             fromVersion={fromVersion}
             toVersion={toVersion}
-            comments={comments.filter((c) => c.anchor.path === pair.path)}
+            comments={comments}
             onStage={onStage}
+            focused={entry.path === focusPath}
             wrap={wrap}
             stickyTop={stickyTop}
           />
@@ -1519,8 +1618,207 @@ function SpecDiff({
   );
 }
 
-function AnnotatedFileDiff({
+/** Picks the drawing that fits a file's fate between the two versions. */
+function SpecStackEntry({
+  entry,
+  fromVersion,
+  toVersion,
+  comments,
+  onStage,
+  focused,
+  wrap,
+  stickyTop,
+}: {
+  entry: SpecDiffEntry;
+  fromVersion: number;
+  toVersion: number;
+  comments: SpecCommentItem[];
+  onStage: (staging: ComposerStaging) => void;
+  /** The rail or a link pointed here: open a collapsed file on arrival. */
+  focused: boolean;
+  wrap: boolean;
+  stickyTop: number;
+}) {
+  const { path, kind, from, oldBody, newBody } = entry;
+
+  if (kind === "unchanged" || (kind === "renamed" && oldBody === newBody)) {
+    return (
+      <SpecUnfoldableFile
+        path={path}
+        oldPath={from}
+        body={newBody}
+        note={
+          from === undefined
+            ? `unchanged since v${fromVersion}`
+            : `renamed from ${from} — contents unchanged`
+        }
+        fromVersion={fromVersion}
+        toVersion={toVersion}
+        comments={comments}
+        onStage={onStage}
+        openOnMount={focused}
+        wrap={wrap}
+        stickyTop={stickyTop}
+      />
+    );
+  }
+
+  if (oldBody === newBody) {
+    // Both sides empty: pierre draws a header and nothing else for a diff
+    // with no hunks, so the fact that the file came or went is stated here
+    // instead of vanishing into an empty box (T-203).
+    return (
+      <SpecStackFrame header={path} stickyTop={stickyTop}>
+        <p className="px-3 py-2 text-xs text-muted-foreground italic">
+          Empty file — {kind === "added" ? "added" : "removed"} in v{toVersion}.
+        </p>
+      </SpecStackFrame>
+    );
+  }
+
+  return (
+    <AnnotatedFileDiff
+      oldPath={from ?? path}
+      newPath={path}
+      oldBody={oldBody}
+      newBody={newBody}
+      fromVersion={fromVersion}
+      toVersion={toVersion}
+      comments={comments}
+      onStage={onStage}
+      wrap={wrap}
+      stickyTop={stickyTop}
+    />
+  );
+}
+
+/**
+ * The box every stack entry shares. `clip` rather than `hidden`: both round
+ * the corners the same way, but an `overflow: hidden` ancestor becomes the
+ * scrollport its sticky descendants are measured against, which pins the path
+ * header to the top of the diff instead of the viewport (T-178).
+ */
+function SpecStackFrame({
+  header,
+  stickyTop,
+  children,
+}: {
+  header: ReactNode;
+  stickyTop: number;
+  children: ReactNode;
+}) {
+  return (
+    <div className="overflow-clip rounded-lg border">
+      <div
+        style={{ top: stickyTop }}
+        className="sticky z-20 border-b bg-background/95 px-3 py-1.5 font-mono text-xs backdrop-blur"
+      >
+        {header}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * A file the stack lists but has no diff to show for: untouched between the
+ * two versions, or moved without an edit. Folded shut on arrival — the stack
+ * covers the whole spec set now, and highlighting every untouched file on the
+ * way in buys the reader nothing (T-203).
+ */
+function SpecUnfoldableFile({
   path,
+  oldPath,
+  body,
+  note,
+  fromVersion,
+  toVersion,
+  comments,
+  onStage,
+  openOnMount,
+  wrap,
+  stickyTop,
+}: {
+  path: string;
+  /** Set only for a rename: where the baseline's comments are anchored. */
+  oldPath?: string;
+  body: string;
+  note: string;
+  fromVersion: number;
+  toVersion: number;
+  comments: SpecCommentItem[];
+  onStage: (staging: ComposerStaging) => void;
+  openOnMount: boolean;
+  wrap: boolean;
+  stickyTop: number;
+}) {
+  const [open, setOpen] = useState(openOnMount);
+  // A rail click retargets `file` without remounting the stack, so arriving
+  // at an already-mounted block has to open it too.
+  useEffect(() => {
+    if (openOnMount) setOpen(true);
+  }, [openOnMount]);
+
+  const lineAnnotations = useMemo(
+    () =>
+      comments
+        .filter(
+          (c) =>
+            (c.anchor.path === path && c.anchor.version === toVersion) ||
+            (c.anchor.path === (oldPath ?? path) &&
+              c.anchor.version === fromVersion),
+        )
+        .map((c) => ({ lineNumber: c.anchor.line_start ?? 0, metadata: c })),
+    [comments, path, oldPath, fromVersion, toVersion],
+  );
+
+  return (
+    <SpecStackFrame
+      header={
+        oldPath === undefined ? (
+          path
+        ) : (
+          <>
+            <span className="text-muted-foreground">{oldPath}</span> → {path}
+          </>
+        )
+      }
+      stickyTop={stickyTop}
+    >
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted/40"
+      >
+        <ChevronRightIcon
+          className={cn(
+            "size-3.5 shrink-0 transition-transform",
+            open && "rotate-90",
+          )}
+        />
+        <span className="truncate italic">{note}</span>
+        <span className="ml-auto shrink-0 underline">
+          {open ? "hide file" : "show file"}
+        </span>
+      </button>
+      {open && (
+        <SpecFileSource
+          path={path}
+          body={body}
+          version={toVersion}
+          lineAnnotations={lineAnnotations}
+          onStage={onStage}
+          wrap={wrap}
+        />
+      )}
+    </SpecStackFrame>
+  );
+}
+
+function AnnotatedFileDiff({
+  oldPath,
+  newPath,
   oldBody,
   newBody,
   fromVersion,
@@ -1530,7 +1828,9 @@ function AnnotatedFileDiff({
   wrap,
   stickyTop,
 }: {
-  path: string;
+  /** Differs from `newPath` only across a rename. */
+  oldPath: string;
+  newPath: string;
   oldBody: string;
   newBody: string;
   fromVersion: number;
@@ -1541,12 +1841,12 @@ function AnnotatedFileDiff({
   stickyTop: number;
 }) {
   const oldFile = useMemo(
-    () => ({ name: path, contents: oldBody }),
-    [path, oldBody],
+    () => ({ name: oldPath, contents: oldBody }),
+    [oldPath, oldBody],
   );
   const newFile = useMemo(
-    () => ({ name: path, contents: newBody }),
-    [path, newBody],
+    () => ({ name: newPath, contents: newBody }),
+    [newPath, newBody],
   );
   const syntaxTheme = useSyntaxTheme();
   const options = useMemo(
@@ -1559,12 +1859,15 @@ function AnnotatedFileDiff({
       enableLineSelection: true,
       onLineSelectionEnd: (range: SelectedLineRange | null) => {
         if (!range) return;
-        const version = range.side === "deletions" ? fromVersion : toVersion;
-        const body = range.side === "deletions" ? oldBody : newBody;
+        const deletion = range.side === "deletions";
+        const version = deletion ? fromVersion : toVersion;
+        const body = deletion ? oldBody : newBody;
         const lineStart = Math.min(range.start, range.end);
         const lineEnd = Math.max(range.start, range.end);
         onStage({
-          path,
+          // Each side anchors to the version it belongs to, and across a
+          // rename that is a different path as well as a different version.
+          path: deletion ? oldPath : newPath,
           version,
           lineStart,
           lineEnd,
@@ -1577,7 +1880,8 @@ function AnnotatedFileDiff({
       },
     }),
     [
-      path,
+      oldPath,
+      newPath,
       oldBody,
       newBody,
       fromVersion,
@@ -1592,7 +1896,8 @@ function AnnotatedFileDiff({
       comments
         .filter(
           (c) =>
-            c.anchor.version === fromVersion || c.anchor.version === toVersion,
+            (c.anchor.path === oldPath && c.anchor.version === fromVersion) ||
+            (c.anchor.path === newPath && c.anchor.version === toVersion),
         )
         .map((c) => ({
           side:
@@ -1604,21 +1909,22 @@ function AnnotatedFileDiff({
           lineNumber: c.anchor.line_start ?? 0,
           metadata: c,
         })),
-    [comments, fromVersion, toVersion],
+    [comments, oldPath, newPath, fromVersion, toVersion],
   );
 
   return (
-    // `clip` rather than `hidden`: both round the corners the same way, but
-    // an `overflow: hidden` ancestor becomes the scrollport its sticky
-    // descendants are measured against, which pins the path header to the
-    // top of the diff instead of the viewport (T-178).
-    <div className="overflow-clip rounded-lg border">
-      <div
-        style={{ top: stickyTop }}
-        className="sticky z-20 border-b bg-background/95 px-3 py-1.5 font-mono text-xs backdrop-blur"
-      >
-        {path}
-      </div>
+    <SpecStackFrame
+      header={
+        oldPath === newPath ? (
+          newPath
+        ) : (
+          <>
+            <span className="text-muted-foreground">{oldPath}</span> → {newPath}
+          </>
+        )
+      }
+      stickyTop={stickyTop}
+    >
       <MultiFileDiff<SpecCommentItem>
         oldFile={oldFile}
         newFile={newFile}
@@ -1628,13 +1934,14 @@ function AnnotatedFileDiff({
           <DiffAnnotation item={annotation.metadata} />
         )}
       />
-    </div>
+    </SpecStackFrame>
   );
 }
 
 /**
- * One version's markdown, whole — the source view with nothing to compare
- * against (T-200).
+ * One version's file, drawn whole. Three places need it: the source view with
+ * nothing to compare against (T-200), and the stack's unchanged and
+ * pure-rename blocks once unfolded (T-203).
  *
  * pierre's `File` rather than a diff of the file against itself: identical
  * sides produce zero hunks, and a hunkless `MultiFileDiff` renders its header
@@ -1642,24 +1949,21 @@ function AnnotatedFileDiff({
  * has nothing to work with either). `File` costs nothing in return — line
  * selection, annotations and wrapping all behave as they do in the diff.
  */
-function SpecSourceFile({
+function SpecFileSource({
   path,
   body,
   version,
-  annotations,
+  lineAnnotations,
   onStage,
   wrap,
-  stickyTop,
 }: {
   path: string;
   body: string;
+  /** What a line selection here anchors to. */
   version: number;
-  /** As remapped for the rendered view — the same comments, same lines. */
-  annotations: DisplayedAnnotation[];
+  lineAnnotations: Array<{ lineNumber: number; metadata: SpecCommentItem }>;
   onStage: (staging: ComposerStaging) => void;
   wrap: boolean;
-  /** Height of the shell header plus the page toolbar (T-178). */
-  stickyTop: number;
 }) {
   const file = useMemo(() => ({ name: path, contents: body }), [path, body]);
   const syntaxTheme = useSyntaxTheme();
@@ -1712,6 +2016,39 @@ function SpecSourceFile({
     }),
     [path, body, version, onStage, syntaxTheme, wrap],
   );
+
+  return (
+    <PierreFile<SpecCommentItem>
+      file={file}
+      options={options}
+      lineAnnotations={lineAnnotations}
+      renderAnnotation={(annotation) => (
+        <DiffAnnotation item={annotation.metadata} />
+      )}
+    />
+  );
+}
+
+/** The whole source of one version, framed like a stack entry (T-200). */
+function SpecSourceFile({
+  path,
+  body,
+  version,
+  annotations,
+  onStage,
+  wrap,
+  stickyTop,
+}: {
+  path: string;
+  body: string;
+  version: number;
+  /** As remapped for the rendered view — the same comments, same lines. */
+  annotations: DisplayedAnnotation[];
+  onStage: (staging: ComposerStaging) => void;
+  wrap: boolean;
+  /** Height of the shell header plus the page toolbar (T-178). */
+  stickyTop: number;
+}) {
   // Drafts stay out, as they do in the source diff; file-level comments have
   // their own strip above and never reach `annotations`.
   const lineAnnotations = useMemo(
@@ -1727,24 +2064,16 @@ function SpecSourceFile({
       <p className="text-xs text-muted-foreground">
         Drag across line numbers to comment on a range (anchors to v{version}).
       </p>
-      {/* `clip` rather than `hidden`, for the sticky path header — see
-          AnnotatedFileDiff. */}
-      <div className="overflow-clip rounded-lg border">
-        <div
-          style={{ top: stickyTop }}
-          className="sticky z-20 border-b bg-background/95 px-3 py-1.5 font-mono text-xs backdrop-blur"
-        >
-          {path}
-        </div>
-        <PierreFile<SpecCommentItem>
-          file={file}
-          options={options}
+      <SpecStackFrame header={path} stickyTop={stickyTop}>
+        <SpecFileSource
+          path={path}
+          body={body}
+          version={version}
           lineAnnotations={lineAnnotations}
-          renderAnnotation={(annotation) => (
-            <DiffAnnotation item={annotation.metadata} />
-          )}
+          onStage={onStage}
+          wrap={wrap}
         />
-      </div>
+      </SpecStackFrame>
     </div>
   );
 }

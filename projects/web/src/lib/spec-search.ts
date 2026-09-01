@@ -52,7 +52,10 @@ export type SpecMode = {
  * while an absent `compare` keeps meaning "previous version, rendered".
  * A baseline at or past the viewed version cannot be diffed, so a hand-typed
  * one degrades to the automatic baseline instead of fetching a missing
- * version.
+ * version — but the presentation follows the *presence* of `compare`, not its
+ * usability: a link that spells out a comparison still means to compare, and
+ * degrading it all the way back to rendered used to strand it on a removed
+ * file's placeholder (T-203).
  */
 export function specMode(
   search: SpecSearch,
@@ -66,7 +69,10 @@ export function specMode(
   const baseline = pinned ?? (off || version <= 1 ? null : version - 1);
   if (baseline === null) return { baseline, view: null };
   if (search.view !== undefined) return { baseline, view: search.view };
-  return { baseline, view: pinned === undefined ? "rendered" : "source" };
+  return {
+    baseline,
+    view: search.compare === undefined ? "rendered" : "source",
+  };
 }
 
 /**
