@@ -120,6 +120,33 @@ export function previewKind(target: {
   return null;
 }
 
+// application/* subtypes a top-level tab renders inline, each one measured
+// against the /view route rather than assumed (T-201). pdf is in: the built-in
+// viewer works even under the route's CSP sandbox.
+const VIEWABLE_APPLICATION_TYPES = new Set([
+  "application/xhtml+xml",
+  "application/json",
+  "application/xml",
+  "application/pdf",
+]);
+
+/**
+ * Whether /view would render this in a top-level tab, deciding where an
+ * anchor points — a separate question from `previewKind`, which decides what
+ * an in-app click opens. No filename fallback here: /view answers `nosniff`,
+ * so the stored content type is the only thing the browser will act on, and a
+ * generic type (octet-stream, empty) downloads either way — via /view it
+ * would just lose the S3 presign offload.
+ */
+export function opensInBrowserTab(target: { content_type?: string }): boolean {
+  const type = target.content_type ?? "";
+  return (
+    type.startsWith("image/") ||
+    type.startsWith("text/") ||
+    VIEWABLE_APPLICATION_TYPES.has(type)
+  );
+}
+
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const units = ["KB", "MB", "GB"];

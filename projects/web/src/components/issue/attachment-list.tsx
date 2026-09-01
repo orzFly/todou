@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   AppWindowIcon,
+  DownloadIcon,
   FileIcon,
   FileTextIcon,
   ImageIcon,
@@ -20,7 +21,7 @@ import {
   type PreviewTarget,
   previewKind,
 } from "@/lib/attachment-preview.ts";
-import { attachmentHref } from "@/lib/attachment-refs.ts";
+import { attachmentAnchorHref, attachmentHref } from "@/lib/attachment-refs.ts";
 
 /** Modifier-clicks (new tab, forced download) keep native link behavior. */
 function isPlainLeftClick(e: MouseEvent): boolean {
@@ -38,11 +39,13 @@ function attachmentIcon(attachment: {
 }
 
 /**
- * Attachment list for an issue. Every row is a real link to the download
- * API (so copy-link/middle-click keep working); a plain click on anything
+ * Attachment list for an issue. Every row is a real link (so copy-link and
+ * middle-click keep working), pointing at /view for types a tab renders and
+ * /download otherwise (T-201) — hence the separate download icon, which is
+ * the only way left to save a viewable file. A plain click on anything
  * previewable (image, HTML, in-limit text) is hijacked into the viewer,
- * anything else falls through to the browser download. The viewer pages
- * across the whole list (T-58).
+ * anything else falls through to the browser. The viewer pages across the
+ * whole list (T-58).
  */
 export function AttachmentList({
   slug,
@@ -67,10 +70,13 @@ export function AttachmentList({
         {items.map((attachment, index) => {
           const Icon = attachmentIcon(attachment);
           return (
-            <li key={attachment.id}>
+            <li
+              key={attachment.id}
+              className="flex items-center hover:bg-muted/40"
+            >
               <a
-                href={attachment.url}
-                className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/40"
+                href={attachmentAnchorHref(attachment)}
+                className="flex min-w-0 flex-1 items-center gap-2 py-2 pl-3 text-sm"
                 onClick={(e) => {
                   if (previewKind(attachment) !== null && isPlainLeftClick(e)) {
                     e.preventDefault();
@@ -85,6 +91,14 @@ export function AttachmentList({
                 <span className="ml-auto shrink-0 text-xs text-muted-foreground">
                   {formatSize(attachment.size)}
                 </span>
+              </a>
+              <a
+                href={attachment.url}
+                download={attachment.filename}
+                aria-label={`download ${attachment.filename}`}
+                className="shrink-0 py-2 pr-3 pl-2 text-muted-foreground hover:text-foreground"
+              >
+                <DownloadIcon className="size-3.5" />
               </a>
             </li>
           );
@@ -122,7 +136,9 @@ export function AttachmentEventLink({
   const attachments = useQuery(attachmentsQuery(slug, issueNumber));
   const [viewer, setViewer] = useState<ViewerState | null>(null);
   const attachment = attachments.data?.find((a) => a.id === attachmentId);
-  const url = attachment?.url ?? attachmentHref(slug, attachmentId, filename);
+  const url = attachment
+    ? attachmentAnchorHref(attachment)
+    : attachmentHref(slug, attachmentId, filename);
 
   return (
     <>
@@ -193,7 +209,7 @@ export function AttachmentRichLink({
   return (
     <>
       <a
-        href={attachment?.url ?? href}
+        href={attachment ? attachmentAnchorHref(attachment) : href}
         className="inline-flex items-center gap-1"
         onClick={(e) => {
           if (previewKind(target) !== null && isPlainLeftClick(e)) {

@@ -11,6 +11,7 @@ import {
   isTextDocument,
   TEXT_PREVIEW_MAX_BYTES,
 } from "@/lib/attachment-preview.ts";
+import { attachmentAnchorHref } from "@/lib/attachment-refs.ts";
 
 /** Card-shaped stand-in for the states that have no document body to show. */
 function EmbedShell({
@@ -56,7 +57,7 @@ function LoadedEmbed({
     return (
       <EmbedShell
         filename={attachment.filename}
-        href={attachment.url}
+        href={attachmentAnchorHref(attachment)}
         meta={formatSize(attachment.size)}
       >
         Loading…
@@ -67,7 +68,7 @@ function LoadedEmbed({
     return (
       <EmbedShell
         filename={attachment.filename}
-        href={attachment.url}
+        href={attachmentAnchorHref(attachment)}
         meta={formatSize(attachment.size)}
       >
         Failed to load: {text.error.message}
@@ -135,7 +136,7 @@ export function AttachmentDocumentEmbed({
     return (
       <EmbedShell
         filename={attachment.filename}
-        href={attachment.url}
+        href={attachmentAnchorHref(attachment)}
         meta={formatSize(attachment.size)}
       >
         Too large to preview — download to view.

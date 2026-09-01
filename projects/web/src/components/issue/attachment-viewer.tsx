@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   formatSize,
+  opensInBrowserTab,
   type PreviewTarget,
   previewKind,
 } from "@/lib/attachment-preview.ts";
@@ -226,7 +227,7 @@ export function AttachmentViewerDialog({
                   .join(" · ")}
               </span>
               <span className="flex shrink-0 items-center gap-3">
-                {kind === "html" && (
+                {opensInBrowserTab(target) && (
                   <a
                     href={viewHrefFromDownload(target.url)}
                     target="_blank"

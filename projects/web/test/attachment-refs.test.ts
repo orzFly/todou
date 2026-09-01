@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  attachmentAnchorHref,
   attachmentHref,
   attachmentImageMarker,
   parseAttachmentHref,
@@ -16,6 +17,17 @@ describe("parseAttachmentHref", () => {
     expect(
       parseAttachmentHref(
         "/api/projects/demo/attachments/12/download/shot%20%281%29.png",
+      ),
+    ).toEqual({ slug: "demo", id: 12, name: "shot (1).png" });
+  });
+
+  it("parses the /view twin, so a URL copied out of the UI renders rich", () => {
+    expect(
+      parseAttachmentHref("/api/projects/demo/attachments/12/view"),
+    ).toEqual({ slug: "demo", id: 12, name: null });
+    expect(
+      parseAttachmentHref(
+        "/api/projects/demo/attachments/12/view/shot%20%281%29.png",
       ),
     ).toEqual({ slug: "demo", id: 12, name: "shot (1).png" });
   });
@@ -44,6 +56,28 @@ describe("attachmentHref", () => {
       id: 7,
       name: "shot (1).png",
     });
+  });
+});
+
+describe("attachmentAnchorHref (T-201)", () => {
+  const url = "/api/projects/demo/attachments/12/download/f";
+
+  it("points viewable types at /view", () => {
+    expect(attachmentAnchorHref({ url, content_type: "text/html" })).toBe(
+      "/api/projects/demo/attachments/12/view/f",
+    );
+    expect(attachmentAnchorHref({ url, content_type: "application/pdf" })).toBe(
+      "/api/projects/demo/attachments/12/view/f",
+    );
+  });
+
+  it("leaves everything else on the download URL", () => {
+    expect(
+      attachmentAnchorHref({ url, content_type: "application/octet-stream" }),
+    ).toBe(url);
+    // An unresolved markdown reference knows no type yet; it upgrades once
+    // the attachments query fills one in.
+    expect(attachmentAnchorHref({ url })).toBe(url);
   });
 });
 

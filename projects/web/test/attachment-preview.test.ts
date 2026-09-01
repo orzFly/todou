@@ -4,6 +4,7 @@ import {
   isMarkdownDocument,
   isPreviewableImage,
   isTextDocument,
+  opensInBrowserTab,
   previewKind,
   TEXT_PREVIEW_MAX_BYTES,
 } from "@/lib/attachment-preview.ts";
@@ -133,6 +134,47 @@ describe("isHtmlDocument / html previews (T-58)", () => {
         "/api/projects/p/attachments/7/download/download.html",
       ),
     ).toBe("/api/projects/p/attachments/7/view/download.html");
+  });
+});
+
+describe("opensInBrowserTab (T-201)", () => {
+  it("accepts the types a tab renders inline", () => {
+    for (const type of [
+      "image/png",
+      "image/svg+xml",
+      "text/html",
+      "text/plain",
+      "text/markdown",
+      "application/xhtml+xml",
+      "application/json",
+      "application/xml",
+      "application/pdf",
+    ]) {
+      expect(opensInBrowserTab(attachment("f", type))).toBe(true);
+    }
+  });
+
+  it("keeps generic and unmeasured types on /download", () => {
+    expect(
+      opensInBrowserTab(attachment("main.rs", "application/octet-stream")),
+    ).toBe(false);
+    expect(opensInBrowserTab(attachment("build.log", ""))).toBe(false);
+    expect(opensInBrowserTab({})).toBe(false);
+    expect(
+      opensInBrowserTab(attachment("archive.zip", "application/zip")),
+    ).toBe(false);
+    // Text-shaped for the in-app preview, but never measured against /view.
+    expect(opensInBrowserTab(attachment("c.yaml", "application/yaml"))).toBe(
+      false,
+    );
+  });
+
+  it("ignores the filename, unlike the preview predicates", () => {
+    // /view answers nosniff, so an extension cannot talk the browser into
+    // rendering an octet-stream — while previewKind still highlights it.
+    const code = attachment("main.rs", "application/octet-stream", 512);
+    expect(previewKind(code)).toBe("text");
+    expect(opensInBrowserTab(code)).toBe(false);
   });
 });
 

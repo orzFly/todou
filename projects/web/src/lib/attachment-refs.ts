@@ -3,7 +3,13 @@
  * download API — real URLs, so they keep working in any renderer that
  * doesn't know about them. These helpers recognize and build that shape:
  * /api/projects/<slug>/attachments/<id>/download[/<name>]
+ *
+ * Parsing also accepts the /view twin: the attachment list links viewable
+ * types there (T-201), so a URL copied out of the UI and pasted into a
+ * comment has to render rich too. What we *write* stays /download.
  */
+
+import { opensInBrowserTab } from "@/lib/attachment-preview.ts";
 
 export type AttachmentRef = {
   slug: string;
@@ -13,7 +19,7 @@ export type AttachmentRef = {
 };
 
 const ATTACHMENT_HREF =
-  /^\/api\/projects\/([a-z0-9][a-z0-9-]*)\/attachments\/(\d{1,9})\/download(?:\/([^/?#]+))?$/;
+  /^\/api\/projects\/([a-z0-9][a-z0-9-]*)\/attachments\/(\d{1,9})\/(?:download|view)(?:\/([^/?#]+))?$/;
 
 export function parseAttachmentHref(
   href: string | undefined,
@@ -45,6 +51,21 @@ export function attachmentHref(
  */
 export function viewHrefFromDownload(url: string): string {
   return url.replace(/\/download(\/|$)/, "/view$1");
+}
+
+/**
+ * Where an attachment anchor points: /view for types a tab renders inline,
+ * so middle-click and ctrl-click show the file instead of downloading it
+ * (T-201); /download for everything else, whose only inline behavior would
+ * be a download anyway.
+ */
+export function attachmentAnchorHref(target: {
+  url: string;
+  content_type?: string;
+}): string {
+  return opensInBrowserTab(target)
+    ? viewHrefFromDownload(target.url)
+    : target.url;
 }
 
 /**
