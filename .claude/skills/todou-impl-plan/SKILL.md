@@ -5,52 +5,32 @@ description: Execute an approved todou spec plan — pull the spec set from the 
 
 # todou implement plan
 
-Execute a plan that lives as an **approved spec set on a todou issue**. Read `/todou-cli` first.
+Execute a plan that lives as an approved spec set on a todou issue. Read `/todou-cli` first.
 
-## Load the spec
+## Steps
 
-```bash
-todou spec status <n> -p <proj>            # confirm the latest version carries an approve verdict
-todou spec pull <n> <dir> -p <proj>        # fetch the set into a scratch dir (never committed)
-```
+1. `todou spec status <n> -p <proj>`. The latest version must carry an approve verdict. If it does
+   not, run `todou spec wait <n> -p <proj>` and follow the review loop of `/todou-plan`; do not
+   implement an unapproved plan, and do not plan to check `spec status` later, because a deferred
+   check has nothing to wake it.
+2. `todou spec pull <n> <dir> -p <proj>` into a scratch directory made with `mktemp -d`. Read
+   whichever exist: `proposal.md` (requirements), `design.md`, `api.md`, `plan.md` (the steps).
+3. Move the card to In Progress. Follow `plan.md`; with several steps, track them in a task list.
+4. Verify against the plan's acceptance criteria, commit on your branch without merging, move the
+   card to Ready to Ship, post a summary comment, report in the terminal.
 
-Read whichever of these exist (ignore missing ones):
+## When reality contradicts the plan
 
-- `proposal.md` — the user's original requirements
-- `design.md` — the overall design
-- `api.md` — the API design involved
-- `plan.md` — the concrete execution plan
+Small deviations get a note in the summary comment. Anything that changes the design gets a native
+question on the card (`comment add --questions` + `question wait`) before you proceed, and the answer
+goes into `proposal.md` on the next spec push, if there is one.
 
-If the latest version is **not** approved, stop and run the review loop from `/todou-plan` instead of
-implementing an unapproved plan — meaning **block on `todou issue watch <n> --since <cursor>`** (the
-whole issue, no type filter) and judge each wake-up with `spec status`, never with the event stream.
-Where the cursor comes from matters: a push mints it (`cursor=$(todou spec push … --print-cursor)`),
-and only when there is no write to take it from is a "now" cursor right. Never plan to re-check
-`spec status` later instead of blocking: a deferred re-check has no wake path — the agent goes idle
-forever.
+## The commit message
 
-## Execute
-
-Follow `plan.md`. If it has multiple steps, create a task list and manage progress through it.
-Move the card to In Progress if it isn't already.
-
-Where reality contradicts the plan (an assumption was wrong, a step is impossible as written), don't
-silently improvise: small deviations are fine with a note in the final summary; anything that changes
-the design gets a native question on the card (`comment add --questions` + `question wait`) before
-proceeding — and the answer recorded into `proposal.md` on the next spec push, if there is one.
-
-## Deliver
-
-Follow the standard worker wrap-up (see /todou-cli): verify per the plan's acceptance criteria,
-commit on your branch (**do not merge**), move the card to Ready to Ship, post a summary comment,
-report in the terminal.
-
-The commit message carries a `Spec:` line above the `Co-Authored-By:` line, pointing at the issue
-and spec version the implementation follows. **Write the card reference the way the project writes
-it** — many repos are mirrored to a host that autolinks bare `#N` to its own, unrelated numbering.
-Take the spelling from the card itself — the first line of `todou issue view <n> --brief` is that
-card, spelled (see /todou-cli) — never from habit; the repo's own convention in AGENTS.md wins
-where it differs:
+Add a `Spec:` line above the `Co-Authored-By:` line, naming the issue and the spec version the
+implementation follows. Spell the card the way the project does: take it from the first line of
+`todou issue view <n> --brief`. Where the repo's AGENTS.md sets a different convention, that wins,
+because a public mirror autolinks a bare `#N` to unrelated numbering.
 
 ```
 feat: implement the xyz feature
