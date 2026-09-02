@@ -387,9 +387,11 @@ describe("a heavily rewritten line collapses to few coherent chunks (T-180)", ()
 });
 
 /**
- * T-209's repro: a paragraph is deleted and the heading beneath it renumbered,
- * which the line diff hands over as one 1×1 rewrite pair — paragraph against
- * heading — plus a bare deletion of the old heading.
+ * T-209's repro: a paragraph is deleted and the heading beneath it renumbered.
+ * The line diff used to hand this over as one 1×1 rewrite pair — paragraph
+ * against heading — plus a bare deletion of the old heading, because a blank
+ * line between them counted as an anchor. Aligning the whole document at once
+ * puts both headings in the same run (T-211).
  */
 const T209_PARA =
   "上一版把裁决写在评论里，读者要在时间线里翻找才能知道当前版本过没过；这一版把裁决落到卡片头部的固定位置，任何时候打开都能一眼看到，不必回溯历史。";
@@ -430,18 +432,15 @@ const T209_TABLE_BEFORE = [
 ].join("\n");
 
 describe("removals read as removals (T-209)", () => {
-  it("refuses to inline-diff a deleted paragraph against an unrelated heading", async () => {
+  it("pairs the renumbered heading across the deleted paragraph (T-211)", async () => {
     const { container } = await renderDiff(T209_BEFORE, T209_AFTER);
-    // The pair used to hang all 72 characters off `5.6 CLI` as one `<del>`.
-    expect(container.querySelector("del.spec-del")).toBeNull();
-    expect(container.querySelector("ins.spec-ins")).toBeNull();
-    expect(container.querySelector("h3.spec-ins-block")?.textContent).toBe(
-      "5.6 CLI",
-    );
-    expect(texts(container, "del.spec-del-block")).toEqual([
-      T209_PARA,
-      "### 5.5 CLI",
-    ]);
+    // The pair used to hang all 72 characters off `5.6 CLI` as one `<del>`;
+    // T-209 then refused the pair outright, which cost the renumbering its
+    // word-level diff and put a second marker on the heading that survived.
+    expect(texts(container, "h3 del.spec-del")).toEqual(["5.5"]);
+    expect(texts(container, "h3 ins.spec-ins")).toEqual(["5.6"]);
+    expect(container.querySelector(".spec-ins-block")).toBeNull();
+    expect(texts(container, "del.spec-del-block")).toEqual([T209_PARA]);
   });
 
   it("shows a removed paragraph whole, well past the old 48-character cut", async () => {
@@ -474,6 +473,90 @@ describe("removals read as removals (T-209)", () => {
     expect(container.querySelector("table")).toBeNull();
     const marker = container.querySelector("del.spec-del-block");
     expect(marker?.textContent).toBe(T209_TABLE_ROWS.join("\n"));
+  });
+});
+
+/** A list item whose second half is a fence — one block the prose cannot see. */
+const LIST_ONE = "- 甲项说明。\n";
+const LIST_TWO = "- 甲项说明改。\n- 乙项：\n\n  ```ts\n  x();\n  ```\n";
+
+describe("the whole document is one alignment (T-211)", () => {
+  it("renumbers two headings past one deleted paragraph", async () => {
+    const { container } = await renderDiff(
+      `${T209_BEFORE}### 5.6 Web\n\n页面照旧。\n`,
+      `${T209_AFTER}### 5.7 Web\n\n页面照旧。\n`,
+    );
+    // Two runs, two 5.x pairs, and the paragraph is the only thing that went.
+    expect(texts(container, "h3 del.spec-del")).toEqual(["5.5", "5.6"]);
+    expect(texts(container, "h3 ins.spec-ins")).toEqual(["5.6", "5.7"]);
+    expect(texts(container, "del.spec-del-block")).toEqual([T209_PARA]);
+  });
+
+  it("pairs a short pointer with the paragraph that replaced it", async () => {
+    const { container } = await renderDiff(
+      "## 结论\n\n见下表。\n",
+      `## 结论\n\n${T209_PARA}\n`,
+    );
+    // Expanding a pointer into prose shares no word with what it became, and
+    // is still one paragraph rewritten. T-209's gate read the length ratio
+    // (0.056) and rendered a marker plus a wholly-new block instead.
+    expect(texts(container, "del.spec-del")).toEqual(["见下表"]);
+    // The full stop both sides end on is an anchor, so the insertion stops
+    // just short of it.
+    expect(texts(container, "ins.spec-ins").join("")).toBe(
+      T209_PARA.slice(0, -1),
+    );
+    expect(container.querySelector(".spec-ins-block")).toBeNull();
+    expect(container.querySelector(".spec-del-block")).toBeNull();
+  });
+
+  it("takes a new list item whole, fence included, even when merged with an edit", async () => {
+    const { container } = await renderDiff(LIST_ONE, LIST_TWO);
+    // No unchanged line between the two edits, so the item arrives in the same
+    // run as the edit above it. The fence used to make its item opaque, which
+    // left the prose half highlighted and the code half bare.
+    const items = container.querySelectorAll("li.spec-ins-block");
+    expect(items).toHaveLength(1);
+    expect(items[0]?.textContent).toContain("乙项");
+    expect(items[0]?.textContent).toContain("x();");
+    expect(items[0]?.querySelector(".spec-ins")).toBeNull();
+    expect(texts(container, "ins.spec-ins")).toEqual(["改"]);
+  });
+
+  it("shows a removed list item whole, fence included", async () => {
+    const { container } = await renderDiff(LIST_TWO, LIST_ONE);
+    const markers = container.querySelectorAll("del.spec-del-block");
+    expect(markers).toHaveLength(1);
+    expect(markers[0]?.textContent).toContain("乙项");
+    expect(markers[0]?.textContent).toContain("x();");
+    // The marker quotes source as plain text; nothing re-renders it, so the
+    // fence it carries does not come back as a code block.
+    expect(container.querySelectorAll("pre")).toHaveLength(0);
+    expect(texts(container, "del.spec-del")).toEqual(["改"]);
+  });
+
+  it("leaves an edited fence to the line wash", () => {
+    const decorations = changeDecorations(
+      buildSegmentIndex("```ts\na = 1;\n```\n"),
+      buildSegmentIndex("```ts\na = 2;\n```\n"),
+    );
+    // A fence is a leaf and pairs with its counterpart, but pierre owns what
+    // is inside it (T-31), so the pair is drawn on with nothing at all.
+    expect(decorations).toEqual({ spans: [], deletions: [], blocks: [] });
+  });
+
+  it("emits one marker and one word pair for T-209's repro", () => {
+    const before = buildSegmentIndex(T209_BEFORE);
+    const after = buildSegmentIndex(T209_AFTER);
+    const decorations = changeDecorations(before, after);
+    expect(decorations.spans).toHaveLength(1);
+    const span = decorations.spans[0];
+    expect(T209_AFTER.slice(span?.start ?? 0, span?.end ?? 0)).toBe("5.6");
+    expect(decorations.deletions.map((d) => [d.block, d.text])).toEqual([
+      [false, "5.5"],
+      [true, T209_PARA],
+    ]);
+    expect(decorations.blocks).toEqual([]);
   });
 });
 

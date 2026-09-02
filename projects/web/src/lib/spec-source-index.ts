@@ -10,14 +10,19 @@ import type { LineRange } from "./spec-changes.ts";
  * table cells — so the flattened text puts a newline there and a word
  * never straddles the boundary. Emphasis, links and the like are NOT on
  * this list: `a **b** c` is one flow and reads as "a b c".
+ *
+ * A fence is a leaf too and owns a group of its own (T-211), but it holds
+ * no prose and so is handled apart from these: its group never reaches the
+ * flattened text.
  */
 const LEAF_BLOCKS = new Set(["paragraph", "heading", "tableCell"]);
 
 /**
  * Structure the whole-block insertion evidence can name (T-158). `code` is
- * on the list even though the prose engine cannot see inside it: a fence
- * that falls entirely within inserted lines is provably new, and line
- * evidence is the only evidence it will ever have.
+ * on the list, and since T-211 it is a leaf like any other: its whole source
+ * — fences included — is the text it aligns by, so a fence being added or
+ * removed is decided the same way a paragraph is, and a container holding
+ * one can be judged new or gone in its entirety.
  */
 const SOURCE_BLOCKS = new Set([
   "paragraph",
@@ -81,9 +86,10 @@ export type SourceBlock = {
   firstGroup: number;
   lastGroup: number;
   /**
-   * The subtree holds code or raw HTML. Prose coverage then says nothing
-   * about the block as a whole — content the word-level engine never saw
-   * would be declared new on the strength of the text around it.
+   * The subtree holds raw HTML. Coverage then says nothing about the block
+   * as a whole — content nothing ever aligned would be declared new on the
+   * strength of the text around it. A fence used to count here too; since
+   * T-211 it owns a leaf group and can speak for itself.
    */
   opaque: boolean;
 };
@@ -115,9 +121,10 @@ function lineStartsOf(source: string): number[] {
  * are needed — source offsets in, to place a word-diff range on the page;
  * rendered offsets in, to turn a reader's selection into an anchor.
  *
- * Fenced and indented code is deliberately absent: those blocks are handed
- * to pierre's CodeView as plain text (T-31), and injecting anything into
- * them would corrupt the extraction. They keep block-level treatment.
+ * Fenced and indented code is deliberately absent from the prose: those
+ * blocks are handed to pierre's CodeView as plain text (T-31), and injecting
+ * anything into them would corrupt the extraction. They keep block-level
+ * treatment, and own a leaf group so the alignment can still place them.
  */
 export function buildSegmentIndex(source: string): SegmentIndex {
   const segments: SourceSegment[] = [];
@@ -142,7 +149,7 @@ export function buildSegmentIndex(source: string): SegmentIndex {
       parent,
       firstGroup: -1,
       lastGroup: -1,
-      opaque: type === "code",
+      opaque: false,
     });
     return blocks.length - 1;
   };
@@ -157,9 +164,24 @@ export function buildSegmentIndex(source: string): SegmentIndex {
   };
 
   const visit = (node: Nodes): void => {
-    if (node.type === "code" || node.type === "html") {
-      if (node.type === "code") pushBlock(node, "code");
+    if (node.type === "html") {
       markOpaque();
+      return;
+    }
+    // A fence is a leaf that owns a group but contributes no prose: nothing
+    // enters `text` or `segments`, so annotation anchoring and selection
+    // mapping never see it, while the alignment gets a block it can pair,
+    // insert or remove whole (T-211).
+    if (node.type === "code") {
+      const index = pushBlock(node, "code");
+      if (index === null) return;
+      const own = groups++;
+      groupTypes[own] = "code";
+      const block = blocks[index];
+      if (block !== undefined) {
+        block.firstGroup = own;
+        block.lastGroup = own;
+      }
       return;
     }
     if (node.type === "text" || node.type === "inlineCode") {
@@ -225,16 +247,6 @@ export function segmentsInLines(
   );
 }
 
-/** The `SegmentIndex.text` range a run of segments occupies. */
-export function textRangeOf(
-  segments: SourceSegment[],
-): { start: number; end: number } | null {
-  const first = segments[0];
-  const last = segments.at(-1);
-  if (first === undefined || last === undefined) return null;
-  return { start: first.at, end: last.at + last.text.length };
-}
-
 export type SourceRange = { start: number; end: number };
 
 /**
@@ -283,22 +295,6 @@ function groupRangesOf(index: SegmentIndex): Array<SourceRange | undefined> {
   return ranges;
 }
 
-function proseRangeOf(
-  block: SourceBlock,
-  groupRanges: Array<SourceRange | undefined>,
-): SourceRange | null {
-  if (block.firstGroup < 0) return null;
-  let start = Number.POSITIVE_INFINITY;
-  let end = -1;
-  for (let g = block.firstGroup; g <= block.lastGroup; g++) {
-    const range = groupRanges[g];
-    if (range === undefined) continue;
-    start = Math.min(start, range.start);
-    end = Math.max(end, range.end);
-  }
-  return end < 0 ? null : { start, end };
-}
-
 /** Blocks with no qualifying ancestor, i.e. the outermost of each nest. */
 function outermost(index: SegmentIndex, qualifies: boolean[]): SourceBlock[] {
   return index.blocks.filter((block, i) => {
@@ -312,31 +308,15 @@ function outermost(index: SegmentIndex, qualifies: boolean[]): SourceBlock[] {
 }
 
 /**
- * Outermost blocks whose source lines fall entirely inside `range` — the
- * evidence a pure insertion carries (T-158). Every line in there is new, so
- * a block that fits inside is new in its entirety and gets one highlight
- * instead of a box around each of its words.
- */
-export function blocksFullyInLines(
-  index: SegmentIndex,
-  range: LineRange,
-): SourceBlock[] {
-  return outermost(
-    index,
-    index.blocks.map(
-      (block) => block.line >= range.start && block.endLine <= range.end,
-    ),
-  );
-}
-
-/**
  * Outermost blocks every one of whose leaf groups is in `groups`. This is the
- * evidence a rewrite pair carries once its two sides are aligned block by
- * block (T-163): a group nothing on the old side matched is new, and a block
- * built only out of such groups was born whole.
+ * evidence the alignment carries (T-163): a group nothing on the old side
+ * matched is new, and a block built only out of such groups was born whole.
  *
  * Groups holding no prose abstain rather than veto — an empty table cell says
- * nothing about whether its table is new.
+ * nothing about whether its table is new. A fence's group is the exception it
+ * used to be part of: it holds no prose either, but it is a leaf that was
+ * aligned, so it votes, and that is what lets a list item carrying a code
+ * block be taken or given up in one piece (T-211).
  */
 export function blocksWhollyInGroups(
   index: SegmentIndex,
@@ -347,7 +327,9 @@ export function blocksWhollyInGroups(
     if (block.opaque || block.firstGroup < 0) return false;
     let any = false;
     for (let g = block.firstGroup; g <= block.lastGroup; g++) {
-      if (groupRanges[g] === undefined) continue;
+      if (index.groupTypes[g] !== "code" && groupRanges[g] === undefined) {
+        continue;
+      }
       if (!groups.has(g)) return false;
       any = true;
     }
@@ -373,53 +355,6 @@ export function outermostBlockOfGroup(
         block.lastGroup >= group,
     ) ?? null
   );
-}
-
-/** The `SegmentIndex.text` ranges a run of blocks occupies. */
-export function textRangesOfBlocks(
-  index: SegmentIndex,
-  blocks: SourceBlock[],
-): SourceRange[] {
-  const groupRanges = groupRangesOf(index);
-  const ranges: SourceRange[] = [];
-  for (const block of blocks) {
-    const prose = proseRangeOf(block, groupRanges);
-    if (prose !== null) ranges.push(prose);
-  }
-  return ranges;
-}
-
-/** Sorted, non-overlapping union of half-open ranges. */
-export function mergeRanges(ranges: SourceRange[]): SourceRange[] {
-  const out: SourceRange[] = [];
-  for (const range of [...ranges].sort((a, b) => a.start - b.start)) {
-    const last = out.at(-1);
-    if (last !== undefined && range.start <= last.end) {
-      last.end = Math.max(last.end, range.end);
-    } else out.push({ ...range });
-  }
-  return out;
-}
-
-/** `ranges` minus every part of `cuts`, both in the same coordinate space. */
-export function subtractRanges(
-  ranges: SourceRange[],
-  cuts: SourceRange[],
-): SourceRange[] {
-  const holes = mergeRanges(cuts);
-  const out: SourceRange[] = [];
-  for (const range of ranges) {
-    let start = range.start;
-    for (const hole of holes) {
-      if (hole.end <= start) continue;
-      if (hole.start >= range.end) break;
-      if (hole.start > start) out.push({ start, end: hole.start });
-      start = hole.end;
-      if (start >= range.end) break;
-    }
-    if (start < range.end) out.push({ start, end: range.end });
-  }
-  return out;
 }
 
 /** Source offset for a caret sitting at `pos` in the flattened text. */

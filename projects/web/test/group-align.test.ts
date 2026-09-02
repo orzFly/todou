@@ -12,6 +12,11 @@ function group(type: SourceBlockType | null, text: string): AlignGroup {
 const para = (text: string) => group("paragraph", text);
 const cell = (text: string) => group("tableCell", text);
 const head = (text: string) => group("heading", text);
+const code = (text: string) => group("code", text);
+
+/** T-209's repro: the paragraph that was deleted above a renumbered heading. */
+const T209_PARA =
+  "上一版把裁决写在评论里，读者要在时间线里翻找才能知道当前版本过没过；这一版把裁决落到卡片头部的固定位置，任何时候打开都能一眼看到，不必回溯历史。";
 
 const paired = (result: ReturnType<typeof alignGroups>) =>
   result.pairs.map((p) => [p.old.text, p.new.text]);
@@ -28,31 +33,14 @@ describe("alignGroups", () => {
 
   it("pairs one for one even with nothing in common", () => {
     // T-142's flagship: 二 → 三 shares no character and must stay word-level.
+    // Between two anchors with one block on each side, the position is the
+    // evidence; nothing else gets a vote.
     const result = alignGroups([cell("二")], [cell("三")]);
     expect(paired(result)).toEqual([["二", "三"]]);
   });
 
-  it("refuses one for one when the two are unlike in size as well", () => {
-    // T-209: the paragraph was deleted and the heading below it renumbered,
-    // which puts the two in one 1×1 run — similarity 0 over a 10× size gap
-    // here, 0.015 on the pair the card measured. The old paragraph used to
-    // come out struck through, inline, beside the new heading's words.
-    const result = alignGroups(
-      [
-        para(
-          "上一版把裁决写在评论里，读者要在时间线里翻找才能知道当前版本过没过；这一版把裁决落到卡片头部的固定位置，任何时候打开都能一眼看到，不必回溯历史。",
-        ),
-      ],
-      [head("5.6 CLI")],
-    );
-    expect(result.pairs).toEqual([]);
-    expect(result.oldOnly.map((o) => o.newIndex)).toEqual([0]);
-    expect(result.newOnly.map((g) => g.text)).toEqual(["5.6 CLI"]);
-  });
-
   it("pairs one for one at the same size, sharing nothing at all", () => {
-    // Every word replaced but the bulk unchanged: still one block rewritten,
-    // and the case the length gate above must not take with it.
+    // Every word replaced but the bulk unchanged: still one block rewritten.
     const result = alignGroups(
       [para("aaaa bbbb cccc dddd eeee ffff gggg")],
       [para("hhhh iiii jjjj kkkk llll mmmm nnnn")],
@@ -65,13 +53,94 @@ describe("alignGroups", () => {
     ]);
   });
 
-  it("pairs two short blocks however far apart their lengths", () => {
+  it("pairs two blocks however far apart their lengths", () => {
     // A cell holding one word can lose every character of it and still be
-    // the cell that was rewritten; nothing this small has a ratio worth
-    // reading, which is 二→三's case one size up.
+    // the cell that was rewritten. T-209 shipped a gate that refused this on
+    // a length ratio; the ratio was never the question (T-211).
     expect(paired(alignGroups([cell("否")], [cell("需要人工确认")]))).toEqual([
       ["否", "需要人工确认"],
     ]);
+  });
+
+  it("pairs the renumbered heading across a deleted paragraph (T-211)", () => {
+    // T-209's repro, and the card this one exists for. The line diff used to
+    // cut the two headings into different hunks over one blank line, so the
+    // deleted paragraph met `5.6 CLI` alone and came out struck through,
+    // inline, beside the new heading's words. Over the whole document the run
+    // is 2×1: 5.5 scores 0.50 against 5.6, the paragraph 0.00, so the heading
+    // takes the pair and the paragraph is what went.
+    const result = alignGroups(
+      [para(T209_PARA), head("5.5 CLI")],
+      [head("5.6 CLI")],
+    );
+    expect(paired(result)).toEqual([["5.5 CLI", "5.6 CLI"]]);
+    expect(result.oldOnly.map((o) => [o.group.text, o.newIndex])).toEqual([
+      [T209_PARA, 0],
+    ]);
+    expect(result.newOnly).toEqual([]);
+  });
+
+  it("pairs a short pointer with the paragraph that replaced it", () => {
+    // Expanding `见下表。` into the table's prose is an ordinary edit. It
+    // shares not one word with what replaced it (bag similarity 0.00), and
+    // pairs anyway: one block, one counterpart, no competition. T-209's gate
+    // refused it on both of its measures and rendered a marker plus a whole
+    // new block.
+    const result = alignGroups([para("见下表。")], [para(T209_PARA)]);
+    expect(paired(result)).toEqual([["见下表。", T209_PARA]]);
+  });
+
+  it("decides each type class on its own", () => {
+    // One paragraph and one fence on each side is two 1×1 questions. Read as
+    // a single 2×2 it would put `intro` and `outro` up against the similarity
+    // floor, which two unrelated single words cannot clear.
+    const result = alignGroups(
+      [para("intro"), code("```ts\na = 1;\n```")],
+      [para("outro"), code("```ts\na = 2;\n```")],
+    );
+    expect(paired(result)).toEqual([
+      ["intro", "outro"],
+      ["```ts\na = 1;\n```", "```ts\na = 2;\n```"],
+    ]);
+  });
+
+  it("never pairs code with prose", () => {
+    const result = alignGroups([para("说明")], [code("```\nx\n```")]);
+    expect(result.pairs).toEqual([]);
+    expect(result.oldOnly.map((o) => o.group.text)).toEqual(["说明"]);
+    expect(result.newOnly.map((g) => g.text)).toEqual(["```\nx\n```"]);
+  });
+
+  it("scores a block whose sentences were reordered as the same block", () => {
+    // What a bag of words buys over diffing them: reordering two sentences
+    // leaves every word in place, so the bag reads 1.00 where the old
+    // diff-based measure read 0.60. The unrelated third paragraph scores 0.00
+    // either way and is what went.
+    const result = alignGroups(
+      [para("甲句在前。乙句在后。"), para("毫不相干的第三段。")],
+      [para("乙句在后。甲句在前。")],
+    );
+    expect(paired(result)).toEqual([
+      ["甲句在前。乙句在后。", "乙句在后。甲句在前。"],
+    ]);
+    expect(result.oldOnly.map((o) => [o.group.text, o.newIndex])).toEqual([
+      ["毫不相干的第三段。", 1],
+    ]);
+  });
+
+  it("puts a dropped old leaf at the seam of the new leaf it lost to", () => {
+    // The fence is identical on both sides, so it anchors and the run is the
+    // two paragraphs against one. 旧甲 takes the pair at 0.80 against 旧乙's
+    // 0.40, and 旧乙 lands after the new paragraph, where it used to sit.
+    const result = alignGroups(
+      [para("旧甲。"), para("旧乙。"), code("```\nk\n```")],
+      [para("旧甲改。"), code("```\nk\n```")],
+    );
+    expect(paired(result)).toEqual([["旧甲。", "旧甲改。"]]);
+    expect(result.oldOnly.map((o) => [o.group.text, o.newIndex])).toEqual([
+      ["旧乙。", 1],
+    ]);
+    expect(result.newOnly).toEqual([]);
   });
 
   it("never pairs a paragraph with a table cell", () => {
@@ -142,9 +211,10 @@ describe("alignGroups", () => {
   });
 
   it("zips by position once the run is too wide to score", () => {
-    // 11 × 11 clears the 100-pair guard; nothing is equal, so it is one run.
-    const olds = Array.from({ length: 11 }, (_, i) => cell(`旧${i}`));
-    const news = Array.from({ length: 11 }, (_, i) => cell(`新${i}`));
+    // 101 × 101 clears the 10 000-pair guard; nothing is equal, so it is one
+    // run. Real revisions get nowhere near: the widest measured is 30 × 14.
+    const olds = Array.from({ length: 101 }, (_, i) => cell(`旧${i}`));
+    const news = Array.from({ length: 101 }, (_, i) => cell(`新${i}`));
     const result = alignGroups(olds, news);
     expect(paired(result)).toEqual(olds.map((o, i) => [o.text, `新${i}`]));
     expect(result.oldOnly).toEqual([]);
@@ -152,11 +222,11 @@ describe("alignGroups", () => {
   });
 
   it("drops the surplus when a wide run's two sides differ in length", () => {
-    const olds = Array.from({ length: 11 }, (_, i) => cell(`旧${i}`));
-    const news = Array.from({ length: 13 }, (_, i) => cell(`新${i}`));
+    const olds = Array.from({ length: 101 }, (_, i) => cell(`旧${i}`));
+    const news = Array.from({ length: 103 }, (_, i) => cell(`新${i}`));
     const result = alignGroups(olds, news);
-    expect(result.pairs).toHaveLength(11);
-    expect(result.newOnly.map((g) => g.text)).toEqual(["新11", "新12"]);
+    expect(result.pairs).toHaveLength(101);
+    expect(result.newOnly.map((g) => g.text)).toEqual(["新101", "新102"]);
   });
 
   it("only ever pairs an untyped group with another untyped one", () => {

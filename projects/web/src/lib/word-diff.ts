@@ -24,6 +24,28 @@ class WordDiff extends Diff<string, string> {
 
 const differ = new WordDiff();
 
+/**
+ * Word-like tokens of `text`, weighted by how many characters each spends.
+ * This is what `alignGroups` scores a candidate pair with (T-211): the
+ * question there is only "are these two the same block", and a bag of words
+ * answers it without the quadratic cost of a real diff — which matters once
+ * the run being scored is a whole rewritten section rather than one line
+ * hunk. Spaces and punctuation stay out: T-180 already found those to be
+ * the anchors that mean nothing.
+ */
+export type WordBag = { weights: Map<string, number>; total: number };
+
+export function wordBag(text: string): WordBag {
+  const weights = new Map<string, number>();
+  let total = 0;
+  for (const { segment, isWordLike } of segmenter.segment(text)) {
+    if (isWordLike !== true) continue;
+    weights.set(segment, (weights.get(segment) ?? 0) + segment.length);
+    total += segment.length;
+  }
+  return { weights, total };
+}
+
 /** Half-open character range `[start, end)`. */
 export type WordDiffRange = { start: number; end: number };
 
@@ -96,9 +118,9 @@ function weightOf(run: EditRun): number {
  * two tiers T-180 weighed, and tightening it later is the one comparison
  * below.
  *
- * `wordDiff` keeps its bare output for `similarity()`: that measures how much
- * genuinely changed, and folded-in anchors would read as change that is not
- * there, moving pairs across the floor line T-163 relies on.
+ * `wordDiff` keeps its bare output beside this one: coalescing answers "what
+ * should the reader see", and anything measuring how much genuinely changed
+ * would read a folded-in anchor as change that is not there.
  */
 export function coalescedWordDiff(
   oldText: string,

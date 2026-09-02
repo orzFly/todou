@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { changeDecorations } from "../src/lib/spec-decorations.ts";
 import {
-  changedBlockPairs,
-  changedLineRanges,
-} from "../src/lib/spec-changes.ts";
-import {
-  blocksFullyInLines,
   blocksWhollyInGroups,
   buildSegmentIndex,
   lineColAt,
@@ -14,60 +10,29 @@ import {
   sourceOffsetOfRendered,
   sourceOffsetOfText,
   sourceRangesOfText,
-  subtractRanges,
-  textRangeOf,
-  textRangesOfBlocks,
 } from "../src/lib/spec-source-index.ts";
 import { wordDiff } from "../src/lib/word-diff.ts";
 
-/** What the rendered view highlights for one edited line range. */
+/** What the rendered view highlights, straight off the engine. */
 function insertedText(oldBody: string, newBody: string): string[] {
-  const oldIndex = buildSegmentIndex(oldBody);
-  const newIndex = buildSegmentIndex(newBody);
-  const out: string[] = [];
-  for (const pair of changedBlockPairs(oldBody, newBody)) {
-    if (pair.old === null || pair.new === null) continue;
-    const before = textRangeOf(segmentsInLines(oldIndex, pair.old));
-    const after = textRangeOf(segmentsInLines(newIndex, pair.new));
-    if (before === null || after === null) continue;
-    const result = wordDiff(
-      oldIndex.text.slice(before.start, before.end),
-      newIndex.text.slice(after.start, after.end),
-    );
-    for (const range of result.ins) {
-      for (const source of sourceRangesOfText(
-        newIndex,
-        after.start + range.start,
-        after.start + range.end,
-      )) {
-        out.push(newBody.slice(source.start, source.end));
-      }
-    }
-  }
-  return out;
+  const decorations = changeDecorations(
+    buildSegmentIndex(oldBody),
+    buildSegmentIndex(newBody),
+  );
+  return decorations.spans
+    .filter((span) => span.kind === "ins")
+    .map((span) => newBody.slice(span.start, span.end));
 }
 
-/** The counterpart: what was removed, read off the old side. */
+/** The counterpart: the text struck through inside the block that replaced it. */
 function deletedText(oldBody: string, newBody: string): string[] {
-  const oldIndex = buildSegmentIndex(oldBody);
-  const newIndex = buildSegmentIndex(newBody);
-  const out: string[] = [];
-  for (const pair of changedBlockPairs(oldBody, newBody)) {
-    if (pair.old === null || pair.new === null) continue;
-    const before = textRangeOf(segmentsInLines(oldIndex, pair.old));
-    const after = textRangeOf(segmentsInLines(newIndex, pair.new));
-    if (before === null || after === null) continue;
-    const result = wordDiff(
-      oldIndex.text.slice(before.start, before.end),
-      newIndex.text.slice(after.start, after.end),
-    );
-    for (const gone of result.del) {
-      out.push(
-        oldIndex.text.slice(before.start + gone.from, before.start + gone.to),
-      );
-    }
-  }
-  return out;
+  const decorations = changeDecorations(
+    buildSegmentIndex(oldBody),
+    buildSegmentIndex(newBody),
+  );
+  return decorations.deletions
+    .filter((deletion) => !deletion.block)
+    .map((deletion) => deletion.text);
 }
 
 describe("wordDiff", () => {
@@ -159,6 +124,7 @@ describe("buildSegmentIndex", () => {
       "tableCell",
       "tableCell",
       "tableCell",
+      "code",
       "paragraph",
     ]);
   });
@@ -281,50 +247,31 @@ describe("the block table (T-158)", () => {
     expect([rows[1]?.firstGroup, rows[1]?.lastGroup]).toEqual([4, 5]);
   });
 
-  it("owns no group where there is no prose, and says so", () => {
+  it("gives a fence one group of its own, and no opacity (T-211)", () => {
     const code = index.blocks.find((b) => b.type === "code");
-    expect(code?.firstGroup).toBe(-1);
-    expect(code?.opaque).toBe(true);
+    // 标题 段落 and the table's four cells are groups 0…5.
+    expect([code?.firstGroup, code?.lastGroup]).toEqual([6, 6]);
+    expect(code?.opaque).toBe(false);
   });
 
-  it("propagates opacity from a fence up to every ancestor", () => {
-    const nested = buildSegmentIndex(
-      "> 引言段落。\n>\n> ```js\n> code();\n> ```\n",
-    );
+  it("propagates opacity from raw HTML up to every ancestor", () => {
+    const nested = buildSegmentIndex("> 引言段落。\n>\n> <b>x</b>\n");
     const quote = nested.blocks.find((b) => b.type === "blockquote");
     const paragraph = nested.blocks.find((b) => b.type === "paragraph");
     expect(quote?.opaque).toBe(true);
+    // The first paragraph is the prose one; the tag lives in the second.
     expect(paragraph?.opaque).toBe(false);
   });
 
-  it("reports a block's prose extent in the flattened text", () => {
-    const rows = index.blocks.filter((b) => b.type === "tableRow");
-    const ranges = textRangesOfBlocks(index, rows.slice(1));
-    expect(ranges).toHaveLength(1);
-    const range = ranges[0];
-    expect(index.text.slice(range?.start ?? 0, range?.end ?? 0)).toBe("一\n二");
-  });
-
-  describe("line evidence", () => {
-    it("takes the outermost block that fits inside the lines", () => {
-      const found = blocksFullyInLines(index, { start: 4, end: 7 });
-      expect(found.map((b) => b.type)).toEqual(["table"]);
-    });
-
-    it("drops to the row when the table itself does not fit", () => {
-      const found = blocksFullyInLines(index, { start: 7, end: 7 });
-      expect(found.map((b) => b.type)).toEqual(["tableRow"]);
-    });
-
-    it("finds nothing when no block fits whole", () => {
-      const multiline = buildSegmentIndex("第一行\n第二行\n第三行\n");
-      expect(blocksFullyInLines(multiline, { start: 2, end: 2 })).toEqual([]);
-    });
-
-    it("names a fence, which prose coverage never could", () => {
-      const found = blocksFullyInLines(index, { start: 8, end: 11 });
-      expect(found.map((b) => b.type)).toEqual(["code"]);
-    });
+  it("no longer calls a quote opaque for holding a fence (T-211)", () => {
+    const nested = buildSegmentIndex(
+      "> 引言段落。\n>\n> ```js\n> code();\n> ```\n",
+    );
+    expect(nested.blocks.map((b) => [b.type, b.opaque])).toEqual([
+      ["blockquote", false],
+      ["paragraph", false],
+      ["code", false],
+    ]);
   });
 
   describe("alignment evidence (T-163)", () => {
@@ -356,10 +303,14 @@ describe("the block table (T-158)", () => {
       expect(found.map((b) => b.type)).toEqual(["table"]);
     });
 
-    it("refuses a block holding content it cannot see", () => {
+    it("refuses a block whose fence nothing accounted for", () => {
       const doc = buildSegmentIndex("> 引言。\n>\n> ```js\n> a();\n> ```\n");
+      // Group 0 is the paragraph, group 1 the fence. Half the quote is not
+      // the quote — the fence has to be unmatched too.
       const found = blocksWhollyInGroups(doc, new Set([0]));
       expect(found.map((b) => b.type)).not.toContain("blockquote");
+      const both = blocksWhollyInGroups(doc, new Set([0, 1]));
+      expect(both.map((b) => b.type)).toEqual(["blockquote"]);
     });
   });
 
@@ -376,71 +327,6 @@ describe("the block table (T-158)", () => {
     it("has no answer for a group no block owns", () => {
       expect(outermostBlockOfGroup(index, 99)).toBeNull();
     });
-  });
-});
-
-describe("subtractRanges", () => {
-  it("cuts holes out of a range and keeps both remainders", () => {
-    expect(
-      subtractRanges([{ start: 0, end: 10 }], [{ start: 3, end: 6 }]),
-    ).toEqual([
-      { start: 0, end: 3 },
-      { start: 6, end: 10 },
-    ]);
-  });
-
-  it("drops a range the cuts cover entirely", () => {
-    expect(
-      subtractRanges(
-        [{ start: 2, end: 5 }],
-        [
-          { start: 0, end: 3 },
-          { start: 3, end: 9 },
-        ],
-      ),
-    ).toEqual([]);
-  });
-
-  it("leaves a range untouched when nothing overlaps", () => {
-    expect(
-      subtractRanges([{ start: 0, end: 4 }], [{ start: 4, end: 8 }]),
-    ).toEqual([{ start: 0, end: 4 }]);
-  });
-});
-
-describe("changedBlockPairs", () => {
-  it("pairs a rewrite's two sides", () => {
-    expect(changedBlockPairs("a\nb\nc\n", "a\nB\nc\n")).toEqual([
-      { old: { start: 2, end: 2 }, new: { start: 2, end: 2 }, at: 2 },
-    ]);
-  });
-
-  it("leaves the old side null for a pure insertion", () => {
-    expect(changedBlockPairs("a\nc\n", "a\nb\nc\n")).toEqual([
-      { old: null, new: { start: 2, end: 2 }, at: 2 },
-    ]);
-  });
-
-  it("points a pure deletion at the line that closed the hole", () => {
-    expect(changedBlockPairs("a\nb\nc\n", "a\nc\n")).toEqual([
-      { old: { start: 2, end: 2 }, new: null, at: 2 },
-    ]);
-  });
-
-  it("keeps separate edits separate", () => {
-    const pairs = changedBlockPairs("a\nb\nc\nd\n", "A\nb\nc\nD\n");
-    expect(pairs).toHaveLength(2);
-    expect(pairs[0]?.new).toEqual({ start: 1, end: 1 });
-    expect(pairs[1]?.new).toEqual({ start: 4, end: 4 });
-  });
-
-  it("agrees with changedLineRanges on the new side", () => {
-    const before = "a\nb\nc\n";
-    const after = "a\nB\nB2\nc\n";
-    const fromPairs = changedBlockPairs(before, after)
-      .map((p) => p.new)
-      .filter((r) => r !== null);
-    expect(fromPairs).toEqual(changedLineRanges(before, after));
   });
 });
 

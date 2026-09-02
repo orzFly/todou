@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   coalescedWordDiff,
   type WordDiffResult,
+  wordBag,
   wordDiff,
 } from "../src/lib/word-diff.ts";
 
@@ -169,5 +170,25 @@ describe("coalescedWordDiff (T-180)", () => {
       ins: [],
       del: [],
     });
+  });
+});
+
+describe("wordBag (T-211)", () => {
+  it("weighs each word by its length and leaves the spaces out", () => {
+    const bag = wordBag("5.5 CLI");
+    expect([...bag.weights]).toEqual([
+      ["5.5", 3],
+      ["CLI", 3],
+    ]);
+    expect(bag.total).toBe(6);
+  });
+
+  it("segments Chinese and drops the punctuation", () => {
+    const bag = wordBag("见下表。");
+    expect([...bag.weights]).toEqual([
+      ["见", 1],
+      ["下表", 2],
+    ]);
+    expect(bag.total).toBe(3);
   });
 });

@@ -1,16 +1,16 @@
 import { diffArrays } from "diff";
 import type { SourceBlockType } from "./spec-source-index.ts";
-import { wordDiff } from "./word-diff.ts";
+import { type WordBag, wordBag } from "./word-diff.ts";
 
-/** One leaf block's prose, as a candidate for alignment. */
+/** One leaf block, as a candidate for alignment. */
 export type AlignGroup = {
   /** Leaf-group number, i.e. an index into `SegmentIndex.groupTypes`. */
   group: number;
   /** null when the block table had no type for it; then it pairs only with null. */
   type: SourceBlockType | null;
-  /** The group's slice of the owning `SegmentIndex.text`. */
+  /** The group's slice of the owning `SegmentIndex.text`; a fence's own source. */
   text: string;
-  /** Offset of `text[0]` in that same flattened text. */
+  /** Offset of `text[0]` in that same flattened text; -1 for a fence, which is not in it. */
   at: number;
 };
 
@@ -29,33 +29,26 @@ export type Alignment = {
 };
 
 /**
- * Below this share of common text, two blocks are two blocks rather than one
+ * Below this share of common words, two blocks are two blocks rather than one
  * rewritten — pairing them would diff unrelated prose and scatter marks
- * through both.
+ * through both. It only ever gets asked where more than one candidate
+ * competes; where the position is unique it says nothing (see `matchRun`).
  */
 const SIMILARITY_FLOOR = 1 / 3;
 
 /**
- * Below this share of the longer block's length the two are not one block
- * rewritten, whatever their words score: shedding two thirds of a block's
- * bulk is content leaving, not content changing (T-209).
+ * Past this many candidate pairs, scoring stops paying for itself and the run
+ * degrades to pairing by position. Word-bag scoring measures at roughly 3 µs a
+ * pair, so ten thousand of them cost about 30 ms: this is a safety net against
+ * pathological input, not a threshold the ordinary document approaches. The
+ * widest run across T-207's and T-203's real revisions is 30 blocks against 14.
  */
-const LENGTH_RATIO_FLOOR = 1 / 3;
-
-/**
- * A block this short can be rewritten without keeping a single character, so
- * neither measure above says anything about one. T-142's flagship 二→三 is the
- * class, and the table cells holding a word or a number are the rest of it.
- */
-const SHORT_BLOCK = 12;
-
-/**
- * Past this many candidate pairs the m·n word diffs stop paying for
- * themselves; a wholesale table reshuffle is the case that gets here.
- */
-const PAIRS_GUARD = 100;
+const PAIRS_GUARD = 10_000;
 
 const PROSE_LEAVES = new Set<SourceBlockType>(["paragraph", "heading"]);
+
+/** What a leaf may be confused with: itself, and nothing across the line. */
+type Class = "none" | "prose" | SourceBlockType;
 
 /**
  * A table cell only ever pairs with a table cell, and that is the whole fix
@@ -63,59 +56,41 @@ const PROSE_LEAVES = new Set<SourceBlockType>(["paragraph", "heading"]);
  * matched into the cells that replaced it, so no `<del>` lands in a header
  * and no cell keeps word boxes the absorbing block should have swallowed.
  * Paragraph and heading do pair — promoting one to the other is an ordinary
- * edit that reads well word by word.
+ * edit that reads well word by word. A fence pairs only with a fence.
  */
-function compatible(
-  a: SourceBlockType | null,
-  b: SourceBlockType | null,
-): boolean {
-  if (a === null || b === null) return a === b;
-  if (a === b) return true;
-  return PROSE_LEAVES.has(a) && PROSE_LEAVES.has(b);
+function classOf(type: SourceBlockType | null): Class {
+  if (type === null) return "none";
+  return PROSE_LEAVES.has(type) ? "prose" : type;
 }
 
-/** Shared characters as a fraction of both texts, 0…1. */
-function similarity(a: string, b: string): number {
-  const total = a.length + b.length;
+/** Shared word weight as a fraction of both bags, 0…1 (Dice). */
+function bagSimilarity(a: WordBag, b: WordBag): number {
+  const total = a.total + b.total;
   if (total === 0) return 1;
-  let added = 0;
-  for (const range of wordDiff(a, b).ins) added += range.end - range.start;
-  return (2 * (b.length - added)) / total;
-}
-
-/**
- * Whether one block became the other, asked where nothing else competes for
- * either side. Similarity cannot answer it alone — a rewrite that shares no
- * character is still a rewrite (T-142's 二→三) — so a pair is refused only
- * when the two are unlike in both respects: no common text *and* nothing like
- * the same bulk. T-209's repro is that refusal, and the reason for the second
- * half: a deleted 125-character paragraph scores 0.015 against the
- * `### 5.6 CLI` that closed the gap behind it, and pairing them hung the
- * entire old paragraph off the new heading as one inline `<del>`.
- */
-function rewritten(a: string, b: string): boolean {
-  const longer = Math.max(a.length, b.length);
-  if (longer <= SHORT_BLOCK) return true;
-  if (Math.min(a.length, b.length) / longer >= LENGTH_RATIO_FLOOR) return true;
-  return similarity(a, b) >= SIMILARITY_FLOOR;
+  let shared = 0;
+  for (const [word, weight] of a.weights) {
+    const other = b.weights.get(word);
+    if (other !== undefined) shared += Math.min(weight, other);
+  }
+  return (2 * shared) / total;
 }
 
 /** Neither side has a counterpart: everything here stands alone. */
 function unmatched(
   olds: AlignGroup[],
   news: AlignGroup[],
-  base: number,
+  newIndex: number,
   out: Alignment,
 ): void {
-  for (const group of olds) out.oldOnly.push({ group, newIndex: base });
+  for (const group of olds) out.oldOnly.push({ group, newIndex });
   out.newOnly.push(...news);
 }
 
-/** Pair by position, skipping the pairs whose types disagree. */
+/** Pair by position, and let the surplus stand alone. */
 function zip(
   olds: AlignGroup[],
   news: AlignGroup[],
-  base: number,
+  seam: (j: number) => number,
   out: Alignment,
 ): void {
   const shared = Math.min(olds.length, news.length);
@@ -123,52 +98,32 @@ function zip(
     const old = olds[i];
     const nu = news[i];
     if (old === undefined || nu === undefined) continue;
-    if (compatible(old.type, nu.type)) out.pairs.push({ old, new: nu });
-    else unmatched([old], [nu], base + i, out);
+    out.pairs.push({ old, new: nu });
   }
-  unmatched(olds.slice(shared), news.slice(shared), base + news.length, out);
+  unmatched(olds.slice(shared), news.slice(shared), seam(news.length), out);
 }
 
-/**
- * One run of replaced blocks, between two anchors. The shape of the run is
- * what decides how hard to look for counterparts.
- */
-function matchRun(
+/** The best non-crossing set of pairs, weighed by how much each shares. */
+function score(
   olds: AlignGroup[],
   news: AlignGroup[],
-  base: number,
+  seam: (j: number) => number,
   out: Alignment,
 ): void {
   const m = olds.length;
   const n = news.length;
-  if (m === 0 || n === 0) {
-    unmatched(olds, news, base, out);
-    return;
-  }
-  const first = olds[0];
-  const only = news[0];
-  // One block for one block: no competition to weigh, only the question
-  // `rewritten` answers.
-  if (m === 1 && n === 1 && first !== undefined && only !== undefined) {
-    if (compatible(first.type, only.type) && rewritten(first.text, only.text))
-      out.pairs.push({ old: first, new: only });
-    else unmatched([first], [only], base, out);
-    return;
-  }
-  if (m * n > PAIRS_GUARD) {
-    zip(olds, news, base, out);
-    return;
-  }
-
+  // One bag per leaf, not one per candidate pair: segmenting is the expensive
+  // half, and a run of 30 against 14 asks about the same leaf 14 times.
+  const oldBags = olds.map((leaf) => wordBag(leaf.text));
+  const newBags = news.map((leaf) => wordBag(leaf.text));
   const sims = new Array<number>(m * n).fill(Number.NEGATIVE_INFINITY);
   for (let i = 0; i < m; i++) {
     for (let j = 0; j < n; j++) {
-      const old = olds[i];
-      const nu = news[j];
-      if (old === undefined || nu === undefined) continue;
-      if (!compatible(old.type, nu.type)) continue;
-      const score = similarity(old.text, nu.text);
-      if (score >= SIMILARITY_FLOOR) sims[i * n + j] = score;
+      const a = oldBags[i];
+      const b = newBags[j];
+      if (a === undefined || b === undefined) continue;
+      const shared = bagSimilarity(a, b);
+      if (shared >= SIMILARITY_FLOOR) sims[i * n + j] = shared;
     }
   }
 
@@ -212,7 +167,7 @@ function matchRun(
       old !== undefined &&
       (nu === undefined || best === (dp[(i + 1) * width + j] ?? 0))
     ) {
-      out.oldOnly.push({ group: old, newIndex: base + j });
+      out.oldOnly.push({ group: old, newIndex: seam(j) });
       i++;
     } else if (nu !== undefined) {
       out.newOnly.push(nu);
@@ -222,11 +177,93 @@ function matchRun(
 }
 
 /**
- * Line up the leaf blocks of a rewrite's two sides before anything looks at
- * their words (T-163). Word-level diffing a whole rewrite pair at once lets
- * prose from one block match prose in another; running it per aligned block
- * cannot, and blocks left without a counterpart are the direct evidence that
- * they were added or removed whole.
+ * One run of replaced leaves, between two anchors, decided one type class at a
+ * time. A class is settled on its own because the classes never pair with each
+ * other anyway, and lumping them together only misreads the shape of the run:
+ * `intro` → `outro` beside an edited fence is two 1×1 questions, not one 2×2,
+ * and asked as a 2×2 the two single words would have to clear the similarity
+ * floor they share nothing to clear.
+ *
+ * Within a class the shape is the whole of it. One leaf against one leaf: the
+ * position is unique, so it *is* the evidence — this block became that one,
+ * and how much of it survived is `coalescedWordDiff`'s question, not this
+ * one's. T-142's 二→三 shares no character and T-180's whole-line rewrite
+ * shares almost none; both are still one block rewritten. More than one
+ * candidate on either side: the position no longer says which went with which,
+ * so words decide, and a candidate below the floor is nobody's counterpart.
+ */
+function matchRun(
+  olds: AlignGroup[],
+  news: AlignGroup[],
+  base: number,
+  out: Alignment,
+): void {
+  const local: Alignment = { pairs: [], oldOnly: [], newOnly: [] };
+  const classes: Class[] = [];
+  for (const leaf of [...olds, ...news]) {
+    const c = classOf(leaf.type);
+    if (!classes.includes(c)) classes.push(c);
+  }
+  for (const c of classes) {
+    const mine = olds.filter((leaf) => classOf(leaf.type) === c);
+    const theirs: AlignGroup[] = [];
+    const at: number[] = [];
+    for (let j = 0; j < news.length; j++) {
+      const leaf = news[j];
+      if (leaf === undefined || classOf(leaf.type) !== c) continue;
+      theirs.push(leaf);
+      at.push(j);
+    }
+    // Where an old leaf with no counterpart falls, in the whole new side's
+    // coordinates: at the new leaf of its own class it lost to, or at the end
+    // of the run when it lost to nothing.
+    const seam = (j: number) => base + (at[j] ?? news.length);
+    if (mine.length === 0 || theirs.length === 0) {
+      unmatched(mine, theirs, base, local);
+      continue;
+    }
+    const only = mine[0];
+    const counterpart = theirs[0];
+    if (
+      mine.length === 1 &&
+      theirs.length === 1 &&
+      only !== undefined &&
+      counterpart !== undefined
+    ) {
+      local.pairs.push({ old: only, new: counterpart });
+      continue;
+    }
+    if (mine.length * theirs.length > PAIRS_GUARD) {
+      zip(mine, theirs, seam, local);
+      continue;
+    }
+    score(mine, theirs, seam, local);
+  }
+  // Back into document order: the classes were settled one after another, and
+  // `clusterDeletions` downstream reads neighbouring removals as one marker.
+  local.pairs.sort((a, b) => a.old.group - b.old.group);
+  local.oldOnly.sort((a, b) => a.group.group - b.group.group);
+  local.newOnly.sort((a, b) => a.group - b.group);
+  out.pairs.push(...local.pairs);
+  out.oldOnly.push(...local.oldOnly);
+  out.newOnly.push(...local.newOnly);
+}
+
+/**
+ * Line up two versions leaf block by leaf block, before anything looks at
+ * their words (T-163). Word-level diffing a whole edit at once lets prose from
+ * one block match prose in another; running it per aligned block cannot, and a
+ * block left without a counterpart is the direct evidence that it was added or
+ * removed whole.
+ *
+ * The scope of one alignment is the whole document (T-211). It used to be a
+ * line hunk, which put the answer at the mercy of where jsdiff happened to cut
+ * — a single blank line counted as an anchor, and the heading renumbered
+ * behind a deleted paragraph landed in a different hunk from the heading it
+ * came from, so the two never met. Lines are markdown's typographical unit,
+ * not its content: blank lines, `| --- |` and list bullets are all lines and
+ * none of them is a block. Leaves whose text is identical are the anchors
+ * here, and only the leaves between two of them compete.
  */
 export function alignGroups(olds: AlignGroup[], news: AlignGroup[]): Alignment {
   const out: Alignment = { pairs: [], oldOnly: [], newOnly: [] };
