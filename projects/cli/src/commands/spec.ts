@@ -21,9 +21,11 @@ import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
 import { makePainter, personName, plural, table } from "../format.ts";
 import { drainPaged } from "../paginate.ts";
-import { parseChoice } from "../parse.ts";
+import { parseChoice, parseSeconds } from "../parse.ts";
 import { refFormat, withRef } from "../refs.ts";
 import { fetchRefPrefix } from "../resolve.ts";
+import { waitForSpecReview } from "../spec-wait.ts";
+import { watchTimeoutSec } from "../watch-loop.ts";
 import {
   assertWriteCursorFlags,
   collectWriteCursor,
@@ -146,6 +148,20 @@ export class SpecPushCommand extends ProjectCommand {
       a verdict landing in between is already in the past when the wait
       begins, and the wait never ends.
 
+      \`--wait\` makes that whole gate one command: the push blocks from its
+      own cursor until the spec has been judged, and prints how it was —
+      \`approved\`, \`changes requested\` with the annotation count, or
+      \`feedback\` when somebody else wrote on the card without judging
+      yet. Exit 0 carries all three; only a fatal error exits 1. Everything
+      \`spec wait\` documents about the wait applies unchanged, including
+      that a killed wait is re-entered with \`spec wait <n> --since
+      <cursor>\` — the position is the single \`cursor:\` line printed,
+      which under \`--wait\` is the wait's rather than the push's.
+      \`--debounce\`, \`--timeout\` and \`--interval\` tune it and mean
+      nothing without it. \`--print-cursor\` conflicts: it exists to hand
+      the cursor to a second command, which is the thing \`--wait\`
+      replaces.
+
       \`--since <cursor>\` says where the pusher last looked. The push runs
       regardless; afterwards the entries between that cursor and now —
       other people's only, as watches count them — are listed on stderr
@@ -153,6 +169,12 @@ export class SpecPushCommand extends ProjectCommand {
       given one echoed back, so anything shown here is delivered again by
       a watch resuming from it. \`--print-cursor\` conflicts with
       \`--json\`; both want stdout.
+
+      \`--json\` prints the usual indented document — except under
+      \`--wait\`, where the push is no longer the whole answer: the output
+      becomes NDJSON, one compact record per line, opening with
+      \`{"type":"push",…}\` and closing with the wait's
+      \`{"type":"outcome",…}\`.
     `,
     examples: [
       [
@@ -160,7 +182,11 @@ export class SpecPushCommand extends ProjectCommand {
         "$0 spec push 23 ./specs/spec-feature --message 'address review'",
       ],
       [
-        "Push, then wait for the verdict with no gap in between",
+        "Push and wait for the verdict, in one command",
+        "$0 spec push 23 ./spec --message 'plan v2' --wait",
+      ],
+      [
+        "The same gate as two commands, for a caller that wants the cursor",
         'cursor=$($0 spec push 23 ./spec --print-cursor) && $0 issue watch 23 --since "$cursor" --debounce 60 --forever',
       ],
     ],
@@ -182,9 +208,23 @@ export class SpecPushCommand extends ProjectCommand {
     description:
       "Report what landed since this cursor (echoed back as the cursor)",
   });
+  wait = Option.Boolean("--wait", false, {
+    description: "Block until the spec is judged, then print the outcome",
+  });
+  debounce = Option.String("--debounce", {
+    description:
+      "With --wait: batch a burst for this many seconds (default 60)",
+  });
+  timeout = Option.String("--timeout", {
+    description: "With --wait: seconds between heartbeats (default 600)",
+  });
+  interval = Option.String("--interval", {
+    description: "With --wait: seconds between server polls (default 2)",
+  });
 
-  protected async run(client: TodouClient): Promise<void> {
+  protected async run(client: TodouClient): Promise<number | void> {
     assertWriteCursorFlags(this);
+    const waitFlags = specWaitFlags(this, this.wait);
     const { project, number } = this.resolveIssueRef(this.number);
     const { files, skipped } = collectMarkdown(this.dir, { pushLimits: true });
     const input = SpecPushInput.safeParse({
@@ -212,11 +252,12 @@ export class SpecPushCommand extends ProjectCommand {
       note: (line) => this.note(line),
       clock: this.clock,
     });
+    const paint = makePainter(this.context.stdout, this.context.env);
     emitWriteResult(
       {
         json: this.json,
         printCursor: this.printCursor,
-        paint: makePainter(this.context.stdout, this.context.env),
+        paint,
         // Only the missed lines spell a ref, so a push with nothing to
         // report spends no round-trip learning how.
         refPrefix: outcome.missed?.length
@@ -225,6 +266,9 @@ export class SpecPushCommand extends ProjectCommand {
         issueNumber: number,
         write: (text) => this.context.stdout.write(`${text}\n`),
         note: (line) => this.note(line),
+        // The wait that follows prints the position to resume from, and its
+        // own is the one worth having.
+        ...(this.wait ? { compact: { type: "push" }, cursorHint: null } : {}),
       },
       outcome,
       result,
@@ -237,7 +281,68 @@ export class SpecPushCommand extends ProjectCommand {
               ...changeLines(result),
             ].join("\n"),
     );
+    if (!this.wait) return;
+    // An unchanged push is the case that makes waiting from the state, not
+    // from the event, load-bearing: no new version means the verdict on the
+    // old one may already be in, and the wait has to return it rather than
+    // block for a review that has happened.
+    return await waitForSpecReview({
+      client,
+      project,
+      number,
+      from: outcome.cursor,
+      ...waitFlags,
+      paint,
+      clock: this.clock,
+      note: (line) => this.note(line),
+      emitBatch: (records, human) => this.outputBatch(records, human),
+    });
   }
+}
+
+/**
+ * The wait's timing flags, parsed the same way for both entry points.
+ * `waiting` is false on a push without `--wait`, where these name nothing at
+ * all: accepting them silently would leave the caller believing it had
+ * tuned a wait that never ran.
+ */
+function specWaitFlags(
+  flags: {
+    debounce: string | undefined;
+    timeout: string | undefined;
+    interval: string | undefined;
+  },
+  waiting: boolean,
+): { debounceSec: number; timeoutSec: number; intervalSec: number } {
+  if (!waiting) {
+    const stray = (
+      [
+        ["--debounce", flags.debounce],
+        ["--timeout", flags.timeout],
+        ["--interval", flags.interval],
+      ] as const
+    ).find(([, value]) => value !== undefined);
+    if (stray) {
+      throw new CliError(
+        `${stray[0]} only means something with --wait`,
+        "add --wait to block until the spec is judged, or drop the flag",
+      );
+    }
+  }
+  return {
+    // A review submission is one transaction, so the window is not there to
+    // catch a torn review: it is there for the plain comment a reviewer
+    // tends to write just before or after the verdict.
+    debounceSec:
+      flags.debounce === undefined
+        ? 60
+        : parseSeconds(flags.debounce, "--debounce", { zero: true }),
+    timeoutSec: watchTimeoutSec(flags.timeout, { poll: false, forever: true }),
+    intervalSec:
+      flags.interval === undefined
+        ? 2
+        : parseSeconds(flags.interval, "--interval"),
+  };
 }
 
 export class SpecPullCommand extends ProjectCommand {
@@ -569,16 +674,109 @@ export class SpecListCommand extends ProjectCommand {
   }
 }
 
+export class SpecWaitCommand extends ProjectCommand {
+  static paths = [["spec", "wait"]];
+  static usage = Command.Usage({
+    description: "Block until the spec is judged, then print the outcome",
+    details: `
+      The waiting half of the review loop, as one call. \`spec push --wait\`
+      runs the same wait right after pushing; this command is how a wait
+      that was killed — or a session taking a card over — gets back into it.
+
+      It reads the spec's state **before** blocking, because a wait only
+      ever wakes for the future: a verdict that is already in is returned
+      rather than waited for. After that it watches the whole issue, with no
+      type filter, so a plain comment wakes it as surely as a verdict does,
+      and judges each wake-up by re-reading the state — never by reading the
+      event stream.
+
+      Three ways out, all of them exit 0, all of them ending on the outcome
+      line:
+
+      - \`approved\` — the current version carries an approve verdict. Any
+        annotation still unresolved is named on the same line; it is a nit to
+        fix while implementing, not a revision round.
+      - \`changes requested\` — a request-changes verdict, or annotations
+        outstanding on an unreviewed version, which is what a revision
+        pushed without \`spec resolve\` looks like. Address them, resolve
+        them, push again.
+      - \`feedback\` — somebody else wrote on the card without judging it.
+        Their entries print above the outcome, in \`issue watch\`'s format;
+        fold them into the documents and resume the wait.
+
+      Only a fatal error exits 1. Timeouts and outages are absorbed the way
+      \`--forever\` absorbs them, and the wait reacts to the server's change
+      feed where there is one, so a verdict does not sit unnoticed for a
+      poll interval. \`--timeout\` is therefore the heartbeat interval
+      (default 600s), written to stderr; \`--debounce\` batches a burst
+      (default 60s, \`0\` returns on the first entry).
+
+      **Where it starts matters.** Without \`--since\` the wait starts where
+      the current version was pushed, not at "now": a re-entry from "now"
+      would silently drop whatever was said while nobody was waiting, and
+      only the verdict survives that as state. Pass \`--since\` to resume
+      from a cursor you already hold — the one the last wake-up printed, or
+      the push's own — and nothing is replayed twice that matters.
+
+      Own-account activity never returns this command: a fleet of agents
+      sharing one machine account would otherwise wake each other. It cannot
+      hide a verdict, since the account that pushed a version is barred from
+      reviewing it.
+    `,
+    examples: [
+      ["Wait for the verdict on a card's spec", "$0 spec wait 23"],
+      [
+        "Re-enter a killed wait from the cursor it printed",
+        '$0 spec wait 23 --since "$cursor"',
+      ],
+    ],
+  });
+
+  number = Option.String({ required: true });
+  since = Option.String("--since", {
+    description:
+      "Resume from this cursor (default: where the version was pushed)",
+  });
+  debounce = Option.String("--debounce", {
+    description: "Batch a burst for this many seconds (default 60, 0 = off)",
+  });
+  timeout = Option.String("--timeout", {
+    description: "Seconds between heartbeats (default 600)",
+  });
+  interval = Option.String("--interval", {
+    description: "Seconds between server polls (default 2)",
+  });
+
+  protected async run(client: TodouClient): Promise<number> {
+    assertWriteCursorFlags({
+      json: this.json,
+      printCursor: false,
+      since: this.since,
+    });
+    const { project, number } = this.resolveIssueRef(this.number);
+    return await waitForSpecReview({
+      client,
+      project,
+      number,
+      from: this.since,
+      ...specWaitFlags(this, true),
+      paint: makePainter(this.context.stdout, this.context.env),
+      clock: this.clock,
+      note: (line) => this.note(line),
+      emitBatch: (records, human) => this.outputBatch(records, human),
+    });
+  }
+}
+
 export class SpecStatusCommand extends ProjectCommand {
   static paths = [["spec", "status"]];
   static usage = Command.Usage({
     description: "Spec overview: version, review state, files",
     details:
       "Errors when the issue has no spec. Under `--json` the full version " +
-      "list rides along. Agents waiting for a verdict block on " +
-      "`todou issue watch <n>` (the whole issue) and run this command once " +
-      "per wake-up to judge the result — polling it instead of watching " +
-      "has no wake path.",
+      "list rides along. A wait for the verdict is `spec wait <n>` (or " +
+      "`spec push --wait`), which judges by reading this same state; " +
+      "polling this command in place of that wait has no wake path.",
   });
 
   number = Option.String({ required: true });

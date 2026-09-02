@@ -54,6 +54,7 @@ import {
   SpecResolveCommand,
   SpecReviewCommand,
   SpecStatusCommand,
+  SpecWaitCommand,
 } from "./spec.ts";
 import {
   StatusCreateCommand,
@@ -98,6 +99,7 @@ export const commands: Array<CommandClass<CliContext>> = [
   SpecPullCommand,
   SpecListCommand,
   SpecStatusCommand,
+  SpecWaitCommand,
   SpecCommentsCommand,
   SpecResolveCommand,
   SpecReviewCommand,

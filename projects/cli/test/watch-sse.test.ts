@@ -48,7 +48,7 @@ const change = (project: string) => ({
 });
 
 describe("change-feed nudges (T-123)", () => {
-  const nudgesOver = async (sse: SseStub) => {
+  const nudgesOver = async (sse: SseStub, issue?: number) => {
     const clock = virtualClock();
     const { fetchImpl } = fakeFetch([
       ["GET", "/api/events", () => sse.reply()],
@@ -60,6 +60,7 @@ describe("change-feed nudges (T-123)", () => {
         fetch: fetchImpl,
       }),
       projects: new Set(["todou"]),
+      issue,
       intervalSec: 2,
       clock,
       random: () => 0,
@@ -85,6 +86,34 @@ describe("change-feed nudges (T-123)", () => {
     sse.push("change", change("todou"));
     await nudges.wait(5_000);
     expect(clock.elapsed()).toBe(5_000);
+    nudges.close();
+  });
+
+  it("ignores another card's event once narrowed to one (T-208)", async () => {
+    const sse = sseStub();
+    sse.push("change", { ...change("todou"), issue_number: 99 });
+    const { nudges, clock } = await nudgesOver(sse, 3);
+    await nudges.wait(5_000);
+    expect(clock.elapsed()).toBe(5_000);
+    sse.push("change", change("todou"));
+    await nudges.wait(5_000);
+    expect(clock.elapsed()).toBe(5_000);
+    nudges.close();
+  });
+
+  it("still wakes for an event that names no card (T-208)", async () => {
+    const sse = sseStub();
+    // A project-level action — a label, a status. Draining once and finding
+    // nothing costs less than sleeping through something that mattered.
+    sse.push("change", {
+      entity: "label",
+      id: 4,
+      action: "created",
+      project: "todou",
+    });
+    const { nudges, clock } = await nudgesOver(sse, 3);
+    await nudges.wait(5_000);
+    expect(clock.elapsed()).toBe(0);
     nudges.close();
   });
 
@@ -446,5 +475,140 @@ describe("watch over the change feed, contract unchanged (T-123)", () => {
     // The watch set lives on the server under --all-projects, so nothing
     // is filtered client-side either.
     expect(calls.some((c) => c.url.includes("/api/events"))).toBe(true);
+  });
+});
+
+describe("one-card waits over the change feed (T-208)", () => {
+  const TIMELINE = "/api/projects/todou/issues/3/timeline";
+
+  it("issue watch drains the moment the feed points at its card", async () => {
+    const clock = virtualClock();
+    const sse = sseStub();
+    sse.push("change", change("todou"));
+    let drains = 0;
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/me", me],
+      ["GET", "/api/events", () => sse.reply()],
+      [
+        "GET",
+        TIMELINE,
+        (_init: RequestInit, url: URL) => {
+          if (url.searchParams.get("after") !== "t0") return page([], null);
+          drains += 1;
+          return drains === 1
+            ? page([], null)
+            : page([comment(9, 3, clock.iso())], "t1");
+        },
+      ],
+    ]);
+    const result = await runCli(
+      [
+        "issue",
+        "watch",
+        "3",
+        "-p",
+        "todou",
+        "--since",
+        "t0",
+        "--interval",
+        "2",
+        "--timeout",
+        "300",
+        "--json",
+      ],
+      { fetchImpl, env: loggedInEnv(), clock },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(parseNdjson(result.stdout).cursor.next_cursor).toBe("t1");
+    // Not one interval waited out: the second drain happened because the
+    // feed asked for it.
+    expect(clock.elapsed()).toBe(0);
+    expect(drains).toBe(2);
+  });
+
+  it("issue watch --poll never subscribes", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      ["GET", "/api/me", me],
+      ["GET", TIMELINE, page([], null)],
+    ]);
+    const result = await runCli(
+      ["issue", "watch", "3", "-p", "todou", "--poll", "--since", "t0"],
+      { fetchImpl, env: loggedInEnv(), clock: virtualClock() },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(calls.some((c) => c.url.includes("/api/events"))).toBe(false);
+  });
+
+  it("question wait drains the moment the feed points at its card", async () => {
+    const clock = virtualClock();
+    const sse = sseStub();
+    sse.push("change", change("todou"));
+    let drains = 0;
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/events", () => sse.reply()],
+      [
+        "GET",
+        "/api/projects/todou/issues/3/questions",
+        { items: [{ comment_id: 42, answer: null }], open: 1 },
+      ],
+      [
+        "GET",
+        TIMELINE,
+        (_init: RequestInit, url: URL) => {
+          if (url.searchParams.get("last") === "1") {
+            return { items: [], prev_cursor: null, next_cursor: "t0" };
+          }
+          if (url.searchParams.get("after") !== "t0") return page([], null);
+          drains += 1;
+          return drains === 1
+            ? page([], null)
+            : page(
+                [
+                  {
+                    type: "event",
+                    id: 7,
+                    event_type: "question_answered",
+                    actor: author,
+                    payload: {
+                      comment_id: 42,
+                      answers: [
+                        {
+                          key: "schema",
+                          selected: [{ index: 0, label: "New entity" }],
+                          other: null,
+                          declined: false,
+                        },
+                      ],
+                    },
+                    created_at: clock.iso(),
+                    agent_context: null,
+                  },
+                ],
+                "t1",
+              );
+        },
+      ],
+    ]);
+    const result = await runCli(
+      [
+        "question",
+        "wait",
+        "3",
+        "42",
+        "-p",
+        "todou",
+        "--interval",
+        "3600",
+        "--timeout",
+        "300",
+        "--json",
+      ],
+      { fetchImpl, env: loggedInEnv(), clock },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).comment_id).toBe(42);
+    // An hour of --interval is what a poll would have charged for this.
+    expect(clock.elapsed()).toBe(0);
+    expect(drains).toBe(2);
   });
 });

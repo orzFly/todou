@@ -66,6 +66,7 @@ const BODIES: Record<number, Array<{ path: string; body: string }>> = {
 function mockSpec() {
   const info: SpecInfo = {
     current_version: 3,
+    current_version_cursor: "c3",
     review_status: "unreviewed",
     unresolved_comments: 0,
     files: BODIES[3]?.map((f) => ({ path: f.path, size: f.body.length })) ?? [],

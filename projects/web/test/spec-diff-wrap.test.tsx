@@ -43,6 +43,7 @@ const V2 = `${"a very long line ".repeat(20)}\n`;
 function mockSpec() {
   const info: SpecInfo = {
     current_version: 2,
+    current_version_cursor: "c2",
     review_status: "unreviewed",
     unresolved_comments: 0,
     files: [{ path: "design.md", size: V2.length }],

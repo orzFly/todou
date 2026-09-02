@@ -215,6 +215,31 @@ describe.each(PLACEMENTS)("spec T-23 (%s placement)", (placement) => {
     );
   });
 
+  it("the info reports where the current version was pushed", async () => {
+    const { number } = await createIssue();
+    expect((await push(number, { files: V1 })).status).toBe(200);
+    expect((await comment(number, "about v1")).status).toBe(201);
+    expect(
+      (await push(number, { files: [{ path: "design.md", body: "# Two\n" }] }))
+        .status,
+    ).toBe(200);
+    expect((await comment(number, "about v2")).status).toBe(201);
+
+    const info = await json(
+      await t.app.request(`/api/projects/${slug}/issues/${number}/spec`, {
+        headers: headers(),
+      }),
+    );
+    expect(info.current_version).toBe(2);
+    // A wait re-entered here reads what was said about v2 and nothing that
+    // belonged to v1 — including v2's own push event, which the waiting
+    // agent filters out as its own (T-208).
+    expect(await since(number, info.current_version_cursor)).toEqual([
+      "event:spec_pushed",
+      "comment:about v2",
+    ]);
+  });
+
   it("if_version mismatches conflict with the current number named", async () => {
     const { number } = await createIssue();
     expect((await push(number, { files: V1 })).status).toBe(200);

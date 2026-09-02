@@ -278,7 +278,17 @@ export async function getSpecInfo(
   );
 
   const versionRows = await db
-    .select()
+    .select({
+      id: specVersions.id,
+      number: specVersions.number,
+      authorId: specVersions.authorId,
+      message: specVersions.message,
+      createdAt: specVersions.createdAt,
+      // The driver's Date carries milliseconds only, and a cursor has to be
+      // able to tell two entries of the same millisecond apart. `created_at`
+      // below stays on the Date: it is display text, not a position.
+      ts: microIso(specVersions.createdAt),
+    })
     .from(specVersions)
     .where(eq(specVersions.issueId, issue.id))
     .orderBy(asc(specVersions.number));
@@ -293,6 +303,14 @@ export async function getSpecInfo(
 
   return {
     current_version: current.number,
+    // (t, 0, 0) is the lower bound of the version's own instant, so a wait
+    // from here also replays the `spec_pushed` event that made it — the same
+    // cursor, minted the same way, an unchanged push reports.
+    current_version_cursor: encodeTimelineCursor({
+      t: current.ts,
+      k: 0,
+      i: 0,
+    }),
     review_status: issue.specReviewStatus ?? "unreviewed",
     unresolved_comments: issue.specUnresolvedComments,
     files: files.map((f) => ({ path: f.path, size: f.size })),

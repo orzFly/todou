@@ -44,6 +44,14 @@ export async function openChangeNudges(opts: {
   client: TodouClient;
   /** Slugs whose events count; null = every project the token can read. */
   projects: Set<string> | null;
+  /**
+   * Narrows the feed to one card, for the watches that drain one card
+   * (T-208). An event carrying no issue number — a project-level action —
+   * still wakes the caller: one drain that finds nothing is cheaper than a
+   * missed wake-up, and only events that name a *different* card are known
+   * to be irrelevant.
+   */
+  issue?: number;
   /** Poll cadence to fall back on while the feed is down. */
   intervalSec: number;
   clock: Clock;
@@ -90,7 +98,15 @@ export async function openChangeNudges(opts: {
       const opened = await client.openChangeStream({
         onAlive,
         onEvent: (event) => {
-          if (projects === null || projects.has(event.project)) nudge();
+          if (projects !== null && !projects.has(event.project)) return;
+          if (
+            opts.issue !== undefined &&
+            event.issue_number !== undefined &&
+            event.issue_number !== opts.issue
+          ) {
+            return;
+          }
+          nudge();
         },
       });
       if (disposed) {

@@ -102,6 +102,13 @@ export type SpecFileEntry = z.infer<typeof SpecFileEntry>;
 /** GET …/spec — 404 when the issue has no spec. */
 export const SpecInfo = z.object({
   current_version: z.number().int().positive(),
+  /**
+   * Where the current version was pushed. A wait re-entered from here reads
+   * everything said since that push; one starting at a "now" cursor taken
+   * at re-entry drops it — a verdict survives in `review_status`, a plain
+   * comment asking a question does not (T-208).
+   */
+  current_version_cursor: Cursor,
   review_status: SpecReviewStatus,
   unresolved_comments: z.number().int().nonnegative(),
   /** Files of the current version. */

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parseColor, parseIssueRef, splitCommaList } from "../src/parse.ts";
+import {
+  parseColor,
+  parseIssueRef,
+  parseSeconds,
+  splitCommaList,
+} from "../src/parse.ts";
 
 describe("parseIssueRef", () => {
   it("parses a bare number", () => {
@@ -137,5 +142,21 @@ describe("parseColor", () => {
   it("names the accepted forms when it rejects one", () => {
     expect(() => parseColor("red", "--color")).toThrow(/must be a hex color/);
     expect(() => parseColor("#12345", "--color")).toThrow(/must be a hex/);
+  });
+});
+
+describe("parseSeconds", () => {
+  it("rejects zero and below by default", () => {
+    expect(parseSeconds("0.5", "--interval")).toBe(0.5);
+    expect(() => parseSeconds("0", "--interval")).toThrow(/positive number/);
+    expect(() => parseSeconds("-1", "--interval")).toThrow(/positive number/);
+    expect(() => parseSeconds("soon", "--interval")).toThrow(/positive number/);
+  });
+
+  it("admits zero where it names a real setting", () => {
+    expect(parseSeconds("0", "--debounce", { zero: true })).toBe(0);
+    expect(() => parseSeconds("-1", "--debounce", { zero: true })).toThrow(
+      /non-negative/,
+    );
   });
 });

@@ -118,6 +118,7 @@ const comment = (
 function mockSpec(items: SpecComments["items"] = []) {
   const info: SpecInfo = {
     current_version: 5,
+    current_version_cursor: "c5",
     review_status: "unreviewed",
     unresolved_comments: 0,
     files: Object.entries(BODIES[5] ?? {}).map(([path, body]) => ({

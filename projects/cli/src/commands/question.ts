@@ -14,6 +14,7 @@ import { Command, Option } from "clipanion";
 import { z } from "zod";
 import { ProjectCommand } from "../api-command.ts";
 import { drain } from "../body.ts";
+import { openChangeNudges } from "../change-nudges.ts";
 import { CliError } from "../errors.ts";
 import {
   makePainter,
@@ -222,49 +223,67 @@ export class QuestionWaitCommand extends ProjectCommand {
       return 0;
     }
 
-    return runWatchLoop<AnswerResult>({
-      ...mode,
-      timeoutSec,
-      intervalSec,
-      baseline,
-      retry,
-      clock: this.clock,
-      onQuiet: (_cursor, totalMs) =>
-        this.note(
-          quietNote("still waiting for an answer", timeoutSec, totalMs),
-        ),
-      drain: async (after) => {
-        const page = await drainTimeline(client, project, number, {
-          after,
-          types: "question_answered",
+    // Transport, not truth (T-123): the answer still comes from draining the
+    // timeline at `baseline`, the feed only decides when to drain. A wait
+    // that may sit for hours has no business idling on a poll interval when
+    // the server can say the moment something lands (T-208).
+    const nudges = this.poll
+      ? null
+      : await openChangeNudges({
+          client,
+          projects: new Set([project]),
+          issue: number,
+          intervalSec,
+          clock: this.clock,
         });
-        const items = page.items.flatMap((entry: TimelineItem) => {
-          if (entry.type !== "event") return [];
-          const payload = decodeAnswerEvent(entry);
-          if (payload === null || payload.comment_id !== commentId) return [];
-          return [
-            {
-              comment_id: commentId,
-              event_id: entry.id,
-              actor: entry.actor,
-              created_at: entry.created_at,
-              answers: payload.answers,
-            },
-          ];
-        });
-        return { items, cursor: page.cursor };
-      },
-      onItems: (items) => {
-        const result = items[0] as AnswerResult;
-        this.output(result, () => renderAnswerResult(result, paint));
-      },
-      onEmpty: () =>
-        this.output({ comment_id: commentId, answer: null }, () =>
-          this.poll
-            ? "not answered yet"
-            : `no answer within ${timeoutSec}s (comment ${commentId} on issue ${number})`,
-        ),
-    });
+    try {
+      return await runWatchLoop<AnswerResult>({
+        ...mode,
+        timeoutSec,
+        intervalSec,
+        baseline,
+        retry,
+        clock: this.clock,
+        wait: nudges?.wait,
+        onQuiet: (_cursor, totalMs) =>
+          this.note(
+            quietNote("still waiting for an answer", timeoutSec, totalMs),
+          ),
+        drain: async (after) => {
+          const page = await drainTimeline(client, project, number, {
+            after,
+            types: "question_answered",
+          });
+          const items = page.items.flatMap((entry: TimelineItem) => {
+            if (entry.type !== "event") return [];
+            const payload = decodeAnswerEvent(entry);
+            if (payload === null || payload.comment_id !== commentId) return [];
+            return [
+              {
+                comment_id: commentId,
+                event_id: entry.id,
+                actor: entry.actor,
+                created_at: entry.created_at,
+                answers: payload.answers,
+              },
+            ];
+          });
+          return { items, cursor: page.cursor };
+        },
+        onItems: (items) => {
+          const result = items[0] as AnswerResult;
+          this.output(result, () => renderAnswerResult(result, paint));
+        },
+        onEmpty: () =>
+          this.output({ comment_id: commentId, answer: null }, () =>
+            this.poll
+              ? "not answered yet"
+              : `no answer within ${timeoutSec}s (comment ${commentId} on issue ${number})`,
+          ),
+      });
+    } finally {
+      nudges?.close();
+    }
   }
 }
 

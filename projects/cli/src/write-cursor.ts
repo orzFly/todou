@@ -28,6 +28,8 @@ export type WriteCursorFlags = {
   json: boolean;
   printCursor: boolean;
   since: string | undefined;
+  /** Only `spec push` has one; see the conflict below. */
+  wait?: boolean;
 };
 
 /**
@@ -36,6 +38,12 @@ export type WriteCursorFlags = {
  * followed by a usage error is not something the caller can undo.
  */
 export function assertWriteCursorFlags(flags: WriteCursorFlags): void {
+  if (flags.wait && flags.printCursor) {
+    throw new CliError(
+      "--wait and --print-cursor both want stdout",
+      "--print-cursor hands the cursor to a second command that waits; --wait does the waiting here, and prints the outcome instead",
+    );
+  }
   if (flags.printCursor && flags.json) {
     throw new CliError(
       "--print-cursor and --json both want stdout",
@@ -112,6 +120,22 @@ export type WriteCursorEmit = {
   /** stdout, one write per call, newline added here. */
   write: (text: string) => void;
   note: (line: string) => void;
+  /**
+   * Set when more records follow this one on stdout: the write is the head
+   * of a stream rather than the whole answer, so under `--json` it has to
+   * be one compact NDJSON line carrying this discriminator instead of an
+   * indented document (T-208).
+   */
+  compact?: { type: string };
+  /**
+   * What the text-mode cursor line names as the command to resume with, or
+   * `null` to leave the line out because whatever runs next prints the
+   * position itself. Two `cursor:` lines in one output — the write's and the
+   * wait's, identical whenever the wait returns at once — read as a glitch,
+   * and the useful one is the wait's: after a wake-up the write's position
+   * has already been consumed.
+   */
+  cursorHint?: string | null;
 };
 
 /**
@@ -127,16 +151,16 @@ export function emitWriteResult(
   human: () => string,
 ): void {
   if (emit.json) {
+    const payload = {
+      ...(emit.compact === undefined ? {} : emit.compact),
+      ...data,
+      ...(outcome.cursor === undefined ? {} : { cursor: outcome.cursor }),
+      ...(outcome.missed === null ? {} : { missed: outcome.missed }),
+    };
     emit.write(
-      JSON.stringify(
-        {
-          ...data,
-          ...(outcome.cursor === undefined ? {} : { cursor: outcome.cursor }),
-          ...(outcome.missed === null ? {} : { missed: outcome.missed }),
-        },
-        null,
-        2,
-      ),
+      emit.compact === undefined
+        ? JSON.stringify(payload, null, 2)
+        : JSON.stringify(payload),
     );
     return;
   }
@@ -146,17 +170,16 @@ export function emitWriteResult(
     emit.write(requireCursor(outcome.cursor));
     return;
   }
+  const hint =
+    emit.cursorHint === undefined
+      ? "issue watch --since <cursor>"
+      : emit.cursorHint;
   emit.write(
     [
       human(),
-      ...(outcome.cursor === undefined
+      ...(outcome.cursor === undefined || hint === null
         ? []
-        : [
-            emit.paint(
-              "dim",
-              `cursor: ${outcome.cursor} (issue watch --since <cursor>)`,
-            ),
-          ]),
+        : [emit.paint("dim", `cursor: ${outcome.cursor} (${hint})`)]),
     ].join("\n"),
   );
   noteMissed(emit, outcome.missed);

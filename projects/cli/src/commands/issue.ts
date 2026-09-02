@@ -17,6 +17,7 @@ import {
 import { Command, Option } from "clipanion";
 import { cursorRecord, ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
+import { openChangeNudges } from "../change-nudges.ts";
 import { CliError } from "../errors.ts";
 import {
   elision,
@@ -731,45 +732,64 @@ export class IssueWatchCommand extends ProjectCommand {
     // Timeline entries carry no issue number of their own, so the envelope
     // is the only place a watcher can read the project's ref format off.
     const ref_format = refFormat(refPrefix);
-
-    return runWatchLoop<TimelineItem>({
-      ...mode,
-      timeoutSec,
-      intervalSec,
-      debounceSec,
-      baseline,
-      retry,
-      clock: this.clock,
-      onQuiet: (_cursor, totalMs) =>
-        this.note(quietNote("still watching", timeoutSec, totalMs)),
-      drain: (after) =>
-        drainTimeline(client, project, number, { after, types, ...self }),
-      onItems: (items, cursor) =>
-        this.outputBatch([...items, cursorRecord(cursor, ref_format)], () =>
-          [
-            ...items.map((item) =>
-              renderActivityLine(item, paint, {
-                refLabel: formatRef(refPrefix, number),
-                issueNumber: number,
-                refPrefix,
-                summaryChars,
-              }),
-            ),
-            paint("dim", `cursor: ${cursor}`),
-          ].join("\n"),
-        ),
-      onEmpty: (cursor) =>
-        this.outputBatch([cursorRecord(cursor, ref_format)], () =>
-          [
-            this.poll
-              ? "no new activity"
-              : `no new activity within ${timeoutSec}s`,
-            ...(cursor === undefined
-              ? []
-              : [paint("dim", `cursor: ${cursor}`)]),
-          ].join("\n"),
-        ),
-    });
+    // Transport, not truth (T-123): the feed only says "there may be
+    // something to pull", so the cursor, the filters and the exit codes are
+    // the same code as when this polled. A watch on one card narrows the
+    // feed to that card — see openChangeNudges on why an event carrying no
+    // issue number still wakes us. `--poll` drains once, so a subscription
+    // would be pure overhead.
+    const nudges = this.poll
+      ? null
+      : await openChangeNudges({
+          client,
+          projects: new Set([project]),
+          issue: number,
+          intervalSec,
+          clock: this.clock,
+        });
+    try {
+      return await runWatchLoop<TimelineItem>({
+        ...mode,
+        timeoutSec,
+        intervalSec,
+        debounceSec,
+        baseline,
+        retry,
+        clock: this.clock,
+        wait: nudges?.wait,
+        onQuiet: (_cursor, totalMs) =>
+          this.note(quietNote("still watching", timeoutSec, totalMs)),
+        drain: (after) =>
+          drainTimeline(client, project, number, { after, types, ...self }),
+        onItems: (items, cursor) =>
+          this.outputBatch([...items, cursorRecord(cursor, ref_format)], () =>
+            [
+              ...items.map((item) =>
+                renderActivityLine(item, paint, {
+                  refLabel: formatRef(refPrefix, number),
+                  issueNumber: number,
+                  refPrefix,
+                  summaryChars,
+                }),
+              ),
+              paint("dim", `cursor: ${cursor}`),
+            ].join("\n"),
+          ),
+        onEmpty: (cursor) =>
+          this.outputBatch([cursorRecord(cursor, ref_format)], () =>
+            [
+              this.poll
+                ? "no new activity"
+                : `no new activity within ${timeoutSec}s`,
+              ...(cursor === undefined
+                ? []
+                : [paint("dim", `cursor: ${cursor}`)]),
+            ].join("\n"),
+          ),
+      });
+    } finally {
+      nudges?.close();
+    }
   }
 
   /**
@@ -805,7 +825,7 @@ export class IssueWatchCommand extends ProjectCommand {
 }
 
 /** Cursor of the newest timeline entry (undefined on an empty timeline). */
-async function tailCursor(
+export async function tailCursor(
   client: TodouClient,
   project: string,
   number: number,

@@ -9,12 +9,22 @@ export function parsePositiveInt(value: string, what: string): number {
   return n;
 }
 
-/** Positive seconds; fractions allowed so tests and tight loops can go sub-second. */
-export function parseSeconds(value: string, what: string): number {
+/**
+ * Positive seconds; fractions allowed so tests and tight loops can go
+ * sub-second. `zero` admits 0 for the one flag where it names a real
+ * setting rather than an impossible one: a debounce window of zero seconds
+ * is "return on the first entry", which is what off means (T-208).
+ */
+export function parseSeconds(
+  value: string,
+  what: string,
+  opts?: { zero?: boolean },
+): number {
   const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) {
+  const tooSmall = opts?.zero ? n < 0 : n <= 0;
+  if (!Number.isFinite(n) || tooSmall) {
     throw new CliError(
-      `${what} must be a positive number of seconds, got "${value}"`,
+      `${what} must be a ${opts?.zero ? "non-negative" : "positive"} number of seconds, got "${value}"`,
     );
   }
   return n;
