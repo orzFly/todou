@@ -117,7 +117,7 @@ describe("word-level diff in the rendered view (T-142)", () => {
     );
     const marker = container.querySelector("del.spec-del-block");
     expect(marker).not.toBeNull();
-    expect(marker?.getAttribute("title")).toContain("第二段。");
+    expect(marker?.textContent).toBe("第二段。");
   });
 
   it("leaves code fences alone", async () => {
@@ -295,7 +295,7 @@ describe("wholly-new blocks get one highlight (T-158)", () => {
     expect(container.querySelector("table .spec-del")).toBeNull();
     const markers = container.querySelectorAll("del.spec-del-block");
     expect(markers).toHaveLength(1);
-    expect(markers[0]?.getAttribute("title")).toContain("纯删除的 marker");
+    expect(markers[0]?.textContent).toContain("纯删除的 marker");
   });
 
   it("still paints an annotation anchored inside a wholly-new block", async () => {
@@ -383,6 +383,97 @@ describe("a heavily rewritten line collapses to few coherent chunks (T-180)", ()
     expect(marked).not.toContain("标题的列表从「必错位」");
     expect(marked).not.toContain("依赖）");
     expect(container.querySelector("li.spec-changed")).not.toBeNull();
+  });
+});
+
+/**
+ * T-209's repro: a paragraph is deleted and the heading beneath it renumbered,
+ * which the line diff hands over as one 1×1 rewrite pair — paragraph against
+ * heading — plus a bare deletion of the old heading.
+ */
+const T209_PARA =
+  "上一版把裁决写在评论里，读者要在时间线里翻找才能知道当前版本过没过；这一版把裁决落到卡片头部的固定位置，任何时候打开都能一眼看到，不必回溯历史。";
+const T209_BEFORE = [
+  "### 5.4 服务端",
+  "",
+  T209_PARA,
+  "",
+  "### 5.5 CLI",
+  "",
+  "CLI 侧只加一个等待命令。",
+  "",
+].join("\n");
+const T209_AFTER = [
+  "### 5.4 服务端",
+  "",
+  "### 5.6 CLI",
+  "",
+  "CLI 侧只加一个等待命令。",
+  "",
+].join("\n");
+
+/** A table to take rows out of, and then to take away whole. */
+const T209_TABLE_ROWS = [
+  "| 引擎 | 渠道 | 判定 |",
+  "| --- | --- | --- |",
+  "| 行证据 | 纯新增 pair | `blocksFullyInLines` |",
+  "| 覆盖证据 | 重写 pair | `blocksFullyCoveredByText` |",
+  "| 第三行 | 会被删掉 | 用来看删行 |",
+];
+const T209_TABLE_BEFORE = [
+  "## 矩阵",
+  "",
+  ...T209_TABLE_ROWS,
+  "",
+  "后面还有一段话。",
+  "",
+].join("\n");
+
+describe("removals read as removals (T-209)", () => {
+  it("refuses to inline-diff a deleted paragraph against an unrelated heading", async () => {
+    const { container } = await renderDiff(T209_BEFORE, T209_AFTER);
+    // The pair used to hang all 72 characters off `5.6 CLI` as one `<del>`.
+    expect(container.querySelector("del.spec-del")).toBeNull();
+    expect(container.querySelector("ins.spec-ins")).toBeNull();
+    expect(container.querySelector("h3.spec-ins-block")?.textContent).toBe(
+      "5.6 CLI",
+    );
+    expect(texts(container, "del.spec-del-block")).toEqual([
+      T209_PARA,
+      "### 5.5 CLI",
+    ]);
+  });
+
+  it("shows a removed paragraph whole, well past the old 48-character cut", async () => {
+    const { container } = await renderDiff(
+      `## 结论\n\n${T209_PARA}\n\n留下的一段。\n`,
+      "## 结论\n\n留下的一段。\n",
+    );
+    const marker = container.querySelector("del.spec-del-block");
+    expect(marker?.textContent).toBe(T209_PARA);
+    expect(marker?.textContent).not.toContain("…");
+  });
+
+  it("shows a removed table row whole", async () => {
+    const { container } = await renderDiff(
+      T209_TABLE_BEFORE,
+      T209_TABLE_BEFORE.replace(`${T209_TABLE_ROWS[4]}\n`, ""),
+    );
+    const marker = container.querySelector("del.spec-del-block");
+    expect(marker?.textContent).toBe(T209_TABLE_ROWS[4]);
+    // The row it stands for was the table's last, so the marker settles
+    // after the table rather than inside it.
+    expect(marker?.previousElementSibling?.tagName).toBe("TABLE");
+  });
+
+  it("shows every row of a removed table, each on its own line", async () => {
+    const { container } = await renderDiff(
+      T209_TABLE_BEFORE,
+      "## 矩阵\n\n后面还有一段话。\n",
+    );
+    expect(container.querySelector("table")).toBeNull();
+    const marker = container.querySelector("del.spec-del-block");
+    expect(marker?.textContent).toBe(T209_TABLE_ROWS.join("\n"));
   });
 });
 

@@ -32,6 +32,48 @@ describe("alignGroups", () => {
     expect(paired(result)).toEqual([["二", "三"]]);
   });
 
+  it("refuses one for one when the two are unlike in size as well", () => {
+    // T-209: the paragraph was deleted and the heading below it renumbered,
+    // which puts the two in one 1×1 run — similarity 0 over a 10× size gap
+    // here, 0.015 on the pair the card measured. The old paragraph used to
+    // come out struck through, inline, beside the new heading's words.
+    const result = alignGroups(
+      [
+        para(
+          "上一版把裁决写在评论里，读者要在时间线里翻找才能知道当前版本过没过；这一版把裁决落到卡片头部的固定位置，任何时候打开都能一眼看到，不必回溯历史。",
+        ),
+      ],
+      [head("5.6 CLI")],
+    );
+    expect(result.pairs).toEqual([]);
+    expect(result.oldOnly.map((o) => o.newIndex)).toEqual([0]);
+    expect(result.newOnly.map((g) => g.text)).toEqual(["5.6 CLI"]);
+  });
+
+  it("pairs one for one at the same size, sharing nothing at all", () => {
+    // Every word replaced but the bulk unchanged: still one block rewritten,
+    // and the case the length gate above must not take with it.
+    const result = alignGroups(
+      [para("aaaa bbbb cccc dddd eeee ffff gggg")],
+      [para("hhhh iiii jjjj kkkk llll mmmm nnnn")],
+    );
+    expect(paired(result)).toEqual([
+      [
+        "aaaa bbbb cccc dddd eeee ffff gggg",
+        "hhhh iiii jjjj kkkk llll mmmm nnnn",
+      ],
+    ]);
+  });
+
+  it("pairs two short blocks however far apart their lengths", () => {
+    // A cell holding one word can lose every character of it and still be
+    // the cell that was rewritten; nothing this small has a ratio worth
+    // reading, which is 二→三's case one size up.
+    expect(paired(alignGroups([cell("否")], [cell("需要人工确认")]))).toEqual([
+      ["否", "需要人工确认"],
+    ]);
+  });
+
   it("never pairs a paragraph with a table cell", () => {
     // T-163 itself: a paragraph replaced by a whole table.
     const result = alignGroups(

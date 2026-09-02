@@ -36,6 +36,20 @@ export type Alignment = {
 const SIMILARITY_FLOOR = 1 / 3;
 
 /**
+ * Below this share of the longer block's length the two are not one block
+ * rewritten, whatever their words score: shedding two thirds of a block's
+ * bulk is content leaving, not content changing (T-209).
+ */
+const LENGTH_RATIO_FLOOR = 1 / 3;
+
+/**
+ * A block this short can be rewritten without keeping a single character, so
+ * neither measure above says anything about one. T-142's flagship 二→三 is the
+ * class, and the table cells holding a word or a number are the rest of it.
+ */
+const SHORT_BLOCK = 12;
+
+/**
  * Past this many candidate pairs the m·n word diffs stop paying for
  * themselves; a wholesale table reshuffle is the case that gets here.
  */
@@ -67,6 +81,23 @@ function similarity(a: string, b: string): number {
   let added = 0;
   for (const range of wordDiff(a, b).ins) added += range.end - range.start;
   return (2 * (b.length - added)) / total;
+}
+
+/**
+ * Whether one block became the other, asked where nothing else competes for
+ * either side. Similarity cannot answer it alone — a rewrite that shares no
+ * character is still a rewrite (T-142's 二→三) — so a pair is refused only
+ * when the two are unlike in both respects: no common text *and* nothing like
+ * the same bulk. T-209's repro is that refusal, and the reason for the second
+ * half: a deleted 125-character paragraph scores 0.015 against the
+ * `### 5.6 CLI` that closed the gap behind it, and pairing them hung the
+ * entire old paragraph off the new heading as one inline `<del>`.
+ */
+function rewritten(a: string, b: string): boolean {
+  const longer = Math.max(a.length, b.length);
+  if (longer <= SHORT_BLOCK) return true;
+  if (Math.min(a.length, b.length) / longer >= LENGTH_RATIO_FLOOR) return true;
+  return similarity(a, b) >= SIMILARITY_FLOOR;
 }
 
 /** Neither side has a counterpart: everything here stands alone. */
@@ -116,11 +147,10 @@ function matchRun(
   }
   const first = olds[0];
   const only = news[0];
-  // One block for one block: a rewrite that shares no words at all is still
-  // a rewrite — T-142's flagship 二→三 has a similarity of zero and has to
-  // come out word-level — so similarity gets no vote here.
+  // One block for one block: no competition to weigh, only the question
+  // `rewritten` answers.
   if (m === 1 && n === 1 && first !== undefined && only !== undefined) {
-    if (compatible(first.type, only.type))
+    if (compatible(first.type, only.type) && rewritten(first.text, only.text))
       out.pairs.push({ old: first, new: only });
     else unmatched([first], [only], base, out);
     return;

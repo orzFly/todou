@@ -20,8 +20,9 @@ export type SpanDecoration = {
 /**
  * Text the new version no longer has. `at` is where it used to sit, in the
  * *new* document's coordinates — a caret, not a span. `block` marks the
- * structural case (a whole paragraph or table row went away): there is no
- * sensible line to strike through, so it degrades to a small marker.
+ * structural case (a paragraph, a table row, a whole table went away): there
+ * is no line left to strike through, so it stands on its own between the
+ * blocks instead of inside one.
  */
 export type DeletionDecoration = {
   at: number;
@@ -73,9 +74,6 @@ const TAG_OF: Record<SpanKind, string> = {
 
 /** Outermost first: an inserted word that also carries a comment reads as both. */
 const NESTING: SpanKind[] = ["ins", "comment", "draft"];
-
-/** How much of a structural deletion the marker shows before its tooltip. */
-const BLOCK_PREVIEW = 48;
 
 function wrap(
   children: ElementContent[],
@@ -141,15 +139,23 @@ function inlineDeletion(deletion: DeletionDecoration): Element {
   };
 }
 
+/**
+ * The whole removed source, line breaks and all. Nothing in the document
+ * survived to be struck through, so this marker is the only place the content
+ * appears at all — a preview with the rest in a `title` (what T-209 found)
+ * left a removed table showing half its header row and nothing else, and put
+ * every deleted paragraph out of reach of the page's own search.
+ */
 function blockDeletion(deletion: DeletionDecoration): Element {
-  const flat = deletion.text.replace(/\s+/g, " ").trim();
-  const preview =
-    flat.length > BLOCK_PREVIEW ? `${flat.slice(0, BLOCK_PREVIEW)}…` : flat;
   return {
     type: "element",
     tagName: "del",
-    properties: { className: ["spec-del-block"], title: deletion.text },
-    children: [{ type: "text", value: preview }],
+    properties: { className: ["spec-del-block"] },
+    // Plain text, for `inlineDeletion`'s reason and one more: a removed table
+    // row is half a construct, so re-rendering it would invent a whole table
+    // around it. The CSS keeps the newlines, which is what lets the rows of a
+    // removed table still read as rows.
+    children: [{ type: "text", value: deletion.text.trim() }],
   };
 }
 

@@ -1006,11 +1006,14 @@ diffs-container {
     );
     color: color-mix(in oklab, var(--foreground) 65%, var(--color-red-500));
   }
-  /* Structural removals — a whole paragraph or table row — have no line
-     left to strike through, so they degrade to a marker that carries the
-     removed source in its tooltip. */
+  /* Structural removals — a paragraph, a table row, a whole table — have no
+     line left to strike through, so they degrade to a marker that shows the
+     removed source in full. `pre-wrap` is what makes the multi-line cases
+     readable (T-209): the rows of a removed table keep their line breaks, and
+     `overflow-wrap` from .markdown-body still breaks a line too long to fit. */
   .markdown-body del.spec-del-block {
     display: block;
+    white-space: pre-wrap;
     margin: 0.35rem 0;
     padding: 0.1rem 0.5rem;
     border-left: 3px solid
