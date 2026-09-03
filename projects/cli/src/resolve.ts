@@ -1,21 +1,71 @@
-import type { Label, Status, TodouClient } from "@todou/shared";
+import type {
+  Label,
+  ReferenceConfig,
+  ReferenceDirectory,
+  Status,
+  TodouClient,
+} from "@todou/shared";
 import { canonicalizeLabelName, TodouError } from "@todou/shared";
 import { CliError } from "./errors.ts";
 
 /**
- * The project's current reference prefix for display spelling (T-80).
- * Best-effort on purpose: an old server (404) or a network blip must
- * never fail the command — the spelling just degrades to "#N".
+ * Reference reads memoized per client instance, which is per command: one is
+ * built in `execute()` and thrown away with it. So resolving a positional's
+ * prefix and then spelling the output costs one request rather than two, and
+ * no command can read two different versions of the same config (T-214).
+ *
+ * A failed read is memoized too. Without that, a command whose server
+ * predates the endpoint would fire the same doomed request at every call
+ * site, and there are two dozen of them.
  */
+const CONFIGS = new WeakMap<
+  TodouClient,
+  Map<string, Promise<ReferenceConfig | null>>
+>();
+const DIRECTORIES = new WeakMap<
+  TodouClient,
+  Promise<ReferenceDirectory | null>
+>();
+
+/**
+ * The project's reference configuration, or null when it cannot be had.
+ * Best-effort on purpose: an old server (404) or a network blip must never
+ * fail the command — the spelling degrades to "#N" and prefix resolution
+ * falls back to the pre-T-214 reading.
+ */
+export async function fetchReferenceConfig(
+  client: TodouClient,
+  project: string,
+): Promise<ReferenceConfig | null> {
+  let byProject = CONFIGS.get(client);
+  if (byProject === undefined) {
+    byProject = new Map();
+    CONFIGS.set(client, byProject);
+  }
+  const cached = byProject.get(project);
+  if (cached !== undefined) return cached;
+  const pending = client.getReferenceConfig(project).catch(() => null);
+  byProject.set(project, pending);
+  return pending;
+}
+
+/** The cross-project prefix directory; null = unreadable, read as empty. */
+export async function fetchReferenceDirectory(
+  client: TodouClient,
+): Promise<ReferenceDirectory | null> {
+  const cached = DIRECTORIES.get(client);
+  if (cached !== undefined) return cached;
+  const pending = client.getReferenceDirectory().catch(() => null);
+  DIRECTORIES.set(client, pending);
+  return pending;
+}
+
+/** The project's current reference prefix for display spelling (T-80). */
 export async function fetchRefPrefix(
   client: TodouClient,
   project: string,
 ): Promise<string | null> {
-  try {
-    return (await client.getReferenceConfig(project)).format.prefix;
-  } catch {
-    return null;
-  }
+  return (await fetchReferenceConfig(client, project))?.format.prefix ?? null;
 }
 
 function findByName<T extends { name: string }>(
