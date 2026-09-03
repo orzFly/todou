@@ -107,6 +107,10 @@ const DECORATION_CLASSES = new Set([
   "spec-del-block",
   "spec-ins",
   "spec-del",
+  // A removed row or column is spliced back into the table it left (T-221),
+  // so it carries no source line the diff could have reported either.
+  "spec-del-cell",
+  "spec-del-row",
 ]);
 
 function classesOf(element: Element): string[] {

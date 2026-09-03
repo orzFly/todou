@@ -145,6 +145,25 @@ function paragraph(n: number, className?: string[]): Element {
   };
 }
 
+/** A table `n` whose only change is a row T-221 struck through in place. */
+function struckRowTable(n: number): Element {
+  const line = n * 2 - 1;
+  return {
+    type: "element",
+    tagName: "table",
+    properties: {},
+    children: [
+      {
+        type: "element",
+        tagName: "tr",
+        properties: { className: ["spec-del-row"] },
+        children: [],
+      },
+    ],
+    position: { start: { line, column: 1 }, end: { line, column: 2 } },
+  };
+}
+
 /** What rehype-decorations splices in for a structural removal. */
 function deletionMarker(): Element {
   return {
@@ -206,6 +225,41 @@ describe("rehypeFoldUnchanged", () => {
       "p",
       "p",
       "p.spec-ins-block",
+      "p",
+      "p",
+    ]);
+  });
+
+  it("keeps a table whose only change is struck through inside it", () => {
+    const tree: Root = {
+      type: "root",
+      children: [
+        paragraph(1),
+        paragraph(2),
+        paragraph(3),
+        paragraph(4),
+        struckRowTable(5),
+        paragraph(6),
+        paragraph(7),
+        paragraph(8),
+      ],
+    };
+    rehypeFoldUnchanged({
+      changedRanges: [],
+      annotationRanges: [],
+      expanded: new Set(),
+      keepHeading: true,
+    })(tree);
+    // A removed row is spliced back into the table, so the line diff reports
+    // nothing and only the class marks the table changed.
+    expect(shape(tree)).toEqual([
+      "p",
+      "button.spec-fold",
+      "p.spec-folded",
+      "p.spec-folded",
+      "p",
+      "table",
+      "p",
       "p",
       "p",
     ]);
