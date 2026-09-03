@@ -455,7 +455,8 @@ export function AnnotatedMarkdown({
     () =>
       decorations.spans.length === 0 &&
       decorations.deletions.length === 0 &&
-      decorations.blocks.length === 0
+      decorations.blocks.length === 0 &&
+      decorations.tables.length === 0
         ? REHYPE_PLUGINS
         : [rehypeSourceLines, [rehypeDecorations, decorations]],
     [decorations],

@@ -30,6 +30,24 @@ export type DeletionDecoration = {
   block: boolean;
 };
 
+/**
+ * What a paired table's new side no longer has (T-221). A removed column or
+ * row has no element on the page to strike through, so one is built and put
+ * back where it stood: `at` is an index into the *final* order — the new
+ * table's own rows and columns with the removed ones spliced in — so applying
+ * these in ascending order is what produces that order.
+ */
+export type TableOverlay = {
+  /** The table's source range in the new document; how its `<table>` is found. */
+  table: SourceRange;
+  /** Removed columns, in final column order; `cells` in rendered row order. */
+  columns: Array<{ at: number; cells: Array<string | null> }>;
+  /** Removed rows, in final row order (0 is the header); `cells` in final column order. */
+  rows: Array<{ at: number; cells: Array<string | null> }>;
+  /** Cells that stayed but were emptied; the coordinates are pre-splice. */
+  emptied: Array<{ row: number; col: number; text: string }>;
+};
+
 export type Decorations = {
   spans: SpanDecoration[];
   deletions: DeletionDecoration[];
@@ -40,12 +58,14 @@ export type Decorations = {
    * them.
    */
   blocks: SourceRange[];
+  tables: TableOverlay[];
 };
 
 export const NO_DECORATIONS: Decorations = {
   spans: [],
   deletions: [],
   blocks: [],
+  tables: [],
 };
 
 /** Carries the annotation key so the popover can flash its exact mark. */
@@ -157,6 +177,132 @@ function blockDeletion(deletion: DeletionDecoration): Element {
     // removed table still read as rows.
     children: [{ type: "text", value: deletion.text.trim() }],
   };
+}
+
+export const DEL_CELL_CLASS = "spec-del-cell";
+export const DEL_ROW_CLASS = "spec-del-row";
+
+/** Element children only: the `\n` text nodes between cells are not cells. */
+function elementsOf(parent: Element, tagNames: string[]): Element[] {
+  return parent.children.filter(
+    (child): child is Element =>
+      child.type === "element" && tagNames.includes(child.tagName),
+  );
+}
+
+/** Where the `n`th element child sits among all children; the end past it. */
+function childIndexOf(parent: Element, n: number): number {
+  let seen = 0;
+  for (let i = 0; i < parent.children.length; i++) {
+    if (parent.children[i]?.type !== "element") continue;
+    if (seen === n) return i;
+    seen++;
+  }
+  return parent.children.length;
+}
+
+/** The element of `tagName` whose source starts exactly at `start`, or null. */
+function elementStartingAt(
+  parent: Root | Element,
+  tagName: string,
+  start: number,
+): Element | null {
+  for (const child of parent.children as ElementContent[]) {
+    if (child.type !== "element") continue;
+    if (child.tagName === tagName && child.position?.start.offset === start) {
+      return child;
+    }
+    // A table can sit inside a list item or a blockquote, so this recurses.
+    const found = elementStartingAt(child, tagName, start);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/**
+ * A cell the new version does not have, built to stand in the column or the
+ * row it was spliced into (T-221). It carries no `position`, so `fullyInside`
+ * refuses it and no "wholly new" class can land on it.
+ */
+function deletedCell(
+  tagName: "th" | "td",
+  text: string | null,
+  className: string[],
+): Element {
+  return {
+    type: "element",
+    tagName,
+    properties: { className },
+    children:
+      text === null ? [] : [inlineDeletion({ at: 0, text, block: false })],
+  };
+}
+
+/**
+ * Splice a paired table's removed columns and rows back into it (T-221).
+ * Everything a diff draws elsewhere is a wrapper around content that is on
+ * the page; a removed column has none, so this is the one place the pass adds
+ * elements. It stays additive all the same: an overlay whose table cannot be
+ * found is dropped in silence, exactly as a mark with no text node is.
+ *
+ * Order is load-bearing. `emptied` names cells by their coordinates before any
+ * splice; `columns` widen every row, which is what makes a removed row's cells
+ * — which already carry a slot for each removed column — line up when they are
+ * inserted last.
+ */
+function applyOverlay(tree: Root, overlay: TableOverlay): void {
+  const table = elementStartingAt(tree, "table", overlay.table.start);
+  if (table === null) return;
+  const head = elementsOf(table, ["thead"])[0] ?? null;
+  const body = elementsOf(table, ["tbody"])[0] ?? null;
+  const sections = [head, body].filter((s): s is Element => s !== null);
+  const rows = sections.flatMap((section) => elementsOf(section, ["tr"]));
+
+  for (const cell of overlay.emptied) {
+    const row = rows[cell.row];
+    if (row === undefined) continue;
+    const target = elementsOf(row, ["th", "td"])[cell.col];
+    if (target === undefined) continue;
+    target.children.push(
+      inlineDeletion({ at: 0, text: cell.text, block: false }),
+    );
+  }
+
+  const headRows = head === null ? 0 : elementsOf(head, ["tr"]).length;
+  for (const column of [...overlay.columns].sort((a, b) => a.at - b.at)) {
+    rows.forEach((row, index) => {
+      row.children.splice(
+        childIndexOf(row, column.at),
+        0,
+        deletedCell(
+          index < headRows ? "th" : "td",
+          column.cells[index] ?? null,
+          [DEL_CELL_CLASS],
+        ),
+      );
+    });
+  }
+
+  let target = body;
+  if (target === null && overlay.rows.length > 0) {
+    target = {
+      type: "element",
+      tagName: "tbody",
+      properties: {},
+      children: [],
+    };
+    table.children.push(target);
+  }
+  if (target === null) return;
+  for (const row of [...overlay.rows].sort((a, b) => a.at - b.at)) {
+    target.children.splice(childIndexOf(target, row.at - 1), 0, {
+      type: "element",
+      tagName: "tr",
+      properties: { className: [DEL_ROW_CLASS] },
+      // The row is coloured as a row; its cells wear no class of their own.
+      children: row.cells.map((text) => deletedCell("td", text, [])),
+    });
+  }
 }
 
 /**
@@ -306,8 +452,14 @@ export function rehypeDecorations(options: Decorations = NO_DECORATIONS) {
   const spans = options.spans;
   const deletions = options.deletions;
   const blocks = options.blocks;
+  const tables = options.tables;
   return (tree: Root) => {
-    if (spans.length === 0 && deletions.length === 0 && blocks.length === 0) {
+    if (
+      spans.length === 0 &&
+      deletions.length === 0 &&
+      blocks.length === 0 &&
+      tables.length === 0
+    ) {
       return;
     }
     const inline = deletions.filter((d) => !d.block);
@@ -374,5 +526,7 @@ export function rehypeDecorations(options: Decorations = NO_DECORATIONS) {
       if (index === -1) tree.children.push(marker);
       else tree.children.splice(index, 0, marker);
     }
+
+    for (const overlay of tables) applyOverlay(tree, overlay);
   };
 }
