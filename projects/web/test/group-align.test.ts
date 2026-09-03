@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { type AlignGroup, alignGroups } from "../src/lib/group-align.ts";
+import {
+  type AlignGroup,
+  alignGroups,
+  matchByWords,
+} from "../src/lib/group-align.ts";
 import type { SourceBlockType } from "../src/lib/spec-source-index.ts";
 
 let next = 0;
@@ -13,6 +17,7 @@ const para = (text: string) => group("paragraph", text);
 const cell = (text: string) => group("tableCell", text);
 const head = (text: string) => group("heading", text);
 const code = (text: string) => group("code", text);
+const table = (text: string) => group("table", text);
 
 /** T-209's repro: the paragraph that was deleted above a renumbered heading. */
 const T209_PARA =
@@ -244,6 +249,65 @@ describe("alignGroups", () => {
       pairs: [],
       oldOnly: [],
       newOnly: [],
+    });
+  });
+
+  it("pairs a table only with a table (T-221)", () => {
+    // A document's leaves hold whole tables now, so the class has to keep them
+    // apart from prose the way it always kept cells apart.
+    const result = alignGroups(
+      [para("说明"), table("甲\n乙\n一\n二")],
+      [para("说明改"), table("甲\n乙\n一\n贰")],
+    );
+    expect(paired(result)).toEqual([
+      ["说明", "说明改"],
+      ["甲\n乙\n一\n二", "甲\n乙\n一\n贰"],
+    ]);
+    const mixed = alignGroups([cell("一")], [table("一\n二")]);
+    expect(mixed.pairs).toEqual([]);
+    expect(mixed.oldOnly).toHaveLength(1);
+    expect(mixed.newOnly).toHaveLength(1);
+  });
+});
+
+describe("matchByWords (T-221)", () => {
+  it("pairs one against one on position alone", () => {
+    expect(matchByWords(["二"], ["三"])).toEqual({
+      pairs: [[0, 0]],
+      oldOnly: [],
+      newOnly: [],
+    });
+  });
+
+  it("names the new index an unmatched old one lost to", () => {
+    // 旧甲 takes the pair; 旧乙 lost to nothing that follows, so it lands at
+    // the end — which is where its marker goes.
+    expect(matchByWords(["旧甲。", "旧乙。"], ["旧甲改。"])).toEqual({
+      pairs: [[0, 0]],
+      oldOnly: [[1, 1]],
+      newOnly: [],
+    });
+    // The other order: 旧乙 loses to the new leaf standing in front of it.
+    expect(matchByWords(["旧乙。", "旧甲。"], ["旧甲改。"])).toEqual({
+      pairs: [[1, 0]],
+      oldOnly: [[0, 0]],
+      newOnly: [],
+    });
+  });
+
+  it("has an answer when one side is empty", () => {
+    expect(matchByWords(["甲", "乙"], [])).toEqual({
+      pairs: [],
+      oldOnly: [
+        [0, 0],
+        [1, 0],
+      ],
+      newOnly: [],
+    });
+    expect(matchByWords([], ["甲"])).toEqual({
+      pairs: [],
+      oldOnly: [],
+      newOnly: [0],
     });
   });
 });

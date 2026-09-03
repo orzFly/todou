@@ -28,6 +28,17 @@ export type Alignment = {
   newOnly: AlignGroup[];
 };
 
+/** The same three outcomes as `Alignment`, but by index (T-221). */
+export type WordMatching = {
+  pairs: Array<[number, number]>;
+  /**
+   * Each unmatched old index, with the new index it lost to — `news.length`
+   * when it lost to nothing. That is where its marker belongs.
+   */
+  oldOnly: Array<[number, number]>;
+  newOnly: number[];
+};
+
 /**
  * Below this share of common words, two blocks are two blocks rather than one
  * rewritten — pairing them would diff unrelated prose and scatter marks
@@ -51,12 +62,16 @@ const PROSE_LEAVES = new Set<SourceBlockType>(["paragraph", "heading"]);
 type Class = "none" | "prose" | SourceBlockType;
 
 /**
- * A table cell only ever pairs with a table cell, and that is the whole fix
- * for T-163: a paragraph replaced by a table can no longer have its words
- * matched into the cells that replaced it, so no `<del>` lands in a header
- * and no cell keeps word boxes the absorbing block should have swallowed.
- * Paragraph and heading do pair — promoting one to the other is an ordinary
- * edit that reads well word by word. A fence pairs only with a fence.
+ * A table only ever pairs with a table, and that is the whole fix for T-163:
+ * a paragraph replaced by a table can no longer have its words matched into
+ * the cells that replaced it, so no `<del>` lands in a header and no cell
+ * keeps word boxes the absorbing block should have swallowed. Paragraph and
+ * heading do pair — promoting one to the other is an ordinary edit that reads
+ * well word by word. A fence pairs only with a fence.
+ *
+ * Since T-221 a document's leaves hold whole tables rather than single cells,
+ * and what is inside a paired one is `alignTable`'s question. `tableCell`
+ * keeps its class for the leaves a test builds by hand.
  */
 function classOf(type: SourceBlockType | null): Class {
   if (type === null) return "none";
@@ -87,35 +102,24 @@ function unmatched(
 }
 
 /** Pair by position, and let the surplus stand alone. */
-function zip(
-  olds: AlignGroup[],
-  news: AlignGroup[],
-  seam: (j: number) => number,
-  out: Alignment,
-): void {
-  const shared = Math.min(olds.length, news.length);
-  for (let i = 0; i < shared; i++) {
-    const old = olds[i];
-    const nu = news[i];
-    if (old === undefined || nu === undefined) continue;
-    out.pairs.push({ old, new: nu });
-  }
-  unmatched(olds.slice(shared), news.slice(shared), seam(news.length), out);
+function zip(m: number, n: number): WordMatching {
+  const shared = Math.min(m, n);
+  const out: WordMatching = { pairs: [], oldOnly: [], newOnly: [] };
+  for (let i = 0; i < shared; i++) out.pairs.push([i, i]);
+  for (let i = shared; i < m; i++) out.oldOnly.push([i, n]);
+  for (let j = shared; j < n; j++) out.newOnly.push(j);
+  return out;
 }
 
 /** The best non-crossing set of pairs, weighed by how much each shares. */
-function score(
-  olds: AlignGroup[],
-  news: AlignGroup[],
-  seam: (j: number) => number,
-  out: Alignment,
-): void {
+function score(olds: string[], news: string[]): WordMatching {
+  const out: WordMatching = { pairs: [], oldOnly: [], newOnly: [] };
   const m = olds.length;
   const n = news.length;
   // One bag per leaf, not one per candidate pair: segmenting is the expensive
   // half, and a run of 30 against 14 asks about the same leaf 14 times.
-  const oldBags = olds.map((leaf) => wordBag(leaf.text));
-  const newBags = news.map((leaf) => wordBag(leaf.text));
+  const oldBags = olds.map(wordBag);
+  const newBags = news.map(wordBag);
   const sims = new Array<number>(m * n).fill(Number.NEGATIVE_INFINITY);
   for (let i = 0; i < m; i++) {
     for (let j = 0; j < n; j++) {
@@ -160,20 +164,49 @@ function score(
       sim !== Number.NEGATIVE_INFINITY &&
       best === sim + (dp[(i + 1) * width + j + 1] ?? 0)
     ) {
-      out.pairs.push({ old, new: nu });
+      out.pairs.push([i, j]);
       i++;
       j++;
     } else if (
       old !== undefined &&
       (nu === undefined || best === (dp[(i + 1) * width + j] ?? 0))
     ) {
-      out.oldOnly.push({ group: old, newIndex: seam(j) });
+      out.oldOnly.push([i, j]);
       i++;
     } else if (nu !== undefined) {
-      out.newOnly.push(nu);
+      out.newOnly.push(j);
       j++;
     } else break;
   }
+  return out;
+}
+
+/**
+ * Which of `olds` became which of `news`, by index — the judgement `matchRun`
+ * makes within one type class, on its own so that `alignTable` can ask it of a
+ * table's rows and of its columns too (T-221).
+ *
+ * The shape is the whole of it. One against one: the position is unique, so it
+ * *is* the evidence — this became that, and how much of it survived is
+ * `coalescedWordDiff`'s question, not this one's. T-142's 二→三 shares no
+ * character and T-180's whole-line rewrite shares almost none; both are still
+ * one block rewritten. More than one candidate on either side: the position no
+ * longer says which went with which, so words decide, and a candidate below
+ * the similarity floor is nobody's counterpart.
+ */
+export function matchByWords(olds: string[], news: string[]): WordMatching {
+  const m = olds.length;
+  const n = news.length;
+  if (m === 0 || n === 0) {
+    return {
+      pairs: [],
+      oldOnly: Array.from({ length: m }, (_, i): [number, number] => [i, n]),
+      newOnly: Array.from({ length: n }, (_, j) => j),
+    };
+  }
+  if (m === 1 && n === 1) return { pairs: [[0, 0]], oldOnly: [], newOnly: [] };
+  if (m * n > PAIRS_GUARD) return zip(m, n);
+  return score(olds, news);
 }
 
 /**
@@ -184,13 +217,10 @@ function score(
  * and asked as a 2×2 the two single words would have to clear the similarity
  * floor they share nothing to clear.
  *
- * Within a class the shape is the whole of it. One leaf against one leaf: the
- * position is unique, so it *is* the evidence — this block became that one,
- * and how much of it survived is `coalescedWordDiff`'s question, not this
- * one's. T-142's 二→三 shares no character and T-180's whole-line rewrite
- * shares almost none; both are still one block rewritten. More than one
- * candidate on either side: the position no longer says which went with which,
- * so words decide, and a candidate below the floor is nobody's counterpart.
+ * Within a class, `matchByWords` decides; this maps its indexes back onto the
+ * leaves and onto the seam an unmatched old leaf fell at. The one case kept
+ * here is a class with nothing on one side, whose seam is the run's own base
+ * rather than any leaf's position.
  */
 function matchRun(
   olds: AlignGroup[],
@@ -222,22 +252,25 @@ function matchRun(
       unmatched(mine, theirs, base, local);
       continue;
     }
-    const only = mine[0];
-    const counterpart = theirs[0];
-    if (
-      mine.length === 1 &&
-      theirs.length === 1 &&
-      only !== undefined &&
-      counterpart !== undefined
-    ) {
-      local.pairs.push({ old: only, new: counterpart });
-      continue;
+    const matching = matchByWords(
+      mine.map((leaf) => leaf.text),
+      theirs.map((leaf) => leaf.text),
+    );
+    for (const [i, j] of matching.pairs) {
+      const old = mine[i];
+      const nu = theirs[j];
+      if (old === undefined || nu === undefined) continue;
+      local.pairs.push({ old, new: nu });
     }
-    if (mine.length * theirs.length > PAIRS_GUARD) {
-      zip(mine, theirs, seam, local);
-      continue;
+    for (const [i, j] of matching.oldOnly) {
+      const old = mine[i];
+      if (old === undefined) continue;
+      local.oldOnly.push({ group: old, newIndex: seam(j) });
     }
-    score(mine, theirs, seam, local);
+    for (const j of matching.newOnly) {
+      const nu = theirs[j];
+      if (nu !== undefined) local.newOnly.push(nu);
+    }
   }
   // Back into document order: the classes were settled one after another, and
   // `clusterDeletions` downstream reads neighbouring removals as one marker.
