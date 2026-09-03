@@ -16,9 +16,9 @@ import type {
   SearchItem,
   SearchPage,
 } from "@todou/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
-import { projectsQuery } from "../src/api/queries.ts";
+import { projectQuery, projectsQuery } from "../src/api/queries.ts";
 import {
   referenceConfigQuery,
   referenceDirectoryQuery,
@@ -253,12 +253,22 @@ describe("search results", () => {
  * shared shim's memory history leaves `window.location` untouched, so
  * reading the router back is the only way to see where it went.
  */
-function renderBox() {
+function renderBox(
+  client: QueryClient = testQueryClient(),
+  { boxes = 1 }: { boxes?: number } = {},
+) {
   const rootRoute = createRootRoute();
+  // Two is the real header: the wide row's box and the narrow row's.
+  const Boxes = () => (
+    <>
+      <SearchBox slug="todou" />
+      {boxes > 1 && <SearchBox slug="todou" listAlign="stretch" />}
+    </>
+  );
   const indexRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/",
-    component: () => <SearchBox slug="todou" />,
+    component: Boxes,
   });
   const projectRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -268,16 +278,22 @@ function renderBox() {
     getParentRoute: () => projectRoute,
     path: "search",
     validateSearch: (search: Record<string, unknown>) => search,
-    component: () => <SearchBox slug="todou" />,
+    component: Boxes,
+  });
+  // The box now navigates to a card as well, and the router refuses a
+  // destination its tree does not know.
+  const issueRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "issues/$number",
+    component: Boxes,
   });
   const router = createRouter({
     routeTree: rootRoute.addChildren([
       indexRoute,
-      projectRoute.addChildren([searchRoute]),
+      projectRoute.addChildren([searchRoute, issueRoute]),
     ]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
-  const client = testQueryClient();
   const utils = render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
@@ -296,6 +312,39 @@ function submit(container: HTMLElement) {
   const form = container.querySelector("form");
   if (!form) throw new Error("no search form rendered");
   fireEvent.submit(form);
+}
+
+/** The box only offers anything while it has focus, so a test has to give it some. */
+async function typeInto(
+  utils: Awaited<ReturnType<typeof renderBox>>,
+  value: string,
+): Promise<HTMLInputElement> {
+  const input = (await utils.findByLabelText(
+    "Search this project",
+  )) as HTMLInputElement;
+  input.focus();
+  fireEvent.focusIn(input);
+  fireEvent.change(input, { target: { value } });
+  return input;
+}
+
+const optionsOf = (container: HTMLElement) => [
+  ...container.querySelectorAll('[role="option"]'),
+];
+
+const listboxOf = (container: HTMLElement) =>
+  container.querySelector('[role="listbox"]');
+
+function seedBox(autolinks: Autolink[] = []): QueryClient {
+  const client = seedJumpContext(testQueryClient(), autolinks);
+  client.setQueryData(projectQuery("todou").queryKey, {
+    id: 1,
+    slug: "todou",
+    name: "Todou",
+    description: "",
+    created_at: "2026-01-01T00:00:00.000Z",
+  });
+  return client;
 }
 
 describe("SearchBox", () => {
@@ -343,6 +392,261 @@ describe("SearchBox", () => {
     expect(document.activeElement).toBe(other);
     expect(document.activeElement).not.toBe(input);
     other.remove();
+  });
+});
+
+describe("SearchBox · the jump offer", () => {
+  it("offers the card a ref names, and Enter follows it", async () => {
+    const client = seedBox();
+    client.setQueryData(
+      issueRefQuery("todou", 141).queryKey,
+      refItem(141, "全文搜索"),
+    );
+    const utils = renderBox(client);
+    await typeInto(utils, "T-141");
+
+    await waitFor(() => expect(optionsOf(utils.container)).toHaveLength(2));
+    const [card, search] = optionsOf(utils.container);
+    expect(card?.getAttribute("href")).toBe("/projects/todou/issues/141");
+    expect(card?.textContent).toContain("T-141");
+    expect(card?.textContent).toContain("全文搜索");
+    expect(card?.textContent).toContain("Next");
+    expect(card?.getAttribute("aria-selected")).toBe("true");
+    expect(search?.textContent).toContain("Search for “T-141”");
+
+    submit(utils.container);
+    await waitFor(() =>
+      expect(utils.where().pathname).toBe("/projects/todou/issues/141"),
+    );
+  });
+
+  it("searches for the ref as text when the reader arrows past the card", async () => {
+    const client = seedBox();
+    client.setQueryData(
+      issueRefQuery("todou", 141).queryKey,
+      refItem(141, "全文搜索"),
+    );
+    const utils = renderBox(client);
+    const input = await typeInto(utils, "T-141");
+    await waitFor(() => expect(optionsOf(utils.container)).toHaveLength(2));
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    submit(utils.container);
+    await waitFor(() =>
+      expect(utils.where()).toEqual({
+        pathname: "/projects/todou/search",
+        search: { q: "T-141" },
+      }),
+    );
+  });
+
+  it("closes on Escape and stays closed until the query changes", async () => {
+    const client = seedBox();
+    client.setQueryData(
+      issueRefQuery("todou", 141).queryKey,
+      refItem(141, "全文搜索"),
+    );
+    client.setQueryData(
+      issueRefQuery("todou", 1411).queryKey,
+      refItem(1411, "另一张"),
+    );
+    const utils = renderBox(client);
+    const input = await typeInto(utils, "T-141");
+    await waitFor(() => expect(listboxOf(utils.container)).not.toBeNull());
+
+    fireEvent.keyDown(input, { key: "Escape" });
+    await waitFor(() => expect(listboxOf(utils.container)).toBeNull());
+
+    fireEvent.change(input, { target: { value: "T-1411" } });
+    await waitFor(() => expect(listboxOf(utils.container)).not.toBeNull());
+  });
+
+  it("offers nothing, and searches as ever, when there is no such card", async () => {
+    const client = seedBox();
+    client.setQueryData(
+      issueRefQuery("todou", 141).queryKey,
+      refItem(141, "全文搜索"),
+    );
+    client.setQueryData(issueRefQuery("todou", 999).queryKey, null);
+    const utils = renderBox(client);
+    // Opened on a card that is there, so the listbox going away is the
+    // absence of a card rather than a query that never answered.
+    const input = await typeInto(utils, "T-141");
+    await waitFor(() => expect(listboxOf(utils.container)).not.toBeNull());
+
+    fireEvent.change(input, { target: { value: "T-999" } });
+    await waitFor(() => expect(listboxOf(utils.container)).toBeNull());
+
+    submit(utils.container);
+    await waitFor(() =>
+      expect(utils.where()).toEqual({
+        pathname: "/projects/todou/search",
+        search: { q: "T-999" },
+      }),
+    );
+  });
+
+  it("waits for a lookup in flight rather than guessing where Enter goes", async () => {
+    const client = seedBox();
+    let land: (item: IssueListItem | null) => void = () => {};
+    const deferred = new Promise<IssueListItem | null>((resolve) => {
+      land = resolve;
+    });
+    void client.prefetchQuery({
+      ...issueRefQuery("todou", 141),
+      queryFn: () => deferred,
+    });
+    const utils = renderBox(client);
+    const input = await typeInto(utils, "T-141");
+    await waitFor(() => expect(optionsOf(utils.container)).toHaveLength(2));
+    // A placeholder, not a link: there is nothing to point at yet.
+    const [placeholder] = optionsOf(utils.container);
+    expect(placeholder?.tagName).toBe("DIV");
+    expect(placeholder?.getAttribute("aria-selected")).toBe("true");
+
+    // Pasting and hitting Enter in the same beat must reach the same place
+    // as waiting for the row first — the destination is not the network's
+    // to decide.
+    submit(utils.container);
+    await waitFor(() => expect(input.getAttribute("aria-busy")).toBe("true"));
+    expect(utils.where().pathname).toBe("/");
+
+    land(refItem(141, "全文搜索"));
+    await waitFor(() =>
+      expect(utils.where().pathname).toBe("/projects/todou/issues/141"),
+    );
+  });
+
+  it("falls back to searching when the awaited card turns out missing", async () => {
+    const client = seedBox();
+    let land: (item: IssueListItem | null) => void = () => {};
+    const deferred = new Promise<IssueListItem | null>((resolve) => {
+      land = resolve;
+    });
+    void client.prefetchQuery({
+      ...issueRefQuery("todou", 141),
+      queryFn: () => deferred,
+    });
+    const utils = renderBox(client);
+    const input = await typeInto(utils, "T-141");
+    await waitFor(() => expect(optionsOf(utils.container)).toHaveLength(2));
+    submit(utils.container);
+    await waitFor(() => expect(input.getAttribute("aria-busy")).toBe("true"));
+    expect(utils.where().pathname).toBe("/");
+
+    land(null);
+    await waitFor(() =>
+      expect(utils.where()).toEqual({
+        pathname: "/projects/todou/search",
+        search: { q: "T-141" },
+      }),
+    );
+  });
+
+  it("names the project in both the jump and the search row when the card is elsewhere", async () => {
+    const client = seedBox();
+    client.setQueryData(
+      issueRefQuery("mirror", 3).queryKey,
+      refItem(3, "Theirs"),
+    );
+    const utils = renderBox(client);
+    await typeInto(utils, "mirror#3");
+    await waitFor(() => expect(optionsOf(utils.container)).toHaveLength(2));
+    const [card, search] = optionsOf(utils.container);
+    expect(card?.textContent).toContain("mirror/M-3");
+    expect(card?.getAttribute("href")).toBe("/projects/mirror/issues/3");
+    // Without this the reader cannot tell the search will stay here.
+    expect(search?.textContent).toContain("in Todou");
+  });
+
+  it("opens an autolink's target in a new tab", async () => {
+    const client = seedBox([
+      {
+        id: 1,
+        prefix: "GH-",
+        url_template: "https://github.com/o/r/issues/<num>",
+      },
+    ]);
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const utils = renderBox(client);
+    await typeInto(utils, "GH-76");
+    await waitFor(() => expect(optionsOf(utils.container)).toHaveLength(2));
+    const [external] = optionsOf(utils.container);
+    expect(external?.getAttribute("href")).toBe(
+      "https://github.com/o/r/issues/76",
+    );
+    expect(external?.getAttribute("target")).toBe("_blank");
+    expect(external?.getAttribute("rel")).toBe("noreferrer");
+
+    submit(utils.container);
+    await waitFor(() =>
+      expect(open).toHaveBeenCalledWith(
+        "https://github.com/o/r/issues/76",
+        "_blank",
+        "noreferrer",
+      ),
+    );
+    // Opening a tab is not leaving this page.
+    expect(utils.where().pathname).toBe("/");
+    open.mockRestore();
+  });
+
+  it("offers both readings of #76 when # is also the autolink prefix", async () => {
+    // docs/external-trackers.md's recommended mirror setup, where the two
+    // are equally plausible and picking one for the reader is a guess.
+    const client = seedBox([
+      {
+        id: 1,
+        prefix: "#",
+        url_template: "https://github.com/o/r/issues/<num>",
+      },
+    ]);
+    client.setQueryData(
+      issueRefQuery("todou", 76).queryKey,
+      refItem(76, "Ours"),
+    );
+    const utils = renderBox(client);
+    await typeInto(utils, "#76");
+    await waitFor(() => expect(optionsOf(utils.container)).toHaveLength(3));
+    const [card, external] = optionsOf(utils.container);
+    expect(card?.getAttribute("href")).toBe("/projects/todou/issues/76");
+    expect(card?.getAttribute("aria-selected")).toBe("true");
+    expect(external?.getAttribute("href")).toBe(
+      "https://github.com/o/r/issues/76",
+    );
+  });
+
+  it("highlights the external link when there is no card behind #76", async () => {
+    const client = seedBox([
+      {
+        id: 1,
+        prefix: "#",
+        url_template: "https://github.com/o/r/issues/<num>",
+      },
+    ]);
+    client.setQueryData(issueRefQuery("todou", 76).queryKey, null);
+    const utils = renderBox(client);
+    await typeInto(utils, "#76");
+    await waitFor(() => expect(optionsOf(utils.container)).toHaveLength(2));
+    const [external] = optionsOf(utils.container);
+    expect(external?.getAttribute("href")).toBe(
+      "https://github.com/o/r/issues/76",
+    );
+    expect(external?.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("gives the header's two boxes listboxes of their own", async () => {
+    const client = seedBox();
+    client.setQueryData(
+      issueRefQuery("todou", 141).queryKey,
+      refItem(141, "全文搜索"),
+    );
+    const utils = renderBox(client, { boxes: 2 });
+    // Both are mounted at once in the real header (wide row and narrow
+    // row), so a written id would be on the page twice.
+    const inputs = await utils.findAllByLabelText("Search this project");
+    const ids = inputs.map((input) => input.getAttribute("aria-controls"));
+    expect(new Set(ids).size).toBe(2);
   });
 });
 

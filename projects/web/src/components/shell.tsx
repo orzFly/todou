@@ -136,7 +136,11 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
         {slug != null && (
           <div className="mx-auto flex max-w-6xl items-center gap-2 px-4 pb-2 md:hidden">
             <ProjectNav slug={slug} className="flex-1 sm:hidden" />
-            <SearchBox slug={slug} className="max-w-48 flex-1 sm:max-w-none" />
+            <SearchBox
+              slug={slug}
+              className="max-w-48 flex-1 sm:max-w-none"
+              listAlign="stretch"
+            />
           </div>
         )}
       </header>

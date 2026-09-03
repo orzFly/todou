@@ -34,9 +34,15 @@ import { type JumpCandidate, refJumpCandidates } from "@/lib/ref-jump.ts";
 /** Where a card candidate points, once every lookup it needs has landed. */
 export type JumpTarget = { slug: string; number: number; commentId?: number };
 
+/** A candidate that names a card, as opposed to an external link. */
+export type JumpCardCandidate = Extract<
+  JumpCandidate,
+  { kind: "issue" | "comment" }
+>;
+
 export type JumpRow =
   /** A card is named and still being looked up; nothing to show yet but a placeholder. */
-  | { kind: "issue"; state: "pending"; candidate: JumpCandidate }
+  | { kind: "issue"; state: "pending"; candidate: JumpCardCandidate }
   | {
       kind: "issue";
       state: "ready";
@@ -58,15 +64,16 @@ function writesPrefix(config: ReferenceConfig, prefix: string): boolean {
   );
 }
 
-const isCard = (
-  candidate: JumpCandidate,
-): candidate is Extract<JumpCandidate, { kind: "issue" | "comment" }> =>
+const isCard = (candidate: JumpCandidate): candidate is JumpCardCandidate =>
   candidate.kind !== "external";
 
 export function useJumpRows(slug: string, q: string): JumpRow[] {
-  const config = useQuery(referenceConfigQuery(slug));
-  const directory = useQuery(referenceDirectoryQuery);
-  const projects = useQuery(projectsQuery);
+  // The box is mounted on every project page. Until someone types in it
+  // there is no question to answer, so it asks nothing.
+  const asked = q.trim() !== "";
+  const config = useQuery({ ...referenceConfigQuery(slug), enabled: asked });
+  const directory = useQuery({ ...referenceDirectoryQuery, enabled: asked });
+  const projects = useQuery({ ...projectsQuery, enabled: asked });
 
   const prefix = config.data?.format.prefix ?? null;
   const candidates = useMemo(() => {
@@ -209,7 +216,7 @@ export function useJumpRows(slug: string, q: string): JumpRow[] {
  */
 export async function jumpIssuePromise(
   client: QueryClient,
-  candidate: Extract<JumpCandidate, { kind: "issue" | "comment" }>,
+  candidate: JumpCardCandidate,
 ): Promise<JumpTarget | null> {
   try {
     const located =
