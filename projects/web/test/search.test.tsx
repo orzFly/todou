@@ -1,3 +1,4 @@
+import type { QueryClient } from "@tanstack/react-query";
 import { QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -7,15 +8,22 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { fireEvent, render, waitFor } from "@testing-library/react";
-import type { SearchItem, SearchPage } from "@todou/shared";
+import type {
+  Autolink,
+  IssueListItem,
+  Project,
+  ReferenceDirectory,
+  SearchItem,
+  SearchPage,
+} from "@todou/shared";
 import { describe, expect, it } from "vitest";
-import { referenceConfigQuery } from "../src/api/references.ts";
+import { issueRefQuery } from "../src/api/issue-refs.ts";
+import { projectsQuery } from "../src/api/queries.ts";
 import {
-  domainsOf,
-  refShortcut,
-  searchPageSchema,
-  searchQuery,
-} from "../src/api/search.ts";
+  referenceConfigQuery,
+  referenceDirectoryQuery,
+} from "../src/api/references.ts";
+import { domainsOf, searchPageSchema, searchQuery } from "../src/api/search.ts";
 import { SearchBox } from "../src/components/search-box.tsx";
 import { SearchHighlight } from "../src/components/search-highlight.tsx";
 import { groupByIssue, SearchResults } from "../src/pages/search.tsx";
@@ -41,14 +49,77 @@ const hit = (over: Partial<SearchItem> = {}): SearchItem => ({
   ...over,
 });
 
-function seeded(page: SearchPage, search: { q?: string; in?: string } = {}) {
-  const client = testQueryClient();
-  const params = { q: "全文搜索", ...search };
-  client.setQueryData(searchQuery("todou", params).queryKey, page);
+const refItem = (number: number, title: string): IssueListItem => ({
+  id: number,
+  number,
+  title,
+  status,
+  author: {
+    id: 1,
+    login: "alice",
+    display_name: "Alice",
+    kind: "human",
+    avatar_url: null,
+    owner: null,
+  },
+  assignees: [],
+  labels: [],
+  created_at: "2026-08-30T08:00:00Z",
+  updated_at: "2026-08-30T08:00:00Z",
+  body_edited_at: null,
+  open_questions: 0,
+  spec_version: null,
+  spec_review_status: null,
+  spec_unresolved_comments: 0,
+  deleted_at: null,
+  deleted_by: null,
+  unread: false,
+  unread_comments: 0,
+});
+
+const DIRECTORY: ReferenceDirectory = {
+  since: "2020-01-01T00:00:00.000Z",
+  entries: [
+    { prefix: "M", slug: "mirror", from: "2020-01-01T00:00:00.000Z", to: null },
+  ],
+  contested: [],
+};
+
+/**
+ * Everything a jump offer reads before it can resolve anything: this
+ * project's format, the prefix directory, and the projects the viewer may
+ * name. Without all three the offer stays empty by design, so a test about
+ * a jump has to seed all three.
+ */
+function seedJumpContext(client: QueryClient, autolinks: Autolink[] = []) {
   client.setQueryData(referenceConfigQuery("todou").queryKey, {
     format: { prefix: "T", history: [] },
+    autolinks,
+  });
+  client.setQueryData(referenceConfigQuery("mirror").queryKey, {
+    format: { prefix: "M", history: [] },
     autolinks: [],
   });
+  client.setQueryData(referenceDirectoryQuery.queryKey, DIRECTORY);
+  client.setQueryData(
+    projectsQuery.queryKey,
+    ["todou", "mirror"].map(
+      (slug): Project => ({
+        id: 1,
+        slug,
+        name: slug === "todou" ? "Todou" : "Mirror",
+        description: "",
+        created_at: "2026-01-01T00:00:00.000Z",
+      }),
+    ),
+  );
+  return client;
+}
+
+function seeded(page: SearchPage, search: { q?: string; in?: string } = {}) {
+  const client = seedJumpContext(testQueryClient());
+  const params = { q: "全文搜索", ...search };
+  client.setQueryData(searchQuery("todou", params).queryKey, page);
   return { client, params };
 }
 
@@ -103,16 +174,68 @@ describe("search results", () => {
     expect(marks).toEqual(["全文搜索"]);
   });
 
-  it("offers a direct jump when the query names a card", async () => {
+  it("offers a direct jump to the card the query names", async () => {
     const { client } = seeded({ items: [], has_more: false }, { q: "T-141" });
+    client.setQueryData(
+      issueRefQuery("todou", 141).queryKey,
+      refItem(141, "全文搜索"),
+    );
     const { findByText } = renderWithProviders(
       <SearchResults slug="todou" search={{ q: "T-141" }} />,
       client,
     );
-    const link = await findByText("Go to T-141");
-    expect(link.closest("a")?.getAttribute("href")).toBe(
-      "/projects/todou/issues/141",
+    const link = (await findByText("T-141")).closest("a");
+    expect(link?.getAttribute("href")).toBe("/projects/todou/issues/141");
+    expect(link?.textContent).toContain("全文搜索");
+    expect(link?.textContent).toContain("Next");
+  });
+
+  it("offers nothing when there is no such card", async () => {
+    // Which is also what an unreadable project and a trashed card look
+    // like — the reader learns nothing either way (T-150).
+    const { client } = seeded({ items: [], has_more: false }, { q: "T-141" });
+    client.setQueryData(issueRefQuery("todou", 141).queryKey, null);
+    const { findByText, queryByText } = renderWithProviders(
+      <SearchResults slug="todou" search={{ q: "T-141" }} />,
+      client,
     );
+    await findByText(/Nothing matched/);
+    expect(queryByText("T-141")).toBeNull();
+  });
+
+  it("spells a jump across projects so it cannot read as one of ours", async () => {
+    const { client } = seeded(
+      { items: [], has_more: false },
+      { q: "mirror#3" },
+    );
+    client.setQueryData(
+      issueRefQuery("mirror", 3).queryKey,
+      refItem(3, "Theirs"),
+    );
+    const { findByText } = renderWithProviders(
+      <SearchResults slug="todou" search={{ q: "mirror#3" }} />,
+      client,
+    );
+    const link = (await findByText("mirror/M-3")).closest("a");
+    expect(link?.getAttribute("href")).toBe("/projects/mirror/issues/3");
+  });
+
+  it("offers the external tracker an autolink prefix points at", async () => {
+    const { client } = seeded({ items: [], has_more: false }, { q: "GH-76" });
+    seedJumpContext(client, [
+      {
+        id: 1,
+        prefix: "GH-",
+        url_template: "https://github.com/o/r/issues/<num>",
+      },
+    ]);
+    const { findByText } = renderWithProviders(
+      <SearchResults slug="todou" search={{ q: "GH-76" }} />,
+      client,
+    );
+    const link = (await findByText("GH-76")).closest("a");
+    expect(link?.getAttribute("href")).toBe("https://github.com/o/r/issues/76");
+    expect(link?.getAttribute("target")).toBe("_blank");
   });
 
   it("says so when nothing matched", async () => {
@@ -251,22 +374,6 @@ describe("SearchHighlight", () => {
   });
 });
 
-describe("refShortcut", () => {
-  it("takes the project's own spelling, and a bare number", () => {
-    expect(refShortcut("T-141", "T")).toBe(141);
-    expect(refShortcut("t-141", "T")).toBe(141);
-    expect(refShortcut(" 141 ", "T")).toBe(141);
-    expect(refShortcut("#141", null)).toBe(141);
-  });
-
-  it("stays out of the way of an ordinary query", () => {
-    expect(refShortcut("全文搜索", "T")).toBeUndefined();
-    expect(refShortcut("T-141 搜索", "T")).toBeUndefined();
-    expect(refShortcut("0", "T")).toBeUndefined();
-    expect(refShortcut("", "T")).toBeUndefined();
-  });
-});
-
 describe("groupByIssue", () => {
   it("keeps a card where its best hit ranked", () => {
     const groups = groupByIssue([
@@ -294,7 +401,7 @@ describe("search params", () => {
   });
 
   it("survives a query the router already read as a number", () => {
-    // `?q=141` — a pasted card number, which is the case refShortcut exists
+    // `?q=141` — a pasted card number, the very case the jump offer exists
     // for — reaches validateSearch as a number, and a bare z.string() there
     // throws the whole route away instead of rendering the page.
     expect(searchPageSchema.parse({ q: 141 }).q).toBe("141");
