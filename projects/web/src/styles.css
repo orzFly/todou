@@ -1110,6 +1110,59 @@ diffs-container {
     );
   }
 
+  /* The stand-in for a folded run of blocks (T-222). Both colours are the
+     formula behind pierre's --diffs-bg-separator and --diffs-fg-number, so the
+     rendered comparison and the source diff of the same versions fold behind
+     the same-looking control. The bottom margin is a paragraph's rather than
+     pierre's 8px: this one stands in the rhythm of prose. */
+  .markdown-body .spec-fold {
+    display: grid;
+    grid-template-columns: 32px auto;
+    column-gap: 1ch;
+    align-items: center;
+    width: 100%;
+    height: 32px;
+    margin: 0 0 1rem;
+    padding: 0;
+    padding-inline-end: 1ch;
+    border: 0;
+    border-radius: 6px;
+    overflow: hidden;
+    background-color: color-mix(in oklab, var(--background) 96%, black);
+    color: color-mix(in oklab, var(--foreground) 65%, var(--background));
+    font: 13px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    text-align: left;
+    cursor: pointer;
+    user-select: none;
+  }
+  .dark .markdown-body .spec-fold {
+    background-color: color-mix(in oklab, var(--background) 85%, white);
+  }
+  /* pierre's `expand-all` glyph, painted through a mask so that it brightens
+     with the label on hover instead of needing a second asset. */
+  .markdown-body .spec-fold::before {
+    content: "";
+    justify-self: stretch;
+    height: 100%;
+    border-right: 2px solid var(--background);
+    background-color: currentColor;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M11.47 9.47a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06L8 12.94zM7.526 1.418a.75.75 0 0 1 1.004.052l4 4a.75.75 0 1 1-1.06 1.06L8 3.06 4.53 6.53a.75.75 0 1 1-1.06-1.06l4-4z'/%3E%3C/svg%3E")
+      center / 16px 16px no-repeat;
+  }
+  .markdown-body .spec-fold:hover {
+    text-decoration: underline;
+  }
+  .markdown-body .spec-fold:hover::before {
+    background-color: var(--foreground);
+  }
+  .markdown-body .spec-fold:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  .markdown-body .spec-folded {
+    display: none;
+  }
+
   /* Code styling stays intentionally shallow: T-31 swaps <pre>/<code>
      for pierre CodeView, and these rules must be trivial to delete. */
   .markdown-body code {

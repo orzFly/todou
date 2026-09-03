@@ -8,6 +8,7 @@ import type { ComponentProps } from "react";
 import {
   type MouseEvent as ReactMouseEvent,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -29,6 +30,11 @@ import {
   NO_DECORATIONS,
   rehypeDecorations,
 } from "@/lib/rehype-decorations.ts";
+import {
+  FOLD_CLASS,
+  FOLD_KEY_ATTR,
+  rehypeFoldUnchanged,
+} from "@/lib/rehype-fold-unchanged.ts";
 import {
   CODE_CONTENT_START_ATTR,
   parseSourceLoc,
@@ -54,6 +60,11 @@ type RehypePlugins = ComponentProps<typeof Markdown>["rehypePlugins"];
 
 // Stable array — MarkdownView passes it straight to react-markdown.
 const REHYPE_PLUGINS: RehypePlugins = [rehypeSourceLines];
+
+// Stable empty defaults, for the same reason as the array above: a fresh `[]`
+// on every render invalidates the memo the plugin array hangs on.
+const NO_RANGES: LineRange[] = [];
+const NO_FOLDS: ReadonlySet<string> = new Set();
 
 export type DisplayedAnnotation = {
   key: string;
@@ -389,7 +400,8 @@ export function AnnotatedMarkdown({
   baselineBody,
   refDate,
   annotations,
-  changedRanges = [],
+  changedRanges = NO_RANGES,
+  foldUnchanged = false,
   onStage,
   onEditDraft,
   onRemoveDraft,
@@ -410,6 +422,12 @@ export function AnnotatedMarkdown({
   annotations: DisplayedAnnotation[];
   /** Lines changed since the compare baseline — green highlight + ↑↓ nav. */
   changedRanges?: LineRange[];
+  /**
+   * Fold the runs of blocks that carry nothing to review (T-222). Only ever
+   * true for a rendered comparison of a file that has changes to fold around;
+   * spec-view owns that judgement, and the reader's preference.
+   */
+  foldUnchanged?: boolean;
   /** Stage a draft for the selected source range of the viewed version. */
   onStage: (range: AnchorRange) => void;
   /** Load a staged draft back into the composer for rewriting (T-159). */
@@ -421,6 +439,7 @@ export function AnnotatedMarkdown({
   const containerRef = useRef<HTMLDivElement>(null);
   const [chips, setChips] = useState<Chip[]>([]);
   const [pending, setPending] = useState<PendingSelection | null>(null);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(NO_FOLDS);
 
   const index = useMemo(() => buildSegmentIndex(body), [body]);
   const baselineIndex = useMemo(
@@ -447,20 +466,39 @@ export function AnnotatedMarkdown({
       ),
     [index, baselineIndex, annotations],
   );
+  const annotationRanges = useMemo(
+    () => annotations.map((a) => ({ start: a.start, end: a.end })),
+    [annotations],
+  );
   // Referential stability is load-bearing, not tidiness: a fresh plugin
   // array re-runs react-markdown and rebuilds the text nodes a live
   // selection lives in (T-60). None of these inputs move while a selection
-  // is pending.
-  const rehypePlugins = useMemo<RehypePlugins>(
-    () =>
-      decorations.spans.length === 0 &&
-      decorations.deletions.length === 0 &&
-      decorations.blocks.length === 0 &&
-      decorations.tables.length === 0
-        ? REHYPE_PLUGINS
-        : [rehypeSourceLines, [rehypeDecorations, decorations]],
-    [decorations],
-  );
+  // is pending — folding is switched from the toolbar, and opening a
+  // placeholder is a click, which no selection outlives anyway.
+  const rehypePlugins = useMemo<RehypePlugins>(() => {
+    const decorated =
+      decorations.spans.length > 0 ||
+      decorations.deletions.length > 0 ||
+      decorations.blocks.length > 0 ||
+      decorations.tables.length > 0;
+    if (!decorated && !foldUnchanged) return REHYPE_PLUGINS;
+    const plugins: NonNullable<RehypePlugins> = [rehypeSourceLines];
+    if (decorated) plugins.push([rehypeDecorations, decorations]);
+    // After the decorations, whose classes decide what counts as changed.
+    if (foldUnchanged) {
+      plugins.push([
+        rehypeFoldUnchanged,
+        { changedRanges, annotationRanges, expanded, keepHeading: true },
+      ]);
+    }
+    return plugins;
+  }, [decorations, foldUnchanged, changedRanges, annotationRanges, expanded]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a different document, or folding switched, invalidates both which folds are open and where a pending selection sat
+  useEffect(() => {
+    setExpanded(NO_FOLDS);
+    setPending(null);
+  }, [body, baselineBody, foldUnchanged]);
 
   const layout = useCallback(() => {
     const container = containerRef.current;
@@ -539,6 +577,11 @@ export function AnnotatedMarkdown({
     window.addEventListener("resize", layout);
     return () => window.removeEventListener("resize", layout);
   }, [layout]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: folding moves the blocks the chips are measured against
+  useLayoutEffect(() => {
+    layout();
+  }, [layout, expanded, foldUnchanged]);
 
   /** Jump to what a popover entry points at — its own mark, or its block. */
   const flashAnnotation = useCallback(
@@ -619,12 +662,25 @@ export function AnnotatedMarkdown({
     [index],
   );
 
+  /** The fold placeholders are markdown-side nodes, so React never sees them. */
+  const onClick = useCallback((event: ReactMouseEvent) => {
+    if (!(event.target instanceof Element)) return;
+    const key = event.target
+      .closest(`.${FOLD_CLASS}`)
+      ?.getAttribute(FOLD_KEY_ATTR);
+    if (key === null || key === undefined) return;
+    setExpanded((prev) => new Set([...prev, key]));
+    setPending(null);
+  }, []);
+
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: mouseup only reads the text selection; blocks stay natively selectable
+    // biome-ignore lint/a11y/noStaticElementInteractions: mouseup only reads the text selection and click only delegates to the fold placeholders; blocks stay natively selectable
+    // biome-ignore lint/a11y/useKeyWithClickEvents: what the click delegates to is a real <button>, which answers Enter and Space by firing this same click
     <div
       ref={containerRef}
       className="relative pr-10"
       onMouseUp={onMouseUp}
+      onClick={onClick}
       data-testid="annotated-markdown"
     >
       <MarkdownView
