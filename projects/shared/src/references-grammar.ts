@@ -10,6 +10,14 @@
  * this module a pure function on either side of the wire.
  */
 
+import {
+  MAX_PREFIX_LENGTH,
+  PREFIX_BODY_CLASS,
+  PREFIX_HEAD_CLASS,
+  SLUG_BODY_CLASS,
+  SLUG_HEAD_CLASS,
+} from "./ref-shapes.ts";
+
 export type AutolinkRule = { prefix: string; url_template: string };
 
 /** One project's hold on a bare prefix over `[from, to)`; `to: null` = still held. */
@@ -83,11 +91,11 @@ export type ReferenceToken =
 
 const WORD = /\w/;
 const DIGIT = /[0-9]/;
-const SLUG_HEAD = /[a-z0-9]/;
-const SLUG_BODY = /[a-z0-9-]/;
-const PREFIX_HEAD = /[A-Z]/;
-const PREFIX_BODY = /[A-Z0-9_]/;
-const MAX_PREFIX = 20;
+const SLUG_HEAD = new RegExp(SLUG_HEAD_CLASS);
+const SLUG_BODY = new RegExp(SLUG_BODY_CLASS);
+const PREFIX_HEAD = new RegExp(PREFIX_HEAD_CLASS);
+const PREFIX_BODY = new RegExp(PREFIX_BODY_CLASS);
+const MAX_PREFIX = MAX_PREFIX_LENGTH;
 const COMMENT_TOKEN = "#comment-";
 
 /**
@@ -158,11 +166,18 @@ function prefixedRefAt(
     : { prefix, value: digits.value, end: digits.end };
 }
 
-/** `slug#N`, `slug/N`, `slug/#N`, `slug/P-N` — one meaning, four spellings. */
+/**
+ * `slug#N`, `slug/N`, `slug/#N`, `slug/P-N` — one meaning, four spellings.
+ *
+ * `prefix` is what the fourth spelling wrote and null for the other three.
+ * The scanner ignores it (a slug names its project outright, so there is
+ * nothing left to resolve); it rides along for `parseRefLocator`, whose
+ * callers do validate it against the named project (T-214).
+ */
 function qualifiedRefAt(
   text: string,
   at: number,
-): { slug: string; value: number; end: number } | null {
+): { slug: string; prefix: string | null; value: number; end: number } | null {
   if (!SLUG_HEAD.test(text[at] ?? "")) return null;
   const stop = runOf(text, at + 1, SLUG_BODY);
   const slug = text.slice(at, stop);
@@ -171,7 +186,7 @@ function qualifiedRefAt(
     const digits = digitsAt(text, stop + 1);
     return digits === null
       ? null
-      : { slug, value: digits.value, end: digits.end };
+      : { slug, prefix: null, value: digits.value, end: digits.end };
   }
   if (sep !== "/") return null;
   const after = stop + 1;
@@ -179,14 +194,57 @@ function qualifiedRefAt(
     const digits = digitsAt(text, after + 1);
     return digits === null
       ? null
-      : { slug, value: digits.value, end: digits.end };
+      : { slug, prefix: null, value: digits.value, end: digits.end };
   }
   const digits = digitsAt(text, after);
-  if (digits !== null) return { slug, value: digits.value, end: digits.end };
+  if (digits !== null) {
+    return { slug, prefix: null, value: digits.value, end: digits.end };
+  }
   const prefixed = prefixedRefAt(text, after);
   return prefixed === null
     ? null
-    : { slug, value: prefixed.value, end: prefixed.end };
+    : {
+        slug,
+        prefix: prefixed.prefix,
+        value: prefixed.value,
+        end: prefixed.end,
+      };
+}
+
+/**
+ * One whole argument read as an issue locator, for a CLI positional rather
+ * than for prose (T-214). Only the two shapes that name a project other
+ * than "wherever this was typed" — a bare prefix, or a slug-qualified form.
+ *
+ * `16` and `#16` are deliberately not covered: they have no shape question
+ * to answer, and the shared `digitsAt` caps a number at nine digits while
+ * the CLI's own `parsePositiveInt` does not. Leaving them to the caller
+ * keeps that cap from spreading into an unrelated tightening.
+ */
+export type RefLocator =
+  | { kind: "prefixed"; prefix: string; number: number }
+  | { kind: "qualified"; slug: string; number: number; prefix: string | null };
+
+/** null = not one of those two shapes, malformed input included. */
+export function parseRefLocator(value: string): RefLocator | null {
+  const qualified = qualifiedRefAt(value, 0);
+  if (qualified !== null && qualified.end === value.length) {
+    return {
+      kind: "qualified",
+      slug: qualified.slug,
+      number: qualified.value,
+      prefix: qualified.prefix,
+    };
+  }
+  const prefixed = prefixedRefAt(value, 0);
+  if (prefixed !== null && prefixed.end === value.length) {
+    return {
+      kind: "prefixed",
+      prefix: prefixed.prefix,
+      number: prefixed.value,
+    };
+  }
+  return null;
 }
 
 /**
