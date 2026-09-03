@@ -20,8 +20,8 @@ pushed as a spec and approved.
 
 ## Steps
 
-1. Explore the project context: files, docs, recent commits, `todou issue view N` for the card and
-   its discussion. Move the card to In Progress.
+1. Move the card to In Progress. Explore the project context: files, docs, recent commits,
+   `todou issue view N` for the card and its discussion.
 2. Ask clarifying questions on the issue: purpose, constraints, success criteria. Build a mockup or
    demo when a question is easier to answer from a picture (see Visual material).
 3. Write the design to a scratch directory made with `mktemp -d`. The approaches you weighed and your
