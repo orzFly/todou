@@ -14,7 +14,7 @@ import type {
   IssueListItem,
   PrefixDirectory,
 } from "@todou/shared";
-import { resolveClaim } from "@todou/shared";
+import { PREFIX_PATTERN, resolveClaim, SLUG_PATTERN } from "@todou/shared";
 import { useMemo } from "react";
 import { issueRefQuery } from "@/api/issue-refs.ts";
 import {
@@ -64,10 +64,8 @@ function escapeRegExp(value: string): string {
 // No whitespace in the run, and no second `#` or `/`, so one token never
 // swallows the start of the next.
 const QUERY = "([^\\s#/]*)$";
-const QUALIFIED = new RegExp(
-  `(?:^|[^\\w-])([a-z0-9][a-z0-9-]*)(#|/#?)${QUERY}`,
-);
-const BARE_PREFIX = new RegExp(`(?:^|[^\\w-])([A-Z][A-Z0-9_]*-)${QUERY}`);
+const QUALIFIED = new RegExp(`(?:^|[^\\w-])(${SLUG_PATTERN})(#|/#?)${QUERY}`);
+const BARE_PREFIX = new RegExp(`(?:^|[^\\w-])(${PREFIX_PATTERN}-)${QUERY}`);
 
 const trigger = (
   text: string,
@@ -86,6 +84,13 @@ const trigger = (
  * mirrors `scanReferenceTokens`: qualified forms, then this project's own
  * format, then autolinks — which suppress completion, being external URLs
  * rather than issues — then a bare foreign prefix.
+ *
+ * Three places now walk that order: `claimAt` anchored left-to-right in
+ * prose, this one matching backwards from the cursor, and the CLI's
+ * `resolvePrefixedRef` matching one whole argument (T-214). The shapes are
+ * shared (`ref-shapes.ts`) and so is the order; the matching itself is not,
+ * because those are three different operations and one function with three
+ * mode switches reads worse at all three call sites.
  */
 export function refTriggerAt(
   text: string,

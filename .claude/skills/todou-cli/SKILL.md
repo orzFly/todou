@@ -65,6 +65,13 @@ gh spellings work too: `issue show` = `view`, `issue comment` = `comment add`, `
 `issue create`, `-l/-a/-L/-S/-s --state open|closed|all` on `issue list`, `-c` on `issue close`, `@me`
 wherever a login goes. Every `<number>` also accepts `<proj>/16`, `"#16"`, `T-16` or a full URL.
 
+**A prefix is resolved, not ignored.** `T-16` means the project that holds `T` — the current one if
+that is its prefix, otherwise whichever readable project claims it deployment-wide. A prefix nobody
+holds, one several projects hold, and one that disagrees with `-p/--project` are all refused (exit 1)
+before anything is read, so a ref pasted from another project can no longer hand you a different
+card. `-p` therefore stays a fence: to reach another project either drop it or write `alpha/16`.
+`<proj>/T-16` is checked against that project's own prefixes, current and retired.
+
 ## Several cards at once
 
 ```bash
