@@ -6,14 +6,10 @@ import {
   useSearch,
 } from "@tanstack/react-router";
 import { formatRef, type SearchDomain, type SearchItem } from "@todou/shared";
-import { ArrowRightIcon, SearchIcon } from "lucide-react";
+import { ArrowRightIcon, ExternalLinkIcon, SearchIcon } from "lucide-react";
+import { useJumpRows } from "@/api/ref-jump.ts";
 import { useRefPrefix } from "@/api/references.ts";
-import {
-  domainsOf,
-  refShortcut,
-  type SearchPageSearch,
-  searchQuery,
-} from "@/api/search.ts";
+import { domainsOf, type SearchPageSearch, searchQuery } from "@/api/search.ts";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { SearchHighlight } from "@/components/search-highlight.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -70,7 +66,6 @@ export function SearchResults({
   const q = (search.q ?? "").trim();
   const results = useQuery(searchQuery(slug, search));
   const prefix = useRefPrefix(slug);
-  const jumpTo = refShortcut(q, prefix);
 
   return (
     <div className="space-y-5">
@@ -91,16 +86,7 @@ export function SearchResults({
 
       <DomainFilter slug={slug} search={search} />
 
-      {jumpTo !== undefined && (
-        <Link
-          to="/projects/$slug/issues/$number"
-          params={{ slug, number: String(jumpTo) }}
-          className="flex items-center gap-2 rounded-lg border border-dashed px-4 py-3 text-sm hover:bg-accent"
-        >
-          <ArrowRightIcon className="size-4 text-muted-foreground" />
-          Go to {formatRef(prefix, jumpTo)}
-        </Link>
-      )}
+      <JumpBanner slug={slug} q={q} />
 
       {q === "" ? (
         <Empty>
@@ -161,6 +147,82 @@ export function SearchResults({
 
 function hitKey(hit: SearchItem): string {
   return `${hit.kind}:${hit.comment_id ?? hit.spec_path ?? hit.field}`;
+}
+
+const JUMP_BOX =
+  "flex items-center gap-2 rounded-lg border border-dashed px-4 py-3 text-sm hover:bg-accent";
+
+/**
+ * What the query names outright, if it names anything. A reader who pastes
+ * a ref means that card, and search would only find it if some *text*
+ * happened to spell the ref — so it is offered as a jump rather than left
+ * to an accidental match. This is also where a shared `?q=T-141` link
+ * lands, which is why the offer lives on the page and not only in the box.
+ *
+ * Nothing is drawn while the lookup is in flight: a box that appears
+ * without a title, one line above the results, would push them down just
+ * as they arrive.
+ */
+function JumpBanner({ slug, q }: { slug: string; q: string }) {
+  const rows = useJumpRows(slug, q);
+  return (
+    <>
+      {rows.map((row) => {
+        if (row.kind === "external") {
+          return (
+            // A new tab: this one leaves todou, unlike an autolink clicked
+            // mid-sentence, which the reader is following as they read.
+            <a
+              key={row.href}
+              href={row.href}
+              target="_blank"
+              rel="noreferrer"
+              className={JUMP_BOX}
+            >
+              <ExternalLinkIcon
+                className="size-4 shrink-0 text-muted-foreground"
+                aria-hidden
+              />
+              <span className="shrink-0 font-mono text-xs">{row.text}</span>
+              <span className="truncate text-muted-foreground">{row.host}</span>
+            </a>
+          );
+        }
+        if (row.state !== "ready") return null;
+        return (
+          <Link
+            key={row.spelled}
+            to="/projects/$slug/issues/$number"
+            params={{ slug: row.slug, number: String(row.number) }}
+            hash={
+              row.commentId === undefined
+                ? undefined
+                : commentAnchor(row.commentId)
+            }
+            // The timeline owns anchor positioning; the router's own scroll
+            // races it.
+            hashScrollIntoView={false}
+            className={JUMP_BOX}
+          >
+            <ArrowRightIcon
+              className="size-4 shrink-0 text-muted-foreground"
+              aria-hidden
+            />
+            <span className="shrink-0 font-mono text-xs text-muted-foreground">
+              {row.spelled}
+            </span>
+            <span className="truncate font-medium">{row.item.title}</span>
+            {row.commentBy !== null && (
+              <span className="shrink-0 text-muted-foreground">
+                · comment by {row.commentBy}
+              </span>
+            )}
+            <StatusPill status={row.item.status} className="ml-auto shrink-0" />
+          </Link>
+        );
+      })}
+    </>
+  );
 }
 
 /**

@@ -179,6 +179,25 @@ A `cross_referenced` event carries its source as `by_project` and
 `by_issue`; spell it `<by_project>#<by_issue>` and it pastes back into any
 command that takes an issue.
 
+## Web
+
+The search box in the project header reads a query that is *entirely* one
+reference and offers where it points, so a pasted ref reaches the card in
+one keystroke; anything else is an ordinary search, unchanged. Every
+spelling a CLI positional takes works here too — `76`, `#76`, `T-76`,
+`t-76`, `todou/T-76`, `todou#76`, a bare foreign prefix, a `#comment-1462`
+anchor, a full URL of this deployment — resolved by the same priority order
+as above. The results page carries the same offer, which is where a shared
+`?q=T-76` link lands.
+
+The card is looked up before it is offered, so a trashed card, a project
+you cannot read, and a number nobody used are indistinguishable: none of
+them is offered, and Enter searches for the text instead. An autolink
+prefix gets a row of its own pointing out of todou — and where `#` is both
+the recommended autolink and a number typed into todou's own box, `#76`
+offers the card and the external tracker as two rows rather than choosing
+one for you.
+
 ## Conventions unaffected
 
 The `Spec: <issue-ref> spec vX` commit trailer is an agent convention that

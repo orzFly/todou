@@ -11,7 +11,7 @@ import { api, authModeQuery, projectQuery } from "@/api/queries.ts";
 import { useUserEvents } from "@/api/useUserEvents.ts";
 import { VersionFooter } from "@/components/footer.tsx";
 import { InboxButton } from "@/components/inbox-button.tsx";
-import { ProjectNav } from "@/components/project-nav.tsx";
+import { NewIssueButton, ProjectNav } from "@/components/project-nav.tsx";
 import { ProjectSwitcher } from "@/components/project-switcher.tsx";
 import { SearchBox } from "@/components/search-box.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -62,8 +62,8 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
     <div className="min-h-dvh bg-background">
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4">
-          {/* Grows so the nav it holds can push its create button out to
-              the account cluster, instead of trailing after Settings. */}
+          {/* Grows so the account cluster stays pinned right whatever the
+              project name and the nav come to. */}
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <Link
               to="/projects"
@@ -85,10 +85,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
                   {project.data?.name ?? slug}
                 </Link>
                 <ProjectSwitcher slug={slug} />
-                <ProjectNav
-                  slug={slug}
-                  className="ml-2 hidden flex-1 sm:flex"
-                />
+                <ProjectNav slug={slug} className="ml-2 hidden sm:flex" />
               </>
             )}
           </div>
@@ -99,6 +96,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
             {slug != null && (
               <SearchBox slug={slug} className="hidden w-48 md:block" />
             )}
+            {slug != null && <NewIssueButton slug={slug} />}
             <InboxButton />
             <ThemeMenu />
             <DropdownMenu>
@@ -136,7 +134,11 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
         {slug != null && (
           <div className="mx-auto flex max-w-6xl items-center gap-2 px-4 pb-2 md:hidden">
             <ProjectNav slug={slug} className="flex-1 sm:hidden" />
-            <SearchBox slug={slug} className="max-w-48 flex-1 sm:max-w-none" />
+            <SearchBox
+              slug={slug}
+              className="max-w-48 flex-1 sm:max-w-none"
+              listAlign="stretch"
+            />
           </div>
         )}
       </header>

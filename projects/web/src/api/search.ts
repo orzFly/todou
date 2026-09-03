@@ -36,23 +36,3 @@ export const searchQuery = (slug: string, search: SearchPageSearch) =>
     staleTime: 60_000,
     enabled: (search.q ?? "").trim() !== "",
   });
-
-/**
- * The card `q` names outright, if it names one. A reader who pastes `T-141`
- * or `141` into the box means that card, and search would only find it if
- * some *text* happened to spell it — so the page offers it as a jump rather
- * than waiting for the query to accidentally match.
- */
-export function refShortcut(
-  q: string,
-  prefix: string | null,
-): number | undefined {
-  const trimmed = q.trim();
-  const token = prefix === null ? "#" : `${prefix}-`;
-  const bare = trimmed.toLowerCase().startsWith(token.toLowerCase())
-    ? trimmed.slice(token.length)
-    : trimmed;
-  if (!/^\d{1,9}$/.test(bare)) return undefined;
-  const n = Number(bare);
-  return n > 0 ? n : undefined;
-}

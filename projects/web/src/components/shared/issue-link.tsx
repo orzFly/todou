@@ -11,6 +11,7 @@ import {
 import { useRefPlacement } from "@/api/prefs.ts";
 import { referenceConfigQuery } from "@/api/references.ts";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
+import { qualifiedRefSpelling } from "@/lib/issue-refs.ts";
 import { commentAnchor, parseIssuePermalink } from "@/lib/timeline-anchors.ts";
 
 /**
@@ -50,7 +51,7 @@ export function IssueLink({
   const refLeads = useRefPlacement("reference") === "before";
   const prefix = config.data?.format.prefix ?? null;
   const spelled = crossProject
-    ? `${slug}${prefix === null ? `#${number}` : `/${prefix}-${number}`}`
+    ? qualifiedRefSpelling(slug, prefix, number)
     : formatRef(prefix, number);
 
   // Across projects a failed lookup degrades exactly like a miss: a link
