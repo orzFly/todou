@@ -6,7 +6,7 @@ import { projectQuery } from "@/api/queries.ts";
 import {
   type JumpRow,
   type JumpTarget,
-  jumpIssuePromise,
+  jumpDestinationPromise,
   useJumpRows,
 } from "@/api/ref-jump.ts";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
@@ -119,30 +119,32 @@ export function SearchBox({
   }, []);
 
   /**
-   * Where Enter goes. A highlighted card still being looked up is waited
-   * for rather than skipped, so pasting a ref and hitting Enter in the same
-   * beat reaches the same place as waiting for the row to appear first.
+   * Where Enter goes. Anything the reader can see decides it outright; a
+   * row that is still loading, or a list that has not appeared yet, is
+   * waited for instead — pasting a ref and hitting Enter in the same beat
+   * has to reach the same place as waiting for the row first.
    */
   const decide = async (): Promise<Destination> => {
-    const chosen = rows[hl];
-    if (chosen === undefined || chosen.kind === "search")
-      return { to: "search" };
-    if (chosen.kind === "external")
+    // Esc hid the offer, and hiding it has to mean something: Enter then
+    // does the plain thing rather than following an invisible highlight.
+    if (dismissed) return { to: "search" };
+    const chosen = open ? rows[hl] : undefined;
+    if (chosen?.kind === "search") return { to: "search" };
+    if (chosen?.kind === "external")
       return { to: "external", href: chosen.href };
-    if (chosen.state === "ready") return { to: "card", target: chosen };
+    if (chosen?.kind === "issue" && chosen.state === "ready") {
+      return { to: "card", target: chosen };
+    }
     setWaiting(true);
     try {
-      const target = await jumpIssuePromise(queryClient, chosen.candidate);
-      if (target !== null) return { to: "card", target };
+      const found = await jumpDestinationPromise(queryClient, slug, value);
+      if (found?.kind === "issue") return { to: "card", target: found.target };
+      if (found?.kind === "external")
+        return { to: "external", href: found.href };
     } finally {
       setWaiting(false);
     }
-    // No such card after all, so this is the highlight it would have had
-    // without one: the external link if there is one, else the search.
-    const external = jumpRows.find((row) => row.kind === "external");
-    return external === undefined
-      ? { to: "search" }
-      : { to: "external", href: external.href };
+    return { to: "search" };
   };
 
   const onSubmit = async (e: React.FormEvent) => {

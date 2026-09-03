@@ -461,6 +461,58 @@ describe("SearchBox · the jump offer", () => {
     await waitFor(() => expect(listboxOf(utils.container)).not.toBeNull());
   });
 
+  it("searches after Escape, so hiding the offer means something", async () => {
+    const client = seedBox();
+    client.setQueryData(
+      issueRefQuery("todou", 141).queryKey,
+      refItem(141, "全文搜索"),
+    );
+    const utils = renderBox(client);
+    const input = await typeInto(utils, "T-141");
+    await waitFor(() => expect(listboxOf(utils.container)).not.toBeNull());
+
+    fireEvent.keyDown(input, { key: "Escape" });
+    await waitFor(() => expect(listboxOf(utils.container)).toBeNull());
+    submit(utils.container);
+    await waitFor(() =>
+      expect(utils.where()).toEqual({
+        pathname: "/projects/todou/search",
+        search: { q: "T-141" },
+      }),
+    );
+  });
+
+  it("reaches the card even when Enter beats the context it needs", async () => {
+    // The box asks nothing until it is typed in, so a reader who pastes and
+    // hits Enter in one beat submits before the project's own format has
+    // arrived. Reading that as "not a reference" would make the destination
+    // a function of the network.
+    const client = seedBox();
+    let land: (directory: ReferenceDirectory) => void = () => {};
+    const deferred = new Promise<ReferenceDirectory>((resolve) => {
+      land = resolve;
+    });
+    client.removeQueries({ queryKey: referenceDirectoryQuery.queryKey });
+    void client.prefetchQuery({
+      ...referenceDirectoryQuery,
+      queryFn: () => deferred,
+    });
+    client.setQueryData(
+      issueRefQuery("todou", 141).queryKey,
+      refItem(141, "全文搜索"),
+    );
+    const utils = renderBox(client);
+    await typeInto(utils, "T-141");
+    // Nothing on offer yet — the context has not landed.
+    expect(listboxOf(utils.container)).toBeNull();
+    submit(utils.container);
+
+    land(DIRECTORY);
+    await waitFor(() =>
+      expect(utils.where().pathname).toBe("/projects/todou/issues/141"),
+    );
+  });
+
   it("offers nothing, and searches as ever, when there is no such card", async () => {
     const client = seedBox();
     client.setQueryData(

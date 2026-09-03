@@ -144,6 +144,21 @@ function readableOnly(
 }
 
 /**
+ * Could this be a reference at all, before the project's format is known?
+ * Every shape in the grammar ends in digits and holds no whitespace, so a
+ * query failing either test cannot resolve to anything.
+ *
+ * Which is what lets Enter skip waiting on the context for an ordinary
+ * search: the box asks nothing until it is typed in, so on the first
+ * keystroke "nothing resolved yet" and "not a reference" look alike, and
+ * only this tells them apart without a round trip.
+ */
+export function couldBeRef(q: string): boolean {
+  const text = q.trim();
+  return text !== "" && !/\s/.test(text) && /\d/.test(text);
+}
+
+/**
  * At most two candidates: one card and one external link, in that order.
  * Both appear together when `#` is this project's autolink prefix while
  * `T-` is its format — the setup docs/external-trackers.md recommends for a
@@ -155,7 +170,7 @@ export function refJumpCandidates(
   ctx: JumpContext,
 ): JumpCandidate[] {
   const text = q.trim();
-  if (text === "") return [];
+  if (!couldBeRef(text)) return [];
 
   if (/^https?:\/\//i.test(text)) {
     const link = parseIssuePermalink(text, ctx.origin);

@@ -3,6 +3,7 @@ import {
   formatRef,
   type IssueListItem,
   type ReferenceConfig,
+  type ReferenceDirectory,
 } from "@todou/shared";
 import { useMemo } from "react";
 import {
@@ -17,7 +18,12 @@ import {
 } from "@/api/references.ts";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import { qualifiedRefSpelling } from "@/lib/issue-refs.ts";
-import { type JumpCandidate, refJumpCandidates } from "@/lib/ref-jump.ts";
+import {
+  couldBeRef,
+  type JumpCandidate,
+  type JumpContext,
+  refJumpCandidates,
+} from "@/lib/ref-jump.ts";
 
 /**
  * The other half of T-215: `refJumpCandidates` says which card a query
@@ -67,6 +73,22 @@ function writesPrefix(config: ReferenceConfig, prefix: string): boolean {
 const isCard = (candidate: JumpCandidate): candidate is JumpCardCandidate =>
   candidate.kind !== "external";
 
+function jumpContext(
+  slug: string,
+  config: ReferenceConfig,
+  directory: ReferenceDirectory,
+  projects: readonly { slug: string }[],
+): JumpContext {
+  return {
+    slug,
+    prefix: config.format.prefix,
+    autolinks: config.autolinks,
+    readableSlugs: projects.map((project) => project.slug),
+    directory,
+    origin: window.location.origin,
+  };
+}
+
 export function useJumpRows(slug: string, q: string): JumpRow[] {
   // The box is mounted on every project page. Until someone types in it
   // there is no question to answer, so it asks nothing.
@@ -86,14 +108,10 @@ export function useJumpRows(slug: string, q: string): JumpRow[] {
       // spellings as this project's own for one render.
       return [];
     }
-    return refJumpCandidates(q, {
-      slug,
-      prefix: config.data.format.prefix,
-      autolinks: config.data.autolinks,
-      readableSlugs: projects.data.map((project) => project.slug),
-      directory: directory.data,
-      origin: window.location.origin,
-    });
+    return refJumpCandidates(
+      q,
+      jumpContext(slug, config.data, directory.data, projects.data),
+    );
   }, [q, slug, config.data, directory.data, projects.data]);
 
   const card = candidates.find(isCard);
@@ -208,13 +226,7 @@ export function useJumpRows(slug: string, q: string): JumpRow[] {
   return rows;
 }
 
-/**
- * The same ladder as a promise, for Enter. `fetchQuery` joins the request
- * already in flight rather than starting a second one, so pasting and
- * hitting Enter within the same beat lands on the same card as waiting for
- * the row to appear first — the destination must not depend on the network.
- */
-export async function jumpIssuePromise(
+async function cardPromise(
   client: QueryClient,
   candidate: JumpCardCandidate,
 ): Promise<JumpTarget | null> {
@@ -252,4 +264,59 @@ export async function jumpIssuePromise(
     // which is the same answer the row gives.
     return null;
   }
+}
+
+/** Where Enter goes; null = nowhere in particular, so search for the text. */
+export type JumpDestination =
+  | { kind: "issue"; target: JumpTarget }
+  | { kind: "external"; href: string };
+
+/**
+ * The whole ladder as a promise, run from the query string rather than from
+ * the rows — because the rows can be empty for two different reasons and
+ * Enter must not confuse them. The box asks nothing until it is typed in,
+ * so on the very first keystroke "not resolved yet" looks exactly like "not
+ * a reference", and reading it as the latter would send a pasted ref to the
+ * results page whenever the reader is faster than the network.
+ *
+ * `fetchQuery` joins a request already in flight rather than starting a
+ * second one, so the answer is the same one the row is about to show.
+ */
+export async function jumpDestinationPromise(
+  client: QueryClient,
+  slug: string,
+  q: string,
+): Promise<JumpDestination | null> {
+  if (!couldBeRef(q)) return null;
+  const [config, directory, projects] = await Promise.all([
+    client.fetchQuery(referenceConfigQuery(slug)).catch(() => null),
+    client.fetchQuery(referenceDirectoryQuery).catch(() => null),
+    client.fetchQuery(projectsQuery).catch(() => null),
+  ]);
+  if (config === null || projects === null) return null;
+
+  const candidates = refJumpCandidates(
+    q,
+    // A directory that cannot be read is one that resolves nothing, which
+    // is the renderer's degradation too.
+    jumpContext(
+      slug,
+      config,
+      directory ?? { since: null, entries: [], contested: [] },
+      projects,
+    ),
+  );
+  const card = candidates.find(isCard);
+  if (card !== undefined) {
+    const target = await cardPromise(client, card);
+    if (target !== null) return { kind: "issue", target };
+  }
+  // No card, so this is the destination the default highlight would have
+  // picked without one.
+  const external = candidates.find(
+    (candidate) => candidate.kind === "external",
+  );
+  return external === undefined || external.kind !== "external"
+    ? null
+    : { kind: "external", href: external.href };
 }

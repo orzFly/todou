@@ -1,6 +1,7 @@
 import type { ReferenceDirectory } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import {
+  couldBeRef,
   type JumpCandidate,
   type JumpContext,
   refJumpCandidates,
@@ -209,6 +210,31 @@ describe("refJumpCandidates · ordinary queries", () => {
   it("stays out of the way of anything that is not one whole reference", () => {
     for (const q of ["T-215 折行", "1234567890", "全文搜索", "", "   "]) {
       expect(of(q), q).toEqual([]);
+    }
+  });
+});
+
+describe("couldBeRef", () => {
+  it("passes everything the grammar could still resolve", () => {
+    for (const q of [
+      "215",
+      "#215",
+      "T-215",
+      "todou/X-215",
+      "#comment-1837",
+      "http://localhost:3000/projects/todou/issues/1",
+      // Resolves to nothing, but only the format can say so.
+      "bug123",
+    ]) {
+      expect(couldBeRef(q), q).toBe(true);
+    }
+  });
+
+  it("rejects what no format could make a reference", () => {
+    // Every shape ends in digits and holds no whitespace, which is what
+    // lets Enter skip waiting for the project's format on these.
+    for (const q of ["全文搜索", "T-215 折行", "WordDiff", "", "   "]) {
+      expect(couldBeRef(q), q).toBe(false);
     }
   });
 });
