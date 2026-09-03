@@ -94,19 +94,32 @@ between versions — the same reason designs and plans live there.
 
 1. Decide the version and write both artifacts above.
 2. Get them approved on the card (above), on the version you are shipping.
-3. Land both files (leave the notes untracked and the script commits it with
-   the bump; the tag message it only reads).
-4. On an up-to-date `master` with a clean tree:
+3. Land both files. Committing them yourself and leaving the notes untracked
+   both work: the script's `git add` is a no-op on a file that is already
+   tracked and unchanged. The tag message file it only reads, so commit that
+   one yourself either way.
+4. Hand over to the orchestrator, who runs the release **in the main
+   checkout**. `release.sh` requires HEAD to be `master` and to equal
+   `origin/master`, so it cannot run from a worktree: an agent that drafted
+   the notes sits on a `worktree-*` branch, where `--dry-run` downgrades both
+   checks to warnings and a real run exits 1. That agent stops with its branch
+   committed and the notes approved; the orchestrator takes it from there:
 
    ```bash
-   scripts/release.sh 0.2.0 --tag-message-file docs/releases/v0.2.0.tag.txt
+   # the notes branch is one commit; the script pushes only at the very end,
+   # so master has to be on origin before it runs
+   git merge --ff-only <agent-branch>
+   git push origin master
+   scripts/release.sh 0.2.0 --tag-message-file docs/releases/v0.2.0.tag.txt \
+     --co-author "Claude Opus 5 <noreply@anthropic.com>"
    ```
 
    The script verifies (master, clean, synced with origin, notes present,
    tag free), bumps the five `package.json` files, commits
    `chore(release): v0.2.0`, tags, and pushes `master` + tag to origin
-   first, then to the GitHub mirror. `--dry-run` rehearses the full
-   command sequence from any branch, downgrading failed checks to warnings.
+   first, then to the GitHub mirror. `--co-author` adds the trailer on agent
+   runs. `--dry-run` rehearses the full command sequence from any branch,
+   downgrading failed checks to warnings.
 
 5. The tag on the mirror triggers CI:
    - **release.yaml** asserts the checkout describes exactly as the tag and
@@ -124,9 +137,9 @@ between versions — the same reason designs and plans live there.
 | Step | Who |
 |---|---|
 | Decide to release | the user |
-| Draft notes + tag message | anyone (usually an agent, on the release card) |
+| Draft notes + tag message | anyone (usually an agent, on the release card, on its own branch) |
 | Approve them (spec review) | the user — a precondition for tagging |
-| Bump, commit, tag, push | `scripts/release.sh` |
+| Merge to `master`, push, run `scripts/release.sh` | the orchestrator, in the main checkout |
 | Artifacts, GitHub release, images | CI |
 | Deploy, CLI distribution | operators, per `docs/deploy.md` |
 
