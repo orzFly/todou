@@ -1,6 +1,6 @@
 {
   "name": "todou",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A to-do list app — reads as To-Do, sounds like 土豆 🥔",
   "private": true,
   "license": "BSD-3-Clause",
