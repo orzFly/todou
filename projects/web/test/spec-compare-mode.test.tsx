@@ -180,9 +180,13 @@ describe("spec compare controls (T-192)", () => {
     expect(
       view.getByRole("link", { name: "source" }).getAttribute("aria-current"),
     ).toBeNull();
-    expect(
-      view.getByRole("button", { name: /^wrap/ }).hasAttribute("disabled"),
-    ).toBe(true);
+    // Enabled once the baseline lands: which blocks changed is what decides
+    // whether there is anything to fold around.
+    await waitFor(() =>
+      expect(
+        view.getByRole("button", { name: /^fold/ }).hasAttribute("disabled"),
+      ).toBe(false),
+    );
     expect(view.queryAllByTestId("diff")).toHaveLength(0);
   });
 

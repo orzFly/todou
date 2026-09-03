@@ -33,6 +33,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   FileTextIcon,
+  FoldVerticalIcon,
   WrapTextIcon,
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -101,11 +102,12 @@ const FILE_DIFF_SELECTOR = "[data-file-diff]";
 const TOOLBAR_FALLBACK_HEIGHT = 78;
 
 /**
- * The one content slot in the toolbar's second row: `wrap` and the new-file
- * note render as this same box, sized to whichever is showing. That leaves the
- * slot ~8px narrower on `wrap` than on the note, and since the slot is anchored
- * right, swapping them shifts it by that much — accepted on T-194 in exchange
- * for the 61px of hollow the old fixed width cost on every other state.
+ * The one content slot in the toolbar's second row: `fold`, `wrap` and the
+ * new-file note render as this same box, sized to whichever is showing. That
+ * leaves the slot ~8px narrower on a toggle than on the note, and since the
+ * slot is anchored right, swapping them shifts it by that much — accepted on
+ * T-194 in exchange for the 61px of hollow the old fixed width cost on every
+ * other state.
  */
 const DISPLAY_SLOT =
   "inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-full border px-2.5 text-xs";
@@ -248,6 +250,27 @@ function writeDiffWrap(wrap: boolean) {
   }
 }
 
+const SPEC_FOLD_STORAGE_KEY = "todou-spec-fold";
+
+// A comparison is opened to see what changed, so the blocks that did not are
+// folded until the reader says otherwise (T-222).
+function readSpecFold(): boolean {
+  try {
+    return localStorage.getItem(SPEC_FOLD_STORAGE_KEY) !== "off";
+  } catch {
+    // storage may be unavailable (private mode); fall through
+    return true;
+  }
+}
+
+function writeSpecFold(fold: boolean) {
+  try {
+    localStorage.setItem(SPEC_FOLD_STORAGE_KEY, fold ? "on" : "off");
+  } catch {
+    // preference just won't persist
+  }
+}
+
 /**
  * Display copy of the anchored source. The server re-cuts it
  * authoritatively on submit; this has to agree with that cut, columns and
@@ -300,6 +323,7 @@ function SpecViewBody({
   // spells out comparisons only, so this quadrant needs its own home (T-200).
   const [offView, setOffView] = useState<SpecView>("rendered");
   const [wrap, setWrap] = useState(readDiffWrap);
+  const [fold, setFold] = useState(readSpecFold);
   const [filesOpen, setFilesOpen] = useState(false);
   const contentRef = useRef<HTMLElement>(null);
   const sessionRef = useRef(0);
@@ -680,9 +704,22 @@ function SpecViewBody({
     return { unit: changedRanges.length === 0 ? "changed file" : "change" };
   })();
 
-  /** The display slot holds `wrap`, which only a source view can honour. */
-  const wrapReason =
-    view === "source" ? undefined : "Only the source view wraps long lines";
+  /**
+   * The display slot's rendered half is `fold`, and it is the one control of
+   * the three that can be refused: a file with nothing marked would fold into
+   * a single placeholder over the document the reader came to read.
+   */
+  const foldReason = !comparing
+    ? "Turn comparing on to fold unchanged blocks"
+    : selected === undefined
+      ? `This file is not part of v${version}`
+      : changedRanges.length === 0
+        ? `Nothing changed in this file since v${baseline}`
+        : undefined;
+  const foldUnchanged =
+    renderedCompare && !isNewFile && foldReason === undefined && fold;
+  /** …and `wrap` is the source half; the new-file note outranks both. */
+  const showsFold = view === "rendered" && !(renderedCompare && isNewFile);
 
   const compareReason =
     version === 1
@@ -1003,7 +1040,10 @@ function SpecViewBody({
             </ToolbarSlot>
           )}
           <span className="ml-auto" />
-          <ToolbarSlot name="display-toggle" title={wrapReason}>
+          <ToolbarSlot
+            name="display-toggle"
+            title={showsFold ? foldReason : undefined}
+          >
             {renderedCompare && isNewFile ? (
               // Nothing is highlighted on a file the baseline never had, and
               // saying why beats leaving the reader to wonder. A renamed one
@@ -1020,34 +1060,55 @@ function SpecViewBody({
                   ? `new in v${version}`
                   : `renamed from ${renamedSource}`}
               </span>
+            ) : showsFold ? (
+              <button
+                type="button"
+                aria-pressed={fold}
+                disabled={foldReason !== undefined}
+                aria-label={
+                  foldReason === undefined
+                    ? "fold unchanged blocks"
+                    : `fold — ${foldReason}`
+                }
+                onClick={() => {
+                  setFold(!fold);
+                  writeSpecFold(!fold);
+                }}
+                className={cn(
+                  DISPLAY_SLOT,
+                  foldReason === undefined
+                    ? cn(
+                        "cursor-pointer",
+                        fold ? DISPLAY_SLOT_ON : DISPLAY_SLOT_OFF,
+                      )
+                    : DISPLAY_SLOT_DISABLED,
+                )}
+                title={
+                  foldReason !== undefined
+                    ? undefined
+                    : fold
+                      ? "Show every block again"
+                      : "Fold the blocks that did not change"
+                }
+              >
+                <FoldVerticalIcon className="size-3.5" />
+                fold
+              </button>
             ) : (
               <button
                 type="button"
                 aria-pressed={wrap}
-                disabled={wrapReason !== undefined}
-                aria-label={
-                  wrapReason === undefined
-                    ? "wrap long lines"
-                    : `wrap — ${wrapReason}`
-                }
+                aria-label="wrap long lines"
                 onClick={() => {
                   setWrap(!wrap);
                   writeDiffWrap(!wrap);
                 }}
                 className={cn(
                   DISPLAY_SLOT,
-                  wrapReason === undefined
-                    ? cn(
-                        "cursor-pointer",
-                        wrap ? DISPLAY_SLOT_ON : DISPLAY_SLOT_OFF,
-                      )
-                    : DISPLAY_SLOT_DISABLED,
+                  "cursor-pointer",
+                  wrap ? DISPLAY_SLOT_ON : DISPLAY_SLOT_OFF,
                 )}
-                title={
-                  wrapReason === undefined
-                    ? "Wrap long lines instead of scrolling horizontally"
-                    : undefined
-                }
+                title="Wrap long lines instead of scrolling horizontally"
               >
                 <WrapTextIcon className="size-3.5" />
                 wrap
@@ -1227,6 +1288,7 @@ function SpecViewBody({
                       }
                       annotations={displayed}
                       changedRanges={changedRanges}
+                      foldUnchanged={foldUnchanged}
                       onStage={(range) =>
                         stage({
                           path: selected.path,

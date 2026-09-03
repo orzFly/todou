@@ -126,14 +126,15 @@ function renderSpecView(search: string) {
 }
 
 describe("spec diff wrap toggle (T-143)", () => {
-  it("is disabled outside the source diff, not unmounted", async () => {
-    // It holds the display slot in every state now, because a slot that
-    // empties out is a slot that moves things (T-190, T-192).
+  it("yields the display slot to fold outside the source views", async () => {
+    // The slot never empties out — a slot that does is a slot that moves
+    // things (T-190, T-192) — but what fills it on a rendered view is the
+    // toggle that view can honour (T-222).
     mockSpec();
     const view = renderSpecView("?v=2");
     await view.findByRole("button", { name: /finish review/i });
-    const toggle = view.getByRole("button", { name: /^wrap/ });
-    expect(toggle.hasAttribute("disabled")).toBe(true);
+    expect(view.queryByRole("button", { name: /^wrap/ })).toBeNull();
+    expect(view.getByRole("button", { name: /^fold/ })).toBeTruthy();
   });
 
   it("defaults to on and wraps the diff", async () => {

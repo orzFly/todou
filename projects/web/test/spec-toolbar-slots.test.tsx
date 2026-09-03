@@ -352,11 +352,67 @@ describe("spec toolbar fixed slots (T-190)", () => {
     expect(finish?.parentElement).not.toBe(rowA);
   });
 
-  it("keeps wrap in the display slot, disabled outside the source views", async () => {
+  it("shows fold on the rendered views and wrap on the source ones", async () => {
+    // The display slot used to hold a permanently disabled `wrap` on every
+    // rendered view — a button that could never be pressed (T-222).
     const view = await toolbar("?v=2&file=design.md");
-    const wrap = view.getByRole("button", { name: /^wrap/ });
-    expect(wrap.hasAttribute("disabled")).toBe(true);
-    expect(wrap.getAttribute("aria-label")).toContain("source view");
+    const fold = view.getByRole("button", { name: /^fold/ });
+    expect(fold.hasAttribute("disabled")).toBe(false);
+    expect(fold.getAttribute("aria-pressed")).toBe("true");
+    expect(view.queryByRole("button", { name: /^wrap/ })).toBeNull();
+    view.unmount();
+    vi.restoreAllMocks();
+
+    const untouched = await toolbar("?v=2&file=stable.md");
+    const disabled = untouched.getByRole("button", { name: /^fold/ });
+    expect(disabled.hasAttribute("disabled")).toBe(true);
+    expect(disabled.getAttribute("aria-label")).toContain("Nothing changed");
+    untouched.unmount();
+    vi.restoreAllMocks();
+
+    const fresh = await toolbar("?v=2&file=fresh.md");
+    expect(fresh.getByText("new in v2")).toBeTruthy();
+    expect(fresh.queryByRole("button", { name: /^fold/ })).toBeNull();
+    expect(fresh.queryByRole("button", { name: /^wrap/ })).toBeNull();
+    fresh.unmount();
+    vi.restoreAllMocks();
+
+    const source = await toolbar("?v=2&compare=1");
+    expect(
+      source.getByRole("button", { name: /^wrap/ }).hasAttribute("disabled"),
+    ).toBe(false);
+    expect(source.queryByRole("button", { name: /^fold/ })).toBeNull();
+  });
+
+  it("turns fold off, remembers it, and refuses it with comparing off", async () => {
+    const view = await toolbar("?v=2&file=design.md");
+    fireEvent.click(view.getByRole("button", { name: /^fold/ }));
+    await waitFor(() =>
+      expect(
+        view
+          .getByRole("button", { name: /^fold/ })
+          .getAttribute("aria-pressed"),
+      ).toBe("false"),
+    );
+    expect(localStorage.getItem("todou-spec-fold")).toBe("off");
+
+    fireEvent.click(compareToggle(view));
+    await waitFor(() =>
+      expect(
+        view.getByRole("button", { name: /^fold/ }).hasAttribute("disabled"),
+      ).toBe(true),
+    );
+    expect(
+      view.getByRole("button", { name: /^fold/ }).getAttribute("aria-label"),
+    ).toContain("Turn comparing on");
+  });
+
+  it("opens with fold off when storage says so", async () => {
+    localStorage.setItem("todou-spec-fold", "off");
+    const view = await toolbar("?v=2&file=design.md");
+    expect(
+      view.getByRole("button", { name: /^fold/ }).getAttribute("aria-pressed"),
+    ).toBe("false");
   });
 
   it("keeps ↑↓ usable on a file that is new in this version", async () => {

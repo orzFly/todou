@@ -109,8 +109,8 @@ export function useLinkedTriggerWidths(
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(row);
-    // The display slot swaps `wrap` for `new in vN` without the row itself
-    // changing size, and that shifts the whole budget.
+    // The display slot rotates between `fold`, `wrap` and `new in vN` without
+    // the row itself changing size, and that shifts the whole budget.
     const display = row.querySelector('[data-toolbar-slot="display-toggle"]');
     if (display !== null) observer.observe(display);
     return () => observer.disconnect();
