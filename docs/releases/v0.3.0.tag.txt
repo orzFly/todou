@@ -1,0 +1,12 @@
+todou v0.3.0
+
+Project-wide search across issues, comments and spec documents;
+cross-project issue references; a restorable trash for deleted issues;
+and a project can change its slug without breaking the links that point
+at the old one. A deployment now hands out the matching CLI builds over
+/api/cli, and --no-browser login works from a browser on another machine.
+
+The CLI absorbed the spec review gate — spec push --wait blocks until a
+verdict — and every wait takes --forever. Two breaking changes for
+scripts: todou watch --json is NDJSON, and an empty --poll exits 0
+instead of 3.
