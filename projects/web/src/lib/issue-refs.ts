@@ -16,6 +16,20 @@ export const DEFAULT_REF_CONFIG: RefConfig = {
   autolinks: [],
 };
 
+/**
+ * The self-contained spelling of another project's issue — `mirror/M-3`, or
+ * `mirror#3` where it has no prefix. A bare `M-3` on a todou page reads as
+ * one of *this* project's cards, so anything pointing across projects has
+ * to name the project it means.
+ */
+export function qualifiedRefSpelling(
+  slug: string,
+  prefix: string | null,
+  number: number,
+): string {
+  return `${slug}${prefix === null ? `#${number}` : `/${prefix}-${number}`}`;
+}
+
 export type RefSegment =
   | { type: "text"; value: string }
   | { type: "ref"; number: number; commentId?: number; text: string }
