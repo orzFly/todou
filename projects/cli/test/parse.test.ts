@@ -89,16 +89,28 @@ describe("parseIssueRef", () => {
 });
 
 describe("parseIssueRef prefixed forms (T-80)", () => {
-  it("parses PREFIX-N and takes the number", () => {
-    expect(parseIssueRef("T-76", "issue number")).toEqual({ number: 76 });
-    expect(parseIssueRef("FOOBAR-8", "issue number")).toEqual({ number: 8 });
-    expect(parseIssueRef("A_2X-9", "issue number")).toEqual({ number: 9 });
+  // The prefix rides along rather than being dropped: with no project named,
+  // it is the only thing that says which one the card is in (T-214).
+  it("parses PREFIX-N and keeps the prefix", () => {
+    expect(parseIssueRef("T-76", "issue number")).toEqual({
+      number: 76,
+      prefix: "T",
+    });
+    expect(parseIssueRef("FOOBAR-8", "issue number")).toEqual({
+      number: 8,
+      prefix: "FOOBAR",
+    });
+    expect(parseIssueRef("A_2X-9", "issue number")).toEqual({
+      number: 9,
+      prefix: "A_2X",
+    });
   });
 
   it("parses project/PREFIX-N", () => {
     expect(parseIssueRef("todou/T-76", "issue number")).toEqual({
       project: "todou",
       number: 76,
+      prefix: "T",
     });
   });
 

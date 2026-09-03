@@ -123,9 +123,39 @@ deployment. Text written before then parses exactly as it did, so
 ## CLI
 
 Issue positionals accept every spelling: `todou issue view 76`, `#76`,
-`T-76`, `todou/T-76`, `todou#76`, or a full URL. The prefix is not
-validated against the project's configured one — the positional already
-names its project.
+`T-76`, `todou/T-76`, `todou#76`, or a full URL.
+
+A prefix names a project, so a positional carrying one is resolved rather
+than read as a number in the current project. `T-76` goes through the same
+priority order the renderer uses:
+
+1. the current project's own prefix, as configured right now
+2. one of its autolink prefixes, which is refused — an autolink points at
+   an external tracker, so there is no todou card to open
+3. the cross-project directory, when exactly one project you can read
+   holds the prefix
+4. otherwise refused, naming the prefixes within reach and suggesting a
+   near miss where there is one
+
+A prefix held by several readable projects is refused the same way, as is
+one whose holders you cannot all see. Every refusal exits 1 and happens
+before any issue is fetched.
+
+`slug/PREFIX-76` is checked too: the prefix has to be one the named project
+writes now or wrote in the past, so a ref pasted out of an old commit
+message still resolves while a mistyped one is caught.
+
+Where a prefix resolves to a project other than the one `-p/--project`
+names, the command is refused instead of following either. Only that flag
+counts — `TODOU_PROJECT`, `.todou.toml` and the git binding are still
+overridden silently, as they are by `todou/76`. So `-p` remains a fence
+around the project you meant, and a cross-project positional needs the
+flag dropped or the qualified spelling written out.
+
+Against a server whose reference config cannot be read the prefix is
+ignored and the number is taken as the current project's, which is what
+the CLI did before prefixes resolved at all.
+
 Human-readable output spells issues in the project's current format;
 against servers without the config endpoint it falls back to `#N`.
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PREFIX_PATTERN, SLUG_PATTERN } from "../ref-shapes.ts";
 import { Id, Timestamp } from "./common.ts";
 import { UserRef } from "./user.ts";
 
@@ -6,7 +7,10 @@ export const ProjectSlug = z
   .string()
   .min(1)
   .max(64)
-  .regex(/^[a-z0-9][a-z0-9-]*$/, "lowercase letters, digits, and dashes");
+  .regex(
+    new RegExp(`^${SLUG_PATTERN}$`),
+    "lowercase letters, digits, and dashes",
+  );
 
 /**
  * Internal issue reference prefix: null = `#N`, 'T' = `T-N`. Lives here
@@ -15,7 +19,10 @@ export const ProjectSlug = z
  */
 export const InternalRefPrefix = z
   .string()
-  .regex(/^[A-Z][A-Z0-9_]{0,19}$/, "capital letter, then capitals/digits/_")
+  .regex(
+    new RegExp(`^${PREFIX_PATTERN}$`),
+    "capital letter, then capitals/digits/_",
+  )
   .nullable();
 export type InternalRefPrefix = z.infer<typeof InternalRefPrefix>;
 

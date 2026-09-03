@@ -2,12 +2,14 @@ import { TodouClient } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import { CliError } from "../src/errors.ts";
 import {
+  fetchReferenceDirectory,
+  fetchRefPrefix,
   resolveAssignees,
   resolveClosedStatus,
   resolveLabels,
   resolveStatus,
 } from "../src/resolve.ts";
-import { fakeFetch } from "./harness.ts";
+import { fakeFetch, type Route } from "./harness.ts";
 
 const statuses = [
   { id: 1, name: "Todo", category: "open", color: "#6b7280", position: 0 },
@@ -79,6 +81,43 @@ describe("resolveLabels", () => {
     expect(
       (await resolveLabels(client(), "todou", ["BUG"])).map((l) => l.id),
     ).toEqual([7]);
+  });
+});
+
+describe("reference reads, memoized per client (T-214)", () => {
+  const config = { format: { prefix: "T", history: [] }, autolinks: [] };
+  const routes: Route[] = [
+    ["GET", "/api/projects/todou/references/config", config],
+    [
+      "GET",
+      "/api/me/reference-directory",
+      { since: null, entries: [], contested: [] },
+    ],
+  ];
+
+  it("reads one config per client, however often it is asked", async () => {
+    const { fetchImpl, calls } = fakeFetch(routes);
+    const one = new TodouClient({ fetch: fetchImpl });
+    expect(await fetchRefPrefix(one, "todou")).toBe("T");
+    expect(await fetchRefPrefix(one, "todou")).toBe("T");
+    await fetchReferenceDirectory(one);
+    await fetchReferenceDirectory(one);
+    expect(calls).toHaveLength(2);
+
+    // A second command gets its own client, so nothing carries over.
+    const two = new TodouClient({ fetch: fetchImpl });
+    expect(await fetchRefPrefix(two, "todou")).toBe("T");
+    expect(calls).toHaveLength(3);
+  });
+
+  it("caches a failure too, rather than retrying it at every call site", async () => {
+    const { fetchImpl, calls } = fakeFetch([]);
+    const client = new TodouClient({ fetch: fetchImpl });
+    expect(await fetchRefPrefix(client, "todou")).toBeNull();
+    expect(await fetchRefPrefix(client, "todou")).toBeNull();
+    expect(await fetchReferenceDirectory(client)).toBeNull();
+    expect(await fetchReferenceDirectory(client)).toBeNull();
+    expect(calls).toHaveLength(2);
   });
 });
 

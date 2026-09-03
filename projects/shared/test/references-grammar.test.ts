@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  parseRefLocator,
   resolveClaim,
   resolveSlugAt,
   type ScanConfig,
@@ -458,5 +459,58 @@ describe("resolveSlugAt", () => {
     expect(resolveSlugAt(SLUG_ENTRIES, ["todou"], "todou", "not a date")).toBe(
       "todou",
     );
+  });
+});
+
+describe("parseRefLocator (T-214)", () => {
+  it("reads a bare prefix off the whole argument", () => {
+    expect(parseRefLocator("T-76")).toEqual({
+      kind: "prefixed",
+      prefix: "T",
+      number: 76,
+    });
+    expect(parseRefLocator("FOOBAR-8")).toEqual({
+      kind: "prefixed",
+      prefix: "FOOBAR",
+      number: 8,
+    });
+    expect(parseRefLocator("A_2X-9")).toEqual({
+      kind: "prefixed",
+      prefix: "A_2X",
+      number: 9,
+    });
+  });
+
+  it("reads all four qualified spellings, carrying the prefix", () => {
+    const bare = { kind: "qualified", slug: "todou", number: 16, prefix: null };
+    expect(parseRefLocator("todou/16")).toEqual(bare);
+    expect(parseRefLocator("todou#16")).toEqual(bare);
+    expect(parseRefLocator("todou/#16")).toEqual(bare);
+    expect(parseRefLocator("todou/T-76")).toEqual({
+      kind: "qualified",
+      slug: "todou",
+      number: 76,
+      prefix: "T",
+    });
+  });
+
+  it.each([
+    // The first two are deliberately uncovered: no shape question to answer,
+    // and the CLI's own parser takes numbers past the nine-digit cap here.
+    "16",
+    "#16",
+    "t-76",
+    "2T-76",
+    "T-",
+    "T-1234567890",
+    "T-76x",
+    "todou/",
+    "todou/abc",
+    "TODOU/16",
+    "todou/1234567890",
+    // A locator is one whole argument; a comment anchor is not part of it.
+    "todou#16#comment-3",
+  ])('reads nothing out of "%s"', (value) => {
+    expect(parseRefLocator(value)).toBeNull();
   });
 });

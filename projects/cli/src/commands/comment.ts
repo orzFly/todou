@@ -129,7 +129,7 @@ export class CommentAddCommand extends ProjectCommand {
 
   protected async run(client: TodouClient): Promise<void> {
     assertWriteCursorFlags(this);
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     if (this.bodyFile === "-" && this.questions === "-") {
       throw new CliError("--body-file and --questions cannot both read stdin");
     }
@@ -236,7 +236,7 @@ export class CommentListCommand extends ProjectCommand {
   });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const last =
       this.last === undefined
         ? undefined
@@ -327,7 +327,7 @@ export class CommentViewCommand extends ProjectCommand {
   commentId = Option.String({ required: false });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const commentId = this.resolveCommentId();
     const comment = await client.getComment(project, number, commentId);
     const refPrefix = await fetchRefPrefix(client, project);
@@ -375,7 +375,7 @@ export class CommentEditCommand extends ProjectCommand {
   });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const commentId = parseCommentId(this.commentId);
     const body = await readBody({
       body: this.body,
@@ -426,7 +426,7 @@ export class CommentDeleteCommand extends ProjectCommand {
   });
 
   protected async run(client: TodouClient): Promise<number> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const commentId = parseCommentId(this.commentId);
     // Fetched before the delete, so a wrong id fails as a 404 rather than
     // as a prompt about a comment nobody can see, and so the confirmation

@@ -2057,3 +2057,207 @@ describe("reference format display (T-80)", () => {
     ).toBe(true);
   });
 });
+
+describe("positional prefix resolution (T-214)", () => {
+  const SINCE = "2026-01-01T00:00:00Z";
+  const prefixed = (prefix: string | null) => ({
+    format: {
+      prefix,
+      history: prefix === null ? [] : [{ prefix, effective_from: SINCE }],
+    },
+    autolinks: [],
+  });
+  const claim = (prefix: string, slug: string) => ({
+    prefix,
+    slug,
+    from: SINCE,
+    to: null,
+  });
+  const directory = (entries: ReturnType<typeof claim>[]) => ({
+    since: SINCE,
+    entries,
+    contested: [],
+  });
+  const DIRECTORY = directory([claim("T", "todou"), claim("CH", "homelab")]);
+
+  /** Everything `issue view <n>` reads, for one project. */
+  function viewRoutes(project: string, number: number): Route[] {
+    return [
+      [
+        "GET",
+        `/api/projects/${project}/issues/${number}`,
+        { ...issue, number },
+      ],
+      [
+        "GET",
+        `/api/projects/${project}/issues/${number}/timeline`,
+        { items: [], prev_cursor: null, next_cursor: null },
+      ],
+      ["PUT", `/api/projects/${project}/issues/${number}/read`, {}],
+    ];
+  }
+
+  const hit = (calls: { url: string }[], fragment: string) =>
+    calls.filter((call) => String(call.url).includes(fragment)).length;
+
+  it("takes this project's own prefix without reading the directory", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      ...viewRoutes("todou", 3),
+      ["GET", "/api/projects/todou/references/config", prefixed("T")],
+      ["GET", "/api/me/reference-directory", DIRECTORY],
+    ]);
+    const result = await runCli(["issue", "view", "T-3", "-p", "todou"], {
+      fetchImpl,
+      env: loggedInEnv(),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("T-3 Fix the potato");
+    // The budget this rung has to keep: the config was going to be read
+    // anyway to spell the header, and the directory is not read at all.
+    expect(hit(calls, "/references/config")).toBe(1);
+    expect(hit(calls, "/reference-directory")).toBe(0);
+  });
+
+  it("resolves a prefix another project holds", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      ...viewRoutes("homelab", 5),
+      ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+      ["GET", "/api/projects/homelab/references/config", prefixed("CH")],
+      ["GET", "/api/me/reference-directory", DIRECTORY],
+    ]);
+    // No -p: with the flag in play this would (correctly) hit the guard
+    // below instead, so the crossing path only exists via an ambient
+    // project — TODOU_PROJECT here.
+    const result = await runCli(["issue", "view", "CH-5"], {
+      fetchImpl,
+      env: loggedInEnv("dogfood"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(hit(calls, "/projects/homelab/issues/5")).toBeGreaterThan(0);
+    expect(result.stdout).toContain("CH-5 Fix the potato");
+  });
+
+  it("refuses a prefix nobody holds, without reading an issue", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      ...viewRoutes("dogfood", 1),
+      ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+      ["GET", "/api/me/reference-directory", DIRECTORY],
+    ]);
+    const result = await runCli(["issue", "view", "FOO-1", "-p", "dogfood"], {
+      fetchImpl,
+      env: loggedInEnv(),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe(
+      'error: no project uses the prefix "FOO" (from "FOO-1")\n' +
+        'write this project\'s own card as "#1" or "dogfood/1"; ' +
+        "prefixes in reach: CH- (homelab), T- (todou)\n",
+    );
+    // The refusal has to land before the read: a command that already
+    // fetched the wrong card has done the damage this card is about.
+    expect(hit(calls, "/projects/dogfood/issues/1")).toBe(0);
+  });
+
+  it("refuses when the prefix and -p disagree", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      ...viewRoutes("homelab", 5),
+      ...viewRoutes("todou", 5),
+      ["GET", "/api/projects/todou/references/config", prefixed("T")],
+      ["GET", "/api/me/reference-directory", DIRECTORY],
+    ]);
+    const result = await runCli(["issue", "view", "CH-5", "-p", "todou"], {
+      fetchImpl,
+      env: loggedInEnv(),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe(
+      'error: "CH-5" resolves to project "homelab" (prefix CH), ' +
+        'but -p/--project says "todou"\n' +
+        'write "todou/5" for this project, or drop -p/--project\n',
+    );
+    expect(hit(calls, "/issues/5")).toBe(0);
+  });
+
+  it("refuses a prefix two projects hold", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+      [
+        "GET",
+        "/api/me/reference-directory",
+        directory([claim("M", "mirror"), claim("M", "muon")]),
+      ],
+    ]);
+    const result = await runCli(["issue", "view", "M-3", "-p", "dogfood"], {
+      fetchImpl,
+      env: loggedInEnv(),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe(
+      'error: prefix "M" is used by more than one project (from "M-3")\n' +
+        "write it qualified: mirror/3 or muon/3\n",
+    );
+  });
+
+  it("refuses a qualified form whose prefix the project never wrote", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      ...viewRoutes("todou", 76),
+      ["GET", "/api/projects/todou/references/config", prefixed("T")],
+    ]);
+    const result = await runCli(
+      ["issue", "view", "todou/FOO-76", "-p", "todou"],
+      { fetchImpl, env: loggedInEnv() },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe(
+      'error: "todou/FOO-76" says prefix "FOO", but project "todou" ' +
+        'writes its issues as "T-76"\n' +
+        'write "todou/T-76" or "todou/76"\n',
+    );
+    expect(hit(calls, "/issues/76")).toBe(0);
+  });
+
+  it("keeps the batch's own error when two prefixes disagree", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+      ["GET", "/api/me/reference-directory", DIRECTORY],
+    ]);
+    const result = await runCli(["issue", "view", "T-1", "CH-2"], {
+      fetchImpl,
+      env: loggedInEnv("dogfood"),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      '"T-1" says project "todou" but "CH-2" says "homelab"',
+    );
+    expect(result.stderr).toContain("one call reads one project");
+  });
+
+  it("does not let --json skip the ladder", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      ...viewRoutes("dogfood", 1),
+      ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+      ["GET", "/api/me/reference-directory", DIRECTORY],
+    ]);
+    const result = await runCli(
+      ["issue", "view", "FOO-1", "-p", "dogfood", "--json"],
+      { fetchImpl, env: loggedInEnv() },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain('no project uses the prefix "FOO"');
+    expect(hit(calls, "/projects/dogfood/issues/1")).toBe(0);
+  });
+
+  it("keeps the loose reading when the config cannot be read", async () => {
+    // An old server has no config route at all; the T-80 behaviour — take
+    // the number, ignore the prefix — has to survive there.
+    const { fetchImpl, calls } = fakeFetch(viewRoutes("dogfood", 1));
+    const result = await runCli(["issue", "view", "FOO-1", "-p", "dogfood"], {
+      fetchImpl,
+      env: loggedInEnv(),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("#1 Fix the potato");
+    expect(hit(calls, "/reference-directory")).toBe(0);
+  });
+});

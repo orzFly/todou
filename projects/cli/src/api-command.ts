@@ -14,8 +14,10 @@ import {
 import { discoverDirConfig } from "./dir-config.ts";
 import { CliError, reportError } from "./errors.ts";
 import { detectAgentContext } from "./harness/index.ts";
+import { checkQualifiedPrefix, resolvePrefixedRef } from "./locator.ts";
 import { parseIssueRef } from "./parse.ts";
 import type { RefFormat } from "./refs.ts";
+import { fetchReferenceConfig, fetchReferenceDirectory } from "./resolve.ts";
 
 export type CursorRecord = {
   type: "cursor";
@@ -195,11 +197,20 @@ export abstract class ProjectCommand extends ApiCommand {
 
   /**
    * Resolves a `<number>` positional that may carry its own project
-   * (`todou/16`, `#16`, or an issue URL). An inline project is as explicit
-   * as -p, so it silently overrides TODOU_PROJECT and the git binding;
-   * only a contradicting -p flag is an error.
+   * (`todou/16`, `#16`, `T-16`, or an issue URL). An inline project is as
+   * explicit as -p, so it silently overrides TODOU_PROJECT and the git
+   * binding; only a contradicting -p flag is an error.
+   *
+   * A prefix names a project too, in a namespace shared across the
+   * deployment (T-150), so `T-16` is resolved rather than read as "16 of
+   * whatever is current" — which used to hand back a different card, exit 0.
+   * Async for that reason: the two documents the ladder judges by are read
+   * here, memoized per command, and not in the pure argument parser.
    */
-  protected resolveIssueRef(raw: string): { project: string; number: number } {
+  protected async resolveIssueRef(
+    client: TodouClient,
+    raw: string,
+  ): Promise<{ project: string; number: number }> {
     const ref = parseIssueRef(raw, "issue number");
     if (ref.origin !== undefined && this.ctx.server !== undefined) {
       const active = new URL(this.ctx.server).origin;
@@ -210,16 +221,60 @@ export abstract class ProjectCommand extends ApiCommand {
         );
       }
     }
-    if (ref.project === undefined) {
+    if (ref.project !== undefined) {
+      if (this.project !== undefined && this.project !== ref.project) {
+        throw new CliError(
+          `"${raw}" says project "${ref.project}" but -p/--project says "${this.project}"`,
+          "drop one of them — they must agree",
+        );
+      }
+      if (ref.prefix !== undefined) {
+        checkQualifiedPrefix(
+          ref.project,
+          ref.prefix,
+          raw,
+          await fetchReferenceConfig(client, ref.project),
+        );
+      }
+      return { project: ref.project, number: ref.number };
+    }
+    if (ref.prefix === undefined) {
       return { project: this.requireProject(), number: ref.number };
     }
-    if (this.project !== undefined && this.project !== ref.project) {
+    const project = this.ctx.project;
+    const config =
+      project === undefined
+        ? null
+        : await fetchReferenceConfig(client, project);
+    const local = resolvePrefixedRef(ref.prefix, raw, {
+      project,
+      config,
+      directory: undefined,
+    });
+    const resolved =
+      "needsDirectory" in local
+        ? resolvePrefixedRef(ref.prefix, raw, {
+            project,
+            config,
+            directory: await fetchReferenceDirectory(client),
+          })
+        : local;
+    // What keeps `-p dogfood` a sandbox fence: a prefix that resolves
+    // elsewhere refuses rather than overriding the flag, so a ref pasted
+    // from another project cannot silently redirect a command at it.
+    // Neither a first-rung hit nor the loose fallback can trip this — both
+    // land on the current project, which the flag itself decided.
+    if (this.project !== undefined && this.project !== resolved.project) {
+      // The project has to be spelled out: unlike `todou/16`, the one a
+      // prefix names is not visible in what was typed, so without it the
+      // reader cannot tell which side to change.
       throw new CliError(
-        `"${raw}" says project "${ref.project}" but -p/--project says "${this.project}"`,
-        "drop one of them — they must agree",
+        `"${raw}" resolves to project "${resolved.project}" (prefix ${ref.prefix}), ` +
+          `but -p/--project says "${this.project}"`,
+        `write "${this.project}/${ref.number}" for this project, or drop -p/--project`,
       );
     }
-    return { project: ref.project, number: ref.number };
+    return { project: resolved.project, number: ref.number };
   }
 
   /**
@@ -233,19 +288,22 @@ export abstract class ProjectCommand extends ApiCommand {
    * use, so it is a slip in how the list was assembled, and the caller is
    * told rather than stopped.
    */
-  protected resolveIssueRefs(raws: string[]): {
+  protected async resolveIssueRefs(
+    client: TodouClient,
+    raws: string[],
+  ): Promise<{
     project: string;
     /** Input order, first occurrence kept; parallel to `spellings`. */
     numbers: number[];
     /** How the caller wrote each kept number, for hints that paste back. */
     spellings: string[];
-  } {
+  }> {
     let project: string | undefined;
     let owner: string | undefined;
     const numbers: number[] = [];
     const spellings: string[] = [];
     for (const raw of raws) {
-      const ref = this.resolveIssueRef(raw);
+      const ref = await this.resolveIssueRef(client, raw);
       if (project === undefined) {
         project = ref.project;
         owner = raw;

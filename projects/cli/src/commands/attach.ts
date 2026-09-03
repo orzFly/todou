@@ -54,7 +54,7 @@ export class AttachCommand extends ProjectCommand {
   files = Option.Rest({ required: 1 });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const uploaded: Attachment[] = [];
     for (const path of this.files) {
       let blob: Blob;
@@ -92,7 +92,7 @@ export class AttachListCommand extends ProjectCommand {
   number = Option.String({ required: true });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const attachments = await client.listAttachments(project, number);
     this.output(attachments, () =>
       attachments.length === 0
@@ -174,7 +174,7 @@ export class AttachDownloadCommand extends ProjectCommand {
   });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     if (this.destination === "-" && this.json) {
       throw new CliError(
         "-o - and --json both want stdout",

@@ -1,4 +1,4 @@
-import { ProjectSlug } from "@todou/shared";
+import { ProjectSlug, parseRefLocator } from "@todou/shared";
 import { CliError } from "./errors.ts";
 
 export function parsePositiveInt(value: string, what: string): number {
@@ -76,6 +76,12 @@ export function parseColor(value: string, what: string): string {
 export type IssueRef = {
   project?: string;
   number: number;
+  /**
+   * The prefix as written ("T-76" → "T", "todou/T-76" → "T"), absent for the
+   * unprefixed spellings. Where the argument names no project, this is what
+   * decides which one it means (T-214), so it has to survive parsing.
+   */
+  prefix?: string;
   /** Set for URL-form refs, so callers can reject a foreign server. */
   origin?: string;
 };
@@ -83,40 +89,32 @@ export type IssueRef = {
 const ISSUE_URL_PATH = /^\/projects\/([^/]+)\/issues\/([^/]+)\/?$/;
 
 /**
- * A project's prefixed reference form (T-80), e.g. "T-76" or "FOOBAR-8".
- * Deliberately loose: any well-formed prefix is accepted without checking
- * the project's configured one — the positional already names its project,
- * so the number is unambiguous and validating would cost a network call.
- */
-const PREFIXED_REF = /^[A-Z][A-Z0-9_]*-(\d{1,9})$/;
-
-/** The slug-qualified form `project#16`; the slug's own charset excludes "#". */
-const QUALIFIED_REF = /^([a-z0-9][a-z0-9-]*)#(\d{1,9})$/;
-
-function parseIssueNumberToken(value: string, what: string): number {
-  const prefixed = PREFIXED_REF.exec(value);
-  if (prefixed?.[1] !== undefined) return Number(prefixed[1]);
-  return parsePositiveInt(stripHash(value), what);
-}
-
-/**
  * An issue reference as agents habitually write it: "16", "#16", "T-16",
  * "project/16", "project/#16", "project/T-16", "project#16", or a full
  * issue URL. The "project#16" form is what cross-project references are
  * written as in prose (T-150), so it has to paste back in here.
+ *
+ * `parseRefLocator` is a fast path over the shared grammar, not a
+ * replacement: everything it declines falls through to the code below,
+ * which carries every error message this function has ever produced.
  */
 export function parseIssueRef(value: string, what: string): IssueRef {
   if (/^https?:\/\//i.test(value)) return parseIssueUrl(value, what);
-  const qualified = QUALIFIED_REF.exec(value);
-  if (qualified?.[1] !== undefined && qualified[2] !== undefined) {
+  const locator = parseRefLocator(value);
+  if (locator !== null) {
     return {
-      project: checkSlug(qualified[1], value),
-      number: parsePositiveInt(qualified[2], what),
+      ...(locator.kind === "qualified"
+        ? { project: checkSlug(locator.slug, value) }
+        : {}),
+      number: locator.number,
+      // Absent rather than null when unprefixed: callers compare a whole
+      // IssueRef, and an extra key would only pass on `toEqual`'s tolerance.
+      ...(locator.prefix === null ? {} : { prefix: locator.prefix }),
     };
   }
   const parts = value.split("/");
   if (parts.length === 1) {
-    return { number: parseIssueNumberToken(value, what) };
+    return { number: parsePositiveInt(stripHash(value), what) };
   }
   if (parts.length !== 2 || parts[0] === "" || parts[1] === "") {
     throw new CliError(
@@ -125,7 +123,7 @@ export function parseIssueRef(value: string, what: string): IssueRef {
   }
   return {
     project: checkSlug(parts[0] as string, value),
-    number: parseIssueNumberToken(parts[1] as string, what),
+    number: parsePositiveInt(stripHash(parts[1] as string), what),
   };
 }
 
