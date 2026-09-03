@@ -1,0 +1,13 @@
+todou v0.3.1
+
+A prefixed issue positional names its project now. todou issue view A-1
+resolves the prefix the way the renderer does — this project's own prefix
+first, then the cross-project directory when exactly one project you can
+read holds it — instead of reading the digits and discarding the prefix.
+Refusals name the spelling that works, and slug/PREFIX-76 is checked
+against what that project writes.
+
+Breaking for scripts: a prefix that resolves elsewhere, or nowhere, exits
+1 where it used to print this project's card and exit 0. A conflict with
+-p/--project is refused rather than resolved either way, so the flag
+stays a fence around the project you meant.
