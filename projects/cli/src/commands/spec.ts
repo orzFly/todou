@@ -225,7 +225,7 @@ export class SpecPushCommand extends ProjectCommand {
   protected async run(client: TodouClient): Promise<number | void> {
     assertWriteCursorFlags(this);
     const waitFlags = specWaitFlags(this, this.wait);
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const { files, skipped } = collectMarkdown(this.dir, { pushLimits: true });
     const input = SpecPushInput.safeParse({
       files,
@@ -367,7 +367,7 @@ export class SpecPullCommand extends ProjectCommand {
   });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const spec = await client.getSpecFiles(
       project,
       number,
@@ -441,7 +441,7 @@ export class SpecCommentsCommand extends ProjectCommand {
   });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const all = await client.getSpecComments(project, number);
     const items = all.items.filter(
       (item) =>
@@ -496,7 +496,7 @@ export class SpecResolveCommand extends ProjectCommand {
   commentIds = Option.Rest({ required: 1 });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const ids = this.commentIds.map((raw) => {
       const id = Number(raw.replace(/^#/, ""));
       if (!Number.isInteger(id) || id <= 0) {
@@ -549,7 +549,7 @@ export class SpecReviewCommand extends ProjectCommand {
   });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     if (this.approve === this.requestChanges) {
       throw new CliError(
         "pick exactly one verdict",
@@ -753,7 +753,7 @@ export class SpecWaitCommand extends ProjectCommand {
       printCursor: false,
       since: this.since,
     });
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     return await waitForSpecReview({
       client,
       project,
@@ -782,7 +782,7 @@ export class SpecStatusCommand extends ProjectCommand {
   number = Option.String({ required: true });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const info = await client.getSpec(project, number);
     this.output(info, () => {
       const status = specVerdict(info.review_status);

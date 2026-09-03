@@ -242,8 +242,13 @@ export class IssueViewCommand extends ProjectCommand {
     description: "Show one or more issues with their full timeline",
     details: `
       Each \`<number>\` also accepts \`<project>/<number>\` (like
-      \`todou/16\`) or a full issue URL; \`issue show\` is an alias of
-      \`issue view\`.
+      \`todou/16\`), the prefixed form \`T-16\`, or a full issue URL;
+      \`issue show\` is an alias of \`issue view\`.
+
+      A prefix is resolved to the project that holds it rather than read as
+      a number in the current one. A prefix nobody holds, one several
+      projects hold, or one that contradicts \`-p/--project\` is refused,
+      naming what to write instead.
 
       **Several numbers read several cards in one call** — space-separated,
       all in the same project. They are fetched concurrently and printed in
@@ -306,7 +311,10 @@ export class IssueViewCommand extends ProjectCommand {
       this.last === undefined
         ? undefined
         : parsePositiveInt(this.last, "--last");
-    const { project, numbers } = this.resolveIssueRefs(this.numbers);
+    const { project, numbers } = await this.resolveIssueRefs(
+      client,
+      this.numbers,
+    );
 
     const paint = makePainter(this.context.stdout, this.context.env);
     // Concurrent, because the whole point of a batch is not paying for it
@@ -492,7 +500,7 @@ export class IssueEventsCommand extends ProjectCommand {
   });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const last =
       this.last === undefined
         ? undefined
@@ -694,7 +702,7 @@ export class IssueWatchCommand extends ProjectCommand {
   });
 
   protected async run(client: TodouClient): Promise<number> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const mode = watchMode(this.poll, this.forever);
     const retry = watchRetryOptions(
       mode,
@@ -1007,7 +1015,10 @@ export class IssueEditCommand extends ProjectCommand {
     const editsAssignees = addAssignees.length + removeAssignees.length > 0;
     const writesBody = this.body !== undefined || this.bodyFile !== undefined;
 
-    const { project, numbers, spellings } = this.resolveIssueRefs(this.numbers);
+    const { project, numbers, spellings } = await this.resolveIssueRefs(
+      client,
+      this.numbers,
+    );
     if (
       this.title === undefined &&
       !writesBody &&
@@ -1273,7 +1284,7 @@ export class IssueStatusCommand extends ProjectCommand {
   status = Option.String({ required: true });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const target = await resolveStatus(client, project, this.status);
     const issue = await client.updateIssue(project, number, {
       status_id: target.id,
@@ -1300,7 +1311,7 @@ export class IssueCloseCommand extends ProjectCommand {
   });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const target = await resolveClosedStatus(client, project, this.status);
     if (this.comment !== undefined) {
       await client.createComment(project, number, this.comment);
@@ -1327,7 +1338,7 @@ export class IssueDeleteCommand extends ProjectCommand {
   });
 
   protected async run(client: TodouClient): Promise<number> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const issue = withRef(
       await client.getIssue(project, number),
       await fetchRefPrefix(client, project),
@@ -1368,7 +1379,7 @@ export class IssueRestoreCommand extends ProjectCommand {
   number = Option.String({ required: true });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const issue = withRef(
       await client.restoreIssue(project, number),
       await fetchRefPrefix(client, project),

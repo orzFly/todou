@@ -90,7 +90,7 @@ export class QuestionListCommand extends ProjectCommand {
   });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const status = await client.getIssueQuestions(project, number);
     const items = this.unanswered
       ? status.items.filter((i) => i.answer === null)
@@ -182,7 +182,7 @@ export class QuestionWaitCommand extends ProjectCommand {
   });
 
   protected async run(client: TodouClient): Promise<number> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const commentId = parsePositiveInt(this.commentId, "comment id");
     const mode = watchMode(this.poll, this.forever);
     const retry = watchRetryOptions(
@@ -328,7 +328,7 @@ export class QuestionAnswerCommand extends ProjectCommand {
   });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = this.resolveIssueRef(this.number);
+    const { project, number } = await this.resolveIssueRef(client, this.number);
     const commentId = parsePositiveInt(this.commentId, "comment id");
     const input =
       this.answersInput === undefined
