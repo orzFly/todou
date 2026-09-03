@@ -1028,6 +1028,23 @@ diffs-container {
     font-size: 0.85em;
     text-decoration-thickness: 1px;
   }
+  /* A column or a row the new version no longer has, put back where it stood
+     (T-221). Same tokens as the marker above, at the wash's weight rather than
+     the marker's: the content is in its own cell, in its own column, so the
+     colour only has to say "this went" — the position already says what. */
+  .markdown-body th.spec-del-cell,
+  .markdown-body td.spec-del-cell,
+  .markdown-body tr.spec-del-row td {
+    background-color: color-mix(
+      in oklab,
+      var(--color-red-500) 10%,
+      transparent
+    );
+    color: color-mix(in oklab, var(--foreground) 55%, var(--color-red-500));
+  }
+  .markdown-body th.spec-del-cell {
+    background-color: color-mix(in oklab, var(--color-red-500) 14%, var(--muted));
+  }
   .markdown-body mark.spec-mark-comment,
   .markdown-body mark.spec-mark-draft {
     color: inherit;

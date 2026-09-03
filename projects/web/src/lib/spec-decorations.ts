@@ -3,6 +3,7 @@ import type {
   Decorations,
   DeletionDecoration,
   SpanDecoration,
+  TableOverlay,
 } from "./rehype-decorations.ts";
 import {
   blocksWhollyInGroups,
@@ -12,7 +13,10 @@ import {
   type SourceRange,
   sourceOffsetOfText,
   sourceRangesOfText,
+  type TableMatrix,
+  tableOf,
 } from "./spec-source-index.ts";
+import { alignTable } from "./table-align.ts";
 import { coalescedWordDiff } from "./word-diff.ts";
 
 /** An annotation as the document sees it: which slice of source it covers. */
@@ -25,6 +29,18 @@ export type AnchoredAnnotation = {
   colEnd: number | null;
 };
 
+/** The table block each leaf group inside a table belongs to (T-221). */
+function tableBlocks(index: SegmentIndex): Map<number, number> {
+  const owner = new Map<number, number>();
+  for (let i = 0; i < index.blocks.length; i++) {
+    const block = index.blocks[i];
+    if (block === undefined || block.type !== "table") continue;
+    if (block.firstGroup < 0) continue;
+    for (let g = block.firstGroup; g <= block.lastGroup; g++) owner.set(g, i);
+  }
+  return owner;
+}
+
 /**
  * Every leaf block of a document, in document order — what one side of an
  * alignment is made of (T-211).
@@ -34,13 +50,40 @@ export type AnchoredAnnotation = {
  * reassembly. A fence contributes no prose at all, so it comes out of the
  * block table instead and carries its own source, fences and all; `at` is -1
  * because there is no flattened text for it to sit in.
+ *
+ * A table is one leaf too (T-221), folding all of its cells together. That is
+ * the partition the whole card turns on: a cell competing document-wide loses
+ * to whatever cell sits at its position elsewhere, and a column dropped out of
+ * a three-column table reads as four unrelated removals. Folded, the table
+ * anchors on its contents like any other leaf, and which cell became which is
+ * `alignTable`'s question, asked inside the pair.
  */
 export function leavesOf(index: SegmentIndex): AlignGroup[] {
   const leaves: AlignGroup[] = [];
+  const owner = tableBlocks(index);
+  const tables = new Map<number, AlignGroup>();
   for (const segment of index.segments) {
+    const end = segment.at + segment.text.length;
+    const table = owner.get(segment.group);
+    if (table !== undefined) {
+      const started = tables.get(table);
+      if (started !== undefined) {
+        started.text = index.text.slice(started.at, end);
+        continue;
+      }
+      const leaf: AlignGroup = {
+        group: index.blocks[table]?.firstGroup ?? segment.group,
+        type: "table",
+        text: segment.text,
+        at: segment.at,
+      };
+      tables.set(table, leaf);
+      leaves.push(leaf);
+      continue;
+    }
     const last = leaves.at(-1);
     if (last !== undefined && last.group === segment.group) {
-      last.text = index.text.slice(last.at, segment.at + segment.text.length);
+      last.text = index.text.slice(last.at, end);
       continue;
     }
     leaves.push({
@@ -62,6 +105,55 @@ export function leavesOf(index: SegmentIndex): AlignGroup[] {
   // Group numbers are handed out in document order, so this is document order.
   return leaves.sort((a, b) => a.group - b.group);
 }
+
+/** A position in a paired table's final order: one the new side kept, or one
+ * spliced back in because it went (T-221). */
+type Slot = { kept: number } | { gone: number };
+
+/**
+ * Where the removed rows — or columns — of a paired table sit once they are
+ * put back beside what they used to stand next to (T-221). Each removed entry
+ * goes after the new position of the nearest old entry above it that survived,
+ * or at the front when nothing above it did; several landing in one place keep
+ * their old order.
+ *
+ * `skip` is the header row, which is placed before any of this and can never
+ * be the entry a removed row follows.
+ */
+function finalOrder(
+  count: number,
+  skip: number,
+  pairs: Array<[number, number]>,
+  removed: number[],
+): Slot[] {
+  const back = new Map(pairs.map(([old, nu]) => [nu, old]));
+  const kept = pairs.map(([old]) => old).sort((a, b) => a - b);
+  const slots: Slot[] = [];
+  for (let j = 0; j < skip; j++) slots.push({ kept: j });
+  const first = kept[0] ?? Number.POSITIVE_INFINITY;
+  for (const index of removed) {
+    if (index < first) slots.push({ gone: index });
+  }
+  for (let j = skip; j < count; j++) {
+    slots.push({ kept: j });
+    const old = back.get(j);
+    if (old === undefined) continue;
+    const next = kept.find((k) => k > old) ?? Number.POSITIVE_INFINITY;
+    for (const index of removed) {
+      if (index > old && index < next) slots.push({ gone: index });
+    }
+  }
+  return slots;
+}
+
+const cellText = (
+  matrix: TableMatrix,
+  row: number,
+  col: number,
+): string | null => {
+  const text = matrix.rows[row]?.cells[col]?.text ?? "";
+  return text === "" ? null : text;
+};
 
 /**
  * Word-level diff of two versions, as decorations on the newer one (T-142).
@@ -100,11 +192,129 @@ export function changeDecorations(
   const spans: SpanDecoration[] = [];
   const deletions: DeletionDecoration[] = [];
   const blocks: SourceRange[] = [];
+  const tables: TableOverlay[] = [];
 
   const insert = (from: number, to: number) => {
     for (const range of sourceRangesOfText(current, from, to)) {
       spans.push({ kind: "ins", start: range.start, end: range.end });
     }
+  };
+
+  /** Words in one cell, exactly as they are read in one paragraph. */
+  const words = (from: string, to: string, at: number) => {
+    const result = coalescedWordDiff(from, to);
+    for (const range of result.ins) insert(at + range.start, at + range.end);
+    for (const gone of result.del) {
+      const text = from.slice(gone.from, gone.to);
+      if (text.trim() === "") continue;
+      const offset = sourceOffsetOfText(current, at + gone.at);
+      if (offset === null) continue;
+      // Always inline: the pair is one leaf block against one leaf block,
+      // so whatever went — a word or the block's whole contents — the
+      // block that replaced it is standing right there to carry the
+      // strike-through (T-158's ruling for a rewritten table cell).
+      deletions.push({ at: offset, text: text.trim(), block: false });
+    }
+  };
+
+  const oldTables = tableBlocks(baseline);
+  const newTables = tableBlocks(current);
+
+  /**
+   * A paired table, cell by cell (T-221). Nothing here goes through
+   * `born` / `gone`: the alignment already knows which row is new and which
+   * column went, and reaching that answer back through group sets would only
+   * lose it again — a table holding raw HTML is opaque to coverage and would
+   * fall back to a marker for an edit its own matrix describes exactly.
+   */
+  const table = (old: AlignGroup, nu: AlignGroup): void => {
+    const oldAt = oldTables.get(old.group);
+    const newAt = newTables.get(nu.group);
+    if (oldAt === undefined || newAt === undefined) return;
+    const from = tableOf(baseline, oldAt);
+    const to = tableOf(current, newAt);
+    if (from === null || to === null) return;
+    const aligned = alignTable(from, to);
+    const rowBack = new Map(aligned.rows.pairs.map(([o, n]) => [n, o]));
+    const colBack = new Map(aligned.columns.pairs.map(([o, n]) => [n, o]));
+
+    const emptied: TableOverlay["emptied"] = [];
+    for (const [ro, rn] of aligned.rows.pairs) {
+      for (const [co, cn] of aligned.columns.pairs) {
+        const before = from.rows[ro]?.cells[co];
+        if (before === undefined || before === null) continue;
+        const after = to.rows[rn]?.cells[cn];
+        // A cell emptied — or padded away — has no text node left to carry
+        // the strike-through, so the overlay puts one back in it.
+        if (after === undefined || after === null || after.text === "") {
+          if (before.text !== "") {
+            emptied.push({ row: rn, col: cn, text: before.text });
+          }
+          continue;
+        }
+        words(before.text, after.text, after.at);
+      }
+    }
+
+    for (const rn of aligned.rows.newOnly) {
+      const row = to.rows[rn];
+      if (row === undefined) continue;
+      blocks.push({ start: row.block.start, end: row.block.end });
+    }
+    for (const cn of aligned.columns.newOnly) {
+      // Only the rows that stayed: a new row's cells are covered by the row.
+      for (const [, rn] of aligned.rows.pairs) {
+        const cell = to.rows[rn]?.cells[cn];
+        if (cell === undefined || cell === null) continue;
+        blocks.push({ start: cell.block.start, end: cell.block.end });
+      }
+    }
+
+    const columnOrder = finalOrder(
+      to.rows[0]?.cells.length ?? 0,
+      0,
+      aligned.columns.pairs,
+      aligned.columns.oldOnly,
+    );
+    const rowOrder = finalOrder(
+      to.rows.length,
+      1,
+      // Without the header pair, which is placed first and is nobody's anchor.
+      aligned.rows.pairs.filter(([ro]) => ro !== 0),
+      aligned.rows.oldOnly,
+    );
+
+    const columns: TableOverlay["columns"] = [];
+    columnOrder.forEach((slot, at) => {
+      if (!("gone" in slot)) return;
+      columns.push({
+        at,
+        cells: to.rows.map((_, rn) => {
+          const ro = rowBack.get(rn);
+          return ro === undefined ? null : cellText(from, ro, slot.gone);
+        }),
+      });
+    });
+    const rows: TableOverlay["rows"] = [];
+    rowOrder.forEach((slot, at) => {
+      if (!("gone" in slot)) return;
+      rows.push({
+        at,
+        cells: columnOrder.map((column) => {
+          const co = "gone" in column ? column.gone : colBack.get(column.kept);
+          return co === undefined ? null : cellText(from, slot.gone, co);
+        }),
+      });
+    });
+    if (columns.length === 0 && rows.length === 0 && emptied.length === 0) {
+      return;
+    }
+    tables.push({
+      table: { start: to.block.start, end: to.block.end },
+      columns,
+      rows,
+      emptied,
+    });
   };
 
   const newLeaves = leavesOf(current);
@@ -114,26 +324,16 @@ export function changeDecorations(
     // pierre owns the inside of a fence (T-31): a paired code block gets the
     // block-level wash it already has and nothing else.
     if (matched.old.type === "code" || matched.new.type === "code") continue;
-    const result = coalescedWordDiff(matched.old.text, matched.new.text);
-    for (const range of result.ins) {
-      insert(matched.new.at + range.start, matched.new.at + range.end);
+    if (matched.old.type === "table" || matched.new.type === "table") {
+      table(matched.old, matched.new);
+      continue;
     }
-    for (const gone of result.del) {
-      const text = matched.old.text.slice(gone.from, gone.to);
-      if (text.trim() === "") continue;
-      const at = sourceOffsetOfText(current, matched.new.at + gone.at);
-      if (at === null) continue;
-      // Always inline: the pair is one leaf block against one leaf block,
-      // so whatever went — a word or the block's whole contents — the
-      // block that replaced it is standing right there to carry the
-      // strike-through (T-158's ruling for a rewritten table cell).
-      deletions.push({ at, text: text.trim(), block: false });
-    }
+    words(matched.old.text, matched.new.text, matched.new.at);
   }
 
   // Take the whole blocks the new leaves build, then word-mark only the
   // leaves those blocks left over.
-  const born = new Set(alignment.newOnly.map((leaf) => leaf.group));
+  const born = groupsOf(current, newTables, alignment.newOnly);
   const absorbed = new Set<number>();
   for (const block of blocksWhollyInGroups(current, born)) {
     blocks.push({ start: block.start, end: block.end });
@@ -151,7 +351,11 @@ export function changeDecorations(
   // a whole table row reads as the row, `| --- |` and all — which is why the
   // outermost gone block, not the leaf, is what gets quoted (T-209).
   // Neighbours with nothing new between them share one marker.
-  const gone = new Set(alignment.oldOnly.map((entry) => entry.group.group));
+  const gone = groupsOf(
+    baseline,
+    oldTables,
+    alignment.oldOnly.map((entry) => entry.group),
+  );
   const seams = new Map(
     alignment.oldOnly.map((entry) => [entry.group.group, entry.newIndex]),
   );
@@ -188,7 +392,31 @@ export function changeDecorations(
       block: true,
     });
   }
-  return { spans, deletions, blocks };
+  return { spans, deletions, blocks, tables };
+}
+
+/**
+ * The leaf groups a set of leaves stands for. A table leaf stands for every
+ * group in its table (T-221), which is what keeps `blocksWhollyInGroups`
+ * answering exactly what it did when each cell was a leaf of its own: a whole
+ * table added or removed is still one block, evidenced by all of its cells.
+ */
+function groupsOf(
+  index: SegmentIndex,
+  owner: Map<number, number>,
+  leaves: AlignGroup[],
+): Set<number> {
+  const groups = new Set<number>();
+  for (const leaf of leaves) {
+    const at = leaf.type === "table" ? owner.get(leaf.group) : undefined;
+    const block = at === undefined ? undefined : index.blocks[at];
+    if (block === undefined) {
+      groups.add(leaf.group);
+      continue;
+    }
+    for (let g = block.firstGroup; g <= block.lastGroup; g++) groups.add(g);
+  }
+  return groups;
 }
 
 /** Unmatched old blocks that sit at the same seam, merged into one marker. */
@@ -265,5 +493,6 @@ export function mergeDecorations(
     spans: [...changes.spans, ...annotations],
     deletions: changes.deletions,
     blocks: changes.blocks,
+    tables: changes.tables,
   };
 }

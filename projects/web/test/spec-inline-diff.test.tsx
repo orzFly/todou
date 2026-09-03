@@ -453,16 +453,24 @@ describe("removals read as removals (T-209)", () => {
     expect(marker?.textContent).not.toContain("…");
   });
 
-  it("shows a removed table row whole", async () => {
+  it("shows a removed table row in place (T-221)", async () => {
     const { container } = await renderDiff(
       T209_TABLE_BEFORE,
       T209_TABLE_BEFORE.replace(`${T209_TABLE_ROWS[4]}\n`, ""),
     );
-    const marker = container.querySelector("del.spec-del-block");
-    expect(marker?.textContent).toBe(T209_TABLE_ROWS[4]);
-    // The row it stands for was the table's last, so the marker settles
-    // after the table rather than inside it.
-    expect(marker?.previousElementSibling?.tagName).toBe("TABLE");
+    // T-209 quoted the row's source above the table, because a cell that had
+    // no counterpart had nowhere else to go. The table is one leaf now, so the
+    // row goes back into it, struck through, where it used to be.
+    expect(container.querySelector("del.spec-del-block")).toBeNull();
+    const removed = container.querySelectorAll("tr.spec-del-row");
+    expect(removed).toHaveLength(1);
+    expect(texts(container, "tr.spec-del-row td")).toEqual([
+      "第三行",
+      "会被删掉",
+      "用来看删行",
+    ]);
+    const body = container.querySelector("tbody");
+    expect([...(body?.children ?? [])].at(-1)).toBe(removed[0]);
   });
 
   it("shows every row of a removed table, each on its own line", async () => {
@@ -473,6 +481,324 @@ describe("removals read as removals (T-209)", () => {
     expect(container.querySelector("table")).toBeNull();
     const marker = container.querySelector("del.spec-del-block");
     expect(marker?.textContent).toBe(T209_TABLE_ROWS.join("\n"));
+  });
+});
+
+/** T-221's fixtures: one three-column table, edited nine different ways. */
+const T221_BEFORE = [
+  "## 矩阵",
+  "",
+  "| 名称 | 渠道 | 判定 |",
+  "| --- | --- | --- |",
+  "| 行证据 | 纯新增 | A |",
+  "| 覆盖证据 | 重写 | B |",
+  "| 第三行 | 会被删掉 | C |",
+  "",
+  "后面还有一段话。",
+  "",
+].join("\n");
+const t221 = (...rows: string[]) =>
+  ["## 矩阵", "", ...rows, "", "后面还有一段话。", ""].join("\n");
+/** D: the middle column goes. */
+const T221_DROP_MIDDLE = t221(
+  "| 名称 | 判定 |",
+  "| --- | --- |",
+  "| 行证据 | A |",
+  "| 覆盖证据 | B |",
+  "| 第三行 | C |",
+);
+/** D2: the last column goes. */
+const T221_DROP_LAST = t221(
+  "| 名称 | 渠道 |",
+  "| --- | --- |",
+  "| 行证据 | 纯新增 |",
+  "| 覆盖证据 | 重写 |",
+  "| 第三行 | 会被删掉 |",
+);
+/** J: a column arrives in the middle. */
+const T221_ADD_COLUMN = t221(
+  "| 名称 | 渠道 | 备注 | 判定 |",
+  "| --- | --- | --- | --- |",
+  "| 行证据 | 纯新增 | 甲 | A |",
+  "| 覆盖证据 | 重写 | 乙 | B |",
+  "| 第三行 | 会被删掉 | 丙 | C |",
+);
+/** K: two columns change places, and nothing else. */
+const T221_SWAP = t221(
+  "| 名称 | 判定 | 渠道 |",
+  "| --- | --- | --- |",
+  "| 行证据 | A | 纯新增 |",
+  "| 覆盖证据 | B | 重写 |",
+  "| 第三行 | C | 会被删掉 |",
+);
+/** L: one header is renamed. */
+const T221_RENAME = t221(
+  "| 名称 | 来源渠道 | 判定 |",
+  "| --- | --- | --- |",
+  "| 行证据 | 纯新增 | A |",
+  "| 覆盖证据 | 重写 | B |",
+  "| 第三行 | 会被删掉 | C |",
+);
+/** M: a row and a column go together. */
+const T221_DROP_BOTH = t221(
+  "| 名称 | 判定 |",
+  "| --- | --- |",
+  "| 行证据 | A |",
+  "| 第三行 | C |",
+);
+/** O: one cell is edited while a column goes. */
+const T221_EDIT_AND_DROP = t221(
+  "| 名称 | 判定 |",
+  "| --- | --- |",
+  "| 行证据 | A |",
+  "| 覆盖证据 | B 改 |",
+  "| 第三行 | C |",
+);
+/** N: two tables with the same header; only the second one loses a column. */
+const T221_TWO_TABLES = [
+  "## 甲",
+  "",
+  "| 名称 | 渠道 | 判定 |",
+  "| --- | --- | --- |",
+  "| 一 | 二 | 三 |",
+  "",
+  "## 乙",
+  "",
+  "| 名称 | 渠道 | 判定 |",
+  "| --- | --- | --- |",
+  "| 四 | 五 | 六 |",
+  "",
+].join("\n");
+const T221_TWO_TABLES_AFTER = T221_TWO_TABLES.replace(
+  "| 名称 | 渠道 | 判定 |\n| --- | --- | --- |\n| 四 | 五 | 六 |",
+  "| 名称 | 判定 |\n| --- | --- |\n| 四 | 六 |",
+);
+/** A cell emptied in place; today's engine turns this into a source marker. */
+const T221_FILLED = "| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n";
+const T221_EMPTIED = "| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 |  |\n";
+
+const decorationsOf = (before: string, after: string) =>
+  changeDecorations(buildSegmentIndex(before), buildSegmentIndex(after));
+
+describe("what the engine emits for table edits (T-221)", () => {
+  it("turns a dropped column into one overlay, not four markers", () => {
+    // The card's measurement: four block deletions stacked above the table,
+    // each quoting one cell's source with its leading pipe.
+    const decorations = decorationsOf(T221_BEFORE, T221_DROP_MIDDLE);
+    expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+    expect(decorations.blocks).toEqual([]);
+    expect(decorations.tables).toHaveLength(1);
+    expect(decorations.tables[0]?.columns).toEqual([
+      { at: 1, cells: ["渠道", "纯新增", "重写", "会被删掉"] },
+    ]);
+    expect(decorations.tables[0]?.rows).toEqual([]);
+    expect(decorations.tables[0]?.emptied).toEqual([]);
+  });
+
+  it("puts a dropped last column at the end of the final order", () => {
+    const decorations = decorationsOf(T221_BEFORE, T221_DROP_LAST);
+    expect(decorations.tables[0]?.columns).toEqual([
+      { at: 2, cells: ["判定", "A", "B", "C"] },
+    ]);
+  });
+
+  it("keeps a new column as four whole cells and no overlay (J)", () => {
+    const decorations = decorationsOf(T221_BEFORE, T221_ADD_COLUMN);
+    expect(
+      decorations.blocks.map((r) => T221_ADD_COLUMN.slice(r.start, r.end)),
+    ).toEqual(["| 备注 ", "| 甲 ", "| 乙 ", "| 丙 "]);
+    expect(decorations.tables).toEqual([]);
+  });
+
+  it("draws nothing at all when two columns swap places (K)", () => {
+    // Cells were anchors document-wide before this card, which put the
+    // swapped ones in different runs where they could never meet again.
+    expect(decorationsOf(T221_BEFORE, T221_SWAP)).toEqual({
+      spans: [],
+      deletions: [],
+      blocks: [],
+      tables: [],
+    });
+  });
+
+  it("keeps a renamed header word-level (L)", () => {
+    const decorations = decorationsOf(T221_BEFORE, T221_RENAME);
+    expect(
+      decorations.spans.map((s) => T221_RENAME.slice(s.start, s.end)),
+    ).toEqual(["来源"]);
+    expect(decorations.deletions).toEqual([]);
+    expect(decorations.tables).toEqual([]);
+  });
+
+  it("splices a dropped row and a dropped column into one order (M)", () => {
+    const decorations = decorationsOf(T221_BEFORE, T221_DROP_BOTH);
+    expect(decorations.tables[0]?.columns).toEqual([
+      { at: 1, cells: ["渠道", "纯新增", "会被删掉"] },
+    ]);
+    // The row's own cells run in the final column order, so the struck-out
+    // column has a slot in it too.
+    expect(decorations.tables[0]?.rows).toEqual([
+      { at: 2, cells: ["覆盖证据", "重写", "B"] },
+    ]);
+    expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+  });
+
+  it("never lets one table's cells answer for another's (N)", () => {
+    const decorations = decorationsOf(T221_TWO_TABLES, T221_TWO_TABLES_AFTER);
+    expect(decorations.tables).toHaveLength(1);
+    expect(decorations.tables[0]?.table.start).toBe(
+      T221_TWO_TABLES_AFTER.indexOf("| 名称 | 判定 |"),
+    );
+    expect(decorations.tables[0]?.columns).toEqual([
+      { at: 1, cells: ["渠道", "五"] },
+    ]);
+  });
+
+  it("edits one cell while a column goes (O)", () => {
+    const decorations = decorationsOf(T221_BEFORE, T221_EDIT_AND_DROP);
+    expect(
+      decorations.spans.map((s) => T221_EDIT_AND_DROP.slice(s.start, s.end)),
+    ).toEqual([" 改"]);
+    expect(decorations.tables[0]?.columns).toEqual([
+      { at: 1, cells: ["渠道", "纯新增", "重写", "会被删掉"] },
+    ]);
+  });
+
+  it("strikes an emptied cell inside itself, not above the table", () => {
+    const decorations = decorationsOf(T221_FILLED, T221_EMPTIED);
+    expect(decorations.tables[0]?.emptied).toEqual([
+      { row: 2, col: 1, text: "4" },
+    ]);
+    expect(decorations.deletions).toEqual([]);
+  });
+
+  it("still quotes a whole removed table as a marker", () => {
+    // Nothing is left on the page to splice a column into, so this stays
+    // exactly what T-209 settled: the source, in full, at the seam.
+    const decorations = decorationsOf(
+      T209_TABLE_BEFORE,
+      "## 矩阵\n\n后面还有一段话。\n",
+    );
+    expect(decorations.tables).toEqual([]);
+    expect(decorations.deletions.map((d) => [d.block, d.text])).toEqual([
+      [true, T209_TABLE_ROWS.join("\n")],
+    ]);
+  });
+});
+
+/** A table inside a list item: the overlay has to recurse to find it. */
+const T221_NESTED_BEFORE = [
+  "- 说明：",
+  "",
+  "  | 名称 | 渠道 | 判定 |",
+  "  | --- | --- | --- |",
+  "  | 行证据 | 纯新增 | A |",
+  "",
+].join("\n");
+const T221_NESTED_AFTER = [
+  "- 说明：",
+  "",
+  "  | 名称 | 判定 |",
+  "  | --- | --- |",
+  "  | 行证据 | A |",
+  "",
+].join("\n");
+
+/** Every `th`/`td` of a row, as elements, so a position can be asserted. */
+const cellsOf = (row: Element) =>
+  [...row.children].filter((el) => el.tagName === "TH" || el.tagName === "TD");
+
+describe("table cells and rows the new version no longer has (T-221)", () => {
+  it("puts a dropped column back where it stood, struck through (D)", async () => {
+    const { container } = await renderDiff(T221_BEFORE, T221_DROP_MIDDLE);
+    expect(container.querySelector("del.spec-del-block")).toBeNull();
+    expect(texts(container, "th.spec-del-cell")).toEqual(["渠道"]);
+    expect(texts(container, "td.spec-del-cell")).toEqual([
+      "纯新增",
+      "重写",
+      "会被删掉",
+    ]);
+    // Second cell of every row, header included — the position the column had.
+    for (const row of container.querySelectorAll("tr")) {
+      expect(cellsOf(row)[1]?.classList.contains("spec-del-cell")).toBe(true);
+    }
+    expect(texts(container, ".spec-del-cell del.spec-del")).toEqual([
+      "渠道",
+      "纯新增",
+      "重写",
+      "会被删掉",
+    ]);
+  });
+
+  it("keeps a new column as four green cells (J)", async () => {
+    const { container } = await renderDiff(T221_BEFORE, T221_ADD_COLUMN);
+    const added = container.querySelectorAll(".spec-ins-block");
+    expect(added).toHaveLength(4);
+    expect([...added].map((el) => el.tagName)).toEqual([
+      "TH",
+      "TD",
+      "TD",
+      "TD",
+    ]);
+    expect(container.querySelector("del.spec-del-block")).toBeNull();
+    expect(container.querySelector(".spec-del-cell")).toBeNull();
+  });
+
+  it("draws nothing when two columns swap places (K)", async () => {
+    const { container } = await renderDiff(T221_BEFORE, T221_SWAP);
+    expect(container.querySelector("ins")).toBeNull();
+    expect(container.querySelector("del")).toBeNull();
+    expect(container.querySelector(".spec-ins-block")).toBeNull();
+  });
+
+  it("splices a dropped row and a dropped column into one table (M)", async () => {
+    const { container } = await renderDiff(T221_BEFORE, T221_DROP_BOTH);
+    expect(texts(container, "th.spec-del-cell")).toEqual(["渠道"]);
+    const removed = container.querySelectorAll("tr.spec-del-row");
+    expect(removed).toHaveLength(1);
+    expect(texts(container, "tr.spec-del-row td")).toEqual([
+      "覆盖证据",
+      "重写",
+      "B",
+    ]);
+    // Between the two rows that stayed, which is where it used to sit.
+    const body = container.querySelector("tbody");
+    expect(body?.children[1]).toBe(removed[0]);
+    // The row is coloured as a row; its cells carry no column class.
+    for (const cell of removed[0]?.children ?? []) {
+      expect(cell.classList.contains("spec-del-cell")).toBe(false);
+    }
+  });
+
+  it("leaves the untouched twin table alone (N)", async () => {
+    const { container } = await renderDiff(
+      T221_TWO_TABLES,
+      T221_TWO_TABLES_AFTER,
+    );
+    const tables = container.querySelectorAll("table");
+    expect(tables).toHaveLength(2);
+    expect(tables[0]?.querySelector(".spec-del-cell")).toBeNull();
+    expect(texts(tables[1] as HTMLElement, "th.spec-del-cell")).toEqual([
+      "渠道",
+    ]);
+  });
+
+  it("strikes an emptied cell inside the cell itself", async () => {
+    const { container } = await renderDiff(T221_FILLED, T221_EMPTIED);
+    expect(container.querySelector("del.spec-del-block")).toBeNull();
+    const struck = container.querySelector("td del.spec-del");
+    expect(struck?.textContent).toBe("4");
+    const row = container.querySelectorAll("tbody tr")[1];
+    expect(cellsOf(row as Element)[1]?.contains(struck ?? null)).toBe(true);
+  });
+
+  it("finds a table nested in a list item", async () => {
+    const { container } = await renderDiff(
+      T221_NESTED_BEFORE,
+      T221_NESTED_AFTER,
+    );
+    expect(texts(container, "li th.spec-del-cell")).toEqual(["渠道"]);
+    expect(texts(container, "li td.spec-del-cell")).toEqual(["纯新增"]);
   });
 });
 
@@ -542,7 +868,12 @@ describe("the whole document is one alignment (T-211)", () => {
     );
     // A fence is a leaf and pairs with its counterpart, but pierre owns what
     // is inside it (T-31), so the pair is drawn on with nothing at all.
-    expect(decorations).toEqual({ spans: [], deletions: [], blocks: [] });
+    expect(decorations).toEqual({
+      spans: [],
+      deletions: [],
+      blocks: [],
+      tables: [],
+    });
   });
 
   it("emits one marker and one word pair for T-209's repro", () => {
