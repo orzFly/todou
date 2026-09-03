@@ -12,9 +12,8 @@ export const projectTabs = [
 
 /**
  * Project-level navigation (T-62). Lives in the floating header: inline on
- * wide screens, on its own second row below `sm`. Creating an issue rides
- * along at the far end, so it is one click from every project module and
- * absent exactly where there is no project to file into (T-104).
+ * wide screens, on its own second row below `sm`, where it shares the row
+ * with the search box.
  */
 export function ProjectNav({
   slug,
@@ -43,14 +42,31 @@ export function ProjectNav({
           {tab.label}
         </Link>
       ))}
-      {/* The caller stretches the nav across the row, so this keeps the
-          right-edge position it held while it lived in the header cluster. */}
-      <Button size="sm" asChild className="ml-auto">
-        <Link to="/projects/$slug/issues/new" params={{ slug }}>
-          <PlusIcon />
-          New issue
-        </Link>
-      </Button>
     </nav>
+  );
+}
+
+/**
+ * Creating an issue, one click from every project module and absent exactly
+ * where there is no project to file into (T-104). It sits in the header's
+ * account cluster rather than at the end of the nav, so the search box comes
+ * first and the nav's second row is left to the tabs and the box (T-215).
+ *
+ * Below `sm` the label goes and the icon stays: that row is the one where
+ * the box has the least width to spare. aria-label rather than the visible
+ * text, because a `display: none` label is not announced either.
+ */
+export function NewIssueButton({ slug }: { slug: string }) {
+  return (
+    <Button size="sm" asChild>
+      <Link
+        to="/projects/$slug/issues/new"
+        params={{ slug }}
+        aria-label="New issue"
+      >
+        <PlusIcon />
+        <span className="hidden sm:inline">New issue</span>
+      </Link>
+    </Button>
   );
 }

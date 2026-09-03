@@ -263,10 +263,15 @@ export function SearchBox({
           // listbox is gone before the click arrives.
           onMouseDown={(e) => e.preventDefault()}
           className={cn(
-            "absolute top-full z-50 mt-1 rounded-lg border bg-popover p-1 shadow-lg ring-1 ring-foreground/5",
-            listAlign === "stretch"
-              ? "right-0 left-0"
-              : "right-0 min-w-80 max-w-[28rem]",
+            // Anchored right and grown leftward, never `left-0`: a min-width
+            // wider than the box would resolve the over-constraint by
+            // ignoring `right` and running off the edge of the screen.
+            "absolute top-full right-0 z-50 mt-1 min-w-80 max-w-[calc(100vw-2rem)] rounded-lg border bg-popover p-1 shadow-lg ring-1 ring-foreground/5",
+            // On the narrow row the box is what there is room for; the panel
+            // takes its width and stops. `min-w-80` still floors it, because
+            // that row can squeeze the box down to ~150px and a title has to
+            // survive (T-215).
+            listAlign === "stretch" ? "w-full" : "max-w-[28rem]",
           )}
         >
           {rows.map((row, idx) => {
