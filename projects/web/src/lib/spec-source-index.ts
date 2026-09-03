@@ -295,6 +295,69 @@ function groupRangesOf(index: SegmentIndex): Array<SourceRange | undefined> {
   return ranges;
 }
 
+/** One cell of a table, as the row × column alignment sees it (T-221). */
+export type TableCell = {
+  group: number;
+  /** The cell's slice of `SegmentIndex.text`; "" when it holds no prose. */
+  text: string;
+  /** Offset of `text[0]` in that same flattened text; -1 when there is none. */
+  at: number;
+  block: SourceBlock;
+};
+
+/** One row, always as wide as the header: short rows are padded with null. */
+export type TableRow = { block: SourceBlock; cells: Array<TableCell | null> };
+
+export type TableMatrix = { block: SourceBlock; rows: TableRow[] };
+
+/**
+ * One table regrouped as a matrix; null when `blockIndex` names anything else.
+ * The block table already holds the shape — a `table` owns `tableRow`s, each
+ * owning `tableCell`s, all in document order — so this reads it rather than
+ * parsing a second time (T-221).
+ *
+ * The header row sets the width, because that is the width the page has:
+ * `mdast-util-to-hast` pads a short row with position-less `<td>`s and drops
+ * whatever a long row carries past the header. A cell nothing renders can hold
+ * no decoration, so it does not compete for a pairing either.
+ */
+export function tableOf(
+  index: SegmentIndex,
+  blockIndex: number,
+): TableMatrix | null {
+  const table = index.blocks[blockIndex];
+  if (table === undefined || table.type !== "table") return null;
+  const ranges = groupRangesOf(index);
+  const rows: TableRow[] = [];
+  const rowAt = new Map<number, TableRow>();
+  // A parent always precedes its children, so every row is registered before
+  // the cells that name it.
+  for (let i = 0; i < index.blocks.length; i++) {
+    const block = index.blocks[i];
+    if (block === undefined) continue;
+    if (block.type === "tableRow" && block.parent === blockIndex) {
+      const row: TableRow = { block, cells: [] };
+      rowAt.set(i, row);
+      rows.push(row);
+      continue;
+    }
+    if (block.type !== "tableCell" || block.parent === null) continue;
+    const range = ranges[block.firstGroup];
+    rowAt.get(block.parent)?.cells.push({
+      group: block.firstGroup,
+      text: range === undefined ? "" : index.text.slice(range.start, range.end),
+      at: range?.start ?? -1,
+      block,
+    });
+  }
+  const width = rows[0]?.cells.length ?? 0;
+  for (const row of rows) {
+    if (row.cells.length > width) row.cells.length = width;
+    while (row.cells.length < width) row.cells.push(null);
+  }
+  return { block: table, rows };
+}
+
 /** Blocks with no qualifying ancestor, i.e. the outermost of each nest. */
 function outermost(index: SegmentIndex, qualifies: boolean[]): SourceBlock[] {
   return index.blocks.filter((block, i) => {

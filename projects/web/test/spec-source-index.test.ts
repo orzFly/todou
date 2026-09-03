@@ -10,6 +10,8 @@ import {
   sourceOffsetOfRendered,
   sourceOffsetOfText,
   sourceRangesOfText,
+  type TableMatrix,
+  tableOf,
 } from "../src/lib/spec-source-index.ts";
 import { wordDiff } from "../src/lib/word-diff.ts";
 
@@ -327,6 +329,84 @@ describe("the block table (T-158)", () => {
     it("has no answer for a group no block owns", () => {
       expect(outermostBlockOfGroup(index, 99)).toBeNull();
     });
+  });
+});
+
+describe("tableOf (T-221)", () => {
+  const TABLE3 = [
+    "## 矩阵",
+    "",
+    "| 名称 | 渠道 | 判定 |",
+    "| --- | --- | --- |",
+    "| 行证据 | 纯新增 | A |",
+    "| 覆盖证据 | 重写 | B |",
+    "| 第三行 | 会被删掉 | C |",
+    "",
+  ].join("\n");
+
+  /** The matrix of the first table in a document. */
+  function matrixOf(source: string) {
+    const index = buildSegmentIndex(source);
+    const at = index.blocks.findIndex((b) => b.type === "table");
+    return { index, matrix: tableOf(index, at) };
+  }
+
+  const cellTexts = (matrix: TableMatrix | null) =>
+    matrix?.rows.map((row) => row.cells.map((cell) => cell?.text ?? null));
+
+  it("rebuilds a three-column table as four rows of three", () => {
+    const { index, matrix } = matrixOf(TABLE3);
+    expect(cellTexts(matrix)).toEqual([
+      ["名称", "渠道", "判定"],
+      ["行证据", "纯新增", "A"],
+      ["覆盖证据", "重写", "B"],
+      ["第三行", "会被删掉", "C"],
+    ]);
+    for (const row of matrix?.rows ?? []) {
+      for (const cell of row.cells) {
+        if (cell === null) continue;
+        expect(index.text.slice(cell.at, cell.at + cell.text.length)).toBe(
+          cell.text,
+        );
+      }
+    }
+  });
+
+  it("gives an empty cell a group but no text to sit in", () => {
+    const { matrix } = matrixOf("| 名称 |  |\n| --- | --- |\n| 行证据 | A |\n");
+    const empty = matrix?.rows[0]?.cells[1];
+    expect(empty?.text).toBe("");
+    expect(empty?.at).toBe(-1);
+    expect(empty?.group).toBeGreaterThanOrEqual(0);
+  });
+
+  it("squares a ragged table off against its header", () => {
+    const { matrix } = matrixOf(
+      "| a | b |\n| --- | --- |\n| 1 | 2 | extra |\n| 3 |\n",
+    );
+    // What the page shows: `extra` is never rendered, and the short row gets a
+    // padding `<td>` with no source position of its own.
+    expect(cellTexts(matrix)).toEqual([
+      ["a", "b"],
+      ["1", "2"],
+      ["3", null],
+    ]);
+  });
+
+  it("rebuilds a table nested in a list item", () => {
+    const { matrix } = matrixOf(
+      "- 说明：\n\n  | a | b |\n  | --- | --- |\n  | 1 | 2 |\n",
+    );
+    expect(cellTexts(matrix)).toEqual([
+      ["a", "b"],
+      ["1", "2"],
+    ]);
+  });
+
+  it("has no answer for a block that is not a table", () => {
+    const index = buildSegmentIndex("段落。\n");
+    expect(tableOf(index, 0)).toBeNull();
+    expect(tableOf(index, 99)).toBeNull();
   });
 });
 
