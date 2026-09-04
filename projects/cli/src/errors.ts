@@ -1,5 +1,5 @@
 import type { Writable } from "node:stream";
-import { TodouError } from "@todou/shared";
+import { GoneError, MovedError, TodouError } from "@todou/shared";
 import { ConfigError } from "@todou/shared/config";
 
 /** A user-facing failure: printed as one line, optionally with a hint. */
@@ -28,7 +28,18 @@ export function reportError(
   stderr: Writable,
   serverHint?: string,
 ): number {
-  if (error instanceof TodouError) {
+  if (error instanceof GoneError) {
+    // The card existed and is gone from here; where it went is deliberately
+    // not something this reader is told.
+    const title = error.body.title;
+    stderr.write(
+      `error: ${title === undefined ? "this issue" : `"${title}"`} moved to a project you cannot read\n`,
+    );
+  } else if (error instanceof MovedError) {
+    stderr.write(
+      `error: moved to ${error.movedTo.slug}/${error.movedTo.number}\n`,
+    );
+  } else if (error instanceof TodouError) {
     stderr.write(`error: ${error.code} — ${error.message}\n`);
   } else if (error instanceof CliError) {
     stderr.write(`error: ${error.message}\n`);

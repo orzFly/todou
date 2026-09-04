@@ -3,12 +3,14 @@ import type {
   IssueListItem,
   IssueUpdateInput,
   Label,
+  MoveIssueResult,
   TimelineEvent,
   TimelineItem,
   TodouClient,
 } from "@todou/shared";
 import {
   formatRef,
+  MovedError,
   SpecPushedPayload,
   SpecReviewPayload,
   TimelineFilterType,
@@ -227,6 +229,8 @@ type ViewedIssue = {
   omitted: number;
   /** Where a watch on this card would resume; never set under `--brief`. */
   cursor?: string;
+  /** Set when the requested address redirected here (T-231). */
+  movedFrom?: string;
   error?: TodouError;
 };
 
@@ -377,6 +381,14 @@ export class IssueViewCommand extends ProjectCommand {
         ...(cursor === undefined ? {} : { cursor }),
       };
     } catch (error) {
+      // A card that moved is still readable — at its new address. Following
+      // it here rather than erroring is what makes an old ref in a script
+      // keep working; the note says where it went.
+      if (error instanceof MovedError) {
+        const { slug, number: landed } = error.movedTo;
+        const card = await this.fetchCard(client, slug, landed, last);
+        return { ...card, movedFrom: `${project}/${number}` };
+      }
       if (!(error instanceof TodouError)) throw error;
       return { number, timeline: [], omitted: 0, error };
     }
@@ -392,13 +404,20 @@ export class IssueViewCommand extends ProjectCommand {
       const error = card.error as TodouError;
       return `${ref} · error: ${error.message} (${error.status})`;
     }
-    return renderIssue(
-      card.issue,
-      card.timeline,
-      card.cursor,
-      paint,
-      refPrefix,
-      this.brief ? {} : { body: !this.timelineOnly, omitted: card.omitted },
+    const moved =
+      card.movedFrom === undefined
+        ? ""
+        : `${paint("dim", `moved from ${card.movedFrom}`)}\n`;
+    return (
+      moved +
+      renderIssue(
+        card.issue,
+        card.timeline,
+        card.cursor,
+        paint,
+        refPrefix,
+        this.brief ? {} : { body: !this.timelineOnly, omitted: card.omitted },
+      )
     );
   }
 
@@ -728,13 +747,35 @@ export class IssueWatchCommand extends ProjectCommand {
 
     // Baseline before the loop: the newest entry regardless of filter, so
     // "from now" never replays history. Also 404s early on a bad number.
-    const baseline =
-      this.since ??
-      (await retryTransient(
-        () => tailCursor(client, project, number),
-        retry,
-      )) ??
-      undefined;
+    let baseline: string | undefined;
+    try {
+      baseline =
+        this.since ??
+        (await retryTransient(
+          () => tailCursor(client, project, number),
+          retry,
+        )) ??
+        undefined;
+    } catch (error) {
+      // A single-issue cursor is a row position in the source database, so
+      // it cannot survive the move. Rather than follow silently and resume
+      // from a position that means nothing there, hand back the new ref and
+      // a cursor to re-anchor from, and let the caller decide.
+      if (!(error instanceof MovedError)) throw error;
+      const { slug, number: landed } = error.movedTo;
+      const cursor = await arrivalCursor(client, slug, landed);
+      this.output({ moved_to: error.movedTo, cursor }, () =>
+        [
+          `moved to ${slug}/${landed}`,
+          ...(cursor === null
+            ? []
+            : [
+                `re-anchor with: todou issue watch ${slug}/${landed} --since ${cursor}`,
+              ]),
+        ].join("\n"),
+      );
+      return 0;
+    }
     const paint = makePainter(this.context.stdout, this.context.env);
     const refPrefix = await fetchRefPrefix(client, project);
     // Timeline entries carry no issue number of their own, so the envelope
@@ -843,6 +884,24 @@ export async function tailCursor(
     limit: 1,
   });
   return page.next_cursor ?? undefined;
+}
+
+/**
+ * Where a watch should resume on the card's new home: the position of the
+ * arrival itself, so everything the card has done since the move is
+ * delivered and its copied history is not replayed.
+ */
+async function arrivalCursor(
+  client: TodouClient,
+  project: string,
+  number: number,
+): Promise<string | null> {
+  const page = await client.getTimeline(project, number, {
+    types: "moved_in",
+    last: true,
+    limit: 1,
+  });
+  return page.next_cursor ?? null;
 }
 
 export class IssueCreateCommand extends ProjectCommand {
@@ -1368,6 +1427,105 @@ export class IssueDeleteCommand extends ProjectCommand {
   }
 }
 
+export class IssueTransferCommand extends ProjectCommand {
+  static paths = [["issue", "transfer"]];
+  static usage = Command.Usage({
+    description: "Move an issue to another project",
+    details:
+      "The card takes a new number in the destination and its old address becomes a permanent redirect, so links to it — `#comment-N`, attachment URLs, other cards' timelines — keep working. Statuses map by name and fall back to the destination's default; labels and assignees the destination has no match for are dropped and reported. Moving back into a project the card has lived in before reclaims its original number.\n\nPrompts with the mapping unless `-y/--yes` is given, and refuses to run unprompted off a TTY. `<number>` also accepts `<project>/<number>`, `T-16`, or a full issue URL.\n\nA single-issue watch cursor does not survive the move: `issue watch` prints the new ref and a cursor to re-anchor from.",
+  });
+
+  number = Option.String({ required: true });
+  to = Option.String("--to", { required: true, description: "Target project" });
+  dryRun = Option.Boolean("--dry-run", false, {
+    description: "Print the mapping and change nothing",
+  });
+  yes = Option.Boolean("-y,--yes", false, {
+    description: "Skip the confirmation prompt",
+  });
+
+  protected async run(client: TodouClient): Promise<number> {
+    const { project, number } = await this.resolveIssueRef(client, this.number);
+    const prefix = await fetchRefPrefix(client, project);
+    const ref = formatRef(prefix, number);
+
+    if (this.dryRun) {
+      const preview = await client.moveIssue(project, number, {
+        to_project: this.to,
+        dry_run: true,
+      });
+      this.output(preview, () =>
+        [
+          `${ref} would move to ${this.to}`,
+          preview.moved_to.number === null
+            ? "  would take a new number"
+            : `  would reinhabit ${this.to}/${preview.moved_to.number}`,
+          ...mappingLines(preview),
+        ].join("\n"),
+      );
+      return 0;
+    }
+
+    if (!this.yes) {
+      if (!isTTY(this.context.stdin)) {
+        throw new CliError(
+          "refusing to move without a confirmation",
+          `pass -y/--yes: todou issue transfer ${this.number} --to ${this.to} -y`,
+        );
+      }
+      // The preview costs one request and is the same computation the move
+      // itself runs, so what is confirmed is what will happen.
+      const preview = await client.moveIssue(project, number, {
+        to_project: this.to,
+        dry_run: true,
+      });
+      for (const line of mappingLines(preview)) this.note(line);
+      const ok = await confirm(
+        this.context.stdin,
+        this.context.stderr,
+        `Move ${ref} to ${this.to}?`,
+      );
+      if (!ok) {
+        this.note("cancelled");
+        return 1;
+      }
+    }
+
+    const result = await client.moveIssue(project, number, {
+      to_project: this.to,
+      dry_run: false,
+    });
+    const landed = result.moved_to.number as number;
+    const newPrefix = await fetchRefPrefix(client, result.moved_to.slug);
+    this.output(result, () =>
+      [
+        `${ref} → ${result.moved_to.slug}/${landed} (${formatRef(newPrefix, landed)})`,
+        ...(result.reinhabited ? ["  reinhabited its previous number"] : []),
+        ...mappingLines(result),
+      ].join("\n"),
+    );
+    return 0;
+  }
+}
+
+/** The lines both the preview and the result print, in the same order. */
+function mappingLines(result: MoveIssueResult): string[] {
+  const lines: string[] = [];
+  const { status, dropped_labels, dropped_assignees } = result.mapping;
+  if (status.from !== status.to) {
+    lines.push(`  status: ${status.from} → ${status.to}`);
+  }
+  if (dropped_labels.length > 0) {
+    lines.push(`  dropped labels: ${dropped_labels.join(", ")}`);
+  }
+  if (dropped_assignees.length > 0) {
+    lines.push(
+      `  dropped assignees: ${dropped_assignees.map((u: { login: string }) => `@${u.login}`).join(", ")}`,
+    );
+  }
+  return lines;
+}
+
 export class IssueRestoreCommand extends ProjectCommand {
   static paths = [["issue", "restore"]];
   static usage = Command.Usage({
@@ -1502,6 +1660,12 @@ export type TimelineRenderContext = {
    * the `#comment-<id>` permalink (T-183).
    */
   showId?: boolean;
+  /**
+   * Project id → slug, for the `by_project_id` newer cross-references
+   * carry. Preferred over the slug in the payload, which has to be read as
+   * of the event's own instant and goes wrong once a slug changes hands.
+   */
+  slugOfProject?: (id: unknown) => string | null;
 };
 
 export function renderTimelineItem(
@@ -1661,11 +1825,47 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
     // Self-contained rather than spelled in this project's format: the
     // source lives elsewhere, and `slug#N` pastes straight back into any
     // command that takes an issue.
-    case "cross_referenced":
-      return typeof payload.by_issue === "number" &&
-        typeof payload.by_project === "string"
-        ? `by ${payload.by_project}#${payload.by_issue}`
-        : scalarDetail(payload);
+    case "cross_referenced": {
+      if (typeof payload.by_issue !== "number") {
+        // A move rewrote this row and blanked the far side, which is what a
+        // reader without that project is entitled to know and no more.
+        return payload.by_moved === true
+          ? "by a card in another project"
+          : scalarDetail(payload);
+      }
+      const slug =
+        ctx.slugOfProject?.(payload.by_project_id) ??
+        (typeof payload.by_project === "string" ? payload.by_project : null);
+      return slug === null
+        ? scalarDetail(payload)
+        : `by ${slug}#${payload.by_issue}`;
+    }
+    case "moved_in": {
+      const from =
+        typeof payload.from_project === "string" &&
+        typeof payload.from_number === "number"
+          ? `${payload.from_project}/${payload.from_number}`
+          : "another project";
+      const status =
+        typeof payload.status_from === "string" &&
+        typeof payload.status_to === "string" &&
+        payload.status_from !== payload.status_to
+          ? ` (${payload.status_from} → ${payload.status_to})`
+          : "";
+      const dropped = Array.isArray(payload.dropped_labels)
+        ? payload.dropped_labels.filter(
+            (l): l is string => typeof l === "string",
+          )
+        : [];
+      const lost =
+        dropped.length > 0 ? `; dropped labels: ${dropped.join(", ")}` : "";
+      return `from ${from}${status}${lost}`;
+    }
+    case "moved_out":
+      return typeof payload.to_project === "string" &&
+        typeof payload.to_number === "number"
+        ? `to ${payload.to_project}/${payload.to_number}`
+        : "to another project";
     case "attachment_added":
       return payload.attachment === undefined
         ? scalarDetail(payload)
