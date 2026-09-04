@@ -1,7 +1,8 @@
 import { useCallback, useSyncExternalStore } from "react";
 
-/** Tailwind's `md`. The one place this breakpoint is written outside CSS. */
+/** Tailwind's `md` and `sm`. The one place these breakpoints are written outside CSS. */
 export const MD_UP = "(min-width: 768px)";
+export const SM_UP = "(min-width: 640px)";
 
 /** Engines without `matchMedia` get the wide branch, the one that needs no second row. */
 function evaluate(query: string): boolean {

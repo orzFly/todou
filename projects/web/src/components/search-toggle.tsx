@@ -6,13 +6,14 @@ import { Button } from "@/components/ui/button";
 import { useSlashShortcut } from "@/lib/use-slash-shortcut.ts";
 
 /**
- * The narrow header's search: an icon beside the inbox that expands into a
- * box across the whole first row (T-232).
+ * The narrow header's search: an icon that expands into a box across the
+ * whole row it sits on (T-232).
  *
  * An overlay rather than a row of its own, so the header keeps its height
  * and the page under it does not jump by 40px on every open. It positions
- * against the first row's container — the nearest positioned ancestor — so
- * it covers the whole row however deep in the cluster this markup sits.
+ * against the nearest positioned ancestor, which the shell makes the row —
+ * so this works from either row without knowing which one it is in, and the
+ * box always opens where the icon was.
  *
  * No focus trap and no `inert` underneath: this is an inline disclosure, not
  * a modal. Tab past the close button and focus leaves the overlay, which

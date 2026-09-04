@@ -26,7 +26,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { MD_UP, useMediaQuery } from "@/lib/use-media-query.ts";
+import { MD_UP, SM_UP, useMediaQuery } from "@/lib/use-media-query.ts";
 
 export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   // One user-level stream for every page and every readable project (T-122).
@@ -59,6 +59,10 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   // disclosure with its own state and keyboard exits, so exactly one of the
   // two is mounted and `/` has exactly one place to land.
   const wide = useMediaQuery(MD_UP);
+  // Below `sm` there is a project row, and the search belongs on it: it
+  // searches this project, so it sits with the project's own controls rather
+  // than up among the account ones.
+  const hasProjectRow = !useMediaQuery(SM_UP);
   const project = useQuery({
     ...projectQuery(slug ?? ""),
     enabled: slug != null,
@@ -107,7 +111,9 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
               flanks being `flex-1` with the same floor is what leaves the
               box in the middle of the row. */}
           <div className="flex flex-1 items-center justify-end gap-1">
-            {!wide && slug != null && <SearchToggle slug={slug} />}
+            {!wide && !hasProjectRow && slug != null && (
+              <SearchToggle slug={slug} />
+            )}
             {slug != null && (
               <NewIssueButton slug={slug} className="hidden sm:inline-flex" />
             )}
@@ -146,11 +152,13 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
           </div>
         </div>
         {/* The project row, and the only thing that makes the header two
-            rows tall. It ends at `sm` now that the search has folded into an
-            icon: from there on the first row seats the nav itself. */}
+            rows tall. It ends at `sm`: from there on the first row seats the
+            nav, the search and the create button itself. `relative` because
+            the search expands over this row while it lives here. */}
         {slug != null && (
-          <div className="mx-auto flex max-w-6xl items-center gap-2 px-4 pb-2 sm:hidden">
+          <div className="relative mx-auto flex max-w-6xl items-center gap-2 px-4 pb-2 sm:hidden">
             <ProjectNav slug={slug} className="flex-1" />
+            {hasProjectRow && <SearchToggle slug={slug} />}
             <NewIssueButton slug={slug} />
           </div>
         )}

@@ -154,6 +154,12 @@ const boxes = (root: ParentNode) => root.querySelectorAll("input[name='q']");
 const toggle = (root: ParentNode) =>
   root.querySelector('button[aria-label="Search"]');
 
+/** Both rows are always in the DOM; which one is shown is CSS, and there is none here. */
+function rows(view: { container: HTMLElement }) {
+  const header = view.container.querySelector("header") as Element;
+  return { first: header.children[0], project: header.children[1] };
+}
+
 afterEach(() => happyDom.happyDOM.setViewport({ width: 1024 }));
 
 describe("the header's search, wide", () => {
@@ -198,6 +204,9 @@ describe("the header's search, narrow", () => {
     expect(
       view.container.querySelector('button[aria-label="Close search"]'),
     ).not.toBeNull();
+    // Where the icon was, not the row above it: the box has to open in place.
+    expect(boxes(rows(view).project)).toHaveLength(1);
+    expect(boxes(rows(view).first)).toHaveLength(0);
   });
 
   it("expands on `/` without going through the icon first", async () => {
@@ -233,17 +242,43 @@ describe("the header's search, narrow", () => {
 });
 
 describe("the header's project row", () => {
-  it("carries the tabs and the create button, and no search", async () => {
+  it("carries the tabs, then the search, then the create button", async () => {
     const view = renderShellAt(390);
     await view.findAllByRole("link", { name: "List" });
+    const { first, project } = rows(view);
 
-    const header = view.container.querySelector("header") as Element;
-    const row = header.children[1] as Element;
-    const labels = [...row.querySelectorAll("nav a")].map((a) =>
+    const labels = [...project.querySelectorAll("nav a")].map((a) =>
       a.textContent?.trim(),
     );
     expect(labels).toEqual(["List", "Board", "Settings"]);
-    expect(row.querySelector('a[aria-label="New issue"]')).not.toBeNull();
-    expect(boxes(row)).toHaveLength(0);
+    // The search is this project's, so it keeps the project's own company
+    // rather than the account cluster's.
+    const icon = toggle(project) as Element;
+    expect(icon).not.toBeNull();
+    expect(toggle(first)).toBeNull();
+    const create = project.querySelector(
+      'a[aria-label="New issue"]',
+    ) as Element;
+    expect(
+      icon.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(boxes(project)).toHaveLength(0);
+  });
+
+  it("gives the icon back to the first row once there is no project row", async () => {
+    // 640–767: one row, so the account cluster is the only place left — and
+    // the icon still lands immediately before the create button there.
+    const view = renderShellAt(700);
+    await view.findAllByRole("link", { name: "List" });
+    const { first, project } = rows(view);
+
+    const icon = toggle(first) as Element;
+    expect(icon).not.toBeNull();
+    expect(toggle(project)).toBeNull();
+    const create = first.querySelector('a[aria-label="New issue"]') as Element;
+    expect(
+      icon.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(boxes(view.container)).toHaveLength(0);
   });
 });
