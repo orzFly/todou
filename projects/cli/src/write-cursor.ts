@@ -1,9 +1,9 @@
 import type { AgentContext, TimelineItem, TodouClient } from "@todou/shared";
 import { formatRef } from "@todou/shared";
 import type { Clock } from "./clock.ts";
-import { drainTimeline, renderActivityLine } from "./commands/issue.ts";
 import { CliError } from "./errors.ts";
 import type { Painter } from "./format.ts";
+import { drainTimeline, renderActivityLine } from "./timeline.ts";
 import {
   describeError,
   resolveSelfFilter,

@@ -8,14 +8,10 @@ import { formatRef } from "@todou/shared";
 import { cursorRecord } from "./api-command.ts";
 import { openChangeNudges } from "./change-nudges.ts";
 import type { Clock } from "./clock.ts";
-import {
-  drainTimeline,
-  renderActivityLine,
-  tailCursor,
-} from "./commands/issue.ts";
 import { type Painter, plural } from "./format.ts";
 import { refFormat } from "./refs.ts";
 import { fetchRefPrefix } from "./resolve.ts";
+import { drainTimeline, renderActivityLine, tailCursor } from "./timeline.ts";
 import {
   quietNote,
   retryTransient,

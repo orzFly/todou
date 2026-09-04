@@ -15,12 +15,12 @@ import { confirm } from "../prompt.ts";
 import { readQuestionsInput } from "../questions.ts";
 import { refFormat, withIssueRef } from "../refs.ts";
 import { fetchRefPrefix, resolveAssignees } from "../resolve.ts";
+import { drainTimeline, renderTimelineItem } from "../timeline.ts";
 import {
   assertWriteCursorFlags,
   collectWriteCursor,
   emitWriteResult,
 } from "../write-cursor.ts";
-import { drainTimeline, renderTimelineItem } from "./issue.ts";
 
 /** Size and opening of a body, counted in code points like `summarize`. */
 function bodyShape(body: string): string {

@@ -1,11 +1,11 @@
 import type { TimelineComment, TimelineEvent } from "@todou/shared";
 import { describe, expect, it } from "vitest";
+import type { Painter } from "../src/format.ts";
 import {
   type ActivityLineContext,
   renderActivityLine,
   renderTimelineItem,
-} from "../src/commands/issue.ts";
-import type { Painter } from "../src/format.ts";
+} from "../src/timeline.ts";
 
 /**
  * T-175: a watch prints one line per entry, and a comment's line has to

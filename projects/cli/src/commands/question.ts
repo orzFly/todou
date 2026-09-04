@@ -29,6 +29,7 @@ import {
   renderQuestions,
 } from "../questions.ts";
 import { fetchRefPrefix } from "../resolve.ts";
+import { drainTimeline } from "../timeline.ts";
 import {
   quietNote,
   retryTransient,
@@ -37,7 +38,6 @@ import {
   watchRetryOptions,
   watchTimeoutSec,
 } from "../watch-loop.ts";
-import { drainTimeline } from "./issue.ts";
 
 /** The wait/answer output once a comment's questions are resolved. */
 type AnswerResult = {

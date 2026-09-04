@@ -13,6 +13,7 @@ import { drainPaged } from "../paginate.ts";
 import { parsePositiveInt, parseSeconds } from "../parse.ts";
 import { type RefFormat, refFormat, withIssueRef } from "../refs.ts";
 import { fetchRefPrefix } from "../resolve.ts";
+import { renderActivityLine } from "../timeline.ts";
 import {
   normalizeTypes,
   quietNote,
@@ -26,7 +27,6 @@ import {
   watchRetryOptions,
   watchTimeoutSec,
 } from "../watch-loop.ts";
-import { renderActivityLine } from "./issue.ts";
 
 export class WatchCommand extends ProjectCommand {
   static paths = [["watch"]];

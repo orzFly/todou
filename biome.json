@@ -16,7 +16,10 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "preset": "recommended"
+      "preset": "recommended",
+      "suspicious": {
+        "noImportCycles": "error"
+      }
     }
   },
   "javascript": {
@@ -33,6 +36,16 @@
     }
   },
   "overrides": [
+    {
+      "includes": ["projects/web/src/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noImportCycles": "off"
+          }
+        }
+      }
+    },
     {
       "includes": [
         "projects/server/src/config.ts",
