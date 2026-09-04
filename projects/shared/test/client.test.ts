@@ -466,6 +466,61 @@ describe("TodouClient redirects (T-231)", () => {
     const res = await client.requestRaw("GET", "/projects/a/attachments/88");
     expect(await res.text()).toBe("PNGDATA");
   });
+
+  // A proxy that mounts the server under a subpath puts its own prefix back
+  // on the `Location`, so the final URL a client lands on carries it (T-246).
+  describe("mounted under a path prefix", () => {
+    const moved = "http://gw.example/todou/api/projects/b/issues/45";
+
+    it.each([
+      ["an absolute base url", "http://gw.example/todou"],
+      ["a trailing slash on the base url", "http://gw.example/todou/"],
+      ["a base url that is only the prefix", "/todou"],
+    ])("reads the move past the prefix with %s", async (_name, baseUrl) => {
+      const client = new TodouClient({
+        baseUrl,
+        fetch: redirectedFetch(moved),
+      });
+      const error = await client.getIssue("a", 123).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(MovedError);
+      expect((error as MovedError).movedTo).toEqual({ slug: "b", number: 45 });
+    });
+
+    it("carries comment_id past the prefix too", async () => {
+      const client = new TodouClient({
+        baseUrl: "http://gw.example/todou",
+        fetch: redirectedFetch(
+          "http://gw.example/todou/api/projects/b/issues/45/comments/2001",
+        ),
+      });
+      const error = await client
+        .locateComment("a", 1462)
+        .catch((e: unknown) => e);
+      expect((error as MovedError).movedTo).toEqual({
+        slug: "b",
+        number: 45,
+        comment_id: 2001,
+      });
+    });
+
+    it("leaves a landing outside the mount point alone", async () => {
+      const client = new TodouClient({
+        baseUrl: "http://gw.example/todou",
+        fetch: redirectedFetch("http://gw.example/api/projects/b/issues/45"),
+      });
+      expect(await client.getIssue("a", 123)).toEqual({ id: 1 });
+    });
+
+    it("leaves the same prefix on another host alone", async () => {
+      const client = new TodouClient({
+        baseUrl: "http://gw.example/todou",
+        fetch: redirectedFetch(
+          "http://evil.test/todou/api/projects/b/issues/45",
+        ),
+      });
+      expect(await client.getIssue("a", 123)).toEqual({ id: 1 });
+    });
+  });
 });
 
 describe("TodouClient change stream (T-123)", () => {

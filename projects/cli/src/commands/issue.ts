@@ -217,6 +217,14 @@ export class IssueListCommand extends ProjectCommand {
 /** One card as `issue view` got it: read, or the reason it could not be. */
 type ViewedIssue = {
   number: number;
+  /**
+   * The project the card was actually read from. Not always the one that was
+   * asked for: following a move lands in another project, and `number` above
+   * is then that project's number, so the two have to travel together or
+   * every ref spelled from them names a different, possibly real card
+   * (T-246).
+   */
+  slug: string;
   /** Undefined exactly when `error` is set. */
   issue?: Issue;
   /** Empty under `--brief`, which fetches no timeline at all. */
@@ -225,9 +233,16 @@ type ViewedIssue = {
   omitted: number;
   /** Where a watch on this card would resume; never set under `--brief`. */
   cursor?: string;
-  /** Set when the requested address redirected here (T-231). */
-  movedFrom?: string;
+  /** The address that was asked for, when it redirected here (T-231). */
+  movedFrom?: { slug: string; number: number };
   error?: TodouError;
+};
+
+/** How this command spells one card's number; see `spellRef`. */
+type CardRef = {
+  spelled: string;
+  /** The landing project's prefix, for refs written inside the card. */
+  prefix: string | null;
 };
 
 /** Between two cards of a batch, in `── timeline ──`'s visual language. */
@@ -319,35 +334,68 @@ export class IssueViewCommand extends ProjectCommand {
     const paint = makePainter(this.context.stdout, this.context.env);
     // Concurrent, because the whole point of a batch is not paying for it
     // card by card; the input order is restored for output either way.
-    const [refPrefix, cards] = await Promise.all([
+    const [requestPrefix, cards] = await Promise.all([
       fetchRefPrefix(client, project),
       Promise.all(numbers.map((n) => this.fetchCard(client, project, n, last))),
     ]);
+
+    // A card that followed a move spells its number in the format of the
+    // project it landed in, so the prefix has to be fetched per project that
+    // actually turned up. `fetchReferenceConfig` memoises per project and
+    // answers null instead of throwing, so the extra asks cost nothing and
+    // cannot fail the view.
+    const prefixes = new Map<string, string | null>([[project, requestPrefix]]);
+    await Promise.all(
+      [...new Set(cards.map((card) => card.slug))]
+        .filter((slug) => !prefixes.has(slug))
+        .map(async (slug) =>
+          prefixes.set(slug, await fetchRefPrefix(client, slug)),
+        ),
+    );
+    const refOf = (card: ViewedIssue): CardRef => {
+      const prefix = prefixes.get(card.slug) ?? null;
+      return { prefix, spelled: this.spellRef(card, prefix) };
+    };
 
     // One number is the old command, down to the byte: the failure is the
     // command's failure, and the payload keeps the shape scripts read.
     const only = cards.length === 1 ? (cards[0] as ViewedIssue) : undefined;
     if (only !== undefined) {
       if (only.error !== undefined) throw only.error;
-      this.output(this.jsonCard(only, refPrefix, { envelope: true }), () =>
-        this.renderCard(only, paint, refPrefix),
+      this.output(this.jsonCard(only, refOf(only), { envelope: true }), () =>
+        this.renderCard(only, paint, refOf(only)),
       );
-      await this.markRead(client, project, only);
+      await this.markRead(client, only);
       return 0;
     }
 
     this.output(
       {
-        items: cards.map((card) => this.jsonCard(card, refPrefix, {})),
-        ref_format: refFormat(refPrefix),
+        items: cards.map((card) => this.jsonCard(card, refOf(card), {})),
+        // One `ref_format` cannot describe several projects, so the envelope
+        // of a batch describes the request; each card's own `ref` is the
+        // authority on how that card is spelled.
+        ref_format: refFormat(requestPrefix),
       },
       () =>
         cards
-          .map((card) => this.renderCard(card, paint, refPrefix))
+          .map((card) => this.renderCard(card, paint, refOf(card)))
           .join(`\n\n${paint("dim", CARD_DIVIDER)}\n\n`),
     );
-    for (const card of cards) await this.markRead(client, project, card);
+    for (const card of cards) await this.markRead(client, card);
     return cards.some((card) => card.error !== undefined) ? 1 : 0;
+  }
+
+  /**
+   * A card reached by following a move carries its landing project's name,
+   * because the bare number reads as a card of the project that was asked
+   * for — and in the case that turned this up, that was a different card
+   * that really existed there (T-246). Both spellings are accepted back as
+   * arguments, so the line stays copy-pasteable.
+   */
+  private spellRef(card: ViewedIssue, prefix: string | null): string {
+    const ref = formatRef(prefix, card.number);
+    return card.movedFrom === undefined ? ref : `${card.slug}/${ref}`;
   }
 
   /**
@@ -362,7 +410,8 @@ export class IssueViewCommand extends ProjectCommand {
   ): Promise<ViewedIssue> {
     try {
       const issue = await client.getIssue(project, number);
-      if (this.brief) return { number, issue, timeline: [], omitted: 0 };
+      if (this.brief)
+        return { number, slug: project, issue, timeline: [], omitted: 0 };
       const { items: drained, cursor } = await drainTimeline(
         client,
         project,
@@ -371,6 +420,7 @@ export class IssueViewCommand extends ProjectCommand {
       const timeline = last === undefined ? drained : drained.slice(-last);
       return {
         number,
+        slug: project,
         issue,
         timeline,
         omitted: drained.length - timeline.length,
@@ -383,27 +433,25 @@ export class IssueViewCommand extends ProjectCommand {
       if (error instanceof MovedError) {
         const { slug, number: landed } = error.movedTo;
         const card = await this.fetchCard(client, slug, landed, last);
-        return { ...card, movedFrom: `${project}/${number}` };
+        // Overwriting on the way out of a chain of moves is deliberate: the
+        // note names the address that was asked for, not the middle hops.
+        return { ...card, movedFrom: { slug: project, number } };
       }
       if (!(error instanceof TodouError)) throw error;
-      return { number, timeline: [], omitted: 0, error };
+      return { number, slug: project, timeline: [], omitted: 0, error };
     }
   }
 
-  private renderCard(
-    card: ViewedIssue,
-    paint: Painter,
-    refPrefix: string | null,
-  ): string {
-    const ref = paint("bold", formatRef(refPrefix, card.number));
+  private renderCard(card: ViewedIssue, paint: Painter, ref: CardRef): string {
     if (card.issue === undefined) {
       const error = card.error as TodouError;
-      return `${ref} · error: ${error.message} (${error.status})`;
+      const spelled = paint("bold", ref.spelled);
+      return `${spelled} · error: ${error.message} (${error.status})`;
     }
     const moved =
       card.movedFrom === undefined
         ? ""
-        : `${paint("dim", `moved from ${card.movedFrom}`)}\n`;
+        : `${paint("dim", `moved from ${card.movedFrom.slug}/${card.movedFrom.number}`)}\n`;
     return (
       moved +
       renderIssue(
@@ -411,7 +459,7 @@ export class IssueViewCommand extends ProjectCommand {
         card.timeline,
         card.cursor,
         paint,
-        refPrefix,
+        ref,
         this.brief ? {} : { body: !this.timelineOnly, omitted: card.omitted },
       )
     );
@@ -419,11 +467,13 @@ export class IssueViewCommand extends ProjectCommand {
 
   private jsonCard(
     card: ViewedIssue,
-    refPrefix: string | null,
+    ref: CardRef,
     opts: { envelope?: boolean },
   ): Record<string, unknown> {
     const head = opts.envelope ? {} : { number: card.number };
-    const tail = opts.envelope ? { ref_format: refFormat(refPrefix) } : {};
+    // A single card's envelope describes that card, so it states the format
+    // of the project the card was read from.
+    const tail = opts.envelope ? { ref_format: refFormat(ref.prefix) } : {};
     if (card.issue === undefined) {
       const error = card.error as TodouError;
       return {
@@ -438,7 +488,10 @@ export class IssueViewCommand extends ProjectCommand {
     }
     return {
       ...head,
-      issue: withRef(card.issue, refPrefix),
+      issue: { ...card.issue, ref: ref.spelled },
+      // The human output says `moved from …`; without this a script could
+      // not tell it had been handed a card of another project at all.
+      ...(card.movedFrom === undefined ? {} : { moved_from: card.movedFrom }),
       // `--brief` fetched no timeline, so it reports none — the same
       // omission the human output makes.
       ...(this.brief
@@ -458,14 +511,13 @@ export class IssueViewCommand extends ProjectCommand {
    */
   private async markRead(
     client: TodouClient,
-    project: string,
     card: ViewedIssue,
   ): Promise<void> {
     if (this.brief || card.issue === undefined) return;
     const tail = card.timeline.at(-1)?.created_at;
     try {
       await client.markIssueRead(
-        project,
+        card.slug,
         card.number,
         tail === undefined ? {} : { up_to: tail },
       );
@@ -1550,13 +1602,11 @@ function renderIssue(
   timeline: TimelineItem[],
   cursor: string | undefined,
   paint: Painter,
-  refPrefix: string | null,
+  ref: CardRef,
   sections: IssueSections,
 ): string {
   const lines: string[] = [];
-  lines.push(
-    `${paint("bold", `${formatRef(refPrefix, issue.number)} ${issue.title}`)}`,
-  );
+  lines.push(`${paint("bold", `${ref.spelled} ${issue.title}`)}`);
   lines.push(
     [
       `status: ${issue.status.name}`,
@@ -1599,7 +1649,7 @@ function renderIssue(
       lines.push(
         renderTimelineItem(item, paint, {
           issueNumber: issue.number,
-          refPrefix,
+          refPrefix: ref.prefix,
         }),
       );
     }

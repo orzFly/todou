@@ -496,6 +496,26 @@ true|false` if a proxy setup confuses the detection.
 For SSE (`/api/projects/:slug/events`), response buffering must be off.
 Traefik and Caddy stream by default; nginx needs `proxy_buffering off`.
 
+### Mounted under a subpath
+
+Serving the API under a path prefix (`https://todou.example/tracker/api/…`)
+works, provided both the proxy and the clients are configured for it.
+
+The proxy must add the prefix to the `Location` header of every response it
+forwards. Redirects are sent as root-absolute paths, so an unmodified
+`Location` resolves against the origin root: the request leaves the mount
+point and reaches whatever the proxy serves there instead. A card that has
+moved to another project is the case where this shows up.
+
+Point clients at the prefix rather than the origin —
+`TODOU_SERVER=https://todou.example/tracker` for the CLI. A relocation is
+recognised by comparing the address a redirect landed on against the
+configured base URL, so a client holding the bare origin reads the moved
+card's new address as an ordinary response and goes on using the old one.
+
+The web UI needs the origin root. Its asset paths are root-absolute, so the
+browser requests them from the origin whichever path the app was loaded from.
+
 ## Auth modes
 
 `auth.mode` picks how HUMANS sign in — exactly one per deployment. Bearer

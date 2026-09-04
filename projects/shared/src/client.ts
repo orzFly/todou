@@ -84,7 +84,12 @@ import { CANONICAL_SLUG_HEADER } from "./schemas/project.ts";
 import { SseDecoder } from "./sse.ts";
 
 export type TodouClientOptions = {
-  /** Origin of the server; empty string = same origin (web app). */
+  /**
+   * Where the API is mounted: an origin, or an origin plus a path prefix
+   * when the server sits under a subpath of a reverse proxy. A leading-slash
+   * path alone means that prefix on the current origin; empty string means
+   * the current origin's root (web app).
+   */
   baseUrl?: string;
   /** Bearer PAT for agents/CLI; omitted = cookie session (web). */
   token?: string;
@@ -218,11 +223,22 @@ function errorFromBody(status: number, parsed: unknown): TodouError {
  * contract promises nothing in that body a client cannot also get from the
  * URL. Anything that is not one of our own JSON issue routes (a presigned
  * attachment redirect, say) is not a move and returns null.
+ *
+ * The test is "did we land under *our* mount point", not "does this path
+ * contain /api/projects/… somewhere": a server mounted under a proxy subpath
+ * gets its own prefix back on the `Location`, so the patterns have to match
+ * past it, and merely unanchoring them would read a cross-host presigned
+ * attachment redirect as a move (T-246).
  */
-function movedToFromUrl(url: string): MovedTo | null {
+function movedToFromUrl(url: string, baseUrl: string): MovedTo | null {
   let path: string;
   try {
-    path = new URL(url).pathname;
+    const final = new URL(url);
+    const base = new URL(baseUrl || "/", final);
+    if (base.origin !== final.origin) return null;
+    const prefix = base.pathname.replace(/\/$/, "");
+    if (!final.pathname.startsWith(prefix)) return null;
+    path = final.pathname.slice(prefix.length);
   } catch {
     return null;
   }
@@ -350,7 +366,7 @@ export class TodouClient {
   ): Promise<T> {
     const res = await this.requestRaw(method, path, init);
     if (method === "GET" && res.redirected) {
-      const movedTo = movedToFromUrl(res.url);
+      const movedTo = movedToFromUrl(res.url, this.#baseUrl);
       if (movedTo !== null) throw new MovedError(movedTo);
     }
     if (res.status === 204) return undefined as T;
