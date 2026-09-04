@@ -1,5 +1,5 @@
 import type { Element, ElementContent, Root, RootContent, Text } from "hast";
-import type { SourceRange } from "./spec-source-index.ts";
+import type { CellPart, SourceRange } from "./spec-source-index.ts";
 
 /**
  * What a decorated run of text means. `ins` is word-level diff output;
@@ -37,10 +37,12 @@ export type DeletionDecoration = {
   parts?: DeletionPart[];
 };
 
-/** One piece of a structural marker: removed source, or a removed image (T-223). */
-export type DeletionPart =
-  | { kind: "text"; text: string }
-  | { kind: "image"; url: string; alt: string };
+/**
+ * One piece of a structural marker: removed source, or a removed image
+ * (T-223). The same two runs a table cell is made of, so the two share one
+ * type rather than drifting apart (T-229).
+ */
+export type DeletionPart = CellPart;
 
 /** An image the new version put in another one's place (T-223). */
 export type ImageSwap = {
@@ -61,11 +63,14 @@ export type TableOverlay = {
   /** The table's source range in the new document; how its `<table>` is found. */
   table: SourceRange;
   /** Removed columns, in final column order; `cells` in rendered row order. */
-  columns: Array<{ at: number; cells: Array<string | null> }>;
+  columns: Array<{ at: number; cells: CellPart[][] }>;
   /** Removed rows, in final row order (0 is the header); `cells` in final column order. */
-  rows: Array<{ at: number; cells: Array<string | null> }>;
-  /** Cells that stayed but were emptied; the coordinates are pre-splice. */
-  emptied: Array<{ row: number; col: number; text: string }>;
+  rows: Array<{ at: number; cells: CellPart[][] }>;
+  /**
+   * Content a cell that stayed no longer has — prose it was emptied of, an
+   * image that went (T-229); the coordinates are pre-splice.
+   */
+  lost: Array<{ row: number; col: number; parts: CellPart[] }>;
 };
 
 export type Decorations = {
@@ -266,6 +271,14 @@ function swappedOutImage(old: { url: string; alt: string }): Element {
 
 export const DEL_CELL_CLASS = "spec-del-cell";
 export const DEL_ROW_CLASS = "spec-del-row";
+/**
+ * An old image a table put back into a cell (T-229). Not `IMG_DEL_CLASS`
+ * above, which is the layout half of a swap's side-by-side pair: this one only
+ * ever holds down a size, and it goes on the `<img>` itself because the same
+ * image also lands in cells that carry neither `DEL_CELL_CLASS` nor
+ * `DEL_ROW_CLASS`.
+ */
+export const DEL_IMG_CLASS = "spec-del-img";
 
 /** Element children only: the `\n` text nodes between cells are not cells. */
 function elementsOf(parent: Element, tagNames: string[]): Element[] {
@@ -305,21 +318,47 @@ function elementStartingAt(
 }
 
 /**
+ * What a table puts back into a cell, run by run (T-229). Prose is struck
+ * through as it always was; an image is rendered rather than quoted, for
+ * `deletionParts`' reason — a spec uses a screenshot as its evidence, so what
+ * a reader needs from a removed one is the picture, and a url is not that.
+ *
+ * None of these nodes carries a `position`, so `fullyInside` refuses them all
+ * and no "wholly new" class can land on one — the same guard `deletedCell` and
+ * T-223's `swappedOutImage` rely on.
+ */
+function partNodes(parts: CellPart[]): ElementContent[] {
+  return parts.map((part) =>
+    part.kind === "image"
+      ? {
+          type: "element",
+          tagName: "img",
+          properties: {
+            src: part.url,
+            alt: part.alt,
+            className: [DEL_IMG_CLASS],
+          },
+          children: [],
+        }
+      : inlineDeletion({ at: 0, text: part.text, block: false }),
+  );
+}
+
+/**
  * A cell the new version does not have, built to stand in the column or the
- * row it was spliced into (T-221). It carries no `position`, so `fullyInside`
- * refuses it and no "wholly new" class can land on it.
+ * row it was spliced into (T-221). Empty `parts` give an empty cell, which is
+ * what a cell that showed nothing renders as.
  */
 function deletedCell(
   tagName: "th" | "td",
-  text: string | null,
+  parts: CellPart[],
   className: string[],
 ): Element {
   return {
     type: "element",
     tagName,
     properties: { className },
-    children:
-      text === null ? [] : [inlineDeletion({ at: 0, text, block: false })],
+    children: partNodes(parts),
   };
 }
 
@@ -330,7 +369,7 @@ function deletedCell(
  * elements. It stays additive all the same: an overlay whose table cannot be
  * found is dropped in silence, exactly as a mark with no text node is.
  *
- * Order is load-bearing. `emptied` names cells by their coordinates before any
+ * Order is load-bearing. `lost` names cells by their coordinates before any
  * splice; `columns` widen every row, which is what makes a removed row's cells
  * — which already carry a slot for each removed column — line up when they are
  * inserted last.
@@ -343,14 +382,12 @@ function applyOverlay(tree: Root, overlay: TableOverlay): void {
   const sections = [head, body].filter((s): s is Element => s !== null);
   const rows = sections.flatMap((section) => elementsOf(section, ["tr"]));
 
-  for (const cell of overlay.emptied) {
+  for (const cell of overlay.lost) {
     const row = rows[cell.row];
     if (row === undefined) continue;
     const target = elementsOf(row, ["th", "td"])[cell.col];
     if (target === undefined) continue;
-    target.children.push(
-      inlineDeletion({ at: 0, text: cell.text, block: false }),
-    );
+    target.children.push(...partNodes(cell.parts));
   }
 
   const headRows = head === null ? 0 : elementsOf(head, ["tr"]).length;
@@ -359,11 +396,9 @@ function applyOverlay(tree: Root, overlay: TableOverlay): void {
       row.children.splice(
         childIndexOf(row, column.at),
         0,
-        deletedCell(
-          index < headRows ? "th" : "td",
-          column.cells[index] ?? null,
-          [DEL_CELL_CLASS],
-        ),
+        deletedCell(index < headRows ? "th" : "td", column.cells[index] ?? [], [
+          DEL_CELL_CLASS,
+        ]),
       );
     });
   }
@@ -385,7 +420,7 @@ function applyOverlay(tree: Root, overlay: TableOverlay): void {
       tagName: "tr",
       properties: { className: [DEL_ROW_CLASS] },
       // The row is coloured as a row; its cells wear no class of their own.
-      children: row.cells.map((text) => deletedCell("td", text, [])),
+      children: row.cells.map((parts) => deletedCell("td", parts, [])),
     });
   }
 }

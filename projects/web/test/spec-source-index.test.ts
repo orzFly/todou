@@ -408,6 +408,69 @@ describe("tableOf (T-221)", () => {
     expect(tableOf(index, 0)).toBeNull();
     expect(tableOf(index, 99)).toBeNull();
   });
+
+  describe("what each cell shows, images included (T-229)", () => {
+    const secondCell = (source: string) =>
+      matrixOf(source).matrix?.rows[1]?.cells[1];
+
+    it("gives a cell holding nothing but an image one image part", () => {
+      const cell = secondCell(
+        "| 名 | 图 |\n| --- | --- |\n| a | ![截图](/a.png) |\n",
+      );
+      expect(cell?.parts).toEqual([
+        { kind: "image", url: "/a.png", alt: "截图" },
+      ]);
+      // The prose view stays what T-221 built it to be: an image is not text,
+      // so the cell still reads as empty to the row × column alignment.
+      expect(cell?.text).toBe("");
+    });
+
+    it("keeps an image and the words beside it in source order", () => {
+      const cell = secondCell(
+        "| 名 | 证据 |\n| --- | --- |\n| a | ![](/a.png) 旧形态 |\n",
+      );
+      expect(cell?.parts).toEqual([
+        { kind: "image", url: "/a.png", alt: "" },
+        { kind: "text", text: "旧形态" },
+      ]);
+      // The flattened text keeps the space the image left behind; the part is
+      // rendered on its own, so it does not.
+      expect(cell?.text).toBe(" 旧形态");
+    });
+
+    it("keeps two images in one cell in source order", () => {
+      const cell = secondCell(
+        "| 名 | 图 |\n| --- | --- |\n| a | ![](/a.png)![](/b.png) |\n",
+      );
+      expect(cell?.parts).toEqual([
+        { kind: "image", url: "/a.png", alt: "" },
+        { kind: "image", url: "/b.png", alt: "" },
+      ]);
+    });
+
+    it("finds an image wrapped in a link", () => {
+      const cell = secondCell(
+        "| 名 | 图 |\n| --- | --- |\n| a | [![](/a.png)](/x) |\n",
+      );
+      expect(cell?.parts).toEqual([{ kind: "image", url: "/a.png", alt: "" }]);
+    });
+
+    it("says exactly what `text` says when no image is involved", () => {
+      // The equivalence every T-221 assertion rests on: `parts` is a second
+      // view of the same cell, not a different reading of it.
+      const { matrix } = matrixOf(TABLE3);
+      for (const row of matrix?.rows ?? []) {
+        for (const cell of row.cells) {
+          if (cell === null) continue;
+          expect(cell.parts).toEqual([{ kind: "text", text: cell.text }]);
+        }
+      }
+      const { matrix: ragged } = matrixOf(
+        "| 名 |  |\n| --- | --- |\n| a | b |\n",
+      );
+      expect(ragged?.rows[0]?.cells[1]?.parts).toEqual([]);
+    });
+  });
 });
 
 describe("image leaves (T-223)", () => {

@@ -1064,6 +1064,20 @@ diffs-container {
   .markdown-body th.spec-del-cell {
     background-color: color-mix(in oklab, var(--color-red-500) 14%, var(--muted));
   }
+  /* An old image the table put back into a cell (T-229). The height cap is the
+     whole rule: `.markdown-body table` is `width: max-content`, so a screenshot
+     at its own size stretches the table to that width and pushes the columns to
+     its right out of view — and dropping the column is what the new version did
+     to make the table readable in the first place. The image stays clickable,
+     so the detail is one click away. Desaturated because a removed image is
+     otherwise indistinguishable from a live one, the cell's 10% wash being all
+     that says the column is gone. */
+  .markdown-body img.spec-del-img {
+    max-height: 96px;
+    width: auto;
+    filter: grayscale(0.85);
+    opacity: 0.65;
+  }
   .markdown-body mark.spec-mark-comment,
   .markdown-body mark.spec-mark-draft {
     color: inherit;

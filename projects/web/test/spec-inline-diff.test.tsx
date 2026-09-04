@@ -8,7 +8,10 @@ import {
 } from "../src/components/spec/annotated-markdown.tsx";
 import { changedLineRanges } from "../src/lib/spec-changes.ts";
 import { changeDecorations } from "../src/lib/spec-decorations.ts";
-import { buildSegmentIndex } from "../src/lib/spec-source-index.ts";
+import {
+  buildSegmentIndex,
+  type CellPart,
+} from "../src/lib/spec-source-index.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 // Same pin as spec-review-web: fences go through pierre's lazy CodeView.
@@ -580,6 +583,15 @@ const T221_EMPTIED = "| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 |  |\n";
 const decorationsOf = (before: string, after: string) =>
   changeDecorations(buildSegmentIndex(before), buildSegmentIndex(after));
 
+/**
+ * A row of stand-in cells that show prose and nothing else — what every
+ * expectation below meant when a cell was one string (T-229). That the two
+ * readings agree for an image-free cell is `spec-source-index.test.ts`'s
+ * assertion; these tests are about which cells the overlay names.
+ */
+const proseCells = (...texts: string[]): CellPart[][] =>
+  texts.map((text) => [{ kind: "text", text }]);
+
 describe("what the engine emits for table edits (T-221)", () => {
   it("turns a dropped column into one overlay, not four markers", () => {
     // The card's measurement: four block deletions stacked above the table,
@@ -589,16 +601,16 @@ describe("what the engine emits for table edits (T-221)", () => {
     expect(decorations.blocks).toEqual([]);
     expect(decorations.tables).toHaveLength(1);
     expect(decorations.tables[0]?.columns).toEqual([
-      { at: 1, cells: ["渠道", "纯新增", "重写", "会被删掉"] },
+      { at: 1, cells: proseCells("渠道", "纯新增", "重写", "会被删掉") },
     ]);
     expect(decorations.tables[0]?.rows).toEqual([]);
-    expect(decorations.tables[0]?.emptied).toEqual([]);
+    expect(decorations.tables[0]?.lost).toEqual([]);
   });
 
   it("puts a dropped last column at the end of the final order", () => {
     const decorations = decorationsOf(T221_BEFORE, T221_DROP_LAST);
     expect(decorations.tables[0]?.columns).toEqual([
-      { at: 2, cells: ["判定", "A", "B", "C"] },
+      { at: 2, cells: proseCells("判定", "A", "B", "C") },
     ]);
   });
 
@@ -634,12 +646,12 @@ describe("what the engine emits for table edits (T-221)", () => {
   it("splices a dropped row and a dropped column into one order (M)", () => {
     const decorations = decorationsOf(T221_BEFORE, T221_DROP_BOTH);
     expect(decorations.tables[0]?.columns).toEqual([
-      { at: 1, cells: ["渠道", "纯新增", "会被删掉"] },
+      { at: 1, cells: proseCells("渠道", "纯新增", "会被删掉") },
     ]);
     // The row's own cells run in the final column order, so the struck-out
     // column has a slot in it too.
     expect(decorations.tables[0]?.rows).toEqual([
-      { at: 2, cells: ["覆盖证据", "重写", "B"] },
+      { at: 2, cells: proseCells("覆盖证据", "重写", "B") },
     ]);
     expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
   });
@@ -651,7 +663,7 @@ describe("what the engine emits for table edits (T-221)", () => {
       T221_TWO_TABLES_AFTER.indexOf("| 名称 | 判定 |"),
     );
     expect(decorations.tables[0]?.columns).toEqual([
-      { at: 1, cells: ["渠道", "五"] },
+      { at: 1, cells: proseCells("渠道", "五") },
     ]);
   });
 
@@ -661,14 +673,14 @@ describe("what the engine emits for table edits (T-221)", () => {
       decorations.spans.map((s) => T221_EDIT_AND_DROP.slice(s.start, s.end)),
     ).toEqual([" 改"]);
     expect(decorations.tables[0]?.columns).toEqual([
-      { at: 1, cells: ["渠道", "纯新增", "重写", "会被删掉"] },
+      { at: 1, cells: proseCells("渠道", "纯新增", "重写", "会被删掉") },
     ]);
   });
 
   it("strikes an emptied cell inside itself, not above the table", () => {
     const decorations = decorationsOf(T221_FILLED, T221_EMPTIED);
-    expect(decorations.tables[0]?.emptied).toEqual([
-      { row: 2, col: 1, text: "4" },
+    expect(decorations.tables[0]?.lost).toEqual([
+      { row: 2, col: 1, parts: [{ kind: "text", text: "4" }] },
     ]);
     expect(decorations.deletions).toEqual([]);
   });
@@ -1205,5 +1217,182 @@ describe("how image edits render (T-223)", () => {
     const marker = container.querySelector("del.spec-del-block");
     expect(marker?.textContent).toBe("这里本来是一段文字说明。");
     expect(marker?.querySelector("img")).toBeNull();
+  });
+});
+
+/**
+ * T-229's fixtures: a spec's before/after table, where the column that goes is
+ * the one holding the screenshots. The card's own repro is the first of them.
+ */
+const T229_IMAGE_COLUMN = [
+  "| 名 | 截图 | 说明 |",
+  "| --- | --- | --- |",
+  `| 工具栏 | ![](${IMG_A}) | 旧形态 |`,
+  "",
+].join("\n");
+const T229_COLUMN_GONE = [
+  "| 名 | 说明 |",
+  "| --- | --- |",
+  "| 工具栏 | 旧形态 |",
+  "",
+].join("\n");
+/** Two screenshot columns, one of which survives. */
+const T229_TWO_IMAGE_COLUMNS = [
+  "| 名 | 旧图 | 新图 |",
+  "| --- | --- | --- |",
+  `| 工具栏 | ![](${IMG_A}) | ![](${IMG_B}) |`,
+  "",
+].join("\n");
+const T229_ONE_IMAGE_COLUMN = [
+  "| 名 | 新图 |",
+  "| --- | --- |",
+  `| 工具栏 | ![](${IMG_B}) |`,
+  "",
+].join("\n");
+const T229_IMAGE_ROW = [
+  "| 名 | 截图 |",
+  "| --- | --- |",
+  "| 工具栏 | 甲 |",
+  `| 侧栏 | ![](${IMG_C}) |`,
+  "",
+].join("\n");
+const T229_ROW_GONE = [
+  "| 名 | 截图 |",
+  "| --- | --- |",
+  "| 工具栏 | 甲 |",
+  "",
+].join("\n");
+/** An image and words in one cell, so the order of the two parts shows. */
+const T229_IMAGE_AND_WORDS = [
+  "| 名 | 证据 | 说明 |",
+  "| --- | --- | --- |",
+  `| 工具栏 | ![](${IMG_A}) 旧形态 | 甲 |`,
+  "",
+].join("\n");
+const T229_EVIDENCE_GONE = [
+  "| 名 | 说明 |",
+  "| --- | --- |",
+  "| 工具栏 | 甲 |",
+  "",
+].join("\n");
+/** The image goes; the words in the same cell stay. */
+const T229_KEEPS_WORDS = [
+  "| 名 | 证据 |",
+  "| --- | --- |",
+  `| 工具栏 | ![](${IMG_A}) 旧形态 |`,
+  "",
+].join("\n");
+const T229_WORDS_ONLY = [
+  "| 名 | 证据 |",
+  "| --- | --- |",
+  "| 工具栏 | 旧形态 |",
+  "",
+].join("\n");
+
+describe("what the engine emits for a removed cell's image (T-229)", () => {
+  it("puts the image of a removed column into the stand-in cell", () => {
+    const decorations = decorationsOf(T229_IMAGE_COLUMN, T229_COLUMN_GONE);
+    expect(decorations.tables[0]?.columns).toEqual([
+      {
+        at: 1,
+        cells: [
+          [{ kind: "text", text: "截图" }],
+          [{ kind: "image", url: IMG_A, alt: "" }],
+        ],
+      },
+    ]);
+    // The card's second finding: the same image also floated out of the table
+    // as a marker quoting the cell's source, pipe and all.
+    expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+  });
+
+  it("puts the image of a removed row into the stand-in row", () => {
+    const decorations = decorationsOf(T229_IMAGE_ROW, T229_ROW_GONE);
+    expect(decorations.tables[0]?.rows).toEqual([
+      {
+        at: 2,
+        cells: [
+          [{ kind: "text", text: "侧栏" }],
+          [{ kind: "image", url: IMG_C, alt: "" }],
+        ],
+      },
+    ]);
+    expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+  });
+
+  it("keeps an image and the words beside it in source order", () => {
+    const decorations = decorationsOf(T229_IMAGE_AND_WORDS, T229_EVIDENCE_GONE);
+    expect(decorations.tables[0]?.columns[0]?.cells[1]).toEqual([
+      { kind: "image", url: IMG_A, alt: "" },
+      { kind: "text", text: "旧形态" },
+    ]);
+    expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+  });
+
+  it("puts an image back into a cell that stayed and lost only that", () => {
+    const decorations = decorationsOf(T229_KEEPS_WORDS, T229_WORDS_ONLY);
+    expect(decorations.tables[0]?.lost).toEqual([
+      { row: 1, col: 1, parts: [{ kind: "image", url: IMG_A, alt: "" }] },
+    ]);
+    expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+  });
+
+  it("leaves a swapped image to the swap, even when the words moved too", () => {
+    // T-223 draws this one in the cell it happened in, side by side. Putting
+    // it back here as well would be the same picture twice.
+    const decorations = decorationsOf(
+      T229_KEEPS_WORDS,
+      T229_KEEPS_WORDS.replace(IMG_A, IMG_B).replace("旧形态", "新形态"),
+    );
+    expect(decorations.images.map((image) => image.old?.url)).toEqual([IMG_A]);
+    expect(decorations.tables).toEqual([]);
+  });
+
+  it("still sends no overlay when only the image of a cell changed (T-230)", () => {
+    // The boundary this card stops at: the two table leaves read the same, so
+    // the alignment calls it unchanged and `table()` is never asked. T-230 is
+    // where that gets an answer; the swap itself is drawn in place regardless.
+    const decorations = decorationsOf(imageCell(IMG_A), imageCell(IMG_B));
+    expect(decorations.tables).toEqual([]);
+    expect(decorations.images.map((image) => image.old?.url)).toEqual([IMG_A]);
+  });
+});
+
+describe("how a removed cell's image renders (T-229)", () => {
+  it("shows the screenshot in the stand-in cell, not its url", async () => {
+    const { container } = await renderDiff(T229_IMAGE_COLUMN, T229_COLUMN_GONE);
+    expect(container.querySelector("del.spec-del-block")).toBeNull();
+    const image = container.querySelector("td.spec-del-cell img");
+    expect(image?.getAttribute("src")).toBe(IMG_A);
+    expect(image?.classList.contains("spec-del-img")).toBe(true);
+  });
+
+  it("leaves the screenshot that stayed at its own size", async () => {
+    const { container } = await renderDiff(
+      T229_TWO_IMAGE_COLUMNS,
+      T229_ONE_IMAGE_COLUMN,
+    );
+    expect(container.querySelectorAll("td.spec-del-cell img")).toHaveLength(1);
+    const live = container.querySelector("td:not(.spec-del-cell) img");
+    expect(live?.getAttribute("src")).toBe(IMG_B);
+    expect(live?.classList.contains("spec-del-img")).toBe(false);
+  });
+
+  it("shows the screenshot of a removed row too", async () => {
+    const { container } = await renderDiff(T229_IMAGE_ROW, T229_ROW_GONE);
+    const image = container.querySelector("tr.spec-del-row img");
+    expect(image?.getAttribute("src")).toBe(IMG_C);
+    expect(image?.classList.contains("spec-del-img")).toBe(true);
+  });
+
+  it("puts the image back inside the cell that stayed", async () => {
+    const { container } = await renderDiff(T229_KEEPS_WORDS, T229_WORDS_ONLY);
+    expect(container.querySelector("del.spec-del-block")).toBeNull();
+    const cell = container.querySelectorAll("tbody td")[1];
+    expect(cell?.querySelector("img.spec-del-img")?.getAttribute("src")).toBe(
+      IMG_A,
+    );
+    // The words the cell kept are not struck through: they are still there.
+    expect(cell?.querySelector("del.spec-del")).toBeNull();
   });
 });

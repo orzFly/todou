@@ -9,13 +9,14 @@ import type {
 } from "./rehype-decorations.ts";
 import {
   blocksWhollyInGroups,
+  type CellPart,
+  cellImageGroups,
   offsetAt,
   outermostBlockOfGroup,
   type SegmentIndex,
   type SourceRange,
   sourceOffsetOfText,
   sourceRangesOfText,
-  type TableMatrix,
   tableOf,
 } from "./spec-source-index.ts";
 import { alignTable } from "./table-align.ts";
@@ -152,15 +153,6 @@ function finalOrder(
   return slots;
 }
 
-const cellText = (
-  matrix: TableMatrix,
-  row: number,
-  col: number,
-): string | null => {
-  const text = matrix.rows[row]?.cells[col]?.text ?? "";
-  return text === "" ? null : text;
-};
-
 /**
  * Word-level diff of two versions, as decorations on the newer one (T-142).
  * The block-level "changed since vN" wash stays where it is and keeps
@@ -200,6 +192,8 @@ export function changeDecorations(
   const blocks: SourceRange[] = [];
   const tables: TableOverlay[] = [];
   const images: ImageSwap[] = [];
+  /** Old images a table put back on the page itself; see `oldOnly` below. */
+  const shown = new Set<number>();
 
   const insert = (from: number, to: number) => {
     for (const range of sourceRangesOfText(current, from, to)) {
@@ -245,21 +239,36 @@ export function changeDecorations(
     const rowBack = new Map(aligned.rows.pairs.map(([o, n]) => [n, o]));
     const colBack = new Map(aligned.columns.pairs.map(([o, n]) => [n, o]));
 
-    const emptied: TableOverlay["emptied"] = [];
+    const lost: TableOverlay["lost"] = [];
     for (const [ro, rn] of aligned.rows.pairs) {
       for (const [co, cn] of aligned.columns.pairs) {
         const before = from.rows[ro]?.cells[co];
         if (before === undefined || before === null) continue;
         const after = to.rows[rn]?.cells[cn];
+        const parts: CellPart[] = [];
+        const cleared =
+          after === undefined || after === null || after.text === "";
         // A cell emptied — or padded away — has no text node left to carry
         // the strike-through, so the overlay puts one back in it.
-        if (after === undefined || after === null || after.text === "") {
-          if (before.text !== "") {
-            emptied.push({ row: rn, col: cn, text: before.text });
-          }
-          continue;
+        if (cleared) {
+          if (before.text !== "")
+            parts.push({ kind: "text", text: before.text });
+        } else {
+          words(before.text, after.text, after.at);
         }
-        words(before.text, after.text, after.at);
+        // An image that found a counterpart is a swap T-223 already draws in
+        // this very cell, side by side; putting it back here as well would be
+        // the same picture twice (T-229).
+        for (const group of cellImageGroups(baseline, before.block)) {
+          if (!unpairedImages.has(group)) continue;
+          const image = baseline.images.get(group);
+          if (image === undefined) continue;
+          parts.push({ kind: "image", url: image.url, alt: image.alt });
+          shown.add(group);
+        }
+        // Prose first, then images: this is appended to a cell that is still
+        // on the page, so the order carries no meaning of its own.
+        if (parts.length > 0) lost.push({ row: rn, col: cn, parts });
       }
     }
 
@@ -291,6 +300,20 @@ export function changeDecorations(
       aligned.rows.oldOnly,
     );
 
+    /**
+     * One cell of a removed column or row, as the stand-in shows it. Every
+     * image in it is accounted for whether it paired or not: the stand-in
+     * renders the cell's parts whole, so all of them are back on the page.
+     */
+    const standIn = (row: number, col: number): CellPart[] => {
+      const cell = from.rows[row]?.cells[col];
+      if (cell === undefined || cell === null) return [];
+      for (const group of cellImageGroups(baseline, cell.block)) {
+        shown.add(group);
+      }
+      return cell.parts;
+    };
+
     const columns: TableOverlay["columns"] = [];
     columnOrder.forEach((slot, at) => {
       if (!("gone" in slot)) return;
@@ -298,7 +321,7 @@ export function changeDecorations(
         at,
         cells: to.rows.map((_, rn) => {
           const ro = rowBack.get(rn);
-          return ro === undefined ? null : cellText(from, ro, slot.gone);
+          return ro === undefined ? [] : standIn(ro, slot.gone);
         }),
       });
     });
@@ -309,23 +332,30 @@ export function changeDecorations(
         at,
         cells: columnOrder.map((column) => {
           const co = "gone" in column ? column.gone : colBack.get(column.kept);
-          return co === undefined ? null : cellText(from, slot.gone, co);
+          return co === undefined ? [] : standIn(slot.gone, co);
         }),
       });
     });
-    if (columns.length === 0 && rows.length === 0 && emptied.length === 0) {
+    if (columns.length === 0 && rows.length === 0 && lost.length === 0) {
       return;
     }
     tables.push({
       table: { start: to.block.start, end: to.block.end },
       columns,
       rows,
-      emptied,
+      lost,
     });
   };
 
   const newLeaves = leavesOf(current);
   const alignment = alignGroups(leavesOf(baseline), newLeaves);
+  // Old images nothing on the new side matched. Anything else is a swap T-223
+  // draws where it stands, which is what `table()` asks this about.
+  const unpairedImages = new Set(
+    alignment.oldOnly
+      .filter((entry) => entry.group.type === "image")
+      .map((entry) => entry.group.group),
+  );
 
   for (const matched of alignment.pairs) {
     // pierre owns the inside of a fence (T-31): a paired code block gets the
@@ -368,6 +398,12 @@ export function changeDecorations(
     insert(leaf.at, leaf.at + leaf.text.length);
   }
 
+  // An image a table already put back in a cell of its own is left out here: a
+  // marker would say the same thing a second time, and say it outside the
+  // table, which is where a removed cell's image used to end up (T-229).
+  const oldOnly = alignment.oldOnly.filter(
+    (entry) => !(entry.group.type === "image" && shown.has(entry.group.group)),
+  );
   // Old blocks with no counterpart have nowhere to be struck through, so they
   // degrade to a marker at the seam. The text is the baseline's own source —
   // a whole table row reads as the row, `| --- |` and all — which is why the
@@ -376,10 +412,10 @@ export function changeDecorations(
   const gone = groupsOf(
     baseline,
     oldTables,
-    alignment.oldOnly.map((entry) => entry.group),
+    oldOnly.map((entry) => entry.group),
   );
   const seams = new Map(
-    alignment.oldOnly.map((entry) => [entry.group.group, entry.newIndex]),
+    oldOnly.map((entry) => [entry.group.group, entry.newIndex]),
   );
   const removed: Array<{
     order: number;
@@ -403,7 +439,7 @@ export function changeDecorations(
       parts: partsOf(baseline, { start: block.start, end: block.end }),
     });
   }
-  for (const entry of alignment.oldOnly) {
+  for (const entry of oldOnly) {
     if (covered.has(entry.group.group)) continue;
     // Only an image leaf can be located back in the source: a prose leaf's
     // text is the flattened text, which has no range of its own, so a

@@ -344,6 +344,30 @@ function groupRangesOf(index: SegmentIndex): Array<SourceRange | undefined> {
   return ranges;
 }
 
+/** One run of a table cell's content, in source order (T-229). */
+export type CellPart =
+  | { kind: "text"; text: string }
+  | { kind: "image"; url: string; alt: string };
+
+/**
+ * The leaf groups of the images a table cell shows, in source order (T-229).
+ * A cell's own group is its prose, and every group after it up to `lastGroup`
+ * was handed out inside the cell — group numbers go out in document order, so
+ * the walk comes out sorted. A GFM cell holds phrasing content only, so an
+ * image nested in a link or in emphasis is inside that span too.
+ */
+export function cellImageGroups(
+  index: SegmentIndex,
+  cell: SourceBlock,
+): number[] {
+  if (cell.firstGroup < 0) return [];
+  const groups: number[] = [];
+  for (let g = cell.firstGroup + 1; g <= cell.lastGroup; g++) {
+    if (index.images.has(g)) groups.push(g);
+  }
+  return groups;
+}
+
 /** One cell of a table, as the row × column alignment sees it (T-221). */
 export type TableCell = {
   group: number;
@@ -351,8 +375,55 @@ export type TableCell = {
   text: string;
   /** Offset of `text[0]` in that same flattened text; -1 when there is none. */
   at: number;
+  /**
+   * Everything the cell shows, images included (T-229). `text` is what the
+   * alignment pairs by and what a word diff maps onto, so it stays exactly the
+   * flattened prose it always was — an image contributes nothing to it. This
+   * is the second view, and the only one a stand-in cell can be rebuilt from.
+   */
+  parts: CellPart[];
   block: SourceBlock;
 };
+
+/**
+ * What one cell shows, in source order. Prose and images live in two separate
+ * tables — the flattened text has no image in it at all — so the two are
+ * merged by source offset here rather than by walking the tree a second time.
+ */
+function cellPartsOf(
+  index: SegmentIndex,
+  cell: SourceBlock,
+  prose: SourceSegment[],
+): CellPart[] {
+  const runs: Array<[number, CellPart]> = prose.map((segment) => [
+    segment.start,
+    { kind: "text", text: segment.text },
+  ]);
+  for (const group of cellImageGroups(index, cell)) {
+    const image = index.images.get(group);
+    if (image === undefined) continue;
+    runs.push([image.start, { kind: "image", url: image.url, alt: image.alt }]);
+  }
+  runs.sort((a, b) => a[0] - b[0]);
+  const parts: CellPart[] = [];
+  for (const [, part] of runs) {
+    const last = parts.at(-1);
+    // Two prose segments of one cell — an entity, an escape, inline code —
+    // read as one run; only an image between them divides the cell's text.
+    if (part.kind === "text" && last?.kind === "text") {
+      last.text += part.text;
+      continue;
+    }
+    parts.push(part);
+  }
+  // `text` arrives trimmed because remark eats the padding around a cell, but
+  // not the space an image beside it left behind; trimming here is what keeps
+  // an image-free cell's one part identical to its `text`.
+  for (const part of parts) {
+    if (part.kind === "text") part.text = part.text.trim();
+  }
+  return parts.filter((part) => part.kind !== "text" || part.text !== "");
+}
 
 /** One row, always as wide as the header: short rows are padded with null. */
 export type TableRow = { block: SourceBlock; cells: Array<TableCell | null> };
@@ -377,6 +448,12 @@ export function tableOf(
   const table = index.blocks[blockIndex];
   if (table === undefined || table.type !== "table") return null;
   const ranges = groupRangesOf(index);
+  const prose = new Map<number, SourceSegment[]>();
+  for (const segment of index.segments) {
+    const run = prose.get(segment.group);
+    if (run === undefined) prose.set(segment.group, [segment]);
+    else run.push(segment);
+  }
   const rows: TableRow[] = [];
   const rowAt = new Map<number, TableRow>();
   // A parent always precedes its children, so every row is registered before
@@ -396,6 +473,7 @@ export function tableOf(
       group: block.firstGroup,
       text: range === undefined ? "" : index.text.slice(range.start, range.end),
       at: range?.start ?? -1,
+      parts: cellPartsOf(index, block, prose.get(block.firstGroup) ?? []),
       block,
     });
   }
