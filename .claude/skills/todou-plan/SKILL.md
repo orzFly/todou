@@ -24,12 +24,18 @@ from the host project's config.
 - `proposal.md`: the user's requirements that have no tracker trace, quoted verbatim without
   commentary. The issue body, comments and question answers are referenced, never copied. If a
   brainstorm preceded this, start from its `proposal.md`. Keep the file current: new information goes
-  in, corrections replace the relevant sentences, and the meaning of review annotations is recorded here.
+  in, corrections replace the relevant sentences, and what a review annotation established is
+  recorded as the requirement it now is, not as a note about the annotation.
 - `design.md`: the architecture in brief. Name every third-party library you introduce and every
   well-known algorithm you implement by hand. Carry over a brainstorm's approved design.
 - `api.md`, only when API design is involved: endpoints and schemas.
 - `plan.md`: the executable plan the implementer follows. Concrete steps, file-level where it helps,
   with verification in each step.
+
+A spec document states the design as it stands, not how it got there. No "v3 said X, v4 changed it
+to Y" passages, no "the review asked for Z", and no list of corrections to another document: a
+correction rewrites the sentence it corrects and folds its reason into the prose. Where a change came
+from is already recorded — in the card's comments and in the spec's own version history.
 
 ## Review gate
 

@@ -57,10 +57,16 @@ pushed as a spec and approved.
 - `proposal.md` holds the user's original requirements that have no tracker trace: requirements from
   the terminal or other outside channels, quoted verbatim without commentary. Card body, comments and
   question answers are referenced, never copied. Keep the file current: new information goes in,
-  corrections replace the relevant sentences, and the meaning of review annotations is recorded here.
+  corrections replace the relevant sentences, and what a review annotation established is recorded as
+  the requirement it now is, not as a note about the annotation.
 - `brainstorm.md` is the design the user reviews: approaches weighed, option chosen, options rejected
   and why. Scale each section to its complexity. Cover architecture, components, data flow, error
   handling and testing.
+
+A spec document states the design as it stands, not how it got there. No "v3 said X, v4 changed it
+to Y" passages, no "the review asked for Z", and no list of corrections to another document: a
+correction rewrites the sentence it corrects and folds its reason into the prose. Where a change came
+from is already recorded — in the card's comments and in the spec's own version history.
 
 Self-review before pushing: remove placeholders and vague requirements, resolve contradictions
 between sections, confirm the scope fits one implementation plan, and rewrite any requirement that can

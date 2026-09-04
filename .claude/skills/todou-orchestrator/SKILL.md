@@ -8,8 +8,9 @@ disable-model-invocation: true
 
 You dispatch and shepherd work; the tracker is the single source of truth. Dispatch cards, relay
 between the user and the worker agents, merge, deploy. Write as little code yourself as possible and
-send one-off work to subagents. Read `/todou-cli` first; herdr's own reference is `herdr --skill`.
-Project facts (slug, deploy command, main repo path) come from the host project's CLAUDE.md or memory.
+send one-off work to subagents. Read `/todou-cli` first; the herdr commands are in
+`references/herdr.md`. Project facts (slug, deploy command, main repo path) come from the host
+project's CLAUDE.md or memory.
 
 ## The background watch
 
@@ -35,9 +36,9 @@ The watch skips your own agent session, not your account, so a worker on the sam
 wake you when it moves a card or comments. Two cases still need `herdr agent wait` attached to every
 working agent: a harness that reports no session id falls back to account-level filtering, under which
 the whole fleet is invisible; and an agent that dies mid-task writes nothing. Re-attach the wait
-whenever you prompt an agent again, because a wait that returned at a review gate has expired. Do not
-attach to an idle agent: the wait resolves at once and tells you nothing, and an agent parked at a
-review gate is waiting on the user, whose review the watch sees.
+whenever you prompt an agent again. Do not attach to an idle agent: the wait resolves at once and
+tells you nothing, and an agent parked at a review gate is waiting on the user, whose review the
+watch sees.
 
 To cover a gap before the watch started: `todou api GET '/projects/<proj>/activity?after=…'`, then
 check that every user action was handled.
@@ -66,26 +67,22 @@ names. Keep the ordering in your head and act on it at dispatch. Comment only wh
 misses something: a wrong premise, a hidden dependency, two proposals of very different size. Bulk
 triage of a backlog is subagent work.
 
-## Dispatching (herdr + claude)
+## Dispatching
 
-One herdr tab per task. Always pass `--cwd <main repo>` explicitly.
+One herdr tab per task, always with `--cwd <main repo>` passed explicitly. The command sequence is in
+`references/herdr.md`, the launch flags in `references/claude.md`.
 
-```bash
-herdr tab create --workspace "$HERDR_WORKSPACE_ID" --cwd <main repo> --label "<name>-<N>" --no-focus
-herdr agent start <name>-<N> --kind claude --pane <pane_id> -- --worktree --model <model>
-herdr agent prompt <name>-<N> "<task brief>" --wait --timeout 43200000   # run_in_background
-```
-
-- `-- --worktree` gives the agent its own worktree; the brief says nothing about worktrees.
-- Models follow the phase. Planning (`/todou-brainstorm`, `/todou-plan`) inherits the current
-  session's model unless the user names another planning model. Implementation (`/todou-impl-plan`)
-  runs on an opus-tier model unless the user says otherwise. Always append `[1m]`. A card that needs a
-  design therefore takes two agents: the planning brief says to stop when the plan is approved; then
-  retire that agent and dispatch a fresh opus-tier agent on the same card with `/todou-impl-plan`.
-  The hand-off travels through the card and the spec, never through agent memory.
-- Subagents (the Agent tool) take investigations, merges and deploys: opus-tier, never fable.
-- To run a brief through a skill, put `/skill-name` on the first line of the prompt. Agents cannot
-  invoke `disable-model-invocation` skills themselves; a leading slash command works.
+- Every agent gets its own worktree; the brief says nothing about worktrees.
+- Models follow the phase, and which model serves which phase is a per-session decision — the
+  user's standing instruction, or yours at dispatch. Naming one here would be wrong within days.
+  Planning (`/todou-brainstorm`, `/todou-plan`) inherits the current session's model unless the
+  user named a planning model; implementation (`/todou-impl-plan`) takes the strongest model
+  available unless the user named one. A card that needs a design therefore takes two agents: the
+  planning brief says to stop when the plan is approved; then retire that agent and dispatch a
+  fresh implementation agent on the same card with `/todou-impl-plan`. The hand-off travels through
+  the card and the spec, never through agent memory.
+- Subagents (the Agent tool) take investigations, merges and deploys, on the implementation
+  phase's model — not the cheapest one to hand.
 
 The task brief carries only what is specific to this task: the skill to run on the first line, the
 card number, and the conflict fences (what every other in-flight agent is touching, so changes stay
@@ -104,10 +101,9 @@ implementation until the user decides, keep the card In Progress.
 
 Every task gets a fresh agent; do not reuse one.
 
-A `--wait` timeout is not a failure. Run `herdr agent get` first; if the agent is working, re-attach.
-Never prompt a working agent. `working` means a process is running, and a blocked wait is a running
-process too. A `--forever` wait prints a heartbeat to stderr, so a terminal with no heartbeat and no
-new output for hours is stuck; check the tail before trusting a long `working`.
+A `--wait` timeout is not a failure. Read the agent's state before concluding anything from one, and
+never prompt a working agent; if it is working, re-attach. A long `working` is worth no more than its
+tail says (`references/herdr.md`).
 
 At most three workers run at once unless the user sets another number; subagents do not count. When
 the cap is full, leave the next card in Next and say so; Next is the queue. A slot frees when its card
@@ -115,19 +111,14 @@ reaches Shipped and the agent is retired.
 
 ## Retiring an agent
 
-Prompt `/exit` with plain `herdr agent prompt <name> "/exit"`, without `--wait`, because the agent
-exits and there is no lifecycle to await. With `--worktree` launches:
+Retiring is prompting `/exit` and then closing the tab: the sequence is in `references/herdr.md`,
+what the exit does to the worktree in `references/claude.md`. The judgement is when, not how.
 
-- A clean or committed worktree is removed silently on exit, branch included. Commits merged into
-  master survive; unmerged commits are destroyed. So `/exit` a worker only after its branch is
-  merged; if unmerged work must survive, merge first or leave the tab alone.
-- A dirty worktree shows an interactive keep/remove menu (default Keep). `herdr agent send-keys
-  <name> 2` then `enter` discards; plain `enter` keeps.
+- `/exit` a worker only after its branch is merged, because unmerged commits go with the worktree.
+  If unmerged work must survive, merge first or leave the tab alone.
 - The cleanup follows the session's own change record, not git state, so commits injected from
   outside the session are destroyed silently. Never stash your own work inside an agent's worktree.
-
-After the pane returns to a shell, close the tab. Verify the label with `herdr tab list` before every
-`tab close`; a mistyped id kills an unrelated agent.
+- Confirm the tab's label before closing it; a mistyped id kills an unrelated agent.
 
 ## Merging in batches
 
@@ -161,10 +152,10 @@ subagent and check the results.
 Run this when a network failure cuts agents off mid-stream, and whenever the user's prompt says
 REFRESH:
 
-1. `herdr agent list` for a fleet snapshot.
-2. For every idle agent, `herdr agent read` and look for an `Interrupted` marker near the end. If
-   present, prompt: "That interruption was a network failure, not a human abort. Continue from where
-   you were cut off (…)".
+1. Take a fleet snapshot, then read the tail of every idle agent (`references/herdr.md`).
+2. An agent whose output ends in an `Interrupted` marker (`references/claude.md`) was cut off, not
+   stopped. Prompt it: "That interruption was a network failure, not a human abort. Continue from
+   where you were cut off (…)".
 3. Leave working agents alone; re-attach their waits.
 4. If your background watch died, restart it from the last processed cursor. Nothing is lost across
    the gap.
@@ -173,5 +164,5 @@ REFRESH:
 
 - Send one-off work (merges, patches, investigations) to subagents.
 - To see whether an agent finished, read the card's status before its transcript.
-- Read agent output with `herdr agent read … --lines 30 | tail`, never whole screens.
+- Read the tail of an agent's output (`references/herdr.md`), never whole screens.
 - `--debounce 60` on the watch turns a burst of user actions into one wake-up.

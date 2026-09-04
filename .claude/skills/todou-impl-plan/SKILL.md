@@ -23,7 +23,9 @@ Execute a plan that lives as an approved spec set on a todou issue. Read `/todou
 
 Small deviations get a note in the summary comment. Anything that changes the design gets a native
 question on the card (`comment add --questions` + `question wait`) before you proceed, and the answer
-goes into `proposal.md` on the next spec push, if there is one.
+goes into `proposal.md` on the next spec push, if there is one — written as the requirement it now
+is, not as a note about the question. A spec document states the design as it stands; where a change
+came from is already in the card's comments and in the spec's version history.
 
 ## The commit message
 
