@@ -255,13 +255,13 @@ describe("search results", () => {
  */
 function renderBox(
   client: QueryClient = testQueryClient(),
-  { boxes = 1 }: { boxes?: number } = {},
+  { boxes = 1, onEscape }: { boxes?: number; onEscape?: () => void } = {},
 ) {
   const rootRoute = createRootRoute();
   // Two is the real header: the wide row's box and the narrow row's.
   const Boxes = () => (
     <>
-      <SearchBox slug="todou" />
+      <SearchBox slug="todou" onEscape={onEscape} />
       {boxes > 1 && <SearchBox slug="todou" listAlign="stretch" />}
     </>
   );
@@ -685,6 +685,32 @@ describe("SearchBox · the jump offer", () => {
       "https://github.com/o/r/issues/76",
     );
     expect(external?.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("keeps the first Escape for the offer it closes", async () => {
+    const onEscape = vi.fn();
+    const client = seedBox();
+    client.setQueryData(
+      issueRefQuery("todou", 141).queryKey,
+      refItem(141, "全文搜索"),
+    );
+    const utils = renderBox(client, { onEscape });
+    const input = await typeInto(utils, "T-141");
+    await waitFor(() => expect(listboxOf(utils.container)).not.toBeNull());
+
+    fireEvent.keyDown(input, { key: "Escape" });
+    await waitFor(() => expect(listboxOf(utils.container)).toBeNull());
+    expect(onEscape).not.toHaveBeenCalled();
+  });
+
+  it("hands Escape to its host once there is no offer left", async () => {
+    const onEscape = vi.fn();
+    const utils = renderBox(seedBox(), { onEscape });
+    const input = await typeInto(utils, "plain words");
+    expect(listboxOf(utils.container)).toBeNull();
+
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(onEscape).toHaveBeenCalledTimes(1);
   });
 
   it("gives the header's two boxes listboxes of their own", async () => {

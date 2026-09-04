@@ -52,11 +52,20 @@ export function SearchBox({
   slug,
   className,
   listAlign = "end",
+  autoFocus = false,
+  onEscape,
 }: {
   slug: string;
   className?: string;
   /** `stretch` matches the box's own width — for the narrow header row, where it is `flex-1`. */
   listAlign?: "end" | "stretch";
+  /** Takes focus on mount, for a host that opened this box to be typed in. */
+  autoFocus?: boolean;
+  /**
+   * Escape arriving with no offer left to close. The first press is the
+   * box's own; where the second one goes is the host's to decide.
+   */
+  onEscape?: () => void;
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -168,7 +177,10 @@ export function SearchBox({
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
-      if (!open) return;
+      if (!open) {
+        onEscape?.();
+        return;
+      }
       setDismissed(true);
     } else if (!open) {
       return;
@@ -211,6 +223,7 @@ export function SearchBox({
         />
         <Input
           ref={input}
+          autoFocus={autoFocus}
           type="search"
           name="q"
           role="combobox"
