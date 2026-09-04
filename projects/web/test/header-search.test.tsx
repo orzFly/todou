@@ -13,7 +13,7 @@ import type {
   Project,
   ReferenceDirectory,
 } from "@todou/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
 import { projectQuery, projectsQuery } from "../src/api/queries.ts";
 import {
@@ -80,6 +80,7 @@ const refItem = (number: number, title: string): IssueListItem => ({
   deleted_by: null,
   unread: false,
   unread_comments: 0,
+  moves: [],
 });
 
 /** Everything the header reads before it can render, plus one card to jump to. */
@@ -238,6 +239,55 @@ describe("the header's search, narrow", () => {
     fireEvent.keyDown(input, { key: "Escape" });
     await waitFor(() => expect(boxes(view.container)).toHaveLength(0));
     expect(toggle(view.container)).not.toBeNull();
+  });
+});
+
+/**
+ * T-215's jump row meeting T-231's tombstones. `useJumpRows` resolves a card
+ * through the same `issueRefQuery` batcher <IssueLink> uses, so the probe that
+ * turns a moved card's ref into a live one is inherited rather than repeated —
+ * this pins that it is still shared. The row keeps the address the reader
+ * typed, which is the tombstone, and the tombstone is what redirects; only the
+ * title comes from where the card actually lives now.
+ */
+describe("the header's search, a card that moved away", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+
+  it("offers the card at its old address, titled from the new one", async () => {
+    vi.stubGlobal("fetch", (async (input: unknown) => {
+      const url = String(input);
+      // The list excludes tombstones, so 123 comes back a miss.
+      if (url.includes("numbers=")) {
+        return json({ items: [], next_cursor: null });
+      }
+      if (url.includes("/projects/todou/issues/123")) {
+        return json({ moved_to: { slug: "b", number: 45 } }, 301);
+      }
+      if (url.includes("/projects/b/issues/45")) {
+        return json({ ...refItem(45, "Landed in B"), body: "" });
+      }
+      return json({ error: { code: "not_found", message: "no" } }, 404);
+    }) as typeof fetch);
+
+    const view = renderShellAt(1280);
+    const input = await view.findByLabelText("Search this project");
+    fireEvent.focusIn(input);
+    fireEvent.change(input, { target: { value: "T-123" } });
+
+    const row = await waitFor(() => {
+      const found = view.container.querySelector(
+        '[role="listbox"] a[href="/projects/todou/issues/123"]',
+      );
+      if (found === null) throw new Error("no jump row yet");
+      return found;
+    });
+    expect(row.textContent).toContain("Landed in B");
   });
 });
 
