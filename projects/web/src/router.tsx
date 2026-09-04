@@ -132,6 +132,10 @@ declare module "@tanstack/react-router" {
     /** The page owns the full viewport height; the shell must not append
      * flow content (the version footer) below it. */
     fillsViewport?: boolean;
+    /** This route's own boundary answers when the project lookup misses: a
+     * card's old address outlives the reader's access to the project that
+     * once held it, and only this route knows where the card went. */
+    resolvesProjectMiss?: boolean;
   }
 }
 
@@ -161,6 +165,7 @@ const issueRoute = createRoute({
   path: "issues/$number",
   component: IssueDetailPage,
   errorComponent: IssueRouteError,
+  staticData: { resolvesProjectMiss: true },
 });
 
 // Lazy: the spec view drags @pierre/diffs and the annotation layer along —

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Link,
   Outlet,
+  useMatches,
   useNavigate,
   useParams,
   useRouterState,
@@ -23,7 +24,20 @@ export function ProjectLayout() {
   // Errors are thrown rather than left in query state so the route's
   // errorComponent can answer for them — an unresolvable slug used to
   // render nothing at all.
-  const project = useQuery({ ...projectQuery(slug), throwOnError: true });
+  //
+  // A 404 under a child route that resolves its own address is the one
+  // exception: a card's old address stays valid after the reader loses
+  // access to the project that once held it, and only the card's own route
+  // knows where the card went. Throwing here would replace that redirect
+  // with a dead end.
+  const childOwnsMiss = useMatches({
+    select: (matches) => matches.some((m) => m.staticData.resolvesProjectMiss),
+  });
+  const project = useQuery({
+    ...projectQuery(slug),
+    throwOnError: (error) =>
+      (error as { status?: number }).status !== 404 || !childOwnsMiss,
+  });
   const canonical = project.data?.slug;
 
   useEffect(() => {
