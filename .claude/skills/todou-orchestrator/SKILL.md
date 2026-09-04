@@ -12,6 +12,34 @@ send one-off work to subagents. Read `/todou-cli` first; the herdr commands are 
 `references/herdr.md`. Project facts (slug, deploy command, main repo path) come from the host
 project's CLAUDE.md or memory.
 
+## Opening the session
+
+Open by stating what this session runs on, so the user never has to ask which settings are current:
+
+```
+project  <slug>
+plan     <harness> · <model id>
+impl     <harness> · <model id>
+cap      <n>
+```
+
+The project you look up rather than recall: `todou config show` prints the project the CLI resolves
+for the repository you are in, usually through its git binding. Only when nothing is bound does the
+slug come from the host project's CLAUDE.md or memory.
+
+Each phase's row holds the pair of flags you will pass at dispatch, `--kind` and `--model` on
+`herdr agent start`. The two rows are independent: a session may plan under one harness and
+implement under another. The harness you yourself run in is not reported, because it decides
+nothing about the agents you launch.
+
+The models and the cap come from the user, said aloud or standing in memory, and often nothing was
+said. Then apply the defaults in `Dispatching` below and mark the value as a default, so a wrong
+assumption costs one line to correct instead of a whole task. Those defaults are rules rather than
+values — report the model id you will actually pass, not the rule that picked it.
+
+Repeat the block whenever one of these changes. A model swapped or a cap raised mid-session is the
+case this exists for.
+
 ## The background watch
 
 Keep one running in the background:
