@@ -83,6 +83,15 @@ const movedResponses = {
   },
 };
 
+/**
+ * Declared where it is a deliberate answer rather than the ambient one: on
+ * an address whose card has moved, a reader who can read neither end gets
+ * 404 and not the 410 above, which would confirm the address existed.
+ */
+const strangerResponse = {
+  404: { description: "No such address, or neither project is readable" },
+};
+
 const listRoute = createRoute({
   method: "get",
   path: "/{slug}/issues",
@@ -116,6 +125,7 @@ const getIssueRoute = createRoute({
   responses: {
     200: { description: "Issue", ...jsonBody(Issue) },
     ...movedResponses,
+    ...strangerResponse,
   },
 });
 
@@ -234,6 +244,7 @@ const getCommentRoute = createRoute({
   responses: {
     200: { description: "Comment", ...jsonBody(TimelineComment) },
     ...movedResponses,
+    ...strangerResponse,
   },
 });
 
@@ -251,6 +262,7 @@ const locateCommentRoute = createRoute({
   responses: {
     200: { description: "Comment", ...jsonBody(CommentLocation) },
     ...movedResponses,
+    ...strangerResponse,
   },
 });
 

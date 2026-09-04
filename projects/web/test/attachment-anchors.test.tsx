@@ -36,6 +36,7 @@ const attachment = (
   url: `/api/projects/demo/attachments/${id}/download/${filename}`,
   uploader,
   created_at: "2026-09-01T00:00:00Z",
+  aliases: [],
 });
 
 const ITEMS = [

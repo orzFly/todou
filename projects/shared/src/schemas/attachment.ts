@@ -1,6 +1,14 @@
 import { z } from "zod";
 import { Id, Timestamp } from "./common.ts";
+import { ProjectSlug } from "./project.ts";
 import { UserRef } from "./user.ts";
+
+/** An address this file used to answer on, and still does. */
+export const AttachmentAlias = z.object({
+  project: ProjectSlug,
+  id: Id,
+});
+export type AttachmentAlias = z.infer<typeof AttachmentAlias>;
 
 export const Attachment = z.object({
   id: Id,
@@ -10,6 +18,14 @@ export const Attachment = z.object({
   url: z.string(),
   uploader: UserRef,
   created_at: Timestamp,
+  /**
+   * The addresses this file answers on besides `url`: a move swapped the id,
+   * a rename swapped the slug, and what a body holds is whichever one was
+   * current when it was written. Empty outside the list endpoint, and
+   * defaulted rather than caught so `@hono/zod-openapi` can still convert
+   * the response schema — a `ZodCatch` here 500s /api/openapi.json.
+   */
+  aliases: z.array(AttachmentAlias).default([]),
 });
 export type Attachment = z.infer<typeof Attachment>;
 

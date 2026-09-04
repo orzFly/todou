@@ -38,6 +38,7 @@ import {
   assertIssueReadable,
   assertIssueWritable,
   gateColumns,
+  type TrashFields,
 } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
@@ -52,7 +53,10 @@ async function loadIssue(
   number: number,
   actor: UserRow,
   role: MemberRole,
-  gate: typeof assertIssueReadable,
+  // Spelled out rather than `typeof assertIssueReadable`: that one takes a
+  // nullable role since T-242 and the write gate does not, so naming one of
+  // them as the type would reject the other.
+  gate: (row: TrashFields, actor: UserRow, role: MemberRole) => void,
 ) {
   const rows = await db
     .select({

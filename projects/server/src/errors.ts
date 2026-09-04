@@ -141,25 +141,36 @@ export class GoneError extends DomainError {
 export class IssueMovedError extends Error {
   readonly issue: { id: number; projectId: number; number: number };
   readonly forWrite: boolean;
+  /**
+   * The asker has a role in the project the URL named. False means a 410 is
+   * off the table however the destination turns out: it would confirm to a
+   * stranger of both projects that this address once held something.
+   */
+  readonly sourceReadable: boolean;
 
   constructor(
     issue: { id: number; projectId: number; number: number },
     forWrite: boolean,
+    sourceReadable: boolean,
   ) {
     super("issue moved");
     this.issue = issue;
     this.forWrite = forWrite;
+    this.sourceReadable = sourceReadable;
   }
 }
 
 export class CommentMovedError extends Error {
   readonly projectId: number;
   readonly commentId: number;
+  /** See `IssueMovedError.sourceReadable`. */
+  readonly sourceReadable: boolean;
 
-  constructor(projectId: number, commentId: number) {
+  constructor(projectId: number, commentId: number, sourceReadable: boolean) {
     super("comment moved");
     this.projectId = projectId;
     this.commentId = commentId;
+    this.sourceReadable = sourceReadable;
   }
 }
 
@@ -169,18 +180,22 @@ export class AttachmentMovedError extends Error {
   /** Preserved so the redirect lands on the same route the reader used. */
   readonly variant: "download" | "view";
   readonly filename: string | null;
+  /** See `IssueMovedError.sourceReadable`. */
+  readonly sourceReadable: boolean;
 
   constructor(
     projectId: number,
     attachmentId: number,
     variant: "download" | "view",
     filename: string | null,
+    sourceReadable: boolean,
   ) {
     super("attachment moved");
     this.projectId = projectId;
     this.attachmentId = attachmentId;
     this.variant = variant;
     this.filename = filename;
+    this.sourceReadable = sourceReadable;
   }
 }
 

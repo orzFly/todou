@@ -15,7 +15,7 @@ import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { comments, issueEvents, issues } from "../db/project-schema.ts";
 import { CommentMovedError, ForbiddenError, NotFoundError } from "../errors.ts";
-import { requireProject, routeInfoOf } from "./access.ts";
+import { projectForRead, requireProject, routeInfoOf } from "./access.ts";
 import {
   analyzeReferences,
   type CrossTarget,
@@ -242,7 +242,9 @@ export async function getComment(
   issueNumber: number,
   commentId: number,
 ): Promise<TimelineComment> {
-  const { project, role } = await requireProject(ctx, actor, slug, "reader");
+  // A permalink is written down and followed later, so it answers to
+  // whoever can read where the comment is now (T-242).
+  const { project, role } = await projectForRead(ctx, actor, slug);
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(db, project.id, issueNumber);
   assertIssueReadable(issue, actor, role);
@@ -252,7 +254,7 @@ export async function getComment(
     .from(comments)
     .where(and(eq(comments.id, commentId), eq(comments.issueId, issue.id)));
   const row = rows[0];
-  if (!row) await throwIfAliased(ctx, project.id, commentId);
+  if (!row) await throwIfAliased(ctx, project.id, commentId, role !== null);
   if (!row) throw new NotFoundError("comment not found");
   return toTimelineComment(ctx, row);
 }
@@ -266,6 +268,7 @@ async function throwIfAliased(
   ctx: AppContext,
   projectId: number,
   commentId: number,
+  sourceReadable: boolean,
 ): Promise<void> {
   const alias = await aliasOf(
     ctx.router.system(),
@@ -273,7 +276,9 @@ async function throwIfAliased(
     projectId,
     commentId,
   );
-  if (alias !== null) throw new CommentMovedError(projectId, commentId);
+  if (alias !== null) {
+    throw new CommentMovedError(projectId, commentId, sourceReadable);
+  }
 }
 
 /**
@@ -287,7 +292,9 @@ export async function locateComment(
   slug: string,
   commentId: number,
 ): Promise<CommentLocation> {
-  const { project, role } = await requireProject(ctx, actor, slug, "reader");
+  // Same as getComment: a bare `#comment-M` outlives the move that carried
+  // the comment away, so the destination decides who may follow it (T-242).
+  const { project, role } = await projectForRead(ctx, actor, slug);
   const db = await ctx.router.forProject(routeInfoOf(project));
   const rows = await db
     .select({
@@ -298,7 +305,7 @@ export async function locateComment(
     .innerJoin(issues, eq(comments.issueId, issues.id))
     .where(and(eq(comments.projectId, project.id), eq(comments.id, commentId)));
   const row = rows[0];
-  if (!row) await throwIfAliased(ctx, project.id, commentId);
+  if (!row) await throwIfAliased(ctx, project.id, commentId, role !== null);
   if (!row) throw new NotFoundError("comment not found");
   // This endpoint reaches a comment by id alone, so the issue's own gate
   // never ran: without this, a bare `#comment-M` would hand out the body of

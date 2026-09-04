@@ -90,6 +90,23 @@ export async function requireProject(
 }
 
 /**
+ * The project a read is addressed to, and the caller's role there if they
+ * have one. Unlike `requireProject` it does not turn a missing role away:
+ * an address whose thing has since moved elsewhere belongs to whoever can
+ * read where it went (T-242), and answering that takes looking the id up in
+ * the address book first. Only routes that consult the address book may use
+ * this — everywhere else, no role still means not found.
+ */
+export async function projectForRead(
+  ctx: AppContext,
+  user: UserRow,
+  slug: string,
+): Promise<{ project: ProjectRow; role: MemberRole | null }> {
+  const project = await getProjectBySlug(ctx, slug);
+  return { project, role: await projectRoleOf(ctx, project, user) };
+}
+
+/**
  * Same visibility rule as listProjects, but keeping the raw rows so the
  * caller can route to each project's database — what every cross-project
  * `/me/*` endpoint needs (T-97's inbox, T-100's bulk read).
