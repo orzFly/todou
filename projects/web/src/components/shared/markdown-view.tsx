@@ -14,6 +14,7 @@ import {
   AttachmentRichLink,
 } from "@/components/issue/attachment-list.tsx";
 import { MarkdownLink } from "@/components/shared/issue-link.tsx";
+import { useOriginSlugAt } from "@/components/shared/issue-origin.tsx";
 import { CodeBlock, fenceFilename } from "@/components/shared/pierre.tsx";
 import {
   isPreviewableImage,
@@ -114,6 +115,7 @@ function MarkdownPre({
 export function MarkdownView({
   children,
   slug,
+  originSlug,
   issueNumber,
   embedded = false,
   refDate,
@@ -122,6 +124,15 @@ export function MarkdownView({
   children: string;
   /** Enables #N → issue link rendering; omit where there is no project. */
   slug?: string;
+  /**
+   * The project this text was written in, if the card has since moved
+   * (T-231). A bare `#12` means whatever it meant when it was typed, so it
+   * resolves under this project rather than the current one — reading it
+   * under the destination would point it at a different, existing card.
+   * Null means the writing project is unknown to this reader, and those
+   * refs stay plain text rather than become a guess.
+   */
+  originSlug?: string | null;
   /**
    * When the content was CREATED (T-80): internal refs parse under the
    * format in force at that moment, so pre-switch text keeps pointing at
@@ -147,6 +158,15 @@ export function MarkdownView({
    */
   rehypePlugins?: ComponentProps<typeof Markdown>["rehypePlugins"];
 }) {
+  // Resolution follows the origin: same project in the ordinary case, and
+  // one extra config fetch only for text that predates a move. The context
+  // answers for every renderer under an issue without each one forwarding
+  // the card's move history by hand.
+  const fromContext = useOriginSlugAt(refDate);
+  const origin = originSlug === undefined ? fromContext : originSlug;
+  const resolveUnder = origin === undefined ? slug : (origin ?? undefined);
+  const unresolvable = origin === null;
+
   // The override map must be referentially stable across re-renders: every
   // entry is an anonymous component, and a fresh map makes React treat each
   // one as a NEW component type, unmounting and rebuilding those DOM
@@ -203,7 +223,13 @@ export function MarkdownView({
                   );
                 }
               }
-              return <MarkdownLink slug={slug} {...props} />;
+              return (
+                <MarkdownLink
+                  slug={slug}
+                  originSlug={resolveUnder}
+                  {...props}
+                />
+              );
             },
             img: ({
               node: _node,
@@ -258,12 +284,12 @@ export function MarkdownView({
             },
           }),
     }),
-    [children, slug, issueNumber, embedded],
+    [children, slug, resolveUnder, issueNumber, embedded],
   );
 
   const refQuery = useQuery({
-    ...referenceConfigQuery(slug ?? ""),
-    enabled: slug !== undefined,
+    ...referenceConfigQuery(resolveUnder ?? ""),
+    enabled: resolveUnder !== undefined,
   });
   // Cross-project resolution is the viewer's own: which projects they can
   // name, and which prefixes were unambiguously held when this was written.
@@ -278,7 +304,7 @@ export function MarkdownView({
   // Stable references: react-markdown gets this array verbatim, and the
   // tokenizer config must not churn identity on unrelated re-renders.
   const remarkPlugins = useMemo(() => {
-    if (slug === undefined)
+    if (resolveUnder === undefined || unresolvable)
       return [remarkGfm] as ComponentProps<typeof Markdown>["remarkPlugins"];
     const directory = directoryQuery.data;
     const readable = readableQuery.data;
@@ -292,7 +318,14 @@ export function MarkdownView({
     return [remarkGfm, [remarkIssueRefs, config]] as ComponentProps<
       typeof Markdown
     >["remarkPlugins"];
-  }, [slug, refQuery.data, refDate, directoryQuery.data, readableQuery.data]);
+  }, [
+    resolveUnder,
+    unresolvable,
+    refQuery.data,
+    refDate,
+    directoryQuery.data,
+    readableQuery.data,
+  ]);
 
   return (
     // Typography lives in styles.css (.markdown-body, GitHub-style).

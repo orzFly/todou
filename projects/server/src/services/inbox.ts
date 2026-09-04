@@ -19,12 +19,13 @@ import {
 } from "./access.ts";
 import {
   crossRefVisibleCondition,
-  visibleSlugsWithHistory,
+  type VisibleProjects,
+  visibleProjects,
 } from "./cross-references.ts";
 import { bundleIssues, toIssue } from "./issues.ts";
 import { readPrefs } from "./prefs.ts";
 import { ensureFrontier, unreadIssueState } from "./reads.ts";
-import { notDeleted } from "./trash.ts";
+import { live } from "./trash.ts";
 
 type ProjectSlice = { items: InboxItem[]; truncated: boolean };
 
@@ -32,11 +33,12 @@ async function projectInbox(
   ctx: AppContext,
   db: Db,
   project: ProjectRow,
-  userId: number,
+  actor: UserRow,
   limit: number,
   showWeakUnread: boolean,
-  visibleSlugs: string[],
+  visible: VisibleProjects,
 ): Promise<ProjectSlice> {
+  const userId = actor.id;
   const frontier = await ensureFrontier(db, project.id, userId);
 
   // Candidate discovery mirrors unreadIssueState's thresholds — including
@@ -101,7 +103,7 @@ async function projectInbox(
         ne(issueEvents.actorId, userId),
         gt(issueEvents.createdAt, frontier),
         sql`${issueEvents.createdAt} > coalesce(${issueReads.lastSeenAt}, ${frontier})`,
-        crossRefVisibleCondition(visibleSlugs),
+        crossRefVisibleCondition(visible.slugs, visible.ids),
       ),
     )
     .groupBy(issueEvents.issueId);
@@ -144,14 +146,14 @@ async function projectInbox(
   const rows = await db
     .select()
     .from(issues)
-    .where(and(inArray(issues.id, ids), notDeleted));
-  const bundles = await bundleIssues(ctx, db, project.id, rows);
+    .where(and(inArray(issues.id, ids), live));
+  const bundles = await bundleIssues(ctx, db, project.id, rows, actor);
   const { unread, counts } = await unreadIssueState(
     db,
     project.id,
     userId,
     ids,
-    visibleSlugs,
+    visible,
   );
 
   // Current version's author, for the "waiting for MY review" exclusion —
@@ -291,7 +293,7 @@ export async function getInbox(
   const prefs = await readPrefs(ctx.router.system(), actor.id);
   // The full readable set, not `scope`: a request narrowed to two projects
   // still gets to see references from every project its caller can read.
-  const visibleSlugs = await visibleSlugsWithHistory(ctx, actor);
+  const visible = await visibleProjects(ctx, actor);
 
   const items: InboxItem[] = [];
   let truncated = false;
@@ -301,10 +303,10 @@ export async function getInbox(
       ctx,
       db,
       project,
-      actor.id,
+      actor,
       query.limit,
       prefs.show_weak_unread,
-      visibleSlugs,
+      visible,
     );
     items.push(...slice.items);
     truncated ||= slice.truncated;

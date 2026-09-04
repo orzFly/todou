@@ -135,20 +135,29 @@ export function IssueLink({
  */
 function CommentLink({
   slug,
+  pageSlug = slug,
   commentId,
   fallback,
 }: {
+  /** Where the id is looked up: the project the text was written in. */
   slug: string;
+  /** Where it is being read, which decides how the ref is spelled. */
+  pageSlug?: string;
   commentId: number;
   fallback: string;
 }) {
   const located = useQuery(commentLocationQuery(slug, commentId));
   if (!located.data) return <>{fallback}</>;
+  // A comment that moved answers from its new project, and the issue number
+  // that comes back belongs to THAT project — pairing it with the project
+  // asked would name a different card entirely.
+  const home = located.data.slug ?? slug;
   return (
     <IssueLink
-      slug={slug}
+      slug={home}
       number={located.data.issue_number}
-      commentId={commentId}
+      commentId={located.data.comment.id}
+      crossProject={home !== pageSlug}
       fallback={fallback}
     />
   );
@@ -175,21 +184,28 @@ const numberOr = (raw: string | undefined): number | undefined =>
  */
 export function MarkdownLink({
   slug,
+  originSlug,
   node,
   ...props
-}: AnchorProps & { slug: string }) {
+}: AnchorProps & { slug: string; originSlug?: string }) {
   const child = node?.children?.length === 1 ? node.children[0] : undefined;
   // The written token, so an unresolvable ref falls back to exactly what
   // its author typed rather than to a spelling they never used.
   const written = child?.type === "text" ? child.value : undefined;
+  // An unqualified ref names the project the text was written in, which is
+  // no longer this one once the card has moved (T-231). Resolving it here
+  // would land on this project's card of the same number — a real card, and
+  // therefore a wrong link no redirect ever gets the chance to correct.
+  const home = originSlug ?? slug;
 
   const refMatch = props.href?.match(ISSUE_REF_HREF);
   if (refMatch?.[1] !== undefined) {
     return (
       <IssueLink
-        slug={slug}
+        slug={home}
         number={Number(refMatch[1])}
         commentId={numberOr(refMatch[2])}
+        crossProject={home !== slug}
         fallback={written}
       />
     );
@@ -210,7 +226,8 @@ export function MarkdownLink({
   if (commentMatch?.[1] !== undefined) {
     return (
       <CommentLink
-        slug={slug}
+        slug={home}
+        pageSlug={slug}
         commentId={Number(commentMatch[1])}
         fallback={written ?? props.href ?? ""}
       />

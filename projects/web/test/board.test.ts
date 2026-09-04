@@ -40,6 +40,7 @@ const page = (numbers: number[], s: Status): IssueListPage => ({
     deleted_by: null,
     unread: false,
     unread_comments: 0,
+    moves: [],
   })),
   next_cursor: null,
 });

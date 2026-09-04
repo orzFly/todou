@@ -78,6 +78,13 @@
       "when": 1788078950401,
       "tag": "0010_search_trgm",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788490043400,
+      "tag": "0011_issue_moved",
+      "breakpoints": true
     }
   ]
 }

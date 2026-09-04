@@ -1,21 +1,65 @@
 import type { MemberRole } from "@todou/shared";
-import { isNull, type SQL } from "drizzle-orm";
+import { and, isNull, type SQL } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import { issues } from "../db/project-schema.ts";
-import { IssueDeletedError, NotFoundError } from "../errors.ts";
+import {
+  IssueDeletedError,
+  IssueMovedError,
+  IssueMovingError,
+  NotFoundError,
+} from "../errors.ts";
 
 /**
- * The trash predicate (T-145). Every query that walks issues carries it
- * unless it is explicitly the trash view, and it has to be a SQL predicate
- * rather than a filter over the results — the list, the counts and the
- * activity stream all paginate, so dropping rows afterwards would corrupt
- * both the page sizes and the cursors (same reasoning as
+ * Cards that still exist here (T-145, T-231). Every query that walks issues
+ * carries it unless it is explicitly the trash view, and it has to be a SQL
+ * predicate rather than a filter over the results — the list, the counts and
+ * the activity stream all paginate, so dropping rows afterwards would
+ * corrupt both the page sizes and the cursors (same reasoning as
  * `crossRefVisibleCondition`).
  */
-export const notDeleted: SQL = isNull(issues.deletedAt);
+export const live: SQL = and(
+  isNull(issues.deletedAt),
+  isNull(issues.movedAt),
+) as SQL;
+
+/**
+ * Cards that may become the target of a NEW reference — `live`, minus the
+ * ones mid-move.
+ *
+ * Narrower than `live` because reference recording does not go through the
+ * write gate: it is a side effect of writing some *other* issue and filters
+ * targets by predicate alone, so the freeze in the cross-database protocol
+ * cannot stop it. An event landing on a card while it is being copied is an
+ * event the source-side cleanup then deletes. Refusing it up front is the
+ * same call the trash already makes.
+ */
+export const referenceable: SQL = and(live, isNull(issues.movingSince)) as SQL;
+
+/**
+ * The gate's column set, spread into every partial select that will be
+ * gated. Named once so widening it stays a change to this file rather than
+ * a hunt through a dozen hand-written select lists.
+ */
+export const gateColumns = {
+  id: issues.id,
+  projectId: issues.projectId,
+  number: issues.number,
+  deletedAt: issues.deletedAt,
+  movedAt: issues.movedAt,
+  movingSince: issues.movingSince,
+  authorId: issues.authorId,
+};
 
 /** The columns the gates below read; every loadIssue helper selects them. */
-export type TrashFields = { deletedAt: Date | null; authorId: number };
+export type TrashFields = {
+  id: number;
+  projectId: number;
+  number: number;
+  deletedAt: Date | null;
+  movedAt: Date | null;
+  movingSince: Date | null;
+  authorId: number;
+};
 
 /**
  * Who may see a card once it is in the trash: project admins across the
@@ -24,7 +68,7 @@ export type TrashFields = { deletedAt: Date | null; authorId: number };
  * able to find it, including when someone else did the deleting.
  */
 export function seesTrashed(
-  row: TrashFields,
+  row: Pick<TrashFields, "authorId">,
   actor: UserRow,
   role: MemberRole,
 ): boolean {
@@ -36,12 +80,18 @@ export function seesTrashed(
  * simply does not exist for everyone else. The 404 is the point — a reader
  * who may not see the trash must not be able to tell a deleted card apart
  * from a number nobody ever used.
+ *
+ * A tombstone is checked first and answered by the error handler, which
+ * turns the marker into a redirect. The order is free of ambiguity rather
+ * than merely convenient: a card cannot be in the trash and moved at once,
+ * because moving one out of the trash is refused.
  */
 export function assertIssueReadable(
   row: TrashFields,
   actor: UserRow,
   role: MemberRole,
 ): void {
+  if (row.movedAt !== null) throw new IssueMovedError(row, false);
   if (row.deletedAt === null) return;
   if (!seesTrashed(row, actor, role))
     throw new NotFoundError("issue not found");
@@ -50,13 +100,15 @@ export function assertIssueReadable(
 /**
  * Write gate: the same visibility, but seeing a trashed card earns a 409
  * instead of permission — a card in the trash is frozen until it is
- * restored.
+ * restored, and so is one being copied to another project.
  */
 export function assertIssueWritable(
   row: TrashFields,
   actor: UserRow,
   role: MemberRole,
 ): void {
+  if (row.movedAt !== null) throw new IssueMovedError(row, true);
+  if (row.movingSince !== null) throw new IssueMovingError();
   if (row.deletedAt === null) return;
   if (seesTrashed(row, actor, role)) throw new IssueDeletedError();
   throw new NotFoundError("issue not found");

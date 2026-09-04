@@ -35,7 +35,7 @@ import {
   statusEventOf,
   toIssue,
 } from "./issues.ts";
-import { assertIssueWritable } from "./trash.ts";
+import { assertIssueWritable, gateColumns } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
 /**
@@ -60,10 +60,7 @@ export async function executeCommands(
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issueRows = await db
     .select({
-      id: issues.id,
-      number: issues.number,
-      authorId: issues.authorId,
-      deletedAt: issues.deletedAt,
+      ...gateColumns,
     })
     .from(issues)
     .where(
@@ -326,7 +323,7 @@ export async function executeCommands(
   const after = await db.select().from(issues).where(eq(issues.id, issue.id));
   const row = after[0];
   if (!row) throw new NotFoundError("issue not found");
-  const bundle = (await bundleIssues(ctx, db, project.id, [row]))[0];
+  const bundle = (await bundleIssues(ctx, db, project.id, [row], actor))[0];
   if (!bundle) throw new Error("bundle missing");
 
   let comment: TimelineComment | null = null;

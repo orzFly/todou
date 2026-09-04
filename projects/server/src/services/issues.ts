@@ -6,6 +6,7 @@ import type {
   IssueCountsQuery,
   IssueCreateInput,
   IssueListQuery,
+  IssueMove,
   IssueUpdateInput,
   Label,
   MemberRole,
@@ -53,7 +54,7 @@ import {
   type CrossTarget,
   loadReferenceInputs,
   recordCrossReferences,
-  visibleSlugsWithHistory,
+  visibleProjects,
 } from "./cross-references.ts";
 import {
   decodeListCursor as decodeCursor,
@@ -63,13 +64,14 @@ import {
 import { toLabel } from "./labels.ts";
 import { unreadIssueState } from "./reads.ts";
 import { recordReferences } from "./references.ts";
+import { originProjectFor } from "./relocation.ts";
 import { recordRevision } from "./revisions.ts";
 import { toStatus } from "./statuses.ts";
 import { microIso } from "./timeline.ts";
 import {
   assertIssueReadable,
   assertIssueWritable,
-  notDeleted,
+  live,
   seesTrashed,
 } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
@@ -110,6 +112,8 @@ export type IssueBundle = {
   assignees: UserRef[];
   author: UserRef;
   deletedBy: UserRef | null;
+  /** Arrivals in this card's history, oldest first (T-231). */
+  moves: IssueMove[];
 };
 
 export function toIssue(bundle: IssueBundle): Issue {
@@ -134,7 +138,64 @@ export function toIssue(bundle: IssueBundle): Issue {
     unread_comments: 0,
     deleted_at: bundle.row.deletedAt?.toISOString() ?? null,
     deleted_by: bundle.deletedBy,
+    moves: bundle.moves,
   };
+}
+
+/**
+ * The card's ownership boundaries, read straight off its `moved_in` events
+ * (T-231) — the copy carries them along, so no column has to.
+ *
+ * Intervals the viewer may not attribute keep their `at` and lose their
+ * project: the boundary is still real, only its owner is withheld, and a
+ * client renders that stretch's local references as plain text.
+ */
+async function movesOf(
+  ctx: AppContext,
+  db: Db,
+  projectId: number,
+  ids: number[],
+  actor: UserRow,
+): Promise<Map<number, IssueMove[]>> {
+  const byIssue = new Map<number, IssueMove[]>();
+  if (ids.length === 0) return byIssue;
+  const rows = await db
+    .select({
+      issueId: issueEvents.issueId,
+      payload: issueEvents.payload,
+      createdAt: issueEvents.createdAt,
+    })
+    .from(issueEvents)
+    .where(
+      and(
+        eq(issueEvents.projectId, projectId),
+        eq(issueEvents.type, "moved_in"),
+        inArray(issueEvents.issueId, ids),
+      ),
+    )
+    .orderBy(asc(issueEvents.createdAt), asc(issueEvents.id));
+  // Cards that never moved are the norm; only a hit pays for the lookup.
+  if (rows.length === 0) return byIssue;
+  const visible = (await visibleProjects(ctx, actor)).ids;
+
+  for (const row of rows) {
+    const payload = row.payload as {
+      from_project_id?: number | null;
+      from_project?: string | null;
+      from_number?: number | null;
+    };
+    const from = payload.from_project_id ?? null;
+    const known = from !== null && visible.has(from);
+    const list = byIssue.get(row.issueId) ?? [];
+    list.push({
+      at: row.createdAt.toISOString(),
+      from_project_id: known ? from : null,
+      from_project: known ? (payload.from_project ?? null) : null,
+      from_number: known ? (payload.from_number ?? null) : null,
+    });
+    byIssue.set(row.issueId, list);
+  }
+  return byIssue;
 }
 
 /**
@@ -142,7 +203,7 @@ export function toIssue(bundle: IssueBundle): Issue {
  * back (see trash.ts) — loading first is what lets the gate tell "deleted"
  * apart from "never existed".
  */
-async function loadIssueRow(
+export async function loadIssueRow(
   db: Db,
   projectId: number,
   number: number,
@@ -162,6 +223,8 @@ export async function bundleIssues(
   db: Db,
   projectId: number,
   rows: IssueRow[],
+  /** Whose view this is; decides which move sources may be named. */
+  actor: UserRow,
 ): Promise<IssueBundle[]> {
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.id);
@@ -188,6 +251,7 @@ export async function bundleIssues(
     ...assigneeRows.map((a) => a.userId),
   ];
   const refs = await getUserRefs(ctx.router.system(), refIds);
+  const moves = await movesOf(ctx, db, projectId, ids, actor);
   const ghost = (id: number): UserRef => ({
     id,
     login: "ghost",
@@ -214,6 +278,7 @@ export async function bundleIssues(
         row.deletedBy === null
           ? null
           : (refs.get(row.deletedBy) ?? ghost(row.deletedBy)),
+      moves: moves.get(row.id) ?? [],
     };
   });
 }
@@ -408,7 +473,7 @@ export async function createIssue(
     crossTargets,
     agentContext,
   );
-  const bundles = await bundleIssues(ctx, db, project.id, [row]);
+  const bundles = await bundleIssues(ctx, db, project.id, [row], actor);
   const bundle = bundles[0];
   if (!bundle) throw new Error("bundle missing");
   return toIssue(bundle);
@@ -424,7 +489,7 @@ export async function getIssue(
   const db = await ctx.router.forProject(routeInfoOf(project));
   const row = await loadIssueRow(db, project.id, number);
   assertIssueReadable(row, actor, role);
-  const bundle = (await bundleIssues(ctx, db, project.id, [row]))[0];
+  const bundle = (await bundleIssues(ctx, db, project.id, [row], actor))[0];
   if (!bundle) throw new Error("bundle missing");
   return toIssue(bundle);
 }
@@ -482,7 +547,7 @@ export async function issueFilterConditions(
 ): Promise<SQL[] | null> {
   const conditions: SQL[] = [eq(issues.projectId, projectId)];
   if (trash === undefined) {
-    conditions.push(notDeleted);
+    conditions.push(live);
   } else {
     conditions.push(isNotNull(issues.deletedAt));
     if (trash.role !== "admin") {
@@ -604,13 +669,13 @@ export async function listIssues(
         })
       : null;
 
-  const bundles = await bundleIssues(ctx, db, project.id, page);
+  const bundles = await bundleIssues(ctx, db, project.id, page, actor);
   const { unread, counts } = await unreadIssueState(
     db,
     project.id,
     actor.id,
     page.map((r) => r.id),
-    await visibleSlugsWithHistory(ctx, actor),
+    await visibleProjects(ctx, actor),
   );
   return {
     items: bundles.map((b) => ({
@@ -701,6 +766,15 @@ export async function updateIssue(
         ]);
 
   const refInputs = await loadReferenceInputs(ctx, db, project.id);
+  // Body edits re-scan text that may predate a move, so they resolve their
+  // references under whoever owned the card when it was written.
+  const origin = await originProjectFor(
+    ctx,
+    db,
+    project,
+    before.id,
+    before.createdAt,
+  );
   let crossTargets: CrossTarget[] = [];
 
   const events: ChangeEvent[] = [];
@@ -847,7 +921,13 @@ export async function updateIssue(
     }
     await tx.update(issues).set(patch).where(eq(issues.id, before.id));
 
-    if (input.body !== undefined && input.body !== before.body) {
+    // A body whose origin project is gone records nothing: see
+    // originProjectFor.
+    if (
+      input.body !== undefined &&
+      input.body !== before.body &&
+      origin !== null
+    ) {
       const analyzed = await analyzeReferences(
         tx,
         refInputs,
@@ -855,6 +935,7 @@ export async function updateIssue(
         input.body,
         before.createdAt,
         { issueNumber: number },
+        origin,
       );
       crossTargets = analyzed.cross;
       const refs = await recordReferences(
@@ -893,7 +974,7 @@ export async function updateIssue(
   );
 
   const after = await loadIssueRow(db, project.id, number);
-  const bundle = (await bundleIssues(ctx, db, project.id, [after]))[0];
+  const bundle = (await bundleIssues(ctx, db, project.id, [after], actor))[0];
   if (!bundle) throw new Error("bundle missing");
   return toIssue(bundle);
 }
@@ -1011,7 +1092,7 @@ export async function restoreIssue(
     false,
     agentContext,
   );
-  const bundle = (await bundleIssues(ctx, db, project.id, [row]))[0];
+  const bundle = (await bundleIssues(ctx, db, project.id, [row], actor))[0];
   if (!bundle) throw new Error("bundle missing");
   return toIssue(bundle);
 }

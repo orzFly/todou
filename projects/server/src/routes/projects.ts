@@ -114,7 +114,7 @@ export function projectRoutes() {
 
   app.openapi(getRoute, async (c) => {
     const ctx = c.get("appCtx");
-    const { project } = await requireProject(
+    const { project, role } = await requireProject(
       ctx,
       c.get("user"),
       c.req.valid("param").slug,
@@ -122,7 +122,7 @@ export function projectRoutes() {
     );
     return c.json(
       {
-        ...toProject(project),
+        ...toProject(project, role),
         former_slugs: await formerSlugsOf(ctx.router.system(), project),
       },
       200,

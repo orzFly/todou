@@ -15,6 +15,7 @@ import {
   pendingUploads,
 } from "../db/project-schema.ts";
 import {
+  AttachmentMovedError,
   DirectUploadIncompleteError,
   DirectUploadUnavailableError,
   ForbiddenError,
@@ -23,7 +24,12 @@ import {
 } from "../errors.ts";
 import { S3Storage } from "../storage/s3.ts";
 import { requireProject, routeInfoOf } from "./access.ts";
-import { assertIssueReadable, assertIssueWritable } from "./trash.ts";
+import { aliasOf } from "./relocation.ts";
+import {
+  assertIssueReadable,
+  assertIssueWritable,
+  gateColumns,
+} from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
 type AttachmentRow = typeof attachments.$inferSelect;
@@ -85,9 +91,7 @@ export async function uploadAttachment(
 
   const issueRows = await db
     .select({
-      id: issues.id,
-      authorId: issues.authorId,
-      deletedAt: issues.deletedAt,
+      ...gateColumns,
     })
     .from(issues)
     .where(
@@ -195,9 +199,7 @@ export async function requestDirectUpload(
 
   const issueRows = await db
     .select({
-      id: issues.id,
-      authorId: issues.authorId,
-      deletedAt: issues.deletedAt,
+      ...gateColumns,
     })
     .from(issues)
     .where(
@@ -298,9 +300,7 @@ export async function completeDirectUpload(
 
   const issueRows = await db
     .select({
-      number: issues.number,
-      authorId: issues.authorId,
-      deletedAt: issues.deletedAt,
+      ...gateColumns,
     })
     .from(issues)
     .where(eq(issues.id, pending.issueId));
@@ -373,6 +373,11 @@ export async function openAttachment(
   actor: UserRow,
   slug: string,
   attachmentId: number,
+  /** Which route asked, so a redirect can point at the same one. */
+  via: { variant: "download" | "view"; filename: string | null } = {
+    variant: "download",
+    filename: null,
+  },
 ): Promise<{ row: AttachmentRow }> {
   const { project, role } = await requireProject(ctx, actor, slug, "reader");
   const db = await ctx.router.forProject(routeInfoOf(project));
@@ -382,8 +387,7 @@ export async function openAttachment(
   const rows = await db
     .select({
       row: attachments,
-      authorId: issues.authorId,
-      deletedAt: issues.deletedAt,
+      ...gateColumns,
     })
     .from(attachments)
     .innerJoin(issues, eq(attachments.issueId, issues.id))
@@ -394,7 +398,25 @@ export async function openAttachment(
       ),
     );
   const found = rows[0];
-  if (!found) throw new NotFoundError("attachment not found");
+  if (!found) {
+    // Not here may mean this project held it before the card moved (T-231);
+    // only a miss pays for the system-database lookup.
+    const alias = await aliasOf(
+      ctx.router.system(),
+      "attachment",
+      project.id,
+      attachmentId,
+    );
+    if (alias !== null) {
+      throw new AttachmentMovedError(
+        project.id,
+        attachmentId,
+        via.variant,
+        via.filename,
+      );
+    }
+    throw new NotFoundError("attachment not found");
+  }
   assertIssueReadable(found, actor, role);
   return { row: found.row };
 }
@@ -409,9 +431,7 @@ export async function listIssueAttachments(
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issueRows = await db
     .select({
-      id: issues.id,
-      authorId: issues.authorId,
-      deletedAt: issues.deletedAt,
+      ...gateColumns,
     })
     .from(issues)
     .where(

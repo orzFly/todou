@@ -41,7 +41,8 @@ import { NotFoundError, ValidationFailedError } from "../errors.ts";
 import { requireProject, routeInfoOf } from "./access.ts";
 import {
   crossRefVisibleCondition,
-  visibleSlugsWithHistory,
+  type VisibleProjects,
+  visibleProjects,
 } from "./cross-references.ts";
 import {
   type TimelineCursor as Cursor,
@@ -49,7 +50,7 @@ import {
   encodeTimelineCursor as encodeCursor,
 } from "./cursor.ts";
 import { listProjects } from "./projects.ts";
-import { assertIssueReadable, notDeleted } from "./trash.ts";
+import { assertIssueReadable, gateColumns, live } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
 const KIND_COMMENT = 0 as const;
@@ -135,6 +136,66 @@ type Filters = {
 };
 
 /**
+ * What a move event may say to this reader.
+ *
+ * Blanking fields rather than hiding rows is why this is post-processing
+ * while `crossRefVisibleCondition` is a SQL predicate: dropping rows would
+ * move page boundaries and corrupt cursors, blanking fields cannot. The keys
+ * stay behind as nulls, which is how a client tells "redacted" apart from
+ * "an old event that never carried this".
+ *
+ * It also strips `id_map` from every `moved_in`. That map is the
+ * cross-database protocol's only durable record of which copy became which,
+ * so it has to live in the payload — but it is nobody's contract, and no
+ * response may carry it.
+ */
+export function redactMovePayloads<T extends TimelineItem>(
+  items: T[],
+  visibleProjectIds: Set<number>,
+): T[] {
+  const seen = (id: unknown) =>
+    typeof id === "number" && visibleProjectIds.has(id);
+  const blank = (payload: Record<string, unknown>, keys: string[]) => {
+    for (const key of keys) payload[key] = null;
+  };
+
+  return items.map((item) => {
+    if (item.type !== "event") return item;
+    const payload = { ...item.payload };
+    switch (item.event_type) {
+      case "moved_in":
+        delete payload.id_map;
+        if (!seen(payload.from_project_id)) {
+          blank(payload, ["from_project_id", "from_project", "from_number"]);
+        }
+        break;
+      case "moved_out":
+        if (!seen(payload.to_project_id)) {
+          blank(payload, ["to_project_id", "to_project", "to_number"]);
+        }
+        break;
+      case "cross_referenced":
+        // Rows a move did not rewrite are already filtered by the SQL
+        // predicate, so one arriving here is visible exactly as it stands.
+        // A rewritten one stays — it was visible before the move — with
+        // everything identifying the far side blanked out.
+        if (payload.by_moved === true && !seen(payload.by_project_id)) {
+          blank(payload, [
+            "by_project_id",
+            "by_project",
+            "by_issue",
+            "by_comment",
+          ]);
+        }
+        break;
+      default:
+        return item;
+    }
+    return { ...item, payload };
+  });
+}
+
+/**
  * "Not mine", as conditions over one table's (actor, agent session) pair.
  *
  * Each axis stands alone: `exclude_actor` drops an account's entries,
@@ -174,7 +235,7 @@ function notSelfConditions(
 /** The parsed `types`/self/visibility filters as per-table SQL conditions. */
 function filterConditions(
   query: Filters,
-  visibleSlugs: string[],
+  visible: VisibleProjects,
 ): {
   wantComments: boolean;
   wantEvents: boolean;
@@ -197,7 +258,7 @@ function filterConditions(
   );
   eventConditions.push(
     ...notSelfConditions(issueEvents.actorId, issueEvents.agentContext, query),
-    crossRefVisibleCondition(visibleSlugs),
+    crossRefVisibleCondition(visible.slugs, visible.ids),
   );
   return {
     wantComments,
@@ -278,9 +339,7 @@ export async function getTimeline(
 
   const issueRows = await db
     .select({
-      id: issues.id,
-      authorId: issues.authorId,
-      deletedAt: issues.deletedAt,
+      ...gateColumns,
     })
     .from(issues)
     .where(
@@ -300,8 +359,9 @@ export async function getTimeline(
   // Filters narrow each table's query; a filtered-out table is skipped
   // entirely. Cursors still order the merged stream, so a poll that matches
   // nothing simply returns an empty page and the caller keeps its cursor.
+  const visible = await visibleProjects(ctx, actor);
   const { wantComments, wantEvents, commentConditions, eventConditions } =
-    filterConditions(query, await visibleSlugsWithHistory(ctx, actor));
+    filterConditions(query, visible);
   commentConditions.push(eq(comments.issueId, issue.id));
   eventConditions.push(eq(issueEvents.issueId, issue.id));
 
@@ -382,7 +442,10 @@ export async function getTimeline(
   merged = backward ? merged.slice(-query.limit) : merged.slice(0, query.limit);
 
   const refs = await actorRefs(ctx, merged);
-  const items: TimelineItem[] = merged.map((m) => toItem(m, refs));
+  const items: TimelineItem[] = redactMovePayloads(
+    merged.map((m) => toItem(m, refs)),
+    visible.ids,
+  );
 
   const first = merged[0];
   const last = merged.at(-1);
@@ -413,14 +476,14 @@ async function fetchProjectActivityRows(opts: {
   projectId: number;
   cursor: Cursor | null;
   filters: Filters;
-  visibleSlugs: string[];
+  visible: VisibleProjects;
   backward: boolean;
   fetchCount: number;
 }): Promise<RawWithIssue[]> {
   const { db, projectId, cursor, backward, fetchCount } = opts;
   const forward = !backward;
   const { wantComments, wantEvents, commentConditions, eventConditions } =
-    filterConditions(opts.filters, opts.visibleSlugs);
+    filterConditions(opts.filters, opts.visible);
   commentConditions.push(eq(comments.projectId, projectId));
   eventConditions.push(eq(issueEvents.projectId, projectId));
   // A card in the trash goes quiet everywhere except about the trashing
@@ -428,12 +491,15 @@ async function fetchProjectActivityRows(opts: {
   // gone, by number, and its cursor keeps advancing over a continuous
   // stream. Everything else about the card — including its comments — stops
   // reaching the feed the moment it is deleted, and comes back on restore.
-  commentConditions.push(notDeleted);
+  commentConditions.push(live);
+  // A tombstone is as quiet as a trashed card, with the same exception: the
+  // one event saying the card left is the only trace the project keeps of it.
   const trashAudible = inArray(issueEvents.type, [
     "deleted",
     "restored",
+    "moved_out",
   ] satisfies IssueEventType[]);
-  const eventVisible = or(notDeleted, trashAudible);
+  const eventVisible = or(live, trashAudible);
   if (eventVisible) eventConditions.push(eventVisible);
   if (cursor) {
     const c1 = beyond(
@@ -528,12 +594,13 @@ export async function getProjectActivity(
 
   const backward = query.last;
   const cursor = query.after === undefined ? null : decodeCursor(query.after);
+  const visible = await visibleProjects(ctx, actor);
   const merged = await fetchProjectActivityRows({
     db,
     projectId: project.id,
     cursor,
     filters: query,
-    visibleSlugs: await visibleSlugsWithHistory(ctx, actor),
+    visible,
     backward,
     fetchCount: query.limit + 1,
   });
@@ -543,10 +610,10 @@ export async function getProjectActivity(
     : merged.slice(0, query.limit);
 
   const refs = await actorRefs(ctx, page);
-  const items = page.map((m) => ({
-    ...toItem(m, refs),
-    issue_number: m.number,
-  }));
+  const items = redactMovePayloads(
+    page.map((m) => ({ ...toItem(m, refs), issue_number: m.number })),
+    visible.ids,
+  );
 
   const last = page.at(-1);
   const next_cursor = last ? encodeCursor(cursorOf(last)) : null;
@@ -624,7 +691,7 @@ export async function getCrossActivity(
   // The filter set is every project the caller can read, even when this
   // request only watches a few of them: what a cross-reference may name is
   // a property of the viewer, not of the requested scope.
-  const visibleSlugs = await visibleSlugsWithHistory(ctx, actor);
+  const visible = await visibleProjects(ctx, actor);
 
   const watched: WatchedProject[] = [];
   for (const slug of slugs) {
@@ -646,7 +713,7 @@ export async function getCrossActivity(
       projectId: p.projectId,
       cursor: null,
       filters: {},
-      visibleSlugs,
+      visible,
       backward: true,
       fetchCount: 1,
     });
@@ -699,7 +766,7 @@ export async function getCrossActivity(
       projectId: p.projectId,
       cursor: p.position === null ? null : decodeCursor(p.position),
       filters: query,
-      visibleSlugs,
+      visible,
       backward: false,
       fetchCount: query.limit + 1,
     });
@@ -720,11 +787,14 @@ export async function getCrossActivity(
   for (const row of page) positions[row.slug] = encodeCursor(cursorOf(row));
 
   const refs = await actorRefs(ctx, page);
-  const items = page.map((m) => ({
-    ...toItem(m, refs),
-    issue_number: m.number,
-    project: m.slug,
-  }));
+  const items = redactMovePayloads(
+    page.map((m) => ({
+      ...toItem(m, refs),
+      issue_number: m.number,
+      project: m.slug,
+    })),
+    visible.ids,
+  );
   const next_cursor =
     page.length > 0 ? await encodeMultiCursor(positions) : null;
   return { items, next_cursor, has_more: hasMore };

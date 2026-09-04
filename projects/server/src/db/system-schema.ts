@@ -183,6 +183,123 @@ export const slugHistory = pgTable(
   ],
 );
 
+// Where a card that moved between projects lives now (T-231): one row per
+// (project, number) it has ever occupied, all of them pointing at the same
+// current address. Flattened rather than chained, so resolving an old
+// address is one lookup however many times the card has moved.
+//
+// System tier because "where did A/123 go" has to be answerable from a
+// third project's database — the same argument ref_prefixes makes above.
+// project_id and current_project_id are LOGICAL ids: the rows they name may
+// live in another database, so no foreign key is possible.
+export const issueAddresses = pgTable(
+  "issue_addresses",
+  {
+    id: id(),
+    // The card's identity across every move, taken from the id of the first
+    // row inserted for it — stable even though (project, number) is not.
+    lineage: bigint("lineage", { mode: "number" }).notNull(),
+    projectId: bigint("project_id", { mode: "number" }).notNull(),
+    number: bigint("number", { mode: "number" }).notNull(),
+    currentProjectId: bigint("current_project_id", {
+      mode: "number",
+    }).notNull(),
+    currentNumber: bigint("current_number", { mode: "number" }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("issue_addresses_project_number_idx").on(t.projectId, t.number),
+    // Moving back into a project reads this to find the tombstone holding
+    // the card's old number, and answering it with the wrong row would hand
+    // out someone else's number. The index makes a broken write fail at the
+    // write instead: at most one address per lineage per project.
+    uniqueIndex("issue_addresses_lineage_project_idx").on(
+      t.lineage,
+      t.projectId,
+    ),
+    index("issue_addresses_lineage_idx").on(t.lineage),
+  ],
+);
+
+// One row per move, and the coordinator of the cross-database protocol: with
+// no transaction spanning two databases, this row's `state` is the only
+// truth about how far a move got, and the recovery sweep drives it forward.
+// Same trick pending_uploads plays — the registration row IS the worklist.
+export const issueMoves = pgTable(
+  "issue_moves",
+  {
+    id: id(),
+    // Null until the address book exists: a card's first move registers this
+    // row before the lineage it will belong to has been created.
+    lineage: bigint("lineage", { mode: "number" }),
+    // Claims the destination copy after a crash: the sweep finds the
+    // moved_in event carrying this token, or knows the copy never landed.
+    moveToken: text("move_token").notNull(),
+    fromProjectId: bigint("from_project_id", { mode: "number" }).notNull(),
+    fromNumber: bigint("from_number", { mode: "number" }).notNull(),
+    toProjectId: bigint("to_project_id", { mode: "number" }).notNull(),
+    // Assigned by the destination database, so it is unknown until step 4.
+    toNumber: bigint("to_number", { mode: "number" }),
+    actorId: bigint("actor_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id),
+    // Generated once and reused for the source freeze, the tombstone, and
+    // both timeline events — which is what lets the sweep thaw a freeze it
+    // can prove is its own (`moving_since = this row's moved_at`).
+    movedAt: timestamp("moved_at", { withTimezone: true }).notNull(),
+    state: text("state", { enum: ["copying", "copied", "done"] }).notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("issue_moves_token_idx").on(t.moveToken),
+    index("issue_moves_state_idx").on(t.state),
+  ],
+);
+
+// Old comment/attachment id → where it lives now (T-231). These ids are the
+// externally visible ones — `#comment-N`, attachment URLs pasted into
+// markdown — and a copy into another database cannot keep them, so the
+// routes answer "no such id here" by asking this table.
+//
+// Flattening past A→B→A never cycles or shadows, on two premises:
+//
+//  1. Identity columns do not recycle. A comment id freed in A is never
+//     handed to a later comment there, so no live row can ever sit on an
+//     alias (the routes check live rows first and only then come here). Any
+//     import or restore path using OVERRIDING SYSTEM VALUE breaks this table.
+//  2. A tombstone holds its (project, number) forever, so moving back in
+//     reuses the old number instead of colliding with it — which is also
+//     what makes issue_addresses' (project_id, number) index safe.
+export const movedIds = pgTable(
+  "moved_ids",
+  {
+    id: id(),
+    kind: text("kind", { enum: ["comment", "attachment"] }).notNull(),
+    projectId: bigint("project_id", { mode: "number" }).notNull(),
+    // Named ref_id because `id` is taken by this table's own key.
+    refId: bigint("ref_id", { mode: "number" }).notNull(),
+    currentProjectId: bigint("current_project_id", {
+      mode: "number",
+    }).notNull(),
+    currentId: bigint("current_id", { mode: "number" }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("moved_ids_kind_project_ref_idx").on(
+      t.kind,
+      t.projectId,
+      t.refId,
+    ),
+    // Flattening rewrites every row that pointed at the ids just copied.
+    index("moved_ids_kind_current_idx").on(
+      t.kind,
+      t.currentProjectId,
+      t.currentId,
+    ),
+  ],
+);
+
 // Deployment-wide settings, validated at the service layer. Holds
 // `cross_refs_since`: the instant this instance ran the T-150 migration,
 // which is the cutoff the cross-project grammar opens at.

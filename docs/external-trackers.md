@@ -120,6 +120,75 @@ All of this applies only to content created after the feature reached your
 deployment. Text written before then parses exactly as it did, so
 `mirror/T-12` in an old comment keeps whatever meaning it already had.
 
+## Moving an issue to another project
+
+A card can be moved between projects. It takes a **new number** in the
+destination — numbers belong to a project, and the one it had may already be
+taken — and its old address becomes a permanent tombstone that redirects.
+
+```
+todou issue transfer T-123 --to b        # asks first, showing the mapping
+todou issue transfer T-123 --to b -y
+todou issue transfer T-123 --to b --dry-run
+```
+
+### Old links keep working
+
+Nothing that points at the old address is rewritten, and nothing has to be.
+The tombstone answers for all of it:
+
+- `a/123` and any `#N` or `T-123` that resolves to it → the card at its new
+  address.
+- `a/123#comment-1462` → the same comment under its new id.
+- Attachment URLs pasted into markdown → the same file where it now lives.
+  Browsers follow this on their own, so embedded images keep rendering.
+
+Resolution is one hop however many times the card has moved: every address it
+has ever had points straight at the current one, not at the previous one.
+
+### Text is still never rewritten
+
+A bare `#12` written while the card lived in `a` means `a/12` forever, and it
+keeps being read that way after the move — the same rule that governs
+reference formats. Each piece of the card's text is parsed under whoever owned
+the card when that piece was written.
+
+### Moving back
+
+Moving a card back into a project it has lived in before returns it to its
+original number. The tombstone never gave the number up, so there is nothing
+to collide with, and the card's number in that project is stable across any
+number of round trips.
+
+### What the destination cannot take
+
+Statuses map by name, then to the destination's default for the same
+open/closed category. Labels and assignees with no counterpart there are
+dropped and reported — in the command's output, in the API response, and on
+the `moved in` timeline entry. `--dry-run` shows all of it before anything
+happens.
+
+### Readers without access to the destination
+
+Someone who cannot read the destination project gets `410 Gone` at the old
+address: the card existed and has moved, and nothing more. The destination
+project and number are never disclosed, in the response body, the timeline
+entry, or the activity stream.
+
+### Two known limitations
+
+- **Editing old text does not re-date it.** A `#1` *added* to a pre-move
+  comment is still read under the project that owned the card when that
+  comment was first written. Write the qualified form (`b#1`) to be explicit.
+- **A cross-project reference committed in the same instant as the move** may
+  lose its timeline entry. The reference itself is unaffected — the link
+  resolves and redirects as usual — only the "referenced by" row is missed.
+  This is the best-effort semantics cross-project references already have.
+
+A single-issue watch cursor does not survive a move: it is a row position in
+the project the card has left. `todou issue watch` prints the new ref and a
+cursor to resume from.
+
 ## CLI
 
 Issue positionals accept every spelling: `todou issue view 76`, `#76`,

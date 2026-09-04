@@ -9,6 +9,7 @@ import {
   CommentCreateResult,
   CommentLocation,
   CommentUpdateInput,
+  GoneBody,
   Issue,
   IssueCounts,
   IssueCountsQuery,
@@ -17,6 +18,9 @@ import {
   IssueListQuery,
   IssueQuestions,
   IssueUpdateInput,
+  MovedTo,
+  MoveIssueInput,
+  MoveIssueResult,
   ProjectSlug,
   RevisionPage,
   RevisionQuery,
@@ -43,6 +47,7 @@ import {
   restoreIssue,
   updateIssue,
 } from "../services/issues.ts";
+import { moveIssue } from "../services/move/execute.ts";
 import { listIssueQuestions, submitAnswers } from "../services/questions.ts";
 import {
   listCommentRevisions,
@@ -61,6 +66,22 @@ const commentParams = z.object({
 const jsonBody = <T extends z.ZodType>(schema: T) => ({
   content: { "application/json": { schema } },
 });
+
+/**
+ * What a GET answers with once the card has moved to another project
+ * (T-231). Declared per route rather than globally: only the reads that go
+ * through the issue gate can produce them.
+ */
+const movedResponses = {
+  301: {
+    description: "Moved to another project",
+    ...jsonBody(z.object({ moved_to: MovedTo })),
+  },
+  410: {
+    description: "Moved to a project the reader cannot see",
+    ...jsonBody(GoneBody),
+  },
+};
 
 const listRoute = createRoute({
   method: "get",
@@ -92,7 +113,10 @@ const getIssueRoute = createRoute({
   path: "/{slug}/issues/{number}",
   summary: "Issue details",
   request: { params: issueParams },
-  responses: { 200: { description: "Issue", ...jsonBody(Issue) } },
+  responses: {
+    200: { description: "Issue", ...jsonBody(Issue) },
+    ...movedResponses,
+  },
 });
 
 const patchIssueRoute = createRoute({
@@ -129,12 +153,31 @@ const restoreIssueRoute = createRoute({
   responses: { 200: { description: "Restored", ...jsonBody(Issue) } },
 });
 
+const moveIssueRoute = createRoute({
+  method: "post",
+  path: "/{slug}/issues/{number}/move",
+  summary: "Move an issue to another project (author or project admin)",
+  description:
+    "The card takes a new number in the destination and the old address " +
+    "becomes a permanent tombstone that redirects: every link to it — " +
+    "`#comment-N`, attachment URLs, other projects' timeline entries — " +
+    "keeps working. Statuses, labels and assignees the destination has no " +
+    "match for are mapped or dropped, never silently: `dry_run` returns the " +
+    "same mapping without writing anything. Moving back into a project the " +
+    "card has lived in before reclaims its original number.",
+  request: { params: issueParams, body: jsonBody(MoveIssueInput) },
+  responses: { 200: { description: "Moved", ...jsonBody(MoveIssueResult) } },
+});
+
 const timelineRoute = createRoute({
   method: "get",
   path: "/{slug}/issues/{number}/timeline",
   summary: "Merged comments × events stream with bidirectional cursors",
   request: { params: issueParams, query: TimelineQuery },
-  responses: { 200: { description: "Page", ...jsonBody(TimelinePage) } },
+  responses: {
+    200: { description: "Page", ...jsonBody(TimelinePage) },
+    ...movedResponses,
+  },
 });
 
 const activityRoute = createRoute({
@@ -188,7 +231,10 @@ const getCommentRoute = createRoute({
   path: "/{slug}/issues/{number}/comments/{commentId}",
   summary: "Fetch one comment (permalink resolution)",
   request: { params: commentParams },
-  responses: { 200: { description: "Comment", ...jsonBody(TimelineComment) } },
+  responses: {
+    200: { description: "Comment", ...jsonBody(TimelineComment) },
+    ...movedResponses,
+  },
 });
 
 const locateCommentRoute = createRoute({
@@ -202,7 +248,10 @@ const locateCommentRoute = createRoute({
       commentId: z.coerce.number().int().positive(),
     }),
   },
-  responses: { 200: { description: "Comment", ...jsonBody(CommentLocation) } },
+  responses: {
+    200: { description: "Comment", ...jsonBody(CommentLocation) },
+    ...movedResponses,
+  },
 });
 
 const patchCommentRoute = createRoute({
@@ -340,6 +389,21 @@ export function issueRoutes() {
       c.get("agentContext"),
     );
     return c.body(null, 204);
+  });
+
+  app.openapi(moveIssueRoute, async (c) => {
+    const { slug, number } = c.req.valid("param");
+    return c.json(
+      await moveIssue(
+        c.get("appCtx"),
+        c.get("user"),
+        slug,
+        number,
+        c.req.valid("json"),
+        c.get("agentContext"),
+      ),
+      200,
+    );
   });
 
   app.openapi(restoreIssueRoute, async (c) => {

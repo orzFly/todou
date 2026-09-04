@@ -72,6 +72,14 @@ import type {
   TokenListItem,
   VersionInfo,
 } from "./index.ts";
+// Imported from their own modules rather than the barrel: these are values,
+// and the barrel re-exports this file.
+import {
+  GoneBody,
+  MovedTo,
+  type MoveIssueInput,
+  type MoveIssueResult,
+} from "./schemas/move.ts";
 import { CANONICAL_SLUG_HEADER } from "./schemas/project.ts";
 import { SseDecoder } from "./sse.ts";
 
@@ -153,7 +161,44 @@ type BatchWaiter = {
   reject: (error: unknown) => void;
 };
 
+/**
+ * A card (or one of its comments) has moved to another project and the
+ * reader may follow (T-231). Carries the new address so a caller can retry
+ * there; `movedTo.comment_id` is present only on the comment routes.
+ */
+export class MovedError extends TodouError {
+  readonly movedTo: MovedTo;
+
+  constructor(movedTo: MovedTo) {
+    super(301, "moved", `moved to ${movedTo.slug}#${movedTo.number}`, movedTo);
+    this.movedTo = movedTo;
+  }
+}
+
+/** Moved somewhere the reader has no role. The body never names it. */
+export class GoneError extends TodouError {
+  readonly body: GoneBody;
+
+  constructor(body: GoneBody) {
+    super(410, "gone", "this issue moved to a project you cannot read", body);
+    this.body = body;
+  }
+}
+
+/**
+ * The redirect bodies are not the error envelope every other status uses,
+ * so they are parsed before the envelope reading below would mangle them.
+ */
 function errorFromBody(status: number, parsed: unknown): TodouError {
+  if (status === 301) {
+    const moved = (parsed as { moved_to?: unknown } | null)?.moved_to;
+    const result = MovedTo.safeParse(moved);
+    if (result.success) return new MovedError(result.data);
+  }
+  if (status === 410) {
+    const result = GoneBody.safeParse(parsed);
+    if (result.success) return new GoneError(result.data);
+  }
   const body = parsed as {
     error?: { code?: string; message?: string; details?: unknown };
   } | null;
@@ -163,6 +208,36 @@ function errorFromBody(status: number, parsed: unknown): TodouError {
     body?.error?.message ?? `${status}`,
     body?.error?.details,
   );
+}
+
+/**
+ * The new address read back off a followed redirect's final URL.
+ *
+ * `fetch` follows a 301 on its own and discards the body doing so, leaving
+ * the URL as the only surviving evidence — which is precisely why the
+ * contract promises nothing in that body a client cannot also get from the
+ * URL. Anything that is not one of our own JSON issue routes (a presigned
+ * attachment redirect, say) is not a move and returns null.
+ */
+function movedToFromUrl(url: string): MovedTo | null {
+  let path: string;
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    return null;
+  }
+  const comment =
+    /^\/api\/projects\/([^/]+)\/issues\/(\d+)\/comments\/(\d+)$/.exec(path);
+  if (comment?.[1] !== undefined)
+    return {
+      slug: comment[1],
+      number: Number(comment[2]),
+      comment_id: Number(comment[3]),
+    };
+  const issue = /^\/api\/projects\/([^/]+)\/issues\/(\d+)(?:\/|$)/.exec(path);
+  if (issue?.[1] !== undefined)
+    return { slug: issue[1], number: Number(issue[2]) };
+  return null;
 }
 
 export class TodouClient {
@@ -249,12 +324,22 @@ export class TodouClient {
     return res;
   }
 
+  /**
+   * The JSON channel, and therefore the one that turns a followed redirect
+   * back into a `MovedError`. `requestRaw` deliberately does not: it is the
+   * binary channel (`attach download`, `todou api`), where following the
+   * redirect and getting the bytes is the whole point.
+   */
   async #send<T>(
     method: string,
     path: string,
     init?: { json?: unknown; form?: FormData; query?: Query },
   ): Promise<T> {
     const res = await this.requestRaw(method, path, init);
+    if (method === "GET" && res.redirected) {
+      const movedTo = movedToFromUrl(res.url);
+      if (movedTo !== null) throw new MovedError(movedTo);
+    }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   }
@@ -489,6 +574,12 @@ export class TodouClient {
     this.request<void>("DELETE", `/projects/${slug}/issues/${number}`);
   restoreIssue = (slug: string, number: number) =>
     this.request<Issue>("POST", `/projects/${slug}/issues/${number}/restore`);
+  moveIssue = (slug: string, number: number, input: MoveIssueInput) =>
+    this.request<MoveIssueResult>(
+      "POST",
+      `/projects/${slug}/issues/${number}/move`,
+      { json: input },
+    );
   markIssueRead = (slug: string, number: number, input: IssueReadInput = {}) =>
     this.request<void>("PUT", `/projects/${slug}/issues/${number}/read`, {
       json: input,

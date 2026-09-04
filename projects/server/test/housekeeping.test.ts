@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { hashToken } from "../src/auth/pat.ts";
+import type { AppContext } from "../src/bootstrap.ts";
 import type { Db } from "../src/db/driver.ts";
 import type { DbRouter } from "../src/db/router.ts";
 import { sessions, tokens, users } from "../src/db/system-schema.ts";
@@ -111,7 +112,12 @@ describe("startHousekeeping", () => {
     const dead = await addSession(past);
 
     // Interval far in the future: only the immediate startup sweep runs.
-    const stop = startHousekeeping(db, 24 * HOUR_MS);
+    // Only the router is exercised here; the move recovery walks an empty
+    // table and the auth sweep is what this asserts on.
+    const stop = startHousekeeping(
+      { router } as unknown as AppContext,
+      24 * HOUR_MS,
+    );
     try {
       await vi.waitFor(async () => {
         expect((await remainingIds()).sessions).not.toContain(dead);

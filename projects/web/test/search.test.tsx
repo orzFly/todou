@@ -75,6 +75,7 @@ const refItem = (number: number, title: string): IssueListItem => ({
   deleted_by: null,
   unread: false,
   unread_comments: 0,
+  moves: [],
 });
 
 const DIRECTORY: ReferenceDirectory = {

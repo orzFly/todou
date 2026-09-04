@@ -12,7 +12,7 @@ import type { Db } from "../db/driver.ts";
 import { comments, issues, revisions } from "../db/project-schema.ts";
 import { NotFoundError } from "../errors.ts";
 import { requireProject, routeInfoOf } from "./access.ts";
-import { assertIssueReadable } from "./trash.ts";
+import { assertIssueReadable, gateColumns } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
 export type RevisionSubjectType =
@@ -129,10 +129,8 @@ export async function listIssueRevisions(
 
   const issueRows = await db
     .select({
-      id: issues.id,
+      ...gateColumns,
       body: issues.body,
-      authorId: issues.authorId,
-      deletedAt: issues.deletedAt,
     })
     .from(issues)
     .where(
@@ -165,9 +163,7 @@ export async function listCommentRevisions(
 
   const issueRows = await db
     .select({
-      id: issues.id,
-      authorId: issues.authorId,
-      deletedAt: issues.deletedAt,
+      ...gateColumns,
     })
     .from(issues)
     .where(

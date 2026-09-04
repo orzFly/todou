@@ -21,6 +21,7 @@ import { CliAuthPage } from "@/pages/cli-auth.tsx";
 import { InboxPage } from "@/pages/inbox.tsx";
 import { IssueDetailPage } from "@/pages/issue-detail.tsx";
 import { IssueListPage } from "@/pages/issue-list.tsx";
+import { IssueRouteError } from "@/pages/issue-route-error.tsx";
 import { LoginPage } from "@/pages/login.tsx";
 import { NewIssuePage } from "@/pages/new-issue.tsx";
 import { ProfileSettingsPage } from "@/pages/profile-settings.tsx";
@@ -159,6 +160,7 @@ const issueRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "issues/$number",
   component: IssueDetailPage,
+  errorComponent: IssueRouteError,
 });
 
 // Lazy: the spec view drags @pierre/diffs and the annotation layer along —
