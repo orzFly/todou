@@ -115,6 +115,26 @@ const FILE_DIFF_SELECTOR = "[data-file-diff]";
 type ChangePosition = { index: number; total: number };
 
 /**
+ * The stops inside `root`, in document order and never one inside another.
+ *
+ * ↑↓ have always stepped over blocks — a paragraph with three edited words is
+ * one stop, because the word-level marks are not in the selector. A swapped
+ * image is the one mark that lands on an inline element, so the `<img>` and
+ * the paragraph holding it both match (T-223); left in, one edit would stop
+ * the reader twice a few pixels apart and count as two.
+ */
+function stopsIn(root: HTMLElement, selector: string): HTMLElement[] {
+  const stops: HTMLElement[] = [];
+  for (const el of root.querySelectorAll<HTMLElement>(selector)) {
+    // An ancestor comes first in document order, so the stop kept last is the
+    // only one that can contain this element.
+    if (stops.at(-1)?.contains(el) === true) continue;
+    stops.push(el);
+  }
+  return stops;
+}
+
+/**
  * Where each mode measures from. The resting line has to be the one the mode
  * scrolls to, or the stop the reader is already on fails to exclude itself
  * from both directions and ↑↓ keep re-finding it — the jam T-61 was opened
@@ -652,7 +672,7 @@ function SpecViewBody({
   const jumpWithin = (direction: 1 | -1): boolean => {
     const root = contentRef.current;
     if (!root) return false;
-    const els = [...root.querySelectorAll<HTMLElement>(CHANGED_SELECTOR)];
+    const els = stopsIn(root, CHANGED_SELECTOR);
     if (els.length === 0) return false;
     const target = els[stepIndex(stopsFor(els, false, stickyTop), direction)];
     if (!target) return false;
@@ -686,7 +706,7 @@ function SpecViewBody({
   const jumpFileDiff = (direction: 1 | -1) => {
     const root = contentRef.current;
     if (!root) return;
-    const els = [...root.querySelectorAll<HTMLElement>(FILE_DIFF_SELECTOR)];
+    const els = stopsIn(root, FILE_DIFF_SELECTOR);
     if (els.length === 0) return;
     const target = els[stepIndex(stopsFor(els, true, stickyTop), direction)];
     if (!target) return;
@@ -802,11 +822,10 @@ function SpecViewBody({
     }
     const root = contentRef.current;
     if (root === null) return null;
-    const els = [
-      ...root.querySelectorAll<HTMLElement>(
-        sourceDiff ? FILE_DIFF_SELECTOR : CHANGED_SELECTOR,
-      ),
-    ];
+    const els = stopsIn(
+      root,
+      sourceDiff ? FILE_DIFF_SELECTOR : CHANGED_SELECTOR,
+    );
     if (els.length === 0) return null;
     return {
       index: currentIndex(stopsFor(els, sourceDiff, stickyTop)),
@@ -828,7 +847,7 @@ function SpecViewBody({
     pendingJumpRef.current = null;
     const root = contentRef.current;
     if (!root) return;
-    const els = [...root.querySelectorAll<HTMLElement>(CHANGED_SELECTOR)];
+    const els = stopsIn(root, CHANGED_SELECTOR);
     const target = direction === 1 ? els[0] : els[els.length - 1];
     if (target) flashTo(target);
     // A file with no highlighted blocks (e.g. brand new) starts at the top.

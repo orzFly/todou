@@ -491,6 +491,23 @@ describe("spec toolbar fixed slots (T-190)", () => {
     await waitFor(() => expect(countSlot(view)?.textContent).toBe("1/4"));
   });
 
+  it("counts a mark nested in another mark as one stop (T-223, T-224)", async () => {
+    // A swapped image marks the <img> and the paragraph holding it both, and
+    // ↑↓ have always stepped over blocks — the pair is one place to look. Left
+    // in, it would stop the reader twice within one paragraph and inflate the
+    // total against what the reader can see.
+    const view = await toolbar("?v=2&file=design.md");
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("3/3"));
+    const blocks = view.container.querySelectorAll("p.spec-changed");
+    const host = blocks[blocks.length - 1];
+    if (host === undefined) throw new Error("no changed block to nest inside");
+    const nested = document.createElement("img");
+    nested.className = "spec-ins-block";
+    host.append(nested);
+    stubTops(view, [100, 500, 900]);
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("1/3"));
+  });
+
   it("counts files where ↑↓ step over files (T-224)", async () => {
     const view = await toolbar("?v=2&file=stable.md");
     // stable.md is not one of the two changed files, so ↓ goes to the first.
