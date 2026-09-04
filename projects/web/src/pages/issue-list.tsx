@@ -50,6 +50,7 @@ import { useCreateLabel } from "@/components/issue/label-picker.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useHeaderHeight } from "@/lib/use-header-height.ts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -91,39 +92,35 @@ function ProjectIssueListPage({
       replace: true,
     });
 
-  // Group headers pin below whatever floats above them: the toolbar on desktop,
-  // the (taller, two-row) app header alone on mobile. Neither height is knowable
-  // in CSS across wrapping and breakpoints, so measure into a variable (same
-  // approach as the board's fitCanvas). Take the toolbar's pinned bottom edge
-  // rather than adding the two heights: the toolbar sticks at its own top and
-  // tucks under the app header's 1px bottom border, so the sum overshoots by
-  // that border and leaves a 1px strip of the list showing through (T-167).
+  // Neither sticky offset on this page can be a constant, so the toolbar takes
+  // the measured header height and the group headers take the sum. Summing is
+  // exact because the toolbar now pins at the header's own bottom edge; T-167's
+  // 1px strip of list came from pinning it at 56 while the header ended at 57.
+  const headerHeight = useHeaderHeight();
   const rootRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const root = rootRef.current;
     const toolbar = toolbarRef.current;
     if (!root || !toolbar) return;
-    const appbar = document.querySelector("header");
     const measure = () => {
-      const pinned = Number.parseFloat(getComputedStyle(toolbar).top);
       const floats = window.matchMedia("(min-width: 640px)").matches;
-      const top =
-        floats && Number.isFinite(pinned)
-          ? pinned + toolbar.getBoundingClientRect().height
-          : (appbar?.getBoundingClientRect().height ?? 0);
+      const top = groupStickyTop(
+        headerHeight,
+        toolbar.getBoundingClientRect().height,
+        floats,
+      );
       root.style.setProperty("--group-sticky-top", `${top}px`);
     };
     measure();
     window.addEventListener("resize", measure);
     const observer = new ResizeObserver(measure);
     observer.observe(toolbar);
-    if (appbar) observer.observe(appbar);
     return () => {
       window.removeEventListener("resize", measure);
       observer.disconnect();
     };
-  }, []);
+  }, [headerHeight]);
 
   const grouped =
     effectiveCategory(search) === "open" && effectiveGroup(search) === "status";
@@ -134,7 +131,8 @@ function ProjectIssueListPage({
           backdrop bleed into the shell's horizontal padding. */}
       <div
         ref={toolbarRef}
-        className="-mx-4 flex flex-wrap items-center gap-2 px-4 py-1.5 sm:sticky sm:top-14 sm:z-30 sm:bg-background/95 sm:backdrop-blur"
+        style={{ top: headerHeight }}
+        className="-mx-4 flex flex-wrap items-center gap-2 px-4 py-1.5 sm:sticky sm:z-30 sm:bg-background/95 sm:backdrop-blur"
       >
         <FilterBar
           search={search}
@@ -360,6 +358,20 @@ export function groupStatuses(
     .filter((s) => selected === undefined || selected.includes(s.id))
     .filter((s) => (counts.by_status[String(s.id)] ?? 0) > 0)
     .sort((a, b) => b.position - a.position);
+}
+
+/**
+ * Where the group headers pin: under the app header, plus the toolbar once it
+ * floats. Both inputs are measured rather than named in CSS — the header gains
+ * a row on narrow viewports, and the filters wrap at widths no breakpoint
+ * knows. Exported for tests.
+ */
+export function groupStickyTop(
+  headerHeight: number,
+  toolbarHeight: number,
+  toolbarFloats: boolean,
+): number {
+  return headerHeight + (toolbarFloats ? toolbarHeight : 0);
 }
 
 function IssueGroup({

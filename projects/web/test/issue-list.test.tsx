@@ -18,6 +18,7 @@ import {
   splitLabelName,
 } from "../src/components/issue/label-chip.tsx";
 import { StatusPill } from "../src/components/issue/status-pill.tsx";
+import { groupStickyTop } from "../src/pages/issue-list.tsx";
 
 describe("issueSearchSchema (filter state ↔ URL)", () => {
   it("accepts an empty search", () => {
@@ -246,5 +247,22 @@ describe("splitLabelName (first-colon split)", () => {
 
   it("a leading colon is not a prefix", () => {
     expect(splitLabelName(":x")).toEqual({ prefix: null, value: ":x" });
+  });
+});
+
+describe("groupStickyTop (offsets follow the measured header)", () => {
+  it("stacks the floating toolbar on a two-row header", () => {
+    // 700 wide: header wraps to 97, the filters wrap to 118.
+    expect(groupStickyTop(97, 118, true)).toBe(215);
+  });
+
+  it("stacks the floating toolbar on a one-row header", () => {
+    // 1280 wide: header 57, filters on one line at 82.
+    expect(groupStickyTop(57, 82, true)).toBe(139);
+  });
+
+  it("leaves the toolbar out while it scrolls with the list", () => {
+    // Below sm the toolbar is not sticky, so only the header floats.
+    expect(groupStickyTop(97, 118, false)).toBe(97);
   });
 });
