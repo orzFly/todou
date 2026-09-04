@@ -46,10 +46,11 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { issueQuery } from "@/api/issues.ts";
-import { api } from "@/api/queries.ts";
+import { api, projectQuery } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
 import { SpecStatusBadge } from "@/components/issue/spec-entry.tsx";
+import { IssueOriginProvider } from "@/components/shared/issue-origin.tsx";
 import {
   PIERRE_HIGHLIGHTER,
   PIERRE_THEME_TYPE,
@@ -436,6 +437,7 @@ function SpecViewBody({
   const stickyTop = headerHeight + toolbarHeight;
 
   const issue = useQuery(issueQuery(slug, issueNumber));
+  const project = useQuery(projectQuery(slug));
   const navigate = useNavigate();
 
   /** Every anchor gesture — selection, line drag, "Comment file". */
@@ -1463,40 +1465,49 @@ function SpecViewBody({
                       </p>
                     )
                   ) : (
-                    <AnnotatedMarkdown
-                      slug={slug}
-                      issueNumber={issueNumber}
-                      body={selected.body}
-                      baselineBody={baselineBody}
-                      refDate={
-                        spec.versions.find((v) => v.number === version)
-                          ?.created_at
-                      }
-                      annotations={displayed}
-                      changedRanges={changedRanges}
-                      foldUnchanged={foldUnchanged}
-                      onStage={(range) =>
-                        stage({
-                          path: selected.path,
-                          version,
-                          lineStart: range.lineStart,
-                          lineEnd: range.lineEnd,
-                          colStart: range.colStart,
-                          colEnd: range.colEnd,
-                          quote: quoteOf(
-                            selected.body,
-                            range.lineStart,
-                            range.lineEnd,
-                            range.colStart,
-                            range.colEnd,
-                          ),
-                        })
-                      }
-                      onEditDraft={editDraft}
-                      onRemoveDraft={drafts.remove}
-                      onResolve={(id) => resolve.mutate(id)}
-                      resolving={resolve.isPending}
-                    />
+                    // A spec file is the card's text too: a `#12` in v3 meant
+                    // v3's project, which after a move is not this one
+                    // (T-231). Review comments below are written now and
+                    // deliberately stay outside.
+                    <IssueOriginProvider
+                      moves={issue.data?.moves ?? []}
+                      currentProjectId={project.data?.id}
+                    >
+                      <AnnotatedMarkdown
+                        slug={slug}
+                        issueNumber={issueNumber}
+                        body={selected.body}
+                        baselineBody={baselineBody}
+                        refDate={
+                          spec.versions.find((v) => v.number === version)
+                            ?.created_at
+                        }
+                        annotations={displayed}
+                        changedRanges={changedRanges}
+                        foldUnchanged={foldUnchanged}
+                        onStage={(range) =>
+                          stage({
+                            path: selected.path,
+                            version,
+                            lineStart: range.lineStart,
+                            lineEnd: range.lineEnd,
+                            colStart: range.colStart,
+                            colEnd: range.colEnd,
+                            quote: quoteOf(
+                              selected.body,
+                              range.lineStart,
+                              range.lineEnd,
+                              range.colStart,
+                              range.colEnd,
+                            ),
+                          })
+                        }
+                        onEditDraft={editDraft}
+                        onRemoveDraft={drafts.remove}
+                        onResolve={(id) => resolve.mutate(id)}
+                        resolving={resolve.isPending}
+                      />
+                    </IssueOriginProvider>
                   )}
                 </div>
               )}

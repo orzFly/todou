@@ -158,6 +158,15 @@ export function MarkdownView({
    */
   rehypePlugins?: ComponentProps<typeof Markdown>["rehypePlugins"];
 }) {
+  // Resolution follows the origin: same project in the ordinary case, and
+  // one extra config fetch only for text that predates a move. The context
+  // answers for every renderer under an issue without each one forwarding
+  // the card's move history by hand.
+  const fromContext = useOriginSlugAt(refDate);
+  const origin = originSlug === undefined ? fromContext : originSlug;
+  const resolveUnder = origin === undefined ? slug : (origin ?? undefined);
+  const unresolvable = origin === null;
+
   // The override map must be referentially stable across re-renders: every
   // entry is an anonymous component, and a fresh map makes React treat each
   // one as a NEW component type, unmounting and rebuilding those DOM
@@ -214,7 +223,13 @@ export function MarkdownView({
                   );
                 }
               }
-              return <MarkdownLink slug={slug} {...props} />;
+              return (
+                <MarkdownLink
+                  slug={slug}
+                  originSlug={resolveUnder}
+                  {...props}
+                />
+              );
             },
             img: ({
               node: _node,
@@ -269,17 +284,9 @@ export function MarkdownView({
             },
           }),
     }),
-    [children, slug, issueNumber, embedded],
+    [children, slug, resolveUnder, issueNumber, embedded],
   );
 
-  // Resolution follows the origin: same project in the ordinary case, and
-  // one extra config fetch only for text that predates a move. The context
-  // answers for every renderer under an issue without each one forwarding
-  // the card's move history by hand.
-  const fromContext = useOriginSlugAt(refDate);
-  const origin = originSlug === undefined ? fromContext : originSlug;
-  const resolveUnder = origin === undefined ? slug : (origin ?? undefined);
-  const unresolvable = origin === null;
   const refQuery = useQuery({
     ...referenceConfigQuery(resolveUnder ?? ""),
     enabled: resolveUnder !== undefined,

@@ -158,10 +158,18 @@ export const commentRefQuery = (
  * Where a bare `#comment-M` points. Unbatched like commentRefQuery: the
  * form is rare enough that one request per distinct id is fine.
  */
+/**
+ * A located comment, plus the project it turned out to be in. `issue_number`
+ * is only meaningful next to its project, and a redirect can change which
+ * project that is — pairing the number with the one that was asked would
+ * name a different card (T-231).
+ */
+export type LocatedComment = CommentLocation & { slug?: string };
+
 export const commentLocationQuery = (slug: string, commentId: number) =>
   queryOptions({
     queryKey: ["comment-location", slug, commentId],
-    queryFn: async (): Promise<CommentLocation | null> => {
+    queryFn: async (): Promise<LocatedComment | null> => {
       try {
         return await api.locateComment(slug, commentId);
       } catch (error) {
@@ -171,6 +179,7 @@ export const commentLocationQuery = (slug: string, commentId: number) =>
           const { slug: to, number, comment_id } = error.movedTo;
           if (comment_id === undefined) return null;
           return api.getComment(to, number, comment_id).then((comment) => ({
+            slug: to,
             issue_number: number,
             issue_ref: `${to}#${number}`,
             comment,
