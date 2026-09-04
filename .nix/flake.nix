@@ -4,6 +4,15 @@
     flake-utils.url = "github:numtide/flake-utils";
     devshell.url = "github:numtide/devshell";
     devshell.inputs.nixpkgs.follows = "nixpkgs";
+    fix-hash = {
+      # v0.4.0. Pinned by commit rather than tag; record the new tag next to the
+      # commit here when bumping.
+      url = "github:spotdemo4/nix-fix-hash/305bcbfb565d4aa016f7aef078a1222bdd6d919d";
+      # `follows` costs a local build on first entry — the binary cache has no
+      # result for this combination — and buys a lock file with one nixpkgs in
+      # it, which is the whole reason the two flakes are split.
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = inputs@{ self, ... }:
@@ -13,16 +22,18 @@
           inherit system;
           overlays = [ inputs.devshell.overlays.default ];
         };
+        common = import ./common.nix { inherit pkgs; };
       in
       {
         devShell = pkgs.devshell.mkShell {
           imports = [{
             name = "devshell";
             packages = [
-              pkgs.deno
+              common.deno
+              common.nodejs
+              common.pnpm
+              inputs.fix-hash.packages."${system}".default
               pkgs.nixpkgs-fmt
-              pkgs.nodejs_24
-              pkgs.pnpm
               pkgs.typescript-language-server
             ];
             commands = [

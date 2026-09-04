@@ -7,6 +7,7 @@
 /.opencode/
 node_modules/
 dist/
+/result
 coverage/
 *.tsbuildinfo
 data/

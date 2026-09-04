@@ -67,25 +67,14 @@ else
 fi
 (cd "$STAGE" && CI=true pnpm install --prod --frozen-lockfile --filter '@todou/cli...')
 
-# Overwriting the tracked placeholder in the staged copy — never the working
-# tree — bakes the version into everything built from the stage; a build must
-# not dirty the developer's checkout.
-echo "==> injecting version $VERSION"
-printf 'export const BUILD_VERSION: string | null = "%s";\n' "$VERSION" \
-  > "$STAGE/projects/shared/src/build-info.ts"
-
-# esbuild bundles from the stage rather than the workspace tree so the version
-# injected above is the one that lands in the bundle — and every other artifact
-# is compiled from that bundle. `.cjs` rather than `.js` because the bundle is
-# CommonJS: a bare `.js` is read as ESM whenever the nearest package.json says
-# `"type": "module"`, which breaks the moment someone drops the file into a
-# modern project. The extension is unconditional.
-echo "==> esbuild single-file todou.cjs (bring-your-own-Node)"
-pnpm exec esbuild "$STAGE/projects/cli/src/index.ts" \
-  --bundle --platform=node --format=cjs \
-  --banner:js='#!/usr/bin/env node' \
-  --outfile="$OUT/todou.cjs"
-chmod +x "$OUT/todou.cjs"
+# The stage, never the working tree: bundle-cli.sh overwrites a tracked file to
+# inject the version, and a build must not dirty the developer's checkout. Every
+# other artifact is then compiled from this bundle.
+#
+# `pnpm exec` puts node_modules/.bin ahead of PATH, so the release artifacts are
+# bundled with the esbuild the lockfile pins.
+echo "==> bundling todou.cjs at version $VERSION (bring-your-own-Node)"
+pnpm exec scripts/bundle-cli.sh "$STAGE" "$VERSION" "$OUT/todou.cjs"
 
 # Compiling the bundle above, not the TS entry: the VFS snapshot `deno compile`
 # takes of a pnpm tree drops the links that live inside `.pnpm`, so a

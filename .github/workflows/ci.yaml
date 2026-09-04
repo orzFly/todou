@@ -43,6 +43,17 @@ jobs:
           TODOU_TEST_POSTGRES_URL: postgres://postgres:ci@localhost:5432/postgres
       - run: pnpm build
 
+  # A correctness check rather than an artifact build, so it runs on the same
+  # events as `checks`. No fetch-depth: the nix version string comes from
+  # inputs.self.shortRev, which needs no tags.
+  nix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - run: nix flake check
+      - run: nix/lock-revs-match.sh
+
   cli:
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04

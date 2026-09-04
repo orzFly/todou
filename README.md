@@ -65,6 +65,25 @@ pnpm test       # vitest in every package
 pnpm build      # build the web app to projects/web/dist
 ```
 
+Nix and direnv are optional but supported: `.envrc` loads the devshell in
+`.nix/`, which carries node, deno, pnpm and `fix-hash`. The root `flake.nix`
+builds the packages described under [Nix](#nix) and follows `.nix/`'s pin, so
+the devshell and the package build can never land on different toolchain
+versions.
+
+That arrangement means upgrading nixpkgs takes two commands. Running only the
+first leaves the package flake on the old revision, and nothing reports it:
+
+```bash
+nix flake update nixpkgs --flake ./.nix
+nix flake update dev
+nix/lock-revs-match.sh   # asserts both lock files pin the same revision; CI runs it
+```
+
+Nix reads git-tracked files only, so a newly created `.nix` file has to be
+`git add`ed before `nix build` or `fix-hash` can see it. Until then they report
+it as missing rather than as untracked.
+
 ## Running
 
 ```bash
@@ -186,6 +205,28 @@ its server exactly — including `edge` and per-commit builds, which have no
 release to download. The docker image carries all five; a checkout deployment
 opts in with `scripts/pack-cli.sh`. See
 [docs/deploy.md](docs/deploy.md#serving-the-cli).
+
+#### Nix
+
+```bash
+nix profile install github:orzFly/todou       # installs todou-cli
+nix run github:orzFly/todou -- --help         # runs it without installing
+```
+
+`todou-cli` is the supported package: `bin/todou` is a wrapper that has deno
+interpret the same esbuild bundle described above, with the environment
+variables that would change how the program behaves cleared. The classification
+and the reason for each name are in
+[`nix/deno-env.nix`](nix/deno-env.nix); `TODOU_*`, `HOME`, `XDG_CONFIG_HOME`,
+the proxy variables and the colour variables all pass through.
+
+`todou-cli-cjs` is the bundle alone, at `$out/lib/todou/todou.cjs`. It has no
+`bin/`, and the caller supplies a node-compatible runtime — the behaviour of
+that combination is not something this project promises.
+
+The version string is `0.3.1-g<shortRev>` rather than the release builds'
+`v0.3.1-65-g<shortRev>`, because a flake carries no tags: seeing which form a
+binary prints tells you which build produced it.
 
 ### Production
 
