@@ -520,6 +520,55 @@ describe("TodouClient redirects (T-231)", () => {
       });
       expect(await client.getIssue("a", 123)).toEqual({ id: 1 });
     });
+
+    it("reads a redirected attachment list's issue out of the query past the prefix (T-250)", async () => {
+      // The answer is assembled from two parts of one URL: the path reduced
+      // by the mount prefix, and the issue number off the query of the
+      // untouched URL. That holds only while a prefix lives in the path.
+      const client = new TodouClient({
+        baseUrl: "http://gw.example/todou",
+        fetch: redirectedFetch(
+          "http://gw.example/todou/api/projects/b/attachments?issue_number=7",
+          [],
+        ),
+      });
+      const error = await client
+        .listAttachments("a", 1)
+        .catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(MovedError);
+      expect((error as MovedError).movedTo).toEqual({ slug: "b", number: 7 });
+    });
+
+    it("keeps a spec sub-route pointed at the issue past the prefix (T-250)", async () => {
+      const client = new TodouClient({
+        baseUrl: "http://gw.example/todou",
+        fetch: redirectedFetch(
+          "http://gw.example/todou/api/projects/b/issues/7/spec/files",
+        ),
+      });
+      const error = await client.getSpecFiles("a", 1).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(MovedError);
+      expect((error as MovedError).movedTo).toEqual({ slug: "b", number: 7 });
+    });
+
+    it("leaves an attachment download redirect alone past the prefix (T-250)", async () => {
+      // What fails this is the attachment list rule losing its trailing
+      // anchor; removing the prefix reduction cannot, because reducing less
+      // can only match less.
+      const client = new TodouClient({
+        baseUrl: "http://gw.example/todou",
+        fetch: redirectedFetch(
+          "http://gw.example/todou/api/projects/b/attachments/2/download/note.txt",
+          { ok: true },
+        ),
+      });
+      expect(
+        await client.request(
+          "GET",
+          "/projects/a/attachments/1/download/note.txt",
+        ),
+      ).toEqual({ ok: true });
+    });
   });
 });
 
