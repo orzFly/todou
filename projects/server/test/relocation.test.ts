@@ -221,8 +221,11 @@ describe.each(PLACEMENTS)("relocation reads (%s placement)", (placement) => {
         admin,
       );
       expect(res.status).toBe(301);
+      // Onto the timeline's own new address, not the bare card: following it
+      // has to reach a timeline (T-245). The whole set of subresources is in
+      // relocation-subresources.test.ts.
       expect(res.headers.get("location")).toBe(
-        `/api/projects/${B}/issues/${to.number}`,
+        `/api/projects/${B}/issues/${to.number}/timeline`,
       );
     });
 
@@ -271,14 +274,15 @@ describe.each(PLACEMENTS)("relocation reads (%s placement)", (placement) => {
       expect(res.status).toBe(404);
     });
 
-    it("leaves the rest of the issue's GETs on the source's own rule", async () => {
-      // The boundary recorded, not endorsed: only addresses that get written
-      // into text were widened (T-242 §5.3), and this is not one of them.
+    it("puts the rest of the issue's GETs on the same rule", async () => {
+      // The boundary T-242 recorded without endorsing has since moved: the
+      // card's subresources answer to the destination's reader too (T-245),
+      // so an old link reaches all of the card and not only its front page.
       const res = await req(
         `/projects/${A}/issues/${from.number}/timeline`,
         destOnly,
       );
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(301);
     });
 
     it("refuses writes with 409 rather than redirecting them", async () => {

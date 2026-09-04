@@ -20,6 +20,7 @@ import {
   resolveSpecComments,
   submitSpecReview,
 } from "../services/spec.ts";
+import { movedResponses } from "./moved-responses.ts";
 
 const issueParams = z.object({
   slug: ProjectSlug,
@@ -34,7 +35,10 @@ const specInfoRoute = createRoute({
   path: "/{slug}/issues/{number}/spec",
   summary: "Spec overview: versions, current files, review state (T-23)",
   request: { params: issueParams },
-  responses: { 200: { description: "Spec", ...jsonBody(SpecInfo) } },
+  responses: {
+    200: { description: "Spec", ...jsonBody(SpecInfo) },
+    ...movedResponses,
+  },
 });
 
 const specFilesRoute = createRoute({
@@ -42,7 +46,10 @@ const specFilesRoute = createRoute({
   path: "/{slug}/issues/{number}/spec/files",
   summary: "Full file bodies of one spec version (default: current)",
   request: { params: issueParams, query: SpecFilesQuery },
-  responses: { 200: { description: "Files", ...jsonBody(SpecFiles) } },
+  responses: {
+    200: { description: "Files", ...jsonBody(SpecFiles) },
+    ...movedResponses,
+  },
 });
 
 const specPushRoute = createRoute({
@@ -82,7 +89,10 @@ const specCommentsRoute = createRoute({
     "Inline spec comments with resolution state and anchors remapped onto " +
     "the current version (outdated when the anchored lines changed)",
   request: { params: issueParams },
-  responses: { 200: { description: "Comments", ...jsonBody(SpecComments) } },
+  responses: {
+    200: { description: "Comments", ...jsonBody(SpecComments) },
+    ...movedResponses,
+  },
 });
 
 const specResolveRoute = createRoute({

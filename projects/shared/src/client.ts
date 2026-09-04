@@ -237,6 +237,19 @@ function movedToFromUrl(url: string): MovedTo | null {
   const issue = /^\/api\/projects\/([^/]+)\/issues\/(\d+)(?:\/|$)/.exec(path);
   if (issue?.[1] !== undefined)
     return { slug: issue[1], number: Number(issue[2]) };
+  // The attachment list addresses its issue through the query, so its new
+  // address has no `/issues/{n}` segment for the rule above to find (T-245).
+  // Without this, following that redirect would return the destination's
+  // attachments as if they were the ones asked for — `attach list a/1`
+  // quietly printing B's files. Anchored at `/attachments` so it cannot take
+  // in `/attachments/{id}/download`, which travels the binary channel and is
+  // meant to follow its redirect and hand back bytes.
+  const list = /^\/api\/projects\/([^/]+)\/attachments$/.exec(path);
+  if (list?.[1] !== undefined) {
+    const number = Number(new URL(url).searchParams.get("issue_number"));
+    if (Number.isInteger(number) && number > 0)
+      return { slug: list[1], number };
+  }
   return null;
 }
 

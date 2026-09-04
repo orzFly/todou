@@ -38,7 +38,7 @@ import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { comments, issueEvents, issues } from "../db/project-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
-import { requireProject, routeInfoOf } from "./access.ts";
+import { projectForRead, requireProject, routeInfoOf } from "./access.ts";
 import {
   crossRefVisibleCondition,
   type VisibleProjects,
@@ -334,7 +334,11 @@ export async function getTimeline(
   issueNumber: number,
   query: TimelineQuery,
 ): Promise<TimelinePage> {
-  const { project, role } = await requireProject(ctx, actor, slug, "reader");
+  // The card's own timeline goes where the card went, so an old address gets
+  // the redirect before the reader's role here is known (T-245). The two
+  // project-wide activity reads below are not addressed by card and keep
+  // their own gate.
+  const { project, role } = await projectForRead(ctx, actor, slug);
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   const issueRows = await db

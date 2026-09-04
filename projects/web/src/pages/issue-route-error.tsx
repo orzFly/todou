@@ -82,6 +82,56 @@ function FollowMove({ error }: { error: MovedError }) {
   );
 }
 
+/**
+ * The same answer for the spec route, which is a sibling of the issue route
+ * rather than a child — so `IssueRouteError` never sees its errors, and an
+ * old spec deep link used to reach the router's generic crash screen.
+ */
+export function SpecRouteError({ error }: { error: Error }) {
+  if (error instanceof MovedError) return <FollowMoveToSpec error={error} />;
+  if (error instanceof GoneError) return <MovedAwayPage error={error} />;
+  if ((error as { status?: number }).status !== 404) throw error;
+  return (
+    <Empty>
+      <p className="text-muted-foreground">
+        This spec does not exist, or you do not have access to it.
+      </p>
+    </Empty>
+  );
+}
+
+/**
+ * Nothing to translate on the way, unlike `FollowMove` above: everything the
+ * spec page keeps in the URL lives in the search (`file`, `v`, `compare`,
+ * `view`), and not one of those is scoped to a project — a move preserves
+ * spec version numbers and leaves file paths alone — while the page never
+ * reads `location.hash` at all. Hence no `useParams` and no `useSearch`
+ * either: the destination is all in `error.movedTo`, and reading the search
+ * through the route it belongs to would bind this component to the very
+ * route whose error boundary it is sitting in.
+ */
+function FollowMoveToSpec({ error }: { error: MovedError }) {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    void navigate({
+      to: "/projects/$slug/issues/$number/spec",
+      params: {
+        slug: error.movedTo.slug,
+        number: String(error.movedTo.number),
+      },
+      search: (prev) => prev,
+      replace: true,
+    });
+  }, [navigate, error.movedTo]);
+
+  return (
+    <Empty>
+      <p className="text-muted-foreground">Taking you to the new address…</p>
+    </Empty>
+  );
+}
+
 /** No link and no destination: the reader may not know where it went. */
 function MovedAwayPage({ error }: { error: GoneError }) {
   return (

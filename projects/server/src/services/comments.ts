@@ -14,7 +14,7 @@ import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { comments, issueEvents, issues } from "../db/project-schema.ts";
-import { CommentMovedError, ForbiddenError, NotFoundError } from "../errors.ts";
+import { ForbiddenError, NotFoundError } from "../errors.ts";
 import { projectForRead, requireProject, routeInfoOf } from "./access.ts";
 import {
   analyzeReferences,
@@ -27,7 +27,7 @@ import {
 import { encodeTimelineCursor } from "./cursor.ts";
 import { canonicalizeComponent, questionCount } from "./questions.ts";
 import { recordReferences, refPrefixAt } from "./references.ts";
-import { aliasOf, originProjectFor } from "./relocation.ts";
+import { originProjectFor, throwIfCommentAliased } from "./relocation.ts";
 import { deleteRevisionsFor, recordRevision } from "./revisions.ts";
 import { microIso } from "./timeline.ts";
 import {
@@ -248,6 +248,13 @@ export async function getComment(
   const { project, role } = await projectForRead(ctx, actor, slug);
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(db, project.id, issueNumber);
+  // Asked before the card's own gate, which would answer for the card and
+  // leave the comment behind: this address names a comment, and only the
+  // alias knows the id it carries now (T-245). A comment id that was never
+  // here falls through to the card's marker, as it did before.
+  if (issue.movedAt !== null) {
+    await throwIfCommentAliased(ctx, project.id, commentId, role !== null);
+  }
   assertIssueReadable(issue, actor, role);
 
   const rows = await db
@@ -255,31 +262,10 @@ export async function getComment(
     .from(comments)
     .where(and(eq(comments.id, commentId), eq(comments.issueId, issue.id)));
   const row = rows[0];
-  if (!row) await throwIfAliased(ctx, project.id, commentId, role !== null);
+  if (!row)
+    await throwIfCommentAliased(ctx, project.id, commentId, role !== null);
   if (!row) throw new NotFoundError("comment not found");
   return toTimelineComment(ctx, row);
-}
-
-/**
- * A comment id that is not here may be one this project used to hold before
- * the card moved (T-231). Checked only on a miss, so the common path never
- * touches the system database.
- */
-async function throwIfAliased(
-  ctx: AppContext,
-  projectId: number,
-  commentId: number,
-  sourceReadable: boolean,
-): Promise<void> {
-  const alias = await aliasOf(
-    ctx.router.system(),
-    "comment",
-    projectId,
-    commentId,
-  );
-  if (alias !== null) {
-    throw new CommentMovedError(projectId, commentId, sourceReadable);
-  }
 }
 
 /**
@@ -306,7 +292,8 @@ export async function locateComment(
     .innerJoin(issues, eq(comments.issueId, issues.id))
     .where(and(eq(comments.projectId, project.id), eq(comments.id, commentId)));
   const row = rows[0];
-  if (!row) await throwIfAliased(ctx, project.id, commentId, role !== null);
+  if (!row)
+    await throwIfCommentAliased(ctx, project.id, commentId, role !== null);
   if (!row) throw new NotFoundError("comment not found");
   // This endpoint reaches a comment by id alone, so the issue's own gate
   // never ran: without this, a bare `#comment-M` would hand out the body of

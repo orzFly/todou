@@ -31,7 +31,7 @@ import {
   NotFoundError,
   ValidationFailedError,
 } from "../errors.ts";
-import { requireProject, routeInfoOf } from "./access.ts";
+import { projectForRead, requireProject, routeInfoOf } from "./access.ts";
 import { encodeTimelineCursor } from "./cursor.ts";
 import { microIso } from "./timeline.ts";
 import {
@@ -47,16 +47,16 @@ import { getUserRefs } from "./users.ts";
  * runs one, so a deleted card's spec is unreachable by the same rules as the
  * card itself.
  */
-async function loadIssue(
+async function loadIssue<Role extends MemberRole | null>(
   db: Db,
   projectId: number,
   number: number,
   actor: UserRow,
-  role: MemberRole,
-  // Spelled out rather than `typeof assertIssueReadable`: that one takes a
-  // nullable role since T-242 and the write gate does not, so naming one of
-  // them as the type would reject the other.
-  gate: (row: TrashFields, actor: UserRow, role: MemberRole) => void,
+  role: Role,
+  // Generic in the role rather than spelled out once: the read gate takes a
+  // nullable role since T-242 and the write gate does not, so either concrete
+  // type would reject the other caller.
+  gate: (row: TrashFields, actor: UserRow, role: Role) => void,
 ) {
   const rows = await db
     .select({
@@ -272,7 +272,11 @@ export async function getSpecInfo(
   slug: string,
   issueNumber: number,
 ): Promise<SpecInfo> {
-  const { project, role } = await requireProject(ctx, actor, slug, "reader");
+  // The spec reads below follow the card: a link to one written before the
+  // card moved answers to whoever can read where it is now (T-245), which
+  // takes reaching the tombstone before knowing the reader's role here. The
+  // three writer entries in this file keep their own gate.
+  const { project, role } = await projectForRead(ctx, actor, slug);
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(
     db,
@@ -340,7 +344,7 @@ export async function getSpecFiles(
   issueNumber: number,
   versionNumber?: number,
 ): Promise<SpecFiles> {
-  const { project, role } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await projectForRead(ctx, actor, slug);
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(
     db,
@@ -813,7 +817,7 @@ export async function listSpecComments(
   slug: string,
   issueNumber: number,
 ): Promise<SpecComments> {
-  const { project, role } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await projectForRead(ctx, actor, slug);
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(
     db,

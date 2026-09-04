@@ -21,7 +21,7 @@ import { CliAuthPage } from "@/pages/cli-auth.tsx";
 import { InboxPage } from "@/pages/inbox.tsx";
 import { IssueDetailPage } from "@/pages/issue-detail.tsx";
 import { IssueListPage } from "@/pages/issue-list.tsx";
-import { IssueRouteError } from "@/pages/issue-route-error.tsx";
+import { IssueRouteError, SpecRouteError } from "@/pages/issue-route-error.tsx";
 import { LoginPage } from "@/pages/login.tsx";
 import { NewIssuePage } from "@/pages/new-issue.tsx";
 import { ProfileSettingsPage } from "@/pages/profile-settings.tsx";
@@ -180,6 +180,9 @@ const specViewRoute = createRoute({
     "SpecViewPage",
   ),
   validateSearch: parseSpecSearch,
+  // Not lazy, unlike the component above: an error boundary that arrived in
+  // the spec page's own chunk could not answer for a spec that is not here.
+  errorComponent: SpecRouteError,
 });
 
 const projectSettingsRoute = createRoute({

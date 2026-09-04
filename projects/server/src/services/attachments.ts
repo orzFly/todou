@@ -444,7 +444,10 @@ export async function listIssueAttachments(
   slug: string,
   issueNumber: number,
 ): Promise<Attachment[]> {
-  const { project, role } = await requireProject(ctx, actor, slug, "reader");
+  // The same rule as `openAttachment` above, one level up: the list belongs
+  // to the card, so an old address answers to whoever can read where the card
+  // is now (T-245). The three upload entries keep their own gate.
+  const { project, role } = await projectForRead(ctx, actor, slug);
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issueRows = await db
     .select({

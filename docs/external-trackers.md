@@ -144,6 +144,11 @@ The tombstone answers for all of it:
   Browsers follow this on their own, so embedded images keep rendering. The
   rich attachment card travels too: the filename, the size and the inline
   preview come from the file's current home, not just its bytes.
+- Every address under the card — its spec at any version, its timeline,
+  questions, edit history and attachment list → the same thing at the card's
+  new address. The redirect points at the address that was asked for, so a
+  caller that follows it receives the resource it requested, with the query it
+  sent left as it was.
 
 Resolution is one hop however many times the card has moved: every address it
 has ever had points straight at the current one, not at the previous one.
@@ -152,8 +157,8 @@ Who may follow an old address is decided by where the thing is now: anyone who
 can read the project it moved to. Someone who can read neither end gets a plain
 404, which admits nothing about the address ever having been used. That holds
 wherever the address is typed: the CLI, an attachment URL, a `#comment-N` in a
-body, and an old *card* link opened in the web UI, which follows the redirect
-without ever reading the project the link names.
+body, and an old *card* or *spec* link opened in the web UI, which follows the
+redirect without ever reading the project the link names.
 
 ### The card's own references are respelled once
 

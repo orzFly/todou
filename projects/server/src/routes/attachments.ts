@@ -17,6 +17,7 @@ import {
   requestDirectUpload,
   uploadAttachment,
 } from "../services/attachments.ts";
+import { movedResponses } from "./moved-responses.ts";
 
 type AttachmentRow = Awaited<ReturnType<typeof openAttachment>>["row"];
 
@@ -72,6 +73,7 @@ const listRoute = createRoute({
       description: "Attachments",
       content: { "application/json": { schema: z.array(Attachment) } },
     },
+    ...movedResponses,
   },
 });
 

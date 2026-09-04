@@ -11,7 +11,8 @@ import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { comments, issues, revisions } from "../db/project-schema.ts";
 import { NotFoundError } from "../errors.ts";
-import { requireProject, routeInfoOf } from "./access.ts";
+import { projectForRead, routeInfoOf } from "./access.ts";
+import { throwIfCommentAliased } from "./relocation.ts";
 import { assertIssueReadable, gateColumns } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
@@ -117,6 +118,11 @@ async function listRevisions(
   return items;
 }
 
+/**
+ * Both reads here are addressed by card, so an old address earns the redirect
+ * before the reader's role in this project is known (T-245) — the same order
+ * T-242 established for the card itself.
+ */
 export async function listIssueRevisions(
   ctx: AppContext,
   actor: UserRow,
@@ -124,7 +130,7 @@ export async function listIssueRevisions(
   issueNumber: number,
   query: RevisionQuery,
 ): Promise<RevisionPage> {
-  const { project, role } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await projectForRead(ctx, actor, slug);
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   const issueRows = await db
@@ -158,7 +164,7 @@ export async function listCommentRevisions(
   commentId: number,
   query: RevisionQuery,
 ): Promise<RevisionPage> {
-  const { project, role } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await projectForRead(ctx, actor, slug);
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   const issueRows = await db
@@ -171,6 +177,12 @@ export async function listCommentRevisions(
     );
   const issue = issueRows[0];
   if (!issue) throw new NotFoundError("issue not found");
+  // Same order as `getComment`: this address names a comment, so the alias
+  // gets asked before the card's own gate redirects to the card and drops it
+  // (T-245).
+  if (issue.movedAt !== null) {
+    await throwIfCommentAliased(ctx, project.id, commentId, role !== null);
+  }
   assertIssueReadable(issue, actor, role);
 
   const commentRows = await db

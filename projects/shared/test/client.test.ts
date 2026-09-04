@@ -385,6 +385,52 @@ describe("TodouClient redirects (T-231)", () => {
     expect((error as MovedError).movedTo).toEqual({ slug: "b", number: 45 });
   });
 
+  it("reads the issue out of a redirected attachment list (T-245)", async () => {
+    // The list addresses its issue through the query, so there is no
+    // `/issues/{n}` in the new URL. Missing it would return B's attachments
+    // as though they were A's, with nothing raised.
+    const client = new TodouClient({
+      fetch: redirectedFetch(
+        "http://todou.example/api/projects/b/attachments?issue_number=7",
+        [],
+      ),
+    });
+    const error = await client.listAttachments("a", 1).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MovedError);
+    expect((error as MovedError).movedTo).toEqual({ slug: "b", number: 7 });
+  });
+
+  it("needs no new rule for a spec sub-route (T-245)", async () => {
+    // The guard on the claim that only the attachment list changed shape:
+    // the issue rule already tolerates a tail, so the seven other widened
+    // entries resolve without touching this function.
+    const client = new TodouClient({
+      fetch: redirectedFetch(
+        "http://todou.example/api/projects/b/issues/7/spec/files",
+      ),
+    });
+    const error = await client.getSpecFiles("a", 1).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MovedError);
+    expect((error as MovedError).movedTo).toEqual({ slug: "b", number: 7 });
+  });
+
+  it("leaves an attachment download redirect alone (T-245)", async () => {
+    // Anchored at `/attachments`: a download is the binary channel, which is
+    // meant to follow its redirect and hand back the bytes.
+    const client = new TodouClient({
+      fetch: redirectedFetch(
+        "http://todou.example/api/projects/b/attachments/2/download/note.txt",
+        { ok: true },
+      ),
+    });
+    expect(
+      await client.request(
+        "GET",
+        "/projects/a/attachments/1/download/note.txt",
+      ),
+    ).toEqual({ ok: true });
+  });
+
   it("leaves a presigned attachment redirect alone", async () => {
     const client = new TodouClient({
       fetch: redirectedFetch("http://store.test/blob/abc?sig=1", { ok: true }),

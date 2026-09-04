@@ -9,7 +9,6 @@ import {
   CommentCreateResult,
   CommentLocation,
   CommentUpdateInput,
-  GoneBody,
   Issue,
   IssueCounts,
   IssueCountsQuery,
@@ -18,7 +17,6 @@ import {
   IssueListQuery,
   IssueQuestions,
   IssueUpdateInput,
-  MovedTo,
   MoveIssueInput,
   MoveIssueResult,
   ProjectSlug,
@@ -54,6 +52,7 @@ import {
   listIssueRevisions,
 } from "../services/revisions.ts";
 import { getProjectActivity, getTimeline } from "../services/timeline.ts";
+import { movedResponses } from "./moved-responses.ts";
 
 const issueNumber = z.coerce.number().int().positive();
 const slugParam = z.object({ slug: ProjectSlug });
@@ -66,22 +65,6 @@ const commentParams = z.object({
 const jsonBody = <T extends z.ZodType>(schema: T) => ({
   content: { "application/json": { schema } },
 });
-
-/**
- * What a GET answers with once the card has moved to another project
- * (T-231). Declared per route rather than globally: only the reads that go
- * through the issue gate can produce them.
- */
-const movedResponses = {
-  301: {
-    description: "Moved to another project",
-    ...jsonBody(z.object({ moved_to: MovedTo })),
-  },
-  410: {
-    description: "Moved to a project the reader cannot see",
-    ...jsonBody(GoneBody),
-  },
-};
 
 /**
  * Declared where it is a deliberate answer rather than the ambient one: on
@@ -279,7 +262,10 @@ const issueRevisionsRoute = createRoute({
   path: "/{slug}/issues/{number}/revisions",
   summary: "Issue body edit history, newest first, both sides paired",
   request: { params: issueParams, query: RevisionQuery },
-  responses: { 200: { description: "Page", ...jsonBody(RevisionPage) } },
+  responses: {
+    200: { description: "Page", ...jsonBody(RevisionPage) },
+    ...movedResponses,
+  },
 });
 
 const commentRevisionsRoute = createRoute({
@@ -287,7 +273,10 @@ const commentRevisionsRoute = createRoute({
   path: "/{slug}/issues/{number}/comments/{commentId}/revisions",
   summary: "Comment edit history, newest first, both sides paired",
   request: { params: commentParams, query: RevisionQuery },
-  responses: { 200: { description: "Page", ...jsonBody(RevisionPage) } },
+  responses: {
+    200: { description: "Page", ...jsonBody(RevisionPage) },
+    ...movedResponses,
+  },
 });
 
 const issueQuestionsRoute = createRoute({
@@ -297,7 +286,10 @@ const issueQuestionsRoute = createRoute({
     "Question comments of an issue with their answer status (T-19); powers " +
     "`todou question list/wait` and the web answer cards",
   request: { params: issueParams },
-  responses: { 200: { description: "Status", ...jsonBody(IssueQuestions) } },
+  responses: {
+    200: { description: "Status", ...jsonBody(IssueQuestions) },
+    ...movedResponses,
+  },
 });
 
 const submitAnswersRoute = createRoute({

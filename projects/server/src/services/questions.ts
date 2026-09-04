@@ -20,7 +20,7 @@ import {
   NotFoundError,
   ValidationFailedError,
 } from "../errors.ts";
-import { requireProject, routeInfoOf } from "./access.ts";
+import { projectForRead, requireProject, routeInfoOf } from "./access.ts";
 import {
   assertIssueReadable,
   assertIssueWritable,
@@ -274,7 +274,10 @@ export async function listIssueQuestions(
   slug: string,
   issueNumber: number,
 ): Promise<IssueQuestions> {
-  const { project, role } = await requireProject(ctx, actor, slug, "reader");
+  // The questions travel with the card, so an old address earns the redirect
+  // before the reader's role here is known (T-245). `submitAnswers` above is
+  // a write and keeps its own gate.
+  const { project, role } = await projectForRead(ctx, actor, slug);
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(db, project.id, issueNumber);
   assertIssueReadable(issue, actor, role);

@@ -163,6 +163,37 @@ export async function aliasAddressesOf(
 }
 
 /**
+ * Whether this comment id is one the project used to hold, and a
+ * `CommentMovedError` if it is (T-231).
+ *
+ * A tombstone has to answer for its comments too. The card's own marker knows
+ * only where the card went, so a comment permalink would be redirected to the
+ * card with the comment dropped — the alias is the only thing that knows the
+ * new id. Lives here rather than in `comments.ts` because `revisions.ts` needs
+ * it as well and `comments.ts` already imports that module, so the other
+ * direction would close an import cycle.
+ *
+ * Consulted only on a miss or on a tombstone, so the common path never
+ * touches the system database.
+ */
+export async function throwIfCommentAliased(
+  ctx: AppContext,
+  projectId: number,
+  commentId: number,
+  sourceReadable: boolean,
+): Promise<void> {
+  const alias = await aliasOf(
+    ctx.router.system(),
+    "comment",
+    projectId,
+    commentId,
+  );
+  if (alias !== null) {
+    throw new CommentMovedError(projectId, commentId, sourceReadable);
+  }
+}
+
+/**
  * Record a move in the address book and flatten the whole lineage onto the
  * new address, minting a lineage on the card's first move.
  *
@@ -481,9 +512,91 @@ export async function respondRelocation(
     );
   }
 
-  c.header("Location", `/api${destination.path}`);
+  // Which subresource the reader asked for is in the request and nowhere
+  // else, so the rewrite happens here rather than in `resolve`. Markers
+  // without a body are the blob routes, whose `resolve` already built a
+  // complete translated address — the same reason no `instanceof` is needed.
+  const moved = destination.body?.moved_to;
+  const asked =
+    moved === undefined
+      ? null
+      : relocatedRequestPath(c.req.path, new URL(c.req.url).search, {
+          slug: moved.slug,
+          issueNumber: moved.number,
+          commentId: moved.comment_id,
+        });
+  c.header("Location", asked ?? `/api${destination.path}`);
   if (destination.body === null) return c.body(null, 301);
   return c.json(destination.body, 301);
+}
+
+/** Where the thing behind an old address lives now, as far as a marker knows. */
+export type RelocatedAddress = {
+  slug: string;
+  issueNumber: number;
+  /** Comment markers only: the id that comment answers to now. */
+  commentId?: number;
+};
+
+/**
+ * The address the reader asked for, with the new home substituted into it.
+ *
+ * `…/issues/1/spec/files?version=1` has to land on the spec files rather than
+ * on the card: a caller that follows the redirect would get 200 and an issue
+ * body while it asked for a spec — success by status code, another resource
+ * by content.
+ *
+ * Null when the substitution cannot be carried through, and the caller falls
+ * back to the marker's own canonical path. The test is that no all-digit
+ * segment is left over: those digits are project-scoped ids the move replaced,
+ * so carrying one across points the redirect at a wrong but real row, which is
+ * worse than pointing at the card. Phrasing the test that way also makes a
+ * subresource added later fall back on its own, with nobody having to remember
+ * to update a list of known shapes.
+ */
+export function relocatedRequestPath(
+  requestPath: string,
+  search: string,
+  to: RelocatedAddress,
+): string | null {
+  const segments = requestPath.split("/");
+  if (segments[1] !== "api" || segments[2] !== "projects") return null;
+  segments[3] = to.slug;
+
+  const substituted = new Set<number>();
+  let rewritten = search;
+
+  if (segments[4] === "issues") {
+    if (!allDigits(segments[5])) return null;
+    segments[5] = String(to.issueNumber);
+    substituted.add(5);
+    if (
+      to.commentId !== undefined &&
+      segments[6] === "comments" &&
+      allDigits(segments[7])
+    ) {
+      segments[7] = String(to.commentId);
+      substituted.add(7);
+    }
+  } else {
+    // Nothing in this path holds the card's number, so the query is the only
+    // place it can be — the attachment list addresses its issue that way. A
+    // rewrite that dropped it would name a project and not a card.
+    const params = new URLSearchParams(search);
+    const asked = Number(params.get("issue_number"));
+    if (!Number.isInteger(asked) || asked <= 0) return null;
+    params.set("issue_number", String(to.issueNumber));
+    rewritten = `?${params.toString()}`;
+  }
+
+  for (let i = 4; i < segments.length; i++) {
+    if (!substituted.has(i) && allDigits(segments[i])) return null;
+  }
+  return `${segments.join("/")}${rewritten}`;
+}
+
+function allDigits(segment: string | undefined): boolean {
+  return segment !== undefined && /^\d+$/.test(segment);
 }
 
 async function resolve(
