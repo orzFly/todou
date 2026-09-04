@@ -13,7 +13,7 @@ export const projectTabs = [
 /**
  * Project-level navigation (T-62). Lives in the floating header: inline on
  * wide screens, on its own second row below `sm`, where it shares the row
- * with the search box.
+ * with the create button.
  */
 export function ProjectNav({
   slug,
@@ -48,17 +48,24 @@ export function ProjectNav({
 
 /**
  * Creating an issue, one click from every project module and absent exactly
- * where there is no project to file into (T-104). It sits in the header's
- * account cluster rather than at the end of the nav, so the search box comes
- * first and the nav's second row is left to the tabs and the box (T-215).
+ * where there is no project to file into (T-104). From `sm` up it sits in
+ * the header's account cluster, after the search box; below that it moves
+ * to the project row, which has room the first row does not.
  *
- * Below `sm` the label goes and the icon stays: that row is the one where
- * the box has the least width to spare. aria-label rather than the visible
- * text, because a `display: none` label is not announced either.
+ * It stays an icon on that row even though the row is the wider of the two:
+ * the label needs 102px, the narrowest phone leaves 85, and the crossover
+ * around 337 is not a breakpoint Tailwind has. aria-label rather than the
+ * visible text, because a `display: none` label is not announced either.
  */
-export function NewIssueButton({ slug }: { slug: string }) {
+export function NewIssueButton({
+  slug,
+  className,
+}: {
+  slug: string;
+  className?: string;
+}) {
   return (
-    <Button size="sm" asChild>
+    <Button size="sm" asChild className={className}>
       <Link
         to="/projects/$slug/issues/new"
         params={{ slug }}

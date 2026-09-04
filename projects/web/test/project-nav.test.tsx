@@ -124,28 +124,32 @@ describe("New issue entry (T-104)", () => {
   });
 });
 
-describe("the header's second row (T-215)", () => {
-  it("puts the search box before the create button", async () => {
-    // Both used to fight the nav for the same row, and the box lost: at
-    // 390 it came out 50px wide, too narrow for the jump offer under it.
-    const view = renderShellAt("/projects/x");
+describe("where the create button sits (T-232)", () => {
+  /**
+   * Both rows are in the DOM at once — which one a reader sees is CSS, and
+   * no CSS is loaded here — so each case reads the row it is about.
+   */
+  async function rowsOf(url: string) {
+    const view = renderShellAt(url);
     await view.findAllByLabelText("Search this project");
-    const box = view.container.querySelector("input[name='q']") as Element;
-    const create = view.container.querySelector(
-      'a[aria-label="New issue"]',
-    ) as Element;
+    const header = view.container.querySelector("header") as Element;
+    return { first: header.children[0], second: header.children[1] };
+  }
+
+  it("keeps it after the search box on the first row", async () => {
+    const { first } = await rowsOf("/projects/x");
+    const box = first.querySelector("input[name='q']") as Element;
+    const create = first.querySelector('a[aria-label="New issue"]') as Element;
     expect(
       box.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 
-  it("leaves the nav's row to the tabs and the box", async () => {
-    const view = renderShellAt("/projects/x");
-    await view.findAllByLabelText("Search this project");
-    const secondRow = view.container.querySelector(".md\\:hidden");
-    expect(secondRow?.querySelector("nav")).not.toBeNull();
-    expect(secondRow?.querySelector("input[name='q']")).not.toBeNull();
-    expect(secondRow?.querySelector('a[aria-label="New issue"]')).toBeNull();
+  it("moves it down to the project row, which has no box to share with", async () => {
+    const { second } = await rowsOf("/projects/x");
+    expect(second.querySelector("nav")).not.toBeNull();
+    expect(second.querySelector('a[aria-label="New issue"]')).not.toBeNull();
+    expect(second.querySelector("input[name='q']")).toBeNull();
   });
 });
 

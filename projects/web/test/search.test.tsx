@@ -255,14 +255,13 @@ describe("search results", () => {
  */
 function renderBox(
   client: QueryClient = testQueryClient(),
-  { boxes = 1 }: { boxes?: number } = {},
+  { boxes = 1, onEscape }: { boxes?: number; onEscape?: () => void } = {},
 ) {
   const rootRoute = createRootRoute();
-  // Two is the real header: the wide row's box and the narrow row's.
   const Boxes = () => (
     <>
-      <SearchBox slug="todou" />
-      {boxes > 1 && <SearchBox slug="todou" listAlign="stretch" />}
+      <SearchBox slug="todou" onEscape={onEscape} />
+      {boxes > 1 && <SearchBox slug="todou" listAlign="start" />}
     </>
   );
   const indexRoute = createRoute({
@@ -687,15 +686,41 @@ describe("SearchBox · the jump offer", () => {
     expect(external?.getAttribute("aria-selected")).toBe("true");
   });
 
-  it("gives the header's two boxes listboxes of their own", async () => {
+  it("keeps the first Escape for the offer it closes", async () => {
+    const onEscape = vi.fn();
+    const client = seedBox();
+    client.setQueryData(
+      issueRefQuery("todou", 141).queryKey,
+      refItem(141, "全文搜索"),
+    );
+    const utils = renderBox(client, { onEscape });
+    const input = await typeInto(utils, "T-141");
+    await waitFor(() => expect(listboxOf(utils.container)).not.toBeNull());
+
+    fireEvent.keyDown(input, { key: "Escape" });
+    await waitFor(() => expect(listboxOf(utils.container)).toBeNull());
+    expect(onEscape).not.toHaveBeenCalled();
+  });
+
+  it("hands Escape to its host once there is no offer left", async () => {
+    const onEscape = vi.fn();
+    const utils = renderBox(seedBox(), { onEscape });
+    const input = await typeInto(utils, "plain words");
+    expect(listboxOf(utils.container)).toBeNull();
+
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(onEscape).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives two boxes on one page listboxes of their own", async () => {
     const client = seedBox();
     client.setQueryData(
       issueRefQuery("todou", 141).queryKey,
       refItem(141, "全文搜索"),
     );
     const utils = renderBox(client, { boxes: 2 });
-    // Both are mounted at once in the real header (wide row and narrow
-    // row), so a written id would be on the page twice.
+    // The header mounts one box now, but the id is the box's own business:
+    // a written one would put the same `aria-controls` on every instance.
     const inputs = await utils.findAllByLabelText("Search this project");
     const ids = inputs.map((input) => input.getAttribute("aria-controls"));
     expect(new Set(ids).size).toBe(2);

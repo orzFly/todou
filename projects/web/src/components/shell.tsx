@@ -14,6 +14,7 @@ import { InboxButton } from "@/components/inbox-button.tsx";
 import { NewIssueButton, ProjectNav } from "@/components/project-nav.tsx";
 import { ProjectSwitcher } from "@/components/project-switcher.tsx";
 import { SearchBox } from "@/components/search-box.tsx";
+import { SearchToggle } from "@/components/search-toggle.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { ThemeMenu } from "@/components/theme-menu.tsx";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { MD_UP, useMediaQuery } from "@/lib/use-media-query.ts";
 
 export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   // One user-level stream for every page and every readable project (T-122).
@@ -53,6 +55,10 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   // Present on every route under /projects/$slug; the header morphs into a
   // breadcrumb with the project nav there (T-62).
   const { slug } = useParams({ strict: false });
+  // A behavioural split, not a visibility one: below `md` the search is a
+  // disclosure with its own state and keyboard exits, so exactly one of the
+  // two is mounted and `/` has exactly one place to land.
+  const wide = useMediaQuery(MD_UP);
   const project = useQuery({
     ...projectQuery(slug ?? ""),
     enabled: slug != null,
@@ -61,10 +67,12 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   return (
     <div className="min-h-dvh bg-background">
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4">
-          {/* Grows so the account cluster stays pinned right whatever the
-              project name and the nav come to. */}
-          <div className="flex min-w-0 flex-1 items-center gap-2">
+        {/* `relative` is the anchor the collapsed search expands against. */}
+        <div className="relative mx-auto flex h-14 max-w-6xl items-center gap-2 px-4">
+          {/* The only cluster that may give ground: `min-w-0` lets the project
+              name truncate, and `overflow-hidden` makes what is left over
+              clip rather than lie on top of the search box. */}
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
             <Link
               to="/projects"
               className="flex shrink-0 items-center gap-2 font-semibold"
@@ -89,14 +97,20 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
               </>
             )}
           </div>
-          <div className="flex shrink-0 items-center gap-1">
-            {/* Wide screens only. Narrower than `md` the header already has
-                a second row, and the box moves down to it rather than
-                squeezing the project name out of this one. */}
+          {/* A fixed width per breakpoint, never shrinking, is what holds
+              the box still: only the flanks give ground. */}
+          {wide && slug != null && (
+            <SearchBox slug={slug} className="w-40 shrink-0 lg:w-64 xl:w-80" />
+          )}
+          {/* No `min-w-0` here, deliberately: this cluster stops at its
+              min-content width and the buttons are never squeezed. Both
+              flanks being `flex-1` with the same floor is what leaves the
+              box in the middle of the row. */}
+          <div className="flex flex-1 items-center justify-end gap-1">
+            {!wide && slug != null && <SearchToggle slug={slug} />}
             {slug != null && (
-              <SearchBox slug={slug} className="hidden w-48 md:block" />
+              <NewIssueButton slug={slug} className="hidden sm:inline-flex" />
             )}
-            {slug != null && <NewIssueButton slug={slug} />}
             <InboxButton />
             <ThemeMenu />
             <DropdownMenu>
@@ -131,14 +145,13 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
             </DropdownMenu>
           </div>
         </div>
+        {/* The project row, and the only thing that makes the header two
+            rows tall. It ends at `sm` now that the search has folded into an
+            icon: from there on the first row seats the nav itself. */}
         {slug != null && (
-          <div className="mx-auto flex max-w-6xl items-center gap-2 px-4 pb-2 md:hidden">
-            <ProjectNav slug={slug} className="flex-1 sm:hidden" />
-            <SearchBox
-              slug={slug}
-              className="max-w-48 flex-1 sm:max-w-none"
-              listAlign="stretch"
-            />
+          <div className="mx-auto flex max-w-6xl items-center gap-2 px-4 pb-2 sm:hidden">
+            <ProjectNav slug={slug} className="flex-1" />
+            <NewIssueButton slug={slug} />
           </div>
         )}
       </header>
