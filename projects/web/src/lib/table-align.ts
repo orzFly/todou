@@ -1,5 +1,9 @@
 import { matchByWords } from "./group-align.ts";
-import type { TableMatrix } from "./spec-source-index.ts";
+import {
+  partsText,
+  type TableCell,
+  type TableMatrix,
+} from "./spec-source-index.ts";
 
 /** Which old positions became which new ones, and what neither side kept. */
 export type Matching = {
@@ -91,8 +95,16 @@ function pairCandidates(olds: Candidate[], news: Candidate[]): Matching {
   };
 }
 
+/**
+ * What a cell brings to the pairing; null for a cell the page only pads in.
+ * The distinction is the whole reason this is not a `?.` chain: a padded cell
+ * abstains, an empty one competes with the empty string.
+ */
+const cellText = (cell: TableCell | null | undefined): string | null =>
+  cell === undefined || cell === null ? null : partsText(cell.parts);
+
 const textAt = (matrix: TableMatrix, row: number, col: number): string =>
-  matrix.rows[row]?.cells[col]?.text ?? "";
+  cellText(matrix.rows[row]?.cells[col]) ?? "";
 
 /** Header text and the whole column beneath it, joined the way prose is. */
 function columnsOf(matrix: TableMatrix): Candidate[] {
@@ -113,8 +125,8 @@ function rowsOf(matrix: TableMatrix, key: number | null): Candidate[] {
       index: row,
       // A cell the page pads in abstains from being a key, but the row it is
       // in still competes on its words.
-      key: key === null ? null : (cells[key]?.text ?? null),
-      text: cells.map((cell) => cell?.text ?? "").join("\n"),
+      key: key === null ? null : cellText(cells[key]),
+      text: cells.map((cell) => cellText(cell) ?? "").join("\n"),
     });
   }
   return candidates;
@@ -132,6 +144,11 @@ function rowsOf(matrix: TableMatrix, key: number | null): Candidate[] {
  * column's cell for a row — and whatever the keys leave over goes to
  * `matchByWords`, where one against one pairs on position and more than one
  * has to clear the word-bag floor. Nothing here reads a threshold of its own.
+ *
+ * A key counts a cell's images along with its prose (T-230): where the key
+ * column holds nothing but pictures, every key is the empty string, order of
+ * appearance is all that is left to pair on, and deleting the first row is
+ * reported as deleting the last.
  *
  * The row/column pairing follows the approach of Rich Markdown Diff's
  * `tableDiff.ts` (phine-apps, MIT); its own thresholds — a header must match

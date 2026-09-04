@@ -321,4 +321,49 @@ describe("alignTable rows (T-221)", () => {
     ]);
     expect(result.rows.oldOnly).toEqual([]);
   });
+
+  it("finds the row that went when the key column is all images (T-230)", () => {
+    const result = alignTable(
+      matrix("| 截图 |", "| --- |", "| ![](/a.png) |", "| ![](/b.png) |"),
+      matrix("| 截图 |", "| --- |", "| ![](/b.png) |"),
+    );
+    // Reading `text` alone, every key here is the empty string and the rows can
+    // only pair in order of appearance — which named the *last* row as the one
+    // that went (`oldOnly: [2]`) when it was the first.
+    expect(result.rows.pairs).toEqual([
+      [0, 0],
+      [2, 1],
+    ]);
+    expect(result.rows.oldOnly).toEqual([1]);
+    expect(result.rows.newOnly).toEqual([]);
+  });
+
+  it("sees two rows of images swap places (T-230)", () => {
+    const result = alignTable(
+      matrix(
+        "| 截图 |",
+        "| --- |",
+        "| ![](/a.png) |",
+        "| ![](/b.png) |",
+        "| ![](/c.png) |",
+      ),
+      matrix(
+        "| 截图 |",
+        "| --- |",
+        "| ![](/a.png) |",
+        "| ![](/c.png) |",
+        "| ![](/b.png) |",
+      ),
+    );
+    // Nothing is drawn either way, so this is about the reading, not the
+    // picture — the same reading K asserts for two columns changing places.
+    expect(result.rows.pairs).toEqual([
+      [0, 0],
+      [1, 1],
+      [2, 3],
+      [3, 2],
+    ]);
+    expect(result.rows.oldOnly).toEqual([]);
+    expect(result.rows.newOnly).toEqual([]);
+  });
 });

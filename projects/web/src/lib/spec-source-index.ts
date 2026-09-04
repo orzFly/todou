@@ -350,6 +350,29 @@ export type CellPart =
   | { kind: "image"; url: string; alt: string };
 
 /**
+ * An image as a string, shaped like an image leaf's own text — that leaf
+ * carries `source.slice(start, end)` of `![alt](url)` — so the two read alike
+ * wherever they meet. The title stays out on T-223's terms: a picture whose
+ * title changed is the same picture.
+ */
+export function imageText(image: { url: string; alt: string }): string {
+  return `![${image.alt}](${image.url})`;
+}
+
+/**
+ * Everything a cell shows, as one string. The alignment weighs strings and
+ * nothing else — a leaf's text, a row's pairing key — so a cell holding only
+ * an image reads as empty and gets paired by position alone (T-230). For a
+ * cell with no image in it this is exactly `TableCell.text`, which is what
+ * keeps every image-free table aligning byte for byte the way it did.
+ */
+export function partsText(parts: CellPart[]): string {
+  return parts
+    .map((part) => (part.kind === "image" ? imageText(part) : part.text))
+    .join("");
+}
+
+/**
  * The leaf groups of the images a table cell shows, in source order (T-229).
  * A cell's own group is its prose, and every group after it up to `lastGroup`
  * was handed out inside the cell — group numbers go out in document order, so

@@ -11,6 +11,7 @@ import {
   blocksWhollyInGroups,
   type CellPart,
   cellImageGroups,
+  imageText,
   offsetAt,
   outermostBlockOfGroup,
   type SegmentIndex,
@@ -63,6 +64,10 @@ function tableBlocks(index: SegmentIndex): Map<number, number> {
  * a three-column table reads as four unrelated removals. Folded, the table
  * anchors on its contents like any other leaf, and which cell became which is
  * `alignTable`'s question, asked inside the pair.
+ *
+ * That fold takes in the images its cells hold as well as their prose (T-230),
+ * or a table whose prose did not change is a perfect anchor and `alignTable`
+ * is never asked about it at all.
  */
 export function leavesOf(index: SegmentIndex): AlignGroup[] {
   const leaves: AlignGroup[] = [];
@@ -98,6 +103,38 @@ export function leavesOf(index: SegmentIndex): AlignGroup[] {
       text: segment.text,
       at: segment.at,
     });
+  }
+  for (let i = 0; i < index.blocks.length; i++) {
+    const block = index.blocks[i];
+    if (block === undefined || block.type !== "table") continue;
+    if (block.firstGroup < 0) continue;
+    const marks: string[] = [];
+    for (let g = block.firstGroup; g <= block.lastGroup; g++) {
+      const image = index.images.get(g);
+      if (image !== undefined) marks.push(imageText(image));
+    }
+    if (marks.length === 0) continue;
+    const leaf = tables.get(i);
+    // A table with not one word of prose in it never reached the loop above,
+    // so there is no leaf yet to append to.
+    if (leaf === undefined) {
+      leaves.push({
+        group: block.firstGroup,
+        type: "table",
+        text: marks.join("\n"),
+        at: -1,
+      });
+      continue;
+    }
+    // Appended rather than spliced in at their source positions: the prose
+    // above is one contiguous slice of the flattened text, and appending is
+    // what leaves an image-free table's leaf byte for byte what it was.
+    leaf.text = `${leaf.text}\n${marks.join("\n")}`;
+    // Only once a mark is actually in there. The text has stopped being a
+    // slice of the flattened text, so the range `insert()` would compute for
+    // it is not this leaf's; a table with no image keeps its `at` and keeps
+    // the word-level `ins` that retiring `at` unconditionally would cost it.
+    leaf.at = -1;
   }
   for (const block of index.blocks) {
     if (block.type !== "code" && block.type !== "image") continue;

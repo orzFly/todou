@@ -1348,13 +1348,88 @@ describe("what the engine emits for a removed cell's image (T-229)", () => {
     expect(decorations.tables).toEqual([]);
   });
 
-  it("still sends no overlay when only the image of a cell changed (T-230)", () => {
-    // The boundary this card stops at: the two table leaves read the same, so
-    // the alignment calls it unchanged and `table()` is never asked. T-230 is
-    // where that gets an answer; the swap itself is drawn in place regardless.
+  it("leaves a cell whose image was swapped to the swap alone (T-230)", () => {
+    // `table()` is asked about this one — the two leaves differ by the url —
+    // and draws nothing: the images paired, so there is neither an unpaired
+    // image to put back nor a row or column to stand in for. T-223's side by
+    // side in the cell itself is the whole picture.
     const decorations = decorationsOf(imageCell(IMG_A), imageCell(IMG_B));
     expect(decorations.tables).toEqual([]);
     expect(decorations.images.map((image) => image.old?.url)).toEqual([IMG_A]);
+  });
+});
+
+/**
+ * T-230's fixtures: the table's prose does not change, only its images do. The
+ * first is the card's own repro.
+ */
+const T230_IMAGE_ROWS = [
+  "| 截图 |",
+  "| --- |",
+  `| ![](${IMG_A}) |`,
+  `| ![](${IMG_B}) |`,
+  "",
+].join("\n");
+const T230_FIRST_ROW_GONE = [
+  "| 截图 |",
+  "| --- |",
+  `| ![](${IMG_B}) |`,
+  "",
+].join("\n");
+/** One image cell beside prose that stays; the cell is emptied, not removed. */
+const T230_CELL_WITH_IMAGE = [
+  "| 名 | 截图 |",
+  "| --- | --- |",
+  `| 工具栏 | ![](${IMG_A}) |`,
+  "",
+].join("\n");
+const T230_CELL_EMPTIED = [
+  "| 名 | 截图 |",
+  "| --- | --- |",
+  "| 工具栏 |  |",
+  "",
+].join("\n");
+/** Not one word of prose in the whole table, header included. */
+const T230_NO_PROSE = [
+  `| ![](${IMG_A}) |`,
+  "| --- |",
+  `| ![](${IMG_B}) |`,
+  `| ![](${IMG_C}) |`,
+  "",
+].join("\n");
+const T230_NO_PROSE_ROW_GONE = [
+  `| ![](${IMG_A}) |`,
+  "| --- |",
+  `| ![](${IMG_C}) |`,
+  "",
+].join("\n");
+
+describe("what the engine emits when only a table's images changed (T-230)", () => {
+  it("names the row that went, not the one that stayed", () => {
+    // The card's measurement, twice wrong: the image floated out above the
+    // table as a marker quoting `| ![](…) |`, and the row it named was the
+    // last one, because every key in an all-image column is the empty string.
+    const decorations = decorationsOf(T230_IMAGE_ROWS, T230_FIRST_ROW_GONE);
+    expect(decorations.tables[0]?.rows).toEqual([
+      { at: 1, cells: [[{ kind: "image", url: IMG_A, alt: "" }]] },
+    ]);
+    expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+  });
+
+  it("puts back the image an otherwise unchanged cell lost", () => {
+    const decorations = decorationsOf(T230_CELL_WITH_IMAGE, T230_CELL_EMPTIED);
+    expect(decorations.tables[0]?.lost).toEqual([
+      { row: 1, col: 1, parts: [{ kind: "image", url: IMG_A, alt: "" }] },
+    ]);
+    expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+  });
+
+  it("sees a table that holds no prose at all", () => {
+    const decorations = decorationsOf(T230_NO_PROSE, T230_NO_PROSE_ROW_GONE);
+    expect(decorations.tables[0]?.rows).toEqual([
+      { at: 1, cells: [[{ kind: "image", url: IMG_B, alt: "" }]] },
+    ]);
+    expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
   });
 });
 
@@ -1394,5 +1469,20 @@ describe("how a removed cell's image renders (T-229)", () => {
     );
     // The words the cell kept are not struck through: they are still there.
     expect(cell?.querySelector("del.spec-del")).toBeNull();
+  });
+
+  it("stands in for a row of a table that is all images (T-230)", async () => {
+    const { container } = await renderDiff(
+      T230_IMAGE_ROWS,
+      T230_FIRST_ROW_GONE,
+    );
+    expect(container.querySelector("del.spec-del-block")).toBeNull();
+    const image = container.querySelector("tr.spec-del-row img.spec-del-img");
+    expect(image?.getAttribute("src")).toBe(IMG_A);
+    // A stand-in row still has to square off against the header, or the table
+    // it is spliced into loses its shape.
+    expect(
+      container.querySelector("tr.spec-del-row")?.querySelectorAll("td"),
+    ).toHaveLength(container.querySelectorAll("thead th").length);
   });
 });

@@ -6,6 +6,7 @@ import {
   lineColAt,
   offsetAt,
   outermostBlockOfGroup,
+  partsText,
   segmentsInLines,
   sourceOffsetOfRendered,
   sourceOffsetOfText,
@@ -469,6 +470,39 @@ describe("tableOf (T-221)", () => {
         "| 名 |  |\n| --- | --- |\n| a | b |\n",
       );
       expect(ragged?.rows[0]?.cells[1]?.parts).toEqual([]);
+    });
+
+    it("reads an image-free cell back as exactly its `text`", () => {
+      // The identity the whole of T-230 rests on: once the alignment pairs by
+      // `partsText` instead of `text`, this is the entire reason a table with
+      // no image in it goes on aligning byte for byte the way it did.
+      const { matrix } = matrixOf(TABLE3);
+      for (const row of matrix?.rows ?? []) {
+        for (const cell of row.cells) {
+          if (cell === null) continue;
+          expect(partsText(cell.parts)).toBe(cell.text);
+        }
+      }
+      expect(partsText([])).toBe("");
+    });
+
+    it("reads a cell's image back as its markdown", () => {
+      expect(
+        partsText(
+          secondCell("| 名 | 图 |\n| --- | --- |\n| a | ![截图](/a.png) |\n")
+            ?.parts ?? [],
+        ),
+      ).toBe("![截图](/a.png)");
+    });
+
+    it("reads an image and the words beside it in source order", () => {
+      expect(
+        partsText(
+          secondCell(
+            "| 名 | 证据 |\n| --- | --- |\n| a | ![](/a.png) 旧形态 |\n",
+          )?.parts ?? [],
+        ),
+      ).toBe("![](/a.png)旧形态");
     });
   });
 });
