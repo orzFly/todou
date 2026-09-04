@@ -410,6 +410,84 @@ describe("tableOf (T-221)", () => {
   });
 });
 
+describe("image leaves (T-223)", () => {
+  it("gives an image a leaf group and a source range of its own", () => {
+    const index = buildSegmentIndex("![alt](/a.png)\n");
+    expect(index.groupTypes).toEqual(["paragraph", "image"]);
+    const block = index.blocks.find((b) => b.type === "image");
+    expect(index.source.slice(block?.start ?? -1, block?.end ?? -1)).toBe(
+      "![alt](/a.png)",
+    );
+    expect(index.images.get(1)).toEqual({
+      url: "/a.png",
+      alt: "alt",
+      title: null,
+      start: block?.start,
+      end: block?.end,
+    });
+  });
+
+  it("keeps the title and the empty alt the source actually has", () => {
+    expect(
+      buildSegmentIndex('![a](/a.png "标题")\n').images.get(1)?.title,
+    ).toBe("标题");
+    expect(buildSegmentIndex("![](/a.png)\n").images.get(1)?.alt).toBe("");
+  });
+
+  it("leaves an image reference alone", () => {
+    // Resolving `![alt][ref]` means reading the definition table, which is a
+    // different job; until then it stays as invisible as it always was.
+    const index = buildSegmentIndex("![alt][ref]\n\n[ref]: /a.png\n");
+    expect(index.groupTypes).not.toContain("image");
+    expect(index.images.size).toBe(0);
+  });
+
+  it("leaves the flattened text and every segment offset untouched", () => {
+    // The regression the whole card turns on: an image contributes no prose,
+    // so annotation anchors and selection mapping read a paragraph holding one
+    // exactly as they did before images became leaves.
+    const index = buildSegmentIndex("看这张 ![](/a.png) 就懂了。\n");
+    expect(index.text).toBe("看这张  就懂了。");
+    expect(index.segments.map((s) => [s.text, s.at, s.start, s.end])).toEqual([
+      ["看这张 ", 0, 0, 4],
+      [" 就懂了。", 4, 15, 20],
+    ]);
+  });
+
+  it("lets a paragraph holding only an image be judged whole", () => {
+    const index = buildSegmentIndex("![](/a.png)\n");
+    expect(
+      blocksWhollyInGroups(index, new Set([1])).map((b) => b.type),
+    ).toEqual(["paragraph"]);
+    expect(blocksWhollyInGroups(index, new Set())).toEqual([]);
+  });
+
+  it("does not let an image speak for a paragraph that has prose too", () => {
+    const index = buildSegmentIndex("看这张 ![](/a.png) 就懂了。\n");
+    // The image qualifies on its own — that is how an image added inline gets
+    // the highlight put on the `<img>` — but the paragraph around it does not.
+    expect(
+      blocksWhollyInGroups(index, new Set([1])).map((b) => b.type),
+    ).toEqual(["image"]);
+  });
+
+  it("keeps an image in a table cell inside that cell's groups", () => {
+    const index = buildSegmentIndex(
+      "| 名 | 图 |\n| --- | --- |\n| a | ![](/a.png) |\n",
+    );
+    const image = [...index.images.keys()][0] ?? -1;
+    const cell = index.blocks.find(
+      (b) =>
+        b.type === "tableCell" && b.firstGroup <= image && b.lastGroup >= image,
+    );
+    expect(cell).toBeDefined();
+    // The cell still reads as empty to the row × column alignment (T-221):
+    // an image is not prose, and folding it in would be T-229's question.
+    const table = index.blocks.findIndex((b) => b.type === "table");
+    expect(tableOf(index, table)?.rows[1]?.cells[1]?.text).toBe("");
+  });
+});
+
 describe("word-level diff through the index", () => {
   it("marks the edited Chinese word, not the paragraph", () => {
     const before = "# 设计\n\n这是一个中文段落，需要微调其中的措辞。\n";

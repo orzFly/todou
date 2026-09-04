@@ -8,9 +8,9 @@ export type AlignGroup = {
   group: number;
   /** null when the block table had no type for it; then it pairs only with null. */
   type: SourceBlockType | null;
-  /** The group's slice of the owning `SegmentIndex.text`; a fence's own source. */
+  /** The group's slice of the owning `SegmentIndex.text`; a fence's or an image's own source. */
   text: string;
-  /** Offset of `text[0]` in that same flattened text; -1 for a fence, which is not in it. */
+  /** Offset of `text[0]` in that same flattened text; -1 for a fence or an image, which are not in it. */
   at: number;
 };
 
@@ -67,7 +67,11 @@ type Class = "none" | "prose" | SourceBlockType;
  * the cells that replaced it, so no `<del>` lands in a header and no cell
  * keeps word boxes the absorbing block should have swallowed. Paragraph and
  * heading do pair — promoting one to the other is an ordinary edit that reads
- * well word by word. A fence pairs only with a fence.
+ * well word by word. A fence pairs only with a fence, and an image only with
+ * an image (T-223) — for the fence's reason: an image aligns by its own
+ * markdown source, which shares no vocabulary with prose, so letting the two
+ * classes meet would only ever produce a pairing the floor should have
+ * refused.
  *
  * Since T-221 a document's leaves hold whole tables rather than single cells,
  * and what is inside a paired one is `alignTable`'s question. `tableCell`

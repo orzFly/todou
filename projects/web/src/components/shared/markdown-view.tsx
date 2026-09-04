@@ -245,6 +245,10 @@ export function MarkdownView({
                       attachmentId={ref.id}
                       src={props.src ?? ""}
                       alt={props.alt ?? ref.name ?? ""}
+                      // The spec diff marks a swapped image on the `<img>`
+                      // itself rather than on a wrapper, so the classes have
+                      // to survive this swap or the decoration is lost (T-223).
+                      className={props.className}
                     />
                   );
                 }

@@ -28,6 +28,26 @@ export type DeletionDecoration = {
   at: number;
   text: string;
   block: boolean;
+  /**
+   * The same content cut around the images inside it (T-223). Present only on
+   * a block marker that actually holds one, so `text` stays what it was and
+   * every path that reads it — the inline marker, the `title` attribute — is
+   * untouched.
+   */
+  parts?: DeletionPart[];
+};
+
+/** One piece of a structural marker: removed source, or a removed image (T-223). */
+export type DeletionPart =
+  | { kind: "text"; text: string }
+  | { kind: "image"; url: string; alt: string };
+
+/** An image the new version put in another one's place (T-223). */
+export type ImageSwap = {
+  /** The new image's source range; how its `<img>` is recognised in the tree. */
+  at: SourceRange;
+  /** The one it replaced; null when only alt or title moved and the url did not. */
+  old: { url: string; alt: string } | null;
 };
 
 /**
@@ -59,6 +79,7 @@ export type Decorations = {
    */
   blocks: SourceRange[];
   tables: TableOverlay[];
+  images: ImageSwap[];
 };
 
 export const NO_DECORATIONS: Decorations = {
@@ -66,6 +87,7 @@ export const NO_DECORATIONS: Decorations = {
   deletions: [],
   blocks: [],
   tables: [],
+  images: [],
 };
 
 /** Carries the annotation key so the popover can flash its exact mark. */
@@ -79,6 +101,15 @@ export const INS_BLOCK_CLASS = "spec-ins-block";
  */
 export const COMMENT_BLOCK_CLASS = "spec-mark-comment-block";
 export const DRAFT_BLOCK_CLASS = "spec-mark-draft-block";
+
+/**
+ * The two halves of a swapped image, side by side (T-223). They carry layout
+ * and nothing else: the colours come from `spec-del-block` and
+ * `spec-ins-block`, which the fold pass, the ↑↓ navigation and the annotation
+ * walker already know about, so a swap joins all three without being taught.
+ */
+export const IMG_DEL_CLASS = "spec-img-del";
+export const IMG_NEW_CLASS = "spec-img-new";
 
 const CLASS_OF: Record<SpanKind, string> = {
   ins: "spec-ins",
@@ -175,7 +206,61 @@ function blockDeletion(deletion: DeletionDecoration): Element {
     // row is half a construct, so re-rendering it would invent a whole table
     // around it. The CSS keeps the newlines, which is what lets the rows of a
     // removed table still read as rows.
-    children: [{ type: "text", value: deletion.text.trim() }],
+    children:
+      deletion.parts === undefined
+        ? [{ type: "text", value: deletion.text.trim() }]
+        : deletionParts(deletion.parts),
+  };
+}
+
+/**
+ * A marker cut around its images (T-223). Images are the one construct that
+ * gets rendered rather than quoted, because quoting one shows the reader a url
+ * where the marker's whole job is to show them what went. Everything else
+ * stays source text, on the reasoning above.
+ *
+ * The head and the tail are trimmed, which is what `text.trim()` does to the
+ * undivided marker; whitespace between two parts is the document's own and is
+ * left alone.
+ */
+function deletionParts(parts: DeletionPart[]): ElementContent[] {
+  const out: ElementContent[] = [];
+  parts.forEach((part, i) => {
+    if (part.kind === "image") {
+      out.push({
+        type: "element",
+        tagName: "img",
+        properties: { src: part.url, alt: part.alt },
+        children: [],
+      });
+      return;
+    }
+    let value = part.text;
+    if (i === 0) value = value.trimStart();
+    if (i === parts.length - 1) value = value.trimEnd();
+    if (value !== "") out.push({ type: "text", value });
+  });
+  return out;
+}
+
+/**
+ * The image a swap replaced, put back beside the one that replaced it (T-223).
+ * It carries no `position`, so `fullyInside` refuses it and no "wholly new"
+ * class can land on it — the same guard `deletedCell` relies on (T-221).
+ */
+function swappedOutImage(old: { url: string; alt: string }): Element {
+  return {
+    type: "element",
+    tagName: "del",
+    properties: { className: ["spec-del-block", IMG_DEL_CLASS] },
+    children: [
+      {
+        type: "element",
+        tagName: "img",
+        properties: { src: old.url, alt: old.alt },
+        children: [],
+      },
+    ],
   };
 }
 
@@ -453,12 +538,14 @@ export function rehypeDecorations(options: Decorations = NO_DECORATIONS) {
   const deletions = options.deletions;
   const blocks = options.blocks;
   const tables = options.tables;
+  const images = options.images;
   return (tree: Root) => {
     if (
       spans.length === 0 &&
       deletions.length === 0 &&
       blocks.length === 0 &&
-      tables.length === 0
+      tables.length === 0 &&
+      images.length === 0
     ) {
       return;
     }
@@ -490,6 +577,37 @@ export function rehypeDecorations(options: Decorations = NO_DECORATIONS) {
           if (child.tagName === "pre") {
             const wash = markBlockClass(child, spans);
             if (wash !== null) addClass(child, wash);
+            next.push(child);
+            continue;
+          }
+          // A swapped image is marked on the `<img>` itself, never through
+          // `blocks` and `fullyInside` (T-223): those put the class on the
+          // outermost element of the range, which is the `<p>` when the image
+          // has a paragraph to itself and the `<img>` when it does not — and
+          // the `<p>` would then wrap the old image's `<del>` in the green
+          // that means "new". No wrapper element either: `markdown-view.tsx`
+          // decides whether a paragraph carries an embed card by asking
+          // whether an `<img>` is a direct child of the `<p>`, and a flex
+          // container in between would both break that test and produce a
+          // `<div>` inside a `<p>`. Side by side is two `inline-block`s.
+          if (child.tagName === "img") {
+            const swap = images.find(
+              (image) => image.at.start === child.position?.start.offset,
+            );
+            if (swap === undefined) {
+              next.push(child);
+              continue;
+            }
+            if (!added) addClass(child, INS_BLOCK_CLASS);
+            if (swap.old !== null) {
+              addClass(child, IMG_NEW_CLASS);
+              next.push(swappedOutImage(swap.old));
+              // Only now: `addClass` edits in place and leaves the node's
+              // identity alone, but splicing a sibling in means `next` has to
+              // replace `parent.children` or the new element is lost (T-60 is
+              // why that distinction is worth keeping).
+              changed = true;
+            }
             next.push(child);
             continue;
           }

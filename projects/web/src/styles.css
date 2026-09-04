@@ -1028,6 +1028,25 @@ diffs-container {
     font-size: 0.85em;
     text-decoration-thickness: 1px;
   }
+  /* A swapped image and the one it replaced, side by side (T-223). Two
+     `inline-block`s rather than a flex container, because the two `<img>`s
+     have to stay direct children of their `<p>`: `markdown-view.tsx` reads
+     that relationship to tell an embed card from an ordinary image, and a
+     wrapper would put a `<div>` inside a `<p>` besides. `min-width` is the
+     whole narrow-column story — once two halves no longer fit, inline-block
+     wrapping stacks them, with no media query to keep in sync. */
+  .markdown-body del.spec-img-del,
+  .markdown-body img.spec-img-new {
+    display: inline-block;
+    vertical-align: top;
+    width: calc(50% - 0.6rem);
+    min-width: 15rem;
+    margin: 0.35rem 0;
+  }
+  .markdown-body del.spec-img-del {
+    margin-right: 0.75rem;
+  }
+
   /* A column or a row the new version no longer has, put back where it stood
      (T-221). Same tokens as the marker above, at the wash's weight rather than
      the marker's: the content is in its own cell, in its own column, so the

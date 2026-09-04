@@ -618,6 +618,7 @@ describe("what the engine emits for table edits (T-221)", () => {
       deletions: [],
       blocks: [],
       tables: [],
+      images: [],
     });
   });
 
@@ -873,6 +874,7 @@ describe("the whole document is one alignment (T-211)", () => {
       deletions: [],
       blocks: [],
       tables: [],
+      images: [],
     });
   });
 
@@ -955,5 +957,253 @@ describe("precise annotation highlights (T-142)", () => {
     ]);
     expect(container.querySelector("mark.spec-mark-comment")).toBeNull();
     expect(container.querySelector("p.spec-annotated")).not.toBeNull();
+  });
+});
+
+/**
+ * T-223's fixtures: the same screenshots, swapped in every context we render.
+ * The slug is `renderDiff`'s own, so these take the path a spec document's
+ * images really take — through `markdown-view.tsx`'s `img:` override and out
+ * of `AttachmentInlineImage`, which is where the decoration classes have to
+ * survive for any of this to show.
+ */
+const IMG_A = "/api/projects/p/attachments/929/download/toolbar-v1.png";
+const IMG_B = "/api/projects/p/attachments/1401/download/toolbar-v2.png";
+const IMG_C = "/api/projects/p/attachments/930/download/panel-v1.png";
+const IMG_D = "/api/projects/p/attachments/1402/download/panel-v2.png";
+const imageCell = (url: string) =>
+  `| 名 | 图 |\n| --- | --- |\n| a | ![](${url}) |\n`;
+
+const decorationsFor = (before: string, after: string) =>
+  changeDecorations(buildSegmentIndex(before), buildSegmentIndex(after));
+
+describe("what the engine emits for image edits (T-223)", () => {
+  it("reports one swap and draws nothing else, wherever the image sits", () => {
+    const contexts: Array<[string, string, string]> = [
+      ["alone in a paragraph", `## 图\n\n![](%s)\n`, ""],
+      ["inline in a sentence", `看这张 ![](%s) 就懂了。\n`, ""],
+      ["in a table cell", imageCell("%s"), ""],
+      ["wrapped in a link", `[![](%s)](%s)\n`, ""],
+    ];
+    for (const [context, template] of contexts) {
+      const after = template.replaceAll("%s", IMG_B);
+      const decorations = decorationsFor(
+        template.replaceAll("%s", IMG_A),
+        after,
+      );
+      expect(decorations.images, context).toHaveLength(1);
+      const swap = decorations.images[0];
+      expect(swap?.old?.url, context).toBe(IMG_A);
+      expect(after.slice(swap?.at.start ?? -1, swap?.at.end ?? -1)).toBe(
+        `![](${IMG_B})`,
+      );
+      // The table leaf still anchors on its prose and the paragraph on its
+      // own words: an image pairs as an image and disturbs neither (T-221).
+      expect(
+        [
+          decorations.spans,
+          decorations.deletions,
+          decorations.blocks,
+          decorations.tables,
+        ],
+        context,
+      ).toEqual([[], [], [], []]);
+    }
+  });
+
+  it("says nothing about the old image when only the alt moved", () => {
+    const decorations = decorationsFor(
+      `![改前](${IMG_A})\n`,
+      `![改后](${IMG_A})\n`,
+    );
+    expect(decorations.images).toHaveLength(1);
+    expect(decorations.images[0]?.old).toBeNull();
+  });
+
+  it("gives an added image the whole-block treatment and no swap", () => {
+    const after = `## 图\n\n![](${IMG_B})\n\n正文。\n`;
+    const decorations = decorationsFor("## 图\n\n正文。\n", after);
+    expect(decorations.images).toEqual([]);
+    expect(decorations.spans).toEqual([]);
+    expect(decorations.blocks.map((b) => after.slice(b.start, b.end))).toEqual([
+      `![](${IMG_B})`,
+    ]);
+  });
+
+  it("puts a removed image into the marker as an image", () => {
+    const decorations = decorationsFor(
+      `## 图\n\n![](${IMG_A})\n\n正文。\n`,
+      "## 图\n\n正文。\n",
+    );
+    expect(decorations.deletions).toHaveLength(1);
+    expect(decorations.deletions[0]?.block).toBe(true);
+    expect(decorations.deletions[0]?.parts).toEqual([
+      { kind: "image", url: IMG_A, alt: "" },
+    ]);
+  });
+
+  it("keeps the prose around a removed image in order", () => {
+    const decorations = decorationsFor(
+      `## 图\n\n看这张 ![](${IMG_A}) 就懂了。\n\n正文。\n`,
+      "## 图\n\n正文。\n",
+    );
+    expect(decorations.deletions[0]?.parts).toEqual([
+      { kind: "text", text: "看这张 " },
+      { kind: "image", url: IMG_A, alt: "" },
+      { kind: "text", text: " 就懂了。" },
+    ]);
+  });
+
+  it("leaves a deletion holding no image on its byte-for-byte path", () => {
+    // A paragraph replaced by an image: the two never pair, so the paragraph
+    // gets the marker it always got — no parts, nothing to render differently.
+    const decorations = decorationsFor(
+      "这里本来是一段文字说明。\n",
+      `![](${IMG_B})\n`,
+    );
+    expect(decorations.deletions).toHaveLength(1);
+    expect(decorations.deletions[0]?.parts).toBeUndefined();
+    expect(decorations.blocks).toHaveLength(1);
+    expect(decorations.images).toEqual([]);
+  });
+
+  it("marks the words and leaves the image alone when only prose moved", () => {
+    const after = `看这张 ![](${IMG_A}) 就明白了。\n`;
+    const decorations = decorationsFor(
+      `看这张 ![](${IMG_A}) 就懂了。\n`,
+      after,
+    );
+    expect(decorations.images).toEqual([]);
+    expect(decorations.spans.map((s) => after.slice(s.start, s.end))).toEqual([
+      "明白了",
+    ]);
+    expect(decorations.deletions.map((d) => d.text)).toEqual(["懂了"]);
+  });
+
+  it("keeps two images swapped at once from crossing", () => {
+    const after = `- 改前 ![](${IMG_B})\n- 改后 ![](${IMG_D})\n`;
+    const decorations = decorationsFor(
+      `- 改前 ![](${IMG_A})\n- 改后 ![](${IMG_C})\n`,
+      after,
+    );
+    expect(decorations.images.map((i) => i.old?.url)).toEqual([IMG_A, IMG_C]);
+    expect(
+      decorations.images.map((i) => after.slice(i.at.start, i.at.end)),
+    ).toEqual([`![](${IMG_B})`, `![](${IMG_D})`]);
+  });
+
+  it("draws nothing at all when an image document did not change", () => {
+    const body = `看这张 ![](${IMG_A}) 就懂了。\n`;
+    const decorations = decorationsFor(body, body);
+    expect([
+      decorations.spans,
+      decorations.deletions,
+      decorations.blocks,
+      decorations.tables,
+      decorations.images,
+    ]).toEqual([[], [], [], [], []]);
+  });
+});
+
+describe("how image edits render (T-223)", () => {
+  it("puts the old image beside the new one, in the same paragraph", async () => {
+    const { container } = await renderDiff(
+      `## 图\n\n![](${IMG_A})\n`,
+      `## 图\n\n![](${IMG_B})\n`,
+    );
+    const old = container.querySelector("del.spec-del-block.spec-img-del");
+    expect(old?.querySelector("img")?.getAttribute("src")).toBe(IMG_A);
+    const fresh = old?.nextElementSibling;
+    expect(fresh?.tagName).toBe("IMG");
+    expect(fresh?.getAttribute("src")).toBe(IMG_B);
+    expect([...(fresh?.classList ?? [])]).toEqual(
+      expect.arrayContaining(["spec-ins-block", "spec-img-new"]),
+    );
+    // Both direct children of the `<p>`: `markdown-view.tsx` reads exactly
+    // that relationship to decide whether a paragraph carries an embed card.
+    expect(old?.parentElement?.tagName).toBe("P");
+    expect(fresh?.parentElement).toBe(old?.parentElement);
+  });
+
+  it("does not draw the same image twice when only the alt moved", async () => {
+    const { container } = await renderDiff(
+      `![改前](${IMG_A})\n`,
+      `![改后](${IMG_A})\n`,
+    );
+    expect(container.querySelector(".spec-img-del")).toBeNull();
+    const fresh = container.querySelector("img.spec-ins-block");
+    expect(fresh?.getAttribute("alt")).toBe("改后");
+    expect(fresh?.classList.contains("spec-img-new")).toBe(false);
+  });
+
+  it("leaves the sentence around an inline swap untouched", async () => {
+    const { container } = await renderDiff(
+      `看这张 ![](${IMG_A}) 就懂了。\n`,
+      `看这张 ![](${IMG_B}) 就懂了。\n`,
+    );
+    const paragraph = container.querySelector("p");
+    expect(paragraph?.textContent).toBe("看这张  就懂了。");
+    expect(
+      paragraph
+        ?.querySelector("del.spec-img-del")
+        ?.nextElementSibling?.getAttribute("src"),
+    ).toBe(IMG_B);
+    expect(container.querySelector("ins.spec-ins")).toBeNull();
+  });
+
+  it("gives an added image the block highlight and no half width", async () => {
+    const { container } = await renderDiff(
+      "## 图\n\n正文。\n",
+      `## 图\n\n![](${IMG_B})\n\n正文。\n`,
+    );
+    expect(container.querySelector("p.spec-ins-block img")).not.toBeNull();
+    expect(container.querySelector(".spec-img-new")).toBeNull();
+    expect(container.querySelector(".spec-img-del")).toBeNull();
+  });
+
+  it("shows a removed image in the marker rather than its url", async () => {
+    const { container } = await renderDiff(
+      `## 图\n\n![](${IMG_A})\n\n正文。\n`,
+      "## 图\n\n正文。\n",
+    );
+    const marker = container.querySelector("del.spec-del-block");
+    expect(marker?.textContent).toBe("");
+    expect(marker?.children).toHaveLength(1);
+    expect(marker?.children[0]?.tagName).toBe("IMG");
+    expect(marker?.children[0]?.getAttribute("src")).toBe(IMG_A);
+  });
+
+  it("keeps a swap inside the table cell it happened in", async () => {
+    const { container } = await renderDiff(imageCell(IMG_A), imageCell(IMG_B));
+    const cell = container.querySelector("td:nth-child(2)");
+    const old = cell?.querySelector("del.spec-img-del");
+    expect(old?.querySelector("img")?.getAttribute("src")).toBe(IMG_A);
+    expect(old?.nextElementSibling?.getAttribute("src")).toBe(IMG_B);
+    // The marker never drifts past the table, which is what anchoring on the
+    // `<img>` bought over putting the old image at a top-level seam.
+    expect(container.querySelector("table del.spec-img-del")).not.toBeNull();
+  });
+
+  it("keeps text and image in order inside a removed paragraph", async () => {
+    const { container } = await renderDiff(
+      `## 图\n\n看这张 ![](${IMG_A}) 就懂了。\n\n正文。\n`,
+      "## 图\n\n正文。\n",
+    );
+    const marker = container.querySelector("del.spec-del-block");
+    expect(
+      [...(marker?.childNodes ?? [])].map((node) =>
+        node.nodeType === 1 ? (node as Element).tagName : node.textContent,
+      ),
+    ).toEqual(["看这张 ", "IMG", " 就懂了。"]);
+  });
+
+  it("leaves an image-free removal reading byte for byte as before", async () => {
+    const { container } = await renderDiff(
+      "这里本来是一段文字说明。\n",
+      `![](${IMG_B})\n`,
+    );
+    const marker = container.querySelector("del.spec-del-block");
+    expect(marker?.textContent).toBe("这里本来是一段文字说明。");
+    expect(marker?.querySelector("img")).toBeNull();
   });
 });

@@ -268,6 +268,44 @@ describe("alignGroups", () => {
     expect(mixed.oldOnly).toHaveLength(1);
     expect(mixed.newOnly).toHaveLength(1);
   });
+
+  describe("images (T-223)", () => {
+    // The shape a spec document actually carries: one shared prefix, one
+    // attachment id, one filename.
+    const A = "/api/projects/p/attachments/929/download/toolbar-v1.png";
+    const B = "/api/projects/p/attachments/1401/download/toolbar-v2.png";
+    const C = "/api/projects/p/attachments/930/download/panel-v1.png";
+    const D = "/api/projects/p/attachments/1402/download/panel-v2.png";
+    const img = (url: string) => group("image", `![](${url})`);
+
+    it("pairs a swapped image one for one, sharing no url at all", () => {
+      // 1×1 is its own evidence: the position is unique, so the similarity
+      // floor is never asked — the same reasoning T-142 used for 二 → 三.
+      const result = alignGroups([img("/a.png")], [img("/b.png")]);
+      expect(paired(result)).toEqual([["![](/a.png)", "![](/b.png)"]]);
+    });
+
+    it("keeps two images swapped at once in their own order", () => {
+      const result = alignGroups([img(A), img(C)], [img(B), img(D)]);
+      expect(paired(result)).toEqual([
+        [`![](${A})`, `![](${B})`],
+        [`![](${C})`, `![](${D})`],
+      ]);
+    });
+
+    it("never pairs an image with prose, a fence or a table", () => {
+      for (const other of [
+        para("这里本来是一段文字说明。"),
+        code("```js\na();\n```"),
+        table("甲\n乙"),
+      ]) {
+        const result = alignGroups([other], [img(B)]);
+        expect(result.pairs).toEqual([]);
+        expect(result.oldOnly).toHaveLength(1);
+        expect(result.newOnly).toHaveLength(1);
+      }
+    });
+  });
 });
 
 describe("matchByWords (T-221)", () => {

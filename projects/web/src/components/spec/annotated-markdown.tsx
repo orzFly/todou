@@ -480,7 +480,8 @@ export function AnnotatedMarkdown({
       decorations.spans.length > 0 ||
       decorations.deletions.length > 0 ||
       decorations.blocks.length > 0 ||
-      decorations.tables.length > 0;
+      decorations.tables.length > 0 ||
+      decorations.images.length > 0;
     if (!decorated && !foldUnchanged) return REHYPE_PLUGINS;
     const plugins: NonNullable<RehypePlugins> = [rehypeSourceLines];
     if (decorated) plugins.push([rehypeDecorations, decorations]);

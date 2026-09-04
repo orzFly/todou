@@ -2,6 +2,8 @@ import { type AlignGroup, alignGroups } from "./group-align.ts";
 import type {
   Decorations,
   DeletionDecoration,
+  DeletionPart,
+  ImageSwap,
   SpanDecoration,
   TableOverlay,
 } from "./rehype-decorations.ts";
@@ -49,7 +51,10 @@ function tableBlocks(index: SegmentIndex): Map<number, number> {
  * contiguous in the flattened text, so a group is a slice of it and needs no
  * reassembly. A fence contributes no prose at all, so it comes out of the
  * block table instead and carries its own source, fences and all; `at` is -1
- * because there is no flattened text for it to sit in.
+ * because there is no flattened text for it to sit in. An image is the same
+ * shape of leaf (T-223), and its `at` of -1 earns it the same exemption: the
+ * `leaf.at < 0` guard below keeps a newly added image out of `insert()`, so
+ * it takes the whole-block highlight and never a word-level one.
  *
  * A table is one leaf too (T-221), folding all of its cells together. That is
  * the partition the whole card turns on: a cell competing document-wide loses
@@ -94,10 +99,11 @@ export function leavesOf(index: SegmentIndex): AlignGroup[] {
     });
   }
   for (const block of index.blocks) {
-    if (block.type !== "code" || block.firstGroup < 0) continue;
+    if (block.type !== "code" && block.type !== "image") continue;
+    if (block.firstGroup < 0) continue;
     leaves.push({
       group: block.firstGroup,
-      type: "code",
+      type: block.type,
       text: index.source.slice(block.start, block.end),
       at: -1,
     });
@@ -193,6 +199,7 @@ export function changeDecorations(
   const deletions: DeletionDecoration[] = [];
   const blocks: SourceRange[] = [];
   const tables: TableOverlay[] = [];
+  const images: ImageSwap[] = [];
 
   const insert = (from: number, to: number) => {
     for (const range of sourceRangesOfText(current, from, to)) {
@@ -328,6 +335,21 @@ export function changeDecorations(
       table(matched.old, matched.new);
       continue;
     }
+    // A paired image is a swap: the two sides align by their markdown source,
+    // so a pair that survived the floor is the same picture's slot, whatever
+    // the url now points at (T-223). Only the url decides whether the old one
+    // is worth showing — a changed alt or title leaves the same picture on the
+    // page, and drawing it twice side by side would say nothing.
+    if (matched.old.type === "image" || matched.new.type === "image") {
+      const old = baseline.images.get(matched.old.group);
+      const nu = current.images.get(matched.new.group);
+      if (old === undefined || nu === undefined) continue;
+      images.push({
+        at: { start: nu.start, end: nu.end },
+        old: old.url === nu.url ? null : { url: old.url, alt: old.alt },
+      });
+      continue;
+    }
     words(matched.old.text, matched.new.text, matched.new.at);
   }
 
@@ -359,7 +381,13 @@ export function changeDecorations(
   const seams = new Map(
     alignment.oldOnly.map((entry) => [entry.group.group, entry.newIndex]),
   );
-  const removed: Array<{ order: number; newIndex: number; text: string }> = [];
+  const removed: Array<{
+    order: number;
+    newIndex: number;
+    text: string;
+    /** Empty unless the removed source holds an image (T-223). */
+    parts: DeletionPart[];
+  }> = [];
   const covered = new Set<number>();
   for (const block of blocksWhollyInGroups(baseline, gone)) {
     let seam: number | undefined;
@@ -372,14 +400,23 @@ export function changeDecorations(
       order: block.firstGroup,
       newIndex: seam,
       text: baseline.source.slice(block.start, block.end),
+      parts: partsOf(baseline, { start: block.start, end: block.end }),
     });
   }
   for (const entry of alignment.oldOnly) {
     if (covered.has(entry.group.group)) continue;
+    // Only an image leaf can be located back in the source: a prose leaf's
+    // text is the flattened text, which has no range of its own, so a
+    // deletion made of prose never grows parts and renders as it always did.
+    const image = baseline.images.get(entry.group.group);
     removed.push({
       order: entry.group.group,
       newIndex: entry.newIndex,
       text: entry.group.text,
+      parts:
+        image === undefined
+          ? []
+          : partsOf(baseline, { start: image.start, end: image.end }),
     });
   }
   removed.sort((a, b) => a.order - b.order);
@@ -390,9 +427,38 @@ export function changeDecorations(
       at: seamAt(current, newLeaves, cluster.newIndex),
       text,
       block: true,
+      ...(cluster.parts === null ? {} : { parts: cluster.parts }),
     });
   }
-  return { spans, deletions, blocks, tables };
+  return { spans, deletions, blocks, tables, images };
+}
+
+/**
+ * A removed source range cut around the images inside it (T-223). A marker is
+ * the only place removed content appears at all (T-209), and quoting
+ * `![](/api/…/screenshot.png)` at a reader is quoting a url, not showing them
+ * what went — so the images become images and the source between them stays
+ * source. Empty when the range holds no image, which is the signal to render
+ * the marker byte for byte the way it always was.
+ */
+function partsOf(index: SegmentIndex, range: SourceRange): DeletionPart[] {
+  const inside = [...index.images.values()]
+    .filter((image) => image.start >= range.start && image.end <= range.end)
+    .sort((a, b) => a.start - b.start);
+  if (inside.length === 0) return [];
+  const parts: DeletionPart[] = [];
+  let at = range.start;
+  for (const image of inside) {
+    if (image.start > at) {
+      parts.push({ kind: "text", text: index.source.slice(at, image.start) });
+    }
+    parts.push({ kind: "image", url: image.url, alt: image.alt });
+    at = image.end;
+  }
+  if (at < range.end) {
+    parts.push({ kind: "text", text: index.source.slice(at, range.end) });
+  }
+  return parts;
 }
 
 /**
@@ -419,18 +485,49 @@ function groupsOf(
   return groups;
 }
 
-/** Unmatched old blocks that sit at the same seam, merged into one marker. */
+/**
+ * Unmatched old blocks that sit at the same seam, merged into one marker.
+ *
+ * `parts` is null unless some entry in the cluster holds an image, which is
+ * what keeps every image-free marker on the byte-for-byte path it has always
+ * had (T-223). Once one entry has images the whole cluster is cut into parts,
+ * because the marker renders as one thing: the entries that have none
+ * contribute their source as a single text part, joined by the same newline
+ * `texts` is joined by.
+ */
 function clusterDeletions(
-  removed: Array<{ newIndex: number; text: string }>,
-): Array<{ newIndex: number; texts: string[] }> {
-  const clusters: Array<{ newIndex: number; texts: string[] }> = [];
+  removed: Array<{ newIndex: number; text: string; parts: DeletionPart[] }>,
+): Array<{ newIndex: number; texts: string[]; parts: DeletionPart[] | null }> {
+  const clusters: Array<{
+    newIndex: number;
+    texts: string[];
+    segments: DeletionPart[];
+    withImage: boolean;
+  }> = [];
   for (const entry of removed) {
-    const last = clusters.at(-1);
-    if (last !== undefined && last.newIndex === entry.newIndex) {
-      last.texts.push(entry.text);
-    } else clusters.push({ newIndex: entry.newIndex, texts: [entry.text] });
+    let last = clusters.at(-1);
+    if (last === undefined || last.newIndex !== entry.newIndex) {
+      last = {
+        newIndex: entry.newIndex,
+        texts: [],
+        segments: [],
+        withImage: false,
+      };
+      clusters.push(last);
+    } else last.segments.push({ kind: "text", text: "\n" });
+    last.texts.push(entry.text);
+    last.segments.push(
+      ...(entry.parts.length > 0
+        ? entry.parts
+        : [{ kind: "text" as const, text: entry.text }]),
+    );
+    last.withImage ||= entry.parts.length > 0;
   }
-  return clusters;
+  return clusters.map(({ newIndex, texts, segments, withImage }) => ({
+    newIndex,
+    texts,
+    parts: withImage ? segments : null,
+  }));
 }
 
 /**
@@ -494,5 +591,6 @@ export function mergeDecorations(
     deletions: changes.deletions,
     blocks: changes.blocks,
     tables: changes.tables,
+    images: changes.images,
   };
 }

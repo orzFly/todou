@@ -11,9 +11,9 @@ import type { LineRange } from "./spec-changes.ts";
  * never straddles the boundary. Emphasis, links and the like are NOT on
  * this list: `a **b** c` is one flow and reads as "a b c".
  *
- * A fence is a leaf too and owns a group of its own (T-211), but it holds
- * no prose and so is handled apart from these: its group never reaches the
- * flattened text.
+ * A fence is a leaf too and owns a group of its own (T-211), as is an image
+ * since T-223, but they hold no prose and so are handled apart from these:
+ * their groups never reach the flattened text.
  */
 const LEAF_BLOCKS = new Set(["paragraph", "heading", "tableCell"]);
 
@@ -22,7 +22,8 @@ const LEAF_BLOCKS = new Set(["paragraph", "heading", "tableCell"]);
  * on the list, and since T-211 it is a leaf like any other: its whole source
  * — fences included — is the text it aligns by, so a fence being added or
  * removed is decided the same way a paragraph is, and a container holding
- * one can be judged new or gone in its entirety.
+ * one can be judged new or gone in its entirety. `image` joined it on the
+ * same terms in T-223.
  */
 const SOURCE_BLOCKS = new Set([
   "paragraph",
@@ -34,6 +35,7 @@ const SOURCE_BLOCKS = new Set([
   "list",
   "blockquote",
   "code",
+  "image",
 ]);
 
 const processor = unified().use(remarkParse).use(remarkGfm);
@@ -69,7 +71,24 @@ export type SourceBlockType =
   | "listItem"
   | "list"
   | "blockquote"
-  | "code";
+  | "code"
+  | "image";
+
+/**
+ * An image node, keyed by the leaf group it owns (T-223). What mdast knows
+ * about an image stops here: everything downstream takes the url and the
+ * source range from this table rather than parsing `![alt](url)` a second
+ * time, which a regex gets wrong the moment a title, an angle-bracketed url
+ * or a parenthesis inside one turns up.
+ */
+export type SourceImage = {
+  url: string;
+  alt: string;
+  title: string | null;
+  /** Absolute source offsets, half-open. */
+  start: number;
+  end: number;
+};
 
 /** One block of structure, for deciding what counts as "new whole" (T-158). */
 export type SourceBlock = {
@@ -105,6 +124,8 @@ export type SegmentIndex = {
   blocks: SourceBlock[];
   /** The leaf block each group came from, indexed by group number. */
   groupTypes: SourceBlockType[];
+  /** Every image, by the leaf group it owns (T-223). */
+  images: Map<number, SourceImage>;
 };
 
 function lineStartsOf(source: string): number[] {
@@ -130,6 +151,7 @@ export function buildSegmentIndex(source: string): SegmentIndex {
   const segments: SourceSegment[] = [];
   const blocks: SourceBlock[] = [];
   const groupTypes: SourceBlockType[] = [];
+  const images = new Map<number, SourceImage>();
   let text = "";
   let groups = 0;
   let group = -1;
@@ -184,6 +206,32 @@ export function buildSegmentIndex(source: string): SegmentIndex {
       }
       return;
     }
+    // An image is a leaf on exactly the fence's terms (T-223). It holds no
+    // prose either — url, alt and title are attributes, not children — so it
+    // owns a group the alignment can pair, insert or remove whole while
+    // nothing of it enters `text` or `segments`. Feeding `![](…)` to the
+    // flattened text instead would paint word-level marks onto markdown
+    // syntax, and would throw `sourceOffsetOfRendered` off by the whole
+    // construct, since an `<img>` contributes no rendered text at all.
+    // `imageReference` stays out: resolving it means reading the definition
+    // table, which is a different job.
+    if (node.type === "image") {
+      const index = pushBlock(node, "image");
+      const block = index === null ? undefined : blocks[index];
+      if (block === undefined) return;
+      const own = groups++;
+      groupTypes[own] = "image";
+      block.firstGroup = own;
+      block.lastGroup = own;
+      images.set(own, {
+        url: node.url,
+        alt: node.alt ?? "",
+        title: node.title ?? null,
+        start: block.start,
+        end: block.end,
+      });
+      return;
+    }
     if (node.type === "text" || node.type === "inlineCode") {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
@@ -234,6 +282,7 @@ export function buildSegmentIndex(source: string): SegmentIndex {
     lineStarts: lineStartsOf(source),
     blocks,
     groupTypes,
+    images,
   };
 }
 
@@ -371,15 +420,23 @@ function outermost(index: SegmentIndex, qualifies: boolean[]): SourceBlock[] {
 }
 
 /**
+ * Leaves that hold no prose and yet vote: they were aligned in their own
+ * right, so they can say whether the block around them is new or gone —
+ * T-211's fence, and T-223's image.
+ */
+const VOTING_EMPTY_LEAVES = new Set<SourceBlockType>(["code", "image"]);
+
+/**
  * Outermost blocks every one of whose leaf groups is in `groups`. This is the
  * evidence the alignment carries (T-163): a group nothing on the old side
  * matched is new, and a block built only out of such groups was born whole.
  *
  * Groups holding no prose abstain rather than veto — an empty table cell says
- * nothing about whether its table is new. A fence's group is the exception it
- * used to be part of: it holds no prose either, but it is a leaf that was
- * aligned, so it votes, and that is what lets a list item carrying a code
- * block be taken or given up in one piece (T-211).
+ * nothing about whether its table is new. `VOTING_EMPTY_LEAVES` is the
+ * exception: those hold no prose either, but each is a leaf that was aligned,
+ * so it votes, and that is what lets a list item carrying a code block be
+ * taken or given up in one piece (T-211), and a paragraph holding nothing but
+ * an image be seen at all (T-223).
  */
 export function blocksWhollyInGroups(
   index: SegmentIndex,
@@ -390,7 +447,11 @@ export function blocksWhollyInGroups(
     if (block.opaque || block.firstGroup < 0) return false;
     let any = false;
     for (let g = block.firstGroup; g <= block.lastGroup; g++) {
-      if (index.groupTypes[g] !== "code" && groupRanges[g] === undefined) {
+      const type = index.groupTypes[g];
+      if (
+        (type === undefined || !VOTING_EMPTY_LEAVES.has(type)) &&
+        groupRanges[g] === undefined
+      ) {
         continue;
       }
       if (!groups.has(g)) return false;

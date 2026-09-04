@@ -22,6 +22,7 @@ import {
   previewKind,
 } from "@/lib/attachment-preview.ts";
 import { attachmentAnchorHref, attachmentHref } from "@/lib/attachment-refs.ts";
+import { cn } from "@/lib/utils.ts";
 
 /** Modifier-clicks (new tab, forced download) keep native link behavior. */
 function isPlainLeftClick(e: MouseEvent): boolean {
@@ -251,12 +252,19 @@ export function AttachmentInlineImage({
   attachmentId,
   src,
   alt,
+  className,
 }: {
   slug: string;
   issueNumber: number;
   attachmentId: number;
   src: string;
   alt: string;
+  /**
+   * Classes the markdown pipeline put on the `<img>` before this component
+   * replaced it. Dropping them would drop the spec diff's decorations, which
+   * are painted on the element itself rather than on a wrapper (T-223).
+   */
+  className?: string;
 }) {
   const attachments = useQuery(attachmentsQuery(slug, issueNumber));
   const [viewer, setViewer] = useState<ViewerState | null>(null);
@@ -272,7 +280,7 @@ export function AttachmentInlineImage({
       <img
         src={src}
         alt={alt}
-        className="cursor-zoom-in"
+        className={cn("cursor-zoom-in", className)}
         onClick={() =>
           setViewer(
             viewerStateFor(
