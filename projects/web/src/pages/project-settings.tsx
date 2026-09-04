@@ -36,6 +36,7 @@ import {
 import { referenceConfigQuery } from "@/api/references.ts";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
+import { AddAgentPicker } from "@/components/shared/add-agent-picker.tsx";
 import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -430,7 +431,7 @@ export function ReferencesSection({ slug }: { slug: string }) {
   );
 }
 
-function MembersSection({ slug }: { slug: string }) {
+export function MembersSection({ slug }: { slug: string }) {
   const members = useSuspenseQuery(membersQuery(slug));
   const agents = useSuspenseQuery(agentsQuery);
   const queryClient = useQueryClient();
@@ -450,9 +451,6 @@ function MembersSection({ slug }: { slug: string }) {
   });
 
   const memberIds = new Set(members.data.map((m) => m.user.id));
-  const addableAgents = agents.data.filter(
-    (a) => !memberIds.has(a.id) && a.disabled_at === null,
-  );
 
   return (
     <section className="space-y-3">
@@ -509,24 +507,12 @@ function MembersSection({ slug }: { slug: string }) {
           </TableBody>
         </Table>
       </div>
-      {addableAgents.length > 0 && (
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Add agent:</span>
-          {addableAgents.map((agent) => (
-            <Button
-              key={agent.id}
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                setRole.mutate({ userId: agent.id, role: "writer" })
-              }
-            >
-              <PlusIcon className="size-3.5" /> {displayNameOf(agent)}
-              <span className="text-muted-foreground">@{agent.login}</span>
-            </Button>
-          ))}
-        </div>
-      )}
+      <AddAgentPicker
+        agents={agents.data}
+        memberIds={memberIds}
+        busy={setRole.isPending}
+        onAdd={(agent) => setRole.mutate({ userId: agent.id, role: "writer" })}
+      />
     </section>
   );
 }
