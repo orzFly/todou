@@ -1,15 +1,23 @@
 import type {
   Agent,
   AgentCreateInput,
+  AgentMemberships,
   AgentUpdateInput,
+  MemberRole,
+  ProjectBrief,
   TokenCreated,
   TokenCreateInput,
   TokenListItem,
 } from "@todou/shared";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
-import { tokens, users } from "../db/system-schema.ts";
+import {
+  projectMembers,
+  projects,
+  tokens,
+  users,
+} from "../db/system-schema.ts";
 import { ConflictError, ForbiddenError, NotFoundError } from "../errors.ts";
 import { deleteAvatar, setAvatar, updateProfile } from "./profile.ts";
 import { issueToken, listTokens, revokeToken } from "./tokens.ts";
@@ -210,4 +218,93 @@ export async function revokeAgentToken(
 ): Promise<void> {
   const agent = await loadManagedAgent(ctx, actor, agentId);
   await revokeToken(ctx.router.system(), agent.id, tokenId);
+}
+
+/**
+ * Display order, not a permission order — access.ts keeps its own RANK
+ * ascending by privilege for comparisons, and does not export it.
+ */
+const ROLE_ORDER: Record<MemberRole, number> = {
+  admin: 0,
+  writer: 1,
+  reader: 2,
+};
+
+const toBrief = (p: typeof projects.$inferSelect): ProjectBrief => ({
+  id: p.id,
+  slug: p.slug,
+  name: p.name,
+});
+
+/**
+ * Every membership of every agent I own, listed whole — including projects I
+ * cannot read myself. That leaks nothing: as owner I may issue the agent a
+ * PAT at will and enumerate its projects as the agent, so hiding them would
+ * only make "how many projects is this agent in" answer wrongly here. Writes
+ * get no such reprieve; they stay behind each project's own admin check.
+ *
+ * Sorted server-side because the column truncates to a few badges: the cut
+ * has to be deterministic, with the most privileged rows above it.
+ */
+export async function listAgentMemberships(
+  ctx: AppContext,
+  actor: UserRow,
+): Promise<AgentMemberships> {
+  const system = ctx.router.system();
+
+  const mine = await system
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.kind, "machine"), eq(users.ownerId, actor.id)));
+  const agentIds = mine.map((r) => r.id);
+
+  const rows =
+    agentIds.length === 0
+      ? []
+      : await system
+          .select({
+            agentId: projectMembers.userId,
+            role: projectMembers.role,
+            createdAt: projectMembers.createdAt,
+            project: projects,
+          })
+          .from(projectMembers)
+          .innerJoin(projects, eq(projects.id, projectMembers.projectId))
+          .where(inArray(projectMembers.userId, agentIds));
+
+  // An instance admin is admin in every project without holding a membership
+  // row anywhere (projectRoleOf's rule), so the candidate set is the table.
+  const manageable = actor.isInstanceAdmin
+    ? await system.select().from(projects)
+    : (
+        await system
+          .select({ project: projects })
+          .from(projectMembers)
+          .innerJoin(projects, eq(projects.id, projectMembers.projectId))
+          .where(
+            and(
+              eq(projectMembers.userId, actor.id),
+              eq(projectMembers.role, "admin"),
+            ),
+          )
+      ).map((r) => r.project);
+
+  return {
+    memberships: rows
+      .map((r) => ({
+        agent_id: r.agentId,
+        project: toBrief(r.project),
+        role: r.role,
+        created_at: r.createdAt.toISOString(),
+      }))
+      .sort(
+        (a, b) =>
+          a.agent_id - b.agent_id ||
+          ROLE_ORDER[a.role] - ROLE_ORDER[b.role] ||
+          a.project.slug.localeCompare(b.project.slug),
+      ),
+    manageable_projects: manageable
+      .map(toBrief)
+      .sort((a, b) => a.slug.localeCompare(b.slug)),
+  };
 }

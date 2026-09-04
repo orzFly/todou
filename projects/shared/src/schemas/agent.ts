@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { Timestamp } from "./common.ts";
+import { Id, Timestamp } from "./common.ts";
+import { MemberRole, ProjectBrief } from "./project.ts";
 import { Login, User } from "./user.ts";
 
 /** A machine user. Owned by a human; authenticates only via PAT. */
@@ -24,3 +25,21 @@ export const AgentListQuery = z.object({
   owner: z.enum(["me", "all"]).default("me"),
 });
 export type AgentListQuery = z.infer<typeof AgentListQuery>;
+
+export const AgentMembership = z.object({
+  agent_id: Id,
+  project: ProjectBrief,
+  role: MemberRole,
+  created_at: Timestamp,
+});
+export type AgentMembership = z.infer<typeof AgentMembership>;
+
+export const AgentMemberships = z.object({
+  memberships: z.array(AgentMembership),
+  /**
+   * The projects the caller administers: both the candidate set for joining
+   * and the test for which of the rows above may be edited.
+   */
+  manageable_projects: z.array(ProjectBrief),
+});
+export type AgentMemberships = z.infer<typeof AgentMemberships>;

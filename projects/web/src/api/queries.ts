@@ -109,6 +109,14 @@ export const agentsQuery = queryOptions({
   queryFn: () => api.listAgents(),
 });
 
+// One call covers every agent, so the Projects column shares a single cache
+// entry across all the rows instead of a query per agent.
+export const agentMembershipsQuery = queryOptions({
+  queryKey: ["agent-memberships"],
+  queryFn: () => api.listAgentMemberships(),
+  staleTime: METADATA_STALE_MS,
+});
+
 // A pending CLI authorization expires in 15 minutes and disappears the
 // moment it is answered, so nothing here is worth caching or retrying.
 export const cliAuthRequestQuery = (code: string) =>

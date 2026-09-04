@@ -96,7 +96,11 @@ export function invalidationsFor(
       // A membership change can grant or revoke a whole project — the
       // user-level stream delivers your own member events even for projects
       // outside the visible set, so the switcher updates live (T-122).
-      return [refetch(["members", slug]), refetch(["projects"])];
+      return [
+        refetch(["members", slug]),
+        refetch(["projects"]),
+        refetch(["agent-memberships"]),
+      ];
     case "project":
       return [refetch(["project", slug]), refetch(["projects"])];
   }
@@ -175,6 +179,7 @@ export function reconnectInvalidations(): QueryKeyLike[] {
     ["statuses"],
     ["labels"],
     ["members"],
+    ["agent-memberships"],
     ["project"],
     ["projects"],
     ["inbox"],

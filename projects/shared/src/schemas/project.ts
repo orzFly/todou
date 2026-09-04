@@ -41,6 +41,10 @@ export const Project = z.object({
 });
 export type Project = z.infer<typeof Project>;
 
+/** Just enough of a project to name and link it from another entity's view. */
+export const ProjectBrief = Project.pick({ id: true, slug: true, name: true });
+export type ProjectBrief = z.infer<typeof ProjectBrief>;
+
 export const ProjectCreateInput = z.object({
   slug: ProjectSlug,
   name: z.string().min(1).max(200),

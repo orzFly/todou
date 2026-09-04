@@ -1,5 +1,6 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
+  AgentMemberships,
   BulkReadInput,
   IssueReadInput,
   Me,
@@ -14,6 +15,7 @@ import {
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
 import { ForbiddenError, ValidationFailedError } from "../errors.ts";
+import { listAgentMemberships } from "../services/agents.ts";
 import { readPrefs, updatePrefs } from "../services/prefs.ts";
 import { deleteAvatar, setAvatar, updateProfile } from "../services/profile.ts";
 import { bulkMarkRead, markIssueRead } from "../services/reads.ts";
@@ -190,6 +192,23 @@ const referenceDirectoryRoute = createRoute({
   },
 });
 
+// Under /me rather than /agents/memberships: agentRoutes() already owns
+// `/{id}`, so a sibling static segment would only avoid a 400 from
+// `z.coerce.number()` by relying on Hono matching static before parameter.
+const agentMembershipsRoute = createRoute({
+  method: "get",
+  path: "/me/agent-memberships",
+  summary:
+    "Project memberships of every agent I own, plus the projects I " +
+    "administer (the set that decides which of them I may change)",
+  responses: {
+    200: {
+      description: "Memberships, and the projects I administer",
+      content: { "application/json": { schema: AgentMemberships } },
+    },
+  },
+});
+
 const revokeTokenRoute = createRoute({
   method: "delete",
   path: "/me/tokens/{id}",
@@ -284,6 +303,11 @@ export function meRoutes() {
   app.openapi(referenceDirectoryRoute, async (c) => {
     const ctx = c.get("appCtx");
     return c.json(await referenceDirectory(ctx, c.get("user")), 200);
+  });
+
+  app.openapi(agentMembershipsRoute, async (c) => {
+    const ctx = c.get("appCtx");
+    return c.json(await listAgentMemberships(ctx, c.get("user")), 200);
   });
 
   app.openapi(revokeTokenRoute, async (c) => {

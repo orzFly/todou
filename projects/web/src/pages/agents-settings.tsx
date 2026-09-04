@@ -16,6 +16,7 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 import { agentsQuery, api } from "@/api/queries.ts";
+import { AgentProjectsCell } from "@/components/shared/agent-projects-dialog.tsx";
 import { AvatarEditor } from "@/components/shared/avatar-editor.tsx";
 import {
   expiresAtFrom,
@@ -105,6 +106,7 @@ export function AgentsSettingsPage() {
                   <TableRow>
                     <TableHead>Agent</TableHead>
                     <TableHead>Handle</TableHead>
+                    <TableHead>Projects</TableHead>
                     <TableHead className="w-56" />
                   </TableRow>
                 </TableHeader>
@@ -189,6 +191,9 @@ function AgentRow({ agent }: { agent: Agent }) {
       </TableCell>
       <TableCell>
         <span className="text-sm text-muted-foreground">@{agent.login}</span>
+      </TableCell>
+      <TableCell>
+        <AgentProjectsCell agent={agent} />
       </TableCell>
       <TableCell>
         <div className="flex justify-end gap-2">

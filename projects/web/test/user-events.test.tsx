@@ -52,12 +52,14 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       { key: ["issues", "p"], scope: "refetch" },
     ]);
     // A member event can be the user's own grant or revocation, so the
-    // project list goes stale with it (T-122).
+    // project list goes stale with it (T-122) — as does the agent Projects
+    // column, whose rows are memberships of exactly this kind (T-227).
     expect(
       invalidationsFor({ entity: "member", id: 1, action: "deleted" }, "p"),
     ).toEqual([
       { key: ["members", "p"], scope: "refetch" },
       { key: ["projects"], scope: "refetch" },
+      { key: ["agent-memberships"], scope: "refetch" },
     ]);
   });
 

@@ -7,6 +7,7 @@ import type {
   ActivityPage,
   Agent,
   AgentCreateInput,
+  AgentMemberships,
   AgentUpdateInput,
   AnswersSubmitInput,
   Attachment,
@@ -401,6 +402,8 @@ export class TodouClient {
     this.request<TokenListItem[]>("GET", `/agents/${id}/tokens`);
   revokeAgentToken = (id: number, tokenId: number) =>
     this.request<void>("DELETE", `/agents/${id}/tokens/${tokenId}`);
+  listAgentMemberships = () =>
+    this.request<AgentMemberships>("GET", "/me/agent-memberships");
 
   // — projects —
   listProjects = () => this.request<Project[]>("GET", "/projects");
