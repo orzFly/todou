@@ -262,7 +262,7 @@ function renderBox(
   const Boxes = () => (
     <>
       <SearchBox slug="todou" onEscape={onEscape} />
-      {boxes > 1 && <SearchBox slug="todou" listAlign="stretch" />}
+      {boxes > 1 && <SearchBox slug="todou" listAlign="start" />}
     </>
   );
   const indexRoute = createRoute({

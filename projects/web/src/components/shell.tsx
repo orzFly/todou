@@ -61,10 +61,12 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   return (
     <div className="min-h-dvh bg-background">
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4">
-          {/* Grows so the account cluster stays pinned right whatever the
-              project name and the nav come to. */}
-          <div className="flex min-w-0 flex-1 items-center gap-2">
+        {/* `relative` is the anchor the collapsed search expands against. */}
+        <div className="relative mx-auto flex h-14 max-w-6xl items-center gap-2 px-4">
+          {/* The only cluster that may give ground: `min-w-0` lets the project
+              name truncate, and `overflow-hidden` makes what is left over
+              clip rather than lie on top of the search box. */}
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
             <Link
               to="/projects"
               className="flex shrink-0 items-center gap-2 font-semibold"
@@ -89,13 +91,21 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
               </>
             )}
           </div>
-          <div className="flex shrink-0 items-center gap-1">
-            {/* Wide screens only. Narrower than `md` the header already has
-                a second row, and the box moves down to it rather than
-                squeezing the project name out of this one. */}
-            {slug != null && (
-              <SearchBox slug={slug} className="hidden w-48 md:block" />
-            )}
+          {/* Wide screens only. Narrower than `md` the header already has a
+              second row, and the box moves down to it rather than squeezing
+              the project name out of this one. A fixed width per breakpoint,
+              never shrinking, is what holds it still. */}
+          {slug != null && (
+            <SearchBox
+              slug={slug}
+              className="hidden w-40 shrink-0 md:block lg:w-64 xl:w-80"
+            />
+          )}
+          {/* No `min-w-0` here, deliberately: this cluster stops at its
+              min-content width and the buttons are never squeezed. Both
+              flanks being `flex-1` with the same floor is what leaves the
+              box in the middle of the row. */}
+          <div className="flex flex-1 items-center justify-end gap-1">
             {slug != null && <NewIssueButton slug={slug} />}
             <InboxButton />
             <ThemeMenu />
@@ -137,7 +147,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
             <SearchBox
               slug={slug}
               className="max-w-48 flex-1 sm:max-w-none"
-              listAlign="stretch"
+              listAlign="start"
             />
           </div>
         )}

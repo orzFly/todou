@@ -51,14 +51,18 @@ const OPTION = "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm";
 export function SearchBox({
   slug,
   className,
-  listAlign = "end",
+  listAlign = "centered",
   autoFocus = false,
   onEscape,
 }: {
   slug: string;
   className?: string;
-  /** `stretch` matches the box's own width — for the narrow header row, where it is `flex-1`. */
-  listAlign?: "end" | "stretch";
+  /**
+   * Where the offer grows from: `centered` about the box, for a box that
+   * sits in the middle of its row; `start` from the box's left edge, for one
+   * that starts at the edge of the screen.
+   */
+  listAlign?: "centered" | "start";
   /** Takes focus on mount, for a host that opened this box to be typed in. */
   autoFocus?: boolean;
   /**
@@ -262,15 +266,18 @@ export function SearchBox({
           // listbox is gone before the click arrives.
           onMouseDown={(e) => e.preventDefault()}
           className={cn(
-            // Anchored right and grown leftward, never `left-0`: a min-width
-            // wider than the box would resolve the over-constraint by
-            // ignoring `right` and running off the edge of the screen.
-            "absolute top-full right-0 z-50 mt-1 min-w-80 max-w-[calc(100vw-2rem)] rounded-lg border bg-popover p-1 shadow-lg ring-1 ring-foreground/5",
-            // On the narrow row the box is what there is room for; the panel
-            // takes its width and stops. `min-w-80` still floors it, because
-            // that row can squeeze the box down to ~150px and a title has to
-            // survive (T-215).
-            listAlign === "stretch" ? "w-full" : "max-w-[28rem]",
+            "absolute top-full z-50 mt-1 max-w-[calc(100vw-2rem)] rounded-lg border bg-popover p-1 shadow-lg ring-1 ring-foreground/5",
+            listAlign === "start"
+              ? // The box starts at the edge of the screen, so the panel
+                // takes its width and stops. `min-w-80` still floors it,
+                // because the narrowest phone squeezes the box down to
+                // ~250px and a title has to survive (T-215).
+                "left-0 w-full min-w-80"
+              : // Grown about the box's own centre. Anchoring an edge would
+                // read as lopsided under a box that is itself centred in the
+                // row, and a min-width wider than the box would resolve the
+                // over-constraint by running off the side of the screen.
+                "left-1/2 w-[28rem] -translate-x-1/2",
           )}
         >
           {rows.map((row, idx) => {
