@@ -42,10 +42,17 @@ const AUTHOR = {
 
 // design.md is edited by v2, stable.md is carried over untouched, and
 // fresh.md appears in v2 — one file per rendered-mode matrix column.
+// design.md changes three of its four paragraphs, so the counter has more
+// than one stop to count; the untouched paragraph neighbours a changed one
+// and therefore never folds away.
 const BODIES: Record<number, Record<string, string>> = {
-  1: { "design.md": "line one\n", "stable.md": "unchanged\n" },
+  1: {
+    "design.md": "line one\n\nline two\n\nline three\n\nline four\n",
+    "stable.md": "unchanged\n",
+  },
   2: {
-    "design.md": "line one, rewritten\n",
+    "design.md":
+      "line one, rewritten\n\nline two\n\nline three, rewritten\n\nline four, rewritten\n",
     "stable.md": "unchanged\n",
     "fresh.md": "brand new\n",
   },
@@ -152,6 +159,27 @@ const jumpButtons = (view: ReturnType<typeof renderSpecView>) => ({
   next: view.getByRole("button", { name: /^next / }),
 });
 
+const countSlot = (view: { container: HTMLElement }) =>
+  view.container.querySelector('[data-toolbar-slot="change-count"]');
+
+/**
+ * Place the changed blocks and let the counter re-measure. happy-dom lays
+ * nothing out, so every rect is zero until a test says otherwise; the viewport
+ * is 768 tall, which puts the pivot at 384 and its tolerance band at 376–392.
+ */
+function stubTops(view: { container: HTMLElement }, tops: number[]): void {
+  const els = [
+    ...view.container.querySelectorAll<HTMLElement>(
+      ".spec-changed, .spec-ins-block",
+    ),
+  ];
+  els.forEach((el, i) => {
+    el.getBoundingClientRect = () =>
+      ({ top: tops[i] ?? 0, height: 20 }) as DOMRect;
+  });
+  fireEvent.scroll(window);
+}
+
 /** The columns of the T-190 state matrix, as T-192 re-cut them. */
 const STATES: [label: string, search: string][] = [
   ["R2 · modified file", "?v=2&file=design.md"],
@@ -179,6 +207,7 @@ const SLOTS_COMPARING = [
   "baseline",
   "display-toggle",
   "prev-change",
+  "change-count",
   "next-change",
 ];
 
@@ -431,6 +460,164 @@ describe("spec toolbar fixed slots (T-190)", () => {
     expect(next.hasAttribute("disabled")).toBe(false);
     expect(prev.getAttribute("aria-label")).toBe("previous file diff");
     expect(view.container.querySelectorAll("[data-file-diff]")).toHaveLength(2);
+  });
+
+  it("counts the change ↓ would step to (T-224)", async () => {
+    const view = await toolbar("?v=2&file=design.md");
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("3/3"));
+
+    // Every block below the pivot: ↓ lands on the first, so the reader is on
+    // none of them yet.
+    stubTops(view, [500, 700, 900]);
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("0/3"));
+
+    stubTops(view, [100, 500, 900]);
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("1/3"));
+
+    stubTops(view, [-100, 200, 900]);
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("2/3"));
+    expect(countSlot(view)?.getAttribute("title")).toBe("change 2 of 3");
+  });
+
+  it("takes the total from the DOM, not from the changed ranges (T-224)", async () => {
+    // T-223 turns a replaced image into a stop of its own, and any count
+    // derived from the ranges would keep saying 3 while ↓ visits four.
+    const view = await toolbar("?v=2&file=design.md");
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("3/3"));
+    const extra = document.createElement("p");
+    extra.className = "spec-ins-block";
+    view.container.querySelector("main")?.append(extra);
+    stubTops(view, [100, 500, 900, 950]);
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("1/4"));
+  });
+
+  it("counts a mark nested in another mark as one stop (T-223, T-224)", async () => {
+    // A swapped image marks the <img> and the paragraph holding it both, and
+    // ↑↓ have always stepped over blocks — the pair is one place to look. Left
+    // in, it would stop the reader twice within one paragraph and inflate the
+    // total against what the reader can see.
+    const view = await toolbar("?v=2&file=design.md");
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("3/3"));
+    const blocks = view.container.querySelectorAll("p.spec-changed");
+    const host = blocks[blocks.length - 1];
+    if (host === undefined) throw new Error("no changed block to nest inside");
+    const nested = document.createElement("img");
+    nested.className = "spec-ins-block";
+    host.append(nested);
+    stubTops(view, [100, 500, 900]);
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("1/3"));
+  });
+
+  it("counts files where ↑↓ step over files (T-224)", async () => {
+    const view = await toolbar("?v=2&file=stable.md");
+    // stable.md is not one of the two changed files, so ↓ goes to the first.
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("0/2"));
+    expect(countSlot(view)?.getAttribute("title")).toBe("changed file 0 of 2");
+  });
+
+  it("counts whole file diffs in source-diff mode (T-224)", async () => {
+    const view = await toolbar("?v=2&compare=1");
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("2/2"));
+    expect(countSlot(view)?.getAttribute("title")).toBe("file diff 2 of 2");
+  });
+
+  it("shows the arrows' own reason where there is nothing to count (T-224)", async () => {
+    const view = await toolbar("?v=1");
+    expect(countSlot(view)?.textContent).toBe("–");
+    expect(countSlot(view)?.getAttribute("title")).toContain("first version");
+    view.unmount();
+    vi.restoreAllMocks();
+
+    const comparing = await toolbar("?v=2&file=design.md");
+    fireEvent.click(compareToggle(comparing));
+    await waitFor(() => expect(countSlot(comparing)?.textContent).toBe("–"));
+    expect(countSlot(comparing)?.getAttribute("title")).toContain(
+      "Turn comparing on",
+    );
+  });
+
+  it("steps with n and p exactly as the arrows do (T-224)", async () => {
+    // stable.md is outside the rail, so the step leaves the file and lands in
+    // the URL — the one move a suite can compare without geometry.
+    const byKey = await toolbar("?v=2&file=stable.md");
+    fireEvent.keyDown(document.body, { key: "n" });
+    await waitFor(() =>
+      expect(byKey.router.state.location.search).toMatchObject({
+        file: "design.md",
+      }),
+    );
+    byKey.unmount();
+    vi.restoreAllMocks();
+
+    const byClick = await toolbar("?v=2&file=stable.md");
+    fireEvent.click(jumpButtons(byClick).next);
+    await waitFor(() =>
+      expect(byClick.router.state.location.search).toMatchObject({
+        file: "design.md",
+      }),
+    );
+    byClick.unmount();
+    vi.restoreAllMocks();
+
+    const backwards = await toolbar("?v=2&file=stable.md");
+    fireEvent.keyDown(document.body, { key: "p" });
+    await waitFor(() =>
+      expect(backwards.router.state.location.search).toMatchObject({
+        file: "fresh.md",
+      }),
+    );
+  });
+
+  it("leaves n and p alone while the reader is typing (T-224)", async () => {
+    const view = await toolbar("?v=2&file=stable.md");
+    const input = document.createElement("input");
+    document.body.append(input);
+    fireEvent.keyDown(input, { key: "n" });
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("0/2"));
+    expect(view.router.state.location.search).toMatchObject({
+      file: "stable.md",
+    });
+    input.remove();
+  });
+
+  it("leaves n and p alone inside a dialog (T-224)", async () => {
+    // Radix runs its own typeahead over the same letters, and the reader who
+    // opened the dialog is not asking the page behind it to scroll.
+    const view = await toolbar("?v=2&file=stable.md");
+    fireEvent.click(view.getByRole("button", { name: /finish review/i }));
+    const dialog = await screen.findByRole("dialog");
+    const target = within(dialog).getAllByRole("button")[0];
+    if (target === undefined) throw new Error("the dialog has no button");
+    fireEvent.keyDown(target, { key: "n" });
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("0/2"));
+    expect(view.router.state.location.search).toMatchObject({
+      file: "stable.md",
+    });
+  });
+
+  it("keeps n and p as disabled as the arrows are (T-224)", async () => {
+    const view = await toolbar("?v=1");
+    const before = view.router.state.location.search;
+    fireEvent.keyDown(document.body, { key: "n" });
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("–"));
+    expect(view.router.state.location.search).toEqual(before);
+  });
+
+  it("says on the arrows which keys drive them (T-224)", async () => {
+    const view = await toolbar("?v=2&file=design.md");
+    const { prev, next } = jumpButtons(view);
+    expect(prev.getAttribute("aria-keyshortcuts")).toBe("p");
+    expect(next.getAttribute("aria-keyshortcuts")).toBe("n");
+    expect(next.getAttribute("title")).toBe("next change (n)");
+    expect(prev.getAttribute("title")).toBe("previous change (p)");
+    // The label carries the disabled reason, so the tooltip steps aside and
+    // lets the slot's own title through.
+    expect(next.getAttribute("aria-label")).toBe("next change");
+    view.unmount();
+    vi.restoreAllMocks();
+
+    const first = await toolbar("?v=1");
+    expect(jumpButtons(first).next.getAttribute("title")).toBeNull();
   });
 
   it("disables Comment file in source-diff mode instead of hiding it", async () => {

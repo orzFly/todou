@@ -36,7 +36,14 @@ import {
   FoldVerticalIcon,
   WrapTextIcon,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { issueQuery } from "@/api/issues.ts";
 import { api } from "@/api/queries.ts";
@@ -73,6 +80,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  acceptsShortcut,
+  currentIndex,
+  type Stops,
+  stepIndex,
+} from "@/lib/spec-change-nav.ts";
 import { changedLineRanges } from "@/lib/spec-changes.ts";
 import {
   type SpecReviewDraft,
@@ -97,6 +110,63 @@ const CHANGED_SELECTOR = ".spec-changed, .spec-ins-block";
 
 /** What ↑↓ stops on in source-diff mode: one per file pair (T-190). */
 const FILE_DIFF_SELECTOR = "[data-file-diff]";
+
+/** Where the reader stands among what ↑↓ steps over, 1-based (T-224). */
+type ChangePosition = { index: number; total: number };
+
+/**
+ * The stops inside `root`, in document order and never one inside another.
+ *
+ * ↑↓ have always stepped over blocks — a paragraph with three edited words is
+ * one stop, because the word-level marks are not in the selector. A swapped
+ * image is the one mark that lands on an inline element, so the `<img>` and
+ * the paragraph holding it both match (T-223); left in, one edit would stop
+ * the reader twice a few pixels apart and count as two.
+ */
+function stopsIn(root: HTMLElement, selector: string): HTMLElement[] {
+  const stops: HTMLElement[] = [];
+  for (const el of root.querySelectorAll<HTMLElement>(selector)) {
+    // An ancestor comes first in document order, so the stop kept last is the
+    // only one that can contain this element.
+    if (stops.at(-1)?.contains(el) === true) continue;
+    stops.push(el);
+  }
+  return stops;
+}
+
+/**
+ * Where each mode measures from. The resting line has to be the one the mode
+ * scrolls to, or the stop the reader is already on fails to exclude itself
+ * from both directions and ↑↓ keep re-finding it — the jam T-61 was opened
+ * about.
+ *
+ * `scrollIntoView({block:"center"})` parks a changed block on the viewport's
+ * center, so that mode compares centers. A file diff is routinely taller than
+ * the viewport and what the reader wants under the toolbar is its path
+ * header, which is where `scrollMarginTop` parks it (T-190 §5), so that mode
+ * compares tops.
+ */
+function stopsFor(
+  els: HTMLElement[],
+  sourceDiff: boolean,
+  stickyTop: number,
+): Stops {
+  if (sourceDiff) {
+    return {
+      positions: els.map(
+        (el) => el.getBoundingClientRect().top + window.scrollY,
+      ),
+      pivot: window.scrollY + stickyTop + 8,
+    };
+  }
+  return {
+    positions: els.map((el) => {
+      const rect = el.getBoundingClientRect();
+      return rect.top + window.scrollY + rect.height / 2;
+    }),
+    pivot: window.scrollY + window.innerHeight / 2,
+  };
+}
 
 /** Two toolbar rows, until the measurement lands. */
 const TOOLBAR_FALLBACK_HEIGHT = 78;
@@ -325,6 +395,7 @@ function SpecViewBody({
   const [wrap, setWrap] = useState(readDiffWrap);
   const [fold, setFold] = useState(readSpecFold);
   const [filesOpen, setFilesOpen] = useState(false);
+  const [position, setPosition] = useState<ChangePosition | null>(null);
   const contentRef = useRef<HTMLElement>(null);
   const sessionRef = useRef(0);
   const rowBRef = useRef<HTMLDivElement>(null);
@@ -595,27 +666,15 @@ function SpecViewBody({
   };
 
   /**
-   * Element centers against the viewport center, not tops against an
-   * arbitrary pivot: scrollIntoView({block:"center"}) leaves the current
-   * target's center ≈ the viewport's, so it excludes itself from both
-   * directions — the old top-vs-⅓-height comparison kept re-finding the
-   * element it had just centered and the navigation jammed (T-61).
+   * False when this file has no further change that way, which is what hands
+   * the step over to `jumpChange` and its file boundaries.
    */
   const jumpWithin = (direction: 1 | -1): boolean => {
     const root = contentRef.current;
     if (!root) return false;
-    const els = [...root.querySelectorAll<HTMLElement>(CHANGED_SELECTOR)];
+    const els = stopsIn(root, CHANGED_SELECTOR);
     if (els.length === 0) return false;
-    const viewportCenter = window.scrollY + window.innerHeight / 2;
-    const centers = els.map((el) => {
-      const rect = el.getBoundingClientRect();
-      return rect.top + window.scrollY + rect.height / 2;
-    });
-    const index =
-      direction === 1
-        ? centers.findIndex((c) => c > viewportCenter + 8)
-        : centers.findLastIndex((c) => c < viewportCenter - 8);
-    const target = index >= 0 ? els[index] : undefined;
+    const target = els[stepIndex(stopsFor(els, false, stickyTop), direction)];
     if (!target) return false;
     flashTo(target);
     return true;
@@ -643,27 +702,13 @@ function SpecViewBody({
     });
   };
 
-  /**
-   * The source half of ↑↓ (T-190 §5). Tops against the resting line rather
-   * than centers against the viewport's: a file diff is routinely taller
-   * than the viewport, and what the reader wants under the toolbar is its
-   * path header — which is also where `scrollMarginTop` parks it, so the
-   * diff already at rest still excludes itself from both directions.
-   */
+  /** The source half of ↑↓ (T-190 §5): whole file diffs, no file boundaries. */
   const jumpFileDiff = (direction: 1 | -1) => {
     const root = contentRef.current;
     if (!root) return;
-    const els = [...root.querySelectorAll<HTMLElement>(FILE_DIFF_SELECTOR)];
+    const els = stopsIn(root, FILE_DIFF_SELECTOR);
     if (els.length === 0) return;
-    const resting = window.scrollY + stickyTop + 8;
-    const tops = els.map(
-      (el) => el.getBoundingClientRect().top + window.scrollY,
-    );
-    const index =
-      direction === 1
-        ? tops.findIndex((t) => t > resting + 8)
-        : tops.findLastIndex((t) => t < resting - 8);
-    const target = index >= 0 ? els[index] : undefined;
+    const target = els[stepIndex(stopsFor(els, true, stickyTop), direction)];
     if (!target) return;
     flashTo(target, "start");
   };
@@ -704,6 +749,31 @@ function SpecViewBody({
     return { unit: changedRanges.length === 0 ? "changed file" : "change" };
   })();
 
+  // The counter re-renders on every scroll frame; the listener must not be
+  // torn down and re-attached that often, so what it needs goes in a ref.
+  const navRef = useRef({ disabled: true, step: (_direction: 1 | -1) => {} });
+  useEffect(() => {
+    navRef.current = {
+      disabled: changeNav.reason !== undefined,
+      step: (direction) =>
+        sourceDiff ? jumpFileDiff(direction) : jumpChange(direction),
+    };
+  });
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      // `event.key` is "N" for shift+n, so the capitals miss on their own.
+      const direction = event.key === "n" ? 1 : event.key === "p" ? -1 : null;
+      if (direction === null) return;
+      if (navRef.current.disabled) return;
+      if (!acceptsShortcut(event)) return;
+      event.preventDefault();
+      navRef.current.step(direction);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   /**
    * The display slot's rendered half is `fold`, and it is the one control of
    * the three that can be refused: a file with nothing marked would fold into
@@ -732,6 +802,44 @@ function SpecViewBody({
       ? `This file is not part of v${version}`
       : undefined;
 
+  /**
+   * The counter beside ↑↓, measured the way they measure. The total comes off
+   * the DOM every time rather than off `changedRanges`: one range can span
+   * several blocks, the inner-first rule leaves ancestors unmarked, and
+   * `.spec-ins-block` never passes through ranges at all — so any count
+   * derived from the ranges would drift from what the arrows actually stop on.
+   */
+  const measurePosition = useCallback((): ChangePosition | null => {
+    if (changeNav.reason !== undefined) return null;
+    // With no marked block of its own, this file's ↑↓ step over files, and
+    // the position is the file's place among the changed ones.
+    if (!sourceDiff && changedRanges.length === 0) {
+      const total = changedFiles.length;
+      if (total === 0) return null;
+      const at =
+        selectedPath === undefined ? -1 : changedFiles.indexOf(selectedPath);
+      return { index: at + 1, total };
+    }
+    const root = contentRef.current;
+    if (root === null) return null;
+    const els = stopsIn(
+      root,
+      sourceDiff ? FILE_DIFF_SELECTOR : CHANGED_SELECTOR,
+    );
+    if (els.length === 0) return null;
+    return {
+      index: currentIndex(stopsFor(els, sourceDiff, stickyTop)),
+      total: els.length,
+    };
+  }, [
+    changeNav.reason,
+    sourceDiff,
+    changedRanges,
+    changedFiles,
+    selectedPath,
+    stickyTop,
+  ]);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: changedRanges signals that the new file's highlights are stamped
   useEffect(() => {
     const direction = pendingJumpRef.current;
@@ -739,12 +847,47 @@ function SpecViewBody({
     pendingJumpRef.current = null;
     const root = contentRef.current;
     if (!root) return;
-    const els = [...root.querySelectorAll<HTMLElement>(CHANGED_SELECTOR)];
+    const els = stopsIn(root, CHANGED_SELECTOR);
     const target = direction === 1 ? els[0] : els[els.length - 1];
     if (target) flashTo(target);
     // A file with no highlighted blocks (e.g. brand new) starts at the top.
     else root.scrollIntoView({ block: "start", behavior: "smooth" });
   }, [selectedPath, changedRanges]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fold changes the blocks' heights, not measurePosition's inputs
+  useEffect(() => {
+    let frame = 0;
+    const sync = () => {
+      frame = 0;
+      const next = measurePosition();
+      setPosition((prev) =>
+        prev?.index === next?.index && prev?.total === next?.total
+          ? prev
+          : next,
+      );
+    };
+    const schedule = () => {
+      if (frame === 0) frame = requestAnimationFrame(sync);
+    };
+    sync();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    // Whether a fold placeholder is open lives inside AnnotatedMarkdown, and
+    // opening one changes the document's height without producing a scroll
+    // event — height is the only signal that reaches this far.
+    const root = contentRef.current;
+    let observer: ResizeObserver | null = null;
+    if (root !== null && typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(schedule);
+      observer.observe(root);
+    }
+    return () => {
+      if (frame !== 0) cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      observer?.disconnect();
+    };
+  }, [measurePosition, fold]);
 
   const queryClient = useQueryClient();
   const resolve = useMutation({
@@ -1129,10 +1272,47 @@ function SpecViewBody({
                     ? `previous ${changeNav.unit}`
                     : `previous ${changeNav.unit} — ${changeNav.reason}`
                 }
+                aria-keyshortcuts="p"
+                // A disabled button fires no pointer events, so the reason on
+                // the slot around it is what shows through in that state.
+                title={
+                  changeNav.reason === undefined
+                    ? `previous ${changeNav.unit} (p)`
+                    : undefined
+                }
                 onClick={() => (sourceDiff ? jumpFileDiff(-1) : jumpChange(-1))}
               >
                 <ArrowUpIcon className="size-4" />
               </Button>
+            </ToolbarSlot>
+            <ToolbarSlot
+              name="change-count"
+              title={
+                changeNav.reason ??
+                (position === null
+                  ? undefined
+                  : `${changeNav.unit} ${position.index} of ${position.total}`)
+              }
+            >
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {position === null ? (
+                  "–"
+                ) : (
+                  <>
+                    {/* Reserved by the total's width, not the index's: the
+                        index grows a digit going from 9 to 10, and that
+                        happens while the reader is scrolling — ↓ would step
+                        sideways under the cursor. */}
+                    <span
+                      className="inline-block text-right"
+                      style={{ minWidth: `${String(position.total).length}ch` }}
+                    >
+                      {position.index}
+                    </span>
+                    /{position.total}
+                  </>
+                )}
+              </span>
             </ToolbarSlot>
             <ToolbarSlot name="next-change" title={changeNav.reason}>
               <Button
@@ -1143,6 +1323,12 @@ function SpecViewBody({
                   changeNav.reason === undefined
                     ? `next ${changeNav.unit}`
                     : `next ${changeNav.unit} — ${changeNav.reason}`
+                }
+                aria-keyshortcuts="n"
+                title={
+                  changeNav.reason === undefined
+                    ? `next ${changeNav.unit} (n)`
+                    : undefined
                 }
                 onClick={() => (sourceDiff ? jumpFileDiff(1) : jumpChange(1))}
               >
