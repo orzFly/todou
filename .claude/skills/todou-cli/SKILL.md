@@ -42,6 +42,7 @@ todou issue create -p <proj> --title T [--body-file -] [--status Next]
 #   ^ when filing on behalf of the user, quote their original words verbatim in the body
 todou issue edit 16 --status "In Progress"    # status/title/labels/assignees
 todou issue edit 12 15 23 --status Next       # one set of flags, every card; checked before it writes
+todou issue transfer 16 --to <slug> [--dry-run] [-y]   # move to another project
 todou issue close 16 --comment "done"
 todou comment add -p <proj> 16 --body-file -  # prints the new comment's id + a wait cursor
 todou comment list 16 [--author @me] [-q text] [--last 5]   # full bodies, each headed by its id
@@ -164,6 +165,10 @@ todou spec wait 16 -p <proj> [--since <cursor>]                        # re-ente
   account, so a sibling agent on the same machine account does wake them; `spec wait` skips the whole
   account. Entries without an agent session (the web UI) count as the account. `--any-actor` turns
   the filter off; `issue watch --exclude-actor <login>` filters one account instead.
+
+A single-issue cursor does not cross a move: it is a row position in the project the card has
+left. `issue watch` on a moved card prints `moved to …` and a cursor for its new home; reopen the
+watch there with that cursor.
 
 A current cursor for a wait that no write precedes: `cursor=$(todou watch -p <proj> --poll
 --print-cursor)`. Unread marks: `issue list` marks unseen activity by others with `●`, `--unread`

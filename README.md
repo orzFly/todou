@@ -116,6 +116,7 @@ todou issue view 1
 todou issue view my-project/1   # project/number, "#1", "T-1", or an issue
                                 # URL work anywhere <number> does; `show` = `view`
 todou issue close 1 --comment "done"
+todou issue transfer 1 --to other-project   # keeps every old link working
 
 # Which server, which profile, why this project — resolved, with the
 # source of each. Purely local, so it answers when nothing is configured
