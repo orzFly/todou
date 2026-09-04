@@ -2,12 +2,13 @@ import type {
   AgentContext,
   AutolinkRule,
   PrefixDirectory,
+  ScanConfig,
   SlugClaim,
 } from "@todou/shared";
 import { scanReferenceTokens } from "@todou/shared";
 import { and, eq, inArray, ne, or, type SQL, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
-import type { AppContext } from "../bootstrap.ts";
+import type { AppContext, DbContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import {
   autolinks,
@@ -143,7 +144,7 @@ export type CrossSource = {
  * before the write opens.
  */
 export async function loadReferenceInputs(
-  ctx: AppContext,
+  ctx: DbContext,
   db: Db,
   projectId: number,
 ): Promise<ReferenceInputs> {
@@ -170,6 +171,62 @@ export async function loadReferenceInputs(
   };
 }
 
+/** The grammar as one project's numbering saw it at one instant. */
+function anchorConfig(
+  inputs: ReferenceInputs,
+  internalPrefix: string | null,
+  at: Date,
+): ScanConfig {
+  return {
+    internalPrefix,
+    autolinks: inputs.autolinks,
+    cross: {
+      slugs: inputs.slugs,
+      directory: inputs.directory,
+      slugEntries: inputs.slugEntries,
+      since: inputs.since,
+      at: at.toISOString(),
+    },
+  };
+}
+
+/**
+ * Which project's numbering an edit of stored text is read under.
+ *
+ * A move respells the card's own references into project-qualified forms
+ * (T-247), so text it rewrote holds no bare `#12` meaning the origin any
+ * more — and once that is true, a `#12` the author types now has to mean a
+ * card HERE, which is what anyone editing at the new address expects. Text
+ * the respell could not safely rewrite still carries origin-local spellings,
+ * and those keep the old anchor: reading them under the current project would
+ * silently repoint them at a real, unrelated card.
+ *
+ * Judged on the stored text rather than on a flag, so the two halves cannot
+ * disagree: whatever the rewrite achieved is what this reads.
+ */
+export async function editAnchorFor(
+  db: Db,
+  inputs: ReferenceInputs,
+  project: { id: number; slug: string },
+  origin: { id: number; slug: string },
+  storedText: string,
+  contentCreatedAt: Date,
+): Promise<{ id: number; slug: string }> {
+  if (origin.id === project.id) return project;
+  const tokens = scanReferenceTokens(
+    stripMarkdownCode(storedText),
+    anchorConfig(
+      inputs,
+      await refPrefixAt(db, origin.id, contentCreatedAt),
+      contentCreatedAt,
+    ),
+  );
+  const originLocal = tokens.some(
+    (token) => token.type === "issue" && token.slug === null,
+  );
+  return originLocal ? origin : project;
+}
+
 /**
  * Split a body's references into this project's issues and other projects'.
  * A qualified form naming this project is local — the spelling is a way to
@@ -191,18 +248,14 @@ export async function analyzeReferences(
    */
   origin: { id: number; slug: string } = project,
 ): Promise<AnalyzedRefs> {
-  const prefix = await refPrefixAt(db, origin.id, contentCreatedAt);
-  const tokens = scanReferenceTokens(stripMarkdownCode(text), {
-    internalPrefix: prefix,
-    autolinks: inputs.autolinks,
-    cross: {
-      slugs: inputs.slugs,
-      directory: inputs.directory,
-      slugEntries: inputs.slugEntries,
-      since: inputs.since,
-      at: contentCreatedAt.toISOString(),
-    },
-  });
+  const tokens = scanReferenceTokens(
+    stripMarkdownCode(text),
+    anchorConfig(
+      inputs,
+      await refPrefixAt(db, origin.id, contentCreatedAt),
+      contentCreatedAt,
+    ),
+  );
 
   const local = new Set<number>();
   const cross = new Map<string, CrossTarget>();

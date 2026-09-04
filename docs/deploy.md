@@ -698,3 +698,20 @@ todou-server storage gc              # delete orphans older than expiry+24h
 
 Run it ad hoc or from a timer; `--min-age <hours>` widens the safety
 margin past the presign expiry.
+
+### Respelling references on cards that moved earlier
+
+Moving a card rewrites the bare references its own text wrote at the old
+address into the qualified `slug#N` form. Cards moved before that behaviour
+existed still hold the bare spellings, which read as the destination's
+numbering and can land on an unrelated card. One walk fixes them:
+
+```sh
+todou-server refs backfill --dry-run    # report what would be rewritten
+todou-server refs backfill              # rewrite it
+```
+
+Run it once after upgrading to a build that has the command. It is idempotent,
+so a real run after a `--dry-run` is safe, and `--project <slug>` limits the
+walk to one project. Each rewritten body or comment records a revision holding
+the original text, attributed to whoever performed that move.

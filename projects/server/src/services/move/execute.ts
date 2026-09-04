@@ -38,6 +38,7 @@ import {
   normalizeThirdParties,
 } from "./normalize.ts";
 import { type MovePlan, planMove } from "./plan.ts";
+import { assembleRespell, respellCopiedContent } from "./respell-pass.ts";
 
 /**
  * Move an issue to another project.
@@ -111,6 +112,7 @@ async function moveWithinDb(
 ): Promise<Landed> {
   const db = plan.source.db;
   const resolver = await loadSlugResolver(ctx);
+  const respell = await assembleRespell(ctx, plan);
   const moveToken = randomUUID();
 
   return db.transaction(async (tx) => {
@@ -137,6 +139,10 @@ async function moveWithinDb(
     const idMap = await copyIssueTree(tx, tx, plan, {
       number,
       reinhabit: plan.reinhabit !== null,
+    });
+    await respellCopiedContent(tx, plan, respell, idMap, {
+      actorId: actor.id,
+      agentContext,
     });
 
     const move = moveContext(plan, number, idMap, resolver);
@@ -316,6 +322,7 @@ async function copyInDestination(
   moveToken: string,
 ): Promise<Copied> {
   const resolver = await loadSlugResolver(ctx);
+  const respell = await assembleRespell(ctx, plan);
   const lineage =
     plan.lineage ??
     // Minted here rather than at step 4 because the `moved_in` payload
@@ -333,6 +340,10 @@ async function copyInDestination(
     const idMap = await copyIssueTree(src, tx, plan, {
       number,
       reinhabit: plan.reinhabit !== null,
+    });
+    await respellCopiedContent(tx, plan, respell, idMap, {
+      actorId: actor.id,
+      agentContext,
     });
     const move = moveContext(plan, number, idMap, resolver);
     await normalizeOwnEvents(
@@ -914,8 +925,13 @@ async function thirdPartyProjects(
 ): Promise<Array<{ id: number; slug: string; databaseUrl: string | null }>> {
   const db = plan.target.db;
   const inputs = await loadReferenceInputs(ctx, db, plan.target.project.id);
+  // Read back rather than taken from `plan.row`: the respell pass has since
+  // rewritten this text, and what it now says is what the events must match.
   const texts = [
-    { body: plan.row.body, at: plan.row.createdAt },
+    ...(await db
+      .select({ body: issues.body, at: issues.createdAt })
+      .from(issues)
+      .where(eq(issues.id, landed.issueId))),
     ...(await db
       .select({ body: comments.body, at: comments.createdAt })
       .from(comments)

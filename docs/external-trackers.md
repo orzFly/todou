@@ -155,12 +155,32 @@ wherever the address is typed: the CLI, an attachment URL, a `#comment-N` in a
 body, and an old *card* link opened in the web UI, which follows the redirect
 without ever reading the project the link names.
 
-### Text is still never rewritten
+### The card's own references are respelled once
 
-A bare `#12` written while the card lived in `a` means `a/12` forever, and it
-keeps being read that way after the move — the same rule that governs
-reference formats. Each piece of the card's text is parsed under whoever owned
-the card when that piece was written.
+A bare `#12` written while the card lived in `a` means `a/12`. Read under the
+destination's numbering it would name a different card, so the move rewrites
+that one spelling into `a#12`, which names its project outright and stays
+correct through every later move. `PREFIX-12` and `#comment-N` written at the
+old address are rewritten the same way, and so is every version of the card's
+spec documents. This is the only moment the system changes text a person
+wrote.
+
+The text as its author typed it is kept as a revision, attributed to whoever
+performed the move. The card is not marked as edited: an "(edited)" mark means
+the author changed their words.
+
+Only the spans holding a reference change. The rest of the markdown is byte
+for byte what it was, and references inside code blocks or inline code are
+left alone.
+
+Where that rewrite cannot be made safely the old rule still applies: the text
+is parsed under whoever owned the card when it was written. The main case is
+text written before this deployment opened the cross-project reference syntax,
+because the qualified form does not parse under the grammar in force back
+then.
+
+Cards that moved before this behaviour existed are rewritten by
+`todou-server refs backfill`, which an operator runs once.
 
 ### Moving back
 

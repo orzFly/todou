@@ -37,6 +37,13 @@ export type AppContext = {
   };
 };
 
+/**
+ * The database tier alone — all a shell command has. Reference-grammar inputs
+ * are assembled from it, so the offline maintenance commands can reach them
+ * without standing up a bus and a storage backend they never touch.
+ */
+export type DbContext = Pick<AppContext, "router">;
+
 export async function bootstrap(config: Config): Promise<AppContext> {
   const router = await DbRouter.open(config);
   if (config.auth.mode === "single") {

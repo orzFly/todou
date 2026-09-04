@@ -328,14 +328,68 @@ export async function recordAliases(
     });
 }
 
+/** One arrival, with the parts of its event only a rewrite needs. */
+export type MoveRecord = IssueMove & {
+  /** Who performed the move: the only actor an offline rewrite can borrow. */
+  actorId: number;
+  /** The comment ids this move renumbered, old → new; empty if it recorded none. */
+  commentIdMap: Map<number, number>;
+};
+
+/**
+ * The card's arrivals, oldest first — every ownership boundary it has.
+ *
+ * A `moved_in` event IS the boundary, which is why none of this needs a
+ * column: the payload names where the card came from and the row's own
+ * timestamp says when it stopped being there. One reader for that payload
+ * shape, so a field renamed in the writer breaks in one place.
+ */
+export async function movedInHistory(
+  db: Db,
+  issueId: number,
+): Promise<MoveRecord[]> {
+  const rows = await db
+    .select({
+      payload: issueEvents.payload,
+      createdAt: issueEvents.createdAt,
+      actorId: issueEvents.actorId,
+    })
+    .from(issueEvents)
+    .where(
+      and(eq(issueEvents.issueId, issueId), eq(issueEvents.type, "moved_in")),
+    )
+    .orderBy(asc(issueEvents.createdAt), asc(issueEvents.id));
+  return rows.map((row) => {
+    const payload = row.payload as {
+      from_project_id?: number;
+      from_project?: string;
+      from_number?: number;
+      id_map?: { comments?: Record<string, number> };
+    };
+    return {
+      at: row.createdAt.toISOString(),
+      from_project_id: payload.from_project_id ?? null,
+      from_project: payload.from_project ?? null,
+      from_number: payload.from_number ?? null,
+      actorId: row.actorId,
+      commentIdMap: new Map(
+        Object.entries(payload.id_map?.comments ?? {}).map(([from, to]) => [
+          Number(from),
+          to,
+        ]),
+      ),
+    };
+  });
+}
+
 /**
  * The project a piece of this card's text was written in.
  *
- * Text is never rewritten, so a bare `#12` keeps meaning whatever it meant
- * when it was typed. Recording references from an edit of pre-move text
- * under the current project would resolve that `#12` against the wrong
- * numbering — and land on a real, unrelated card, which no redirect can
- * undo. Everything but an edit of moved text answers with `project` itself.
+ * A bare `#12` keeps meaning whatever it meant when it was typed. Recording
+ * references from an edit of text the move never respelled under the current
+ * project would resolve that `#12` against the wrong numbering — and land on
+ * a real, unrelated card, which no redirect can undo. Everything but an edit
+ * of such text answers with `project` itself.
  *
  * Null means the owning project is gone and the text's numbering cannot be
  * resolved at all. Callers record no references rather than guess: the
@@ -348,28 +402,9 @@ export async function originProjectFor(
   issueId: number,
   at: Date,
 ): Promise<{ id: number; slug: string } | null> {
-  const rows = await db
-    .select({ payload: issueEvents.payload, createdAt: issueEvents.createdAt })
-    .from(issueEvents)
-    .where(
-      and(eq(issueEvents.issueId, issueId), eq(issueEvents.type, "moved_in")),
-    )
-    .orderBy(asc(issueEvents.createdAt), asc(issueEvents.id));
-  if (rows.length === 0) return project;
+  const moves = await movedInHistory(db, issueId);
+  if (moves.length === 0) return project;
 
-  const moves: IssueMove[] = rows.map((row) => {
-    const payload = row.payload as {
-      from_project_id?: number;
-      from_project?: string;
-      from_number?: number;
-    };
-    return {
-      at: row.createdAt.toISOString(),
-      from_project_id: payload.from_project_id ?? null,
-      from_project: payload.from_project ?? null,
-      from_number: payload.from_number ?? null,
-    };
-  });
   const owner = ownerAt(moves, project.id, at.toISOString());
   if (owner === null) return null;
   if (owner === project.id) return project;

@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { comments, issues } from "../src/db/project-schema.ts";
+import { comments, issueEvents, issues } from "../src/db/project-schema.ts";
 import { routeInfoOf } from "../src/services/access.ts";
+import { backfillRefs } from "../src/services/refs-backfill.ts";
 import { microIso } from "../src/services/timeline.ts";
 import { makeTestApp, type TestApp } from "./helpers.ts";
 
@@ -119,6 +120,93 @@ describe.skipIf(!PG_URL)("moving an issue on real postgres", () => {
       "five",
     ]);
     expect(after.map((row) => row.at)).toEqual(before.map((row) => row.at));
+  });
+
+  it("respells up to the move's instant and no further", async () => {
+    // The boundary `ownerAt` fixes and the respell has to share: content
+    // stamped exactly at the move belongs to the new home, so it is already
+    // spelled for it. PGlite cannot show this — its clock has no
+    // sub-millisecond digits, so nothing distinguishes "at the move" from
+    // "just before it" there.
+    const target = await json(
+      await req(`/projects/${A}/issues`, {
+        method: "POST",
+        body: JSON.stringify({ title: "boundary target", body: "" }),
+      }),
+    );
+    const card = await json(
+      await req(`/projects/${B}/issues`, {
+        method: "POST",
+        body: JSON.stringify({ title: "sits on the boundary", body: "" }),
+      }),
+    );
+    const before = await json(
+      await req(`/projects/${B}/issues/${card.number}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ body: `earlier #${target.number}` }),
+      }),
+    );
+    const onTheDot = await json(
+      await req(`/projects/${B}/issues/${card.number}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ body: `exactly #${target.number}` }),
+      }),
+    );
+
+    const db = await t.ctx.router.forProject(
+      routeInfoOf({
+        id: ids[B] as number,
+        slug: B,
+        databaseUrl: null,
+      } as Parameters<typeof routeInfoOf>[0]),
+    );
+    const [row] = await db
+      .select({ authorId: issues.authorId })
+      .from(issues)
+      .where(eq(issues.id, card.id));
+    // Ahead of now, so both comments stay clear of this deployment's
+    // `cross_refs_since` — a fresh database seeds that at migration time.
+    const at = new Date(Date.now() + 60_000);
+    await db
+      .update(comments)
+      .set({ createdAt: new Date(at.getTime() - 1) })
+      .where(eq(comments.id, before.id));
+    await db
+      .update(comments)
+      .set({ createdAt: at })
+      .where(eq(comments.id, onTheDot.id));
+    await db.insert(issueEvents).values({
+      projectId: ids[B] as number,
+      issueId: card.id,
+      actorId: row?.authorId as number,
+      type: "moved_in",
+      createdAt: at,
+      payload: {
+        move_token: `boundary-${run}`,
+        lineage: 1,
+        from_project_id: ids[A],
+        from_project: A,
+        from_number: 4242,
+      },
+    });
+
+    const report = await backfillRefs(t.ctx, {
+      dryRun: false,
+      slug: B,
+      log: () => {},
+    });
+    expect(report.changed).toBe(1);
+
+    const bodies = await db
+      .select({ id: comments.id, body: comments.body })
+      .from(comments)
+      .where(eq(comments.issueId, card.id));
+    expect(bodies.find((c) => c.id === before.id)?.body).toBe(
+      `earlier ${A}#${target.number}`,
+    );
+    expect(bodies.find((c) => c.id === onTheDot.id)?.body).toBe(
+      `exactly #${target.number}`,
+    );
   });
 
   it("orders the copied timeline the way the source was ordered", async () => {

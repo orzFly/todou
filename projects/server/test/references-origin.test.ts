@@ -9,8 +9,12 @@ const json = (res: Response): Promise<any> => res.json() as Promise<any>;
 
 /**
  * References resolve under the project that owned the card when the text was
- * written (T-231 §4.2) — the half of "text is never rewritten" that lives in
- * the writer rather than the reader.
+ * written (T-231 §4.2) — the half of the origin rule that lives in the writer
+ * rather than the reader.
+ *
+ * Since T-247 a move respells what it can, so this rule is what covers the
+ * text it could not: every fixture here therefore carries a bare origin-local
+ * ref in its STORED text, which is the condition `editAnchorFor` reads.
  *
  * No executor is involved: a hand-written `moved_in` event is all an
  * ownership interval is, which is exactly why the design reads them from the
@@ -101,7 +105,9 @@ describe.each(PLACEMENTS)("reference origin (%s placement)", (placement) => {
       await createIssue(B, `filler ${i}`);
     }
 
-    const moved = await createIssue(B, "arrived here", "placeholder");
+    // `#404` names nothing in either project, so it records no event of its
+    // own — it is here to say the stored text still spells A's numbering.
+    const moved = await createIssue(B, "arrived here", "placeholder #404");
     await arrivedFrom(
       moved.id,
       { id: idA, slug: A, number: 999 },
@@ -136,7 +142,7 @@ describe.each(PLACEMENTS)("reference origin (%s placement)", (placement) => {
     const targetInA = await createIssue(A, "A's card");
     const targetInB = await createIssue(B, "B's card");
 
-    const moved = await createIssue(B, "went around", "body");
+    const moved = await createIssue(B, "went around", "body #404");
     const commentRes = await req(
       `/projects/${B}/issues/${moved.number}/comments`,
       { method: "POST", body: JSON.stringify({ body: "written mid-trip" }) },
@@ -184,6 +190,74 @@ describe.each(PLACEMENTS)("reference origin (%s placement)", (placement) => {
         (i: { event_type?: string }) => i.event_type === "referenced",
       ),
     ).toBe(true);
+  });
+
+  it("reads an edit of respelled text under the project it lives in now", async () => {
+    // What a move leaves behind since T-247: the card's own references name
+    // their project outright, so nothing in the stored text still belongs to
+    // A's numbering — and a `#K` typed now means a card here.
+    const here = await createIssue(B, "a card in B");
+    const moved = await createIssue(
+      B,
+      "arrived respelled",
+      `already qualified: ${A}#999`,
+    );
+    await arrivedFrom(
+      moved.id,
+      { id: idA, slug: A, number: 998 },
+      new Date(Date.now() + 60_000),
+    );
+
+    const res = await req(`/projects/${B}/issues/${moved.number}`, {
+      method: "PATCH",
+      body: JSON.stringify({ body: `now points at #${here.number}` }),
+    });
+    expect(res.status).toBe(200);
+
+    const inB = await timelineOf(B, here.number);
+    expect(
+      inB.items.filter(
+        (i: { event_type?: string }) => i.event_type === "referenced",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("reads an edit of a respelled comment under the project it lives in now", async () => {
+    const here = await createIssue(B, "comment target in B");
+    const moved = await createIssue(B, "respelled comment host", "clean body");
+    const commentRes = await req(
+      `/projects/${B}/issues/${moved.number}/comments`,
+      { method: "POST", body: JSON.stringify({ body: `see ${A}#997` }) },
+    );
+    expect(commentRes.status).toBe(201);
+    const comment = (await json(commentRes)) as { id: number };
+
+    const base = Date.now();
+    await (await dbOf(idB, B))
+      .update(comments)
+      .set({ createdAt: new Date(base) })
+      .where(eq(comments.id, comment.id));
+    await arrivedFrom(
+      moved.id,
+      { id: idA, slug: A, number: 996 },
+      new Date(base + 60_000),
+    );
+
+    const res = await req(
+      `/projects/${B}/issues/${moved.number}/comments/${comment.id}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ body: `and also #${here.number}` }),
+      },
+    );
+    expect(res.status).toBe(200);
+
+    const inB = await timelineOf(B, here.number);
+    expect(
+      inB.items.filter(
+        (i: { event_type?: string }) => i.event_type === "referenced",
+      ),
+    ).toHaveLength(1);
   });
 
   it("records nothing when the source project is unknown", async () => {

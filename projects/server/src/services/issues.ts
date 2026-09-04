@@ -57,6 +57,7 @@ import {
 import {
   analyzeReferences,
   type CrossTarget,
+  editAnchorFor,
   loadReferenceInputs,
   recordCrossReferences,
   visibleProjects,
@@ -774,8 +775,8 @@ export async function updateIssue(
         ]);
 
   const refInputs = await loadReferenceInputs(ctx, db, project.id);
-  // Body edits re-scan text that may predate a move, so they resolve their
-  // references under whoever owned the card when it was written.
+  // A body edit may be re-scanning text that predates a move; whether it is
+  // read under the old owner or this one is `editAnchorFor`'s call.
   const origin = await originProjectFor(
     ctx,
     db,
@@ -943,7 +944,14 @@ export async function updateIssue(
         input.body,
         before.createdAt,
         { issueNumber: number },
-        origin,
+        await editAnchorFor(
+          tx,
+          refInputs,
+          project,
+          origin,
+          before.body,
+          before.createdAt,
+        ),
       );
       crossTargets = analyzed.cross;
       const refs = await recordReferences(

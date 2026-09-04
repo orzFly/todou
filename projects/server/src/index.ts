@@ -10,6 +10,7 @@ import {
   runStartupChores,
   startHousekeeping,
 } from "./services/housekeeping.ts";
+import { backfillRefs } from "./services/refs-backfill.ts";
 import {
   copyMissing,
   enumerateBlobKeys,
@@ -242,6 +243,55 @@ class StorageGcCommand extends ConfiguredCommand {
   }
 }
 
+class RefsBackfillCommand extends ConfiguredCommand {
+  static paths = [["refs", "backfill"]];
+
+  static usage = Command.Usage({
+    description:
+      "Respell references in cards that moved before the move learnt to",
+    details:
+      "Walks every card carrying a `moved_in` event and rewrites the bare " +
+      "references in text written at its old address into the qualified " +
+      "`slug#N` form, exactly as a move does now. Each rewritten body or " +
+      "comment records a revision holding the original text, attributed to " +
+      "whoever performed that move. Idempotent: a second run finds nothing, " +
+      "so a real run after a --dry-run is safe.",
+  });
+
+  dryRun = Option.Boolean("--dry-run", false, {
+    description: "Report what would be rewritten and change nothing",
+  });
+
+  project = Option.String("--project", {
+    description: "Limit the walk to one project slug",
+  });
+
+  async execute(): Promise<number | undefined> {
+    const config = this.loadConfig();
+    const router = await DbRouter.open(config);
+    try {
+      const report = await backfillRefs(
+        { router },
+        {
+          dryRun: this.dryRun,
+          ...(this.project === undefined ? {} : { slug: this.project }),
+          log: (line) => this.context.stdout.write(`${line}\n`),
+        },
+      );
+      this.context.stdout.write(
+        `${this.dryRun ? "[dry-run] would respell" : "respelled"} ` +
+          `${report.rewritten} reference(s) in ${report.changed} segment(s) ` +
+          `across ${report.issues} moved card(s) in ${report.projects} ` +
+          `project(s); ${report.skipped} segment(s) skipped, ` +
+          `${report.unanchored} unanchored\n`,
+      );
+      return 0;
+    } finally {
+      await router.close();
+    }
+  }
+}
+
 // The `user` command group is deliberately shell-only (no HTTP surface):
 // moving history onto an IdP identity is an operator act, never something an
 // asserted username may trigger (T-86). On PGlite deployments stop the server
@@ -416,6 +466,7 @@ cli.register(ServeCommand);
 cli.register(MigrateCommand);
 cli.register(StorageMigrateCommand);
 cli.register(StorageGcCommand);
+cli.register(RefsBackfillCommand);
 cli.register(UserListCommand);
 cli.register(UserBindSubjectCommand);
 cli.register(UserAdoptCommand);

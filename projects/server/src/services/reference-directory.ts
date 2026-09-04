@@ -7,7 +7,7 @@ import type {
 } from "@todou/shared";
 import { eq } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
-import type { AppContext } from "../bootstrap.ts";
+import type { AppContext, DbContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { refFormats } from "../db/project-schema.ts";
 import {
@@ -196,7 +196,7 @@ const entryOf = (hold: Hold): PrefixClaimEntry => ({
  * and, at read time, by the viewer filter.
  */
 export async function globalPrefixDirectory(
-  ctx: AppContext,
+  ctx: DbContext,
 ): Promise<PrefixDirectory> {
   const holds = await allHolds(ctx);
   return { entries: holds.map(entryOf), contested: contestedWindows(holds) };
@@ -246,7 +246,7 @@ const slugEntryOf = (hold: SlugHold): SlugClaimEntry => ({
   to: hold.to === OPEN ? null : new Date(hold.to).toISOString(),
 });
 
-async function allSlugHolds(ctx: AppContext): Promise<SlugHold[]> {
+async function allSlugHolds(ctx: DbContext): Promise<SlugHold[]> {
   const system = ctx.router.system();
   const [rows, projectRows] = await Promise.all([
     system
@@ -278,7 +278,7 @@ async function allSlugHolds(ctx: AppContext): Promise<SlugHold[]> {
 
 /** Every project's slug holds, for the extraction path. */
 export async function globalSlugEntries(
-  ctx: AppContext,
+  ctx: DbContext,
 ): Promise<SlugClaimEntry[]> {
   return (await allSlugHolds(ctx)).map(slugEntryOf);
 }
@@ -314,7 +314,7 @@ export async function referenceDirectory(
   };
 }
 
-async function allHolds(ctx: AppContext): Promise<Hold[]> {
+async function allHolds(ctx: DbContext): Promise<Hold[]> {
   const system = ctx.router.system();
   const [rows, projectRows] = await Promise.all([
     system

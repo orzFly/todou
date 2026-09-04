@@ -19,6 +19,7 @@ import { projectForRead, requireProject, routeInfoOf } from "./access.ts";
 import {
   analyzeReferences,
   type CrossTarget,
+  editAnchorFor,
   loadReferenceInputs,
   type ReferenceInputs,
   recordCrossReferences,
@@ -369,7 +370,8 @@ export async function updateComment(
 
   const project = { id: projectId, slug };
   const refInputs = await loadReferenceInputs(ctx, db, projectId);
-  // The comment may predate a move, and its text was never rewritten.
+  // The comment may predate a move; `editAnchorFor` decides from the stored
+  // text whether the old numbering still applies to it.
   const origin = await originProjectFor(
     ctx,
     db,
@@ -408,7 +410,14 @@ export async function updateComment(
             input.body,
             row.createdAt,
             { issueNumber, commentId: row.id },
-            origin,
+            await editAnchorFor(
+              tx,
+              refInputs,
+              project,
+              origin,
+              row.body,
+              row.createdAt,
+            ),
           );
     crossTargets = analyzed.cross;
     const refs = await recordReferences(

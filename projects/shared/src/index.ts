@@ -5,6 +5,7 @@ export * from "./events.ts";
 export * from "./ownership.ts";
 export * from "./ref-shapes.ts";
 export * from "./references-grammar.ts";
+export * from "./respell.ts";
 export * from "./schemas/agent.ts";
 export * from "./schemas/agent-context.ts";
 export * from "./schemas/attachment.ts";

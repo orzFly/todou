@@ -94,7 +94,7 @@ async function filesOfVersion(db: Db | Tx, versionId: number) {
     .orderBy(asc(specVersionFiles.path));
 }
 
-const utf8Size = (body: string) => Buffer.byteLength(body, "utf8");
+export const utf8Size = (body: string) => Buffer.byteLength(body, "utf8");
 
 export async function pushSpec(
   ctx: AppContext,
