@@ -22,33 +22,80 @@ const component: QuestionsComponent = {
       header: "Data model",
       question: "Where does the payload live?",
       multiple: false,
-      options: [{ label: "New entity" }, { label: "Inline" }],
+      options: [
+        {
+          label: "New entity",
+          description: "A clean row per record, plus a migration.",
+        },
+        {
+          label: "Inline",
+          description: "No migration; queries can never filter on it.",
+        },
+      ],
     },
     {
       key: "scope",
       question: "Which environments?",
       multiple: true,
-      options: [{ label: "dev" }, { label: "prod" }],
+      options: [
+        { label: "dev", description: "Cheap to revert." },
+        { label: "prod" },
+      ],
     },
   ],
 };
 
-const item = (answer: unknown) => ({
+/** Same shape, no `description` anywhere: the expand toggle has nothing to show. */
+const noDescriptions: QuestionsComponent = {
+  type: "questions",
+  questions: [
+    {
+      key: "schema",
+      header: "Data model",
+      question: "Where does the payload live?",
+      multiple: false,
+      options: [{ label: "New entity" }, { label: "Inline" }],
+    },
+  ],
+};
+
+const answered = {
+  event_id: 7,
+  actor: user,
+  created_at: "2026-08-12T01:00:00Z",
+  answers: [
+    {
+      key: "schema",
+      selected: [{ index: 1, label: "Inline" }],
+      other: "ship it",
+      declined: false,
+    },
+    { key: "scope", selected: [], other: null, declined: true },
+  ],
+};
+
+const item = (answer: unknown, comp: QuestionsComponent) => ({
   comment_id: 42,
   author: user,
   created_at: "2026-08-12T00:00:00Z",
-  questions: component.questions,
+  questions: comp.questions,
   answer,
 });
 
 /** Route-table fetch stub; records POST bodies for assertions. */
-function stubFetch(answer: unknown = null) {
+function stubFetch(
+  answer: unknown = null,
+  comp: QuestionsComponent = component,
+) {
   const posts: unknown[] = [];
   vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     if (method === "GET" && url.includes("/questions")) {
-      return Response.json({ items: [item(answer)], open: answer ? 0 : 2 });
+      return Response.json({
+        items: [item(answer, comp)],
+        open: answer ? 0 : 2,
+      });
     }
     if (method === "POST" && url.includes("/comments/42/answers")) {
       posts.push(JSON.parse(String(init?.body)));
@@ -64,16 +111,13 @@ function stubFetch(answer: unknown = null) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  // A range left standing would trip the next test's click guard.
+  window.getSelection()?.removeAllRanges();
 });
 
-function renderCard() {
+function renderCard(comp: QuestionsComponent = component) {
   return renderWithProviders(
-    <QuestionsCard
-      slug="p"
-      issueNumber={19}
-      commentId={42}
-      component={component}
-    />,
+    <QuestionsCard slug="p" issueNumber={19} commentId={42} component={comp} />,
   );
 }
 
@@ -205,24 +249,74 @@ describe("QuestionsCard (unanswered)", () => {
       ],
     });
   });
+
+  it("lets the option rows be selected for copying", async () => {
+    stubFetch();
+    const view = renderCard();
+    await view.findByText("awaiting answer");
+
+    // Chromium refuses to *start* a selection inside a <button> unless the
+    // used value of user-select is overridden (T-235).
+    expect(optionButton(view, "New entity").className).toContain("select-text");
+    const declineBtn = view
+      .getAllByText("Decline to answer")[0]
+      ?.closest("button") as HTMLButtonElement;
+    expect(declineBtn.className).toContain("select-text");
+  });
+
+  it("does not toggle an option when the click ends a selection in the row", async () => {
+    stubFetch();
+    const view = renderCard();
+    await view.findByText("awaiting answer");
+
+    const row = optionButton(view, "New entity");
+    const textNode = view.getByText("New entity").firstChild as Node;
+    window.getSelection()?.setBaseAndExtent(textNode, 0, textNode, 3);
+    fireEvent.click(row);
+    expect(row.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("still toggles on a plain click, and past a selection elsewhere", async () => {
+    stubFetch();
+    const view = renderCard();
+    await view.findByText("awaiting answer");
+
+    fireEvent.click(optionButton(view, "New entity"));
+    expect(optionButton(view, "New entity").getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+
+    // A selection left standing on the question text must not freeze the row:
+    // the guard only fires for a selection that ends inside the row itself.
+    const elsewhere = view.getByText("Where does the payload live?")
+      .firstChild as Node;
+    window.getSelection()?.setBaseAndExtent(elsewhere, 0, elsewhere, 5);
+    fireEvent.click(optionButton(view, "New entity"));
+    expect(optionButton(view, "New entity").getAttribute("aria-pressed")).toBe(
+      "false",
+    );
+  });
+
+  it("double-clicking a word toggles exactly once", async () => {
+    stubFetch();
+    const view = renderCard();
+    await view.findByText("awaiting answer");
+
+    // A double click dispatches two clicks: the first before the word is
+    // selected, the second with it — so the net effect matches one click.
+    fireEvent.click(optionButton(view, "New entity"));
+    const textNode = view.getByText("New entity").firstChild as Node;
+    window.getSelection()?.setBaseAndExtent(textNode, 0, textNode, 3);
+    fireEvent.click(optionButton(view, "New entity"));
+    expect(optionButton(view, "New entity").getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+  });
 });
 
 describe("QuestionsCard (answered)", () => {
   it("renders read-only results with no way back in", async () => {
-    stubFetch({
-      event_id: 7,
-      actor: user,
-      created_at: "2026-08-12T01:00:00Z",
-      answers: [
-        {
-          key: "schema",
-          selected: [{ index: 1, label: "Inline" }],
-          other: "ship it",
-          declined: false,
-        },
-        { key: "scope", selected: [], other: null, declined: true },
-      ],
-    });
+    stubFetch(answered);
     const view = renderCard();
 
     await view.findByText("answered by");
@@ -232,5 +326,59 @@ describe("QuestionsCard (answered)", () => {
     expect(view.getByText("ship it")).toBeTruthy();
     // No interactive option buttons remain.
     expect(view.getByText("Inline").closest("button")).toBeNull();
+  });
+
+  it("hides the option descriptions until the toggle is pressed", async () => {
+    stubFetch(answered);
+    const view = renderCard();
+
+    await view.findByText("answered by");
+    expect(
+      view.queryByText("A clean row per record, plus a migration."),
+    ).toBeNull();
+    const toggle = view
+      .getByText("show option descriptions")
+      .closest("button") as HTMLButtonElement;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("keeps the picked option marked while descriptions are expanded", async () => {
+    stubFetch(answered);
+    const view = renderCard();
+
+    await view.findByText("answered by");
+    const picked = () =>
+      view.container.querySelector(".bg-primary\\/10") as HTMLElement;
+    const checks = () =>
+      view.container.querySelectorAll("svg.text-primary").length;
+    const before = checks();
+
+    fireEvent.click(view.getByText("show option descriptions"));
+    expect(
+      view.getByText("No migration; queries can never filter on it."),
+    ).toBeTruthy();
+    // The unpicked option keeps its description too, just dimmed with the row.
+    expect(
+      view.getByText("A clean row per record, plus a migration."),
+    ).toBeTruthy();
+    expect(checks()).toBe(before);
+    expect(picked().textContent).toContain("Inline");
+    const toggle = view
+      .getByText("hide option descriptions")
+      .closest("button") as HTMLButtonElement;
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+    fireEvent.click(toggle);
+    expect(
+      view.queryByText("No migration; queries can never filter on it."),
+    ).toBeNull();
+  });
+
+  it("omits the toggle when no option carries a description", async () => {
+    stubFetch(answered, noDescriptions);
+    const view = renderCard(noDescriptions);
+
+    await view.findByText("answered by");
+    expect(view.queryByText("show option descriptions")).toBeNull();
   });
 });

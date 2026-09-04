@@ -7,6 +7,8 @@ import type {
 } from "@todou/shared";
 import {
   CheckIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
   CircleIcon,
   CircleSlashIcon,
   SquareCheckIcon,
@@ -33,6 +35,22 @@ const emptyDraft = (): Draft => ({
 
 const resolved = (d: Draft): boolean =>
   d.selected.size > 0 || d.other.trim() !== "" || d.declined;
+
+/**
+ * A drag that selects text inside a row still fires the row's click (measured
+ * on Chromium 151), so copying an option's text would answer the question.
+ * The selection is already built by the time the handler runs; a plain click
+ * leaves it collapsed, even when the page had a stale selection elsewhere.
+ */
+function selectingInside(row: HTMLElement): boolean {
+  const sel = window.getSelection();
+  return (
+    sel !== null &&
+    !sel.isCollapsed &&
+    sel.focusNode !== null &&
+    row.contains(sel.focusNode)
+  );
+}
 
 /** Markdown that sits inside an option row: kill the paragraph margins. */
 function InlineMarkdown({
@@ -77,10 +95,14 @@ export function QuestionsCard({
   refDate?: string;
 }) {
   const status = useQuery(questionsQuery(slug, issueNumber));
+  const [showDescriptions, setShowDescriptions] = useState(false);
   const answer =
     status.data?.items.find((i) => i.comment_id === commentId)?.answer ?? null;
 
   if (answer) {
+    const hasDescriptions = component.questions.some((q) =>
+      q.options.some((o) => o.description !== undefined),
+    );
     return (
       <div className="mt-1 space-y-3 rounded-md border bg-muted/20 p-3">
         {component.questions.map((q) => (
@@ -92,14 +114,30 @@ export function QuestionsCard({
             record={answer.answers.find((a) => a.key === q.key)}
             refDate={refDate}
             answerDate={answer.created_at}
+            showDescriptions={showDescriptions}
           />
         ))}
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <CheckIcon className="size-3.5 text-green-600" />
-          answered by <UserChip user={answer.actor} compact />
-          <span title={answer.created_at}>
-            {new Date(answer.created_at).toLocaleString()}
+        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span className="flex items-center gap-2">
+            <CheckIcon className="size-3.5 text-green-600" />
+            answered by <UserChip user={answer.actor} compact />
+            <span title={answer.created_at}>
+              {new Date(answer.created_at).toLocaleString()}
+            </span>
           </span>
+          {hasDescriptions && (
+            <Button
+              variant="ghost"
+              size="xs"
+              aria-expanded={showDescriptions}
+              onClick={() => setShowDescriptions((v) => !v)}
+            >
+              {showDescriptions ? <ChevronUpIcon /> : <ChevronDownIcon />}
+              {showDescriptions
+                ? "hide option descriptions"
+                : "show option descriptions"}
+            </Button>
+          )}
         </div>
       </div>
     );
@@ -288,9 +326,12 @@ function QuestionForm({
               key={option.label}
               type="button"
               disabled={disabled}
-              onClick={() => toggleOption(index)}
+              onClick={(e) => {
+                if (selectingInside(e.currentTarget)) return;
+                toggleOption(index);
+              }}
               aria-pressed={active}
-              className={`flex w-full items-start gap-2 rounded-md border px-2 py-1.5 text-left text-sm transition-colors ${
+              className={`flex w-full items-start gap-2 rounded-md border px-2 py-1.5 text-left text-sm transition-colors select-text ${
                 active
                   ? "border-primary bg-primary/10"
                   : "border-transparent hover:bg-muted/60"
@@ -328,9 +369,12 @@ function QuestionForm({
         <button
           type="button"
           disabled={disabled}
-          onClick={toggleDecline}
+          onClick={(e) => {
+            if (selectingInside(e.currentTarget)) return;
+            toggleDecline();
+          }}
           aria-pressed={draft.declined}
-          className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left text-sm transition-colors ${
+          className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left text-sm transition-colors select-text ${
             draft.declined
               ? "border-destructive/60 bg-destructive/10"
               : "border-transparent text-muted-foreground hover:bg-muted/60"
@@ -368,6 +412,7 @@ function AnsweredQuestion({
   record,
   refDate,
   answerDate,
+  showDescriptions,
 }: {
   slug: string;
   issueNumber: number;
@@ -377,6 +422,7 @@ function AnsweredQuestion({
   refDate?: string;
   /** ...but the free-text "other" is written when answered. */
   answerDate?: string;
+  showDescriptions: boolean;
 }) {
   const chosen = new Set(record?.selected.map((s) => s.index) ?? []);
   return (
@@ -409,13 +455,28 @@ function AnsweredQuestion({
               <span className="mt-0.5 w-4 shrink-0">
                 {active && <CheckIcon className="size-4 text-primary" />}
               </span>
-              <InlineMarkdown
-                slug={slug}
-                issueNumber={issueNumber}
-                refDate={refDate}
-              >
-                {option.label}
-              </InlineMarkdown>
+              <div className="min-w-0 space-y-0.5">
+                <InlineMarkdown
+                  slug={slug}
+                  issueNumber={issueNumber}
+                  refDate={refDate}
+                >
+                  {option.label}
+                </InlineMarkdown>
+                {showDescriptions && option.description !== undefined && (
+                  // No `text-muted-foreground`: the description inherits the
+                  // row's own color, so an unpicked option stays dimmer than
+                  // the picked one instead of outshining its own label.
+                  <InlineMarkdown
+                    slug={slug}
+                    issueNumber={issueNumber}
+                    refDate={refDate}
+                    className="text-xs opacity-80"
+                  >
+                    {option.description}
+                  </InlineMarkdown>
+                )}
+              </div>
             </div>
           );
         })}
