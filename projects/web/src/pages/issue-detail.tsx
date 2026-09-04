@@ -4,20 +4,13 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useParams } from "@tanstack/react-router";
 import { formatRef, type Issue, type Status } from "@todou/shared";
-import {
-  CheckIcon,
-  FolderInputIcon,
-  PencilIcon,
-  Trash2Icon,
-  XIcon,
-} from "lucide-react";
+import { CheckIcon, PencilIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   issueQuery,
-  useDeleteIssueMutation,
   useIssueStatusMutation,
   useRestoreIssueMutation,
 } from "@/api/issues.ts";
@@ -40,7 +33,7 @@ import {
   useCreateLabel,
 } from "@/components/issue/label-picker.tsx";
 import { MarkReadOnView } from "@/components/issue/mark-read-on-view.tsx";
-import { MoveIssueDialog } from "@/components/issue/move-issue-dialog.tsx";
+import { IssueMoreActions } from "@/components/issue/more-actions-menu.tsx";
 import {
   SpecEntryRow,
   SpecSidebarSection,
@@ -66,7 +59,6 @@ import {
 } from "@/components/timeline/composer.tsx";
 import { Timeline } from "@/components/timeline/timeline.tsx";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -459,14 +451,9 @@ function Sidebar({
   trashed: boolean;
 }) {
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const refPrefix = useRefPrefix(slug);
   const statusMutation = useIssueStatusMutation(slug);
   const canCreateLabels = useCanCreateLabels(slug);
   const createLabel = useCreateLabel(slug);
-  const deleteIssue = useDeleteIssueMutation(slug);
-  const [confirming, setConfirming] = useState(false);
-  const [moving, setMoving] = useState(false);
   const patch = useMutation({
     mutationFn: (input: { label_ids?: number[]; assignee_ids?: number[] }) =>
       api.updateIssue(slug, issue.number, input),
@@ -607,65 +594,7 @@ function Sidebar({
       {/* Placement per the T-63 verdict: after Assignees, verdict-free. */}
       <SpecSidebarSection slug={slug} issueNumber={issue.number} />
 
-      {canDelete && !trashed && (
-        <section className="space-y-2">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase">
-            Move to another project
-          </h3>
-          <Button variant="outline" size="sm" onClick={() => setMoving(true)}>
-            <FolderInputIcon className="size-3.5" />
-            Move issue
-          </Button>
-          <MoveIssueDialog
-            slug={slug}
-            issueNumber={issue.number}
-            open={moving}
-            onOpenChange={setMoving}
-          />
-        </section>
-      )}
-
-      {canDelete && !trashed && (
-        <section className="space-y-2">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase">
-            Danger zone
-          </h3>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => setConfirming(true)}
-          >
-            <Trash2Icon className="size-3.5" />
-            Delete issue
-          </Button>
-          <ConfirmDialog
-            open={confirming}
-            onOpenChange={setConfirming}
-            title="Move this issue to the trash?"
-            description={
-              <>
-                <strong>
-                  {formatRef(refPrefix, issue.number)} {issue.title}
-                </strong>{" "}
-                disappears from lists, search and references, and every write to
-                it is refused. Nothing is erased: you can restore it from the
-                trash, and its number is never reused.
-              </>
-            }
-            confirmLabel="Move to trash"
-            destructive
-            pending={deleteIssue.isPending}
-            onConfirm={() =>
-              deleteIssue.mutate(issue.number, {
-                // Redirect after a mutation — the page we are standing on is
-                // about to stop being reachable for most viewers.
-                onSuccess: () =>
-                  navigate({ to: "/projects/$slug", params: { slug } }),
-              })
-            }
-          />
-        </section>
-      )}
+      {canDelete && !trashed && <IssueMoreActions slug={slug} issue={issue} />}
     </aside>
   );
 }
