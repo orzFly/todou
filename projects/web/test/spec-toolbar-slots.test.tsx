@@ -162,17 +162,22 @@ const jumpButtons = (view: ReturnType<typeof renderSpecView>) => ({
 const countSlot = (view: { container: HTMLElement }) =>
   view.container.querySelector('[data-toolbar-slot="change-count"]');
 
+/** The stops source-diff mode steps over, as `stopsIn` selects them. */
+const FILE_DIFF_SELECTOR = "[data-file-diff]";
+
 /**
- * Place the changed blocks and let the counter re-measure. happy-dom lays
- * nothing out, so every rect is zero until a test says otherwise; the viewport
- * is 768 tall, which puts the pivot at 384 and its tolerance band at 376–392.
+ * Place the stops and let the counter re-measure. happy-dom lays nothing out,
+ * so every rect is zero until a test says otherwise. Rendered mode compares
+ * block centers against the viewport's, at 384 in a 768-tall window with a
+ * tolerance band of 376–392; source mode compares tops against `stickyTop + 8`,
+ * at 64 while the header stands on its 56px fallback.
  */
-function stubTops(view: { container: HTMLElement }, tops: number[]): void {
-  const els = [
-    ...view.container.querySelectorAll<HTMLElement>(
-      ".spec-changed, .spec-ins-block",
-    ),
-  ];
+function stubTops(
+  view: { container: HTMLElement },
+  tops: number[],
+  selector = ".spec-changed, .spec-ins-block",
+): void {
+  const els = [...view.container.querySelectorAll<HTMLElement>(selector)];
   els.forEach((el, i) => {
     el.getBoundingClientRect = () =>
       ({ top: tops[i] ?? 0, height: 20 }) as DOMRect;
@@ -515,10 +520,21 @@ describe("spec toolbar fixed slots (T-190)", () => {
     expect(countSlot(view)?.getAttribute("title")).toBe("changed file 0 of 2");
   });
 
-  it("counts whole file diffs in source-diff mode (T-224)", async () => {
+  it("counts whole file diffs, and steps over them by their tops (T-224)", async () => {
     const view = await toolbar("?v=2&compare=1");
+    // Both rects are zero here, which reads as a reader who has passed both
+    // diffs. Only the total says anything until the tops are placed (T-237).
     await waitFor(() => expect(countSlot(view)?.textContent).toBe("2/2"));
-    expect(countSlot(view)?.getAttribute("title")).toBe("file diff 2 of 2");
+
+    stubTops(view, [40, 500], FILE_DIFF_SELECTOR);
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("1/2"));
+    expect(countSlot(view)?.getAttribute("title")).toBe("file diff 1 of 2");
+
+    stubTops(view, [500, 900], FILE_DIFF_SELECTOR);
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("0/2"));
+
+    stubTops(view, [-100, -50], FILE_DIFF_SELECTOR);
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("2/2"));
   });
 
   it("shows the arrows' own reason where there is nothing to count (T-224)", async () => {

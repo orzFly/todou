@@ -116,6 +116,18 @@ async function renderBar(config?: ReferenceConfig, detail?: RefPlacement) {
 const setIntersecting = (isIntersecting: boolean) =>
   act(() => notify?.([{ isIntersecting }]));
 
+/**
+ * happy-dom answers 0 from every `getBoundingClientRect()`, so a height only
+ * reaches the hook when it is stubbed on the element. use-header-height.test.ts
+ * stubs the same way.
+ */
+function headerOf(height: number): HTMLElement {
+  const header = document.createElement("header");
+  header.getBoundingClientRect = () => ({ height }) as DOMRect;
+  document.body.append(header);
+  return header;
+}
+
 beforeEach(() => {
   notify = undefined;
   observerOptions = undefined;
@@ -125,6 +137,9 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  // testing-library removes only the container it made, and the stub is
+  // appended beside it.
+  for (const header of document.querySelectorAll("header")) header.remove();
 });
 
 describe("FloatingTitleBar (T-154)", () => {
@@ -139,7 +154,21 @@ describe("FloatingTitleBar (T-154)", () => {
     expect(bar.dataset.state).toBe("hidden");
   });
 
-  it("offsets the threshold by the measured header height", async () => {
+  it("offsets the threshold and the bar by the header's measured height", async () => {
+    headerOf(97);
+    const { bar } = await renderBar();
+    // `useHeaderHeight` reports from a passive effect, so the second render's
+    // DOM commits while the observer still holds the fallback. Read
+    // synchronously, this case would pass against a hard-coded 56 — the defect
+    // it exists to catch (T-237). `waitFor` flushes that effect, and the
+    // observer is rebuilt with the measurement.
+    await waitFor(() => {
+      expect(observerOptions?.rootMargin).toBe("-97px 0px 0px 0px");
+      expect(bar.parentElement?.style.top).toBe("97px");
+    });
+  });
+
+  it("stands on a 56px offset until there is a header to measure", async () => {
     await renderBar();
     expect(observerOptions?.rootMargin).toBe("-56px 0px 0px 0px");
   });
