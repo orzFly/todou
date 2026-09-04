@@ -142,10 +142,27 @@ const editorTheme = EditorView.theme({
     minHeight: "0",
   },
   "&.cm-focused": { outline: "none" },
+  /**
+   * alignSelf and minHeight here, with flexGrow on .cm-scroller below, are what
+   * makes the blank area under a short document part of the editor rather than
+   * a dead shell. The base theme already means to do that, with
+   * `.cm-scroller { height: 100% }` and `.cm-content { min-height: 100% }` —
+   * but callers give this component a min-height, never a height, so the
+   * containing block is never definite, both percentages silently resolve to
+   * `auto`, and the contenteditable stays as short as its text. None of the
+   * three below depends on percentage resolution: the scroller takes the
+   * leftover height through flex, align-self overrides the base theme's
+   * `align-items: flex-start !important` so the content stretches down the
+   * cross axis, and min-content floors that stretch — a stretched box is
+   * clamped to the flex line, which costs a document taller than the caller's
+   * max-height its bottom padding, with no way to scroll to it.
+   */
   ".cm-content": {
     padding: "0.5rem 0.625rem",
     lineHeight: "1.5",
     caretColor: "var(--foreground)",
+    alignSelf: "stretch",
+    minHeight: "min-content",
   },
   // CodeMirror's own base theme puts monospace here; this is a comment box,
   // not a code box.
@@ -154,6 +171,9 @@ const editorTheme = EditorView.theme({
     fontFamily: "inherit",
     fontSize: "inherit",
     lineHeight: "inherit",
+    // Not `flex: 1`, which would zero the basis; the other two components of
+    // the shorthand are already at their defaults.
+    flexGrow: "1",
   },
   ".cm-line": { padding: "0" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--foreground)" },

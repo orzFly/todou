@@ -111,4 +111,28 @@ describe("MarkdownEditor", () => {
     view.rerender(<MarkdownEditor extensions={[]} />);
     expect(cm.state.facet(EditorView.editable)).toBe(true);
   });
+
+  /**
+   * happy-dom has no layout engine, so the thing these three declarations buy —
+   * the contenteditable filling the editor box, so the blank area below a short
+   * document is clickable — cannot be measured here; that is checked in a real
+   * browser. What is checked here is the one part that silently breaks: the
+   * cascade. CodeMirror's base theme fights all three (`height: 100%` on the
+   * scroller, `min-height: 100%` on the content, and `align-items: flex-start
+   * !important` on the scroller), so a CodeMirror upgrade that adds
+   * `!important` to one more rule — or a tidy-up that drops these lines — puts
+   * the editor back to being a dead shell with a live first line.
+   */
+  it("wins the cascade that lets the contenteditable fill the editor box", () => {
+    const view = render(<MarkdownEditor />);
+    const scroller = view.container.querySelector(".cm-scroller");
+    const content = view.container.querySelector(".cm-content");
+    expect(scroller).not.toBeNull();
+    expect(content).not.toBeNull();
+    expect(getComputedStyle(scroller as HTMLElement).flexGrow).toBe("1");
+    expect(getComputedStyle(content as HTMLElement).alignSelf).toBe("stretch");
+    expect(getComputedStyle(content as HTMLElement).minHeight).toBe(
+      "min-content",
+    );
+  });
 });
