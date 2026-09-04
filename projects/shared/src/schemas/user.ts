@@ -51,3 +51,25 @@ export const MeUpdateInput = z.object({
   login: Login.optional(),
 });
 export type MeUpdateInput = z.infer<typeof MeUpdateInput>;
+
+/**
+ * Avatars are small by design — independent of the attachment upload limit.
+ * Shared rather than server-local because the browser scales oversized images
+ * down against this same number before uploading; two copies would drift.
+ */
+export const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+
+export const AVATAR_CONTENT_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+] as const;
+
+const AVATAR_CONTENT_TYPE_SET: ReadonlySet<string> = new Set(
+  AVATAR_CONTENT_TYPES,
+);
+
+export function isAvatarContentType(type: string): boolean {
+  return AVATAR_CONTENT_TYPE_SET.has(type);
+}

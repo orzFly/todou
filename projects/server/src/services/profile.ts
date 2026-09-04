@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { AVATAR_MAX_BYTES, isAvatarContentType } from "@todou/shared";
 import { eq } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -8,15 +9,6 @@ import {
   NotFoundError,
   ValidationFailedError,
 } from "../errors.ts";
-
-// Avatars are small by design — independent of the attachment upload limit.
-export const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
-const AVATAR_CONTENT_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-  "image/gif",
-]);
 
 export type ProfilePatch = { display_name?: string; login?: string };
 
@@ -84,7 +76,7 @@ export async function setAvatar(
   target: UserRow,
   file: File,
 ): Promise<UserRow> {
-  if (!AVATAR_CONTENT_TYPES.has(file.type)) {
+  if (!isAvatarContentType(file.type)) {
     throw new ValidationFailedError(
       "avatar must be a png, jpeg, webp, or gif image",
     );

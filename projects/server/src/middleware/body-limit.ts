@@ -1,9 +1,9 @@
+import { AVATAR_MAX_BYTES } from "@todou/shared";
 import { bodyLimit } from "hono/body-limit";
 import { createMiddleware } from "hono/factory";
 import type { AppEnv } from "../auth/middleware.ts";
 import type { Config } from "../config.ts";
 import { PayloadTooLargeError } from "../errors.ts";
-import { AVATAR_MAX_BYTES } from "../services/profile.ts";
 
 const MB = 1024 * 1024;
 
