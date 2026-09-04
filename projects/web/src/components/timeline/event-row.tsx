@@ -15,6 +15,8 @@ import {
   FileCheck2Icon,
   LinkIcon,
   ListChecksIcon,
+  LogInIcon,
+  LogOutIcon,
   PaperclipIcon,
   PencilIcon,
   RefreshCwIcon,
@@ -23,7 +25,8 @@ import {
   UserMinusIcon,
   UserPlusIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useMemo } from "react";
+import { projectsQuery } from "@/api/queries.ts";
 import {
   refConfigFor,
   referenceConfigQuery,
@@ -55,6 +58,8 @@ export type EventRenderContext = {
   refConfig: RefConfig;
   /** Slug claims, so a cross-reference resolves as of the event (T-156). */
   slugEntries: SlugClaimEntry[];
+  /** Project id → current slug, preferred over the payload's slug. */
+  slugOfProject?: (id: number) => string | undefined;
   entities: EventEntities;
 };
 
@@ -69,12 +74,20 @@ export function useEventRenderContext(
     enabled: slug !== undefined,
   });
   const directory = useQuery(referenceDirectoryQuery);
+  const projects = useQuery(projectsQuery);
   const entities = useEventEntities(slug);
+  const slugById = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const project of projects.data ?? [])
+      map.set(project.id, project.slug);
+    return map;
+  }, [projects.data]);
   return {
     slug,
     issueNumber,
     refConfig: refConfigFor(refConfigData.data),
     slugEntries: directory.data?.slug_entries ?? [],
+    slugOfProject: (id) => slugById.get(id),
     entities,
   };
 }
@@ -201,14 +214,25 @@ export function renderEvent(
     case "cross_referenced": {
       const project = payload.by_project;
       const number = payload.by_issue;
+      // A row a move rewrote stays visible with its far side blanked; it was
+      // visible before the move, and losing it would be the disappearance
+      // the redaction rule exists to prevent.
+      if (payload.by_moved === true && project === null) {
+        return plain("referenced by a card that has since moved");
+      }
       // Self-contained on purpose: the source lives in another project, so
       // this project's format would spell a number that means nothing here.
       const text = `referenced by ${String(project)}#${String(number)}`;
       if (typeof project !== "string" || typeof number !== "number")
         return plain(text);
-      // The payload keeps the slug the source project had at the time, so a
-      // rename since then has to be resolved away or the link goes nowhere.
+      // An id beats a slug: a slug has to be read as of the event's own
+      // instant, and after it changes hands that answer is a guess.
+      const byId =
+        typeof payload.by_project_id === "number"
+          ? ctx.slugOfProject?.(payload.by_project_id)
+          : undefined;
       const slug =
+        byId ??
         resolveSlugAt(ctx.slugEntries, [], project, event.created_at) ??
         project;
       return {
@@ -315,6 +339,62 @@ export function renderEvent(
       return plain("moved this to the trash");
     case "restored":
       return plain("restored this from the trash");
+    case "moved_in": {
+      const slug = payload.from_project;
+      const number = payload.from_number;
+      const extras = [
+        payload.status_from !== payload.status_to &&
+        typeof payload.status_to === "string"
+          ? `${String(payload.status_from)} → ${payload.status_to}`
+          : null,
+        Array.isArray(payload.dropped_labels) &&
+        payload.dropped_labels.length > 0
+          ? `dropped labels: ${payload.dropped_labels.join(", ")}`
+          : null,
+      ].filter((part): part is string => part !== null);
+      const suffix = extras.length > 0 ? ` (${extras.join("; ")})` : "";
+      // Blanked source = a project this reader has no role in. Naming it
+      // "another project" is the whole of what they are entitled to know.
+      if (typeof slug !== "string" || typeof number !== "number") {
+        return plain(`moved this in from another project${suffix}`);
+      }
+      return {
+        node: (
+          <>
+            {"moved this in from "}
+            <IssueLink
+              slug={slug}
+              number={number}
+              crossProject
+              fallback={`${slug}#${number}`}
+            />
+            {suffix}
+          </>
+        ),
+        text: `moved this in from ${slug}#${number}${suffix}`,
+      };
+    }
+    case "moved_out": {
+      const slug = payload.to_project;
+      const number = payload.to_number;
+      if (typeof slug !== "string" || typeof number !== "number") {
+        return plain("moved this out to another project");
+      }
+      return {
+        node: (
+          <>
+            {"moved this out to "}
+            <IssueLink
+              slug={slug}
+              number={number}
+              crossProject
+              fallback={`${slug}#${number}`}
+            />
+          </>
+        ),
+        text: `moved this out to ${slug}#${number}`,
+      };
+    }
   }
 }
 
@@ -337,6 +417,8 @@ export const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
   spec_comments_resolved: <CheckIcon className="size-3.5 text-green-600" />,
   deleted: <Trash2Icon className="size-3.5 text-destructive" />,
   restored: <ArchiveRestoreIcon className="size-3.5" />,
+  moved_out: <LogOutIcon className="size-3.5" />,
+  moved_in: <LogInIcon className="size-3.5" />,
 };
 
 /**

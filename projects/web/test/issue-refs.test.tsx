@@ -60,6 +60,7 @@ const refItem = (number: number, title: string): IssueListItem => ({
   deleted_by: null,
   unread: false,
   unread_comments: 0,
+  moves: [],
 });
 
 /**
@@ -292,8 +293,12 @@ describe("issue ref batching", () => {
       client.fetchQuery(issueRefQuery("todou", 999)),
     ]);
 
-    expect(urls).toHaveLength(1);
+    // One list request for all three, then a probe for the miss alone: a
+    // number the list does not return may be a card that moved away, and
+    // only the issue route can tell that apart from a number nobody used.
+    expect(urls).toHaveLength(2);
     expect(urls[0]).toContain("numbers=5%2C9%2C999");
+    expect(urls[1]).toContain("/issues/999");
     expect(five?.title).toBe("Five");
     expect(nine?.title).toBe("Nine");
     expect(missing).toBeNull();

@@ -1,11 +1,18 @@
 import {
   useMutation,
+  useQuery,
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { formatRef, type Issue, type Status } from "@todou/shared";
-import { CheckIcon, PencilIcon, Trash2Icon, XIcon } from "lucide-react";
+import {
+  CheckIcon,
+  FolderInputIcon,
+  PencilIcon,
+  Trash2Icon,
+  XIcon,
+} from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -20,6 +27,7 @@ import {
   labelsQuery,
   membersQuery,
   meQuery,
+  projectQuery,
   statusesQuery,
 } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
@@ -32,6 +40,7 @@ import {
   useCreateLabel,
 } from "@/components/issue/label-picker.tsx";
 import { MarkReadOnView } from "@/components/issue/mark-read-on-view.tsx";
+import { MoveIssueDialog } from "@/components/issue/move-issue-dialog.tsx";
 import {
   SpecEntryRow,
   SpecSidebarSection,
@@ -42,6 +51,7 @@ import {
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
+import { IssueOriginProvider } from "@/components/shared/issue-origin.tsx";
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
@@ -75,6 +85,7 @@ export function IssueDetailPage() {
 
   const me = useSuspenseQuery(meQuery);
   const issue = useSuspenseQuery(issueQuery(slug, issueNumber));
+  const project = useQuery(projectQuery(slug));
   const statuses = useSuspenseQuery(statusesQuery(slug));
   const labels = useSuspenseQuery(labelsQuery(slug));
   const members = useSuspenseQuery(membersQuery(slug));
@@ -92,60 +103,65 @@ export function IssueDetailPage() {
   const trashed = issue.data.deleted_at !== null;
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_240px]">
-      {/* Nothing in the trash is ever unread, so there is no position to
+    <IssueOriginProvider
+      moves={issue.data.moves}
+      currentProjectId={project.data?.id}
+    >
+      <div className="grid gap-6 lg:grid-cols-[1fr_240px]">
+        {/* Nothing in the trash is ever unread, so there is no position to
           advance while looking at one — the endpoint would 404. */}
-      {!trashed && <MarkReadOnView slug={slug} number={issueNumber} />}
-      {/* Two layers on purpose: the floating bar's zero-height host has to
+        {!trashed && <MarkReadOnView slug={slug} number={issueNumber} />}
+        {/* Two layers on purpose: the floating bar's zero-height host has to
           stay out of the space-y flow, which would otherwise add a gap below
           it, and its sticky container has to span the whole column. */}
-      <div className="min-w-0">
-        <FloatingTitleBar
+        <div className="min-w-0">
+          <FloatingTitleBar
+            slug={slug}
+            issue={issue.data}
+            watchTarget={titleRef}
+          />
+          <div className="space-y-4">
+            {trashed && <TrashBanner slug={slug} issue={issue.data} />}
+            <div ref={titleRef}>
+              <TitleBlock slug={slug} issue={issue.data} readOnly={trashed} />
+            </div>
+            <BodyBlock slug={slug} issue={issue.data} readOnly={trashed} />
+            <SpecEntryRow slug={slug} issueNumber={issueNumber} />
+            <AttachmentList slug={slug} issueNumber={issueNumber} />
+            <Separator />
+            <Timeline
+              slug={slug}
+              issueNumber={issueNumber}
+              pendingComments={composer.pending.filter((p) => !p.failed)}
+              viewer={viewer}
+            />
+            {/* Floats at the viewport bottom while the timeline scrolls by,
+              and settles into flow at the end of the page (GitHub-style). */}
+            {!trashed && (
+              <div className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4">
+                <Composer
+                  slug={slug}
+                  issueNumber={issueNumber}
+                  onSend={composer.send}
+                  onSendWithCommands={composer.sendWithCommands}
+                  failed={composer.pending.filter((p) => p.failed)}
+                  onRetry={composer.retry}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+        <Sidebar
           slug={slug}
           issue={issue.data}
-          watchTarget={titleRef}
+          statuses={statuses.data}
+          allLabels={labels.data}
+          members={members.data}
+          canDelete={isAdmin || issue.data.author.id === me.data.id}
+          trashed={trashed}
         />
-        <div className="space-y-4">
-          {trashed && <TrashBanner slug={slug} issue={issue.data} />}
-          <div ref={titleRef}>
-            <TitleBlock slug={slug} issue={issue.data} readOnly={trashed} />
-          </div>
-          <BodyBlock slug={slug} issue={issue.data} readOnly={trashed} />
-          <SpecEntryRow slug={slug} issueNumber={issueNumber} />
-          <AttachmentList slug={slug} issueNumber={issueNumber} />
-          <Separator />
-          <Timeline
-            slug={slug}
-            issueNumber={issueNumber}
-            pendingComments={composer.pending.filter((p) => !p.failed)}
-            viewer={viewer}
-          />
-          {/* Floats at the viewport bottom while the timeline scrolls by,
-              and settles into flow at the end of the page (GitHub-style). */}
-          {!trashed && (
-            <div className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4">
-              <Composer
-                slug={slug}
-                issueNumber={issueNumber}
-                onSend={composer.send}
-                onSendWithCommands={composer.sendWithCommands}
-                failed={composer.pending.filter((p) => p.failed)}
-                onRetry={composer.retry}
-              />
-            </div>
-          )}
-        </div>
       </div>
-      <Sidebar
-        slug={slug}
-        issue={issue.data}
-        statuses={statuses.data}
-        allLabels={labels.data}
-        members={members.data}
-        canDelete={isAdmin || issue.data.author.id === me.data.id}
-        trashed={trashed}
-      />
-    </div>
+    </IssueOriginProvider>
   );
 }
 
@@ -450,6 +466,7 @@ function Sidebar({
   const createLabel = useCreateLabel(slug);
   const deleteIssue = useDeleteIssueMutation(slug);
   const [confirming, setConfirming] = useState(false);
+  const [moving, setMoving] = useState(false);
   const patch = useMutation({
     mutationFn: (input: { label_ids?: number[]; assignee_ids?: number[] }) =>
       api.updateIssue(slug, issue.number, input),
@@ -589,6 +606,24 @@ function Sidebar({
 
       {/* Placement per the T-63 verdict: after Assignees, verdict-free. */}
       <SpecSidebarSection slug={slug} issueNumber={issue.number} />
+
+      {canDelete && !trashed && (
+        <section className="space-y-2">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase">
+            Move to another project
+          </h3>
+          <Button variant="outline" size="sm" onClick={() => setMoving(true)}>
+            <FolderInputIcon className="size-3.5" />
+            Move issue
+          </Button>
+          <MoveIssueDialog
+            slug={slug}
+            issueNumber={issue.number}
+            open={moving}
+            onOpenChange={setMoving}
+          />
+        </section>
+      )}
 
       {canDelete && !trashed && (
         <section className="space-y-2">

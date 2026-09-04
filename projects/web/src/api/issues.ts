@@ -383,6 +383,56 @@ export function useRestoreIssueMutation(slug: string) {
   });
 }
 
+/**
+ * What a move would do, without doing it. Keyed on the destination so
+ * switching projects in the dialog re-previews rather than showing the
+ * previous answer.
+ */
+export function movePreviewQuery(
+  slug: string,
+  issueNumber: number,
+  toProject: string | null,
+) {
+  return queryOptions({
+    queryKey: ["move-preview", slug, issueNumber, toProject],
+    queryFn: () =>
+      api.moveIssue(slug, issueNumber, {
+        to_project: toProject as string,
+        dry_run: true,
+      }),
+    enabled: toProject !== null,
+    // A preview the user is about to act on: never served stale.
+    staleTime: 0,
+  });
+}
+
+/** Move an issue to another project (T-231). */
+export function useMoveIssueMutation(slug: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { issueNumber: number; toProject: string }) =>
+      api.moveIssue(slug, vars.issueNumber, {
+        to_project: vars.toProject,
+        dry_run: false,
+      }),
+    onError: (error) => toast.error(`Could not move issue: ${error.message}`),
+    onSettled: (result, _error, vars) => {
+      // Both ends move: the card leaves one project's lists and joins the
+      // other's, and every <IssueLink> pointing at the old address has to
+      // re-resolve before it can find the redirect.
+      invalidateAfterTrashMove(queryClient, slug, vars.issueNumber);
+      if (result) {
+        invalidateAfterTrashMove(
+          queryClient,
+          result.moved_to.slug,
+          result.moved_to.number as number,
+        );
+      }
+      queryClient.invalidateQueries({ queryKey: ["comment-location"] });
+    },
+  });
+}
+
 /** Optimistic label toggle from the list view. */
 export function useIssueLabelsMutation(slug: string) {
   const queryClient = useQueryClient();
