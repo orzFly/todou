@@ -141,10 +141,20 @@ The tombstone answers for all of it:
   address.
 - `a/123#comment-1462` → the same comment under its new id.
 - Attachment URLs pasted into markdown → the same file where it now lives.
-  Browsers follow this on their own, so embedded images keep rendering.
+  Browsers follow this on their own, so embedded images keep rendering. The
+  rich attachment card travels too: the filename, the size and the inline
+  preview come from the file's current home, not just its bytes.
 
 Resolution is one hop however many times the card has moved: every address it
 has ever had points straight at the current one, not at the previous one.
+
+Who may follow an old address is decided by where the thing is now: anyone who
+can read the project it moved to. Someone who can read neither end gets a plain
+404, which admits nothing about the address ever having been used. One gap is
+left: opening an old *card* link in the web UI still stops at the project page
+for a reader who is not a member of the source project, because that page loads
+the source project's own metadata first. Following the same link with the CLI,
+and every attachment URL and `#comment-N` in a body, works.
 
 ### Text is still never rewritten
 
