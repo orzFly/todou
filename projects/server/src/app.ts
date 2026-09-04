@@ -5,7 +5,7 @@ import { createMiddleware } from "hono/factory";
 import { z } from "zod";
 import { type AppEnv, authMiddleware } from "./auth/middleware.ts";
 import type { AppContext } from "./bootstrap.ts";
-import { registerErrorHandler } from "./errors.ts";
+import { registerErrorHandler } from "./error-handler.ts";
 import { agentContextMiddleware } from "./middleware/agent-context.ts";
 import {
   avatarBodyLimit,

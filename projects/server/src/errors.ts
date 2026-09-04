@@ -1,9 +1,3 @@
-import type { OpenAPIHono } from "@hono/zod-openapi";
-import type { Hono } from "hono";
-// A cycle on paper (relocation.ts throws these markers back at us), but only
-// ever read at request time, which ESM's live bindings handle.
-import { respondRelocation } from "./services/relocation.ts";
-
 type ErrorStatus =
   | 301
   | 400
@@ -216,34 +210,4 @@ export class DirectUploadIncompleteError extends DomainError {
       { reason },
     );
   }
-}
-
-// biome-ignore lint/suspicious/noExplicitAny: accepts any Hono env
-export function registerErrorHandler(app: Hono<any> | OpenAPIHono<any>): void {
-  app.onError((err, c) => {
-    if (
-      err instanceof IssueMovedError ||
-      err instanceof CommentMovedError ||
-      err instanceof AttachmentMovedError
-    ) {
-      return respondRelocation(c, err);
-    }
-    if (err instanceof DomainError) {
-      return c.json(
-        {
-          error: {
-            code: err.code,
-            message: err.message,
-            ...(err.details === undefined ? {} : { details: err.details }),
-          },
-        },
-        err.status,
-      );
-    }
-    console.error("unhandled error", err);
-    return c.json(
-      { error: { code: "internal", message: "internal server error" } },
-      500,
-    );
-  });
 }
