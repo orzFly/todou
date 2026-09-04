@@ -74,6 +74,17 @@ export function isTextDocument(attachment: {
   return hasGenericType(type) && TEXT_EXTENSION.test(attachment.filename);
 }
 
+/**
+ * Names whose image-syntax reference embeds a document card rather than an
+ * `<img>`. Images keep winning ties like .svg, which is both.
+ */
+export function isTextEmbedName(name: string): boolean {
+  return (
+    !isPreviewableImage({ filename: name }) &&
+    isTextDocument({ filename: name })
+  );
+}
+
 /** Markdown gets our own MarkdownView instead of a code view. */
 export function isMarkdownDocument(attachment: {
   filename: string;
