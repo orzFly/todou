@@ -1,7 +1,12 @@
 import type { Nodes } from "mdast";
+import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
+import {
+  FRONTMATTER_FLAVOURS,
+  remarkFrontmatterTable,
+} from "./remark-frontmatter-table.ts";
 import type { LineRange } from "./spec-changes.ts";
 
 /**
@@ -36,9 +41,40 @@ const SOURCE_BLOCKS = new Set([
   "blockquote",
   "code",
   "image",
+  "frontmatter",
 ]);
 
-const processor = unified().use(remarkParse).use(remarkGfm);
+/**
+ * The node types `remarkFrontmatterTable` invents, mapped onto block types the
+ * engine already has (T-240). A frontmatter block IS a two-column table as far
+ * as everything downstream is concerned — rows pair by their key cell, a
+ * removed row is spliced back where it stood — so its fields enter the block
+ * table as `tableRow` and its cells as `tableCell`, and none of that machinery
+ * has to learn a second vocabulary.
+ *
+ * `frontmatterBody` is deliberately absent: pushing no block for it is what
+ * makes a field row's `parent` the frontmatter block itself, which is the
+ * relationship `tableOf` reads to find the rows of a table.
+ */
+const FRONTMATTER_BLOCKS: Record<string, SourceBlockType> = {
+  frontmatterField: "tableRow",
+  frontmatterKey: "tableCell",
+  frontmatterValue: "tableCell",
+};
+
+/**
+ * This list has to stay the same one `MarkdownView` renders with. Let the two
+ * diverge and the index reads a block as a `heading` leaf where the DOM has a
+ * table: every offset the decorations compute then lands on a node that is not
+ * there, and `rehypeDecorations` drops what it cannot place *in silence*. The
+ * symptom is decorations quietly vanishing, not an error — so plugins go in
+ * both places at once (T-240).
+ */
+const processor = unified()
+  .use(remarkParse)
+  .use(remarkGfm)
+  .use(remarkFrontmatter, FRONTMATTER_FLAVOURS)
+  .use(remarkFrontmatterTable);
 
 /** One run of prose, with both of its coordinate systems. */
 export type SourceSegment = {
@@ -72,7 +108,16 @@ export type SourceBlockType =
   | "list"
   | "blockquote"
   | "code"
-  | "image";
+  | "image"
+  /**
+   * A document's frontmatter (T-240). Being its own type is the whole of what
+   * keeps it out of the prose word bag: `classOf` returns any type that is not
+   * a prose leaf as its own class, so `title` / `status` / `owner` — key names,
+   * which are syntax rather than vocabulary — can no longer compete with a
+   * paragraph for a pairing. That was T-239's lesson, applied before it costs
+   * anything rather than after.
+   */
+  | "frontmatter";
 
 /**
  * An image node, keyed by the leaf group it owns (T-223). What mdast knows
@@ -255,14 +300,14 @@ export function buildSegmentIndex(source: string): SegmentIndex {
     if (!("children" in node)) return;
     const outerGroup = group;
     const outerParent = parent;
-    const index = SOURCE_BLOCKS.has(node.type)
-      ? pushBlock(node, node.type as SourceBlockType)
-      : null;
+    const type =
+      FRONTMATTER_BLOCKS[node.type] ?? (node.type as SourceBlockType);
+    const index = SOURCE_BLOCKS.has(type) ? pushBlock(node, type) : null;
     if (index !== null) parent = index;
     const firstGroup = groups;
-    if (LEAF_BLOCKS.has(node.type)) {
+    if (LEAF_BLOCKS.has(type)) {
       group = groups++;
-      groupTypes[group] = node.type as SourceBlockType;
+      groupTypes[group] = type;
     }
     for (const child of node.children) visit(child);
     const block = index === null ? undefined : blocks[index];
@@ -274,7 +319,10 @@ export function buildSegmentIndex(source: string): SegmentIndex {
     parent = outerParent;
   };
 
-  visit(processor.parse(source));
+  // `runSync`, not `parse` alone: `parse` stops at the tokenizer and runs no
+  // transformer, so `remarkFrontmatterTable` — which is one — would never fire
+  // and the index would hold the `yaml` leaf while the DOM held a table.
+  visit(processor.runSync(processor.parse(source), source));
   return {
     source,
     text,
@@ -469,7 +517,14 @@ export function tableOf(
   blockIndex: number,
 ): TableMatrix | null {
   const table = index.blocks[blockIndex];
-  if (table === undefined || table.type !== "table") return null;
+  // Frontmatter answers here too (T-240): its fields are `tableRow`s and its
+  // cells `tableCell`s, so the matrix below reads it without a second path.
+  if (
+    table === undefined ||
+    (table.type !== "table" && table.type !== "frontmatter")
+  ) {
+    return null;
+  }
   const ranges = groupRangesOf(index);
   const prose = new Map<number, SourceSegment[]>();
   for (const segment of index.segments) {

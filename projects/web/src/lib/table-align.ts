@@ -34,10 +34,13 @@ const compare = (a: number, b: number) => a - b;
  * Pair equal keys in order of appearance. Position deliberately does not enter
  * into it: two columns swapped are still those two columns, and a table whose
  * rows were reordered has nothing removed and nothing added.
+ *
+ * Only the key is read, so the parameter says only that — `alignFrontmatter`
+ * pairs on keys alone and has no bag to weigh.
  */
 function matchByKey(
-  olds: Candidate[],
-  news: Candidate[],
+  olds: Array<{ key: string | null }>,
+  news: Array<{ key: string | null }>,
 ): Array<[number, number]> {
   const queues = new Map<string, number[]>();
   news.forEach((candidate, j) => {
@@ -197,4 +200,59 @@ export function alignTable(old: TableMatrix, nu: TableMatrix): TableAlignment {
   const header: Array<[number, number]> =
     old.rows.length > 0 && nu.rows.length > 0 ? [[0, 0]] : [];
   return { columns, rows: { ...rows, pairs: [...header, ...rows.pairs] } };
+}
+
+/** Every field's key, by row; row 0 is a field like any other. */
+const keysOf = (matrix: TableMatrix): Array<{ key: string | null }> =>
+  matrix.rows.map((row) => ({ key: cellText(row.cells[0]) }));
+
+/**
+ * Line up the fields of one frontmatter block against another's (T-240). Two
+ * columns and no header row, so the whole question is which key became which —
+ * and the answer is only ever "the one spelled the same".
+ *
+ * That last word is where this parts company with `alignTable`, and the
+ * difference was measured. Run a real `key | value` table through the existing
+ * mechanism and three of the four field outcomes already come out right: a
+ * removed field gets its stand-in row put back where it stood, an added one
+ * gets the whole-row highlight, and a reordering costs nothing because key
+ * pairing never looked at position. The fourth is wrong. One field removed and
+ * another added leaves `matchByKey` with one candidate on each side, and
+ * `matchByWords` pairs one against one on position alone — rightly, for prose,
+ * where T-211 established that a unique position IS the evidence. A key is not
+ * prose: it is an identifier in a namespace, and drawing `reviewer: ~` becoming
+ * `approved_by: bot-one` tells the reader the two fields are related when they
+ * are not. So there is no word-bag fallback here — a key on one side only is
+ * one addition or one removal, and that is the whole of it.
+ *
+ * The columns pair by position because there is nothing else they could do: a
+ * frontmatter is two columns wide by construction, so `columns.oldOnly` is
+ * always empty and the removed-column path is unreachable — which is just as
+ * well, since it assumes a header exists when it decides between `<th>` and
+ * `<td>`.
+ */
+export function alignFrontmatter(
+  old: TableMatrix,
+  nu: TableMatrix,
+): TableAlignment {
+  const olds = keysOf(old);
+  const news = keysOf(nu);
+  const pairs = matchByKey(olds, news);
+  const takenOld = new Set(pairs.map(([i]) => i));
+  const takenNew = new Set(pairs.map(([, j]) => j));
+  return {
+    columns: {
+      pairs: [
+        [0, 0],
+        [1, 1],
+      ],
+      oldOnly: [],
+      newOnly: [],
+    },
+    rows: {
+      pairs,
+      oldOnly: olds.flatMap((_, i) => (takenOld.has(i) ? [] : [i])),
+      newOnly: news.flatMap((_, j) => (takenNew.has(j) ? [] : [j])),
+    },
+  };
 }

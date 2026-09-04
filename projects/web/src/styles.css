@@ -918,6 +918,101 @@ diffs-container {
     background-color: color-mix(in oklab, var(--muted) 50%, transparent);
   }
 
+  /* A document's frontmatter, as a metadata grid (T-240). It is a `<table>`
+     because the compare engine reads tables, and it must not look like one:
+     the keys are syntax, not a header row, so they get mono at small size in
+     the muted tone while the values keep body typography.
+
+     Grid rather than table layout for one concrete reason: `.markdown-body
+     table` above is `width: max-content`, which would let a long value push
+     the grid into its own horizontal scrollbar. `minmax(0, 1fr)` on the value
+     column caps it at the container instead, and `subgrid` is what still
+     aligns every key against every other. */
+  .markdown-body table.markdown-frontmatter {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    width: 100%;
+    overflow-x: visible;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background-color: color-mix(in oklab, var(--muted) 45%, transparent);
+    font-size: 0.9375em;
+  }
+  .markdown-body table.markdown-frontmatter tbody,
+  .markdown-body table.markdown-frontmatter tr {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+  }
+  /* The striping above counts rows; here every row is a field and reads better
+     separated by a hairline than by alternating fills. */
+  .markdown-body table.markdown-frontmatter tbody tr {
+    background-color: transparent;
+  }
+  .markdown-body table.markdown-frontmatter tr + tr {
+    border-top: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+  }
+  .markdown-body table.markdown-frontmatter th,
+  .markdown-body table.markdown-frontmatter td {
+    border: 0;
+    padding: 0.2rem 0.6rem;
+    text-align: left;
+    font-weight: 400;
+    background-color: transparent;
+  }
+  /* The key column. `td:first-child` is in here because a removed field's
+     stand-in row is built out of `<td>`s — the shared builder has no header to
+     know about — and a key that switched to body type in the one row that is
+     struck through would make the column read as ragged. Only a stand-in row
+     can match it: a live row's key is always the `<th>`. */
+  .markdown-body table.markdown-frontmatter th,
+  .markdown-body table.markdown-frontmatter tr.spec-del-row td:first-child {
+    font-family: var(--font-mono);
+    font-size: 0.8125em;
+    line-height: 1.7;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+  }
+  /* Indentation and line breaks are the whole of what a nested map or a block
+     scalar shows, since the value is never parsed (T-240). */
+  .markdown-body table.markdown-frontmatter td {
+    white-space: pre-wrap;
+  }
+  /* A field with no key at all — TOML's `[section]`, or a line ahead of the
+     first field. Its key cell exists so the table stays two columns wide for
+     the diff, and spans away here so the row reads as the full-width line it
+     is. Both spellings of that cell, for `td:first-child`'s reason above. */
+  .markdown-body table.markdown-frontmatter th:empty,
+  .markdown-body
+    table.markdown-frontmatter
+    tr.spec-del-row
+    td:first-child:empty {
+    display: none;
+  }
+  .markdown-body table.markdown-frontmatter th:empty + td,
+  .markdown-body
+    table.markdown-frontmatter
+    tr.spec-del-row
+    td:first-child:empty
+    + td {
+    grid-column: 1 / -1;
+  }
+  /* A field the new version no longer has, put back where it stood. The grid
+     sets every cell's `background` to transparent above, so the row's own wash
+     and its strike-through have to be spelled out here rather than inherited
+     from the table rules `tr.spec-del-row td` carries elsewhere. */
+  .markdown-body table.markdown-frontmatter tr.spec-del-row th,
+  .markdown-body table.markdown-frontmatter tr.spec-del-row td {
+    background-color: color-mix(
+      in oklab,
+      var(--color-red-500) 10%,
+      transparent
+    );
+    color: color-mix(in oklab, var(--foreground) 55%, var(--color-red-500));
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+  }
+
   .markdown-body img {
     max-width: 100%;
   }

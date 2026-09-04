@@ -4,7 +4,7 @@ import {
   type TableMatrix,
   tableOf,
 } from "../src/lib/spec-source-index.ts";
-import { alignTable } from "../src/lib/table-align.ts";
+import { alignFrontmatter, alignTable } from "../src/lib/table-align.ts";
 
 /** The matrix of the one table in a fixture. */
 function matrix(...lines: string[]): TableMatrix {
@@ -365,5 +365,136 @@ describe("alignTable rows (T-221)", () => {
     ]);
     expect(result.rows.oldOnly).toEqual([]);
     expect(result.rows.newOnly).toEqual([]);
+  });
+});
+
+/** The matrix of the frontmatter block in a fixture. */
+function frontmatter(...lines: string[]): TableMatrix {
+  const index = buildSegmentIndex(`${lines.join("\n")}\n`);
+  const found = tableOf(
+    index,
+    index.blocks.findIndex((block) => block.type === "frontmatter"),
+  );
+  if (found === null) throw new Error("the fixture holds no frontmatter");
+  return found;
+}
+
+describe("alignFrontmatter", () => {
+  const base = frontmatter(
+    "---",
+    "title: Design",
+    "status: draft",
+    "reviewer: ~",
+    "---",
+  );
+
+  it("pairs two columns by position and never loses one", () => {
+    const result = alignFrontmatter(base, base);
+    expect(result.columns).toEqual({
+      pairs: [
+        [0, 0],
+        [1, 1],
+      ],
+      oldOnly: [],
+      newOnly: [],
+    });
+  });
+
+  it("reports a removed field as removed", () => {
+    const result = alignFrontmatter(
+      base,
+      frontmatter("---", "title: Design", "status: draft", "---"),
+    );
+    expect(result.rows.pairs).toEqual([
+      [0, 0],
+      [1, 1],
+    ]);
+    expect(result.rows.oldOnly).toEqual([2]);
+    expect(result.rows.newOnly).toEqual([]);
+  });
+
+  it("reports an added field as added", () => {
+    const result = alignFrontmatter(
+      frontmatter("---", "title: Design", "status: draft", "---"),
+      base,
+    );
+    expect(result.rows.pairs).toEqual([
+      [0, 0],
+      [1, 1],
+    ]);
+    expect(result.rows.oldOnly).toEqual([]);
+    expect(result.rows.newOnly).toEqual([2]);
+  });
+
+  it("reads a reordering as no change at all", () => {
+    // Key pairing never looks at position, and a key/value block has no order
+    // to change: the same three fields are still the same three fields.
+    const result = alignFrontmatter(
+      base,
+      frontmatter(
+        "---",
+        "reviewer: ~",
+        "title: Design",
+        "status: draft",
+        "---",
+      ),
+    );
+    expect(result.rows.pairs).toEqual([
+      [0, 1],
+      [1, 2],
+      [2, 0],
+    ]);
+    expect(result.rows.oldOnly).toEqual([]);
+    expect(result.rows.newOnly).toEqual([]);
+  });
+
+  // The boundary with `alignTable`, and the reason this function exists: one
+  // field out and one field in must read as two events, not as a rename.
+  it("keeps one field out and one in as two events, not a rename", () => {
+    const result = alignFrontmatter(
+      base,
+      frontmatter(
+        "---",
+        "title: Design",
+        "status: draft",
+        "approved_by: bot-one",
+        "---",
+      ),
+    );
+    expect(result.rows.pairs).toEqual([
+      [0, 0],
+      [1, 1],
+    ]);
+    expect(result.rows.oldOnly).toEqual([2]);
+    expect(result.rows.newOnly).toEqual([2]);
+  });
+
+  it("pairs a field whose value changed, so the value can be word-diffed", () => {
+    const result = alignFrontmatter(
+      base,
+      frontmatter(
+        "---",
+        "title: Design",
+        "status: approved",
+        "reviewer: ~",
+        "---",
+      ),
+    );
+    expect(result.rows.pairs).toEqual([
+      [0, 0],
+      [1, 1],
+      [2, 2],
+    ]);
+    expect(result.rows.oldOnly).toEqual([]);
+  });
+
+  it("gives up both sides when the two blocks share no key", () => {
+    const result = alignFrontmatter(
+      frontmatter("---", "title: Design", "---"),
+      frontmatter("---", "owner: bot-one", "---"),
+    );
+    expect(result.rows.pairs).toEqual([]);
+    expect(result.rows.oldOnly).toEqual([0]);
+    expect(result.rows.newOnly).toEqual([0]);
   });
 });

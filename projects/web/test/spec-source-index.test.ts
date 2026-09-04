@@ -612,3 +612,91 @@ describe("word-level diff through the index", () => {
     expect(insertedText(before, after)).toEqual(["重点"]);
   });
 });
+
+describe("frontmatter in the index", () => {
+  const source =
+    "---\ntitle: Design\nstatus: approved\n---\n\n# Heading\n\nBody text.\n";
+
+  it("indexes the block, its fields and its cells the way a table is", () => {
+    const index = buildSegmentIndex(source);
+    const at = index.blocks.findIndex((b) => b.type === "frontmatter");
+    expect(at).toBeGreaterThanOrEqual(0);
+    const block = index.blocks[at];
+    // Top level, and covering both fences: that is the range a wholly-new
+    // block is highlighted over and a removed one is quoted from.
+    expect(block?.parent).toBeNull();
+    expect(source.slice(block?.start, block?.end)).toBe(
+      "---\ntitle: Design\nstatus: approved\n---",
+    );
+    const rows = index.blocks.filter(
+      (b) => b.type === "tableRow" && b.parent === at,
+    );
+    expect(rows).toHaveLength(2);
+    // `frontmatterBody` pushes no block, which is what makes a field row's
+    // parent the frontmatter block itself — the relation `tableOf` reads.
+    for (const row of rows) {
+      const rowAt = index.blocks.indexOf(row);
+      expect(
+        index.blocks.filter(
+          (b) => b.type === "tableCell" && b.parent === rowAt,
+        ),
+      ).toHaveLength(2);
+    }
+  });
+
+  it("keeps every cell's segment an exact slice of the source", () => {
+    // The invariant the whole decoration chain rests on: a word-level mark is
+    // mapped back onto the source by adding an offset, which is only sound
+    // while the text and its span agree character for character.
+    const index = buildSegmentIndex(
+      "---\ntitle: Design\nmeta:\n  nested: 1\n---\n\nBody.\n",
+    );
+    const groups = new Set(
+      index.blocks
+        .filter((b) => b.type === "tableCell")
+        .map((cell) => cell.firstGroup),
+    );
+    const inCells = index.segments.filter((s) => groups.has(s.group));
+    expect(inCells).toHaveLength(4);
+    for (const segment of inCells) {
+      expect(segment.exact).toBe(true);
+      expect(index.source.slice(segment.start, segment.end)).toBe(segment.text);
+    }
+    // The indented continuation included, which `mdast-util-to-hast` would
+    // have trimmed on its own way to the DOM.
+    expect(inCells.map((s) => s.text)).toContain("\n  nested: 1");
+  });
+
+  it("reads the block as a two-column matrix, one row per field", () => {
+    const index = buildSegmentIndex(source);
+    const at = index.blocks.findIndex((b) => b.type === "frontmatter");
+    const matrix = tableOf(index, at);
+    expect(
+      matrix?.rows.map((row) => row.cells.map((cell) => cell?.text ?? null)),
+    ).toEqual([
+      ["title", "Design"],
+      ["status", "approved"],
+    ]);
+  });
+
+  it("stays two columns wide when the first field has no key", () => {
+    // The width comes from row 0, so a keyless field leading the block must
+    // not narrow the matrix and drop every value out of the diff.
+    const index = buildSegmentIndex('+++\n[owner]\nname = "bot-one"\n+++\n');
+    const at = index.blocks.findIndex((b) => b.type === "frontmatter");
+    expect(
+      tableOf(index, at)?.rows.map((row) =>
+        row.cells.map((cell) => cell?.text ?? null),
+      ),
+    ).toEqual([
+      ["", "[owner]"],
+      ["name", '"bot-one"'],
+    ]);
+  });
+
+  it("leaves a document without frontmatter exactly as it was", () => {
+    const index = buildSegmentIndex("# Heading\n\nBody text.\n");
+    expect(index.blocks.some((b) => b.type === "frontmatter")).toBe(false);
+    expect(index.text).toBe("Heading\nBody text.");
+  });
+});

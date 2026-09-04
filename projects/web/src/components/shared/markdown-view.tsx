@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ComponentProps, type ReactNode, useMemo } from "react";
 import Markdown from "react-markdown";
+import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import { projectsQuery } from "@/api/queries.ts";
 import {
@@ -26,6 +27,10 @@ import {
   parseSourceLoc,
   SOURCE_LINE_ATTR,
 } from "@/lib/rehype-source-lines.ts";
+import {
+  FRONTMATTER_FLAVOURS,
+  remarkFrontmatterTable,
+} from "@/lib/remark-frontmatter-table.ts";
 import { remarkIssueRefs } from "@/lib/remark-issue-refs.ts";
 
 /** The slice of hast react-markdown hands to component overrides. */
@@ -303,9 +308,19 @@ export function MarkdownView({
   });
   // Stable references: react-markdown gets this array verbatim, and the
   // tokenizer config must not churn identity on unrelated re-renders.
+  //
+  // `remarkFrontmatterTable` has to follow `remarkFrontmatter` (T-240): the
+  // `yaml` / `toml` nodes it consumes are the other one's output. Its position
+  // relative to `remarkIssueRefs` carries no meaning — the `OPAQUE` entry in
+  // remark-issue-refs.ts is what keeps refs out of a frontmatter value, not
+  // this order.
   const remarkPlugins = useMemo(() => {
     if (resolveUnder === undefined || unresolvable)
-      return [remarkGfm] as ComponentProps<typeof Markdown>["remarkPlugins"];
+      return [
+        remarkGfm,
+        [remarkFrontmatter, FRONTMATTER_FLAVOURS],
+        remarkFrontmatterTable,
+      ] as ComponentProps<typeof Markdown>["remarkPlugins"];
     const directory = directoryQuery.data;
     const readable = readableQuery.data;
     const config = refConfigFor(
@@ -315,9 +330,12 @@ export function MarkdownView({
         ? undefined
         : { slugs: readable.map((p) => p.slug), directory },
     );
-    return [remarkGfm, [remarkIssueRefs, config]] as ComponentProps<
-      typeof Markdown
-    >["remarkPlugins"];
+    return [
+      remarkGfm,
+      [remarkFrontmatter, FRONTMATTER_FLAVOURS],
+      remarkFrontmatterTable,
+      [remarkIssueRefs, config],
+    ] as ComponentProps<typeof Markdown>["remarkPlugins"];
   }, [
     resolveUnder,
     unresolvable,

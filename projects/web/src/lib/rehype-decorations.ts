@@ -414,8 +414,14 @@ function applyOverlay(tree: Root, overlay: TableOverlay): void {
     table.children.push(target);
   }
   if (target === null) return;
+  // `row.at` counts the final order from the top of the table, `childIndexOf`
+  // from the top of the `<tbody>`, and `headRows` is the difference. It used
+  // to be a literal 1, which assumed a header exists and occupies exactly one
+  // row of a `<thead>`; a frontmatter grid has neither, and every stand-in
+  // row landed one position too high (T-240). An ordinary GFM table still has
+  // `headRows === 1`, so its behaviour is unchanged byte for byte.
   for (const row of [...overlay.rows].sort((a, b) => a.at - b.at)) {
-    target.children.splice(childIndexOf(target, row.at - 1), 0, {
+    target.children.splice(childIndexOf(target, row.at - headRows), 0, {
       type: "element",
       tagName: "tr",
       properties: { className: [DEL_ROW_CLASS] },

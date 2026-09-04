@@ -26,8 +26,23 @@ type MdNode = {
  * (T-6), links because nesting an anchor inside an anchor is invalid HTML.
  * `code` and `inlineCode` are leaves without children, but listing them
  * documents the exemption where a reader looks for it.
+ *
+ * `frontmatter` is here because it is the one entry that is not self-enforcing
+ * (T-240). A `yaml` node has no children and so was exempt by accident; the
+ * table `remarkFrontmatterTable` puts in its place has `text` children, and
+ * metadata is not prose — `related: F-1` in a frontmatter value would be
+ * replaced by another card's title, which is the half of that card's bug that
+ * matters. Naming the container makes the whole subtree exit early whatever
+ * order the plugins run in; relying on this one running first would be an
+ * implicit constraint the next person to touch that array cannot see.
  */
-const OPAQUE = new Set(["code", "inlineCode", "link", "linkReference"]);
+const OPAQUE = new Set([
+  "code",
+  "inlineCode",
+  "link",
+  "linkReference",
+  "frontmatter",
+]);
 
 /**
  * The fragment hrefs MarkdownLink recognises. A fragment rather than a

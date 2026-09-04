@@ -16,13 +16,14 @@ import {
   outermostBlockOfGroup,
   type SegmentIndex,
   type SourceBlock,
+  type SourceBlockType,
   type SourceImage,
   type SourceRange,
   sourceOffsetOfText,
   sourceRangesOfText,
   tableOf,
 } from "./spec-source-index.ts";
-import { alignTable } from "./table-align.ts";
+import { alignFrontmatter, alignTable } from "./table-align.ts";
 import { bagWith, coalescedWordDiff } from "./word-diff.ts";
 
 /** An annotation as the document sees it: which slice of source it covers. */
@@ -35,12 +36,29 @@ export type AnchoredAnnotation = {
   colEnd: number | null;
 };
 
-/** The table block each leaf group inside a table belongs to (T-221). */
+/** Block types whose cells fold into one leaf and align inside it (T-221). */
+const CELL_HOLDERS = new Set<SourceBlockType>(["table", "frontmatter"]);
+
+const holdsCells = (type: SourceBlockType | null): boolean =>
+  type !== null && CELL_HOLDERS.has(type);
+
+/**
+ * The table block each leaf group inside a table belongs to (T-221), and since
+ * T-240 each frontmatter block too — it is a two-column table in everything
+ * but name, and everything that reads this map wants it treated as one.
+ *
+ * Widening it is safe against T-239's second use of this map, which is deciding
+ * whether a picture belongs to some table: a frontmatter value holds nothing
+ * but a `text` child, so mdast never builds an `image` node in that source at
+ * all and no group in `index.images` can fall inside one. That is a structural
+ * guarantee rather than a lucky one, but it is a guarantee about this plugin —
+ * hence the assertion pinning it down in frontmatter-diff.test.ts.
+ */
 function tableBlocks(index: SegmentIndex): Map<number, number> {
   const owner = new Map<number, number>();
   for (let i = 0; i < index.blocks.length; i++) {
     const block = index.blocks[i];
-    if (block === undefined || block.type !== "table") continue;
+    if (block === undefined || !CELL_HOLDERS.has(block.type)) continue;
     if (block.firstGroup < 0) continue;
     for (let g = block.firstGroup; g <= block.lastGroup; g++) owner.set(g, i);
   }
@@ -88,7 +106,11 @@ export function leavesOf(index: SegmentIndex): AlignGroup[] {
       }
       const leaf: AlignGroup = {
         group: index.blocks[table]?.firstGroup ?? segment.group,
-        type: "table",
+        // Read rather than assumed, so a frontmatter block's leaf carries its
+        // own type — which is the whole of what keeps its key names out of the
+        // prose word bag (T-240): `classOf` hands any non-prose type a class
+        // of its own, so it competes with frontmatter and with nothing else.
+        type: index.blocks[table]?.type ?? "table",
         text: segment.text,
         at: segment.at,
       };
@@ -359,7 +381,12 @@ export function changeDecorations(
     const from = tableOf(baseline, oldAt);
     const to = tableOf(current, newAt);
     if (from === null || to === null) return;
-    const aligned = alignTable(from, to);
+    // Both sides always agree: a leaf pairs only inside its own class, and
+    // frontmatter is a class of its own.
+    const isFrontmatter = to.block.type === "frontmatter";
+    const aligned = isFrontmatter
+      ? alignFrontmatter(from, to)
+      : alignTable(from, to);
     const rowBack = new Map(aligned.rows.pairs.map(([o, n]) => [n, o]));
     const colBack = new Map(aligned.columns.pairs.map(([o, n]) => [n, o]));
 
@@ -443,11 +470,18 @@ export function changeDecorations(
       aligned.columns.pairs,
       aligned.columns.oldOnly,
     );
+    // Frontmatter has no header row: its row 0 is a field like any other, so
+    // nothing is placed ahead of the rest and the 0 pair stays in — dropping
+    // it would leave a removed first field with no surviving row above it to
+    // follow, and the stand-in would be spliced somewhere else entirely.
+    const headRows = isFrontmatter ? 0 : 1;
     const rowOrder = finalOrder(
       to.rows.length,
-      1,
+      headRows,
       // Without the header pair, which is placed first and is nobody's anchor.
-      aligned.rows.pairs.filter(([ro]) => ro !== 0),
+      headRows === 0
+        ? aligned.rows.pairs
+        : aligned.rows.pairs.filter(([ro]) => ro !== 0),
       aligned.rows.oldOnly,
     );
 
@@ -499,7 +533,11 @@ export function changeDecorations(
     // pierre owns the inside of a fence (T-31): a paired code block gets the
     // block-level wash it already has and nothing else.
     if (matched.old.type === "code" || matched.new.type === "code") continue;
-    if (matched.old.type === "table" || matched.new.type === "table") {
+    // Frontmatter comes down this branch too (T-240): its fields are rows and
+    // its cells are cells, so which field became which is `table()`'s question
+    // asked inside the pair. Left out, the pair would fall through to `words()`
+    // and word-diff one field's value against the next field's key.
+    if (holdsCells(matched.old.type) || holdsCells(matched.new.type)) {
       table(matched.old, matched.new);
       continue;
     }
@@ -647,7 +685,7 @@ function groupsOf(
 ): Set<number> {
   const groups = new Set<number>();
   for (const leaf of leaves) {
-    const at = leaf.type === "table" ? owner.get(leaf.group) : undefined;
+    const at = holdsCells(leaf.type) ? owner.get(leaf.group) : undefined;
     const block = at === undefined ? undefined : index.blocks[at];
     if (block === undefined) {
       groups.add(leaf.group);
