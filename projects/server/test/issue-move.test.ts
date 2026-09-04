@@ -457,6 +457,38 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
     ).toBe(false);
   });
 
+  it("normalizes a reference event that predates by_project_id", async () => {
+    const source = await createIssue(A, "named the old way", "body");
+    const inB = await createIssue(B, "points at A by slug alone", "body");
+    // Every cross_referenced event written before T-231 looks like this:
+    // the slug and nothing else. They are the whole existing corpus on any
+    // deployment this ships to, so the rewrite has to find them.
+    const dbB = await dbOf(idB, B);
+    await dbB.insert(issueEvents).values({
+      projectId: idB,
+      issueId: inB.id,
+      actorId: authorId,
+      type: "cross_referenced",
+      payload: { by_project: A, by_issue: source.number },
+    });
+
+    const result = await moved(A, source.number, B);
+
+    const after = await json(
+      await req(
+        `/projects/${B}/issues/${inB.number}/timeline?limit=100`,
+        author,
+      ),
+    );
+    const row = after.items.find(
+      (i: { event_type?: string }) =>
+        i.event_type === "referenced" || i.event_type === "cross_referenced",
+    );
+    // The far end is now this very project, so the event is local.
+    expect(row.event_type).toBe("referenced");
+    expect(row.payload.by_issue).toBe(result.moved_to.number);
+  });
+
   it("copies the timeline in order, to the microsecond", async () => {
     const source = await createIssue(A, "ordered history", "body");
     for (const body of ["first", "second", "third"]) {

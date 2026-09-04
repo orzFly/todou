@@ -1,6 +1,8 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, is } from "drizzle-orm";
+import { getTableConfig, PgTable } from "drizzle-orm/pg-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "../src/db/driver.ts";
+import * as projectSchema from "../src/db/project-schema.ts";
 import {
   attachments,
   comments,
@@ -339,5 +341,29 @@ describe("copyIssueTree", () => {
     expect(
       ISSUE_CHILD_TABLES.filter((entry) => !entry.copied).map((e) => e.name),
     ).toEqual(["issue_reads", "pending_uploads"]);
+  });
+
+  it("covers every table the schema hangs off an issue", () => {
+    // The list above is a list; this asks the schema. A new child table added
+    // to project-schema.ts and forgotten in copy.ts fails here rather than
+    // years later, as rows nobody can reach under a tombstone.
+    const listed = new Set(ISSUE_CHILD_TABLES.map((entry) => entry.name));
+    const missing: string[] = [];
+    for (const exported of Object.values(projectSchema)) {
+      if (!is(exported, PgTable)) continue;
+      const config = getTableConfig(exported);
+      const referencesIssues = config.foreignKeys.some(
+        (fk) => getTableConfig(fk.reference().foreignTable).name === "issues",
+      );
+      if (referencesIssues && !listed.has(config.name)) {
+        missing.push(config.name);
+      }
+    }
+    expect(missing).toEqual([]);
+    // `spec_version_files` and `revisions` reach the issue indirectly — one
+    // through its version, one through a polymorphic subject with no key at
+    // all — so the loop above cannot see them and the list must name them.
+    expect(listed).toContain("spec_version_files");
+    expect(listed).toContain("revisions");
   });
 });

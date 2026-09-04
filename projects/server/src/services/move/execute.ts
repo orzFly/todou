@@ -87,6 +87,8 @@ export async function moveIssue(
   };
 }
 
+type SlugLookup = Awaited<ReturnType<typeof loadSlugResolver>>;
+
 export type Landed = {
   number: number;
   issueId: number;
@@ -406,8 +408,11 @@ async function finishCopying(
   plan: MovePlan,
   copied: Copied,
   moveToken: string,
+  // The sweep replays this step while holding a lease on the registration
+  // row, and that lease is a transaction — so its writes have to go through
+  // the same handle or they would queue behind the lock it already holds.
+  system: Db = ctx.router.system(),
 ): Promise<void> {
-  const system = ctx.router.system();
   await registerMove(system, {
     lineage: plan.lineage,
     from: { projectId: plan.source.project.id, number: plan.row.number },
@@ -428,9 +433,16 @@ async function retireSource(
   moveToken: string,
   actor: UserRow,
   agentContext: AgentContext | null,
+  /** The sweep passes its own: loading one reads the system tables, and it
+   * calls this while holding a transaction open on them. */
+  resolver?: SlugLookup,
 ): Promise<void> {
-  const resolver = await loadSlugResolver(ctx);
-  const move = moveContext(plan, copied.number, copied.idMap, resolver);
+  const move = moveContext(
+    plan,
+    copied.number,
+    copied.idMap,
+    resolver ?? (await loadSlugResolver(ctx)),
+  );
   await plan.source.db.transaction(async (tx) => {
     await clearIssueChildren(tx, plan.row.id);
     await raiseTombstone(tx, plan);
@@ -439,14 +451,17 @@ async function retireSource(
     // becoming two.
     await tx.execute(sql`
       insert into issue_events
-        (project_id, issue_id, actor_id, type, payload, created_at)
+        (project_id, issue_id, actor_id, type, payload, agent_context,
+         created_at)
       select ${plan.source.project.id}, ${plan.row.id}, ${actor.id},
              'moved_out', ${JSON.stringify({
                move_token: moveToken,
                to_project_id: plan.target.project.id,
                to_project: plan.target.project.slug,
                to_number: copied.number,
-             })}::jsonb, ${plan.movedAt.toISOString()}::timestamptz
+             })}::jsonb,
+             ${agentContext === null ? null : JSON.stringify(agentContext)}::jsonb,
+             ${plan.movedAt.toISOString()}::timestamptz
       where not exists (
         select 1 from issue_events
         where issue_id = ${plan.row.id}
@@ -465,7 +480,6 @@ async function retireSource(
       move,
     );
   });
-  void agentContext;
 }
 
 async function markDone(system: Db, moveToken: string): Promise<void> {
@@ -490,19 +504,29 @@ export async function sweepMoves(ctx: AppContext): Promise<number> {
     .from(issueMoves)
     .where(ne(issueMoves.state, "done"));
   let finished = 0;
+  if (pending.length === 0) return finished;
+  // Read before the lease is taken: recovery needs it, and it reads the
+  // very tables the lease holds a transaction open on.
+  const resolver = await loadSlugResolver(ctx);
 
   for (const row of pending) {
-    // The lease. Without it two instances can both decide the copy never
-    // landed, while one of them is in the middle of writing it.
-    const leased = await system
-      .select({ id: issueMoves.id })
-      .from(issueMoves)
-      .where(and(eq(issueMoves.id, row.id), ne(issueMoves.state, "done")))
-      .for("update", { skipLocked: true });
-    if (leased.length === 0) continue;
-
     try {
-      if (await recoverOne(ctx, row)) finished += 1;
+      // The lease has to span the recovery, not just the SELECT that takes
+      // it: a row lock acquired outside a transaction is released the
+      // moment that statement returns, which would leave a second instance
+      // free to replay step 5 alongside this one — and `moved_out` carries
+      // no unique index, so its NOT EXISTS guard is not a race the database
+      // arbitrates on its own.
+      const recovered = await system.transaction(async (tx) => {
+        const leased = await tx
+          .select({ id: issueMoves.id })
+          .from(issueMoves)
+          .where(and(eq(issueMoves.id, row.id), ne(issueMoves.state, "done")))
+          .for("update", { skipLocked: true });
+        if (leased.length === 0) return false;
+        return recoverOne(ctx, tx, row, resolver);
+      });
+      if (recovered) finished += 1;
     } catch (err) {
       console.error(`recovering move ${row.moveToken} failed`, err);
     }
@@ -512,9 +536,11 @@ export async function sweepMoves(ctx: AppContext): Promise<number> {
 
 async function recoverOne(
   ctx: AppContext,
+  /** The lease's transaction: every system-tier read and write uses it. */
+  system: Db,
   row: typeof issueMoves.$inferSelect,
+  resolver: SlugLookup,
 ): Promise<boolean> {
-  const system = ctx.router.system();
   const source = await projectRowById(system, row.fromProjectId);
   const target = await projectRowById(system, row.toProjectId);
   if (source === undefined || target === undefined) return false;
@@ -558,7 +584,7 @@ async function recoverOne(
     movedInEventId: undefined,
   };
   if (row.state === "copying") {
-    await finishCopying(ctx, plan, copied, row.moveToken);
+    await finishCopying(ctx, plan, copied, row.moveToken, system);
   }
   await retireSource(
     ctx,
@@ -567,6 +593,7 @@ async function recoverOne(
     row.moveToken,
     { id: row.actorId } as UserRow,
     null,
+    resolver,
   );
   await markDone(system, row.moveToken);
   return true;
@@ -809,17 +836,24 @@ async function afterCommit(
   plan: MovePlan,
   landed: Landed,
 ): Promise<void> {
-  const resolver = await loadSlugResolver(ctx);
-  const move = moveContext(plan, landed.number, landed.idMap, resolver);
-  await normalizeThirdParties(
-    ctx,
-    {
-      projects: await thirdPartyProjects(ctx, actor, plan, landed),
-      oldNumber: plan.row.number,
-      attributedTo: plan.source.project.id,
-    },
-    move,
-  );
+  // The move is already committed, so nothing here may fail it. Throwing
+  // would answer a request that succeeded with a 500 — and the caller's
+  // only reasonable reaction, retrying, now hits the tombstone's 409.
+  try {
+    const resolver = await loadSlugResolver(ctx);
+    const move = moveContext(plan, landed.number, landed.idMap, resolver);
+    await normalizeThirdParties(
+      ctx,
+      {
+        projects: await thirdPartyProjects(ctx, actor, plan, landed),
+        oldNumber: plan.row.number,
+        attributedTo: plan.source.project.id,
+      },
+      move,
+    );
+  } catch (err) {
+    console.error("normalizing third-party references after a move", err);
+  }
 
   const events: Array<[number, ChangeEvent]> = [
     [

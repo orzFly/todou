@@ -277,17 +277,11 @@ export async function normalizeReferencesTo(
   },
   ctx: MoveContext,
 ): Promise<number[]> {
-  const shape =
-    where.projectId === where.attributedTo
-      ? eq(issueEvents.type, "referenced")
-      : and(
-          eq(issueEvents.type, "cross_referenced"),
-          sql`(${issueEvents.payload} ->> 'by_project_id')::bigint = ${where.attributedTo}`,
-        );
+  const local = where.projectId === where.attributedTo;
   const conditions = [
     eq(issueEvents.projectId, where.projectId),
     sql`${issueEvents.payload} ->> 'by_issue' = ${String(where.oldNumber)}`,
-    shape as ReturnType<typeof eq>,
+    eq(issueEvents.type, local ? "referenced" : "cross_referenced"),
   ];
   if (where.exceptIssueId !== undefined) {
     conditions.push(ne(issueEvents.issueId, where.exceptIssueId));
@@ -301,7 +295,30 @@ export async function normalizeReferencesTo(
     })
     .from(issueEvents)
     .where(and(...conditions));
-  return rewrite(db, rows, "about-the-card", where.projectId, ctx);
+  // Which project a cross-reference names is answered in SQL only for the
+  // payloads that carry an id. Everything written before `by_project_id`
+  // existed — the entire existing corpus on any deployment this ships to —
+  // names its project by slug, which has to be read as of the event's own
+  // instant, so those are matched here instead.
+  const named = local
+    ? rows
+    : rows.filter((row) => namesProject(row, where.attributedTo, ctx));
+  return rewrite(db, named, "about-the-card", where.projectId, ctx);
+}
+
+function namesProject(
+  row: EventRow,
+  projectId: number,
+  ctx: MoveContext,
+): boolean {
+  const payload = row.payload as Payload;
+  const id = payload.by_project_id;
+  if (typeof id === "number") return id === projectId;
+  const slug = payload.by_project;
+  return (
+    typeof slug === "string" &&
+    ctx.resolveSlug(slug, row.createdAt) === projectId
+  );
 }
 
 /**

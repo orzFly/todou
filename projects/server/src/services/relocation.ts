@@ -1,6 +1,6 @@
 import type { IssueMove } from "@todou/shared";
 import { ownerAt } from "@todou/shared";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import type { AppEnv } from "../auth/middleware.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -279,9 +279,16 @@ export async function recordAliases(
         currentId: pair.toId,
       })),
     )
+    // Per row, not one value for the batch: the conflict target is an old
+    // address, and each of them has its own new one. A static `set` would
+    // give every colliding row the same id — an alias pointing at a real
+    // but unrelated comment, which nothing downstream could detect.
     .onConflictDoUpdate({
       target: [movedIds.kind, movedIds.projectId, movedIds.refId],
-      set: { currentProjectId: to.projectId },
+      set: {
+        currentProjectId: sql`excluded.current_project_id`,
+        currentId: sql`excluded.current_id`,
+      },
     });
 }
 
