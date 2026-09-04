@@ -258,7 +258,6 @@ function renderBox(
   { boxes = 1, onEscape }: { boxes?: number; onEscape?: () => void } = {},
 ) {
   const rootRoute = createRootRoute();
-  // Two is the real header: the wide row's box and the narrow row's.
   const Boxes = () => (
     <>
       <SearchBox slug="todou" onEscape={onEscape} />
@@ -713,15 +712,15 @@ describe("SearchBox · the jump offer", () => {
     expect(onEscape).toHaveBeenCalledTimes(1);
   });
 
-  it("gives the header's two boxes listboxes of their own", async () => {
+  it("gives two boxes on one page listboxes of their own", async () => {
     const client = seedBox();
     client.setQueryData(
       issueRefQuery("todou", 141).queryKey,
       refItem(141, "全文搜索"),
     );
     const utils = renderBox(client, { boxes: 2 });
-    // Both are mounted at once in the real header (wide row and narrow
-    // row), so a written id would be on the page twice.
+    // The header mounts one box now, but the id is the box's own business:
+    // a written one would put the same `aria-controls` on every instance.
     const inputs = await utils.findAllByLabelText("Search this project");
     const ids = inputs.map((input) => input.getAttribute("aria-controls"));
     expect(new Set(ids).size).toBe(2);

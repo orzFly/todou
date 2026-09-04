@@ -97,8 +97,6 @@ export function SearchBox({
 
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
-  // The header mounts two of these (wide and narrow); a written id would
-  // put the same one on both listboxes.
   const listId = useId();
   const project = useQuery(projectQuery(slug));
   const jumpRows = useJumpRows(slug, value);
@@ -269,10 +267,12 @@ export function SearchBox({
             "absolute top-full z-50 mt-1 max-w-[calc(100vw-2rem)] rounded-lg border bg-popover p-1 shadow-lg ring-1 ring-foreground/5",
             listAlign === "start"
               ? // The box starts at the edge of the screen, so the panel
-                // takes its width and stops. `min-w-80` still floors it,
-                // because the narrowest phone squeezes the box down to
-                // ~250px and a title has to survive (T-215).
-                "left-0 w-full min-w-80"
+                // takes its width and stops. A floor still applies, because
+                // the narrowest phone squeezes the box down to ~250px and a
+                // title has to survive (T-215) — but the floor stops at the
+                // viewport, since a `min-width` beats a `max-width` and a
+                // flat 20rem would push the page 16px wider at 320.
+                "left-0 w-full min-w-[min(20rem,calc(100vw-2rem))]"
               : // Grown about the box's own centre. Anchoring an edge would
                 // read as lopsided under a box that is itself centred in the
                 // row, and a min-width wider than the box would resolve the
