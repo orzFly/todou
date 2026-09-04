@@ -519,6 +519,90 @@ describe("spec toolbar fixed slots (T-190)", () => {
     );
   });
 
+  it("steps with n and p exactly as the arrows do (T-224)", async () => {
+    // stable.md is outside the rail, so the step leaves the file and lands in
+    // the URL — the one move a suite can compare without geometry.
+    const byKey = await toolbar("?v=2&file=stable.md");
+    fireEvent.keyDown(document.body, { key: "n" });
+    await waitFor(() =>
+      expect(byKey.router.state.location.search).toMatchObject({
+        file: "design.md",
+      }),
+    );
+    byKey.unmount();
+    vi.restoreAllMocks();
+
+    const byClick = await toolbar("?v=2&file=stable.md");
+    fireEvent.click(jumpButtons(byClick).next);
+    await waitFor(() =>
+      expect(byClick.router.state.location.search).toMatchObject({
+        file: "design.md",
+      }),
+    );
+    byClick.unmount();
+    vi.restoreAllMocks();
+
+    const backwards = await toolbar("?v=2&file=stable.md");
+    fireEvent.keyDown(document.body, { key: "p" });
+    await waitFor(() =>
+      expect(backwards.router.state.location.search).toMatchObject({
+        file: "fresh.md",
+      }),
+    );
+  });
+
+  it("leaves n and p alone while the reader is typing (T-224)", async () => {
+    const view = await toolbar("?v=2&file=stable.md");
+    const input = document.createElement("input");
+    document.body.append(input);
+    fireEvent.keyDown(input, { key: "n" });
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("0/2"));
+    expect(view.router.state.location.search).toMatchObject({
+      file: "stable.md",
+    });
+    input.remove();
+  });
+
+  it("leaves n and p alone inside a dialog (T-224)", async () => {
+    // Radix runs its own typeahead over the same letters, and the reader who
+    // opened the dialog is not asking the page behind it to scroll.
+    const view = await toolbar("?v=2&file=stable.md");
+    fireEvent.click(view.getByRole("button", { name: /finish review/i }));
+    const dialog = await screen.findByRole("dialog");
+    const target = within(dialog).getAllByRole("button")[0];
+    if (target === undefined) throw new Error("the dialog has no button");
+    fireEvent.keyDown(target, { key: "n" });
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("0/2"));
+    expect(view.router.state.location.search).toMatchObject({
+      file: "stable.md",
+    });
+  });
+
+  it("keeps n and p as disabled as the arrows are (T-224)", async () => {
+    const view = await toolbar("?v=1");
+    const before = view.router.state.location.search;
+    fireEvent.keyDown(document.body, { key: "n" });
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("–"));
+    expect(view.router.state.location.search).toEqual(before);
+  });
+
+  it("says on the arrows which keys drive them (T-224)", async () => {
+    const view = await toolbar("?v=2&file=design.md");
+    const { prev, next } = jumpButtons(view);
+    expect(prev.getAttribute("aria-keyshortcuts")).toBe("p");
+    expect(next.getAttribute("aria-keyshortcuts")).toBe("n");
+    expect(next.getAttribute("title")).toBe("next change (n)");
+    expect(prev.getAttribute("title")).toBe("previous change (p)");
+    // The label carries the disabled reason, so the tooltip steps aside and
+    // lets the slot's own title through.
+    expect(next.getAttribute("aria-label")).toBe("next change");
+    view.unmount();
+    vi.restoreAllMocks();
+
+    const first = await toolbar("?v=1");
+    expect(jumpButtons(first).next.getAttribute("title")).toBeNull();
+  });
+
   it("disables Comment file in source-diff mode instead of hiding it", async () => {
     const view = await toolbar("?v=2&compare=1");
     const button = view.getByRole("button", { name: /^Comment file/ });

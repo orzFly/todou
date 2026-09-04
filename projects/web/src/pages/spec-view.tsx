@@ -80,7 +80,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { currentIndex, type Stops, stepIndex } from "@/lib/spec-change-nav.ts";
+import {
+  acceptsShortcut,
+  currentIndex,
+  type Stops,
+  stepIndex,
+} from "@/lib/spec-change-nav.ts";
 import { changedLineRanges } from "@/lib/spec-changes.ts";
 import {
   type SpecReviewDraft,
@@ -724,6 +729,31 @@ function SpecViewBody({
     return { unit: changedRanges.length === 0 ? "changed file" : "change" };
   })();
 
+  // The counter re-renders on every scroll frame; the listener must not be
+  // torn down and re-attached that often, so what it needs goes in a ref.
+  const navRef = useRef({ disabled: true, step: (_direction: 1 | -1) => {} });
+  useEffect(() => {
+    navRef.current = {
+      disabled: changeNav.reason !== undefined,
+      step: (direction) =>
+        sourceDiff ? jumpFileDiff(direction) : jumpChange(direction),
+    };
+  });
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      // `event.key` is "N" for shift+n, so the capitals miss on their own.
+      const direction = event.key === "n" ? 1 : event.key === "p" ? -1 : null;
+      if (direction === null) return;
+      if (navRef.current.disabled) return;
+      if (!acceptsShortcut(event)) return;
+      event.preventDefault();
+      navRef.current.step(direction);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   /**
    * The display slot's rendered half is `fold`, and it is the one control of
    * the three that can be refused: a file with nothing marked would fold into
@@ -1223,6 +1253,14 @@ function SpecViewBody({
                     ? `previous ${changeNav.unit}`
                     : `previous ${changeNav.unit} — ${changeNav.reason}`
                 }
+                aria-keyshortcuts="p"
+                // A disabled button fires no pointer events, so the reason on
+                // the slot around it is what shows through in that state.
+                title={
+                  changeNav.reason === undefined
+                    ? `previous ${changeNav.unit} (p)`
+                    : undefined
+                }
                 onClick={() => (sourceDiff ? jumpFileDiff(-1) : jumpChange(-1))}
               >
                 <ArrowUpIcon className="size-4" />
@@ -1266,6 +1304,12 @@ function SpecViewBody({
                   changeNav.reason === undefined
                     ? `next ${changeNav.unit}`
                     : `next ${changeNav.unit} — ${changeNav.reason}`
+                }
+                aria-keyshortcuts="n"
+                title={
+                  changeNav.reason === undefined
+                    ? `next ${changeNav.unit} (n)`
+                    : undefined
                 }
                 onClick={() => (sourceDiff ? jumpFileDiff(1) : jumpChange(1))}
               >
