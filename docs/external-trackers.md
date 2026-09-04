@@ -150,11 +150,10 @@ has ever had points straight at the current one, not at the previous one.
 
 Who may follow an old address is decided by where the thing is now: anyone who
 can read the project it moved to. Someone who can read neither end gets a plain
-404, which admits nothing about the address ever having been used. One gap is
-left: opening an old *card* link in the web UI still stops at the project page
-for a reader who is not a member of the source project, because that page loads
-the source project's own metadata first. Following the same link with the CLI,
-and every attachment URL and `#comment-N` in a body, works.
+404, which admits nothing about the address ever having been used. That holds
+wherever the address is typed: the CLI, an attachment URL, a `#comment-N` in a
+body, and an old *card* link opened in the web UI, which follows the redirect
+without ever reading the project the link names.
 
 ### Text is still never rewritten
 
