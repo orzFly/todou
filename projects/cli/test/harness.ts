@@ -3,6 +3,7 @@ import { Builtins, Cli } from "clipanion";
 import type { CliContext } from "../src/api-command.ts";
 import type { Clock } from "../src/clock.ts";
 import { commands } from "../src/commands/index.ts";
+import type { openPeerPush } from "../src/peer-push.ts";
 
 export type Captured = { url: string; init: RequestInit };
 
@@ -114,6 +115,7 @@ export async function runCli(
     stdinIsTTY?: boolean;
     clock?: Clock;
     openBrowser?: (url: string) => void;
+    openPeerPush?: typeof openPeerPush;
   } = {},
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const cli = new Cli<CliContext>({
@@ -155,6 +157,7 @@ export async function runCli(
     clock: options.clock,
     // Unset would spawn a real browser on whoever runs the suite.
     openBrowser: options.openBrowser ?? (() => {}),
+    openPeerPush: options.openPeerPush,
   });
 
   return {

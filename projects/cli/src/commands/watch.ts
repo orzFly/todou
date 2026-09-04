@@ -9,12 +9,15 @@ import { cursorRecord, ProjectCommand } from "../api-command.ts";
 import { openChangeNudges } from "../change-nudges.ts";
 import { CliError } from "../errors.ts";
 import { makePainter } from "../format.ts";
+import { detectPermissionMode } from "../harness/claude-code.ts";
 import { drainPaged } from "../paginate.ts";
 import { parsePositiveInt, parseSeconds } from "../parse.ts";
+import { openPeerPush, type PeerPush } from "../peer-push.ts";
 import { type RefFormat, refFormat, withIssueRef } from "../refs.ts";
 import { fetchRefPrefix } from "../resolve.ts";
 import { renderActivityLine } from "../timeline.ts";
 import {
+  describeError,
   normalizeTypes,
   quietNote,
   type RetryOptions,
@@ -27,6 +30,78 @@ import {
   watchRetryOptions,
   watchTimeoutSec,
 } from "../watch-loop.ts";
+
+/** Which channel a standing watch delivers each batch over. */
+type Transport = "stdout" | "uds";
+
+/**
+ * The batching window a standing watch defaults to. The receiving side
+ * appends ~140 tokens of boilerplate to every peer message with no way to
+ * turn it off, so ten notifications pay for it ten times while one merged
+ * notification pays once: message *count* costs far more than message
+ * length, which makes waiting a minute to merge almost always the better
+ * trade. `--debounce 0` opts back into immediate delivery.
+ */
+const FOLLOW_DEBOUNCE_SEC = 60;
+
+/**
+ * The display label a push attests to. It only decides how the receiving
+ * session names the sender and takes no part in its admission check, so
+ * unlike the permission mode there is nothing here to get wrong.
+ */
+const FROM_NAME = "todou-watch";
+
+/**
+ * What to change, per receipt status. `crossSessionInbound` short-circuits
+ * the receiving session's admission check *ahead* of its own-process rule,
+ * so it holds or refuses even a background process that session started
+ * itself — which is why it is the setting to name in every refusal here.
+ */
+const REJECTION_HINT: Record<string, string> = {
+  held: 'queued for approval — crossSessionInbound: "accept" delivers without confirming each one',
+  refused: 'crossSessionInbound is set to "refuse"',
+  denied: "the user declined it",
+  dropped: "the session discarded it",
+  expired: "it aged out unread",
+  unreachable: "the session's socket could not be written to",
+};
+
+/** The standing-mode plumbing a watch branch hands to `runWatchLoop`. */
+type Follow<T> = {
+  afterItems?: (
+    items: T[],
+    cursor: string | undefined,
+  ) => Promise<"continue" | "stop">;
+  shouldStop?: () => boolean;
+  wait: ((maxMs: number) => Promise<void>) | undefined;
+  /** Where the batch being delivered starts; unset outside standing mode. */
+  since: () => string | undefined;
+  /** True while a push owns delivery, so stdout must stay empty. */
+  silent: boolean;
+  /** Records a position the loop reported, for the exit flush. */
+  seen: (cursor: string | undefined) => void;
+  /** Hands over what is not known to have landed, then closes. */
+  finish: () => void;
+};
+
+/**
+ * How every batch ends. `since` appears only in standing mode, where the
+ * pair states the range this batch covers — so a reader comparing one
+ * message's `since` against the previous one's `cursor` can tell for itself
+ * whether a notification went missing, instead of that being knowable only
+ * on the sending side. A one-shot batch has no predecessor to abut and
+ * keeps the single `cursor:` line it always had.
+ */
+function cursorLines(
+  since: string | undefined,
+  cursor: string | undefined,
+  paint: ReturnType<typeof makePainter>,
+): string[] {
+  return [
+    ...(since === undefined ? [] : [paint("dim", `since: ${since}`)]),
+    paint("dim", `cursor: ${cursor}`),
+  ];
+}
 
 export class WatchCommand extends ProjectCommand {
   static paths = [["watch"]];
@@ -143,7 +218,41 @@ export class WatchCommand extends ProjectCommand {
       old history is already past it and returns immediately. \`--timeout\`
       only bounds the quiet phase, so a watch that catches news right before
       the deadline still gets its full window; \`--poll\` ignores
-      \`--debounce\`. Off by default — first news returns immediately.
+      \`--debounce\`. Off by default — first news returns immediately, and
+      \`--debounce 0\` says the same thing explicitly.
+
+      \`--follow\` stops the watch from exiting with its first batch: it
+      stays resident and delivers every batch as it arrives, which spares an
+      agent a tool call per batch — and spares it forgetting to re-open the
+      watch at all. It implies \`--forever\` and defaults \`--debounce\` to
+      60 seconds; conflicts with \`--poll\` and \`--print-cursor\`.
+
+      The transport is explicit, never guessed. \`--follow\` and
+      \`--follow=stdout\` write each batch to stdout in the format above,
+      which is what a supervisor that runs a command and reads its output
+      wants. \`--follow=uds\` (alias \`--follow=claude-code-messaging\`)
+      instead pushes each batch as a message to the Claude Code session that
+      exported \`CLAUDE_CODE_MESSAGING_SOCKET\`, and refuses up front if that
+      variable is unset. Auto-detection would get the first case wrong: a
+      supervisor runs this command *from* the session, so that variable is
+      set there too.
+
+      Under \`--follow=uds\` stdout stays empty while pushing works — a
+      background task's stdout is delivered in full when the process exits,
+      so printing as well as pushing would hand every batch over twice. Each
+      push carries the range it covers as \`since:\` and \`cursor:\` lines,
+      and one push's \`cursor\` is the next one's \`since\`, so a reader can
+      see for itself that nothing went missing.
+
+      Delivery is confirmed, and an unconfirmable push degrades rather than
+      going out blind. If the receiving session holds, refuses or drops a
+      message — or its socket is gone — the watch writes the batches it
+      cannot account for, plus the cursor, to stdout, explains itself on
+      stderr, and exits 0: exactly the pre-\`--follow\` behaviour, only with
+      the accumulated batches. Nothing is lost on the way there: a push that
+      fails to write is re-sent with the next batch, and every exit path —
+      including a fatal error — flushes the unconfirmed entries and the
+      position first, so a restart resumes from that \`--since\`.
     `,
     examples: [
       [
@@ -173,6 +282,14 @@ export class WatchCommand extends ProjectCommand {
       [
         "Sentinel that only ever returns with news",
         'todou watch -p todou --since "$CURSOR" --debounce 60 --forever',
+      ],
+      [
+        "Stay resident and push each batch into this Claude Code session",
+        "todou watch -p todou --follow=uds",
+      ],
+      [
+        "Stay resident and stream each batch to stdout",
+        "todou watch -p todou --follow --debounce 0",
       ],
       [
         "Feed a script, line by line",
@@ -217,8 +334,42 @@ export class WatchCommand extends ProjectCommand {
   printCursor = Option.Boolean("--print-cursor", false, {
     description: "With --poll: print the next cursor alone and exit 0",
   });
+  // `tolerateBoolean` only accepts `--follow=<value>`, never `--follow
+  // <value>`, so a bare `--follow` cannot swallow the next argument.
+  follow = Option.String("--follow", {
+    tolerateBoolean: true,
+    description:
+      "Stay resident and deliver every batch: =stdout (the default) or =uds to push into the Claude Code session (conflicts with --poll)",
+  });
 
   protected async run(client: TodouClient): Promise<number> {
+    // Every one of these is decided before the first request: a watch that
+    // cannot push has to say so up front, not after a batch is in hand with
+    // nowhere to send it.
+    const transport = this.followTransport();
+    if (transport !== null) {
+      if (this.poll) {
+        throw new CliError(
+          "--follow conflicts with --poll",
+          "--poll checks once and leaves; --follow is the opposite — it never leaves",
+        );
+      }
+      if (this.printCursor) {
+        throw new CliError(
+          "--follow conflicts with --print-cursor",
+          "--print-cursor writes one bare cursor and exits; a standing watch keeps minting them",
+        );
+      }
+      if (
+        transport === "uds" &&
+        !this.context.env.CLAUDE_CODE_MESSAGING_SOCKET
+      ) {
+        throw new CliError(
+          "CLAUDE_CODE_MESSAGING_SOCKET is not set in this environment",
+          "--follow=uds pushes to the Claude Code session that exports it — use --follow=stdout anywhere else",
+        );
+      }
+    }
     if (this.printCursor && !this.poll) {
       throw new CliError(
         "--print-cursor only makes sense with --poll",
@@ -232,7 +383,10 @@ export class WatchCommand extends ProjectCommand {
       );
     }
     const slugs = this.resolveSlugs();
-    const mode = watchMode(this.poll, this.forever);
+    // A standing watch is a `--forever` watch with somewhere to deliver to:
+    // it must never come back empty-handed either, and the conflict with
+    // --poll is already refused above, so watchMode cannot object.
+    const mode = watchMode(this.poll, this.forever || transport !== null);
     const retry = watchRetryOptions(
       mode,
       (line) => this.note(line),
@@ -246,9 +400,13 @@ export class WatchCommand extends ProjectCommand {
         ? 2
         : parseSeconds(this.interval, "--interval");
     const debounceSec =
-      this.debounce === undefined
-        ? undefined
-        : parseSeconds(this.debounce, "--debounce");
+      this.debounce !== undefined
+        ? // `zero` because a standing watch needs a way back to immediate
+          // delivery, and 0 already names it: "return on the first entry".
+          parseSeconds(this.debounce, "--debounce", { zero: true })
+        : transport === null
+          ? undefined
+          : FOLLOW_DEBOUNCE_SEC;
     const summaryChars =
       this.summary === undefined
         ? 120
@@ -284,6 +442,7 @@ export class WatchCommand extends ProjectCommand {
         summaryChars,
         self,
         paint,
+        transport,
         wait: nudges?.wait,
       });
       // Under --print-cursor the cursor is the product, and an empty poll
@@ -308,6 +467,7 @@ export class WatchCommand extends ProjectCommand {
       summaryChars: number;
       self: SelfFilter;
       paint: ReturnType<typeof makePainter>;
+      transport: Transport | null;
       wait: ((maxMs: number) => Promise<void>) | undefined;
     },
   ): Promise<number> {
@@ -325,6 +485,9 @@ export class WatchCommand extends ProjectCommand {
     } = opts;
     const onQuiet = (_cursor: string | undefined, totalMs: number) =>
       this.note(quietNote("still watching", timeoutSec, totalMs));
+    // A push body is read by a model, never by a terminal: makePainter with
+    // no stream sees no isTTY and hands back the identity function.
+    const plain = makePainter(undefined, this.context.env);
 
     if (slugs !== null && slugs.length === 1) {
       // Single-project mode: the published v0.1.0 contract — a plain
@@ -345,45 +508,83 @@ export class WatchCommand extends ProjectCommand {
       const refPrefix = await fetchRefPrefix(client, project);
       const ref_format = refFormat(refPrefix);
 
-      return runWatchLoop<ActivityItem>({
-        ...mode,
-        timeoutSec,
-        intervalSec,
-        debounceSec,
+      // One renderer behind all three consumers — the one-shot batch, a
+      // standing batch on stdout, and a push body — so no reader ever has
+      // to reconcile two spellings of the same entry.
+      const renderHuman = (
+        items: ActivityItem[],
+        since: string | undefined,
+        cursor: string | undefined,
+        pen: ReturnType<typeof makePainter>,
+      ) =>
+        [
+          ...items.map((item) =>
+            renderActivityLine(item, pen, {
+              refLabel: formatRef(refPrefix, item.issue_number),
+              issueNumber: item.issue_number,
+              refPrefix,
+              summaryChars,
+            }),
+          ),
+          ...cursorLines(since, cursor, pen),
+        ].join("\n");
+      const emit = (
+        items: ActivityItem[],
+        since: string | undefined,
+        cursor: string | undefined,
+      ) =>
+        this.outputBatch(
+          [
+            ...items.map((item) => ({
+              ...withIssueRef(item, refPrefix),
+              project,
+            })),
+            cursorRecord(cursor, ref_format),
+          ],
+          () => renderHuman(items, since, cursor, paint),
+        );
+
+      const follow = await this.openFollow<ActivityItem>({
+        transport: opts.transport,
+        label: `todou watch -p ${project}`,
         baseline,
-        retry,
-        clock: this.clock,
+        intervalSec,
         wait: opts.wait,
-        onQuiet,
-        drain: (after) =>
-          drainActivity(client, project, { after, types, ...self }),
-        onItems: (items, cursor) =>
-          this.printCursor
-            ? this.emitCursorOnly(cursor)
-            : this.outputBatch(
-                [
-                  ...items.map((item) => ({
-                    ...withIssueRef(item, refPrefix),
-                    project,
-                  })),
-                  cursorRecord(cursor, ref_format),
-                ],
-                () =>
-                  [
-                    ...items.map((item) =>
-                      renderActivityLine(item, paint, {
-                        refLabel: formatRef(refPrefix, item.issue_number),
-                        issueNumber: item.issue_number,
-                        refPrefix,
-                        summaryChars,
-                      }),
-                    ),
-                    paint("dim", `cursor: ${cursor}`),
-                  ].join("\n"),
-              ),
-        onEmpty: (cursor) =>
-          this.emitEmpty(cursor, timeoutSec, paint, ref_format),
+        render: (items, since, cursor) =>
+          renderHuman(items, since, cursor, plain),
+        emit,
       });
+      try {
+        return await runWatchLoop<ActivityItem>({
+          ...mode,
+          timeoutSec,
+          intervalSec,
+          debounceSec,
+          baseline,
+          retry,
+          clock: this.clock,
+          wait: follow.wait,
+          afterItems: follow.afterItems,
+          shouldStop: follow.shouldStop,
+          onQuiet: (cursor, totalMs) => {
+            follow.seen(cursor);
+            onQuiet(cursor, totalMs);
+          },
+          drain: (after) =>
+            drainActivity(client, project, { after, types, ...self }),
+          onItems: (items, cursor) => {
+            follow.seen(cursor);
+            if (this.printCursor) return this.emitCursorOnly(cursor);
+            if (!follow.silent) emit(items, follow.since(), cursor);
+          },
+          onEmpty: (cursor) => {
+            follow.seen(cursor);
+            this.emitEmpty(cursor, timeoutSec, paint, ref_format);
+          },
+        });
+      } finally {
+        follow.finish();
+      }
     }
 
     // Multi-project mode: a thin client over GET /activity — the server
@@ -433,53 +634,233 @@ export class WatchCommand extends ProjectCommand {
       ).next_cursor ??
       undefined;
 
-    return runWatchLoop<CrossActivityItem>({
-      ...mode,
-      timeoutSec,
-      intervalSec,
-      debounceSec,
+    const renderHuman = (
+      items: CrossActivityItem[],
+      since: string | undefined,
+      cursor: string | undefined,
+      pen: ReturnType<typeof makePainter>,
+    ) =>
+      [
+        ...items.map((item) =>
+          renderActivityLine(item, pen, {
+            refLabel: spell(item),
+            issueNumber: item.issue_number,
+            refPrefix: prefixes.get(item.project) ?? null,
+            summaryChars,
+          }),
+        ),
+        ...cursorLines(since, cursor, pen),
+      ].join("\n");
+    const emit = (
+      items: CrossActivityItem[],
+      since: string | undefined,
+      cursor: string | undefined,
+    ) =>
+      // No ref_format on the cursor record here: the stream spans projects
+      // that may each spell refs differently, so the format lives per item.
+      this.outputBatch(
+        [
+          ...items.map((item) =>
+            withIssueRef(item, prefixes.get(item.project) ?? null),
+          ),
+          cursorRecord(cursor),
+        ],
+        () => renderHuman(items, since, cursor, paint),
+      );
+
+    const follow = await this.openFollow<CrossActivityItem>({
+      transport: opts.transport,
+      label: `todou watch ${projects === undefined ? "--all-projects" : `-p ${projects}`}`,
       baseline,
-      retry,
-      clock: this.clock,
+      intervalSec,
       wait: opts.wait,
-      onQuiet,
-      drain: async (after) => {
-        const page = await drainCrossActivity(client, projects, {
-          after,
-          types,
-          ...self,
-        });
-        await ensurePrefixes(page.items);
-        return page;
-      },
-      onItems: (items, cursor) =>
-        // No ref_format on the cursor record here: the stream spans
-        // projects that may each spell refs differently, so the format
-        // lives per item.
-        this.printCursor
-          ? this.emitCursorOnly(cursor)
-          : this.outputBatch(
-              [
-                ...items.map((item) =>
-                  withIssueRef(item, prefixes.get(item.project) ?? null),
-                ),
-                cursorRecord(cursor),
-              ],
-              () =>
-                [
-                  ...items.map((item) =>
-                    renderActivityLine(item, paint, {
-                      refLabel: spell(item),
-                      issueNumber: item.issue_number,
-                      refPrefix: prefixes.get(item.project) ?? null,
-                      summaryChars,
-                    }),
-                  ),
-                  paint("dim", `cursor: ${cursor}`),
-                ].join("\n"),
-            ),
-      onEmpty: (cursor) => this.emitEmpty(cursor, timeoutSec, paint),
+      render: (items, since, cursor) =>
+        renderHuman(items, since, cursor, plain),
+      emit,
     });
+    try {
+      return await runWatchLoop<CrossActivityItem>({
+        ...mode,
+        timeoutSec,
+        intervalSec,
+        debounceSec,
+        baseline,
+        retry,
+        clock: this.clock,
+        wait: follow.wait,
+        afterItems: follow.afterItems,
+        shouldStop: follow.shouldStop,
+        onQuiet: (cursor, totalMs) => {
+          follow.seen(cursor);
+          onQuiet(cursor, totalMs);
+        },
+        drain: async (after) => {
+          const page = await drainCrossActivity(client, projects, {
+            after,
+            types,
+            ...self,
+          });
+          await ensurePrefixes(page.items);
+          return page;
+        },
+        onItems: (items, cursor) => {
+          follow.seen(cursor);
+          if (this.printCursor) return this.emitCursorOnly(cursor);
+          if (!follow.silent) emit(items, follow.since(), cursor);
+        },
+        onEmpty: (cursor) => {
+          follow.seen(cursor);
+          this.emitEmpty(cursor, timeoutSec, paint);
+        },
+      });
+    } finally {
+      follow.finish();
+    }
+  }
+
+  /**
+   * `--follow`, `--follow=stdout`, `--follow=uds` (alias
+   * `claude-code-messaging`), or null when the flag is absent.
+   *
+   * Deliberately not inferred from the environment. A supervisor that runs
+   * a command and reads its stdout is started *by* the session, so
+   * CLAUDE_CODE_MESSAGING_SOCKET is set for it too — guessing by that
+   * variable would send exactly the batches that belong on stdout down the
+   * push channel instead. A bare `--follow` means stdout because stdout is
+   * the transport with no outside dependency.
+   */
+  private followTransport(): Transport | null {
+    if (this.follow === undefined || this.follow === false) return null;
+    if (this.follow === true || this.follow === "stdout") return "stdout";
+    if (this.follow === "uds" || this.follow === "claude-code-messaging") {
+      return "uds";
+    }
+    throw new CliError(
+      `unknown --follow transport "${this.follow}"`,
+      "valid transports: stdout (the default), uds (alias claude-code-messaging)",
+    );
+  }
+
+  /**
+   * The standing-mode plumbing (T-252): the two hooks `runWatchLoop` needs,
+   * a wait a refusal can cut short, and the flush that hands over whatever
+   * is not known to have been delivered.
+   *
+   * A push that cannot be opened degrades here instead of pushing blind.
+   * The failure this flag exists to remove is a batch disappearing into a
+   * hold with nobody the wiser, so a watch that cannot confirm delivery has
+   * no business claiming any: it falls back to the one batch and the exit
+   * that `todou watch` has always done.
+   */
+  private async openFollow<T>(opts: {
+    transport: Transport | null;
+    /** Names the command in a push header, so a reader can re-run it. */
+    label: string;
+    baseline: string | undefined;
+    intervalSec: number;
+    wait: ((maxMs: number) => Promise<void>) | undefined;
+    render: (
+      items: T[],
+      since: string | undefined,
+      cursor: string | undefined,
+    ) => string;
+    emit: (
+      items: T[],
+      since: string | undefined,
+      cursor: string | undefined,
+    ) => void;
+  }): Promise<Follow<T>> {
+    /** Newest position the loop has reported, for the exit flush. */
+    let seenCursor = opts.baseline;
+    /** Where the next batch's range starts: the last delivered cursor. */
+    let rangeStart = opts.baseline;
+    const oneShot: Follow<T> = {
+      wait: opts.wait,
+      since: () => undefined,
+      silent: false,
+      seen: () => {},
+      finish: () => {},
+    };
+    if (opts.transport === null) return oneShot;
+
+    let opened: PeerPush<T> | null = null;
+    if (opts.transport === "uds") {
+      const open = this.context.openPeerPush ?? openPeerPush;
+      try {
+        opened = await open<T>({
+          // Guarded in run() before any I/O; unset is refused there.
+          target: this.context.env.CLAUDE_CODE_MESSAGING_SOCKET as string,
+          clock: this.clock,
+          fromName: FROM_NAME,
+          // Attested only where the transcript is unambiguous: an
+          // unattested message is held only if the target session is in
+          // bypass, while a wrongly attested one is held outright.
+          fromMode: detectPermissionMode(this.agentContext?.session_id),
+          render: (items, since, cursor) =>
+            [
+              `${opts.label} — ${items.length} new ${items.length === 1 ? "entry" : "entries"}`,
+              opts.render(items, since, cursor),
+            ].join("\n"),
+        });
+      } catch (error) {
+        this.note(
+          `--follow=uds could not open its receipt socket (${describeError(error)}) — ` +
+            "delivering one batch and exiting, as without --follow",
+        );
+        return oneShot;
+      }
+    }
+
+    const push = opened;
+    return {
+      since: () => rangeStart,
+      silent: push !== null,
+      seen: (cursor) => {
+        seenCursor = cursor;
+      },
+      wait:
+        push === null
+          ? opts.wait
+          : (maxMs) =>
+              // Racing the refusal is what makes it noticed during the
+              // quiet phase, where `shouldStop` can then act on it,
+              // instead of whenever the next batch happens to land.
+              Promise.race([
+                (
+                  opts.wait ??
+                  ((ms: number) =>
+                    this.clock.sleep(Math.min(opts.intervalSec * 1000, ms)))
+                )(maxMs),
+                push.whenRejected,
+              ]),
+      afterItems: async (items, cursor) => {
+        if (push !== null) await push.send(items, rangeStart, cursor);
+        rangeStart = cursor;
+        seenCursor = cursor;
+        return push?.rejected ? "stop" : "continue";
+      },
+      shouldStop: push === null ? undefined : () => push.rejected !== null,
+      finish: () => {
+        if (push === null) return;
+        const held = push.unconfirmed();
+        // The one moment uds mode writes to stdout. Whatever ended the
+        // watch — a refusal, a fatal error — the background task's own
+        // completion notice carries this over, which is the behaviour from
+        // before this flag: print and exit, only with the accumulated
+        // batches. The position goes out even with nothing held, so a
+        // restart has a `--since` to resume from.
+        opts.emit(held.items, held.since, held.cursor ?? seenCursor);
+        const why = push.rejected;
+        if (why !== null) {
+          this.note(
+            `--follow=uds stopped: push ${why.status} ` +
+              `(${REJECTION_HINT[why.status] ?? "the receiving session did not take it"})` +
+              `${why.reason === undefined ? "" : ` — ${why.reason}`}`,
+          );
+        }
+        push.close();
+      },
+    };
   }
 
   /**

@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { detectPermissionMode } from "../../src/harness/claude-code.ts";
 import { detectAgentContext } from "../../src/harness/index.ts";
 import { fakeFetch, loggedInEnv, runCli } from "../harness.ts";
 
@@ -220,6 +221,59 @@ describe("detectAgentContext", () => {
         home,
       ),
     ).toEqual({ agent: "claude-code", session_id: "../../etc/passwd" });
+  });
+});
+
+describe("detectPermissionMode (T-252)", () => {
+  const modeLine = (mode: string) =>
+    JSON.stringify({ type: "permission-mode", permissionMode: mode });
+
+  it("maps every mode a push may attest to", () => {
+    writeTranscript("-proj-a", [userLine, modeLine("bypassPermissions")]);
+    expect(detectPermissionMode(SID, home)).toBe("bypass");
+
+    writeTranscript("-proj-a", [userLine, modeLine("default")]);
+    expect(detectPermissionMode(SID, home)).toBe("prompting");
+
+    writeTranscript("-proj-a", [userLine, modeLine("acceptEdits")]);
+    expect(detectPermissionMode(SID, home)).toBe("prompting");
+  });
+
+  it("reads the mode off an ordinary user entry too", () => {
+    // The field rides along on every user turn, not only on the record
+    // written when the mode changes.
+    writeTranscript("-proj-a", [
+      JSON.stringify({
+        type: "user",
+        message: { role: "user" },
+        permissionMode: "acceptEdits",
+      }),
+    ]);
+    expect(detectPermissionMode(SID, home)).toBe("prompting");
+  });
+
+  it("attests nothing at all once plan mode is the newest word", () => {
+    // Not "keep looking for something translatable": the receiver decides
+    // what plan normalizes to by a flag the transcript never records, and
+    // an older bypass line describes a mode already left behind. Attesting
+    // the wrong mode is held outright, which is worse than not attesting.
+    writeTranscript("-proj-a", [
+      modeLine("bypassPermissions"),
+      userLine,
+      modeLine("plan"),
+    ]);
+    expect(detectPermissionMode(SID, home)).toBeUndefined();
+  });
+
+  it("degrades quietly with no session, no transcript, no shape", () => {
+    expect(detectPermissionMode(undefined, home)).toBeUndefined();
+    expect(
+      detectPermissionMode("99999999-aaaa-bbbb-cccc-dddddddddddd", home),
+    ).toBeUndefined();
+    expect(detectPermissionMode("../../etc/passwd", home)).toBeUndefined();
+
+    writeTranscript("-proj-a", ['{"permissionMode":"bypassPer']);
+    expect(detectPermissionMode(SID, home)).toBeUndefined();
   });
 });
 

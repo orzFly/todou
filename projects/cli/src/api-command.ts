@@ -16,6 +16,7 @@ import { CliError, reportError } from "./errors.ts";
 import { detectAgentContext } from "./harness/index.ts";
 import { checkQualifiedPrefix, resolvePrefixedRef } from "./locator.ts";
 import { parseIssueRef } from "./parse.ts";
+import type { openPeerPush } from "./peer-push.ts";
 import type { RefFormat } from "./refs.ts";
 import { fetchReferenceConfig, fetchReferenceDirectory } from "./resolve.ts";
 
@@ -50,6 +51,8 @@ export type CliContext = BaseContext & {
   clock?: Clock;
   /** Test seam; production leaves it unset and spawns the real browser. */
   openBrowser?: (url: string) => void;
+  /** Test seam; production leaves it unset and a real Unix socket is used. */
+  openPeerPush?: typeof openPeerPush;
 };
 
 /** Base for every command that talks to a server: context, client, --json. */

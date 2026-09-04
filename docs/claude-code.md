@@ -33,6 +33,39 @@ issue URL. Output is not left to guesswork either: `--json` spells every
 issue number in the project's own reference format (see
 [docs/external-trackers.md](external-trackers.md)).
 
+## Pushing activity into the session: `watch --follow=uds`
+
+`todou watch --follow=uds` stays resident and delivers each batch of
+activity as a message to the Claude Code session that started it, instead
+of printing one batch and exiting. Run it as a background task and the
+session is told when something happens, rather than having to re-open the
+watch each time — or forgetting to.
+
+It needs `CLAUDE_CODE_MESSAGING_SOCKET`, which Claude Code exports to the
+subprocesses it spawns, and refuses with that variable named if it is
+unset. `--follow=stdout` (or a bare `--follow`) is the transport for
+everything else, including a supervisor that runs a command and reads its
+output; the transport is never inferred from the environment, because such
+a supervisor is started *by* the session and has the variable set too.
+
+Three things about the message channel, all measured rather than
+documented, and each of them silent when wrong:
+
+- `msg_id` must be a UUID. A message with a custom id is still delivered,
+  but the receipt comes back without an `orig_msg_id`, so nothing can be
+  correlated to it and a refusal goes unnoticed.
+- The sender's reply address must be a `uds:` URI over an absolute `.sock`
+  path that the sender itself is listening on, or no receipt is sent at all.
+- A session that accepts messages outright sends no positive receipt, so
+  "delivered" can only mean "nothing negative arrived within the window".
+
+The session's `crossSessionInbound` setting is what decides whether the
+push works. It short-circuits the admission check **ahead of** the rule
+that lets a session's own processes through, so `"hold"` or `"refuse"`
+stops even a background task that session started itself. In that case the
+watch does not push blind: it writes the batches it cannot account for and
+its cursor to stdout, names the setting on stderr, and exits 0.
+
 ## Where the metadata comes from
 
 - `session_id` — `CLAUDE_CODE_SESSION_ID`, documented and set by Claude
@@ -42,6 +75,12 @@ issue number in the project's own reference format (see
   (`~/.claude/projects/*/<session-id>.jsonl`, an *unofficial* format) and
   falls back to a `CLAUDE_MODEL` variable if you export one. Detection
   failures just omit the field; they never break a command.
+- permission mode (`watch --follow=uds` only, so a push can attest to it) —
+  the same transcript tail, newest `permissionMode` wins, so switching mode
+  mid-session is picked up. `plan` attests nothing: what the receiving side
+  normalizes it to depends on a flag the transcript does not record, and a
+  wrongly attested mode is held outright while an unattested one is held
+  only if the target session is in bypass.
 
 ## Optional: a stable `CLAUDE_MODEL` via hooks
 

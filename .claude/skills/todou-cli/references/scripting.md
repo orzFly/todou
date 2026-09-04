@@ -14,6 +14,11 @@ cursor.
   are retried for more than two minutes first). On 3 or 4, rerun with the same cursor.
 - `--poll`: 0 = the check finished, with or without news; 1 = fatal; 4 = the command failed fast
   after three attempts.
+- `todou watch --follow` (standing mode, implies `--forever`): 0 = it stopped on purpose — the push
+  channel refused delivery and it degraded, which is the same verdict a one-shot delivery gives;
+  1 = fatal. There is no "nothing new" ending, because it does not end on quiet. Before any exit,
+  including a fatal one, uds mode flushes the entries it cannot confirm were delivered plus a
+  `cursor:` line to stdout, so the position is never lost; feed that cursor back to `--since`.
 
 All waits subscribe to the server's change feed and return within about a second of a new entry;
 `--interval` (default 2s) is the poll cadence used while the feed is unavailable. `question wait` and

@@ -231,6 +231,25 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
     after: string | undefined,
   ) => Promise<{ items: T[]; cursor: string | undefined }>;
   onItems: (items: T[], cursor: string | undefined) => void;
+  /**
+   * Standing mode (T-252): decides after each delivered batch whether to
+   * keep waiting. Unset keeps the one-shot contract every caller but
+   * `watch --follow` relies on, and `"stop"` ends with exit code 0 — the
+   * same verdict a one-shot delivery gives, so degrading is indistinguishable
+   * to whoever runs the command.
+   */
+  afterItems?: (
+    items: T[],
+    cursor: string | undefined,
+  ) => Promise<"continue" | "stop">;
+  /**
+   * Checked at the top of every round; true ends with exit code 0. Standing
+   * mode needs this as well as `afterItems` because the reason to stop —
+   * a push the session refused — can land during the quiet phase, and
+   * without a check there it would go unnoticed until the next batch, which
+   * may be hours away. Pairs with a `wait` that the same event cuts short.
+   */
+  shouldStop?: () => boolean;
   onEmpty: (cursor: string | undefined) => void;
   /** `forever` only: one heartbeat per elapsed quiet phase, for stderr. */
   onQuiet?: (cursor: string | undefined, totalMs: number) => void;
@@ -280,6 +299,7 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
   };
 
   for (;;) {
+    if (opts.shouldStop?.()) return 0;
     const items = await drainOnce();
     if (items.length > 0) {
       if (opts.debounceSec !== undefined && !opts.poll) {
@@ -306,7 +326,14 @@ export async function runWatchLoop<T extends { created_at: string }>(opts: {
         }
       }
       opts.onItems(items, cursor);
-      return 0;
+      if (opts.afterItems === undefined) return 0;
+      if ((await opts.afterItems(items, cursor)) === "stop") return 0;
+      // Same re-arming as the forever quiet phase, and for the same reason:
+      // the cursor the loop already holds is the one to carry on from, since
+      // asking the server for a fresh "now" would skip whatever landed
+      // while this batch was being handed over.
+      deadline = clock.now() + opts.timeoutSec * 1000;
+      continue;
     }
     if (opts.poll) {
       opts.onEmpty(cursor);

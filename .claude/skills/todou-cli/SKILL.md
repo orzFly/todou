@@ -142,6 +142,7 @@ todou watch -p <proj> --since <cursor> --debounce 60 --forever         # whole p
 todou question wait 16 <commentId> -p <proj> --forever                 # answers to one question comment
 todou spec push 16 <dir> -p <proj> --message "v2" --wait               # push, then wait for the verdict
 todou spec wait 16 -p <proj> [--since <cursor>]                        # re-enter that wait
+todou watch -p <proj> --follow=uds                                     # stay resident, push each batch to this session
 ```
 
 - Use `--forever` (`spec wait` always behaves this way): one call, no loop around it. The command
@@ -154,6 +155,23 @@ todou spec wait 16 -p <proj> [--since <cursor>]                        # re-ente
 - A wait killed from outside (the harness stopping a background task) is not an error. The kill
   notification is your wake-up; restart the wait with the same cursor, every time. A short self-poll
   instead costs an agent turn per tick.
+- `todou watch --follow` does not exit with its first batch: it stays resident and delivers every
+  batch, so a sentinel costs one background task rather than a tool call per batch. Two transports,
+  never guessed from the environment: `--follow` / `--follow=stdout` writes each batch to stdout (for
+  a supervisor that runs a command and reads its output), `--follow=uds` (alias
+  `claude-code-messaging`) pushes each batch as a message into the Claude Code session that exported
+  `CLAUDE_CODE_MESSAGING_SOCKET`, and refuses up front if it is unset. Implies `--forever`; conflicts
+  with `--poll` and `--print-cursor`. `--debounce` defaults to **60s** here, because the receiving
+  side charges every message a fixed boilerplate cost — merging is nearly always the better trade —
+  and `--debounce 0` restores immediate delivery.
+- **Under `--follow=uds` stdout stays empty while pushing works**, because a background task's stdout
+  is delivered in full at exit and printing as well as pushing would hand you every batch twice. The
+  one thing it writes is the degrade: if the session holds, refuses or drops a message, the watch
+  writes the batches it cannot account for plus the cursor to stdout, explains itself on stderr, and
+  exits 0 — the plain "wait, print, exit" behaviour, only with the accumulated batches. Every exit
+  path flushes, a fatal error included, so there is always a cursor to resume from. Each push states
+  the range it covers as `since:` / `cursor:` lines, and one push's `cursor` is the next one's
+  `since`: if they ever fail to line up, a notification went missing.
 - A wait returns only for entries created after its cursor. When you wait for a state (a verdict, an
   answer, a status), read the state first and block only while it is not there yet. `spec wait` and
   `question wait` do this themselves; before an `issue watch`, run `issue view --brief`.
