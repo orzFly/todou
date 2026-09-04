@@ -42,10 +42,17 @@ const AUTHOR = {
 
 // design.md is edited by v2, stable.md is carried over untouched, and
 // fresh.md appears in v2 — one file per rendered-mode matrix column.
+// design.md changes three of its four paragraphs, so the counter has more
+// than one stop to count; the untouched paragraph neighbours a changed one
+// and therefore never folds away.
 const BODIES: Record<number, Record<string, string>> = {
-  1: { "design.md": "line one\n", "stable.md": "unchanged\n" },
+  1: {
+    "design.md": "line one\n\nline two\n\nline three\n\nline four\n",
+    "stable.md": "unchanged\n",
+  },
   2: {
-    "design.md": "line one, rewritten\n",
+    "design.md":
+      "line one, rewritten\n\nline two\n\nline three, rewritten\n\nline four, rewritten\n",
     "stable.md": "unchanged\n",
     "fresh.md": "brand new\n",
   },
@@ -152,6 +159,27 @@ const jumpButtons = (view: ReturnType<typeof renderSpecView>) => ({
   next: view.getByRole("button", { name: /^next / }),
 });
 
+const countSlot = (view: { container: HTMLElement }) =>
+  view.container.querySelector('[data-toolbar-slot="change-count"]');
+
+/**
+ * Place the changed blocks and let the counter re-measure. happy-dom lays
+ * nothing out, so every rect is zero until a test says otherwise; the viewport
+ * is 768 tall, which puts the pivot at 384 and its tolerance band at 376–392.
+ */
+function stubTops(view: { container: HTMLElement }, tops: number[]): void {
+  const els = [
+    ...view.container.querySelectorAll<HTMLElement>(
+      ".spec-changed, .spec-ins-block",
+    ),
+  ];
+  els.forEach((el, i) => {
+    el.getBoundingClientRect = () =>
+      ({ top: tops[i] ?? 0, height: 20 }) as DOMRect;
+  });
+  fireEvent.scroll(window);
+}
+
 /** The columns of the T-190 state matrix, as T-192 re-cut them. */
 const STATES: [label: string, search: string][] = [
   ["R2 · modified file", "?v=2&file=design.md"],
@@ -179,6 +207,7 @@ const SLOTS_COMPARING = [
   "baseline",
   "display-toggle",
   "prev-change",
+  "change-count",
   "next-change",
 ];
 
@@ -431,6 +460,63 @@ describe("spec toolbar fixed slots (T-190)", () => {
     expect(next.hasAttribute("disabled")).toBe(false);
     expect(prev.getAttribute("aria-label")).toBe("previous file diff");
     expect(view.container.querySelectorAll("[data-file-diff]")).toHaveLength(2);
+  });
+
+  it("counts the change ↓ would step to (T-224)", async () => {
+    const view = await toolbar("?v=2&file=design.md");
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("3/3"));
+
+    // Every block below the pivot: ↓ lands on the first, so the reader is on
+    // none of them yet.
+    stubTops(view, [500, 700, 900]);
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("0/3"));
+
+    stubTops(view, [100, 500, 900]);
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("1/3"));
+
+    stubTops(view, [-100, 200, 900]);
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("2/3"));
+    expect(countSlot(view)?.getAttribute("title")).toBe("change 2 of 3");
+  });
+
+  it("takes the total from the DOM, not from the changed ranges (T-224)", async () => {
+    // T-223 turns a replaced image into a stop of its own, and any count
+    // derived from the ranges would keep saying 3 while ↓ visits four.
+    const view = await toolbar("?v=2&file=design.md");
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("3/3"));
+    const extra = document.createElement("p");
+    extra.className = "spec-ins-block";
+    view.container.querySelector("main")?.append(extra);
+    stubTops(view, [100, 500, 900, 950]);
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("1/4"));
+  });
+
+  it("counts files where ↑↓ step over files (T-224)", async () => {
+    const view = await toolbar("?v=2&file=stable.md");
+    // stable.md is not one of the two changed files, so ↓ goes to the first.
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("0/2"));
+    expect(countSlot(view)?.getAttribute("title")).toBe("changed file 0 of 2");
+  });
+
+  it("counts whole file diffs in source-diff mode (T-224)", async () => {
+    const view = await toolbar("?v=2&compare=1");
+    await waitFor(() => expect(countSlot(view)?.textContent).toBe("2/2"));
+    expect(countSlot(view)?.getAttribute("title")).toBe("file diff 2 of 2");
+  });
+
+  it("shows the arrows' own reason where there is nothing to count (T-224)", async () => {
+    const view = await toolbar("?v=1");
+    expect(countSlot(view)?.textContent).toBe("–");
+    expect(countSlot(view)?.getAttribute("title")).toContain("first version");
+    view.unmount();
+    vi.restoreAllMocks();
+
+    const comparing = await toolbar("?v=2&file=design.md");
+    fireEvent.click(compareToggle(comparing));
+    await waitFor(() => expect(countSlot(comparing)?.textContent).toBe("–"));
+    expect(countSlot(comparing)?.getAttribute("title")).toContain(
+      "Turn comparing on",
+    );
   });
 
   it("disables Comment file in source-diff mode instead of hiding it", async () => {
