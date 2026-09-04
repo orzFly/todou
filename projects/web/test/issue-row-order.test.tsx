@@ -55,6 +55,7 @@ const issue: IssueListItem = {
   deleted_by: null,
   unread: false,
   unread_comments: 0,
+  moves: [],
 };
 
 const prefixedConfig: ReferenceConfig = {

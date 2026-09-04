@@ -56,6 +56,7 @@ const issue = {
   deleted_by: null,
   unread: false,
   unread_comments: 0,
+  moves: [],
 } satisfies Issue;
 
 /** The last observer's callback, so a test can drive the threshold. */

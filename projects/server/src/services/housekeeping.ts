@@ -2,6 +2,7 @@ import { and, isNotNull, lte, or } from "drizzle-orm";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { sessions, tokens } from "../db/system-schema.ts";
+import { sweepMoves } from "./move/execute.ts";
 import { syncRefPrefixMirror } from "./reference-directory.ts";
 
 /** Hourly is plenty: dead rows are inert (auth re-checks expiry/revocation
@@ -51,6 +52,21 @@ export async function runStartupChores(ctx: AppContext): Promise<void> {
   } catch (err) {
     console.error("housekeeping: reference-prefix mirror sync failed", err);
   }
+  // A cross-database move interrupted by a crash leaves the card readable at
+  // one address or both; finishing it at boot bounds how long that lasts to
+  // the restart rather than to the next hourly tick.
+  await recoverMoves(ctx);
+}
+
+async function recoverMoves(ctx: AppContext): Promise<void> {
+  try {
+    const finished = await sweepMoves(ctx);
+    if (finished > 0) {
+      console.log(`housekeeping: finished ${finished} interrupted move(s)`);
+    }
+  } catch (err) {
+    console.error("housekeeping: move recovery failed", err);
+  }
 }
 
 /**
@@ -59,10 +75,12 @@ export async function runStartupChores(ctx: AppContext): Promise<void> {
  * The timer is unref'd so a missed stop can never hold the process open.
  */
 export function startHousekeeping(
-  db: Db,
+  ctx: AppContext,
   intervalMs: number = SWEEP_INTERVAL_MS,
 ): () => void {
+  const db = ctx.router.system();
   const run = async () => {
+    await recoverMoves(ctx);
     try {
       const swept = await sweepAuthRows(db);
       if (swept.sessions > 0 || swept.tokens > 0) {

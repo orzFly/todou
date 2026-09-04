@@ -26,8 +26,64 @@ export const IssueEventType = z.enum([
   // whole record, so the trace a deleted card leaves behind carries no title.
   "deleted",
   "restored",
+  // The two halves of one cross-project move (T-231), paired by
+  // `payload.move_token`: moved_out is the only trace left on the source
+  // tombstone, moved_in travels with the card and is what clients read the
+  // card's ownership intervals from.
+  "moved_out",
+  "moved_in",
 ]);
 export type IssueEventType = z.infer<typeof IssueEventType>;
+
+/**
+ * Event payloads stay a loose record on the wire; these three exist for
+ * clients to `safeParse` the ones they render, so a missing key is a
+ * fallback rather than a crash.
+ *
+ * Every `*_project*` / `*_number` field goes null when the reader may not
+ * read the project it names — the key stays, which is how a client tells a
+ * redacted field from an old event that never carried one.
+ */
+export const MovedInPayload = z.object({
+  move_token: z.string(),
+  lineage: Id,
+  from_project_id: Id.nullable(),
+  from_project: ProjectSlug.nullable(),
+  from_number: Id.nullable(),
+  status_from: z.string().optional(),
+  status_to: z.string().optional(),
+  dropped_labels: z.array(z.string()).default([]),
+  /** Logins, not refs: the event outlives the accounts it names. */
+  dropped_assignees: z.array(z.string()).default([]),
+});
+export type MovedInPayload = z.infer<typeof MovedInPayload>;
+
+export const MovedOutPayload = z.object({
+  move_token: z.string(),
+  to_project_id: Id.nullable(),
+  to_project: ProjectSlug.nullable(),
+  to_number: Id.nullable(),
+});
+export type MovedOutPayload = z.infer<typeof MovedOutPayload>;
+
+export const CrossReferencedPayload = z.object({
+  by_project: ProjectSlug.nullable(),
+  /**
+   * Absent on events written before T-231. Present, it wins over
+   * `by_project`: a slug resolved by event time can land on whoever holds
+   * that spelling now, an id cannot.
+   */
+  by_project_id: Id.nullable().optional(),
+  by_issue: Id.nullable(),
+  by_comment: Id.nullable().optional(),
+  /**
+   * Set only on events a move rewrote. Such a row stays visible even to a
+   * reader who cannot read the project it now names — it was visible before
+   * the move, and vanishing is what the redaction rule exists to avoid.
+   */
+  by_moved: z.boolean().optional(),
+});
+export type CrossReferencedPayload = z.infer<typeof CrossReferencedPayload>;
 
 export const TimelineComment = z.object({
   type: z.literal("comment"),

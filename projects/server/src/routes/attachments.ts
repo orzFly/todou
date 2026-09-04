@@ -111,7 +111,9 @@ const downloadRoute = createRoute({
   },
   responses: {
     200: { description: "File stream" },
+    301: { description: "The card moved; the attachment lives elsewhere now" },
     302: { description: "Redirect to a presigned URL (s3 backend)" },
+    410: { description: "Moved to a project the reader cannot see" },
   },
 });
 
@@ -130,7 +132,9 @@ const downloadNamedRoute = createRoute({
   },
   responses: {
     200: { description: "File stream" },
+    301: { description: "The card moved; the attachment lives elsewhere now" },
     302: { description: "Redirect to a presigned URL (s3 backend)" },
+    410: { description: "Moved to a project the reader cannot see" },
   },
 });
 
@@ -144,7 +148,11 @@ const viewRoute = createRoute({
       id: z.coerce.number().int().positive(),
     }),
   },
-  responses: { 200: { description: "Inline file stream" } },
+  responses: {
+    200: { description: "Inline file stream" },
+    301: { description: "The card moved; the attachment lives elsewhere now" },
+    410: { description: "Moved to a project the reader cannot see" },
+  },
 });
 
 const viewNamedRoute = createRoute({
@@ -160,7 +168,11 @@ const viewNamedRoute = createRoute({
       name: z.string(),
     }),
   },
-  responses: { 200: { description: "Inline file stream" } },
+  responses: {
+    200: { description: "Inline file stream" },
+    301: { description: "The card moved; the attachment lives elsewhere now" },
+    410: { description: "Moved to a project the reader cannot see" },
+  },
 });
 
 export function attachmentRoutes() {
@@ -253,9 +265,13 @@ export function attachmentRoutes() {
     c: Context<AppEnv>,
     slug: string,
     id: number,
+    name: string | null = null,
   ) => {
     const ctx = c.get("appCtx");
-    const { row } = await openAttachment(ctx, c.get("user"), slug, id);
+    const { row } = await openAttachment(ctx, c.get("user"), slug, id, {
+      variant: "download",
+      filename: name,
+    });
     const url = await ctx.storage.urlFor(row.storageKey, {
       filename: row.filename,
       contentType: row.contentType,
@@ -272,9 +288,13 @@ export function attachmentRoutes() {
     c: Context<AppEnv>,
     slug: string,
     id: number,
+    name: string | null = null,
   ) => {
     const ctx = c.get("appCtx");
-    const { row } = await openAttachment(ctx, c.get("user"), slug, id);
+    const { row } = await openAttachment(ctx, c.get("user"), slug, id, {
+      variant: "view",
+      filename: name,
+    });
     return streamAttachment(c, row, "inline");
   };
 
@@ -284,8 +304,8 @@ export function attachmentRoutes() {
   });
 
   app.openapi(downloadNamedRoute, (c) => {
-    const { slug, id } = c.req.valid("param");
-    return downloadAttachment(c, slug, id);
+    const { slug, id, name } = c.req.valid("param");
+    return downloadAttachment(c, slug, id, name);
   });
 
   app.openapi(viewRoute, (c) => {
@@ -294,8 +314,8 @@ export function attachmentRoutes() {
   });
 
   app.openapi(viewNamedRoute, (c) => {
-    const { slug, id } = c.req.valid("param");
-    return viewAttachment(c, slug, id);
+    const { slug, id, name } = c.req.valid("param");
+    return viewAttachment(c, slug, id, name);
   });
 
   return app;

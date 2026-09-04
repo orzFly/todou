@@ -1,5 +1,6 @@
 import { rm } from "node:fs/promises";
 import type {
+  MemberRole,
   Project,
   ProjectCreateInput,
   ProjectUpdateInput,
@@ -30,13 +31,14 @@ import {
 import { type ProjectRow, requireProject, routeInfoOf } from "./access.ts";
 import { mirrorRefFormat } from "./reference-directory.ts";
 
-export function toProject(row: ProjectRow): Project {
+export function toProject(row: ProjectRow, viewerRole?: MemberRole): Project {
   return {
     id: row.id,
     slug: row.slug,
     name: row.name,
     description: row.description,
     created_at: row.createdAt.toISOString(),
+    ...(viewerRole === undefined ? {} : { viewer_role: viewerRole }),
   };
 }
 
@@ -204,20 +206,24 @@ export async function listProjects(
   user: UserRow,
 ): Promise<Project[]> {
   const system = ctx.router.system();
+  // An instance admin is an admin everywhere without a membership row.
   if (user.isInstanceAdmin) {
-    return (await system.select().from(projects)).map(toProject);
+    return (await system.select().from(projects)).map((row) =>
+      toProject(row, "admin"),
+    );
   }
   const memberships = await system
-    .select({ projectId: projectMembers.projectId })
+    .select({ projectId: projectMembers.projectId, role: projectMembers.role })
     .from(projectMembers)
     .where(eq(projectMembers.userId, user.id));
   const ids = memberships.map((m) => m.projectId);
   if (ids.length === 0) return [];
+  const roleById = new Map(memberships.map((m) => [m.projectId, m.role]));
   const rows = await system
     .select()
     .from(projects)
     .where(inArray(projects.id, ids));
-  return rows.map(toProject);
+  return rows.map((row) => toProject(row, roleById.get(row.id)));
 }
 
 /**

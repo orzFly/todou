@@ -26,6 +26,9 @@ export const InternalRefPrefix = z
   .nullable();
 export type InternalRefPrefix = z.infer<typeof InternalRefPrefix>;
 
+export const MemberRole = z.enum(["admin", "writer", "reader"]);
+export type MemberRole = z.infer<typeof MemberRole>;
+
 export const Project = z.object({
   id: Id,
   slug: ProjectSlug,
@@ -38,6 +41,12 @@ export const Project = z.object({
    * a query per row for something no list view shows.
    */
   former_slugs: z.array(ProjectSlug).optional(),
+  /**
+   * The requesting user's role here (T-231). Optional: servers predating it
+   * omit it. Lets a picker offer only the projects a card may be moved into
+   * without a request per row — the server checks the role again anyway.
+   */
+  viewer_role: MemberRole.optional(),
 });
 export type Project = z.infer<typeof Project>;
 
@@ -77,9 +86,6 @@ export type ProjectUpdateInput = z.infer<typeof ProjectUpdateInput>;
  * the new slug, and a redirect inside a batch sub-request reads as an error.
  */
 export const CANONICAL_SLUG_HEADER = "x-todou-canonical-slug";
-
-export const MemberRole = z.enum(["admin", "writer", "reader"]);
-export type MemberRole = z.infer<typeof MemberRole>;
 
 export const Member = z.object({
   user: UserRef,

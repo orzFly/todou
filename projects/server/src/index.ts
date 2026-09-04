@@ -62,7 +62,7 @@ class ServeCommand extends ConfiguredCommand {
     const server = serve({ fetch: app.fetch, port }, (info) => {
       this.context.stdout.write(`todou server listening on :${info.port} 🥔\n`);
     });
-    const stopHousekeeping = startHousekeeping(context.router.system());
+    const stopHousekeeping = startHousekeeping(context);
     await runStartupChores(context);
 
     await new Promise<void>((resolve) => {

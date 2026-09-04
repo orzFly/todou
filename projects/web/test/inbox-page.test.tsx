@@ -47,6 +47,7 @@ function makeItem(
     deleted_by: null,
     unread: true,
     unread_comments: 1,
+    moves: [],
     project: { slug, name: `Project ${slug}` },
     last_activity_at: "2026-01-02T00:00:00Z",
     pending_spec_review: false,

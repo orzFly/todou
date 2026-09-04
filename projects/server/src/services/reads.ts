@@ -17,8 +17,11 @@ import {
   requireProject,
   routeInfoOf,
 } from "./access.ts";
-import { crossRefVisibleCondition } from "./cross-references.ts";
-import { notDeleted } from "./trash.ts";
+import {
+  crossRefVisibleCondition,
+  type VisibleProjects,
+} from "./cross-references.ts";
+import { live } from "./trash.ts";
 
 /**
  * The user's unread epoch in this project, created lazily on first use so
@@ -82,7 +85,7 @@ export async function unreadIssueState(
   projectId: number,
   userId: number,
   issueIds: number[],
-  visibleSlugs: string[],
+  visible: VisibleProjects,
 ): Promise<{ unread: Set<number>; counts: Map<number, number> }> {
   const frontier = await ensureFrontier(db, projectId, userId);
   if (issueIds.length === 0) return { unread: new Set(), counts: new Map() };
@@ -125,7 +128,7 @@ export async function unreadIssueState(
       and(
         inArray(issues.id, issueIds),
         ne(issues.authorId, userId),
-        notDeleted,
+        live,
         sql`${issues.createdAt} > coalesce(${issueReads.lastSeenAt}, ${frontier})`,
       ),
     );
@@ -146,7 +149,7 @@ export async function unreadIssueState(
         gt(issueEvents.createdAt, frontier),
         // Same predicate the timeline reads under: an event the viewer
         // cannot see must never light the card that carries it.
-        crossRefVisibleCondition(visibleSlugs),
+        crossRefVisibleCondition(visible.slugs, visible.ids),
       ),
     )
     .groupBy(issueEvents.issueId);
@@ -203,7 +206,7 @@ export async function markIssueRead(
         eq(issues.number, number),
         // Nothing in the trash is ever unread, so there is no position to
         // advance on one — not even for the admin looking at it.
-        notDeleted,
+        live,
       ),
     );
   const issue = issueRows[0];

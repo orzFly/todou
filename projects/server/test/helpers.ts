@@ -128,9 +128,11 @@ export type TestApp = {
 export async function makeTestApp(
   placement: PlacementMode = "shared",
   overrides?: ConfigOverrides,
+  testHooks?: AppContext["testHooks"],
 ): Promise<TestApp> {
   const config = testConfig(placement, overrides);
   const ctx = await bootstrap(config);
+  if (testHooks !== undefined) ctx.testHooks = testHooks;
   const app = createApp(ctx);
   return {
     app,

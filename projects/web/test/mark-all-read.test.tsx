@@ -59,6 +59,7 @@ const listItem = (
   deleted_by: null,
   unread: true,
   unread_comments: 2,
+  moves: [],
   ...overrides,
 });
 

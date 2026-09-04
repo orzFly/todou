@@ -21,7 +21,11 @@ import {
   ValidationFailedError,
 } from "../errors.ts";
 import { requireProject, routeInfoOf } from "./access.ts";
-import { assertIssueReadable, assertIssueWritable } from "./trash.ts";
+import {
+  assertIssueReadable,
+  assertIssueWritable,
+  gateColumns,
+} from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
 /**
@@ -139,9 +143,7 @@ function toAnswerRecords(
 async function loadIssue(db: Db, projectId: number, number: number) {
   const rows = await db
     .select({
-      id: issues.id,
-      authorId: issues.authorId,
-      deletedAt: issues.deletedAt,
+      ...gateColumns,
     })
     .from(issues)
     .where(and(eq(issues.projectId, projectId), eq(issues.number, number)));

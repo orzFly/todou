@@ -153,6 +153,15 @@ export const issues = pgTable(
     // below, untouched by a delete, is why a restore can never collide.
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     deletedBy: bigint("deleted_by", { mode: "number" }),
+    // Moving to another project (T-231) is two states, not one, and both are
+    // read off this row so the synchronous gates in trash.ts never have to
+    // consult the system database: moving_since is the cross-database copy
+    // window (reads pass, writes 409), moved_at is the permanent tombstone
+    // (reads redirect, writes 409). Where the card went is deliberately NOT
+    // here — the address book answers that, and it stays right after a
+    // second move.
+    movingSince: timestamp("moving_since", { withTimezone: true }),
+    movedAt: timestamp("moved_at", { withTimezone: true }),
   },
   (t) => [
     uniqueIndex("issues_project_number_idx").on(t.projectId, t.number),
@@ -245,6 +254,11 @@ export const issueEvents = pgTable(
         "spec_comments_resolved",
         "deleted",
         "restored",
+        // The two halves of one move (T-231), paired by payload.move_token:
+        // moved_out stays on the source tombstone, moved_in rides along to
+        // the destination and is what the ownership intervals are read from.
+        "moved_out",
+        "moved_in",
       ],
     }).notNull(),
     payload: jsonb("payload").notNull().default({}),

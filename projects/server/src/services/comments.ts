@@ -14,7 +14,7 @@ import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { comments, issueEvents, issues } from "../db/project-schema.ts";
-import { ForbiddenError, NotFoundError } from "../errors.ts";
+import { CommentMovedError, ForbiddenError, NotFoundError } from "../errors.ts";
 import { requireProject, routeInfoOf } from "./access.ts";
 import {
   analyzeReferences,
@@ -26,9 +26,14 @@ import {
 import { encodeTimelineCursor } from "./cursor.ts";
 import { canonicalizeComponent, questionCount } from "./questions.ts";
 import { recordReferences, refPrefixAt } from "./references.ts";
+import { aliasOf, originProjectFor } from "./relocation.ts";
 import { deleteRevisionsFor, recordRevision } from "./revisions.ts";
 import { microIso } from "./timeline.ts";
-import { assertIssueReadable, assertIssueWritable } from "./trash.ts";
+import {
+  assertIssueReadable,
+  assertIssueWritable,
+  gateColumns,
+} from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
 export type CommentRow = typeof comments.$inferSelect;
@@ -56,10 +61,7 @@ export async function toTimelineComment(
 async function loadIssue(db: Db, projectId: number, number: number) {
   const rows = await db
     .select({
-      id: issues.id,
-      number: issues.number,
-      authorId: issues.authorId,
-      deletedAt: issues.deletedAt,
+      ...gateColumns,
     })
     .from(issues)
     .where(and(eq(issues.projectId, projectId), eq(issues.number, number)));
@@ -250,8 +252,28 @@ export async function getComment(
     .from(comments)
     .where(and(eq(comments.id, commentId), eq(comments.issueId, issue.id)));
   const row = rows[0];
+  if (!row) await throwIfAliased(ctx, project.id, commentId);
   if (!row) throw new NotFoundError("comment not found");
   return toTimelineComment(ctx, row);
+}
+
+/**
+ * A comment id that is not here may be one this project used to hold before
+ * the card moved (T-231). Checked only on a miss, so the common path never
+ * touches the system database.
+ */
+async function throwIfAliased(
+  ctx: AppContext,
+  projectId: number,
+  commentId: number,
+): Promise<void> {
+  const alias = await aliasOf(
+    ctx.router.system(),
+    "comment",
+    projectId,
+    commentId,
+  );
+  if (alias !== null) throw new CommentMovedError(projectId, commentId);
 }
 
 /**
@@ -270,14 +292,13 @@ export async function locateComment(
   const rows = await db
     .select({
       comment: comments,
-      number: issues.number,
-      authorId: issues.authorId,
-      deletedAt: issues.deletedAt,
+      ...gateColumns,
     })
     .from(comments)
     .innerJoin(issues, eq(comments.issueId, issues.id))
     .where(and(eq(comments.projectId, project.id), eq(comments.id, commentId)));
   const row = rows[0];
+  if (!row) await throwIfAliased(ctx, project.id, commentId);
   if (!row) throw new NotFoundError("comment not found");
   // This endpoint reaches a comment by id alone, so the issue's own gate
   // never ran: without this, a bare `#comment-M` would hand out the body of
@@ -341,6 +362,14 @@ export async function updateComment(
 
   const project = { id: projectId, slug };
   const refInputs = await loadReferenceInputs(ctx, db, projectId);
+  // The comment may predate a move, and its text was never rewritten.
+  const origin = await originProjectFor(
+    ctx,
+    db,
+    project,
+    row.issueId,
+    row.createdAt,
+  );
   let crossTargets: CrossTarget[] = [];
   const { after, refs } = await db.transaction(async (tx) => {
     const updated = await tx
@@ -360,14 +389,20 @@ export async function updateComment(
       agentContext,
     });
 
-    const analyzed = await analyzeReferences(
-      tx,
-      refInputs,
-      project,
-      input.body,
-      row.createdAt,
-      { issueNumber, commentId: row.id },
-    );
+    // An origin project that no longer exists leaves this text's numbering
+    // unresolvable, so it records nothing: see originProjectFor.
+    const analyzed =
+      origin === null
+        ? { local: [], cross: [] }
+        : await analyzeReferences(
+            tx,
+            refInputs,
+            project,
+            input.body,
+            row.createdAt,
+            { issueNumber, commentId: row.id },
+            origin,
+          );
     crossTargets = analyzed.cross;
     const refs = await recordReferences(
       tx,

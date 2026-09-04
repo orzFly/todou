@@ -42,6 +42,7 @@ const issue = (unread: boolean, unreadComments = 0): IssueListItem => ({
   deleted_by: null,
   unread,
   unread_comments: unreadComments,
+  moves: [],
 });
 
 const renderRow = (unread: boolean, unreadComments = 0) =>

@@ -1,7 +1,16 @@
 import { z } from "zod";
 import { Cursor, Id, Timestamp } from "./common.ts";
-import { Label, Status, StatusCategory } from "./project.ts";
+import { Label, ProjectSlug, Status, StatusCategory } from "./project.ts";
 import { UserRef } from "./user.ts";
+
+/** One arrival: from `at` onwards the card belongs to the next project. */
+export const IssueMove = z.object({
+  at: Timestamp,
+  from_project_id: Id.nullable(),
+  from_project: ProjectSlug.nullable(),
+  from_number: Id.nullable(),
+});
+export type IssueMove = z.infer<typeof IssueMove>;
 
 export const Issue = z.object({
   id: Id,
@@ -63,6 +72,14 @@ export const Issue = z.object({
    */
   deleted_at: Timestamp.nullable().default(null),
   deleted_by: UserRef.nullable().default(null),
+  /**
+   * Every project this card has lived in, oldest move first (T-231) — the
+   * boundaries a client needs to parse each piece of its text under the
+   * project that owned it at the time (`ownerAt`). A reader who cannot read
+   * a source project gets that entry's `from_*` as null and keeps `at`, so
+   * the intervals still line up and only their owner is unknown.
+   */
+  moves: z.array(IssueMove).default([]),
 });
 export type Issue = z.infer<typeof Issue>;
 

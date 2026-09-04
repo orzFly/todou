@@ -438,6 +438,7 @@ const refItem = (number: number, title: string): IssueListItem => ({
   deleted_by: null,
   unread: false,
   unread_comments: 0,
+  moves: [],
 });
 
 // Reverse mapping (selection → source line and column) block kind by block

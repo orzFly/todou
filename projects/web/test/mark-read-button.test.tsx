@@ -175,6 +175,7 @@ describe("clearUnread", () => {
     deleted_by: null,
     unread: true,
     unread_comments: unreadComments,
+    moves: [],
   });
 
   it("clears only the matching row", () => {

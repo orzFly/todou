@@ -1,4 +1,7 @@
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { issueEvents, issues } from "../src/db/project-schema.ts";
+import { routeInfoOf } from "../src/services/access.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
@@ -209,5 +212,103 @@ describe("cross-reference visibility T-150", () => {
     expect(
       crossTypes(await get(`/activity?projects=${DST}&limit=100`, outsider)),
     ).toEqual([]);
+  });
+
+  it("does not duplicate an event that predates by_project_id", async () => {
+    // Old rows carry only a slug. Deduplication keyed on the id alone would
+    // never match them, and `recordCrossReferences` replays the whole set on
+    // every edit — so each edit of the source would add another row here.
+    const legacy = await createIssue(DST, "referenced the old way");
+    const db = await t.ctx.router.forProject(
+      routeInfoOf({
+        id: (await get(`/projects/${DST}`, { cookie })).id,
+        slug: DST,
+        databaseUrl: null,
+      } as Parameters<typeof routeInfoOf>[0]),
+    );
+    const [issue] = await db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(eq(issues.number, legacy));
+    const srcProject = await get(`/projects/${SRC}`, { cookie });
+    const oldSource = await createIssue(SRC, "old-style source");
+    await db.insert(issueEvents).values({
+      projectId: (await get(`/projects/${DST}`, { cookie })).id,
+      issueId: issue?.id as number,
+      actorId: 1,
+      type: "cross_referenced",
+      payload: { by_project: SRC, by_issue: oldSource },
+    });
+    void srcProject;
+
+    const before = await get(
+      `/projects/${DST}/issues/${legacy}/timeline?limit=100`,
+      { cookie },
+    );
+    const countCross = (page: { items: Array<{ event_type?: string }> }) =>
+      page.items.filter((i) => i.event_type === "cross_referenced").length;
+    expect(countCross(before)).toBe(1);
+
+    const res = await t.app.request(
+      `/api/projects/${SRC}/issues/${oldSource}`,
+      {
+        method: "PATCH",
+        headers: headers(),
+        body: JSON.stringify({ body: `still fixes ${DST}#${legacy}` }),
+      },
+    );
+    expect(res.status).toBe(200);
+    await settle();
+
+    const after = await get(
+      `/projects/${DST}/issues/${legacy}/timeline?limit=100`,
+      { cookie },
+    );
+    expect(countCross(after)).toBe(1);
+  });
+
+  it("keeps a move-rewritten row visible, with its far side blanked", async () => {
+    // Hiding it instead would delete a line the reader could see yesterday,
+    // over a change to a card they may not even be able to reach.
+    const card = await createIssue(DST, "referenced by something that moved");
+    const dst = await get(`/projects/${DST}`, { cookie });
+    const db = await t.ctx.router.forProject(
+      routeInfoOf({
+        id: dst.id,
+        slug: DST,
+        databaseUrl: null,
+      } as Parameters<typeof routeInfoOf>[0]),
+    );
+    const [issue] = await db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(eq(issues.number, card));
+    await db.insert(issueEvents).values({
+      projectId: dst.id,
+      issueId: issue?.id as number,
+      actorId: 1,
+      type: "cross_referenced",
+      // A project the outsider cannot read, on a row a move rewrote.
+      payload: {
+        by_project: "somewhere-unreadable",
+        by_project_id: 987654,
+        by_issue: 7,
+        by_moved: true,
+      },
+    });
+
+    const page = await get(
+      `/projects/${DST}/issues/${card}/timeline?limit=100`,
+      outsider,
+    );
+    const row = page.items.find(
+      (i: { event_type?: string }) => i.event_type === "cross_referenced",
+    );
+    expect(row).toBeDefined();
+    expect(row.payload).toMatchObject({
+      by_project: null,
+      by_project_id: null,
+      by_issue: null,
+    });
   });
 });

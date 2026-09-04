@@ -34,7 +34,11 @@ import {
 import { requireProject, routeInfoOf } from "./access.ts";
 import { encodeTimelineCursor } from "./cursor.ts";
 import { microIso } from "./timeline.ts";
-import { assertIssueReadable, assertIssueWritable } from "./trash.ts";
+import {
+  assertIssueReadable,
+  assertIssueWritable,
+  gateColumns,
+} from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
 /**
@@ -52,12 +56,10 @@ async function loadIssue(
 ) {
   const rows = await db
     .select({
-      id: issues.id,
+      ...gateColumns,
       specVersion: issues.specVersion,
       specReviewStatus: issues.specReviewStatus,
       specUnresolvedComments: issues.specUnresolvedComments,
-      authorId: issues.authorId,
-      deletedAt: issues.deletedAt,
     })
     .from(issues)
     .where(and(eq(issues.projectId, projectId), eq(issues.number, number)));

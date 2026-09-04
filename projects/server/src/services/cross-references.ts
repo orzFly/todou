@@ -29,7 +29,7 @@ import {
   globalSlugEntries,
 } from "./reference-directory.ts";
 import { refPrefixAt, stripMarkdownCode } from "./references.ts";
-import { notDeleted } from "./trash.ts";
+import { referenceable } from "./trash.ts";
 
 /**
  * Hide `cross_referenced` events whose source project the viewer cannot
@@ -37,12 +37,34 @@ import { notDeleted } from "./trash.ts";
  * silence and leaks that the project exists at all. It has to be a SQL
  * predicate: the timeline counts and paginates over these tables, so
  * dropping rows afterwards would break both.
+ *
+ * The two spellings are exclusive rather than alternatives. Falling back to
+ * the slug for a row that HAS an id would keep the T-156 limitation alive
+ * for new events — a slug that changed hands makes its old holder's events
+ * visible to the new one. Judged on the id, that cannot happen.
+ *
+ * Rows a move rewrote pass regardless: they were visible before the move, so
+ * hiding them now would delete a line from a reader's history over a change
+ * to a card they may not even be able to see. Their far side is blanked in
+ * post-processing instead (`redactMovePayloads`).
  */
-export function crossRefVisibleCondition(visibleSlugs: string[]): SQL {
+export function crossRefVisibleCondition(
+  visibleSlugs: string[],
+  visibleIds: Iterable<number> = [],
+): SQL {
   const notCross = ne(issueEvents.type, "cross_referenced");
-  if (visibleSlugs.length === 0) return notCross;
-  const source = sql<string>`${issueEvents.payload} ->> 'by_project'`;
-  return or(notCross, inArray(source, visibleSlugs)) as SQL;
+  const rewrittenByMove = sql`${issueEvents.payload} ? 'by_moved'`;
+  const ids = [...visibleIds];
+  if (visibleSlugs.length === 0 && ids.length === 0) {
+    return or(notCross, rewrittenByMove) as SQL;
+  }
+  const bySlug = sql<string>`${issueEvents.payload} ->> 'by_project'`;
+  const byId = sql<number>`(${issueEvents.payload} ->> 'by_project_id')::bigint`;
+  const source = sql`case when ${issueEvents.payload} ? 'by_project_id'
+      then ${ids.length === 0 ? sql`false` : inArray(byId, ids)}
+      else ${visibleSlugs.length === 0 ? sql`false` : inArray(bySlug, visibleSlugs)}
+    end`;
+  return or(notCross, rewrittenByMove, source) as SQL;
 }
 
 /**
@@ -60,8 +82,24 @@ export async function visibleSlugsWithHistory(
   ctx: AppContext,
   user: UserRow,
 ): Promise<string[]> {
+  return (await visibleProjects(ctx, user)).slugs;
+}
+
+/**
+ * The readable projects named both ways at once: by every slug they have
+ * ever held (what the visibility predicate matches on) and by id (what
+ * redaction and the newer `by_project_id` payloads compare against). One
+ * `accessibleProjectRows` walk serves both — they are the same question.
+ */
+export type VisibleProjects = { slugs: string[]; ids: Set<number> };
+
+export async function visibleProjects(
+  ctx: AppContext,
+  user: UserRow,
+): Promise<VisibleProjects> {
   const rows = await accessibleProjectRows(ctx, user);
-  if (rows.length === 0) return [];
+  const ids = new Set(rows.map((row) => row.id));
+  if (rows.length === 0) return { slugs: [], ids };
   const slugs = new Set(rows.map((row) => row.slug));
   const history = await ctx.router
     .system()
@@ -74,7 +112,7 @@ export async function visibleSlugsWithHistory(
       ),
     );
   for (const row of history) slugs.add(row.slug);
-  return [...slugs];
+  return { slugs: [...slugs], ids };
 }
 
 /** Everything the grammar needs beyond the text itself, loaded once per write. */
@@ -144,8 +182,16 @@ export async function analyzeReferences(
   text: string,
   contentCreatedAt: Date,
   source: CrossSource,
+  /**
+   * The project this text was WRITTEN in, which is not the current one once
+   * the card has moved (T-231). A bare `#12` typed in A means A/12 forever;
+   * reading it under the destination's numbering would silently point it at
+   * a different, existing card — an error no redirect can undo. Defaults to
+   * the current project, which is every case but an edit of moved text.
+   */
+  origin: { id: number; slug: string } = project,
 ): Promise<AnalyzedRefs> {
-  const prefix = await refPrefixAt(db, project.id, contentCreatedAt);
+  const prefix = await refPrefixAt(db, origin.id, contentCreatedAt);
   const tokens = scanReferenceTokens(stripMarkdownCode(text), {
     internalPrefix: prefix,
     autolinks: inputs.autolinks,
@@ -165,13 +211,14 @@ export async function analyzeReferences(
     if (token.type === "comment") {
       commentIds.add(token.commentId);
     } else if (token.type === "issue") {
-      if (token.slug === null || token.slug === project.slug) {
+      // An unqualified ref means "this project" as of when it was written,
+      // so it resolves against the origin. Once that is no longer the
+      // current project the very same text denotes a cross-project target.
+      const slug = token.slug ?? origin.slug;
+      if (slug === project.slug) {
         local.add(token.number);
       } else {
-        cross.set(`${token.slug}#${token.number}`, {
-          slug: token.slug,
-          number: token.number,
-        });
+        cross.set(`${slug}#${token.number}`, { slug, number: token.number });
       }
     }
   }
@@ -197,7 +244,7 @@ async function issuesOfComments(
       and(
         eq(comments.projectId, projectId),
         inArray(comments.id, [...ids]),
-        notDeleted,
+        referenceable,
       ),
     );
   return rows.map((row) => row.number);
@@ -213,7 +260,7 @@ async function issuesOfComments(
 export async function recordCrossReferences(
   ctx: AppContext,
   actor: UserRow,
-  sourceProject: { slug: string },
+  sourceProject: { id: number; slug: string },
   source: CrossSource,
   targets: CrossTarget[],
   agentContext: AgentContext | null = null,
@@ -246,7 +293,7 @@ export async function recordCrossReferences(
 async function recordInProject(
   ctx: AppContext,
   actor: UserRow,
-  sourceProject: { slug: string },
+  sourceProject: { id: number; slug: string },
   source: CrossSource,
   slug: string,
   numbers: number[],
@@ -266,7 +313,7 @@ async function recordInProject(
       and(
         eq(issues.projectId, target.id),
         inArray(issues.number, numbers),
-        notDeleted,
+        referenceable,
       ),
     );
   if (rows.length === 0) return;
@@ -284,16 +331,31 @@ async function recordInProject(
         ),
       ),
     );
-  const seen = new Set(
-    existing.map((row) => {
-      const payload = row.payload as { by_project?: string; by_issue?: number };
-      return `${row.issueId}:${payload.by_project}:${payload.by_issue}`;
-    }),
-  );
+  // Keyed both ways on purpose. Events written before `by_project_id`
+  // existed carry only a slug, so an id-only key would never match them —
+  // and `recordCrossReferences` replays the whole set on every edit, so each
+  // edit of the source would add a duplicate event to every card it names.
+  const seen = new Set<string>();
+  for (const row of existing) {
+    const payload = row.payload as {
+      by_project?: string;
+      by_project_id?: number;
+      by_issue?: number;
+    };
+    if (payload.by_project !== undefined) {
+      seen.add(`${row.issueId}:slug:${payload.by_project}:${payload.by_issue}`);
+    }
+    if (payload.by_project_id !== undefined) {
+      seen.add(
+        `${row.issueId}:id:${payload.by_project_id}:${payload.by_issue}`,
+      );
+    }
+  }
 
   for (const row of rows) {
-    const key = `${row.id}:${sourceProject.slug}:${source.issueNumber}`;
-    if (seen.has(key)) continue;
+    const bySlug = `${row.id}:slug:${sourceProject.slug}:${source.issueNumber}`;
+    const byId = `${row.id}:id:${sourceProject.id}:${source.issueNumber}`;
+    if (seen.has(bySlug) || seen.has(byId)) continue;
     const inserted = await db
       .insert(issueEvents)
       .values({
@@ -304,6 +366,11 @@ async function recordInProject(
         agentContext,
         payload: {
           by_project: sourceProject.slug,
+          // The slug stays for older clients and plain-text output; the id is
+          // what anything resolving the source should prefer, because a slug
+          // has to be read as of the event's own instant and a slug that has
+          // changed hands makes that answer a guess.
+          by_project_id: sourceProject.id,
           by_issue: source.issueNumber,
           ...(source.commentId === undefined
             ? {}

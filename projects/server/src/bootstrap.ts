@@ -27,6 +27,14 @@ export type AppContext = {
    * instead of waiting on connections that never finish (T-56).
    */
   shutdown: AbortController;
+  /**
+   * Injected only by tests. The cross-database move has no transaction to
+   * roll back, so the only way to prove its recovery works is to stop it
+   * between two steps and let the sweep finish the job.
+   */
+  testHooks?: {
+    afterMoveStep?(step: 1 | 2 | 3 | 4 | 5 | 6): Promise<void>;
+  };
 };
 
 export async function bootstrap(config: Config): Promise<AppContext> {

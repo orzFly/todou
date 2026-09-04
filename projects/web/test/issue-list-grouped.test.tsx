@@ -70,6 +70,7 @@ function item(id: number, title: string, status: Status): IssueListItem {
     deleted_by: null,
     unread: false,
     unread_comments: 0,
+    moves: [],
   };
 }
 

@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { TodouClient, TodouError } from "../src/client.ts";
+import {
+  GoneError,
+  MovedError,
+  TodouClient,
+  TodouError,
+} from "../src/client.ts";
 
 type Captured = { url: string; init: RequestInit };
 
@@ -313,6 +318,107 @@ describe("TodouClient batching (T-91)", () => {
     await client.request("POST", "/projects", { json: { slug: "x" } });
     expect(calls[0]?.url).toBe("/api/projects");
     expect(calls[0]?.init.method).toBe("POST");
+  });
+
+  it("surfaces a sub-response 301 as MovedError", async () => {
+    const fetchImpl = (async () =>
+      Response.json({
+        responses: [
+          { status: 301, body: { moved_to: { slug: "b", number: 45 } } },
+        ],
+      })) as typeof fetch;
+    const client = new TodouClient({ fetch: fetchImpl, batch: true });
+    await Promise.all([
+      expect(client.request("GET", "/projects/a/issues/123")).rejects.toThrow(
+        MovedError,
+      ),
+      // A second queued GET is what pushes the pair into an envelope.
+      client.request("GET", "/me").catch(() => undefined),
+    ]);
+  });
+});
+
+describe("TodouClient redirects (T-231)", () => {
+  /** A fetch that reports having followed a redirect, as the real one does. */
+  const redirectedFetch = (finalUrl: string, body: unknown = { id: 1 }) =>
+    (async () => {
+      const res = Response.json(body);
+      Object.defineProperty(res, "redirected", { value: true });
+      Object.defineProperty(res, "url", { value: finalUrl });
+      return res;
+    }) as typeof fetch;
+
+  it("turns a followed issue redirect into MovedError", async () => {
+    const client = new TodouClient({
+      fetch: redirectedFetch("http://todou.example/api/projects/b/issues/45"),
+    });
+    const error = await client.getIssue("a", 123).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MovedError);
+    expect((error as MovedError).movedTo).toEqual({ slug: "b", number: 45 });
+  });
+
+  it("carries comment_id when the comment route redirected", async () => {
+    const client = new TodouClient({
+      fetch: redirectedFetch(
+        "http://todou.example/api/projects/b/issues/45/comments/2001",
+      ),
+    });
+    const error = await client
+      .locateComment("a", 1462)
+      .catch((e: unknown) => e);
+    expect((error as MovedError).movedTo).toEqual({
+      slug: "b",
+      number: 45,
+      comment_id: 2001,
+    });
+  });
+
+  it("keeps sub-route redirects pointed at the issue", async () => {
+    const client = new TodouClient({
+      fetch: redirectedFetch(
+        "http://todou.example/api/projects/b/issues/45/timeline?limit=50",
+      ),
+    });
+    const error = await client
+      .getTimeline("a", 123, {})
+      .catch((e: unknown) => e);
+    expect((error as MovedError).movedTo).toEqual({ slug: "b", number: 45 });
+  });
+
+  it("leaves a presigned attachment redirect alone", async () => {
+    const client = new TodouClient({
+      fetch: redirectedFetch("http://store.test/blob/abc?sig=1", { ok: true }),
+    });
+    expect(await client.request("GET", "/projects/a/attachments/8")).toEqual({
+      ok: true,
+    });
+  });
+
+  it("maps an unfollowed 410 to GoneError with the title", async () => {
+    const { fetch } = mockFetch(410, { moved: true, title: "Old card" });
+    const client = new TodouClient({ fetch });
+    const error = await client.getIssue("a", 123).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(GoneError);
+    expect((error as GoneError).body).toEqual({
+      moved: true,
+      title: "Old card",
+    });
+  });
+
+  it("still returns bytes from requestRaw after following a redirect", async () => {
+    // The binary channel must not throw: `attach download` following a 301
+    // to the moved attachment is exactly the result it wants.
+    const fetchImpl = (async () => {
+      const res = new Response("PNGDATA", { status: 200 });
+      Object.defineProperty(res, "redirected", { value: true });
+      Object.defineProperty(res, "url", {
+        value: "http://todou.example/api/projects/b/issues/45/comments/2001",
+      });
+      return res;
+    }) as typeof fetch;
+    const client = new TodouClient({ fetch: fetchImpl });
+    const res = await client.requestRaw("GET", "/projects/a/attachments/88");
+    expect(await res.text()).toBe("PNGDATA");
   });
 });
 

@@ -57,6 +57,13 @@
       "when": 1787988200955,
       "tag": "0007_slug-history",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788490049333,
+      "tag": "0008_issue_addresses",
+      "breakpoints": true
     }
   ]
 }

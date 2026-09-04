@@ -1,7 +1,21 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { Hono } from "hono";
+// A cycle on paper (relocation.ts throws these markers back at us), but only
+// ever read at request time, which ESM's live bindings handle.
+import { respondRelocation } from "./services/relocation.ts";
 
-type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 413 | 422 | 502 | 503;
+type ErrorStatus =
+  | 301
+  | 400
+  | 401
+  | 403
+  | 404
+  | 409
+  | 410
+  | 413
+  | 422
+  | 502
+  | 503;
 
 export class DomainError extends Error {
   readonly status: ErrorStatus;
@@ -101,6 +115,86 @@ export class IssueDeletedError extends DomainError {
   }
 }
 
+/** Writing to a card while it is being copied to another project (T-231). */
+export class IssueMovingError extends DomainError {
+  constructor() {
+    super(
+      409,
+      "issue_moving",
+      "this issue is moving to another project — try again in a moment",
+    );
+  }
+}
+
+/**
+ * The card moved somewhere the reader has no role, so the response admits
+ * that much and no more: never the destination project, never its number.
+ */
+export class GoneError extends DomainError {
+  constructor(body: { moved: true; title?: string }) {
+    super(410, "gone", "this issue moved to a project you cannot read", body);
+  }
+}
+
+/**
+ * Markers, not errors: "the thing you asked for moved, work out where it
+ * went". They carry only what locating it needs and deliberately do NOT
+ * extend DomainError — the destination, the reader's role there and the
+ * tombstone's title all take queries, and a throw site deep inside a gate
+ * is the wrong place to run them. `respondRelocation` does it once, in the
+ * error handler.
+ */
+export class IssueMovedError extends Error {
+  readonly issue: { id: number; projectId: number; number: number };
+  readonly forWrite: boolean;
+
+  constructor(
+    issue: { id: number; projectId: number; number: number },
+    forWrite: boolean,
+  ) {
+    super("issue moved");
+    this.issue = issue;
+    this.forWrite = forWrite;
+  }
+}
+
+export class CommentMovedError extends Error {
+  readonly projectId: number;
+  readonly commentId: number;
+
+  constructor(projectId: number, commentId: number) {
+    super("comment moved");
+    this.projectId = projectId;
+    this.commentId = commentId;
+  }
+}
+
+export class AttachmentMovedError extends Error {
+  readonly projectId: number;
+  readonly attachmentId: number;
+  /** Preserved so the redirect lands on the same route the reader used. */
+  readonly variant: "download" | "view";
+  readonly filename: string | null;
+
+  constructor(
+    projectId: number,
+    attachmentId: number,
+    variant: "download" | "view",
+    filename: string | null,
+  ) {
+    super("attachment moved");
+    this.projectId = projectId;
+    this.attachmentId = attachmentId;
+    this.variant = variant;
+    this.filename = filename;
+  }
+}
+
+export type RelocationMarker =
+  | IssueMovedError
+  | CommentMovedError
+  | AttachmentMovedError;
+
 export class DirectUploadUnavailableError extends DomainError {
   constructor() {
     super(
@@ -127,6 +221,13 @@ export class DirectUploadIncompleteError extends DomainError {
 // biome-ignore lint/suspicious/noExplicitAny: accepts any Hono env
 export function registerErrorHandler(app: Hono<any> | OpenAPIHono<any>): void {
   app.onError((err, c) => {
+    if (
+      err instanceof IssueMovedError ||
+      err instanceof CommentMovedError ||
+      err instanceof AttachmentMovedError
+    ) {
+      return respondRelocation(c, err);
+    }
     if (err instanceof DomainError) {
       return c.json(
         {

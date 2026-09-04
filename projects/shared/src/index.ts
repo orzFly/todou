@@ -2,6 +2,7 @@ export const TODOU = "todou";
 
 export * from "./client.ts";
 export * from "./events.ts";
+export * from "./ownership.ts";
 export * from "./ref-shapes.ts";
 export * from "./references-grammar.ts";
 export * from "./schemas/agent.ts";
@@ -17,6 +18,7 @@ export * from "./schemas/component.ts";
 export * from "./schemas/cursor-envelope.ts";
 export * from "./schemas/inbox.ts";
 export * from "./schemas/issue.ts";
+export * from "./schemas/move.ts";
 export * from "./schemas/prefs.ts";
 export * from "./schemas/project.ts";
 export * from "./schemas/references.ts";
