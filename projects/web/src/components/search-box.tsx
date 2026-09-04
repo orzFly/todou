@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { ArrowRightIcon, ExternalLinkIcon, SearchIcon } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { projectQuery } from "@/api/queries.ts";
 import {
   type JumpRow,
@@ -13,15 +13,8 @@ import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
+import { useSlashShortcut } from "@/lib/use-slash-shortcut.ts";
 import { cn } from "@/lib/utils";
-
-/** Where `/` must not steal the keystroke: the user is already typing. */
-function isTypingTarget(target: EventTarget | null): boolean {
-  const el = target as HTMLElement | null;
-  if (!el) return false;
-  if (el.isContentEditable) return true;
-  return ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName);
-}
 
 /** The last row, always present: what the box did before it understood refs. */
 type SearchRow = { kind: "search" };
@@ -106,17 +99,10 @@ export function SearchBox({
   const query = value.trim();
   const optionId = (idx: number) => `${listId}-${idx}`;
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (isTypingTarget(e.target)) return;
-      e.preventDefault();
-      input.current?.focus();
-      input.current?.select();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  useSlashShortcut(() => {
+    input.current?.focus();
+    input.current?.select();
+  });
 
   /**
    * Where Enter goes. Anything the reader can see decides it outright; a
