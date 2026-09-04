@@ -12,6 +12,15 @@ export type AlignGroup = {
   text: string;
   /** Offset of `text[0]` in that same flattened text; -1 for a fence or an image, which are not in it. */
   at: number;
+  /**
+   * What to score this leaf by, when that is not its `text` (T-239). `text`
+   * answers "are these two byte for byte the same block" and holds every
+   * picture's markdown so that a table whose prose did not move is still a
+   * perfect anchor (T-230); scoring by the same string weighs an attachment
+   * url's shared path as vocabulary. Absent means the two questions take the
+   * same evidence, which is every leaf that cannot hold a picture.
+   */
+  bag?: WordBag;
 };
 
 export type Alignment = {
@@ -44,6 +53,12 @@ export type WordMatching = {
  * rewritten — pairing them would diff unrelated prose and scatter marks
  * through both. It only ever gets asked where more than one candidate
  * competes; where the position is unique it says nothing (see `matchRun`).
+ *
+ * That harm is the whole of its jurisdiction, so only a class whose pairing
+ * produces a word diff is asked about it (T-239). An image and a fence are
+ * not: pairing either draws no word-level mark anywhere, and refusing to pair
+ * them costs the reader real content — the picture or the fence degrades into
+ * a marker quoting what the page is already showing.
  */
 const SIMILARITY_FLOOR = 1 / 3;
 
@@ -115,15 +130,28 @@ function zip(m: number, n: number): WordMatching {
   return out;
 }
 
+/**
+ * What a candidate is scored by: its own prose, or a bag the caller weighed
+ * itself because the candidate holds something that is not prose (T-239).
+ */
+export type Scorable = string | WordBag;
+
+const bagOf = (scorable: Scorable): WordBag =>
+  typeof scorable === "string" ? wordBag(scorable) : scorable;
+
 /** The best non-crossing set of pairs, weighed by how much each shares. */
-function score(olds: string[], news: string[]): WordMatching {
+function score(
+  olds: Scorable[],
+  news: Scorable[],
+  floor: number,
+): WordMatching {
   const out: WordMatching = { pairs: [], oldOnly: [], newOnly: [] };
   const m = olds.length;
   const n = news.length;
   // One bag per leaf, not one per candidate pair: segmenting is the expensive
   // half, and a run of 30 against 14 asks about the same leaf 14 times.
-  const oldBags = olds.map(wordBag);
-  const newBags = news.map(wordBag);
+  const oldBags = olds.map(bagOf);
+  const newBags = news.map(bagOf);
   const sims = new Array<number>(m * n).fill(Number.NEGATIVE_INFINITY);
   for (let i = 0; i < m; i++) {
     for (let j = 0; j < n; j++) {
@@ -131,7 +159,7 @@ function score(olds: string[], news: string[]): WordMatching {
       const b = newBags[j];
       if (a === undefined || b === undefined) continue;
       const shared = bagSimilarity(a, b);
-      if (shared >= SIMILARITY_FLOOR) sims[i * n + j] = shared;
+      if (shared >= floor) sims[i * n + j] = shared;
     }
   }
 
@@ -196,9 +224,17 @@ function score(olds: string[], news: string[]): WordMatching {
  * character and T-180's whole-line rewrite shares almost none; both are still
  * one block rewritten. More than one candidate on either side: the position no
  * longer says which went with which, so words decide, and a candidate below
- * the similarity floor is nobody's counterpart.
+ * `floor` is nobody's counterpart.
+ *
+ * `floor` is the caller's because what a bad pairing costs is the caller's
+ * (T-239); a class that draws no word diff passes 0 and lets position and the
+ * little vocabulary it has settle the order.
  */
-export function matchByWords(olds: string[], news: string[]): WordMatching {
+export function matchByWords(
+  olds: Scorable[],
+  news: Scorable[],
+  floor = SIMILARITY_FLOOR,
+): WordMatching {
   const m = olds.length;
   const n = news.length;
   if (m === 0 || n === 0) {
@@ -210,7 +246,7 @@ export function matchByWords(olds: string[], news: string[]): WordMatching {
   }
   if (m === 1 && n === 1) return { pairs: [[0, 0]], oldOnly: [], newOnly: [] };
   if (m * n > PAIRS_GUARD) return zip(m, n);
-  return score(olds, news);
+  return score(olds, news, floor);
 }
 
 /**
@@ -256,9 +292,16 @@ function matchRun(
       unmatched(mine, theirs, base, local);
       continue;
     }
+    // An image and a fence answer to no floor (T-239). Neither pairing draws
+    // a single word-level mark — an image becomes the old picture beside the
+    // new one, a fence keeps its block wash and hands its inside to pierre —
+    // so there is nothing here for the floor to protect, and refusing the
+    // pair sends content the page already displays out to a marker instead.
+    const floor = c === "image" || c === "code" ? 0 : SIMILARITY_FLOOR;
     const matching = matchByWords(
-      mine.map((leaf) => leaf.text),
-      theirs.map((leaf) => leaf.text),
+      mine.map((leaf) => leaf.bag ?? leaf.text),
+      theirs.map((leaf) => leaf.bag ?? leaf.text),
+      floor,
     );
     for (const [i, j] of matching.pairs) {
       const old = mine[i];

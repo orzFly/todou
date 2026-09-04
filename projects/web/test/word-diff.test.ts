@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bagWith,
   coalescedWordDiff,
   type WordDiffResult,
   wordBag,
@@ -190,5 +191,37 @@ describe("wordBag (T-211)", () => {
       ["下表", 2],
     ]);
     expect(bag.total).toBe(3);
+  });
+});
+
+describe("bagWith (T-239)", () => {
+  it("is the prose bag itself when there is no picture", () => {
+    expect(bagWith("见下表。", [])).toEqual(wordBag("见下表。"));
+  });
+
+  it("adds one entry per picture, whatever the url spends on its path", () => {
+    const prose = wordBag("见下表。");
+    // The real shape of an attachment url: almost all of it is the path every
+    // attachment in a deployment shares, which is exactly what must not be
+    // weighed (T-239). A short url would pass this test either way.
+    const bag = bagWith("见下表。", [
+      "/api/projects/p/attachments/929/download/toolbar-v1.png",
+    ]);
+    expect(bag.total).toBe(prose.total + 1);
+    expect(bag.weights.size).toBe(prose.weights.size + 1);
+    // Nothing the segmenter can produce collides with the picture's key, so
+    // the prose side of the bag comes through untouched.
+    for (const [word, weight] of prose.weights) {
+      expect(bag.weights.get(word)).toBe(weight);
+    }
+  });
+
+  it("counts the same url twice when a cell shows it twice", () => {
+    const url = "/api/projects/p/attachments/929/download/toolbar-v1.png";
+    const once = bagWith("", [url]);
+    const twice = bagWith("", [url, url]);
+    expect(once.total).toBe(1);
+    expect(twice.total).toBe(2);
+    expect([...twice.weights.values()]).toEqual([2]);
   });
 });

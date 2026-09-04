@@ -32,6 +32,9 @@ const differ = new WordDiff();
  * the run being scored is a whole rewritten section rather than one line
  * hunk. Spaces and punctuation stay out: T-180 already found those to be
  * the anchors that mean nothing.
+ *
+ * What it weighs is prose. A candidate that can also hold pictures goes
+ * through `bagWith`, which counts those by identity instead (T-239).
  */
 export type WordBag = { weights: Map<string, number>; total: number };
 
@@ -44,6 +47,42 @@ export function wordBag(text: string): WordBag {
     total += segment.length;
   }
   return { weights, total };
+}
+
+/**
+ * What one picture is worth against one character of prose. It is a rate, not
+ * a threshold — it rules nothing out, it only gives an image enough weight to
+ * take part in the score at all. T-239 swept 1 through 20 and every fixture
+ * came out identical; at 40 one picture outweighs all the prose beside it and
+ * a table that lost an image stops resembling its own counterpart, so the
+ * bottom of the flat range is what this takes.
+ */
+const IMAGE_WEIGHT = 1;
+
+/** The bag of `text`, plus one entry for each of `urls`.
+ *
+ * An image used to reach the bag as its markdown source, and a word is weighed
+ * by its characters, so `/api/projects/<slug>/attachments/<id>/download/` —
+ * the path every attachment in one deployment shares — became the vocabulary
+ * two unrelated tables had most in common (T-239). Two tables sharing nothing
+ * but the fact of holding attachments scored 0.69 against each other while a
+ * table and its real counterpart scored 0.22, and both numbers get worse the
+ * longer the deployment spells that prefix.
+ *
+ * A url is an identity, not prose: worth counting that this picture is that
+ * picture, worth nothing to count how many characters the path to it spends.
+ * So each one lands as a single fixed-weight entry under a key no prose can
+ * collide with — `wordBag` keeps `isWordLike` segments only, which one
+ * non-word character in front is enough to stay clear of.
+ */
+export function bagWith(text: string, urls: string[]): WordBag {
+  const bag = wordBag(text);
+  for (const url of urls) {
+    const key = `\u0000${url}`;
+    bag.weights.set(key, (bag.weights.get(key) ?? 0) + IMAGE_WEIGHT);
+    bag.total += IMAGE_WEIGHT;
+  }
+  return bag;
 }
 
 /** Half-open character range `[start, end)`. */

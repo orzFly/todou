@@ -983,6 +983,8 @@ const IMG_A = "/api/projects/p/attachments/929/download/toolbar-v1.png";
 const IMG_B = "/api/projects/p/attachments/1401/download/toolbar-v2.png";
 const IMG_C = "/api/projects/p/attachments/930/download/panel-v1.png";
 const IMG_D = "/api/projects/p/attachments/1402/download/panel-v2.png";
+const IMG_E = "/api/projects/p/attachments/932/download/sidebar-v1.png";
+const IMG_F = "/api/projects/p/attachments/1403/download/sidebar-v2.png";
 const imageCell = (url: string) =>
   `| 名 | 图 |\n| --- | --- |\n| a | ![](${url}) |\n`;
 
@@ -1484,5 +1486,257 @@ describe("how a removed cell's image renders (T-229)", () => {
     expect(
       container.querySelector("tr.spec-del-row")?.querySelectorAll("td"),
     ).toHaveLength(container.querySelectorAll("thead th").length);
+  });
+});
+
+/**
+ * T-239's fixtures. Every url here is `IMG_A`…`IMG_F`, which is to say the
+ * real deployed shape — `/api/projects/<slug>/attachments/<id>/download/…`.
+ * That is load-bearing, not decoration: the bug this file now guards against
+ * was two unrelated tables scoring 0.69 against each other on the path every
+ * attachment in a deployment shares, and shortening a url to `/a.png` makes
+ * the whole set pass against the very code that failed on the card.
+ *
+ * The other condition is adjacency. An unchanged leaf between two tables is
+ * an anchor, and an anchor cuts them into separate runs where each is the
+ * only candidate of its class and pairs with no score asked — so a blank line
+ * is all that may separate the two tables below.
+ */
+const T239_TWO_TABLES = [
+  "| 名 | 证据 | 说明 |",
+  "| --- | --- | --- |",
+  `| 工具栏 | ![](${IMG_C}) 旧形态 | 甲 |`,
+  "",
+  "| 截图 |",
+  "| --- |",
+  `| ![](${IMG_D}) |`,
+  `| ![](${IMG_E}) |`,
+  "",
+].join("\n");
+const T239_TWO_TABLES_AFTER = [
+  "| 名 | 说明 |",
+  "| --- | --- |",
+  "| 工具栏 | 甲 |",
+  "",
+  "| 截图 |",
+  "| --- |",
+  `| ![](${IMG_E}) |`,
+  "",
+].join("\n");
+
+/** Two tables of nothing but pictures; the first goes, the second edits. */
+const T239_ALL_IMAGE_TABLES = [
+  "| 截图 |",
+  "| --- |",
+  `| ![](${IMG_A}) |`,
+  `| ![](${IMG_B}) |`,
+  "",
+  "| 截图 |",
+  "| --- |",
+  `| ![](${IMG_C}) |`,
+  `| ![](${IMG_E}) |`,
+  "",
+].join("\n");
+const T239_ALL_IMAGE_SURVIVOR = [
+  "| 截图 |",
+  "| --- |",
+  `| ![](${IMG_C}) |`,
+  `| ![](${IMG_F}) |`,
+  "",
+].join("\n");
+
+/** The same, with no prose anywhere — the headers are pictures too. */
+const T239_IMAGE_HEADERS = [
+  `| ![](${IMG_A}) |`,
+  "| --- |",
+  `| ![](${IMG_B}) |`,
+  "",
+  `| ![](${IMG_C}) |`,
+  "| --- |",
+  `| ![](${IMG_E}) |`,
+  "",
+].join("\n");
+const T239_IMAGE_HEADERS_SURVIVOR = [
+  `| ![](${IMG_C}) |`,
+  "| --- |",
+  `| ![](${IMG_F}) |`,
+  "",
+].join("\n");
+
+/** One screenshot shown in a paragraph and again in a comparison table. */
+const T239_SHARED_IMAGE = [
+  "看这张：",
+  "",
+  `![](${IMG_A})`,
+  "",
+  "| 名 | 截图 |",
+  "| --- | --- |",
+  `| 甲 | ![](${IMG_B}) |`,
+  "",
+].join("\n");
+const T239_SHARED_IMAGE_AFTER = [
+  "看这张：",
+  "",
+  `![](${IMG_B})`,
+  "",
+  "| 名 |",
+  "| --- |",
+  "| 甲 |",
+  "",
+].join("\n");
+
+/** Two pictures in one cell, and only the first of them replaced. */
+const T239_TWO_IN_A_CELL = [
+  "| 名 | 截图 |",
+  "| --- | --- |",
+  `| 甲 | ![](${IMG_A}) ![](${IMG_B}) |`,
+  "",
+].join("\n");
+const T239_FIRST_OF_TWO_SWAPPED = [
+  "| 名 | 截图 |",
+  "| --- | --- |",
+  `| 甲 | ![](${IMG_C}) ![](${IMG_B}) |`,
+  "",
+].join("\n");
+
+const T239_ALTS = `![甲](${IMG_A})\n\n![乙](${IMG_C})\n`;
+
+describe("pictures pair by identity, inside their own table (T-239)", () => {
+  it("decorates both tables when both changed and neither is an anchor", () => {
+    // The card's measurement: the two tables paired across each other — the
+    // first table's old side with the second table's new side — leaving one
+    // overlay, one table quoted whole as a marker, and one declared new.
+    const decorations = decorationsOf(T239_TWO_TABLES, T239_TWO_TABLES_AFTER);
+    expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+    expect(decorations.tables).toHaveLength(2);
+    expect(decorations.tables[0]?.columns).toEqual([
+      {
+        at: 1,
+        cells: [
+          proseCells("证据")[0],
+          [
+            { kind: "image", url: IMG_C, alt: "" },
+            { kind: "text", text: "旧形态" },
+          ],
+        ],
+      },
+    ]);
+    expect(decorations.tables[1]?.rows).toEqual([
+      { at: 1, cells: [[{ kind: "image", url: IMG_D, alt: "" }]] },
+    ]);
+  });
+
+  it("keeps the survivor with its own table when the other one goes", () => {
+    // Weighing a picture at its url's length instead of once got this
+    // backwards: the two tables' prose is the same word, so the score could
+    // not tell them apart and the first table took the survivor.
+    const decorations = decorationsOf(
+      T239_ALL_IMAGE_TABLES,
+      T239_ALL_IMAGE_SURVIVOR,
+    );
+    const markers = decorations.deletions.filter((d) => d.block);
+    expect(markers).toHaveLength(1);
+    expect(markers[0]?.text).toContain(IMG_A);
+    expect(markers[0]?.text).not.toContain(IMG_C);
+  });
+
+  it("does the same for tables with no prose at all", () => {
+    const decorations = decorationsOf(
+      T239_IMAGE_HEADERS,
+      T239_IMAGE_HEADERS_SURVIVOR,
+    );
+    const markers = decorations.deletions.filter((d) => d.block);
+    expect(markers).toHaveLength(1);
+    expect(markers[0]?.text).toContain(IMG_A);
+    expect(markers[0]?.text).not.toContain(IMG_C);
+  });
+
+  it("separates a paragraph's picture from the same one in a cell", () => {
+    // A picture inside a table used to be cut as a document-level leaf too,
+    // and this cell's markdown is byte for byte the paragraph's new markdown
+    // — so `diffArrays` read the two as one anchor and split the run between
+    // the paragraph and the table before any score was asked for. Nothing was
+    // drawn on the swap, and one marker quoted the old picture and the whole
+    // table together.
+    const decorations = decorationsOf(
+      T239_SHARED_IMAGE,
+      T239_SHARED_IMAGE_AFTER,
+    );
+    expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+    expect(decorations.images).toHaveLength(1);
+    expect(decorations.images[0]?.old?.url).toBe(IMG_A);
+    expect(decorations.tables[0]?.columns).toEqual([
+      {
+        at: 1,
+        cells: [
+          proseCells("截图")[0],
+          [{ kind: "image", url: IMG_B, alt: "" }],
+        ],
+      },
+    ]);
+  });
+
+  it("leaves the picture a cell did not touch alone", () => {
+    // The cell's other picture is byte for byte what it was, so it gets no
+    // `ImageSwap` and no block highlight — either would render it as newly
+    // added. At document level an identical pair is an anchor and never
+    // reaches the decorations; inside a cell that has to be checked for.
+    const decorations = decorationsOf(
+      T239_TWO_IN_A_CELL,
+      T239_FIRST_OF_TWO_SWAPPED,
+    );
+    expect(decorations.images).toHaveLength(1);
+    expect(decorations.images[0]?.old?.url).toBe(IMG_A);
+    expect(
+      T239_FIRST_OF_TWO_SWAPPED.slice(
+        decorations.images[0]?.at.start,
+        decorations.images[0]?.at.end,
+      ),
+    ).toBe(`![](${IMG_C})`);
+    expect(decorations.blocks).toEqual([]);
+    expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+  });
+
+  it("swaps two pictures whose alts were rewritten with them", () => {
+    // Once a picture is weighed by identity its bag holds nothing but the
+    // alt, so rewriting both alts leaves two candidates sharing no word at
+    // all. Only a class that draws a word diff answers to the floor, and an
+    // image draws none — otherwise both swaps degrade into a marker quoting
+    // pictures the page is already showing.
+    const decorations = decorationsOf(
+      T239_ALTS,
+      `![丙](${IMG_B})\n\n![丁](${IMG_D})\n`,
+    );
+    expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+    expect(decorations.images.map((swap) => swap.old?.url)).toEqual([
+      IMG_A,
+      IMG_C,
+    ]);
+  });
+
+  it("still reads the alt when one of the two pictures went", () => {
+    // Position says the survivor is the first picture, the alt says it is the
+    // second, and the alt is right. Dropping the alt from the bag and pairing
+    // on position alone would pass every other case in this block.
+    const decorations = decorationsOf(T239_ALTS, `![乙](${IMG_D})\n`);
+    expect(decorations.images).toHaveLength(1);
+    expect(decorations.images[0]?.old?.url).toBe(IMG_C);
+    const markers = decorations.deletions.filter((d) => d.block);
+    expect(markers).toHaveLength(1);
+    expect(markers[0]?.text).toContain(IMG_A);
+  });
+
+  it("pairs two fences that were replaced by two unrelated ones", () => {
+    // A fence draws no word-level mark either — pierre owns its inside — so
+    // it answers to no floor for the same reason a picture does not. This is
+    // the behaviour T-239 corrected in passing: before it, both fences fell
+    // below the floor and left one marker quoting both old sources plus two
+    // whole-block highlights.
+    const decorations = decorationsOf(
+      "```sh\nalpha\n```\n\n```sh\nbeta\n```\n",
+      "```sh\ngamma\n```\n\n```sh\ndelta\n```\n",
+    );
+    expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+    expect(decorations.blocks).toEqual([]);
   });
 });

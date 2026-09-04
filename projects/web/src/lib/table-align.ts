@@ -4,6 +4,7 @@ import {
   type TableCell,
   type TableMatrix,
 } from "./spec-source-index.ts";
+import { bagWith, type WordBag } from "./word-diff.ts";
 
 /** Which old positions became which new ones, and what neither side kept. */
 export type Matching = {
@@ -19,8 +20,12 @@ type Candidate = {
   index: number;
   /** Header text for a column, key-cell text for a row; null abstains. */
   key: string | null;
-  /** All of it, for the word bag to weigh when the key found nothing. */
-  text: string;
+  /**
+   * All of it, weighed, for when the key found nothing. Already a bag rather
+   * than a string because prose and pictures are weighed by different rules
+   * and only this end of the pipe still knows which run was which (T-239).
+   */
+  text: WordBag;
 };
 
 const compare = (a: number, b: number) => a - b;
@@ -106,13 +111,37 @@ const cellText = (cell: TableCell | null | undefined): string | null =>
 const textAt = (matrix: TableMatrix, row: number, col: number): string =>
   cellText(matrix.rows[row]?.cells[col]) ?? "";
 
+type Cell = TableCell | null | undefined;
+
+/**
+ * The two halves of what a cell brings to a score, kept apart (T-239). `key`
+ * still reads them together through `partsText`, and must: a key is compared
+ * for exact equality, where a url is a perfect identity and the reason T-230's
+ * picture-only rows pair at all. A bag is compared by weight, where the same
+ * url is a shared path spelled at length.
+ */
+const proseOf = (cell: Cell): string =>
+  cell === undefined || cell === null
+    ? ""
+    : cell.parts
+        .map((part) => (part.kind === "text" ? part.text : ""))
+        .join("");
+
+const urlsOf = (cell: Cell): string[] =>
+  cell === undefined || cell === null
+    ? []
+    : cell.parts.flatMap((part) => (part.kind === "image" ? [part.url] : []));
+
+const weigh = (cells: Cell[]): WordBag =>
+  bagWith(cells.map(proseOf).join("\n"), cells.flatMap(urlsOf));
+
 /** Header text and the whole column beneath it, joined the way prose is. */
 function columnsOf(matrix: TableMatrix): Candidate[] {
   const width = matrix.rows[0]?.cells.length ?? 0;
   return Array.from({ length: width }, (_, col) => ({
     index: col,
     key: textAt(matrix, 0, col),
-    text: matrix.rows.map((_, row) => textAt(matrix, row, col)).join("\n"),
+    text: weigh(matrix.rows.map((row) => row.cells[col])),
   }));
 }
 
@@ -126,7 +155,7 @@ function rowsOf(matrix: TableMatrix, key: number | null): Candidate[] {
       // A cell the page pads in abstains from being a key, but the row it is
       // in still competes on its words.
       key: key === null ? null : cellText(cells[key]),
-      text: cells.map((cell) => cellText(cell) ?? "").join("\n"),
+      text: weigh(cells),
     });
   }
   return candidates;

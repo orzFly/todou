@@ -15,13 +15,15 @@ import {
   offsetAt,
   outermostBlockOfGroup,
   type SegmentIndex,
+  type SourceBlock,
+  type SourceImage,
   type SourceRange,
   sourceOffsetOfText,
   sourceRangesOfText,
   tableOf,
 } from "./spec-source-index.ts";
 import { alignTable } from "./table-align.ts";
-import { coalescedWordDiff } from "./word-diff.ts";
+import { bagWith, coalescedWordDiff } from "./word-diff.ts";
 
 /** An annotation as the document sees it: which slice of source it covers. */
 export type AnchoredAnnotation = {
@@ -67,7 +69,9 @@ function tableBlocks(index: SegmentIndex): Map<number, number> {
  *
  * That fold takes in the images its cells hold as well as their prose (T-230),
  * or a table whose prose did not change is a perfect anchor and `alignTable`
- * is never asked about it at all.
+ * is never asked about it at all. It takes them in as text, though, and the
+ * text is also what the score reads — so a leaf that holds pictures carries a
+ * bag weighing each of them once instead, and leaves the anchor alone (T-239).
  */
 export function leavesOf(index: SegmentIndex): AlignGroup[] {
   const leaves: AlignGroup[] = [];
@@ -109,9 +113,12 @@ export function leavesOf(index: SegmentIndex): AlignGroup[] {
     if (block === undefined || block.type !== "table") continue;
     if (block.firstGroup < 0) continue;
     const marks: string[] = [];
+    const urls: string[] = [];
     for (let g = block.firstGroup; g <= block.lastGroup; g++) {
       const image = index.images.get(g);
-      if (image !== undefined) marks.push(imageText(image));
+      if (image === undefined) continue;
+      marks.push(imageText(image));
+      urls.push(image.url);
     }
     if (marks.length === 0) continue;
     const leaf = tables.get(i);
@@ -123,9 +130,14 @@ export function leavesOf(index: SegmentIndex): AlignGroup[] {
         type: "table",
         text: marks.join("\n"),
         at: -1,
+        bag: bagWith("", urls),
       });
       continue;
     }
+    // Weighed before the marks go in, because at this point `text` is still
+    // nothing but the table's prose — which is the whole of what a bag should
+    // weigh by the character (T-239).
+    leaf.bag = bagWith(leaf.text, urls);
     // Appended rather than spliced in at their source positions: the prose
     // above is one contiguous slice of the flattened text, and appending is
     // what leaves an image-free table's leaf byte for byte what it was.
@@ -139,15 +151,92 @@ export function leavesOf(index: SegmentIndex): AlignGroup[] {
   for (const block of index.blocks) {
     if (block.type !== "code" && block.type !== "image") continue;
     if (block.firstGroup < 0) continue;
+    // A picture inside a table is the table's, and competes only inside the
+    // pair of tables it belongs to (T-239) — one layer further down the
+    // partition T-221 drew. Cut as a leaf here as well, it was the last thing
+    // inside a table still competing document-wide, and it decided the
+    // document's anchors: a paragraph's picture and a cell's picture with the
+    // same markdown read as one anchor, cutting the run between two tables
+    // apart before any score was asked for.
+    if (block.type === "image" && owner.has(block.firstGroup)) continue;
+    const image = index.images.get(block.firstGroup);
     leaves.push({
       group: block.firstGroup,
       type: block.type,
       text: index.source.slice(block.start, block.end),
       at: -1,
+      // A lone picture has no prose but its alt, and no identity question
+      // left to answer: two image leaves that reached the same run are, by
+      // the anchor that put them there, not the same picture (T-239). What
+      // is still open is which slot each one is, and alt is the only word
+      // of evidence for it — with none, the non-crossing pairing falls back
+      // on order of appearance, which is what it always did.
+      ...(image === undefined ? {} : { bag: bagWith(image.alt, []) }),
     });
   }
   // Group numbers are handed out in document order, so this is document order.
   return leaves.sort((a, b) => a.group - b.group);
+}
+
+/** The pictures one table cell shows, in source order (T-239). */
+function imagesOf(index: SegmentIndex, cell: SourceBlock): SourceImage[] {
+  const images: SourceImage[] = [];
+  for (const group of cellImageGroups(index, cell)) {
+    const image = index.images.get(group);
+    if (image !== undefined) images.push(image);
+  }
+  return images;
+}
+
+type ImageMatching = {
+  pairs: Array<[SourceImage, SourceImage]>;
+  oldOnly: SourceImage[];
+  newOnly: SourceImage[];
+};
+
+/**
+ * Which picture in a cell became which picture in the cell that replaced it
+ * (T-239) — the innermost layer of the partition T-221 drew, below the table
+ * and below the row × column crossing.
+ *
+ * The two questions are `pairCandidates`', in its order: equal identities pair
+ * first, in order of appearance, and order of appearance settles the rest.
+ * Words never enter, because a picture has none, and because anything reaching
+ * the second step has already proved its url matches nothing.
+ *
+ * Identity has to go first. A cell showing [A, B] that now shows [B] lost A —
+ * pair by position alone and it reads as A became B and B went, two false
+ * statements in place of one true one.
+ */
+function matchImages(olds: SourceImage[], news: SourceImage[]): ImageMatching {
+  const pairs: Array<[SourceImage, SourceImage]> = [];
+  const restOld: SourceImage[] = [];
+  const taken = new Set<number>();
+  for (const old of olds) {
+    const at = news.findIndex((nu, j) => !taken.has(j) && nu.url === old.url);
+    const nu = at < 0 ? undefined : news[at];
+    if (nu === undefined) {
+      restOld.push(old);
+      continue;
+    }
+    taken.add(at);
+    pairs.push([old, nu]);
+  }
+  const restNew = news.filter((_, j) => !taken.has(j));
+  const shared = Math.min(restOld.length, restNew.length);
+  for (let k = 0; k < shared; k++) {
+    const old = restOld[k];
+    const nu = restNew[k];
+    if (old === undefined || nu === undefined) continue;
+    pairs.push([old, nu]);
+  }
+  // Source order, so a caller reading the result reads the cell.
+  pairs.sort((a, b) => a[1].start - b[1].start);
+  return {
+    pairs,
+    oldOnly: restOld.slice(shared),
+    newOnly: restNew.slice(shared),
+  };
 }
 
 /** A position in a paired table's final order: one the new side kept, or one
@@ -229,8 +318,6 @@ export function changeDecorations(
   const blocks: SourceRange[] = [];
   const tables: TableOverlay[] = [];
   const images: ImageSwap[] = [];
-  /** Old images a table put back on the page itself; see `oldOnly` below. */
-  const shown = new Set<number>();
 
   const insert = (from: number, to: number) => {
     for (const range of sourceRangesOfText(current, from, to)) {
@@ -293,15 +380,42 @@ export function changeDecorations(
         } else {
           words(before.text, after.text, after.at);
         }
-        // An image that found a counterpart is a swap T-223 already draws in
-        // this very cell, side by side; putting it back here as well would be
-        // the same picture twice (T-229).
-        for (const group of cellImageGroups(baseline, before.block)) {
-          if (!unpairedImages.has(group)) continue;
-          const image = baseline.images.get(group);
-          if (image === undefined) continue;
-          parts.push({ kind: "image", url: image.url, alt: image.alt });
-          shown.add(group);
+        const matched = matchImages(
+          imagesOf(baseline, before.block),
+          after === undefined || after === null
+            ? []
+            : imagesOf(current, after.block),
+        );
+        for (const [old, nu] of matched.pairs) {
+          // Byte for byte the same picture, so nothing is drawn on it. At
+          // document level `diffArrays` reached this outcome by itself —
+          // two identical image leaves are an anchor and `changeDecorations`
+          // is never asked about them — and inside a cell there is no anchor
+          // pass to reach it, so the same evidence is weighed here. Drop
+          // this and a cell holding two pictures where only the first was
+          // swapped hands the untouched second one an `ImageSwap` too, which
+          // `rehype-decorations` renders as newly added.
+          if (
+            baseline.source.slice(old.start, old.end) ===
+            current.source.slice(nu.start, nu.end)
+          ) {
+            continue;
+          }
+          // A swap T-223 draws in this very cell, old beside new. Only the
+          // url decides whether the old one is worth showing: a changed alt
+          // leaves the same picture on the page (T-223).
+          images.push({
+            at: { start: nu.start, end: nu.end },
+            old: old.url === nu.url ? null : { url: old.url, alt: old.alt },
+          });
+        }
+        // A picture with no counterpart has nowhere left on the page to be,
+        // so the overlay puts it back into the cell it went from (T-229).
+        for (const old of matched.oldOnly) {
+          parts.push({ kind: "image", url: old.url, alt: old.alt });
+        }
+        for (const nu of matched.newOnly) {
+          blocks.push({ start: nu.start, end: nu.end });
         }
         // Prose first, then images: this is appended to a cell that is still
         // on the page, so the order carries no meaning of its own.
@@ -342,14 +456,8 @@ export function changeDecorations(
      * image in it is accounted for whether it paired or not: the stand-in
      * renders the cell's parts whole, so all of them are back on the page.
      */
-    const standIn = (row: number, col: number): CellPart[] => {
-      const cell = from.rows[row]?.cells[col];
-      if (cell === undefined || cell === null) return [];
-      for (const group of cellImageGroups(baseline, cell.block)) {
-        shown.add(group);
-      }
-      return cell.parts;
-    };
+    const standIn = (row: number, col: number): CellPart[] =>
+      from.rows[row]?.cells[col]?.parts ?? [];
 
     const columns: TableOverlay["columns"] = [];
     columnOrder.forEach((slot, at) => {
@@ -386,13 +494,6 @@ export function changeDecorations(
 
   const newLeaves = leavesOf(current);
   const alignment = alignGroups(leavesOf(baseline), newLeaves);
-  // Old images nothing on the new side matched. Anything else is a swap T-223
-  // draws where it stands, which is what `table()` asks this about.
-  const unpairedImages = new Set(
-    alignment.oldOnly
-      .filter((entry) => entry.group.type === "image")
-      .map((entry) => entry.group.group),
-  );
 
   for (const matched of alignment.pairs) {
     // pierre owns the inside of a fence (T-31): a paired code block gets the
@@ -435,12 +536,11 @@ export function changeDecorations(
     insert(leaf.at, leaf.at + leaf.text.length);
   }
 
-  // An image a table already put back in a cell of its own is left out here: a
-  // marker would say the same thing a second time, and say it outside the
-  // table, which is where a removed cell's image used to end up (T-229).
-  const oldOnly = alignment.oldOnly.filter(
-    (entry) => !(entry.group.type === "image" && shown.has(entry.group.group)),
-  );
+  // Every leaf here is one no table can speak for: since T-239 a picture
+  // inside a table is not a leaf at all, so the suppression this list used to
+  // need — a marker repeating, outside the table, a picture the overlay had
+  // already put back inside it (T-229) — has nothing left to suppress.
+  const oldOnly = alignment.oldOnly;
   // Old blocks with no counterpart have nowhere to be struck through, so they
   // degrade to a marker at the seam. The text is the baseline's own source —
   // a whole table row reads as the row, `| --- |` and all — which is why the
