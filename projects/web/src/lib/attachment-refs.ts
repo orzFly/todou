@@ -9,6 +9,7 @@
  * comment has to render rich too. What we *write* stays /download.
  */
 
+import type { Attachment } from "@todou/shared";
 import { opensInBrowserTab } from "@/lib/attachment-preview.ts";
 
 export type AttachmentRef = {
@@ -17,6 +18,24 @@ export type AttachmentRef = {
   /** Decoded cosmetic name segment, when the URL carries one. */
   name: string | null;
 };
+
+/**
+ * Whether the address `ref` was written with is one this attachment answers
+ * on: its current address, or one it kept across a move or a rename (T-242).
+ *
+ * Both arms compare the slug as well as the id, which is what keeps a
+ * foreign `a/88` from matching a live, unrelated `b/88`.
+ */
+export function attachmentAnswersTo(
+  attachment: Attachment,
+  ref: AttachmentRef,
+  slug: string,
+): boolean {
+  if (ref.slug === slug && ref.id === attachment.id) return true;
+  return attachment.aliases.some(
+    (alias) => alias.project === ref.slug && alias.id === ref.id,
+  );
+}
 
 const ATTACHMENT_HREF =
   /^\/api\/projects\/([a-z0-9][a-z0-9-]*)\/attachments\/(\d{1,9})\/(?:download|view)(?:\/([^/?#]+))?$/;

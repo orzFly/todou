@@ -35,6 +35,10 @@ describe.each(PLACEMENTS)("relocation reads (%s placement)", (placement) => {
   let admin: Who;
   /** A member of the source project only: may not follow the redirect. */
   let sourceOnly: Who;
+  /** A member of the destination only: follows the redirect, sees no more. */
+  let destOnly: Who;
+  /** A member of neither: an old address must not admit it ever existed. */
+  let outsider: Who;
   const A = `reloc-a-${placement}`;
   const B = `reloc-b-${placement}`;
   let idA = 0;
@@ -169,6 +173,21 @@ describe.each(PLACEMENTS)("relocation reads (%s placement)", (placement) => {
       },
     );
     expect(res.status).toBe(204);
+
+    const dest = await addUserWithToken(t.ctx, `reloc-destonly-${placement}`);
+    destOnly = dest.headers;
+    const added = await t.app.request(
+      `/api/projects/${B}/members/${dest.user.id}`,
+      {
+        method: "PUT",
+        headers: headers(),
+        body: JSON.stringify({ role: "reader" }),
+      },
+    );
+    expect(added.status).toBe(204);
+
+    outsider = (await addUserWithToken(t.ctx, `reloc-outsider-${placement}`))
+      .headers;
   });
 
   afterAll(async () => {
@@ -216,6 +235,50 @@ describe.each(PLACEMENTS)("relocation reads (%s placement)", (placement) => {
       // naming nothing about where it went.
       expect(JSON.stringify(body)).not.toContain(B);
       expect(JSON.stringify(body)).not.toContain(String(to.number));
+    });
+
+    it("redirects a reader of the destination alone (T-242)", async () => {
+      const res = await req(`/projects/${A}/issues/${from.number}`, destOnly);
+      expect(res.status).toBe(301);
+      expect(res.headers.get("location")).toBe(
+        `/api/projects/${B}/issues/${to.number}`,
+      );
+    });
+
+    it("admits nothing to a reader of neither project", async () => {
+      const res = await req(`/projects/${A}/issues/${from.number}`, outsider);
+      // 404 and not 410: the 410 would confirm this address once held a card.
+      expect(res.status).toBe(404);
+    });
+
+    it("keeps cards still living here invisible to non-members", async () => {
+      const staying = await createIssue("never left", A);
+      const res = await req(
+        `/projects/${A}/issues/${staying.number}`,
+        destOnly,
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("still turns a non-member's write away at the door", async () => {
+      const res = await req(
+        `/projects/${A}/issues/${from.number}/comments`,
+        destOnly,
+        { method: "POST", body: JSON.stringify({ body: "hello" }) },
+      );
+      // Writes never consult the address book, so nothing about the move
+      // leaks through this path.
+      expect(res.status).toBe(404);
+    });
+
+    it("leaves the rest of the issue's GETs on the source's own rule", async () => {
+      // The boundary recorded, not endorsed: only addresses that get written
+      // into text were widened (T-242 §5.3), and this is not one of them.
+      const res = await req(
+        `/projects/${A}/issues/${from.number}/timeline`,
+        destOnly,
+      );
+      expect(res.status).toBe(404);
     });
 
     it("refuses writes with 409 rather than redirecting them", async () => {
@@ -346,6 +409,38 @@ describe.each(PLACEMENTS)("relocation reads (%s placement)", (placement) => {
       expect(res.status).toBe(410);
       expect(JSON.stringify(await json(res))).not.toContain(B);
     });
+
+    it("redirects a reader of the destination alone (T-242)", async () => {
+      const res = await req(
+        `/projects/${A}/comments/${oldCommentId}`,
+        destOnly,
+      );
+      expect(res.status).toBe(301);
+      expect(res.headers.get("location")).toBe(
+        `/api/projects/${B}/issues/${to.number}/comments/${newCommentId}`,
+      );
+    });
+
+    it("admits nothing to a reader of neither project", async () => {
+      const res = await req(
+        `/projects/${A}/comments/${oldCommentId}`,
+        outsider,
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("keeps comments still living here invisible to non-members", async () => {
+      const staying = await createIssue("keeps its comment", A);
+      const posted = await req(
+        `/projects/${A}/issues/${staying.number}/comments`,
+        admin,
+        { method: "POST", body: JSON.stringify({ body: "still here" }) },
+      );
+      expect(posted.status).toBe(201);
+      const id = (await json(posted)).id as number;
+      const res = await req(`/projects/${A}/comments/${id}`, destOnly);
+      expect(res.status).toBe(404);
+    });
   });
 
   describe("an attachment that travelled with the card", () => {
@@ -411,6 +506,46 @@ describe.each(PLACEMENTS)("relocation reads (%s placement)", (placement) => {
         sourceOnly,
       );
       expect(res.status).toBe(410);
+    });
+
+    it("redirects a reader of the destination alone (T-242)", async () => {
+      // The case this card exists for: an image embedded in the moved body
+      // points here, and this reader used to get a broken image.
+      const res = await req(
+        `/projects/${A}/attachments/${oldId}/download/note.txt`,
+        destOnly,
+      );
+      expect(res.status).toBe(301);
+      expect(res.headers.get("location")).toBe(
+        `/api/projects/${B}/attachments/${newId}/download/note.txt`,
+      );
+    });
+
+    it("admits nothing to a reader of neither project", async () => {
+      const res = await req(
+        `/projects/${A}/attachments/${oldId}/download`,
+        outsider,
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("keeps files still living here invisible to non-members", async () => {
+      const staying = await createIssue("keeps its file", A);
+      const form = new FormData();
+      form.set("file", new File(["hi"], "stays.txt", { type: "text/plain" }));
+      form.set("issue_number", String(staying.number));
+      const posted = await t.app.request(`/api/projects/${A}/attachments`, {
+        method: "POST",
+        headers: admin,
+        body: form,
+      });
+      expect(posted.status).toBe(201);
+      const id = (await json(posted)).id as number;
+      const res = await req(
+        `/projects/${A}/attachments/${id}/download`,
+        destOnly,
+      );
+      expect(res.status).toBe(404);
     });
   });
 

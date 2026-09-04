@@ -9,18 +9,14 @@ import {
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "@/api/references.ts";
-import { AttachmentDocumentEmbed } from "@/components/issue/attachment-embed.tsx";
 import {
-  AttachmentInlineImage,
-  AttachmentRichLink,
-} from "@/components/issue/attachment-list.tsx";
+  MarkdownAttachmentAnchor,
+  MarkdownAttachmentImage,
+} from "@/components/issue/attachment-markdown.tsx";
 import { MarkdownLink } from "@/components/shared/issue-link.tsx";
 import { useOriginSlugAt } from "@/components/shared/issue-origin.tsx";
 import { CodeBlock, fenceFilename } from "@/components/shared/pierre.tsx";
-import {
-  isPreviewableImage,
-  isTextDocument,
-} from "@/lib/attachment-preview.ts";
+import { isTextEmbedName } from "@/lib/attachment-preview.ts";
 import { parseAttachmentHref } from "@/lib/attachment-refs.ts";
 import {
   CODE_CONTENT_START_ATTR,
@@ -42,21 +38,23 @@ type HastNode = {
   children?: HastNode[];
 };
 
-/** Names whose image-syntax reference embeds a document card, not an <img>. */
-function isTextEmbedName(name: string): boolean {
-  return (
-    !isPreviewableImage({ filename: name }) &&
-    isTextDocument({ filename: name })
-  );
-}
-
-/** True when this img node is one our override turns into a document card. */
-function isEmbedImgNode(child: HastNode, slug: string): boolean {
+/**
+ * True when this img node is one our override turns into a document card.
+ *
+ * Deliberately answers from the markdown alone — no slug test, no attachment
+ * data. It decides between `<p>` and `<div>`, and an element type that
+ * flipped when the attachments query arrived would unmount and rebuild the
+ * whole paragraph, which is exactly what the T-60 note above warns about.
+ * The cost of being generous is a paragraph rendered as
+ * `div.markdown-paragraph` when the address turns out to resolve to nothing;
+ * the two share their typography. Being strict instead would put a block
+ * document card inside a `<p>`, which browsers split the paragraph over.
+ */
+function isEmbedImgNode(child: HastNode): boolean {
   if (child.type !== "element" || child.tagName !== "img") return false;
   const src = child.properties?.src;
   const ref = typeof src === "string" ? parseAttachmentHref(src) : null;
-  if (ref === null || ref.slug !== slug) return false;
-  return isTextEmbedName(ref.name ?? "");
+  return ref !== null && isTextEmbedName(ref.name ?? "");
 }
 
 /**
@@ -197,7 +195,7 @@ export function MarkdownView({
                 issueNumber !== undefined &&
                 !embedded &&
                 ((node as HastNode | undefined)?.children ?? []).some((child) =>
-                  isEmbedImgNode(child, slug),
+                  isEmbedImgNode(child),
                 );
               if (carriesEmbed) {
                 return (
@@ -209,24 +207,25 @@ export function MarkdownView({
               return <p {...props}>{children}</p>;
             },
             // Attachment refs need the issue context and win first;
-            // everything else (issue refs, permalinks, plain links)
-            // is MarkdownLink's business.
+            // everything else (issue refs, permalinks, plain links) is
+            // MarkdownLink's business. WHICH attachment an address names is
+            // the wrapper's: answering that takes a query, and this map is
+            // not a component, so no hook may run in it.
             a: (props): ReactNode => {
-              if (issueNumber !== undefined) {
-                const ref = parseAttachmentHref(props.href);
-                if (ref !== null && ref.slug === slug) {
-                  return (
-                    <AttachmentRichLink
-                      slug={slug}
-                      issueNumber={issueNumber}
-                      attachmentId={ref.id}
-                      href={props.href ?? ""}
-                      fallbackName={ref.name ?? "attachment"}
-                    >
-                      {props.children}
-                    </AttachmentRichLink>
-                  );
-                }
+              const target =
+                issueNumber === undefined
+                  ? null
+                  : parseAttachmentHref(props.href);
+              if (target !== null && issueNumber !== undefined) {
+                return (
+                  <MarkdownAttachmentAnchor
+                    slug={slug}
+                    issueNumber={issueNumber}
+                    address={target}
+                    originSlug={resolveUnder}
+                    {...props}
+                  />
+                );
               }
               return (
                 <MarkdownLink
@@ -236,56 +235,27 @@ export function MarkdownView({
                 />
               );
             },
-            img: ({
-              node: _node,
-              ...props
-            }: ComponentProps<"img"> & { node?: unknown }): ReactNode => {
-              if (issueNumber !== undefined) {
-                const ref = parseAttachmentHref(props.src);
-                if (ref !== null && ref.slug === slug) {
-                  const name = ref.name ?? "";
-                  // Image syntax on a text attachment embeds it as a
-                  // document card (the text twin of an inline image).
-                  // Images keep winning ties like .svg, which is both.
-                  if (isTextEmbedName(name)) {
-                    if (embedded) {
-                      return (
-                        <AttachmentRichLink
-                          slug={slug}
-                          issueNumber={issueNumber}
-                          attachmentId={ref.id}
-                          href={props.src ?? ""}
-                          fallbackName={name}
-                        />
-                      );
-                    }
-                    return (
-                      <AttachmentDocumentEmbed
-                        slug={slug}
-                        issueNumber={issueNumber}
-                        attachmentId={ref.id}
-                        href={props.src ?? ""}
-                        fallbackName={name}
-                      />
-                    );
-                  }
-                  return (
-                    <AttachmentInlineImage
-                      slug={slug}
-                      issueNumber={issueNumber}
-                      attachmentId={ref.id}
-                      src={props.src ?? ""}
-                      alt={props.alt ?? ref.name ?? ""}
-                      // The spec diff marks a swapped image on the `<img>`
-                      // itself rather than on a wrapper, so the classes have
-                      // to survive this swap or the decoration is lost (T-223).
-                      className={props.className}
-                    />
-                  );
-                }
+            img: (
+              props: ComponentProps<"img"> & { node?: unknown },
+            ): ReactNode => {
+              const target =
+                issueNumber === undefined
+                  ? null
+                  : parseAttachmentHref(props.src);
+              if (target !== null && issueNumber !== undefined) {
+                return (
+                  <MarkdownAttachmentImage
+                    slug={slug}
+                    issueNumber={issueNumber}
+                    address={target}
+                    embedded={embedded}
+                    {...props}
+                  />
+                );
               }
+              const { node: _node, ...rest } = props;
               // biome-ignore lint/a11y/useAltText: alt is forwarded via props when the markdown provides one
-              return <img {...props} />;
+              return <img {...rest} />;
             },
           }),
     }),

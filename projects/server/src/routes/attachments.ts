@@ -20,6 +20,18 @@ import {
 
 type AttachmentRow = Awaited<ReturnType<typeof openAttachment>>["row"];
 
+/**
+ * Shared by the four blob routes. The 404 is declared because it is a
+ * deliberate answer rather than the ambient one: on an address whose file
+ * has moved, a reader who can read neither project gets it instead of the
+ * 410, which would confirm the address existed.
+ */
+const blobResponses = {
+  301: { description: "The card moved; the attachment lives elsewhere now" },
+  410: { description: "Moved to a project the reader cannot see" },
+  404: { description: "No such address, or neither project is readable" },
+};
+
 const uploadRoute = createRoute({
   method: "post",
   path: "/{slug}/attachments",
@@ -111,9 +123,8 @@ const downloadRoute = createRoute({
   },
   responses: {
     200: { description: "File stream" },
-    301: { description: "The card moved; the attachment lives elsewhere now" },
     302: { description: "Redirect to a presigned URL (s3 backend)" },
-    410: { description: "Moved to a project the reader cannot see" },
+    ...blobResponses,
   },
 });
 
@@ -132,9 +143,8 @@ const downloadNamedRoute = createRoute({
   },
   responses: {
     200: { description: "File stream" },
-    301: { description: "The card moved; the attachment lives elsewhere now" },
     302: { description: "Redirect to a presigned URL (s3 backend)" },
-    410: { description: "Moved to a project the reader cannot see" },
+    ...blobResponses,
   },
 });
 
@@ -150,8 +160,7 @@ const viewRoute = createRoute({
   },
   responses: {
     200: { description: "Inline file stream" },
-    301: { description: "The card moved; the attachment lives elsewhere now" },
-    410: { description: "Moved to a project the reader cannot see" },
+    ...blobResponses,
   },
 });
 
@@ -170,8 +179,7 @@ const viewNamedRoute = createRoute({
   },
   responses: {
     200: { description: "Inline file stream" },
-    301: { description: "The card moved; the attachment lives elsewhere now" },
-    410: { description: "Moved to a project the reader cannot see" },
+    ...blobResponses,
   },
 });
 

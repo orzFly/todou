@@ -48,7 +48,12 @@ import {
   NotFoundError,
   ValidationFailedError,
 } from "../errors.ts";
-import { type ProjectRow, requireProject, routeInfoOf } from "./access.ts";
+import {
+  type ProjectRow,
+  projectForRead,
+  requireProject,
+  routeInfoOf,
+} from "./access.ts";
 import {
   analyzeReferences,
   type CrossTarget,
@@ -485,7 +490,10 @@ export async function getIssue(
   slug: string,
   number: number,
 ): Promise<Issue> {
-  const { project, role } = await requireProject(ctx, actor, slug, "reader");
+  // A card link is the kind of address that gets written down, so who may
+  // follow it is decided by where the card is now (T-242), not by the
+  // project the URL names.
+  const { project, role } = await projectForRead(ctx, actor, slug);
   const db = await ctx.router.forProject(routeInfoOf(project));
   const row = await loadIssueRow(db, project.id, number);
   assertIssueReadable(row, actor, role);

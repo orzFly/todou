@@ -127,6 +127,42 @@ export async function aliasesOf(
 }
 
 /**
+ * The same table read backwards: which old addresses each of these current
+ * ids still answers on. One query is enough because the table is flat —
+ * every historic address points straight at where the thing is now, so
+ * there is no chain to walk.
+ */
+export async function aliasAddressesOf(
+  system: Db,
+  kind: AliasKind,
+  currentProjectId: number,
+  currentIds: number[],
+): Promise<Map<number, Array<{ projectId: number; id: number }>>> {
+  const found = new Map<number, Array<{ projectId: number; id: number }>>();
+  if (currentIds.length === 0) return found;
+  const rows = await system
+    .select({
+      projectId: movedIds.projectId,
+      refId: movedIds.refId,
+      currentId: movedIds.currentId,
+    })
+    .from(movedIds)
+    .where(
+      and(
+        eq(movedIds.kind, kind),
+        eq(movedIds.currentProjectId, currentProjectId),
+        inArray(movedIds.currentId, currentIds),
+      ),
+    );
+  for (const row of rows) {
+    const list = found.get(row.currentId) ?? [];
+    list.push({ projectId: row.projectId, id: row.refId });
+    found.set(row.currentId, list);
+  }
+  return found;
+}
+
+/**
  * Record a move in the address book and flatten the whole lineage onto the
  * new address, minting a lineage on the card's first move.
  *
@@ -382,6 +418,9 @@ export async function respondRelocation(
   if (destination === null) throw new NotFoundError("not found");
 
   if ((await projectRoleOf(ctx, destination.target, actor)) === null) {
+    // Neither end is theirs to read, so there is nothing to admit: a 410
+    // would tell a stranger that this address once held something (T-242).
+    if (!marker.sourceReadable) throw new NotFoundError("not found");
     if (marker instanceof AttachmentMovedError) return c.body(null, 410);
     return c.json(
       {

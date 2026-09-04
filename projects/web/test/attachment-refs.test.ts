@@ -1,6 +1,8 @@
+import type { Attachment } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import {
   attachmentAnchorHref,
+  attachmentAnswersTo,
   attachmentHref,
   attachmentImageMarker,
   parseAttachmentHref,
@@ -78,6 +80,79 @@ describe("attachmentAnchorHref (T-201)", () => {
     // An unresolved markdown reference knows no type yet; it upgrades once
     // the attachments query fills one in.
     expect(attachmentAnchorHref({ url })).toBe(url);
+  });
+});
+
+describe("attachmentAnswersTo (T-242)", () => {
+  const uploader = {
+    id: 1,
+    login: "bot",
+    display_name: "bot",
+    kind: "machine" as const,
+    avatar_url: null,
+    owner: null,
+  };
+  const make = (id: number, aliases: Attachment["aliases"]): Attachment => ({
+    id,
+    filename: "note.txt",
+    content_type: "text/plain",
+    size: 5,
+    url: `/api/projects/b/attachments/${id}/download/note.txt`,
+    uploader,
+    created_at: "2026-09-01T00:00:00Z",
+    aliases,
+  });
+  const ref = (href: string) => {
+    const parsed = parseAttachmentHref(href);
+    if (parsed === null) throw new Error(`unparseable: ${href}`);
+    return parsed;
+  };
+
+  it("matches the attachment's own address", () => {
+    const found = make(7, []);
+    expect(
+      attachmentAnswersTo(
+        found,
+        ref("/api/projects/b/attachments/7/download/note.txt"),
+        "b",
+      ),
+    ).toBe(true);
+  });
+
+  it("matches an address the attachment kept from elsewhere", () => {
+    const found = make(7, [{ project: "a", id: 88 }]);
+    expect(
+      attachmentAnswersTo(
+        found,
+        ref("/api/projects/a/attachments/88/download/note.txt"),
+        "b",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not let a foreign id collide with a live local one", () => {
+    // The trap this rule exists for: `a/88` and a real `b/88` are different
+    // files, and matching on the id alone would show the wrong one.
+    const live = make(88, []);
+    expect(
+      attachmentAnswersTo(
+        live,
+        ref("/api/projects/a/attachments/88/download/note.txt"),
+        "b",
+      ),
+    ).toBe(false);
+  });
+
+  it("matches the /view twin and the named forms alike", () => {
+    const found = make(7, [{ project: "a", id: 88 }]);
+    for (const href of [
+      "/api/projects/a/attachments/88/view",
+      "/api/projects/a/attachments/88/view/whatever.txt",
+      "/api/projects/a/attachments/88/download",
+      "/api/projects/b/attachments/7/view",
+    ]) {
+      expect(attachmentAnswersTo(found, ref(href), "b")).toBe(true);
+    }
   });
 });
 

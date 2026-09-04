@@ -89,9 +89,17 @@ export function seesTrashed(
 export function assertIssueReadable(
   row: TrashFields,
   actor: UserRow,
-  role: MemberRole,
+  /**
+   * Null only from the entries that consult the address book (T-242), which
+   * reach this gate before knowing whether the reader belongs here.
+   */
+  role: MemberRole | null,
 ): void {
-  if (row.movedAt !== null) throw new IssueMovedError(row, false);
+  if (row.movedAt !== null)
+    throw new IssueMovedError(row, false, role !== null);
+  // The tombstone above is the only thing a reader without a role can be
+  // answered with; a card still living here is not theirs to see.
+  if (role === null) throw new NotFoundError("issue not found");
   if (row.deletedAt === null) return;
   if (!seesTrashed(row, actor, role))
     throw new NotFoundError("issue not found");
@@ -107,7 +115,8 @@ export function assertIssueWritable(
   actor: UserRow,
   role: MemberRole,
 ): void {
-  if (row.movedAt !== null) throw new IssueMovedError(row, true);
+  // Always readable at the source: writing still demands a writer role there.
+  if (row.movedAt !== null) throw new IssueMovedError(row, true, true);
   if (row.movingSince !== null) throw new IssueMovingError();
   if (row.deletedAt === null) return;
   if (seesTrashed(row, actor, role)) throw new IssueDeletedError();

@@ -2,18 +2,21 @@ import { randomUUID } from "node:crypto";
 import type {
   AgentContext,
   Attachment,
+  AttachmentAlias,
   DirectUploadRequest,
   DirectUploadTicket,
 } from "@todou/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
+import type { Db } from "../db/driver.ts";
 import {
   attachments,
   issueEvents,
   issues,
   pendingUploads,
 } from "../db/project-schema.ts";
+import { projects } from "../db/system-schema.ts";
 import {
   AttachmentMovedError,
   DirectUploadIncompleteError,
@@ -23,8 +26,15 @@ import {
   ValidationFailedError,
 } from "../errors.ts";
 import { S3Storage } from "../storage/s3.ts";
-import { requireProject, routeInfoOf } from "./access.ts";
-import { aliasOf } from "./relocation.ts";
+import {
+  type ProjectRow,
+  projectForRead,
+  requireProject,
+  routeInfoOf,
+} from "./access.ts";
+import { visibleProjects } from "./cross-references.ts";
+import { formerSlugsOf } from "./projects.ts";
+import { aliasAddressesOf, aliasOf } from "./relocation.ts";
 import {
   assertIssueReadable,
   assertIssueWritable,
@@ -68,6 +78,9 @@ async function toAttachment(
     url: `/api/projects/${slug}/attachments/${row.id}/download/${encodeNameSegment(row.filename)}`,
     uploader,
     created_at: row.createdAt.toISOString(),
+    // Only the list endpoint pays for the address book; an upload's response
+    // describes a file that has not been anywhere else yet.
+    aliases: [],
   };
 }
 
@@ -379,7 +392,10 @@ export async function openAttachment(
     filename: null,
   },
 ): Promise<{ row: AttachmentRow }> {
-  const { project, role } = await requireProject(ctx, actor, slug, "reader");
+  // Attachment URLs are pasted into bodies and followed long afterwards, so
+  // reading one is decided by where the file is now (T-242) — otherwise a
+  // reader of the destination alone sees a broken image.
+  const { project, role } = await projectForRead(ctx, actor, slug);
   const db = await ctx.router.forProject(routeInfoOf(project));
   // Joined to the issue rather than looked up by attachment id alone: the id
   // is the whole URL, so without the join a deleted card's attachments would
@@ -413,6 +429,7 @@ export async function openAttachment(
         attachmentId,
         via.variant,
         via.filename,
+        role !== null,
       );
     }
     throw new NotFoundError("attachment not found");
@@ -448,5 +465,80 @@ export async function listIssueAttachments(
   for (const row of rows) {
     result.push(await toAttachment(ctx, slug, row));
   }
+  await fillAliases(ctx, actor, project, result);
   return result;
+}
+
+/**
+ * The other addresses each of these files still answers on (T-242), so a
+ * body that named one before the card moved or the project was renamed can
+ * still be resolved to the file it meant.
+ */
+async function fillAliases(
+  ctx: AppContext,
+  actor: UserRow,
+  project: ProjectRow,
+  list: Attachment[],
+): Promise<void> {
+  if (list.length === 0) return;
+  const system = ctx.router.system();
+  const ids = list.map((a) => a.id);
+  const [moved, renames] = await Promise.all([
+    aliasAddressesOf(system, "attachment", project.id, ids),
+    formerSlugsOf(system, project),
+  ]);
+  // A project that never moved a card in and never changed its slug is the
+  // norm, and it stops here — before the project rows and, above all, before
+  // `visibleProjects`, which is the expensive one.
+  if (moved.size === 0 && renames.length === 0) return;
+
+  const slugsOf = await sourceSlugs(system, moved);
+  const visible =
+    moved.size === 0
+      ? new Set<number>()
+      : (await visibleProjects(ctx, actor)).ids;
+
+  for (const attachment of list) {
+    const found = new Map<string, AttachmentAlias>();
+    const add = (slug: string, id: number) => {
+      if (slug === project.slug && id === attachment.id) return;
+      found.set(`${slug}/${id}`, { project: slug, id });
+    };
+    for (const slug of renames) add(slug, attachment.id);
+    for (const from of moved.get(attachment.id) ?? []) {
+      // Withheld on the same rule as `movesOf`: naming a project the reader
+      // cannot read would tell them where this card came from.
+      if (!visible.has(from.projectId)) continue;
+      for (const slug of slugsOf.get(from.projectId) ?? []) add(slug, from.id);
+    }
+    attachment.aliases = [...found.values()].sort(
+      (a, b) => a.project.localeCompare(b.project) || a.id - b.id,
+    );
+  }
+}
+
+/**
+ * Every slug each source project answers on. The current one is not enough:
+ * the source may have been renamed after the move, and what a body written
+ * before that rename holds is the older spelling — which still resolves.
+ */
+async function sourceSlugs(
+  system: Db,
+  moved: Map<number, Array<{ projectId: number; id: number }>>,
+): Promise<Map<number, string[]>> {
+  const byProject = new Map<number, string[]>();
+  const ids = [
+    ...new Set(
+      [...moved.values()].flatMap((list) => list.map((m) => m.projectId)),
+    ),
+  ];
+  if (ids.length === 0) return byProject;
+  const rows = await system
+    .select()
+    .from(projects)
+    .where(inArray(projects.id, ids));
+  for (const row of rows) {
+    byProject.set(row.id, [row.slug, ...(await formerSlugsOf(system, row))]);
+  }
+  return byProject;
 }
