@@ -66,20 +66,28 @@ const input = () => screen.getByLabelText("filter agents");
 const list = () => within(screen.getByRole("listbox"));
 const options = () => list().getAllByRole("option");
 
+// The avatar's initials fallback sits in the row's textContent too, glued to
+// the name; skipping it keeps these assertions about the text the row spells.
+const rowText = (option: HTMLElement): string =>
+  Array.from(option.children)
+    .filter((child) => child.getAttribute("data-slot") !== "avatar")
+    .map((child) => child.textContent)
+    .join("");
+
 describe("AddAgentPicker candidates", () => {
   it("filters by display name, case-insensitively and in Chinese", () => {
     open();
     fireEvent.change(input(), { target: { value: "  ZULU " } });
-    expect(options().map((o) => o.textContent)).toEqual(["Zulu Probe@probe-2"]);
+    expect(options().map(rowText)).toEqual(["Zulu Probe@probe-2"]);
 
     fireEvent.change(input(), { target: { value: "探针" } });
-    expect(options().map((o) => o.textContent)).toEqual(["探针 Probe@probe-1"]);
+    expect(options().map(rowText)).toEqual(["探针 Probe@probe-1"]);
   });
 
   it("filters by login", () => {
     open();
     fireEvent.change(input(), { target: { value: "probe-" } });
-    expect(options().map((o) => o.textContent)).toEqual([
+    expect(options().map(rowText)).toEqual([
       "Zulu Probe@probe-2",
       "探针 Probe@probe-1",
     ]);
@@ -87,7 +95,7 @@ describe("AddAgentPicker candidates", () => {
 
   it("hides existing members and disabled agents", () => {
     open({ memberIds: new Set([HELPER.id]) });
-    expect(options().map((o) => o.textContent)).toEqual([
+    expect(options().map(rowText)).toEqual([
       "Alpha Prober@prober",
       "Zulu Probe@probe-2",
       "探针 Probe@probe-1",
@@ -96,12 +104,37 @@ describe("AddAgentPicker candidates", () => {
 
   it("sorts by display name when nothing is typed", () => {
     open();
-    expect(options().map((o) => o.textContent)).toEqual([
+    expect(options().map(rowText)).toEqual([
       "Alpha Prober@prober",
       "Helper Bot@helper-bot",
       "Zulu Probe@probe-2",
       "探针 Probe@probe-1",
     ]);
+  });
+});
+
+describe("AddAgentPicker avatars", () => {
+  it("gives every candidate row an avatar", () => {
+    open();
+    for (const option of options()) {
+      expect(option.querySelector("[data-slot=avatar]")).toBeTruthy();
+    }
+  });
+
+  it("falls back to the display name's initials", () => {
+    open();
+    fireEvent.change(input(), { target: { value: "zulu" } });
+    expect(list().getByText("ZP")).toBeTruthy();
+  });
+
+  it("keeps the avatar out of the row's accessible name", () => {
+    open();
+    fireEvent.change(input(), { target: { value: "zulu" } });
+    expect(
+      options()[0]
+        .querySelector("[data-slot=avatar]")
+        ?.getAttribute("aria-hidden"),
+    ).toBe("true");
   });
 });
 
@@ -239,5 +272,19 @@ describe("MembersSection add agent", () => {
     const put = calls.find((c) => c.method === "PUT");
     expect(put?.url).toContain(`/projects/todou/members/${PROBE2.id}`);
     expect(JSON.parse(put?.body ?? "{}")).toEqual({ role: "writer" });
+  });
+
+  it("draws the candidate's avatar exactly like the members table draws one", async () => {
+    const { container } = renderSection();
+    fireEvent.click(screen.getByRole("button", { name: /add agent/i }));
+    await waitFor(() => expect(screen.getByRole("listbox")).toBeTruthy());
+
+    const inTable = container.querySelector(
+      "[data-slot=table-cell] [data-slot=avatar]",
+    );
+    const inList = options()[0].querySelector("[data-slot=avatar]");
+    expect(inTable).toBeTruthy();
+    expect(inList).toBeTruthy();
+    expect(inList?.className).toBe(inTable?.className);
   });
 });

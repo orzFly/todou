@@ -31,6 +31,27 @@ export function initialsOf(displayName: string): string {
 }
 
 /**
+ * Separate from UserChip so a row that lays out its own name still takes the
+ * chip's avatar size from here instead of picking one of its own.
+ */
+export function UserAvatar({
+  user,
+  className,
+  ...props
+}: {
+  user: { display_name?: string; login: string; avatar_url?: string | null };
+} & React.ComponentProps<typeof Avatar>) {
+  return (
+    <Avatar className={cn("size-5", className)} {...props}>
+      {user.avatar_url && <AvatarImage src={user.avatar_url} alt="" />}
+      <AvatarFallback className="text-[10px]">
+        {initialsOf(displayNameOf(user))}
+      </AvatarFallback>
+    </Avatar>
+  );
+}
+
+/**
  * Uniform user rendering across the app. Machine users get a bot badge and
  * an ownership tooltip so agents are always visually distinct from humans.
  */
@@ -46,15 +67,10 @@ export function UserChip({
   showLogin?: boolean;
   nameClassName?: string;
 }) {
-  const initials = initialsOf(displayNameOf(user));
-
   const chip = (
     <span className="inline-flex shrink-0 items-center gap-1.5">
       <span className="relative inline-flex">
-        <Avatar className="size-5">
-          {user.avatar_url && <AvatarImage src={user.avatar_url} alt="" />}
-          <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
-        </Avatar>
+        <UserAvatar user={user} />
         {user.kind === "machine" && (
           <BotIcon
             aria-label="agent"

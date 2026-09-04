@@ -1,7 +1,7 @@
 import type { Agent } from "@todou/shared";
 import { PlusIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { displayNameOf } from "@/components/shared/user-chip.tsx";
+import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -156,6 +156,9 @@ export function AddAgentPicker({
               onMouseMove={() => setHighlight(idx)}
               onClick={() => pick(agent)}
             >
+              {/* Decorative: the initials fallback would otherwise be read out
+                  glued to the name this row already carries. */}
+              <UserAvatar user={agent} aria-hidden />
               <span className="min-w-0 truncate">{displayNameOf(agent)}</span>
               <span className="min-w-0 truncate text-muted-foreground">
                 @{agent.login}
