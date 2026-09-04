@@ -251,18 +251,24 @@ describe("splitLabelName (first-colon split)", () => {
 });
 
 describe("groupStickyTop (offsets follow the measured header)", () => {
-  it("stacks the floating toolbar on a two-row header", () => {
-    // 700 wide: header wraps to 97, the filters wrap to 118.
-    expect(groupStickyTop(97, 118, true)).toBe(215);
-  });
-
   it("stacks the floating toolbar on a one-row header", () => {
     // 1280 wide: header 57, filters on one line at 82.
     expect(groupStickyTop(57, 82, true)).toBe(139);
   });
 
   it("leaves the toolbar out while it scrolls with the list", () => {
-    // Below sm the toolbar is not sticky, so only the header floats.
+    // Below sm the toolbar is not sticky, so only the header floats — and
+    // that is also where the header carries its second row, at 97.
     expect(groupStickyTop(97, 118, false)).toBe(97);
+  });
+
+  it("reads the row count off the measurement, not off the breakpoint", () => {
+    // T-232 moved the project row to `sm:hidden` and left the toolbar at
+    // `sm:sticky`, so a two-row header with a floating toolbar is
+    // unreachable at present — the two live on opposite sides of 640. The
+    // property is still the one worth pinning: the offsets follow whatever
+    // the header measures, so a header that regains a row above `sm` needs
+    // no change here.
+    expect(groupStickyTop(97, 118, true)).toBe(215);
   });
 });
