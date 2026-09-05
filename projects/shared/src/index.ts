@@ -30,5 +30,6 @@ export * from "./schemas/timeline.ts";
 export * from "./schemas/token.ts";
 export * from "./schemas/user.ts";
 export * from "./schemas/version.ts";
+export * from "./search-query.ts";
 export * from "./spec-rename.ts";
 export * from "./sse.ts";

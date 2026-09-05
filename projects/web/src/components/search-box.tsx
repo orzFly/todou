@@ -1,16 +1,44 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { ArrowRightIcon, ExternalLinkIcon, SearchIcon } from "lucide-react";
-import { useId, useRef, useState } from "react";
-import { projectQuery } from "@/api/queries.ts";
+import { parseSearchQuery } from "@todou/shared";
+import {
+  ArrowRightIcon,
+  ExternalLinkIcon,
+  FilterIcon,
+  SearchIcon,
+  TagIcon,
+} from "lucide-react";
+import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  labelsQuery,
+  membersQuery,
+  projectQuery,
+  statusesQuery,
+} from "@/api/queries.ts";
 import {
   type JumpRow,
   type JumpTarget,
   jumpDestinationPromise,
   useJumpRows,
 } from "@/api/ref-jump.ts";
+import { searchFacetsQuery } from "@/api/search.ts";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
-import { Input } from "@/components/ui/input";
+import {
+  highlightParts,
+  type KnownValues,
+} from "@/components/search/highlight.tsx";
+import {
+  type CaretPosition,
+  QualifierInput,
+} from "@/components/search/qualifier-input.tsx";
+import {
+  type CompletionRow,
+  hasQualifier,
+  orderRows,
+  qualifierKeySource,
+  qualifierValueSource,
+  type ValuePools,
+} from "@/components/search/suggestions.ts";
 import { Skeleton } from "@/components/ui/skeleton";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import { useSlashShortcut } from "@/lib/use-slash-shortcut.ts";
@@ -18,7 +46,8 @@ import { cn } from "@/lib/utils";
 
 /** The last row, always present: what the box did before it understood refs. */
 type SearchRow = { kind: "search" };
-type BoxRow = JumpRow | SearchRow;
+type CompletionBoxRow = { kind: "completion"; row: CompletionRow };
+type BoxRow = JumpRow | SearchRow | CompletionBoxRow;
 
 type Destination =
   | { to: "card"; target: JumpTarget }
@@ -33,8 +62,12 @@ function pointsElsewhere(row: JumpRow, slug: string): boolean {
 
 const OPTION = "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm";
 
+/** Nothing highlighted. Enter then submits what was typed, not an offer. */
+const NONE = -1;
+
 /**
- * The project's search box, in the header on every project page (T-141).
+ * The project's search box, in the header on every project page (T-141),
+ * with the qualifier syntax and its completions (T-262).
  *
  * A form, not a button with a handler: Enter submits it the way every search
  * box on the web does, and the browser's own autofill and history come with
@@ -42,11 +75,10 @@ const OPTION = "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm";
  * rather than searching in place — which is also what makes a result URL
  * shareable.
  *
- * A query that is entirely one reference gets a listbox under the box
- * offering that card, and Enter follows the highlight (T-215). A hand-rolled
- * combobox rather than a radix popover: focus has to stay in the input, and
- * `Content` wants to take it. Nothing is offered for a query that is not a
- * reference, and then the box behaves exactly as it did.
+ * The listbox is hand-rolled rather than a radix popover because focus has to
+ * stay in the input and `Content` wants to take it. Nothing is ever
+ * preselected: the reader is typing a query, so Enter belongs to the query
+ * unless they arrowed onto something else. Tab is the key that takes an offer.
  */
 export function SearchBox({
   slug,
@@ -85,27 +117,77 @@ export function SearchBox({
   const [value, setValue] = useState(urlQuery);
   const [focused, setFocused] = useState(false);
   const [dismissed, setDismissed] = useState(false);
-  const [highlight, setHighlight] = useState(0);
+  const [highlight, setHighlight] = useState(NONE);
   const [waiting, setWaiting] = useState(false);
+  const [position, setPosition] = useState<CaretPosition>({ caret: 0, x: 0 });
   const lastSeen = useRef(urlQuery);
   if (lastSeen.current !== urlQuery) {
     lastSeen.current = urlQuery;
     setValue(urlQuery);
     setDismissed(false);
-    setHighlight(0);
+    setHighlight(NONE);
   }
 
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const listId = useId();
   const project = useQuery(projectQuery(slug));
-  const jumpRows = useJumpRows(slug, value);
+  const parts = useMemo(() => parseSearchQuery(value), [value]);
 
-  const rows: BoxRow[] = [...jumpRows, { kind: "search" }];
+  // Only once the box is in use: it is mounted on every project page, and
+  // four lists nobody has asked for is four requests nobody wanted.
+  const asked = focused && value !== "";
+  const labels = useQuery({ ...labelsQuery(slug), enabled: asked });
+  const statuses = useQuery({ ...statusesQuery(slug), enabled: asked });
+  const members = useQuery({ ...membersQuery(slug), enabled: asked });
+  const facets = useQuery(searchFacetsQuery(slug, asked));
+
+  const pools: ValuePools = useMemo(
+    () => ({
+      label: labels.data?.map((l) => ({ value: l.name })),
+      status: statuses.data?.map((s) => ({ value: s.name })),
+      assignee: members.data?.map((m) => ({ value: m.user.login })),
+      harness: facets.data?.harnesses
+        .filter((h) => h.agent !== null)
+        .map((h) => ({ value: h.agent as string, hint: String(h.count) })),
+      session: facets.data?.sessions.map((s) => ({
+        value: s.session_id,
+        ...(s.agent === null ? {} : { hint: s.agent }),
+      })),
+    }),
+    [labels.data, statuses.data, members.data, facets.data],
+  );
+  const known: KnownValues = useMemo(
+    () => ({
+      label: labels.data?.map((l) => l.name),
+      status: statuses.data?.map((s) => s.name),
+      assignee: members.data?.map((m) => m.user.login),
+    }),
+    [labels.data, statuses.data, members.data],
+  );
+
+  // A jump that silently drops `label:bug` is a lie about where it goes, so
+  // the offer only stands for a query that is nothing but a reference.
+  const jumpRows = useJumpRows(slug, hasQualifier(parts) ? "" : value);
+  const completions = useMemo(() => {
+    const ctx = { slug, query: value, caret: position.caret, parts };
+    return [qualifierKeySource(ctx), qualifierValueSource(pools)(ctx)];
+  }, [slug, value, position.caret, parts, pools]);
+
+  const rows: BoxRow[] = orderRows<BoxRow>(
+    [
+      { matched: true, rows: jumpRows },
+      ...completions.map((result) => ({
+        matched: result.matched,
+        rows: result.rows.map(
+          (row): BoxRow => ({ kind: "completion" as const, row }),
+        ),
+      })),
+    ],
+    { kind: "search" },
+  );
   const open = focused && !dismissed && rows.length > 1;
-  // Clamped rather than reset as rows arrive: a reader who arrowed down to
-  // the search row keeps it when the card above them finishes loading.
-  const hl = Math.min(highlight, rows.length - 1);
+  const hl = highlight >= rows.length ? NONE : highlight;
   const elsewhere = jumpRows.some((row) => pointsElsewhere(row, slug));
   const query = value.trim();
   const optionId = (idx: number) => `${listId}-${idx}`;
@@ -115,8 +197,50 @@ export function SearchBox({
     input.current?.select();
   });
 
+  // Anchored where the caret is, not at the box's left edge — a qualifier is
+  // completed in the middle of a line — and pulled back in when that would
+  // hang the panel off the right of the window.
+  const [anchor, setAnchor] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure whenever the panel or the caret moves
+  useLayoutEffect(() => {
+    const panel = list.current;
+    if (panel === null) return;
+    const parent = panel.offsetParent?.getBoundingClientRect();
+    const room =
+      parent === undefined
+        ? Number.POSITIVE_INFINITY
+        : window.innerWidth - 16 - parent.left - panel.offsetWidth;
+    setAnchor(Math.max(0, Math.min(position.x, room)));
+  }, [position.x, open, rows.length]);
+
+  /** Accepting an offer rewrites the query; the caret goes where it says. */
+  const pendingCaret = useRef<number | null>(null);
+  const accept = (row: CompletionRow) => {
+    setValue(row.apply.value);
+    setHighlight(NONE);
+    setDismissed(false);
+    pendingCaret.current = row.apply.caret;
+  };
+  useLayoutEffect(() => {
+    const caret = pendingCaret.current;
+    if (caret === null) return;
+    pendingCaret.current = null;
+    const el = input.current;
+    if (el === null) return;
+    el.focus();
+    el.setSelectionRange(caret, caret);
+  });
+
+  /** The first row Tab may take — the search row and a jump are not offers. */
+  const acceptable = (from: number): CompletionRow | null => {
+    const at = rows[from];
+    if (at?.kind === "completion") return at.row;
+    for (const row of rows) if (row.kind === "completion") return row.row;
+    return null;
+  };
+
   /**
-   * Where Enter goes. Anything the reader can see decides it outright; a
+   * Where Enter goes. Anything the reader arrowed onto decides it outright; a
    * row that is still loading, or a list that has not appeared yet, is
    * waited for instead — pasting a ref and hitting Enter in the same beat
    * has to reach the same place as waiting for the row first.
@@ -125,13 +249,15 @@ export function SearchBox({
     // Esc hid the offer, and hiding it has to mean something: Enter then
     // does the plain thing rather than following an invisible highlight.
     if (dismissed) return { to: "search" };
-    const chosen = open ? rows[hl] : undefined;
+    const chosen = open && hl !== NONE ? rows[hl] : undefined;
     if (chosen?.kind === "search") return { to: "search" };
     if (chosen?.kind === "external")
       return { to: "external", href: chosen.href };
     if (chosen?.kind === "issue" && chosen.state === "ready") {
       return { to: "card", target: chosen };
     }
+    if (chosen?.kind === "completion") return { to: "search" };
+    if (hasQualifier(parts)) return { to: "search" };
     setWaiting(true);
     try {
       const found = await jumpDestinationPromise(queryClient, slug, value);
@@ -147,6 +273,13 @@ export function SearchBox({
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (query === "") return;
+    const chosen = open && hl !== NONE ? rows[hl] : undefined;
+    // Enter on a completion takes it and stays put; the reader is still
+    // building the query, not asking for it.
+    if (chosen?.kind === "completion") {
+      accept(chosen.row);
+      return;
+    }
     const destination = await decide();
     setDismissed(true);
     if (destination.to === "card") {
@@ -184,12 +317,18 @@ export function SearchBox({
         return;
       }
       setDismissed(true);
+    } else if (e.key === "Tab" && open && !e.shiftKey) {
+      const row = acceptable(hl);
+      if (row === null) return;
+      accept(row);
     } else if (!open) {
       return;
     } else if (e.key === "ArrowDown") {
       setHighlight(Math.min(hl + 1, rows.length - 1));
     } else if (e.key === "ArrowUp") {
-      setHighlight(Math.max(hl - 1, 0));
+      // Back past the first row is back to nothing selected, which is where
+      // the box started and what Enter means by default.
+      setHighlight(Math.max(hl - 1, NONE));
     } else if (e.key === "Home") {
       setHighlight(0);
     } else if (e.key === "End") {
@@ -220,26 +359,28 @@ export function SearchBox({
     <search className={cn("relative", className)}>
       <form onSubmit={onSubmit}>
         <SearchIcon
-          className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
+          className="pointer-events-none absolute top-1/2 left-2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground"
           aria-hidden
         />
-        <Input
-          ref={input}
+        <QualifierInput
+          inputRef={input}
           autoFocus={autoFocus}
-          type="search"
+          type="text"
           name="q"
           role="combobox"
           aria-expanded={open}
           aria-controls={listId}
-          aria-activedescendant={open ? optionId(hl) : undefined}
+          aria-activedescendant={open && hl !== NONE ? optionId(hl) : undefined}
           aria-autocomplete="list"
           aria-busy={waiting || undefined}
           value={value}
-          onChange={(e) => {
-            setValue(e.target.value);
+          onValueChange={(next) => {
+            setValue(next);
             setDismissed(false);
-            setHighlight(0);
+            setHighlight(NONE);
           }}
+          onCaretChange={setPosition}
+          render={(text) => highlightParts(text, parseSearchQuery(text), known)}
           onKeyDown={onKeyDown}
           onFocus={() => setFocused(true)}
           onBlur={(e) => {
@@ -251,7 +392,7 @@ export function SearchBox({
           }}
           aria-label="Search this project"
           placeholder="Search…"
-          className="pl-7"
+          padding="pl-7"
         />
       </form>
       {open && (
@@ -259,10 +400,11 @@ export function SearchBox({
           ref={list}
           id={listId}
           role="listbox"
-          aria-label="Jump to"
+          aria-label="Search suggestions"
           // Without this, pressing on a row blurs the input first and the
           // listbox is gone before the click arrives.
           onMouseDown={(e) => e.preventDefault()}
+          style={{ left: anchor }}
           className={cn(
             "absolute top-full z-50 mt-1 max-w-[calc(100vw-2rem)] rounded-lg border bg-popover p-1 shadow-lg ring-1 ring-foreground/5",
             listAlign === "start"
@@ -272,12 +414,8 @@ export function SearchBox({
                 // title has to survive (T-215) — but the floor stops at the
                 // viewport, since a `min-width` beats a `max-width` and a
                 // flat 20rem would push the page 16px wider at 320.
-                "left-0 w-full min-w-[min(20rem,calc(100vw-2rem))]"
-              : // Grown about the box's own centre. Anchoring an edge would
-                // read as lopsided under a box that is itself centred in the
-                // row, and a min-width wider than the box would resolve the
-                // over-constraint by running off the side of the screen.
-                "left-1/2 w-[28rem] -translate-x-1/2",
+                "w-full min-w-[min(20rem,calc(100vw-2rem))]"
+              : "w-[28rem]",
           )}
         >
           {rows.map((row, idx) => {
@@ -301,6 +439,34 @@ export function SearchBox({
                     {elsewhere && ` in ${project.data?.name ?? slug}`}
                   </span>
                 </Link>
+              );
+            }
+            if (row.kind === "completion") {
+              const Icon = row.row.icon === "qualifier" ? FilterIcon : TagIcon;
+              return (
+                // A button, not a link: it goes nowhere, it rewrites the
+                // query in place. Focus stays in the input regardless — the
+                // listbox cancels the mousedown that would move it.
+                <button
+                  type="button"
+                  key={row.row.key}
+                  {...optionProps(idx)}
+                  onMouseMove={() => setHighlight(idx)}
+                  onClick={() => accept(row.row)}
+                >
+                  <Icon
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                    aria-hidden
+                  />
+                  <span className="truncate font-mono text-xs">
+                    {row.row.text}
+                  </span>
+                  {row.row.hint !== undefined && (
+                    <span className="truncate text-muted-foreground text-xs">
+                      {row.row.hint}
+                    </span>
+                  )}
+                </button>
               );
             }
             if (row.kind === "external") {

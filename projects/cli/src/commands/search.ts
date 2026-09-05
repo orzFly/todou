@@ -1,5 +1,5 @@
-import type { SearchItem, TodouClient } from "@todou/shared";
-import { formatRef } from "@todou/shared";
+import type { SearchDiagnostic, SearchItem, TodouClient } from "@todou/shared";
+import { formatRef, parseSearchQuery } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { makePainter, type Painter, plural, table } from "../format.ts";
@@ -18,9 +18,28 @@ const DOMAINS = ["issues", "comments", "specs"] as const;
  * The shell already ate the user's quotes, so a term that still carries a
  * space is one they meant to keep together — it goes back in quoted, which
  * is how the server is told the same thing.
+ *
+ * A qualifier needs the quotes around its *value* instead: wrapping the whole
+ * of `status:In Progress` would make the run start with a quote, and the
+ * server would then read the entire thing as one literal phrase with the
+ * qualifier silently gone.
  */
 export function joinSearchTerms(terms: string[]): string {
-  return terms.map((t) => (/\s/.test(t) ? `"${t}"` : t)).join(" ");
+  return terms.map(quoteSearchTerm).join(" ");
+}
+
+function quoteSearchTerm(term: string): string {
+  if (!/\s/.test(term)) return term;
+  const first = parseSearchQuery(term)[0];
+  if (first?.kind !== "filter") return `"${term}"`;
+  // One argv element that opens with a qualifier: whatever follows the colon
+  // is the value the user kept together, however many spaces it has.
+  const afterColon = first.keyEnd + 1;
+  const value = term.slice(afterColon);
+  if (value.startsWith('"')) return term;
+  // A quote inside a value has no spelling in the grammar — a bare one ends
+  // the value — so there is nothing to preserve by keeping it.
+  return `${term.slice(0, afterColon)}"${value.replaceAll('"', "")}"`;
 }
 
 /** The snippet with every term hit picked out, ranges applied left to right. */
@@ -39,6 +58,13 @@ export function paintSnippet(
     at = end;
   }
   return out + snippet.text.slice(at);
+}
+
+/** The server's sentence, plus its suggestion when it has one. */
+function diagnosticLine(diagnostic: SearchDiagnostic): string {
+  return diagnostic.suggestion === null
+    ? diagnostic.message
+    : `${diagnostic.message}; did you mean ${diagnostic.suggestion}?`;
 }
 
 /** The addressable handle for a hit: what you would read next to see it. */
@@ -65,16 +91,53 @@ export class SearchCommand extends ProjectCommand {
       \`issue\`. Hits are ordered by domain (issue title, then issue body,
       then comment, then spec) and then by recency.
 
+      The query also takes qualifiers, spelled the same here and on the web
+      (T-262):
+
+      \`\`\`
+      is:body|comment|spec     which unit a hit is
+      state:open|closed        the card's status category
+      status:<name>            the card's status
+      label:<name>             a label on the card
+      assignee:<login>|@me     who the card is assigned to
+      harness:<agent>|none     which agent wrote the matched text
+      session:<id>             which agent session wrote it
+      \`\`\`
+
+      Commas are any-of and repeating a key is all-of, so \`label:a,b\` is
+      either label and \`label:a label:b\` is both. A leading \`-\` inverts
+      one expression — and since that also looks like a flag, put it after
+      \`--\`: \`todou search -p x -- -harness:codex 部署\`. \`harness:\` and
+      \`session:\` follow **the text that matched**, not the card: a comment
+      answers for whoever wrote it, a spec for whoever pushed the version, an
+      issue body for whoever opened the card.
+
+      A key nobody knows stays plain text — \`area:web\` is a label name in
+      this project and \`https://…\` must keep working — so searching a known
+      key literally means quoting it: \`'"harness:"'\`. A value that names
+      nothing prints a \`warning:\` on stderr and matches nothing; it is not
+      an error.
+
       \`--in\` narrows the domains, \`--status\`/\`--label\`/\`--assignee\`
-      narrow exactly as they do on \`issue list\`. Nothing in the trash is
-      searchable, and only the newest version of a spec is. Finding nothing
-      is not an error — it exits 0.
+      narrow exactly as they do on \`issue list\`. They intersect with
+      whatever the query string says. Nothing in the trash is searchable, and
+      only the newest version of a spec is. Finding nothing is not an error —
+      it exits 0.
     `,
     examples: [
       ["Anywhere in the project", "$0 search 全文搜索"],
       ["Two words, any distance apart", "$0 search cursor 语义"],
       ["One phrase, exactly", '$0 search "中文分词"'],
       ["Only what was said in comments", "$0 search pg_trgm --in comments"],
+      [
+        "What one agent said about deployment",
+        "$0 search harness:codex is:comment 部署",
+      ],
+      ["Open cards carrying a label", "$0 search state:open label:kind:bug 慢"],
+      [
+        "Everything except one agent's writing",
+        "$0 search -- -harness:codex 慢",
+      ],
     ],
   });
 
@@ -116,6 +179,12 @@ export class SearchCommand extends ProjectCommand {
       assignee,
       limit: this.limit ? parsePositiveInt(this.limit, "--limit") : undefined,
     });
+
+    // Ahead of the results and on stderr, so a piped `todou search` still
+    // yields only hits while the reader is told which word found nothing.
+    for (const diagnostic of page.diagnostics) {
+      this.note(`warning: ${diagnosticLine(diagnostic)}`);
+    }
 
     const refPrefix = await fetchRefPrefix(client, project);
     this.output(

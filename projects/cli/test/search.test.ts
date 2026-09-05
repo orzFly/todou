@@ -32,10 +32,10 @@ const hit = (over: Record<string, unknown> = {}) => ({
 
 const refConfig = { format: { prefix: "T", history: [] }, autolinks: [] };
 
-function routes(page: unknown, extra: Route[] = []): Route[] {
+function routes(page: object, extra: Route[] = []): Route[] {
   return [
     ["GET", "/api/projects/todou/references/config", refConfig],
-    ["GET", "/api/projects/todou/search", page],
+    ["GET", "/api/projects/todou/search", { diagnostics: [], ...page }],
     ...extra,
   ];
 }
@@ -101,6 +101,61 @@ describe("todou search", () => {
     expect(res.stdout.trimEnd().split("\n").at(-1)).toBe(
       "1 hit shown · more available (raise --limit)",
     );
+  });
+
+  it("puts a diagnostic on stderr and leaves stdout to the hits", async () => {
+    const { fetchImpl } = fakeFetch(
+      routes({
+        items: [],
+        has_more: false,
+        diagnostics: [
+          {
+            severity: "error",
+            key: "label",
+            value: "不存在",
+            message: 'no label named "不存在" in this project',
+            suggestion: null,
+          },
+          {
+            severity: "note",
+            key: "harness",
+            value: "claud",
+            message: '"claud" is not a harness todou knows',
+            suggestion: "claude-code",
+          },
+        ],
+      }),
+    );
+    const res = await runCli(["search", "label:不存在", "慢"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toBe("no matches\n");
+    expect(res.stderr.trimEnd().split("\n")).toEqual([
+      'warning: no label named "不存在" in this project',
+      'warning: "claud" is not a harness todou knows; did you mean claude-code?',
+    ]);
+  });
+
+  it("carries the diagnostics into --json", async () => {
+    const diagnostics = [
+      {
+        severity: "error",
+        key: "status",
+        value: "Nxt",
+        message: 'no status named "Nxt" in this project',
+        suggestion: "Next",
+      },
+    ];
+    const { fetchImpl } = fakeFetch(
+      routes({ items: [], has_more: false, diagnostics }),
+    );
+    const res = await runCli(["search", "status:Nxt", "--json"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(JSON.parse(res.stdout).diagnostics).toEqual(diagnostics);
   });
 
   it("is reachable as `issue search` too", async () => {
@@ -202,6 +257,35 @@ describe("joinSearchTerms", () => {
 
   it("re-quotes a term the shell already unquoted", () => {
     expect(joinSearchTerms(["a b", "c"])).toBe('"a b" c');
+  });
+
+  it("quotes a qualifier's value rather than the whole expression", () => {
+    // `"status:In Progress"` would open with a quote, and the server would
+    // read the lot as one literal phrase with the qualifier gone.
+    expect(joinSearchTerms(["status:In Progress"])).toBe(
+      'status:"In Progress"',
+    );
+    expect(joinSearchTerms(["-status:In Progress"])).toBe(
+      '-status:"In Progress"',
+    );
+  });
+
+  it("leaves a qualifier alone when nothing needs quoting", () => {
+    expect(joinSearchTerms(["label:kind:bug"])).toBe("label:kind:bug");
+    expect(joinSearchTerms(["harness:codex", "is:comment", "部署"])).toBe(
+      "harness:codex is:comment 部署",
+    );
+  });
+
+  it("does not double-quote a value the shell handed over quoted", () => {
+    expect(joinSearchTerms(['status:"In Progress"'])).toBe(
+      'status:"In Progress"',
+    );
+  });
+
+  it("still quotes a phrase that only looks like a qualifier", () => {
+    expect(joinSearchTerms(["kind:bug 慢"])).toBe('"kind:bug 慢"');
+    expect(joinSearchTerms(["含空格的 自由词"])).toBe('"含空格的 自由词"');
   });
 });
 

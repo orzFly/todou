@@ -18,12 +18,25 @@ import type {
 } from "@todou/shared";
 import { describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
-import { projectQuery, projectsQuery } from "../src/api/queries.ts";
+import {
+  labelsQuery,
+  membersQuery,
+  projectQuery,
+  projectsQuery,
+  statusesQuery,
+} from "../src/api/queries.ts";
 import {
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
-import { domainsOf, searchPageSchema, searchQuery } from "../src/api/search.ts";
+import {
+  domainsOf,
+  type SearchPageSearch,
+  searchFacetsQuery,
+  searchPageSchema,
+  searchQuery,
+  withDomains,
+} from "../src/api/search.ts";
 import { SearchBox } from "../src/components/search-box.tsx";
 import { SearchHighlight } from "../src/components/search-highlight.tsx";
 import { groupByIssue, SearchResults } from "../src/pages/search.tsx";
@@ -116,10 +129,17 @@ function seedJumpContext(client: QueryClient, autolinks: Autolink[] = []) {
   return client;
 }
 
-function seeded(page: SearchPage, search: { q?: string; in?: string } = {}) {
+function seeded(
+  page: Omit<SearchPage, "diagnostics"> &
+    Partial<Pick<SearchPage, "diagnostics">>,
+  search: { q?: string; in?: string } = {},
+) {
   const client = seedJumpContext(testQueryClient());
   const params = { q: "全文搜索", ...search };
-  client.setQueryData(searchQuery("todou", params).queryKey, page);
+  client.setQueryData(searchQuery("todou", params).queryKey, {
+    diagnostics: [],
+    ...page,
+  });
   return { client, params };
 }
 
@@ -410,7 +430,10 @@ describe("SearchBox · the jump offer", () => {
     expect(card?.textContent).toContain("T-141");
     expect(card?.textContent).toContain("全文搜索");
     expect(card?.textContent).toContain("Next");
-    expect(card?.getAttribute("aria-selected")).toBe("true");
+    // Offered, not chosen: nothing is preselected (T-262), and Enter reaches
+    // the card by resolving the reference rather than by following a
+    // highlight the reader never asked for.
+    expect(card?.getAttribute("aria-selected")).toBe("false");
     expect(search?.textContent).toContain("Search for “T-141”");
 
     submit(utils.container);
@@ -429,6 +452,8 @@ describe("SearchBox · the jump offer", () => {
     const input = await typeInto(utils, "T-141");
     await waitFor(() => expect(optionsOf(utils.container)).toHaveLength(2));
 
+    // Twice: the first press lands on the card, since nothing was selected.
+    fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "ArrowDown" });
     submit(utils.container);
     await waitFor(() =>
@@ -436,6 +461,28 @@ describe("SearchBox · the jump offer", () => {
         pathname: "/projects/todou/search",
         search: { q: "T-141" },
       }),
+    );
+  });
+
+  it("takes nothing back off the list once ArrowUp leaves the first row", async () => {
+    const client = seedBox();
+    client.setQueryData(
+      issueRefQuery("todou", 141).queryKey,
+      refItem(141, "全文搜索"),
+    );
+    const utils = renderBox(client);
+    const input = await typeInto(utils, "T-141");
+    await waitFor(() => expect(optionsOf(utils.container)).toHaveLength(2));
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    await waitFor(() =>
+      expect(input.getAttribute("aria-activedescendant")).not.toBeNull(),
+    );
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    // Back to where the box started: no highlight, and no `activedescendant`
+    // for a screen reader to announce.
+    await waitFor(() =>
+      expect(input.getAttribute("aria-activedescendant")).toBeNull(),
     );
   });
 
@@ -553,7 +600,7 @@ describe("SearchBox · the jump offer", () => {
     // A placeholder, not a link: there is nothing to point at yet.
     const [placeholder] = optionsOf(utils.container);
     expect(placeholder?.tagName).toBe("DIV");
-    expect(placeholder?.getAttribute("aria-selected")).toBe("true");
+    expect(placeholder?.getAttribute("aria-selected")).toBe("false");
 
     // Pasting and hitting Enter in the same beat must reach the same place
     // as waiting for the row first — the destination is not the network's
@@ -661,13 +708,13 @@ describe("SearchBox · the jump offer", () => {
     await waitFor(() => expect(optionsOf(utils.container)).toHaveLength(3));
     const [card, external] = optionsOf(utils.container);
     expect(card?.getAttribute("href")).toBe("/projects/todou/issues/76");
-    expect(card?.getAttribute("aria-selected")).toBe("true");
+    expect(card?.getAttribute("aria-selected")).toBe("false");
     expect(external?.getAttribute("href")).toBe(
       "https://github.com/o/r/issues/76",
     );
   });
 
-  it("highlights the external link when there is no card behind #76", async () => {
+  it("offers the external link alone when there is no card behind #76", async () => {
     const client = seedBox([
       {
         id: 1,
@@ -683,7 +730,7 @@ describe("SearchBox · the jump offer", () => {
     expect(external?.getAttribute("href")).toBe(
       "https://github.com/o/r/issues/76",
     );
-    expect(external?.getAttribute("aria-selected")).toBe("true");
+    expect(external?.getAttribute("aria-selected")).toBe("false");
   });
 
   it("keeps the first Escape for the offer it closes", async () => {
@@ -788,5 +835,321 @@ describe("search params", () => {
     expect(searchPageSchema.parse({ q: 141 }).q).toBe("141");
     expect(searchPageSchema.parse({ status: 3 }).status).toBe("3");
     expect(searchPageSchema.parse({}).q).toBeUndefined();
+  });
+
+  it("reads the domains out of `is:` before it looks at `?in=`", () => {
+    expect(domainsOf({ q: "is:comment 部署" })).toEqual(["comments"]);
+    expect(domainsOf({ q: "is:spec,comment" })).toEqual(["comments", "specs"]);
+    expect(domainsOf({ q: "-is:spec" })).toEqual(["issues", "comments"]);
+    // `is:` wins over an older link's `?in=`, and `?in=` still answers alone.
+    expect(domainsOf({ q: "is:comment", in: "specs" })).toEqual(["comments"]);
+    expect(domainsOf({ q: "部署", in: "specs" })).toEqual(["specs"]);
+    expect(domainsOf({ q: "部署" })).toEqual([]);
+  });
+
+  it("writes the domains back into the query, and only when they narrow", () => {
+    expect(withDomains("部署", ["comments"])).toBe("部署 is:comment");
+    expect(withDomains("is:spec 部署", ["comments"])).toBe("部署 is:comment");
+    // All three is what no `is:` already means; spelling it out is noise in
+    // a URL somebody is going to paste.
+    expect(withDomains("is:spec 部署", ["issues", "comments", "specs"])).toBe(
+      "部署",
+    );
+    expect(withDomains("is:spec 部署", [])).toBe("部署");
+    expect(withDomains("", ["specs"])).toBe("is:spec");
+    // Everything else in the query survives untouched, quotes and all.
+    expect(withDomains('is:spec label:"kind:bug" 慢', ["comments"])).toBe(
+      'label:"kind:bug" 慢 is:comment',
+    );
+  });
+});
+
+/** A project whose labels, statuses, members and facets are already known. */
+function seedPools(client: QueryClient): QueryClient {
+  client.setQueryData(labelsQuery("todou").queryKey, [
+    { id: 1, name: "area:web", color: "#111111" },
+    { id: 2, name: "kind:bug", color: "#222222" },
+  ]);
+  client.setQueryData(statusesQuery("todou").queryKey, [status]);
+  client.setQueryData(membersQuery("todou").queryKey, [
+    {
+      user: {
+        id: 1,
+        login: "alice",
+        display_name: "Alice",
+        kind: "human",
+        avatar_url: null,
+        owner: null,
+      },
+      role: "writer",
+      created_at: "2026-01-01T00:00:00.000Z",
+    },
+  ]);
+  client.setQueryData(searchFacetsQuery("todou", true).queryKey, {
+    harnesses: [{ agent: "codex", count: 12 }],
+    sessions: [
+      {
+        session_id: "sess-a",
+        agent: "codex",
+        count: 3,
+        last_seen: "2026-09-01T00:00:00.000Z",
+      },
+    ],
+  });
+  return client;
+}
+
+const rowTexts = (container: HTMLElement) =>
+  optionsOf(container).map((o) => o.textContent ?? "");
+
+/**
+ * The results page mounted on its own route, so a chip's `navigate()` lands
+ * somewhere the assertions can read.
+ */
+function renderPage(
+  page: Omit<SearchPage, "diagnostics"> &
+    Partial<Pick<SearchPage, "diagnostics">>,
+  search: SearchPageSearch,
+) {
+  const client = seedJumpContext(testQueryClient());
+  client.setQueryData(searchQuery("todou", search).queryKey, {
+    diagnostics: [],
+    ...page,
+  });
+  const rootRoute = createRootRoute();
+  const projectRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/projects/$slug",
+  });
+  const searchRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "search",
+    validateSearch: (raw: Record<string, unknown>) => raw as SearchPageSearch,
+    component: () => (
+      <SearchResults slug="todou" search={searchRoute.useSearch()} />
+    ),
+  });
+  const issueRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "issues/$number",
+  });
+  const entry = `/projects/todou/search?${new URLSearchParams(
+    Object.entries(search).map(([k, v]) => [k, String(v)]),
+  )}`;
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([
+      projectRoute.addChildren([searchRoute, issueRoute]),
+    ]),
+    history: createMemoryHistory({ initialEntries: [entry] }),
+  });
+  const utils = render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  return {
+    ...utils,
+    client,
+    where: () => ({
+      pathname: router.state.location.pathname,
+      search: router.state.location.search as SearchPageSearch,
+    }),
+  };
+}
+
+const chip = (container: HTMLElement, label: string) =>
+  [...container.querySelectorAll("button")].find(
+    (b) => b.textContent === label,
+  ) as HTMLButtonElement;
+
+describe("the results page · qualifiers", () => {
+  it("says what went wrong with the query, above the results", async () => {
+    const utils = renderPage(
+      {
+        items: [],
+        has_more: false,
+        diagnostics: [
+          {
+            severity: "error",
+            key: "label",
+            value: "不存在",
+            message: 'no label named "不存在" in this project',
+            suggestion: "kind:bug",
+          },
+          {
+            severity: "note",
+            key: "harness",
+            value: "claud",
+            message: '"claud" is not a harness todou knows',
+            suggestion: null,
+          },
+        ],
+      },
+      { q: "label:不存在 慢" },
+    );
+    await utils.findByText(/no label named/);
+    await utils.findByText(/is not a harness/);
+    // The suggestion is offered, not applied.
+    await utils.findByText("kind:bug");
+    // Still a results page, not an error page.
+    await utils.findByText(/Nothing matched/);
+  });
+
+  it("writes a chip into the query rather than into `?in=`", async () => {
+    const utils = renderPage({ items: [], has_more: false }, { q: "部署" });
+    await utils.findByText(/Results for/);
+    fireEvent.click(chip(utils.container, "Comments"));
+    await waitFor(() =>
+      expect(utils.where().search).toEqual({ q: "部署 is:comment" }),
+    );
+  });
+
+  it("folds an older link's `?in=` into the query on the first click", async () => {
+    const utils = renderPage(
+      { items: [], has_more: false },
+      { q: "部署", in: "comments" },
+    );
+    // Arriving on the old link, the chip it selected is the one shown.
+    await waitFor(() =>
+      expect(
+        chip(utils.container, "Comments").getAttribute("aria-pressed"),
+      ).toBe("true"),
+    );
+    expect(chip(utils.container, "Specs").getAttribute("aria-pressed")).toBe(
+      "false",
+    );
+
+    fireEvent.click(chip(utils.container, "Specs"));
+    await waitFor(() =>
+      expect(utils.where().search).toEqual({ q: "部署 is:comment,spec" }),
+    );
+  });
+
+  it("spells the syntax out where there is nothing to show yet", async () => {
+    const utils = renderPage({ items: [], has_more: false }, { q: "" });
+    await utils.findByText("harness:codex");
+    await utils.findByText("which agent wrote the matched text");
+  });
+
+  it("offers no jump for a query that carries a qualifier", async () => {
+    const utils = renderPage(
+      { items: [], has_more: false },
+      { q: "label:kind:bug T-141" },
+    );
+    utils.client.setQueryData(
+      issueRefQuery("todou", 141).queryKey,
+      refItem(141, "全文搜索"),
+    );
+    await utils.findByText(/Nothing matched/);
+    expect(utils.queryByText("全文搜索")).toBeNull();
+  });
+});
+
+describe("SearchBox · qualifier completion", () => {
+  it("keeps search first when what was typed completes nothing", async () => {
+    // The whole ordering rule: the reader is writing a query, so an offer
+    // has to earn its place above the thing they came to do.
+    const utils = renderBox(seedPools(seedBox()));
+    await typeInto(utils, "部署 ");
+    await waitFor(() => expect(listboxOf(utils.container)).not.toBeNull());
+    expect(rowTexts(utils.container)[0]).toContain("Search for");
+    // The full table is still there, below, because that is how the syntax
+    // gets discovered.
+    expect(rowTexts(utils.container).join("\n")).toContain("harness:");
+  });
+
+  it("lifts a key above search once it is really a prefix", async () => {
+    const utils = renderBox(seedPools(seedBox()));
+    await typeInto(utils, "har");
+    await waitFor(() =>
+      expect(rowTexts(utils.container)[0]).toContain("harness:"),
+    );
+    expect(rowTexts(utils.container)[1]).toContain("Search for");
+  });
+
+  it("offers a project's own values once the colon is typed", async () => {
+    const utils = renderBox(seedPools(seedBox()));
+    const input = await typeInto(utils, "label:");
+    input.setSelectionRange(6, 6);
+    fireEvent.select(input);
+    await waitFor(() =>
+      expect(rowTexts(utils.container)[0]).toContain("area:web"),
+    );
+    expect(rowTexts(utils.container)[1]).toContain("kind:bug");
+    expect(rowTexts(utils.container)[2]).toContain("Search for");
+  });
+
+  it("gives each offer one line and no more", async () => {
+    const utils = renderBox(seedPools(seedBox()));
+    await typeInto(utils, "har");
+    await waitFor(() =>
+      expect(rowTexts(utils.container)[0]).toContain("harness:"),
+    );
+    const row = optionsOf(utils.container)[0] as HTMLElement;
+    expect(row.querySelectorAll("div, p, br")).toHaveLength(0);
+  });
+
+  it("takes an offer on Tab, and never the search row", async () => {
+    const utils = renderBox(seedPools(seedBox()));
+    const input = await typeInto(utils, "部署 har");
+    await waitFor(() =>
+      expect(rowTexts(utils.container)[0]).toContain("harness:"),
+    );
+    fireEvent.keyDown(input, { key: "Tab" });
+    await waitFor(() => expect(input.value).toBe("部署 harness:"));
+    expect(utils.where().pathname).toBe("/");
+  });
+
+  it("rewrites the query when an offer is clicked", async () => {
+    const utils = renderBox(seedPools(seedBox()));
+    const input = await typeInto(utils, "label:kind");
+    input.setSelectionRange(10, 10);
+    fireEvent.select(input);
+    await waitFor(() =>
+      expect(rowTexts(utils.container)[0]).toContain("kind:bug"),
+    );
+    fireEvent.click(optionsOf(utils.container)[0] as Element);
+    await waitFor(() => expect(input.value).toBe("label:kind:bug"));
+  });
+
+  it("stops offering a jump once the query carries a qualifier", async () => {
+    // `label:kind:bug T-141` cannot honestly offer a card: following it
+    // would drop the label the reader just typed.
+    const client = seedPools(seedBox());
+    client.setQueryData(
+      issueRefQuery("todou", 141).queryKey,
+      refItem(141, "全文搜索"),
+    );
+    const utils = renderBox(client);
+    const input = await typeInto(utils, "T-141");
+    await waitFor(() =>
+      expect(rowTexts(utils.container).join("\n")).toContain("全文搜索"),
+    );
+
+    fireEvent.change(input, { target: { value: "label:kind:bug T-141" } });
+    await waitFor(() =>
+      expect(rowTexts(utils.container).join("\n")).not.toContain("全文搜索"),
+    );
+  });
+
+  it("submits the query as typed when nothing is highlighted", async () => {
+    const utils = renderBox(seedPools(seedBox()));
+    await typeInto(utils, "harness:codex is:comment 部署");
+    submit(utils.container);
+    await waitFor(() =>
+      expect(utils.where()).toEqual({
+        pathname: "/projects/todou/search",
+        search: { q: "harness:codex is:comment 部署" },
+      }),
+    );
+  });
+
+  it("paints the query behind the input, character for character", async () => {
+    const utils = renderBox(seedPools(seedBox()));
+    await typeInto(utils, "label:不存在 慢");
+    const mirror = utils.container.querySelector("[aria-hidden] span");
+    await waitFor(() => expect(mirror?.textContent).toBe("label:不存在 慢"));
+    // The label does not exist in this project, and the mirror says so.
+    expect(mirror?.innerHTML).toContain("decoration-wavy");
   });
 });

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildSnippet, parseSearchTerms } from "../src/services/search.ts";
+import { buildSnippet } from "../src/services/search.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
@@ -352,32 +352,517 @@ describe("project search", () => {
       );
       expect(res.status).toBe(422);
     });
+
+    it("rejects a q that yields neither a term nor a qualifier", async () => {
+      const res = await t.app.request(
+        `/api/projects/${SLUG}/search?q=${encodeURIComponent('  ""  ')}`,
+        { headers: { cookie } },
+      );
+      expect(res.status).toBe(422);
+    });
+
+    it("rejects more than sixteen qualifiers", async () => {
+      const q = Array.from({ length: 17 }, (_, i) => `label:l${i}`).join(" ");
+      const res = await t.app.request(
+        `/api/projects/${SLUG}/search?q=${encodeURIComponent(q)}`,
+        { headers: { cookie } },
+      );
+      expect(res.status).toBe(422);
+    });
+
+    it("does not spend the term budget on qualifiers", async () => {
+      // Nine expressions and one word: over the term cap only if qualifiers
+      // counted, which they must not.
+      const q = `${Array.from({ length: 9 }, (_, i) => `label:l${i}`).join(" ")} 词`;
+      const res = await t.app.request(
+        `/api/projects/${SLUG}/search?q=${encodeURIComponent(q)}`,
+        { headers: { cookie } },
+      );
+      expect(res.status).toBe(200);
+    });
   });
 });
 
-describe("parseSearchTerms", () => {
-  it("splits on whitespace", () => {
-    expect(parseSearchTerms("  a\tb\nc ")).toEqual(["a", "b", "c"]);
+const QUAL = "qual-proj";
+
+/** The provenance a write reports; `null` = a human at a browser. */
+type Ctx = { agent: string; session_id?: string } | null;
+
+describe("search qualifiers", () => {
+  let t: TestApp;
+  let cookie: string;
+  let meId = 0;
+  let outsider = 0;
+  const statusId = new Map<string, number>();
+  const labelId = new Map<string, number>();
+
+  const headers = (agent: Ctx = null) => ({
+    "content-type": "application/json",
+    cookie,
+    ...(agent === null
+      ? {}
+      : { "x-todou-agent-context": JSON.stringify(agent) }),
   });
 
-  it("keeps a quoted phrase whole", () => {
-    expect(parseSearchTerms('a "b c" d')).toEqual(["a", "b c", "d"]);
+  const createIssue = async (
+    title: string,
+    body: string,
+    agent: Ctx = null,
+  ): Promise<number> => {
+    const res = await t.app.request(`/api/projects/${QUAL}/issues`, {
+      method: "POST",
+      headers: headers(agent),
+      body: JSON.stringify({ title, body }),
+    });
+    expect(res.status).toBe(201);
+    return (await json(res)).number as number;
+  };
+
+  const comment = async (n: number, body: string, agent: Ctx = null) => {
+    const res = await t.app.request(
+      `/api/projects/${QUAL}/issues/${n}/comments`,
+      {
+        method: "POST",
+        headers: headers(agent),
+        body: JSON.stringify({ body }),
+      },
+    );
+    expect(res.status).toBe(201);
+  };
+
+  const pushSpec = async (n: number, body: string, agent: Ctx = null) => {
+    const res = await t.app.request(
+      `/api/projects/${QUAL}/issues/${n}/spec/push`,
+      {
+        method: "POST",
+        headers: headers(agent),
+        body: JSON.stringify({
+          files: [{ path: "design.md", body }],
+          message: "push",
+        }),
+      },
+    );
+    expect(res.status).toBe(200);
+  };
+
+  const patch = async (n: number, body: Record<string, unknown>) => {
+    const res = await t.app.request(`/api/projects/${QUAL}/issues/${n}`, {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(200);
+  };
+
+  const raw = async (q: string, extra = ""): Promise<Response> =>
+    await t.app.request(
+      `/api/projects/${QUAL}/search?q=${encodeURIComponent(q)}${extra}`,
+      { headers: { cookie } },
+    );
+
+  const search = async (
+    q: string,
+    extra = "",
+  ): Promise<{
+    items: Hit[];
+    has_more: boolean;
+    diagnostics: Array<Record<string, unknown>>;
+  }> => {
+    const res = await raw(q, extra);
+    expect(res.status).toBe(200);
+    return json(res);
+  };
+
+  /** `number:kind` per hit, which is what every assertion below compares. */
+  const kinds = async (q: string, extra = "") =>
+    (await search(q, extra)).items.map((i) => `${i.issue.number}:${i.kind}`);
+
+  beforeAll(async () => {
+    t = await makeTestApp();
+    cookie = await t.login();
+    const created = await t.app.request("/api/projects", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ slug: QUAL, name: "Qualifiers" }),
+    });
+    expect(created.status).toBe(201);
+    meId = (await json(await t.app.request("/api/me", { headers: { cookie } })))
+      .id as number;
+
+    for (const row of await json(
+      await t.app.request(`/api/projects/${QUAL}/statuses`, {
+        headers: { cookie },
+      }),
+    )) {
+      statusId.set(row.name, row.id);
+    }
+    // A label name carrying a colon, because todou's own do — the parser has
+    // to keep the whole `area:web` as one value.
+    for (const name of ["area:web", "kind:bug"]) {
+      const res = await t.app.request(`/api/projects/${QUAL}/labels`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ name, color: "#112233" }),
+      });
+      expect(res.status).toBe(201);
+      labelId.set(name, (await json(res)).id as number);
+    }
+
+    const other = await addUserWithToken(t.ctx, "qual-writer");
+    outsider = other.user.id;
+    const member = await t.app.request(
+      `/api/projects/${QUAL}/members/${outsider}`,
+      {
+        method: "PUT",
+        headers: headers(),
+        body: JSON.stringify({ role: "writer" }),
+      },
+    );
+    expect(member.status).toBe(204);
+
+    // 1 — opened by codex, labelled area:web, assigned to me, left in Todo.
+    await createIssue("限定符锚点一", "正文一 限定符锚点", {
+      agent: "codex",
+      session_id: "sess-a",
+    });
+    await patch(1, {
+      label_ids: [labelId.get("area:web")],
+      assignee_ids: [meId],
+    });
+    await comment(1, "评论 限定符锚点 甲", {
+      agent: "claude-code",
+      session_id: "sess-b",
+    });
+
+    // 2 — opened from a browser, labelled kind:bug, moved to Next, and its
+    // spec pushed by codex under a third session.
+    await createIssue("限定符锚点二", "正文二 限定符锚点");
+    await patch(2, {
+      label_ids: [labelId.get("kind:bug")],
+      status_id: statusId.get("Next"),
+    });
+    await comment(2, "评论 限定符锚点 乙");
+    await pushSpec(2, "spec 限定符锚点 定稿", {
+      agent: "codex",
+      session_id: "sess-c",
+    });
+
+    // 3 — closed, both labels, and opened by a harness reporting an empty
+    // session, which must read as "no session at all".
+    await createIssue("限定符锚点三", "正文三 限定符锚点", {
+      agent: "pi",
+      session_id: "",
+    });
+    await patch(3, {
+      label_ids: [labelId.get("area:web"), labelId.get("kind:bug")],
+      status_id: statusId.get("Done"),
+    });
   });
 
-  it("runs an unclosed quote to the end", () => {
-    expect(parseSearchTerms('a "b c')).toEqual(["a", "b c"]);
+  afterAll(async () => {
+    await t?.cleanup();
   });
 
-  it("drops an empty quoted term", () => {
-    expect(parseSearchTerms('a "" b')).toEqual(["a", "b"]);
+  describe("each qualifier narrows what the same words find", () => {
+    it("baseline: the anchor is in every card, comment and spec", async () => {
+      // Ranking is unchanged: title hits first, then recency — the fixtures
+      // were touched in ascending order, so cards come back 3, 2, 1.
+      expect(await kinds("限定符锚点")).toEqual([
+        "3:issue",
+        "2:issue",
+        "1:issue",
+        "2:comment",
+        "1:comment",
+        "2:spec",
+      ]);
+    });
+
+    it("is: picks the unit, in the plural spellings too", async () => {
+      expect(await kinds("is:comment 限定符锚点")).toEqual([
+        "2:comment",
+        "1:comment",
+      ]);
+      expect(await kinds("is:body 限定符锚点")).toEqual([
+        "3:issue",
+        "2:issue",
+        "1:issue",
+      ]);
+      expect(await kinds("is:specs 限定符锚点")).toEqual(["2:spec"]);
+      expect(await kinds("is:spec,comment 限定符锚点")).toEqual([
+        "2:comment",
+        "1:comment",
+        "2:spec",
+      ]);
+    });
+
+    it("state: reads the status category", async () => {
+      expect(await kinds("state:closed is:body 限定符锚点")).toEqual([
+        "3:issue",
+      ]);
+      expect(await kinds("state:open is:body 限定符锚点")).toEqual([
+        "2:issue",
+        "1:issue",
+      ]);
+    });
+
+    it("status: reads the status name, case and spaces included", async () => {
+      expect(await kinds("status:next is:body 限定符锚点")).toEqual([
+        "2:issue",
+      ]);
+      expect(await kinds('status:"To Do" is:body 限定符锚点')).toEqual([]);
+      expect(await kinds("status:Todo is:body 限定符锚点")).toEqual([
+        "1:issue",
+      ]);
+    });
+
+    it("label: takes a name that carries a colon", async () => {
+      expect(await kinds("label:area:web is:body 限定符锚点")).toEqual([
+        "3:issue",
+        "1:issue",
+      ]);
+      expect(await kinds('label:"kind:bug" is:body 限定符锚点')).toEqual([
+        "3:issue",
+        "2:issue",
+      ]);
+    });
+
+    it("assignee: takes a login and @me", async () => {
+      expect(await kinds("assignee:user is:body 限定符锚点")).toEqual([
+        "1:issue",
+      ]);
+      expect(await kinds("assignee:@me is:body 限定符锚点")).toEqual([
+        "1:issue",
+      ]);
+      expect(await kinds("assignee:qual-writer is:body 限定符锚点")).toEqual(
+        [],
+      );
+    });
   });
 
-  it("ends a bare term at a quote", () => {
-    expect(parseSearchTerms('ab"cd"')).toEqual(["ab", "cd"]);
+  describe("combining values", () => {
+    it("commas are any-of, repeating the key is all-of", async () => {
+      expect(await kinds("label:area:web,kind:bug is:body 限定符锚点")).toEqual(
+        ["3:issue", "2:issue", "1:issue"],
+      );
+      expect(
+        await kinds("label:area:web label:kind:bug is:body 限定符锚点"),
+      ).toEqual(["3:issue"]);
+    });
+
+    it("a leading minus inverts the whole expression", async () => {
+      expect(await kinds("-label:area:web is:body 限定符锚点")).toEqual([
+        "2:issue",
+      ]);
+      expect(
+        await kinds("-label:area:web,kind:bug is:body 限定符锚点"),
+      ).toEqual([]);
+      expect(await kinds("-state:closed is:body 限定符锚点")).toEqual([
+        "2:issue",
+        "1:issue",
+      ]);
+    });
+
+    it("intersects is: with a ?in= that came from an old link", async () => {
+      expect(await kinds("is:comment,spec 限定符锚点", "&in=specs")).toEqual([
+        "2:spec",
+      ]);
+    });
+
+    it("an empty value narrows nothing and is not an error", async () => {
+      expect(await kinds("label: is:body 限定符锚点")).toEqual([
+        "3:issue",
+        "2:issue",
+        "1:issue",
+      ]);
+      expect((await search("label: is:body 限定符锚点")).diagnostics).toEqual(
+        [],
+      );
+    });
   });
 
-  it("rejects a query with no terms", () => {
-    expect(() => parseSearchTerms('  ""  ')).toThrow();
+  describe("harness: and session: follow the text, not the card", () => {
+    it("matches each domain against its own provenance", async () => {
+      // Card 1 was opened by codex but commented by claude-code, and card 2's
+      // spec is codex's while its body is nobody's — so a per-card reading
+      // would answer all three of these wrongly.
+      expect(await kinds("harness:codex 限定符锚点")).toEqual([
+        "1:issue",
+        "2:spec",
+      ]);
+      expect(await kinds("harness:claude-code 限定符锚点")).toEqual([
+        "1:comment",
+      ]);
+      expect(await kinds("harness:pi 限定符锚点")).toEqual(["3:issue"]);
+    });
+
+    it("harness:none is the writes that report no agent at all", async () => {
+      expect(await kinds("harness:none 限定符锚点")).toEqual([
+        "2:issue",
+        "2:comment",
+      ]);
+    });
+
+    it("takes several harnesses as any-of, and negates", async () => {
+      expect(await kinds("harness:codex,pi is:body 限定符锚点")).toEqual([
+        "3:issue",
+        "1:issue",
+      ]);
+      expect(await kinds("-harness:codex is:body 限定符锚点")).toEqual([
+        "3:issue",
+        "2:issue",
+      ]);
+    });
+
+    it("counts a write with no agent context as not that harness", async () => {
+      // The comment on card 2 was typed by a person. `agent_context ->> …`
+      // is NULL there, and a bare `not (… = 'codex')` would be NULL too —
+      // silently hiding exactly the rows a negation is usually reaching for.
+      expect(await kinds("-harness:codex is:comment 限定符锚点")).toEqual([
+        "2:comment",
+        "1:comment",
+      ]);
+      expect(await kinds("-session:sess-c is:spec 限定符锚点")).toEqual([]);
+      expect(await kinds("-session:sess-a is:comment 限定符锚点")).toEqual([
+        "2:comment",
+        "1:comment",
+      ]);
+    });
+
+    it("session: picks one run of one agent", async () => {
+      expect(await kinds("session:sess-a 限定符锚点")).toEqual(["1:issue"]);
+      expect(await kinds("session:sess-b 限定符锚点")).toEqual(["1:comment"]);
+      expect(await kinds("session:sess-c 限定符锚点")).toEqual(["2:spec"]);
+    });
+
+    it("reads an empty reported session as no session", async () => {
+      // Card 3 reported `session_id: ""`. It must not answer to the empty
+      // string, and negating any session must still count it as sessionless —
+      // the same `nullif` the timeline's self-filter applies.
+      expect(await kinds('session:"" is:body 限定符锚点')).toEqual([
+        "3:issue",
+        "2:issue",
+        "1:issue",
+      ]);
+      expect(await kinds("-session:sess-a is:body 限定符锚点")).toEqual([
+        "3:issue",
+        "2:issue",
+      ]);
+    });
+  });
+
+  describe("a query of qualifiers alone", () => {
+    it("is answered rather than refused", async () => {
+      const { items } = await search("harness:codex");
+      expect(items.map((i) => `${i.issue.number}:${i.kind}`)).toEqual([
+        "1:issue",
+        "2:spec",
+      ]);
+    });
+
+    it("still carries a snippet for each hit", async () => {
+      const { items } = await search("is:body label:area:web");
+      expect(items.map((i) => i.snippet.text)).toEqual([
+        "正文三 限定符锚点",
+        "正文一 限定符锚点",
+      ]);
+      expect(items.every((i) => i.snippet.ranges.length === 0)).toBe(true);
+    });
+  });
+
+  describe("diagnostics", () => {
+    it("reports a value that names nothing, and returns no rows", async () => {
+      const { items, diagnostics } = await search("label:不存在 限定符锚点");
+      expect(items).toEqual([]);
+      expect(diagnostics).toEqual([
+        {
+          severity: "error",
+          key: "label",
+          value: "不存在",
+          message: 'no label named "不存在" in this project',
+          suggestion: null,
+        },
+      ]);
+    });
+
+    it("suggests the closed-set value sharing the longest prefix", async () => {
+      const { diagnostics } = await search("status:Nex 限定符锚点");
+      expect(diagnostics[0]).toMatchObject({
+        severity: "error",
+        key: "status",
+        suggestion: "Next",
+      });
+      expect(
+        (await search("state:opne 限定符锚点")).diagnostics[0],
+      ).toMatchObject({
+        severity: "error",
+        key: "state",
+        message: '"opne" is not a state (open, closed)',
+        suggestion: "open",
+      });
+      expect(
+        (await search("is:body,pr 限定符锚点")).diagnostics[0],
+      ).toMatchObject({
+        severity: "error",
+        key: "is",
+        message: '"pr" is not searchable (body, comment, spec)',
+      });
+    });
+
+    it("notes an unfamiliar harness but still matches it literally", async () => {
+      const { diagnostics } = await search("harness:claud 限定符锚点");
+      expect(diagnostics).toEqual([
+        {
+          severity: "note",
+          key: "harness",
+          value: "claud",
+          message:
+            '"claud" is not a harness todou knows (claude-code, codex, hermes-agent, pi); matching it literally',
+          suggestion: "claude-code",
+        },
+      ]);
+    });
+
+    it("notes an is:/in= pair with nothing in common", async () => {
+      const { items, diagnostics } = await search(
+        "is:comment 限定符锚点",
+        "&in=specs",
+      );
+      expect(items).toEqual([]);
+      expect(diagnostics).toEqual([
+        {
+          severity: "note",
+          key: "is",
+          value: null,
+          message: "is: and in= select no domain in common",
+          suggestion: null,
+        },
+      ]);
+    });
+
+    it("says nothing about a session, which has no set to check", async () => {
+      expect((await search("session:nobody 限定符锚点")).diagnostics).toEqual(
+        [],
+      );
+    });
+
+    it("is an empty array on a clean query", async () => {
+      expect((await search("限定符锚点")).diagnostics).toEqual([]);
+    });
+  });
+
+  describe("what stays plain text", () => {
+    it("leaves an unknown key alone", async () => {
+      // `kind:bug` is a label here, but `kind:` is not a qualifier — so this
+      // is a literal search, and it finds nothing rather than the two cards
+      // carrying the label.
+      expect(await kinds("kind:bug")).toEqual([]);
+      expect(await kinds("https://example.com/x")).toEqual([]);
+    });
+
+    it("searches a known key literally once it is quoted", async () => {
+      await comment(1, "字面量 harness: 出现在这句里");
+      expect(await kinds('"harness:" 字面量')).toEqual(["1:comment"]);
+    });
   });
 });
 

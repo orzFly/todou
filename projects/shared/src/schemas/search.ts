@@ -50,6 +50,26 @@ export const SearchItem = z.object({
 });
 export type SearchItem = z.infer<typeof SearchItem>;
 
+/**
+ * Something wrong with a qualifier, reported instead of refused. A shared
+ * link whose label was since renamed has to keep opening a results page that
+ * says which word to change — turning it into an error page would leave the
+ * reader with nothing to go on.
+ */
+export const SearchDiagnostic = z.object({
+  /** error = this condition can match nothing; note = it ran, with a caveat. */
+  severity: z.enum(["error", "note"]),
+  /** The qualifier at fault, e.g. "label". */
+  key: z.string(),
+  /** The value at fault; null when the whole expression is. */
+  value: z.string().nullable(),
+  /** Already a sentence, so neither end assembles its own wording. */
+  message: z.string(),
+  /** A near miss from the same closed set, or null. */
+  suggestion: z.string().nullable(),
+});
+export type SearchDiagnostic = z.infer<typeof SearchDiagnostic>;
+
 export const SearchPage = z.object({
   items: z.array(SearchItem),
   /**
@@ -59,8 +79,49 @@ export const SearchPage = z.object({
    * nobody paginates by.
    */
   has_more: z.boolean(),
+  /**
+   * Always present, empty when the query was clean — a client then never has
+   * to tell "an older server" apart from "nothing to report".
+   */
+  diagnostics: z.array(SearchDiagnostic),
 });
 export type SearchPage = z.infer<typeof SearchPage>;
+
+/**
+ * The values `harness:` and `session:` can actually be given, drawn from what
+ * clients have written rather than from `HARNESS_IDS` — a project whose
+ * agents todou has no logo for still gets completions, and a harness nobody
+ * here uses does not clutter the list.
+ *
+ * Only these two: `label:`, `status:` and `assignee:` already have endpoints.
+ */
+export const SearchFacets = z.object({
+  harnesses: z.array(
+    z.object({
+      /** null is "no agent context", i.e. `harness:none`. */
+      agent: z.string().nullable(),
+      count: z.number().int().nonnegative(),
+    }),
+  ),
+  sessions: z.array(
+    z.object({
+      session_id: z.string(),
+      /** The agent this session last reported. */
+      agent: z.string().nullable(),
+      count: z.number().int().nonnegative(),
+      last_seen: Timestamp,
+    }),
+  ),
+});
+export type SearchFacets = z.infer<typeof SearchFacets>;
+
+/**
+ * Hard caps, because this is a pool for a dropdown and not a report: a busy
+ * project accumulates sessions without bound, and nobody scrolls a completion
+ * list past its first screen.
+ */
+export const SEARCH_FACET_HARNESSES = 20;
+export const SEARCH_FACET_SESSIONS = 50;
 
 /** Terms above this count, or a longer `q`, are rejected rather than cut. */
 export const SEARCH_MAX_QUERY_CHARS = 256;

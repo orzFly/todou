@@ -34,6 +34,19 @@ import {
 const trigramIndex = (name: string, column: AnyPgColumn) =>
   index(name).using("gin", sql`${column} gin_trgm_ops`);
 
+/**
+ * One key of an `agent_context`, indexed as an expression (T-262).
+ *
+ * `harness:`/`session:` searches may carry no free term at all, and such a
+ * query has no trigram index to anchor it — it would fall back to reading
+ * every comment in the project, on the one connection every request for that
+ * project shares. Queries that *do* carry a term never touch these: the
+ * trigram index has already narrowed the candidates by then, and the JSON
+ * extraction only runs on rows that already matched.
+ */
+const agentContextIndex = (name: string, column: AnyPgColumn, path: string) =>
+  index(name).on(sql`(${column} ->> ${sql.raw(`'${path}'`)})`);
+
 const id = () =>
   bigint("id", { mode: "number" }).generatedAlwaysAsIdentity().primaryKey();
 const projectId = () => bigint("project_id", { mode: "number" }).notNull();
@@ -222,6 +235,8 @@ export const comments = pgTable(
   (t) => [
     index("comments_issue_created_idx").on(t.issueId, t.createdAt),
     trigramIndex("comments_body_trgm_idx", t.body),
+    agentContextIndex("comments_agent_idx", t.agentContext, "agent"),
+    agentContextIndex("comments_session_idx", t.agentContext, "session_id"),
   ],
 );
 
@@ -265,7 +280,11 @@ export const issueEvents = pgTable(
     agentContext: jsonb("agent_context").$type<AgentContext | null>(),
     createdAt: createdAt(),
   },
-  (t) => [index("issue_events_issue_created_idx").on(t.issueId, t.createdAt)],
+  (t) => [
+    index("issue_events_issue_created_idx").on(t.issueId, t.createdAt),
+    agentContextIndex("issue_events_agent_idx", t.agentContext, "agent"),
+    agentContextIndex("issue_events_session_idx", t.agentContext, "session_id"),
+  ],
 );
 
 // One row per content-changing edit, holding the superseded text (snapshot
@@ -320,6 +339,12 @@ export const specVersions = pgTable(
       t.projectId,
       t.issueId,
       t.number,
+    ),
+    agentContextIndex("spec_versions_agent_idx", t.agentContext, "agent"),
+    agentContextIndex(
+      "spec_versions_session_idx",
+      t.agentContext,
+      "session_id",
     ),
   ],
 );

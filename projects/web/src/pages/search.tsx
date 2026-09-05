@@ -5,12 +5,24 @@ import {
   useParams,
   useSearch,
 } from "@tanstack/react-router";
-import { formatRef, type SearchDomain, type SearchItem } from "@todou/shared";
+import {
+  formatRef,
+  parseSearchQuery,
+  type SearchDiagnostic,
+  type SearchDomain,
+  type SearchItem,
+} from "@todou/shared";
 import { ArrowRightIcon, ExternalLinkIcon, SearchIcon } from "lucide-react";
 import { useJumpRows } from "@/api/ref-jump.ts";
 import { useRefPrefix } from "@/api/references.ts";
-import { domainsOf, type SearchPageSearch, searchQuery } from "@/api/search.ts";
+import {
+  domainsOf,
+  type SearchPageSearch,
+  searchQuery,
+  withDomains,
+} from "@/api/search.ts";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
+import { hasQualifier } from "@/components/search/suggestions.ts";
 import { SearchHighlight } from "@/components/search-highlight.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
@@ -88,13 +100,10 @@ export function SearchResults({
 
       <JumpBanner slug={slug} q={q} />
 
+      {results.data && <Diagnostics items={results.data.diagnostics} />}
+
       {q === "" ? (
-        <Empty>
-          Type in the box above. Terms are ANDed and each one matches anywhere
-          inside the text, so <code>搜索</code> finds it in the middle of a
-          sentence and <code>WordDiff</code> finds{" "}
-          <code>coalescedWordDiff</code>. Quote a phrase to keep it together.
-        </Empty>
+        <SyntaxHelp />
       ) : results.isPending ? (
         <div className="space-y-3">
           <Skeleton className="h-20 w-full" />
@@ -149,6 +158,80 @@ function hitKey(hit: SearchItem): string {
   return `${hit.kind}:${hit.comment_id ?? hit.spec_path ?? hit.field}`;
 }
 
+/**
+ * What the server made of the query, above the results rather than instead of
+ * them. A label that has since been renamed turns a shared link into zero
+ * hits; the reader needs to be told which word to change, and an error page
+ * would tell them nothing.
+ */
+function Diagnostics({ items }: { items: SearchDiagnostic[] }) {
+  if (items.length === 0) return null;
+  return (
+    <ul className="space-y-1 rounded-lg border border-amber-500/60 bg-amber-500/10 px-4 py-3 text-sm">
+      {items.map((item) => (
+        <li
+          key={`${item.key}:${item.value ?? ""}:${item.message}`}
+          className={
+            item.severity === "error"
+              ? "text-amber-700 dark:text-amber-400"
+              : "text-muted-foreground"
+          }
+        >
+          {item.message}
+          {item.suggestion !== null && (
+            <>
+              {" — did you mean "}
+              <code className="font-mono">{item.suggestion}</code>?
+            </>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const SYNTAX: Array<[string, string]> = [
+  ["is:body,comment,spec", "which unit a hit is"],
+  ["state:open", "the card's status category"],
+  ["status:“In Progress”", "the card's status, by name"],
+  ["label:kind:bug", "a label on the card"],
+  ["assignee:@me", "who the card is assigned to"],
+  ["harness:codex", "which agent wrote the matched text"],
+  ["session:<id>", "which agent session wrote it"],
+];
+
+/** The empty state, doubling as the only place the syntax is written out. */
+function SyntaxHelp() {
+  return (
+    <div className="space-y-4 rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+      <p>
+        Type in the box above. Terms are ANDed and each one matches anywhere
+        inside the text, so <code>搜索</code> finds it in the middle of a
+        sentence and <code>WordDiff</code> finds <code>coalescedWordDiff</code>.
+        Quote a phrase to keep it together.
+      </p>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+        {SYNTAX.map(([syntax, means]) => (
+          <div key={syntax} className="contents">
+            <dt className="font-mono text-xs text-foreground">{syntax}</dt>
+            <dd>{means}</dd>
+          </div>
+        ))}
+      </dl>
+      <p>
+        A comma is any-of and repeating a key is all-of, so{" "}
+        <code>label:a,b</code> is either and <code>label:a label:b</code> is
+        both; a leading <code>-</code> inverts one of them.{" "}
+        <code>harness:</code> and <code>session:</code> follow the text that
+        matched, not the card. A key todou does not know stays plain text —{" "}
+        <code>area:web</code> is a label name here — so a known one is searched
+        literally by quoting it: <code>"harness:"</code>. The same query means
+        the same thing in <code>todou search</code>.
+      </p>
+    </div>
+  );
+}
+
 const JUMP_BOX =
   "flex items-center gap-2 rounded-lg border border-dashed px-4 py-3 text-sm hover:bg-accent";
 
@@ -161,10 +244,12 @@ const JUMP_BOX =
  *
  * Nothing is drawn while the lookup is in flight: a box that appears
  * without a title, one line above the results, would push them down just
- * as they arrive.
+ * as they arrive. Nor for a query carrying a qualifier — following an offer
+ * that quietly drops `label:bug` would go somewhere the reader did not ask
+ * for (T-262).
  */
 function JumpBanner({ slug, q }: { slug: string; q: string }) {
-  const rows = useJumpRows(slug, q);
+  const rows = useJumpRows(slug, hasQualifier(parseSearchQuery(q)) ? "" : q);
   return (
     <>
       {rows.map((row) => {
@@ -272,6 +357,12 @@ function HitRow({ slug, hit }: { slug: string; hit: SearchItem }) {
 /**
  * Domain chips. They rewrite this page's own search params, which is the
  * case `navigate()` is for — there is no destination until the click.
+ *
+ * They write `is:` into the query rather than `?in=`, so the box above shows
+ * what the chips did and the same string can be pasted into `todou search`.
+ * An older link's `?in=` still selects the chips on arrival, and the first
+ * click folds it into the query and drops it — one fact in one place from
+ * then on.
  */
 function DomainFilter({
   slug,
@@ -289,7 +380,11 @@ function DomainFilter({
     navigate({
       to: "/projects/$slug/search",
       params: { slug },
-      search: { ...search, in: next.length === 0 ? undefined : next.join(",") },
+      search: {
+        ...search,
+        q: withDomains(search.q ?? "", next),
+        in: undefined,
+      },
     });
   };
 
