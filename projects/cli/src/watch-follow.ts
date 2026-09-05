@@ -45,6 +45,30 @@ const REJECTION_HINT: Record<string, string> = {
 };
 
 /**
+ * The refusals that are about the receiving session rather than about one
+ * attempt: `refused` and `held` are what its `crossSessionInbound` setting
+ * does to every message alike, and `denied` is the user's own decision. The
+ * rest are not — `dropped` is this batch, `unreachable` is this socket, and a
+ * channel that never opened is this process — so a watch that hit one of
+ * those may well succeed on its next run and has nothing to escalate.
+ *
+ * `held` sits here despite being recoverable: a held message can still be
+ * approved later, but the watch counts it as a refusal and stops, so from the
+ * agent's side it is a failure to report either way.
+ */
+const SESSION_LEVEL_REFUSALS = new Set(["refused", "denied", "held"]);
+
+/**
+ * What to do about a refusal that keeps happening. Printed only where it can
+ * be acted on, and phrased as an escalation because the switch is the user's
+ * to throw: an agent that opted itself out would be silencing the channel
+ * the user is waiting on.
+ */
+const ESCALATION =
+  "if --follow=uds keeps failing this way, report it to the user and offer them " +
+  "`todou agent opt-out-uds` — never run that yourself";
+
+/**
  * One spelling of `--follow` for every command that has it. A factory rather
  * than a shared constant because clipanion reads the option off the instance
  * and never asks where the value came from — and because this flag's parsing
@@ -282,6 +306,9 @@ export async function openFollow<T>(opts: {
             `(${REJECTION_HINT[why.status] ?? "the receiving session did not take it"})` +
             `${why.reason === undefined ? "" : ` — ${why.reason}`}`,
         );
+        // Its own line rather than a third clause on the one above, which
+        // already carries our hint and the receipt's verbatim reason.
+        if (SESSION_LEVEL_REFUSALS.has(why.status)) opts.note(ESCALATION);
       }
       push.close();
     },

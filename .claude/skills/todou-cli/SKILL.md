@@ -137,6 +137,7 @@ A request to file a card asks for the card, not for a report.
 ## Waiting: watch, question wait, spec wait
 
 ```bash
+todou agent can-i-follow                                               # which follow mode this harness supports
 todou issue watch 16 -p <proj> --since <cursor> --forever              # one issue
 todou watch -p <proj> --since <cursor> --debounce 60 --forever         # whole project, other people's entries
 todou question wait 16 <commentId> -p <proj> --forever                 # answers to one question comment
@@ -146,6 +147,9 @@ todou watch -p <proj> --follow=uds                                     # stay re
 todou issue watch 16 -p <proj> --follow=uds                            # the same, on one card
 ```
 
+- Which way of waiting this harness can actually use is not something to guess: run
+  `todou agent can-i-follow` and do what it says. It reads no server and resolves no project, so it
+  answers at any point in a session, and it is the only place that judgement is written down.
 - Use `--forever` (`spec wait` always behaves this way): one call, no loop around it. The command
   ends in exactly two ways: exit 0 with entries, or exit 1 on a fatal error, which you report.
   Timeouts and outages are handled inside the command, which resumes from the cursor it holds. The

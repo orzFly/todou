@@ -1,5 +1,10 @@
 import type { CommandClass } from "clipanion";
 import type { CliContext } from "../api-command.ts";
+import {
+  AgentCanIFollowCommand,
+  AgentOptInUdsCommand,
+  AgentOptOutUdsCommand,
+} from "./agent.ts";
 import { ApiPassthroughCommand } from "./api.ts";
 import {
   AttachCommand,
@@ -72,6 +77,9 @@ export const commands: Array<CommandClass<CliContext>> = [
   LoginCommand,
   WhoamiCommand,
   ConfigShowCommand,
+  AgentCanIFollowCommand,
+  AgentOptOutUdsCommand,
+  AgentOptInUdsCommand,
   ProjectListCommand,
   ProjectMembersCommand,
   ProjectEditCommand,

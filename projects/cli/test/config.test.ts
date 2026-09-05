@@ -66,6 +66,25 @@ describe("load/save round-trip", () => {
     );
   });
 
+  it("writes no [agent] section for a config that has no preference", () => {
+    // The reason the table is optional rather than defaulted: every `todou
+    // login` rewrites this file, and a defaulted table would grow a section
+    // into it that nobody asked for.
+    const env = envFor("no-agent");
+    saveCliConfig({ servers: {}, bindings: [] }, env);
+    expect(readFileSync(configPath(env), "utf8")).not.toContain("agent");
+    expect(loadCliConfig(env).agent).toBeUndefined();
+  });
+
+  it("round-trips the uds opt-out", () => {
+    const env = envFor("agent-opt-out");
+    saveCliConfig(
+      { servers: {}, bindings: [], agent: { follow_uds: false } },
+      env,
+    );
+    expect(loadCliConfig(env).agent).toEqual({ follow_uds: false });
+  });
+
   it("chmods the file to 0600", () => {
     const env = envFor("perms");
     saveCliConfig({ servers: {}, bindings: [] }, env);

@@ -317,6 +317,12 @@ describe("watch --follow=uds (T-252)", () => {
     expect(result.stderr).toContain("held");
     expect(result.stderr).toContain("awaiting approval in the TUI");
     expect(result.stderr).toContain("crossSessionInbound");
+    // A hold is the session's settings talking, so this is the moment the
+    // opt-out becomes actionable — and the moment to say whose call it is.
+    expect(result.stderr).toContain(
+      "if --follow=uds keeps failing this way, report it to the user and " +
+        "offer them `todou agent opt-out-uds` — never run that yourself",
+    );
     // Stopped without waiting the quiet phase out and without reaching the
     // drain that would have turned fatal: the refusal landed while the loop
     // was idling, and the wait it races was cut short.
@@ -395,6 +401,68 @@ describe("watch --follow=uds (T-252)", () => {
     ]);
     expect(result.stderr).toContain("bind EADDRINUSE");
     expect(push.pushes).toHaveLength(0);
+  });
+});
+
+describe("watch --follow=uds escalation (T-259)", () => {
+  const udsEnv = {
+    ...loggedInEnv(),
+    CLAUDE_CODE_MESSAGING_SOCKET: "/run/cc-socks/4242.sock",
+  };
+  const ESCALATION = "todou agent opt-out-uds";
+
+  /** One refused delivery, and the stderr it explains itself on. */
+  const stderrFor = async (status: string) => {
+    const clock = virtualClock();
+    const push = fakePeerPush({
+      rejectAfter: { send: 1, rejection: { status } },
+    });
+    const { fetchImpl } = activityRoutes([
+      ...batch([comment(9, 3, clock.iso())], "a1"),
+      quiet,
+      quiet,
+    ]);
+    const result = await runCli(
+      ["watch", "-p", "todou", "--since", "a0", "--follow=uds"],
+      { fetchImpl, env: udsEnv, clock, openPeerPush: push.open },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain(`push ${status}`);
+    return result.stderr;
+  };
+
+  it("offers the opt-out where the session's own settings refused", async () => {
+    for (const status of ["refused", "denied", "held"]) {
+      expect(await stderrFor(status), status).toContain(ESCALATION);
+    }
+  });
+
+  it("says nothing about it where one attempt failed", async () => {
+    // `dropped` is this batch and `expired` is this message; neither says
+    // the channel is unusable, so a rerun is the answer and a standing
+    // preference would be the wrong one.
+    for (const status of ["dropped", "expired"]) {
+      expect(await stderrFor(status), status).not.toContain(ESCALATION);
+    }
+  });
+
+  it("says nothing about it when the channel never opened", async () => {
+    const clock = virtualClock();
+    const push = fakePeerPush({
+      failOpen: Object.assign(new Error("bind EADDRINUSE"), {
+        code: "EADDRINUSE",
+      }),
+    });
+    const { fetchImpl } = activityRoutes([
+      ...batch([comment(9, 3, clock.iso())], "a1"),
+      quiet,
+    ]);
+    const result = await runCli(
+      ["watch", "-p", "todou", "--since", "a0", "--follow=uds"],
+      { fetchImpl, env: udsEnv, clock, openPeerPush: push.open },
+    );
+    expect(result.stderr).toContain("could not open its push channel");
+    expect(result.stderr).not.toContain(ESCALATION);
   });
 });
 

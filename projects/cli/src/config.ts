@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, sep } from "node:path";
 import { loadTomlConfig } from "@todou/shared/config";
 import { stringify } from "smol-toml";
 import { z } from "zod";
@@ -25,6 +25,13 @@ export const CliConfig = z.object({
   default_server: z.string().optional(),
   servers: z.record(z.string(), ServerEntry).default({}),
   bindings: z.array(Binding).default([]),
+  /**
+   * Machine-wide preferences an agent's advice reads. Optional and
+   * undefaulted, unlike the tables above: `saveCliConfig` rewrites the whole
+   * document, so a defaulted table would make every `todou login` grow an
+   * `[agent]` section nobody asked for. Absent means "advise everything".
+   */
+  agent: z.object({ follow_uds: z.boolean() }).optional(),
 });
 export type CliConfig = z.infer<typeof CliConfig>;
 
@@ -33,6 +40,14 @@ export type Env = Record<string, string | undefined>;
 export function configPath(env: Env = process.env): string {
   const base = env.XDG_CONFIG_HOME || join(homedir(), ".config");
   return join(base, "todou", "config.toml");
+}
+
+/** `$HOME/x` reads as `~/x`; a JSON report keeps the absolute path. */
+export function tildePath(path: string, env: Env): string {
+  const home = env.HOME && isAbsolute(env.HOME) ? env.HOME : homedir();
+  if (!home || home === sep) return path;
+  const base = home.endsWith(sep) ? home : home + sep;
+  return path.startsWith(base) ? `~${sep}${path.slice(base.length)}` : path;
 }
 
 export function loadCliConfig(env: Env = process.env): CliConfig {

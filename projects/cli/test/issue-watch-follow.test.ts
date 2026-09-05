@@ -275,6 +275,13 @@ describe("issue watch --follow=uds (T-254)", () => {
     expect(result.stderr).toContain("held");
     expect(result.stderr).toContain("awaiting approval in the TUI");
     expect(result.stderr).toContain("crossSessionInbound");
+    // Both watches share `openFollow`, so both escalate the same way — which
+    // is the claim worth pinning, since a skill sends the agent to whichever
+    // one fits the work.
+    expect(result.stderr).toContain(
+      "if --follow=uds keeps failing this way, report it to the user and " +
+        "offer them `todou agent opt-out-uds` — never run that yourself",
+    );
     // Stopped without waiting the quiet phase out and without reaching the
     // drain that would have turned fatal: the refusal landed while the loop
     // was idling, and the wait it races was cut short.

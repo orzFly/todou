@@ -166,7 +166,26 @@ describe("config show", () => {
         },
       ],
       bindings: [],
+      agent: { follow_uds: true },
     });
+  });
+
+  it("names the uds opt-out, and only when it is set", async () => {
+    const off = seed("uds-opted-out", {
+      ...TWO_SERVERS,
+      agent: { follow_uds: false },
+    });
+    const { human, report } = await show({ env: off });
+
+    expect(human).toContain("\n\n--follow=uds: opted out");
+    expect(report.agent).toEqual({ follow_uds: false });
+    // No way back out of it here: this is a command agents run, and the
+    // switch is the user's to throw. `opt-out-uds`'s own receipt says it.
+    expect(human).not.toContain("opt-in-uds");
+
+    const on = await show({ env: seed("uds-advised", TWO_SERVERS) });
+    expect(on.human).not.toContain("--follow=uds");
+    expect(on.report.agent).toEqual({ follow_uds: true });
   });
 
   it("names TODOU_TOKEN as the source without echoing it", async () => {

@@ -31,6 +31,19 @@ export const HARNESSES = [
 ] as const satisfies readonly Harness[];
 
 /**
+ * How each harness is spelled in prose written for a reader, as opposed to
+ * the id a matcher uses. A Record over the whole union, so a harness added to
+ * HARNESS_IDS fails to compile until it has a label here — the same guard
+ * HARNESS_META gives the web.
+ */
+export const HARNESS_LABELS: Record<HarnessId, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  "hermes-agent": "Hermes",
+  pi: "pi",
+};
+
+/**
  * The harness whose host process sits nearest to us, among those the
  * environment already matched.
  *

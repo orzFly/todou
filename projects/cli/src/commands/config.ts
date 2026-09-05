@@ -1,11 +1,9 @@
 import { statSync } from "node:fs";
-import { homedir } from "node:os";
-import { isAbsolute, sep } from "node:path";
 import { resolveVersion } from "@todou/shared/version";
 import { Command, Option } from "clipanion";
 import type { CliContext } from "../api-command.ts";
 import type { CliConfig, Env } from "../config.ts";
-import { configPath, loadCliConfig } from "../config.ts";
+import { configPath, loadCliConfig, tildePath } from "../config.ts";
 import type {
   ProjectSource,
   ResolvedContext,
@@ -61,6 +59,10 @@ export type ConfigReport = {
     /** Whether this binding is the one matching the current repository. */
     active: boolean;
   }>;
+  agent: {
+    /** Whether `can-i-follow` may offer the push transport here. */
+    follow_uds: boolean;
+  };
 };
 
 function fileExists(path: string): boolean {
@@ -116,15 +118,8 @@ export function buildConfigReport(input: {
       project: binding.project,
       active: binding.remote === ctx.remoteUrl,
     })),
+    agent: { follow_uds: config.agent?.follow_uds ?? true },
   };
-}
-
-/** `$HOME/x` reads as `~/x`; the JSON keeps the absolute path. */
-function tildePath(path: string, env: Env): string {
-  const home = env.HOME && isAbsolute(env.HOME) ? env.HOME : homedir();
-  if (!home || home === sep) return path;
-  const base = home.endsWith(sep) ? home : home + sep;
-  return path.startsWith(base) ? `~${sep}${path.slice(base.length)}` : path;
 }
 
 function serverSourceLabel(report: ConfigReport, cwd: string): string | null {
@@ -253,6 +248,10 @@ export function renderConfigReport(
     lines.push("", `git remote: ${report.git_remote} (no binding)`);
   }
   lines.push("", ...bindingsBlock(report));
+  // Printed only when it is set, so ordinary output is unchanged. It names
+  // no way back: `config show` is a command agents run, and the opt-out is
+  // the user's standing decision to reverse.
+  if (!report.agent.follow_uds) lines.push("", "--follow=uds: opted out");
   return lines.join("\n");
 }
 

@@ -25,10 +25,10 @@ cap      <n>
 ```
 
 The block comes out before any dispatch. Ahead of it you may run only the reads that fill it in —
-`todou config show`, the card, `herdr agent list`; `herdr tab create`, `herdr agent start`, `herdr
-agent prompt`, the background `todou watch` and every write to the tracker wait until it is out.
-Emit it as text ahead of those tool calls: the user's chance to correct a wrong model or cap lasts
-until the first agent starts on it.
+`todou config show`, `todou agent can-i-follow`, the card, `herdr agent list`; `herdr tab create`,
+`herdr agent start`, `herdr agent prompt`, the background `todou watch` and every write to the
+tracker wait until it is out. Emit it as text ahead of those tool calls: the user's chance to
+correct a wrong model or cap lasts until the first agent starts on it.
 
 The project you look up rather than recall: `todou config show` prints the project the CLI resolves
 for the repository you are in, usually through its git binding. Only when nothing is bound does the
@@ -55,6 +55,9 @@ Keep one running in the background:
 ```bash
 todou watch -p <proj> --since <cursor> --debounce 60 --forever
 ```
+
+Before you start it, run `todou agent can-i-follow` and do what it says — how this session should
+carry a standing watch is its answer, not a guess.
 
 Run it without `--json`; the line format carries each comment's opening, which is what you act on.
 It returns with events (exit 0) or a fatal error (exit 1, which you report). Heartbeat lines on stderr

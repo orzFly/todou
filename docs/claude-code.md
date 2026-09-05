@@ -50,6 +50,16 @@ everything else, including a supervisor that runs a command and reads its
 output; the transport is never inferred from the environment, because such
 a supervisor is started *by* the session and has the variable set too.
 
+Choosing the transport is therefore the caller's job, and `todou agent
+can-i-follow` does it: it reports which one this environment supports, and
+what to run instead where neither does. It talks to no server and resolves no
+project, so it answers at any point in a session, including one that starts
+with the tracker down. Where a session keeps refusing or holding pushed
+messages, `todou agent opt-out-uds` records that on the machine and the
+report stops offering the push transport; `todou agent opt-in-uds` takes it
+back. Both change advice only — an explicit `--follow=uds` keeps working
+either way.
+
 The session exports `CLAUDE_CODE_MESSAGING_TOKEN` next to the socket path
 (Claude Code v2.1.228 and later), and every connection opens with that
 token on its first line, as `{"type":"auth","token":"…"}`. On POSIX the
