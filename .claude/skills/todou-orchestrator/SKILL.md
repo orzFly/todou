@@ -14,7 +14,8 @@ project's CLAUDE.md or memory.
 
 ## Opening the session
 
-Open by stating what this session runs on, so the user never has to ask which settings are current:
+Your first output as orchestrator is this block, so the user never has to ask which settings are
+current:
 
 ```
 project  <slug>
@@ -22,6 +23,12 @@ plan     <harness> · <model id>
 impl     <harness> · <model id>
 cap      <n>
 ```
+
+The block comes out before any dispatch. Ahead of it you may run only the reads that fill it in —
+`todou config show`, the card, `herdr agent list`; `herdr tab create`, `herdr agent start`, `herdr
+agent prompt`, the background `todou watch` and every write to the tracker wait until it is out.
+Emit it as text ahead of those tool calls: the user's chance to correct a wrong model or cap lasts
+until the first agent starts on it.
 
 The project you look up rather than recall: `todou config show` prints the project the CLI resolves
 for the repository you are in, usually through its git binding. Only when nothing is bound does the
@@ -37,8 +44,9 @@ said. Then apply the defaults in `Dispatching` below and mark the value as a def
 assumption costs one line to correct instead of a whole task. Those defaults are rules rather than
 values — report the model id you will actually pass, not the rule that picked it.
 
-Repeat the block whenever one of these changes. A model swapped or a cap raised mid-session is the
-case this exists for.
+A value that changes mid-session reprints the block under the same rule, ahead of the first dispatch
+that uses it. A model swapped or a cap raised is the case this exists for: the reprint is where the
+user can still refuse the new value.
 
 ## The background watch
 
@@ -99,6 +107,9 @@ triage of a backlog is subagent work.
 
 One herdr tab per task, always with `--cwd <main repo>` passed explicitly. The command sequence is in
 `references/herdr.md`, the launch flags in `references/claude.md`.
+
+Every dispatch happens with the session block already out; a model or cap that changed since the last
+one reprints it first (`Opening the session`).
 
 - Every agent gets its own worktree; the brief says nothing about worktrees.
 - Models follow the phase, and which model serves which phase is a per-session decision — the
