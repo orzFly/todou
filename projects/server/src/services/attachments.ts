@@ -8,6 +8,7 @@ import type {
 } from "@todou/shared";
 import { and, eq, inArray } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
+import { uniqueViolation } from "../auth/provision.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import {
@@ -19,6 +20,7 @@ import {
 import { projects } from "../db/system-schema.ts";
 import {
   AttachmentMovedError,
+  ConflictError,
   DirectUploadIncompleteError,
   DirectUploadUnavailableError,
   ForbiddenError,
@@ -32,6 +34,13 @@ import {
   requireCapability,
   routeInfoOf,
 } from "./access.ts";
+import {
+  encodeNameSegment,
+  nameKey,
+  resolveCollision,
+  sanitizeFilename,
+  takenNames,
+} from "./attachment-names.ts";
 import { visibleProjects } from "./cross-references.ts";
 import { formerSlugsOf } from "./projects.ts";
 import { aliasAddressesOf, aliasOf } from "./relocation.ts";
@@ -43,24 +52,6 @@ import {
 import { getUserRefs } from "./users.ts";
 
 type AttachmentRow = typeof attachments.$inferSelect;
-
-export function sanitizeFilename(name: string): string {
-  const cleaned = name
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
-    .replaceAll(/[\u0000-\u001f/\\:"'<>|?*]/g, "_")
-    .replaceAll("..", "_")
-    .trim();
-  return cleaned === "" ? "attachment" : cleaned.slice(0, 200);
-}
-
-/**
- * encodeURIComponent leaves ( ) ' ! * alone; parentheses would terminate
- * a markdown `](…)` destination early, and these URLs get pasted into
- * markdown bodies verbatim.
- */
-function encodeNameSegment(name: string): string {
-  return encodeURIComponent(name).replaceAll("(", "%28").replaceAll(")", "%29");
-}
 
 async function toAttachment(
   ctx: AppContext,
@@ -122,39 +113,39 @@ export async function uploadAttachment(
   const storageKey = newStorageKey();
   await ctx.storage.put(storageKey, new Uint8Array(await file.arrayBuffer()));
 
-  const filename = sanitizeFilename(file.name);
-  const row = await db.transaction(async (tx) => {
-    const inserted = await tx
-      .insert(attachments)
-      .values({
+  const requested = sanitizeFilename(file.name);
+  const row = await retryNaming(() =>
+    db.transaction(async (tx) => {
+      const attachment = await insertNamed(tx, requested, {
         projectId: project.id,
         issueId: issue.id,
         uploaderId: actor.id,
-        filename,
         contentType: file.type || "application/octet-stream",
         size: file.size,
         storageKey,
-      })
-      .returning();
-    const attachment = inserted[0];
-    if (!attachment) throw new Error("attachment insert returned no row");
+      });
 
-    await tx.insert(issueEvents).values({
-      projectId: project.id,
-      issueId: issue.id,
-      actorId: actor.id,
-      type: "attachment_added",
-      agentContext,
-      payload: {
-        attachment: { id: attachment.id, filename, size: file.size },
-      },
-    });
-    await tx
-      .update(issues)
-      .set({ updatedAt: new Date() })
-      .where(eq(issues.id, issue.id));
-    return attachment;
-  });
+      await tx.insert(issueEvents).values({
+        projectId: project.id,
+        issueId: issue.id,
+        actorId: actor.id,
+        type: "attachment_added",
+        agentContext,
+        payload: {
+          attachment: {
+            id: attachment.id,
+            filename: attachment.filename,
+            size: file.size,
+          },
+        },
+      });
+      await tx
+        .update(issues)
+        .set({ updatedAt: new Date() })
+        .where(eq(issues.id, issue.id));
+      return attachment;
+    }),
+  );
 
   publishAttachmentEvents(ctx, project.id, row.id, issue.id, issueNumber);
   return toAttachment(ctx, slug, row);
@@ -163,6 +154,63 @@ export async function uploadAttachment(
 function newStorageKey(): string {
   const uuid = randomUUID();
   return `${uuid.slice(0, 2)}/${uuid.slice(2, 4)}/${uuid}`;
+}
+
+/**
+ * Insert the row under a name free on this card (T-269).
+ *
+ * The colliding case needs the row's own id, which `generated always as
+ * identity` will not hand out before the insert — so it lands under a
+ * placeholder and one same-transaction update settles the name. The
+ * placeholder is the row's storage key: `attachments_storage_key_idx` already
+ * guarantees it collides with nothing, and it never leaves this transaction.
+ */
+async function insertNamed(
+  tx: Db,
+  requested: string,
+  values: Omit<typeof attachments.$inferInsert, "filename">,
+): Promise<AttachmentRow> {
+  const taken = await takenNames(tx, values.issueId);
+  const free = !taken.has(nameKey(requested));
+  const inserted = await tx
+    .insert(attachments)
+    .values({ ...values, filename: free ? requested : values.storageKey })
+    .returning();
+  const attachment = inserted[0];
+  if (!attachment) throw new Error("attachment insert returned no row");
+  if (free) return attachment;
+
+  const renamed = await tx
+    .update(attachments)
+    .set({ filename: resolveCollision(taken, requested, attachment.id) })
+    .where(eq(attachments.id, attachment.id))
+    .returning();
+  const settled = renamed[0];
+  if (!settled) throw new Error("attachment rename returned no row");
+  return settled;
+}
+
+/**
+ * Reading the taken names and inserting are two statements, so a concurrent
+ * upload of the same name on the same card can slip between them; the unique
+ * index catches that and this retries the whole transaction, which reads the
+ * winner's name on the way past. Both clients upload sequentially today, so
+ * this is the index's escape hatch rather than a path anything walks.
+ */
+async function retryNaming<T>(attempt: () => Promise<T>): Promise<T> {
+  for (let left = 5; ; left -= 1) {
+    try {
+      return await attempt();
+    } catch (err) {
+      if (uniqueViolation(err) !== "attachments_issue_filename_idx") throw err;
+      if (left <= 1) {
+        throw new ConflictError(
+          "that filename is being written to this card concurrently; " +
+            "retry the upload",
+        );
+      }
+    }
+  }
 }
 
 function publishAttachmentEvents(
@@ -338,46 +386,42 @@ export async function completeDirectUpload(
 
   let row: AttachmentRow;
   try {
-    row = await db.transaction(async (tx) => {
-      const inserted = await tx
-        .insert(attachments)
-        .values({
+    row = await retryNaming(() =>
+      db.transaction(async (tx) => {
+        const attachment = await insertNamed(tx, pending.filename, {
           projectId: project.id,
           issueId: pending.issueId,
           uploaderId: pending.uploaderId,
-          filename: pending.filename,
           contentType: pending.contentType,
           size: pending.declaredSize,
           storageKey: pending.storageKey,
-        })
-        .returning();
-      const attachment = inserted[0];
-      if (!attachment) throw new Error("attachment insert returned no row");
+        });
 
-      await tx.insert(issueEvents).values({
-        projectId: project.id,
-        issueId: pending.issueId,
-        actorId: actor.id,
-        type: "attachment_added",
-        agentContext,
-        payload: {
-          attachment: {
-            id: attachment.id,
-            filename: pending.filename,
-            size: pending.declaredSize,
+        await tx.insert(issueEvents).values({
+          projectId: project.id,
+          issueId: pending.issueId,
+          actorId: actor.id,
+          type: "attachment_added",
+          agentContext,
+          payload: {
+            attachment: {
+              id: attachment.id,
+              filename: attachment.filename,
+              size: pending.declaredSize,
+            },
           },
-        },
-      });
-      await tx
-        .update(pendingUploads)
-        .set({ completedAt: new Date() })
-        .where(eq(pendingUploads.id, pending.id));
-      await tx
-        .update(issues)
-        .set({ updatedAt: new Date() })
-        .where(eq(issues.id, pending.issueId));
-      return attachment;
-    });
+        });
+        await tx
+          .update(pendingUploads)
+          .set({ completedAt: new Date() })
+          .where(eq(pendingUploads.id, pending.id));
+        await tx
+          .update(issues)
+          .set({ updatedAt: new Date() })
+          .where(eq(issues.id, pending.issueId));
+        return attachment;
+      }),
+    );
   } catch (err) {
     // A concurrent complete of the same upload hit the storage_key unique
     // index first; converge on its row instead of surfacing the race.

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { sanitizeFilename } from "../src/services/attachments.ts";
+import { sanitizeFilename } from "../src/services/attachment-names.ts";
 import { type FakeS3, startFakeS3 } from "./fake-s3.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
 
@@ -251,6 +251,139 @@ describe("attachments (fs backend)", () => {
   });
 });
 
+describe("filenames are unique within one card (T-269)", () => {
+  let t: TestApp;
+  let cookie: string;
+  const slug = "attach-unique";
+  const headers = () => ({ "content-type": "application/json", cookie });
+
+  beforeAll(async () => {
+    t = await makeTestApp("dedicated");
+    cookie = await t.login();
+    await t.app.request("/api/projects", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ slug, name: "Unique" }),
+    });
+    for (const title of ["first card", "second card"]) {
+      await t.app.request(`/api/projects/${slug}/issues`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ title }),
+      });
+    }
+  });
+
+  afterAll(async () => {
+    await t.cleanup();
+  });
+
+  const put = async (issueNumber: number, name: string) => {
+    const form = new FormData();
+    form.set("file", new File(["bytes"], name, { type: "text/plain" }));
+    form.set("issue_number", String(issueNumber));
+    const res = await t.app.request(`/api/projects/${slug}/attachments`, {
+      method: "POST",
+      headers: { cookie },
+      body: form,
+    });
+    expect(res.status).toBe(201);
+    return json(res);
+  };
+
+  it("appends the new attachment's own id to a taken name", async () => {
+    const first = await put(1, "foo.png");
+    expect(first.filename).toBe("foo.png");
+    const second = await put(1, "foo.png");
+    expect(second.filename).toBe(`foo-${second.id}.png`);
+    const third = await put(1, "foo.png");
+    expect(third.filename).toBe(`foo-${third.id}.png`);
+    expect(third.url).toContain(`/download/foo-${third.id}.png`);
+  });
+
+  it("folds case when deciding, and keeps it when storing", async () => {
+    const clashing = await put(1, "FOO.PNG");
+    expect(clashing.filename).toBe(`FOO-${clashing.id}.PNG`);
+  });
+
+  it("walks past an id-suffixed name someone really uploaded", async () => {
+    const first = await put(1, "bar.png");
+    // The next two inserts take the next two ids, so a file named after the
+    // one after that is waiting when the third upload asks for it.
+    const decoy = await put(1, `bar-${first.id + 2}.png`);
+    expect(decoy.id).toBe(first.id + 1);
+    expect(decoy.filename).toBe(`bar-${first.id + 2}.png`);
+
+    const third = await put(1, "bar.png");
+    expect(third.id).toBe(first.id + 2);
+    expect(third.filename).toBe(`bar-${first.id + 2}-2.png`);
+  });
+
+  it("puts the suffix at the end of a name with no extension", async () => {
+    const first = await put(1, "README");
+    expect(first.filename).toBe("README");
+    const second = await put(1, "README");
+    expect(second.filename).toBe(`README-${second.id}`);
+  });
+
+  it("scopes uniqueness to the card, not the project", async () => {
+    const elsewhere = await put(2, "foo.png");
+    expect(elsewhere.filename).toBe("foo.png");
+  });
+
+  it("does not know what image.png means", async () => {
+    // The clipboard default is renamed in the browser, at paste time; the
+    // server sees an ordinary name and treats it as one.
+    const first = await put(2, "image.png");
+    expect(first.filename).toBe("image.png");
+    const second = await put(2, "image.png");
+    expect(second.filename).toBe(`image-${second.id}.png`);
+  });
+
+  it("encodes the final name into the url segment", async () => {
+    const parens = await put(2, "shot (1).png");
+    expect(parens.filename).toBe("shot (1).png");
+    expect(parens.url).toContain("/download/shot%20%281%29.png");
+
+    const clashing = await put(2, "shot (1).png");
+    expect(clashing.filename).toBe(`shot (1)-${clashing.id}.png`);
+    expect(clashing.url).toContain(
+      `/download/shot%20%281%29-${clashing.id}.png`,
+    );
+  });
+
+  it("lists every name on the card exactly once", async () => {
+    const list = await json(
+      await t.app.request(`/api/projects/${slug}/attachments?issue_number=1`, {
+        headers: { cookie },
+      }),
+    );
+    const folded = list.map((one: { filename: string }) =>
+      one.filename.toLowerCase(),
+    );
+    expect(folded.length).toBeGreaterThan(1);
+    expect(new Set(folded).size).toBe(folded.length);
+  });
+
+  it("records the stored name on the timeline event, not the asked-for one", async () => {
+    const clashing = await put(1, "foo.png");
+    const timeline = await json(
+      await t.app.request(`/api/projects/${slug}/issues/1/timeline?limit=100`, {
+        headers: { cookie },
+      }),
+    );
+    const entry = timeline.items.find(
+      (one: {
+        event_type?: string;
+        payload?: { attachment?: { id: number; filename: string } };
+      }) =>
+        one.event_type === "attachment_added" &&
+        one.payload?.attachment?.id === clashing.id,
+    );
+    expect(entry?.payload?.attachment?.filename).toBe(clashing.filename);
+  });
+});
+
 describe("direct uploads (fs backend)", () => {
   let t: TestApp;
   let cookie: string;
@@ -498,6 +631,32 @@ describe("attachments (s3 backend)", () => {
           i.type === "event" && i.event_type === "attachment_added",
       ),
     ).toBe(true);
+  });
+
+  // The ticket's filename is a declaration; the name is settled at complete,
+  // by the same rule the multipart path uses (T-269).
+  it("renames a clashing name on the direct path too", async () => {
+    const first = await json(await multipartUpload("shared.txt", "first"));
+    expect(first.filename).toBe("shared.txt");
+
+    const body = "second";
+    const ticket = await json(
+      await requestDirect({
+        filename: "shared.txt",
+        content_type: "text/plain",
+        size: body.length,
+      }),
+    );
+    const put = await fetch(ticket.url, { method: "PUT", body });
+    expect(put.status).toBe(200);
+
+    const attachment = await json(await complete(ticket.upload_id));
+    expect(attachment.filename).toBe(`shared-${attachment.id}.txt`);
+    expect(attachment.url).toContain(`/download/shared-${attachment.id}.txt`);
+
+    // A replayed complete converges on the row, name included.
+    const replay = await json(await complete(ticket.upload_id));
+    expect(replay.filename).toBe(attachment.filename);
   });
 
   it("pins a client-supplied sha256 into the upload", async () => {

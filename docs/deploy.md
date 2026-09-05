@@ -67,6 +67,11 @@ For PostgreSQL, set `database.system` to a `postgres://` URL and apply
 migrations explicitly: `todou-server migrate` applies pending migrations to
 the system database and every project database.
 
+Migration 0013 is the one that changes existing data rather than only its
+shape: it renames stored attachment filenames so that no two on one card
+collide. See [Relabelling attachment links after the filename
+migration](#relabelling-attachment-links-after-the-filename-migration).
+
 ### What project search needs from PostgreSQL
 
 Project search runs on `pg_trgm`, so a `postgres://` deployment has two
@@ -760,3 +765,33 @@ one.
 The dry run ends with the spellings it could not resolve — a target that
 never existed, or one that is gone. Those stay verbatim, which is the
 intended answer, but the list is worth reading once before the real run.
+
+### Relabelling attachment links after the filename migration
+
+Migration 0013 makes attachment filenames unique within a card, which renames
+the files that clashed and every stored `image.<ext>` — the name browsers give
+a pasted screenshot. It runs with the rest of the migrations; nothing to do.
+
+No link breaks: an attachment URL addresses the file by id and the last
+segment is decoration. What goes stale is what a reader sees — link text that
+spelled out the old filename, and that last URL segment. Fixing it is one
+optional pass afterwards:
+
+```sh
+todou-server attachments relabel --dry-run    # report what would change
+todou-server attachments relabel              # change it
+todou-server attachments relabel --dry-run    # must now report nothing
+```
+
+The old name moves in the two places a reader sees it: link text that is
+character-for-character the old filename, and the last segment of a URL —
+the destination's, and the text's own when the text is nothing but the
+attachment's URL, which is the shape `refs migrate` leaves behind for an
+address that was pasted bare. Captions someone wrote themselves are left
+alone. `--project <slug>` limits the walk, and each rewritten body or
+comment records a revision holding the original text.
+
+Run it after `refs migrate` when both are pending. Either order gives the
+same text — the two passes touch different parts of a link — but the bare
+addresses `refs migrate` wraps are only worth relabelling once they are
+links.

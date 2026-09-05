@@ -55,7 +55,13 @@ const uploadRoute = createRoute({
   },
   responses: {
     201: {
-      description: "Uploaded",
+      description:
+        "Uploaded. `filename` is authoritative and may differ from the name " +
+        "sent: filenames are unique within an issue, so a name already taken " +
+        "there comes back with the new attachment's id appended " +
+        "(`foo.png` → `foo-813.png`). Build markdown from the returned " +
+        "`filename` and `url`, never from the local name. 409 `conflict` " +
+        "means a concurrent upload kept claiming the same name; retry.",
       content: { "application/json": { schema: Attachment } },
     },
   },
@@ -108,7 +114,10 @@ const directUploadCompleteRoute = createRoute({
   },
   responses: {
     201: {
-      description: "Registered",
+      description:
+        "Registered. The ticket's `filename` was a declaration; the stored " +
+        "name is settled here and returned, under the same uniqueness rule " +
+        "as the multipart upload.",
       content: { "application/json": { schema: Attachment } },
     },
   },

@@ -388,6 +388,13 @@ export const attachments = pgTable(
   (t) => [
     uniqueIndex("attachments_storage_key_idx").on(t.storageKey),
     index("attachments_issue_idx").on(t.issueId),
+    // Folded, not verbatim: two names differing only in case land on the same
+    // file when downloaded into one directory (T-269). NFC folding happens at
+    // the upload entrance instead, in `sanitizeFilename`.
+    uniqueIndex("attachments_issue_filename_idx").on(
+      t.issueId,
+      sql`lower(${t.filename})`,
+    ),
   ],
 );
 

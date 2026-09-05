@@ -13,6 +13,7 @@ import {
   attachmentImageMarker,
   attachmentLinkMarker,
 } from "@/lib/attachment-refs.ts";
+import { renameIfClipboardDefault } from "@/lib/pasted-filename.ts";
 
 export type StagedFile = {
   key: number;
@@ -51,8 +52,13 @@ export function useStagedFiles() {
     [],
   );
 
-  function stage(files: Iterable<File>): boolean {
-    const list = [...files];
+  function stage(
+    files: Iterable<File>,
+    opts?: { fromClipboard?: boolean },
+  ): boolean {
+    const list = [...files].map((file) =>
+      opts?.fromClipboard === true ? renameIfClipboardDefault(file) : file,
+    );
     if (list.length === 0) return false;
     setStaged((prev) => [
       ...prev,
@@ -127,7 +133,11 @@ export function useStagedFiles() {
   }
 
   function onPaste(e: FileClipboardEvent) {
-    if (stage(e.clipboardData?.files ?? [])) e.preventDefault();
+    // The only route the clipboard-default rename applies to: a drop or a
+    // file picker carries a name someone actually chose.
+    if (stage(e.clipboardData?.files ?? [], { fromClipboard: true })) {
+      e.preventDefault();
+    }
   }
 
   function onDrop(e: FileDragEvent) {
@@ -215,40 +225,46 @@ export function StagedFileTray({
   if (staged.length === 0) return null;
   return (
     <div className="flex flex-wrap items-end gap-2">
-      {staged.map((item) => (
-        <div key={item.key} className="group relative">
-          {item.previewUrl !== null ? (
-            <img
-              src={item.previewUrl}
-              alt={item.file.name}
-              title={item.file.name}
-              className="h-16 w-16 rounded-md border object-cover"
-            />
-          ) : (
-            <div
-              title={item.file.name}
-              className="flex h-16 max-w-48 min-w-32 flex-col justify-center gap-0.5 rounded-md border px-2.5 text-xs"
+      {staged.map((item) => {
+        // Once the server has answered, its name is the authoritative one —
+        // it may have appended an id to settle a clash (T-269), and what the
+        // tray shows has to be what the body will say.
+        const name = item.uploaded?.filename ?? item.file.name;
+        return (
+          <div key={item.key} className="group relative">
+            {item.previewUrl !== null ? (
+              <img
+                src={item.previewUrl}
+                alt={name}
+                title={name}
+                className="h-16 w-16 rounded-md border object-cover"
+              />
+            ) : (
+              <div
+                title={name}
+                className="flex h-16 max-w-48 min-w-32 flex-col justify-center gap-0.5 rounded-md border px-2.5 text-xs"
+              >
+                <span className="flex items-center gap-1 font-medium">
+                  <FileIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{name}</span>
+                </span>
+                <span className="pl-4.5 text-muted-foreground">
+                  {formatSize(item.file.size)}
+                </span>
+              </div>
+            )}
+            <button
+              type="button"
+              aria-label={`remove ${name}`}
+              disabled={disabled}
+              onClick={() => onRemove(item.key)}
+              className="absolute -top-1.5 -right-1.5 rounded-full border bg-background p-0.5 text-muted-foreground shadow-sm hover:text-foreground disabled:opacity-50"
             >
-              <span className="flex items-center gap-1 font-medium">
-                <FileIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="truncate">{item.file.name}</span>
-              </span>
-              <span className="pl-4.5 text-muted-foreground">
-                {formatSize(item.file.size)}
-              </span>
-            </div>
-          )}
-          <button
-            type="button"
-            aria-label={`remove ${item.file.name}`}
-            disabled={disabled}
-            onClick={() => onRemove(item.key)}
-            className="absolute -top-1.5 -right-1.5 rounded-full border bg-background p-0.5 text-muted-foreground shadow-sm hover:text-foreground disabled:opacity-50"
-          >
-            <XIcon className="size-3" />
-          </button>
-        </div>
-      ))}
+              <XIcon className="size-3" />
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 }

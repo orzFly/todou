@@ -238,6 +238,22 @@ describe("attach download", () => {
     expect(readFileSync(join(dir, "42"), "utf8")).toBe(PAYLOAD);
   });
 
+  it("finds a name typed in the wrong case (T-269)", async () => {
+    const dir = cwd();
+    const { fetchImpl, calls } = fakeFetch(routes([file(), NOTES]));
+    const result = await runCli(["attach", "download", "16", "SHOT.PNG"], {
+      fetchImpl,
+      env,
+      cwd: dir,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(calls.at(-1)?.url).toBe(
+      "http://stub.test/api/projects/demo/attachments/42/download",
+    );
+    // Saved under the stored spelling, not the one that was typed.
+    expect(readFileSync(join(dir, "shot.png"), "utf8")).toBe(PAYLOAD);
+  });
+
   it("refuses to guess between two attachments of one name", async () => {
     const twins = [file(), file({ id: 99, size: 11 })];
     const { fetchImpl } = fakeFetch(routes(twins));

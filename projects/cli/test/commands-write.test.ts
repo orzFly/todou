@@ -948,6 +948,43 @@ describe("attach", () => {
     expect(result.stdout).toBe("#1 note.txt → /attachments/note.txt\n");
   });
 
+  it("says so when the server stored the file under another name", async () => {
+    const file = join(dir, "shot.png");
+    writeFileSync(file, "png-ish");
+    const { fetchImpl } = fakeFetch([
+      [
+        "POST",
+        "/api/projects/todou/attachments/direct-uploads",
+        {
+          __status: 409,
+          body: { error: { code: "direct_upload_unavailable" } },
+        },
+      ],
+      [
+        "POST",
+        "/api/projects/todou/attachments",
+        {
+          id: 813,
+          filename: "shot-813.png",
+          content_type: "image/png",
+          size: 7,
+          url: "/attachments/shot-813.png",
+          uploader: me,
+          created_at: "2026-09-05T12:00:00Z",
+        },
+      ],
+    ]);
+    const result = await runCli(["attach", "3", file], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain("uploaded shot.png as shot-813.png");
+    expect(result.stdout).toBe(
+      "#813 shot-813.png → /attachments/shot-813.png\n",
+    );
+  });
+
   it("fails on an unreadable file", async () => {
     const { fetchImpl } = fakeFetch([]);
     const result = await runCli(["attach", "3", join(dir, "missing.bin")], {

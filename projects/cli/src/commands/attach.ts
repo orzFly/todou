@@ -66,8 +66,16 @@ export class AttachCommand extends ProjectCommand {
       const file = new File([blob], basename(path), {
         type: blob.type || mimeTypeFor(path),
       });
-      uploaded.push(await client.uploadAttachment(project, number, file));
-      this.note(`uploaded ${basename(path)}`);
+      const stored = await client.uploadAttachment(project, number, file);
+      uploaded.push(stored);
+      // Filenames are unique within a card, so the server may have appended
+      // an id (T-269). Say so when it did: the markdown someone writes next
+      // has to use the stored name, not the one on their disk.
+      this.note(
+        stored.filename === basename(path)
+          ? `uploaded ${basename(path)}`
+          : `uploaded ${basename(path)} as ${stored.filename}`,
+      );
     }
     this.output(uploaded, () =>
       // `#id` first, the shape `attach list` prints and `attach download`
@@ -112,18 +120,24 @@ export class AttachListCommand extends ProjectCommand {
 /**
  * A digits-only argument is an id first and a filename second, so an
  * attachment literally named "42" stays reachable once no id matches.
- * Ambiguity is never broken silently: two files of one name on one issue is
- * an ordinary thing to have, and guessing would write the wrong bytes.
+ *
+ * Names are matched with the server's own yardstick — NFC, case folded —
+ * which is what `attachments_issue_filename_idx` enforces, so a name typed
+ * in the wrong case still finds its file.
  */
 function selectAttachment(list: Attachment[], key: string): Attachment {
   if (/^\d+$/.test(key)) {
     const byId = list.find((a) => a.id === Number(key));
     if (byId !== undefined) return byId;
   }
-  const named = list.filter((a) => a.filename === key);
+  const fold = (name: string) => name.normalize("NFC").toLowerCase();
+  const named = list.filter((a) => fold(a.filename) === fold(key));
   const first = named[0];
   if (named.length === 1 && first !== undefined) return first;
   if (named.length > 1) {
+    // Unreachable since T-269 made filenames unique within a card; kept as
+    // the backstop for a server that predates the index, where guessing
+    // would write the wrong bytes.
     throw new CliError(
       `${named.length} attachments are named "${key}":\n${table(
         named.map((a) => [`#${a.id}`, formatBytes(a.size), a.created_at]),
@@ -148,10 +162,11 @@ export class AttachDownloadCommand extends ProjectCommand {
       "never a reason to read a token out of the config file and hand-write " +
       "a request. Permissions are the server's usual ones: whoever can read " +
       "the issue can download its files.\n\n" +
-      "`<id-or-name>` is an id from `attach list` or an exact filename; a " +
-      "name shared by several attachments is an error listing their ids. " +
-      "Without `-o` the file lands in the current directory under its own " +
-      "name and an existing file is never overwritten. `-o <dir>` writes " +
+      "`<id-or-name>` is an id from `attach list` or a filename; filenames " +
+      "are unique within an issue, so a name is never ambiguous, and the " +
+      "match ignores case. Without `-o` the file lands in the current " +
+      "directory under its own name and an existing file is never " +
+      "overwritten. `-o <dir>` writes " +
       "into that directory under the same rule, `-o <file>` writes exactly " +
       "there and may overwrite, and `-o -` streams the bytes to stdout.",
     examples: [

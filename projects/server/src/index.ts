@@ -6,6 +6,7 @@ import { bootstrap } from "./bootstrap.ts";
 import { loadConfig, resolveS3Settings } from "./config.ts";
 import { DbRouter } from "./db/router.ts";
 import { projects } from "./db/system-schema.ts";
+import { relabelAttachments } from "./services/attachment-relabel.ts";
 import {
   runStartupChores,
   startHousekeeping,
@@ -297,6 +298,59 @@ class RefsMigrateCommand extends ConfiguredCommand {
   }
 }
 
+class AttachmentsRelabelCommand extends ConfiguredCommand {
+  static paths = [["attachments", "relabel"]];
+
+  static usage = Command.Usage({
+    description:
+      "Update attachment link text left behind by the filename migration",
+    details:
+      "Migration 0013 made attachment filenames unique within a card, which " +
+      "renamed some existing files. Nothing broke — an attachment URL " +
+      "addresses the attachment by id and the last segment is decoration — " +
+      "but a body that spelled out the old name still shows it. This walks " +
+      "every issue body, comment and spec file and updates link text that " +
+      "is character-for-character the old filename, along with the last " +
+      "segment of the destination and of a link text that is itself the " +
+      "attachment's URL; captions the author wrote themselves are left " +
+      "alone. Run it after `refs migrate` when both are pending. " +
+      "Rewritten bodies and comments record a revision holding the original " +
+      "text. Idempotent: a second run finds nothing, so a real run after a " +
+      "--dry-run is safe.",
+  });
+
+  dryRun = Option.Boolean("--dry-run", false, {
+    description: "Report what would be relabelled and change nothing",
+  });
+
+  project = Option.String("--project", {
+    description: "Limit the walk to one project slug",
+  });
+
+  async execute(): Promise<number | undefined> {
+    const config = this.loadConfig();
+    const router = await DbRouter.open(config);
+    try {
+      const report = await relabelAttachments(
+        { router },
+        {
+          dryRun: this.dryRun,
+          ...(this.project === undefined ? {} : { slug: this.project }),
+          log: (line) => this.context.stdout.write(`${line}\n`),
+        },
+      );
+      this.context.stdout.write(
+        `${this.dryRun ? "[dry-run] would relabel" : "relabelled"} ` +
+          `${report.links} link(s) in ${report.segments} segment(s) across ` +
+          `${report.projects} project(s); ${report.skipped} link(s) skipped\n`,
+      );
+      return 0;
+    } finally {
+      await router.close();
+    }
+  }
+}
+
 // The `user` command group is deliberately shell-only (no HTTP surface):
 // moving history onto an IdP identity is an operator act, never something an
 // asserted username may trigger (T-86). On PGlite deployments stop the server
@@ -472,6 +526,7 @@ cli.register(MigrateCommand);
 cli.register(StorageMigrateCommand);
 cli.register(StorageGcCommand);
 cli.register(RefsMigrateCommand);
+cli.register(AttachmentsRelabelCommand);
 cli.register(UserListCommand);
 cli.register(UserBindSubjectCommand);
 cli.register(UserAdoptCommand);
