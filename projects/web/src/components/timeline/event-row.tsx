@@ -380,52 +380,54 @@ export function referenceSource(
   const commentId =
     typeof payload.by_comment === "number" ? payload.by_comment : undefined;
 
-  if (event.event_type === "referenced") {
-    const number = Number(payload.by_issue);
-    const text = formatRef(ctx.refConfig.internalPrefix, number);
-    return {
-      node:
-        ctx.slug === undefined ? (
-          text
-        ) : (
-          <IssueLink slug={ctx.slug} number={number} commentId={commentId} />
-        ),
-      text,
-    };
+  const number = payload.by_issue;
+  if (typeof number !== "number") {
+    const unknown = "another card";
+    return { node: unknown, text: unknown };
   }
 
-  const project = payload.by_project;
-  const number = payload.by_issue;
-  // A row a move rewrote stays visible with its far side blanked; it was
-  // visible before the move, and losing it would be the disappearance
-  // the redaction rule exists to prevent.
-  if (payload.by_moved === true && project === null) {
-    const moved = "a card that has since moved";
-    return { node: moved, text: moved };
-  }
-  // Self-contained on purpose: the source lives in another project, so
-  // this project's format would spell a number that means nothing here.
-  const text = `${String(project)}#${String(number)}`;
-  if (typeof project !== "string" || typeof number !== "number")
-    return { node: text, text };
-  // An id beats a slug: a slug has to be read as of the event's own
-  // instant, and after it changes hands that answer is a guess.
+  // Which project wrote the reference. An id beats a slug: a slug has to be
+  // read as of the event's own instant, and after it changes hands that
+  // answer is a guess. A row carrying neither is a local reference from
+  // before the two event types merged (T-266) — local by definition, since
+  // that is the only kind the old `referenced` type ever held.
   const byId =
     typeof payload.by_project_id === "number"
       ? ctx.slugOfProject?.(payload.by_project_id)
       : undefined;
-  const slug =
+  const legacy =
+    typeof payload.by_project === "string" ? payload.by_project : null;
+  const named =
     byId ??
-    resolveSlugAt(ctx.slugEntries, [], project, event.created_at) ??
-    project;
+    (legacy === null
+      ? null
+      : (resolveSlugAt(ctx.slugEntries, [], legacy, event.created_at) ??
+        legacy));
+  // Falling back to the current project is only right for a row that names
+  // none. One that names a project nobody here can resolve must not be
+  // attributed to this one: `#3` would then link a real, unrelated card.
+  const namesProject =
+    typeof payload.by_project_id === "number" || legacy !== null;
+  const slug = namesProject ? named : ctx.slug;
+  if (slug === undefined || slug === null) {
+    const text = `#${number}`;
+    return { node: text, text };
+  }
+
+  // Local or not is a display property now, worked out by comparing where
+  // the reference was written with where it is being read.
+  const local = slug === ctx.slug;
+  const text = local
+    ? formatRef(ctx.refConfig.internalPrefix, number)
+    : `${slug}#${number}`;
   return {
     node: (
       <IssueLink
         slug={slug}
         number={number}
         commentId={commentId}
-        crossProject
-        fallback={`${slug}#${number}`}
+        crossProject={!local}
+        fallback={text}
       />
     ),
     text,

@@ -115,10 +115,10 @@ describe("cross-project references T-150", () => {
     );
 
     for (const number of targets) {
-      const landed = await events(DST, number, "cross_referenced");
+      const landed = await events(DST, number, "referenced");
       expect(landed).toHaveLength(1);
       expect(landed[0]?.payload).toMatchObject({
-        by_project: SRC,
+        by_project_id: projectId[SRC],
         by_issue: source,
       });
     }
@@ -142,7 +142,7 @@ describe("cross-project references T-150", () => {
       body: JSON.stringify({ body: `second ${DST}#${target}` }),
     });
     expect(res.status).toBe(200);
-    expect(await events(DST, target, "cross_referenced")).toHaveLength(1);
+    expect(await events(DST, target, "referenced")).toHaveLength(1);
   });
 
   it("carries the source comment when the reference came from one", async () => {
@@ -158,9 +158,9 @@ describe("cross-project references T-150", () => {
     );
     expect(res.status).toBe(201);
     const comment = await json(res);
-    const landed = await events(DST, target, "cross_referenced");
+    const landed = await events(DST, target, "referenced");
     expect(landed[0]?.payload).toMatchObject({
-      by_project: SRC,
+      by_project_id: projectId[SRC],
       by_issue: source,
       by_comment: comment.id,
     });
@@ -191,14 +191,14 @@ describe("cross-project references T-150", () => {
     await putFormat(DST, "DST");
     const target = await createIssue(DST, "bare target");
     await createIssue(SRC, "bare source", `fixes DST-${target}`);
-    expect(await events(DST, target, "cross_referenced")).toHaveLength(1);
+    expect(await events(DST, target, "referenced")).toHaveLength(1);
   });
 
   it("refuses to guess once a second project claims the prefix", async () => {
     await putFormat(RIVAL, "DST");
     const target = await createIssue(DST, "contested target");
     await createIssue(SRC, "contested source", `fixes DST-${target}`);
-    expect(await events(DST, target, "cross_referenced")).toHaveLength(0);
+    expect(await events(DST, target, "referenced")).toHaveLength(0);
   });
 
   it("writes nothing when the author cannot read the target", async () => {
@@ -210,7 +210,7 @@ describe("cross-project references T-150", () => {
       bob.headers,
     );
     expect(source).toBeGreaterThan(0);
-    expect(await events(DST, target, "cross_referenced")).toHaveLength(0);
+    expect(await events(DST, target, "referenced")).toHaveLength(0);
   });
 
   it("treats a bare comment anchor as a reference to its issue", async () => {
@@ -229,7 +229,7 @@ describe("cross-project references T-150", () => {
     expect(await events(SRC, target, "referenced")).toHaveLength(1);
   });
 
-  it("records a cross reference from text written years ago", async () => {
+  it("reads text written years ago under today's grammar", async () => {
     const target = await createIssue(DST, "old-text target");
     const source = await createIssue(SRC, "old-text source");
     const db = await dbOf(SRC);
@@ -248,7 +248,12 @@ describe("cross-project references T-150", () => {
       body: JSON.stringify({ body: `see ${DST}#${target}` }),
     });
     expect(res.status).toBe(200);
-    expect(await events(DST, target, "cross_referenced")).toHaveLength(1);
+    // The card's age is no longer an input: what the author typed just now is
+    // read under the rules in force just now (T-266).
+    expect(await events(DST, target, "referenced")).toHaveLength(1);
+    expect((await json(res)).body).toBe(
+      `see [${DST}#${target}](/projects/${projectId[DST]}/issues/${target})`,
+    );
   });
 });
 
@@ -289,7 +294,7 @@ describe("cross-project references across a rename (T-156)", () => {
 
   const crossEvents = async (slug: string, number: number) => {
     const res = await t.app.request(
-      `/api/projects/${slug}/issues/${number}/timeline?types=cross_referenced&limit=100`,
+      `/api/projects/${slug}/issues/${number}/timeline?types=referenced&limit=100`,
       { headers: { cookie } },
     );
     expect(res.status).toBe(200);
@@ -307,7 +312,7 @@ describe("cross-project references across a rename (T-156)", () => {
     await t.cleanup();
   });
 
-  it("re-resolves old text to the project that held the slug then", async () => {
+  it("holds what it already resolved, and reads new text under the new holder", async () => {
     await create("ren-src");
     await create("ren-tgt");
     await create("ren-thief");
@@ -318,24 +323,33 @@ describe("cross-project references across a rename (T-156)", () => {
     await settle();
     const source = await issue("ren-src", "points across", "see ren-tgt/1");
     expect(await crossEvents("ren-tgt", target)).toHaveLength(1);
+    const stored = await t.app.request(
+      `/api/projects/ren-src/issues/${source}`,
+      {
+        headers: { cookie },
+      },
+    );
+    const href = (await json(stored)).body.match(/\((\/projects\/[^)]+)\)/)[1];
 
     await rename("ren-tgt", { slug: "ren-tgt2" });
     await rename("ren-thief", { slug: "ren-tgt", reclaim: true });
 
-    // Editing replays extraction against the body's ORIGINAL timestamp, so
-    // "ren-tgt" still means whoever held it when the text was written.
+    // The link written before the rename still names the project it resolved
+    // to, by an id no rename touches (T-266 P3). What the slug means to
+    // somebody typing it TODAY is the new holder, which is what a fresh edit
+    // gets — an input rule, not a rewrite of history.
     const edited = await t.app.request(
       `/api/projects/ren-src/issues/${source}`,
       {
         method: "PATCH",
         headers: headers(),
-        body: JSON.stringify({ body: "see ren-tgt/1 (still)" }),
+        body: JSON.stringify({ body: `kept ${href} and new ren-tgt/1` }),
       },
     );
     expect(edited.status).toBe(200);
 
     expect(await crossEvents("ren-tgt2", target)).toHaveLength(1);
-    expect(await crossEvents("ren-tgt", decoy)).toHaveLength(0);
+    expect(await crossEvents("ren-tgt", decoy)).toHaveLength(1);
   });
 
   it("keeps a renamed project's old references visible on the target", async () => {
@@ -344,15 +358,16 @@ describe("cross-project references across a rename (T-156)", () => {
     const target = await issue("vis-tgt", "referenced once");
     await settle();
     await issue("vis-src", "the source", "see vis-tgt/1");
-    expect(await crossEvents("vis-tgt", target)).toHaveLength(1);
+    const before = await crossEvents("vis-tgt", target);
+    expect(before).toHaveLength(1);
 
     await rename("vis-src", { slug: "vis-src2" });
 
-    // The event payload still spells the old slug; the visibility predicate
-    // has to know that spelling belongs to a project this viewer can read.
+    // The payload names the referring project by id, so a rename cannot make
+    // the event disappear and cannot hand it to whoever takes the old slug.
     const after = await crossEvents("vis-tgt", target);
-    expect(after).toHaveLength(1);
-    expect(after[0]?.payload.by_project).toBe("vis-src");
+    expect(after).toEqual(before);
+    expect(after[0]?.payload.by_project).toBeUndefined();
   });
 
   it("publishes slug history in the viewer's reference directory", async () => {

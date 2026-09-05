@@ -47,14 +47,35 @@ describe("parseIssueRef", () => {
     });
   });
 
-  it.each(["a/b/16", "/16", "todou/", "/"])(
-    'rejects the malformed shape "%s"',
+  it.each(["a/b/16", "todou/"])('rejects the malformed shape "%s"', (value) => {
+    expect(() => parseIssueRef(value, "issue number")).toThrow(
+      /must be <number> or <project>\/<number>/,
+    );
+  });
+
+  it.each(["/16", "/", "/projects/todou/16"])(
+    'rejects the malformed address "%s"',
     (value) => {
       expect(() => parseIssueRef(value, "issue number")).toThrow(
-        /must be <number> or <project>\/<number>/,
+        /is not an issue address/,
       );
     },
   );
+
+  it("parses the address a stored reference is written with", () => {
+    // What `[#12](/projects/7/issues/12)` holds, copied out of a body: the
+    // point of storing an address is being able to hand it back (T-266).
+    expect(parseIssueRef("/projects/7/issues/12", "issue number")).toEqual({
+      project: "7",
+      number: 12,
+    });
+    expect(parseIssueRef("/projects/todou/issues/12/", "issue number")).toEqual(
+      { project: "todou", number: 12 },
+    );
+    expect(
+      parseIssueRef("/projects/7/issues/12#comment-34", "issue number"),
+    ).toEqual({ project: "7", number: 12, commentId: 34 });
+  });
 
   it("rejects an invalid slug with a hint", () => {
     expect(() => parseIssueRef("TODOU/16", "issue number")).toThrow(
@@ -68,7 +89,7 @@ describe("parseIssueRef", () => {
     );
   });
 
-  it("parses an issue URL, ignoring fragment and trailing slash", () => {
+  it("parses an issue URL, keeping the comment it anchors at", () => {
     expect(
       parseIssueRef(
         "https://todou.example/projects/todou/issues/16/#comment-3",
@@ -76,6 +97,17 @@ describe("parseIssueRef", () => {
       ),
     ).toEqual({
       project: "todou",
+      number: 16,
+      commentId: 3,
+      origin: "https://todou.example",
+    });
+    expect(
+      parseIssueRef(
+        "https://todou.example/projects/9/issues/16/",
+        "issue number",
+      ),
+    ).toEqual({
+      project: "9",
       number: 16,
       origin: "https://todou.example",
     });

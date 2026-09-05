@@ -2,7 +2,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
   type ChangeEvent,
   type CrossChangeEvent,
-  ProjectSlug,
+  ProjectRef,
   SSE_CHANGE_EVENT,
   SSE_PING_EVENT,
 } from "@todou/shared";
@@ -45,7 +45,7 @@ const projectEventsRoute = createRoute({
     "carry pointers only ({entity, id, action, issue_number?, project}); " +
     "clients refetch via REST. The stream closes when the caller loses " +
     "access to the project.",
-  request: { params: z.object({ slug: ProjectSlug }) },
+  request: { params: z.object({ slug: ProjectRef }) },
   responses: { 200: { description: "text/event-stream" } },
 });
 

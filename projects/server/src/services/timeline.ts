@@ -148,6 +148,10 @@ type Filters = {
  * cross-database protocol's only durable record of which copy became which,
  * so it has to live in the payload — but it is nobody's contract, and no
  * response may carry it.
+ *
+ * Reference events are not redacted here at all since T-266: the SQL
+ * predicate decides them whole, and a move no longer rewrites one, so there
+ * is no row that was visible under an old spelling and needs to survive.
  */
 export function redactMovePayloads<T extends TimelineItem>(
   items: T[],
@@ -172,20 +176,6 @@ export function redactMovePayloads<T extends TimelineItem>(
       case "moved_out":
         if (!seen(payload.to_project_id)) {
           blank(payload, ["to_project_id", "to_project", "to_number"]);
-        }
-        break;
-      case "cross_referenced":
-        // Rows a move did not rewrite are already filtered by the SQL
-        // predicate, so one arriving here is visible exactly as it stands.
-        // A rewritten one stays — it was visible before the move — with
-        // everything identifying the far side blanked out.
-        if (payload.by_moved === true && !seen(payload.by_project_id)) {
-          blank(payload, [
-            "by_project_id",
-            "by_project",
-            "by_issue",
-            "by_comment",
-          ]);
         }
         break;
       default:

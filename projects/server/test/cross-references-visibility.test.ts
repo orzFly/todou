@@ -127,11 +127,12 @@ describe("cross-reference visibility T-150", () => {
   it("shows the event to a reader of both projects", async () => {
     const page = await timeline(insider);
     const events = page.items.filter(
-      (i: { event_type?: string }) => i.event_type === "cross_referenced",
+      (i: { event_type?: string }) => i.event_type === "referenced",
     );
     expect(events).toHaveLength(1);
+    const src = await get(`/projects/${SRC}`, { cookie });
     expect(events[0].payload).toMatchObject({
-      by_project: SRC,
+      by_project_id: src.id,
       by_issue: sourceIssue,
     });
   });
@@ -140,7 +141,7 @@ describe("cross-reference visibility T-150", () => {
     const mine = await timeline(outsider);
     expect(
       mine.items.filter(
-        (i: { event_type?: string }) => i.event_type === "cross_referenced",
+        (i: { event_type?: string }) => i.event_type === "referenced",
       ),
     ).toEqual([]);
     expect(mine.total_count).toBe(mine.items.length);
@@ -202,7 +203,7 @@ describe("cross-reference visibility T-150", () => {
 
   it("filters the activity streams by the same rule", async () => {
     const crossTypes = (page: { items: Array<{ event_type?: string }> }) =>
-      page.items.filter((i) => i.event_type === "cross_referenced");
+      page.items.filter((i) => i.event_type === "referenced");
     expect(
       crossTypes(await get(`/projects/${DST}/activity?limit=100`, outsider)),
     ).toEqual([]);
@@ -246,7 +247,9 @@ describe("cross-reference visibility T-150", () => {
       { cookie },
     );
     const countCross = (page: { items: Array<{ event_type?: string }> }) =>
-      page.items.filter((i) => i.event_type === "cross_referenced").length;
+      page.items.filter((i) =>
+        ["referenced", "cross_referenced"].includes(i.event_type ?? ""),
+      ).length;
     expect(countCross(before)).toBe(1);
 
     const res = await t.app.request(
@@ -267,10 +270,12 @@ describe("cross-reference visibility T-150", () => {
     expect(countCross(after)).toBe(1);
   });
 
-  it("keeps a move-rewritten row visible, with its far side blanked", async () => {
-    // Hiding it instead would delete a line the reader could see yesterday,
-    // over a change to a card they may not even be able to reach.
-    const card = await createIssue(DST, "referenced by something that moved");
+  it("hides a row naming a project the reader cannot read", async () => {
+    // The `by_moved` exemption is gone with the rewrite that minted it
+    // (T-266): a move no longer touches an event, so no row can have been
+    // visible under an older spelling and need rescuing here. One rule now —
+    // readable referring project, or the whole row stays out.
+    const card = await createIssue(DST, "referenced by something unreadable");
     const dst = await get(`/projects/${DST}`, { cookie });
     const db = await t.ctx.router.forProject(
       routeInfoOf({
@@ -301,14 +306,21 @@ describe("cross-reference visibility T-150", () => {
       `/projects/${DST}/issues/${card}/timeline?limit=100`,
       outsider,
     );
-    const row = page.items.find(
-      (i: { event_type?: string }) => i.event_type === "cross_referenced",
+    expect(
+      page.items.find((i: { event_type?: string }) =>
+        ["referenced", "cross_referenced"].includes(i.event_type ?? ""),
+      ),
+    ).toBeUndefined();
+    // Not even to an instance admin: nobody can read a project that is not
+    // there, and the rule asks about the project rather than about the row.
+    const asAdmin = await get(
+      `/projects/${DST}/issues/${card}/timeline?limit=100`,
+      { cookie },
     );
-    expect(row).toBeDefined();
-    expect(row.payload).toMatchObject({
-      by_project: null,
-      by_project_id: null,
-      by_issue: null,
-    });
+    expect(
+      asAdmin.items.filter((i: { event_type?: string }) =>
+        ["referenced", "cross_referenced"].includes(i.event_type ?? ""),
+      ),
+    ).toEqual([]);
   });
 });

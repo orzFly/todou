@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { formatRef } from "@todou/shared";
+import { formatRef, type LinkTarget, parseInternalHref } from "@todou/shared";
 import { CircleDotIcon, CircleSlashIcon } from "lucide-react";
 import type { ComponentProps } from "react";
 import {
@@ -9,10 +9,11 @@ import {
   issueRefQuery,
 } from "@/api/issue-refs.ts";
 import { useRefPlacement } from "@/api/prefs.ts";
+import { projectsQuery } from "@/api/queries.ts";
 import { referenceConfigQuery } from "@/api/references.ts";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import { qualifiedRefSpelling } from "@/lib/issue-refs.ts";
-import { commentAnchor, parseIssuePermalink } from "@/lib/timeline-anchors.ts";
+import { commentAnchor } from "@/lib/timeline-anchors.ts";
 
 /**
  * GitHub-style rich issue reference: status icon, title and muted ref once
@@ -63,6 +64,12 @@ export function IssueLink({
   }
 
   const item = ref.data;
+  // Where the card is NOW. A stored link is anchored on an address that
+  // never changes, so following one after a move would spend a redirect;
+  // pointing the anchor at the current address spends none.
+  const at = item?.at;
+  const toSlug = at?.slug ?? slug;
+  const toNumber = at?.number ?? number;
   const commentNote =
     commentId === undefined
       ? null
@@ -78,7 +85,7 @@ export function IssueLink({
   return (
     <Link
       to="/projects/$slug/issues/$number"
-      params={{ slug, number: String(number) }}
+      params={{ slug: toSlug, number: String(toNumber) }}
       hash={commentId === undefined ? undefined : commentAnchor(commentId)}
       // The timeline owns anchor positioning (highlight + lazy page
       // loading); the router's own scroll would race it.
@@ -163,6 +170,49 @@ function CommentLink({
   );
 }
 
+/**
+ * A stored reference, as the resolve pass writes it: `[#12](/projects/7/issues/12)`.
+ * The project is named by an id, which no rename or move can invalidate, so
+ * turning it back into something a reader can click means asking the
+ * directory which slug that id answers to today.
+ *
+ * An id nobody in the viewer's directory holds is a project they cannot
+ * read: the link stays exactly as written, undecorated. The text already
+ * carries the id, so nothing is revealed either way.
+ */
+function useStoredTarget(href: string | undefined): {
+  slug: string;
+  number: number;
+  commentId?: number;
+} | null {
+  const projects = useQuery(projectsQuery);
+  if (href === undefined) return null;
+  let target: LinkTarget | null;
+  try {
+    target = parseInternalHref(href, window.location.origin);
+  } catch {
+    return null;
+  }
+  if (target === null || target.kind !== "issue") return null;
+  if (target.project.kind === "slug") {
+    return {
+      slug: target.project.slug,
+      number: target.number,
+      ...(target.commentId === undefined
+        ? {}
+        : { commentId: target.commentId }),
+    };
+  }
+  const id = target.project.id;
+  const slug = (projects.data ?? []).find((p) => p.id === id)?.slug;
+  if (slug === undefined) return null;
+  return {
+    slug,
+    number: target.number,
+    ...(target.commentId === undefined ? {} : { commentId: target.commentId }),
+  };
+}
+
 /** The href shapes remarkIssueRefs emits (see refHref). */
 const ISSUE_REF_HREF = /^#issue-(\d{1,9})(?:\/comment-(\d{1,9}))?$/;
 const XREF_HREF =
@@ -177,26 +227,39 @@ const numberOr = (raw: string | undefined): number | undefined =>
   raw === undefined ? undefined : Number(raw);
 
 /**
- * react-markdown `a` renderer: upgrades remarkIssueRefs tokens and pasted
- * same-origin issue/comment permalinks to <IssueLink>. Rich rendering
- * applies only to bare autolinks (text === url) — a custom-text
- * [link](url) keeps its author-chosen text, like GitHub.
+ * react-markdown `a` renderer: upgrades a stored reference link, a
+ * remarkIssueRefs token and a pasted same-origin permalink to <IssueLink>.
+ *
+ * Since T-266 the stored form of a reference IS a link, so an internal issue
+ * address is decorated whatever text it carries. That does mean a
+ * hand-written `[the login bug](/projects/…)` shows the card's title instead
+ * of the words its author chose: the two shapes are identical in the
+ * document, and dropping the decoration would leave every migrated reference
+ * plain.
  */
 export function MarkdownLink({
   slug,
-  originSlug,
   node,
   ...props
-}: AnchorProps & { slug: string; originSlug?: string }) {
+}: AnchorProps & { slug: string }) {
   const child = node?.children?.length === 1 ? node.children[0] : undefined;
   // The written token, so an unresolvable ref falls back to exactly what
   // its author typed rather than to a spelling they never used.
   const written = child?.type === "text" ? child.value : undefined;
-  // An unqualified ref names the project the text was written in, which is
-  // no longer this one once the card has moved (T-231). Resolving it here
-  // would land on this project's card of the same number — a real card, and
-  // therefore a wrong link no redirect ever gets the chance to correct.
-  const home = originSlug ?? slug;
+  const home = slug;
+  const stored = useStoredTarget(props.href);
+
+  if (stored !== null) {
+    return (
+      <IssueLink
+        slug={stored.slug}
+        number={stored.number}
+        commentId={stored.commentId}
+        crossProject={stored.slug !== slug}
+        fallback={written}
+      />
+    );
+  }
 
   const refMatch = props.href?.match(ISSUE_REF_HREF);
   if (refMatch?.[1] !== undefined) {
@@ -232,23 +295,6 @@ export function MarkdownLink({
         fallback={written ?? props.href ?? ""}
       />
     );
-  }
-  if (
-    props.href !== undefined &&
-    child?.type === "text" &&
-    child.value === props.href
-  ) {
-    const permalink = parseIssuePermalink(props.href, window.location.origin);
-    if (permalink) {
-      return (
-        <IssueLink
-          slug={permalink.slug}
-          number={permalink.number}
-          commentId={permalink.commentId}
-          crossProject={permalink.slug !== slug}
-        />
-      );
-    }
   }
   return <a {...props} />;
 }

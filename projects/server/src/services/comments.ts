@@ -15,19 +15,22 @@ import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { comments, issueEvents, issues } from "../db/project-schema.ts";
 import { ForbiddenError, NotFoundError } from "../errors.ts";
-import { projectForRead, requireCapability, routeInfoOf } from "./access.ts";
 import {
-  analyzeReferences,
-  type CrossTarget,
-  editAnchorFor,
-  loadReferenceInputs,
-  type ReferenceInputs,
-  recordCrossReferences,
-} from "./cross-references.ts";
+  type ProjectRow,
+  projectForRead,
+  requireCapability,
+  routeInfoOf,
+} from "./access.ts";
+import { loadReferenceInputs } from "./cross-references.ts";
 import { encodeTimelineCursor } from "./cursor.ts";
 import { canonicalizeComponent, questionCount } from "./questions.ts";
-import { recordReferences, refPrefixAt } from "./references.ts";
-import { originProjectFor, throwIfCommentAliased } from "./relocation.ts";
+import { refPrefixAt } from "./references.ts";
+import { throwIfCommentAliased } from "./relocation.ts";
+import {
+  recordCrossReferences,
+  recordLocalReferences,
+  resolveContent,
+} from "./resolve-pass.ts";
 import { deleteRevisionsFor, recordRevision } from "./revisions.ts";
 import { microIso } from "./timeline.ts";
 import {
@@ -73,33 +76,32 @@ async function loadIssue(db: Db, projectId: number, number: number) {
 
 /**
  * Insert a comment row inside an open transaction: the row itself, the
- * issue's `updated_at` (plus the open-question counter), the reference scan
- * and the timeline ChangeEvents it produces. Shared by `createComment` and
- * the atomic command endpoint (T-161), which needs a comment and a set of
+ * issue's `updated_at` (plus the open-question counter), the local reference
+ * events and the timeline ChangeEvents it produces. Shared by `createComment`
+ * and the atomic command endpoint (T-161), which needs a comment and a set of
  * field changes to land or roll back together.
  *
- * `refInputs` is a parameter because it reads the system database, which a
- * project transaction must not hold a second connection for — the caller
- * loads it before opening the transaction.
+ * `body` arrives already resolved and `localRefs` comes from the same pass,
+ * because resolving reads the system database and other projects' — which a
+ * project transaction must not hold a second connection for.
  */
 export async function insertCommentInTx(
   tx: Db,
   args: {
-    project: { id: number; slug: string };
+    project: ProjectRow;
     issue: { id: number; number: number };
     actorId: number;
     body: string;
+    localRefs: number[];
     component?: CommentComponent | null;
     agentContext: AgentContext | null;
-    refInputs: ReferenceInputs;
   },
 ): Promise<{
   comment: CommentRow;
   /** Publish after commit; the comment leads, subscribers pin that. */
   timeline: ChangeEvent[];
-  crossTargets: CrossTarget[];
 }> {
-  const { project, issue, actorId, body, agentContext, refInputs } = args;
+  const { project, issue, actorId, body, agentContext, localRefs } = args;
   const component = args.component ?? null;
   const issueNumber = issue.number;
 
@@ -139,20 +141,12 @@ export async function insertCommentInTx(
     },
   ];
 
-  const analyzed = await analyzeReferences(
+  const refs = await recordLocalReferences(
     tx,
-    refInputs,
     project,
-    body,
-    comment.createdAt,
-    { issueNumber, commentId: comment.id },
-  );
-  const refs = await recordReferences(
-    tx,
-    project.id,
     actorId,
     { issueNumber, commentId: comment.id },
-    analyzed.local,
+    localRefs,
     agentContext,
   );
   for (const ref of refs) {
@@ -163,7 +157,7 @@ export async function insertCommentInTx(
       issue_number: ref.issueNumber,
     });
   }
-  return { comment, timeline, crossTargets: analyzed.cross };
+  return { comment, timeline };
 }
 
 export async function createComment(
@@ -190,19 +184,26 @@ export async function createComment(
       : canonicalizeComponent(input.component);
 
   const refInputs = await loadReferenceInputs(ctx, db, project.id);
-  let crossTargets: CrossTarget[] = [];
+  const resolved = await resolveContent({
+    ctx,
+    db,
+    project,
+    actor,
+    inputs: refInputs,
+    text: input.body,
+    self: { projectId: project.id, number: issueNumber },
+  });
   const events: ChangeEvent[] = [];
   const { row, ts } = await db.transaction(async (tx) => {
     const result = await insertCommentInTx(tx, {
       project,
       issue: { id: issue.id, number: issueNumber },
       actorId: actor.id,
-      body: input.body,
+      body: resolved.storedText,
+      localRefs: resolved.local,
       component,
       agentContext,
-      refInputs,
     });
-    crossTargets = result.crossTargets;
     events.push(...result.timeline);
     // updated_at moved (and maybe the counter) → issue list ordering and
     // badges must refresh.
@@ -229,7 +230,7 @@ export async function createComment(
     actor,
     project,
     { issueNumber, commentId: row.id },
-    crossTargets,
+    resolved.cross,
     agentContext,
   );
   return {
@@ -320,7 +321,7 @@ async function loadCommentForWrite(
   slug: string,
   issueNumber: number,
   commentId: number,
-): Promise<{ projectId: number; db: Db; row: CommentRow }> {
+): Promise<{ project: ProjectRow; db: Db; row: CommentRow }> {
   const { project, role } = await requireCapability(
     ctx,
     actor,
@@ -340,7 +341,7 @@ async function loadCommentForWrite(
   if (row.authorId !== actor.id && role !== "admin") {
     throw new ForbiddenError("only the author or a project admin may modify");
   }
-  return { projectId: project.id, db, row };
+  return { project, db, row };
 }
 
 export async function updateComment(
@@ -354,7 +355,7 @@ export async function updateComment(
   // events born from this edit carry the editing request's context.
   agentContext: AgentContext | null = null,
 ): Promise<TimelineComment> {
-  const { projectId, db, row } = await loadCommentForWrite(
+  const { project, db, row } = await loadCommentForWrite(
     ctx,
     actor,
     slug,
@@ -365,22 +366,25 @@ export async function updateComment(
   // bump, no SSE, no reference re-scan.
   if (input.body === row.body) return toTimelineComment(ctx, row);
 
-  const project = { id: projectId, slug };
+  const projectId = project.id;
   const refInputs = await loadReferenceInputs(ctx, db, projectId);
-  // The comment may predate a move; `editAnchorFor` decides from the stored
-  // text whether the old numbering still applies to it.
-  const origin = await originProjectFor(
+  const resolved = await resolveContent({
     ctx,
     db,
     project,
-    row.issueId,
-    row.createdAt,
-  );
-  let crossTargets: CrossTarget[] = [];
+    actor,
+    inputs: refInputs,
+    text: input.body,
+    self: { projectId, number: issueNumber },
+  });
+  // Storing the resolved text is what makes this a no-op the second time
+  // round: an unchanged body reaches the guard above and stops there.
+  if (resolved.storedText === row.body) return toTimelineComment(ctx, row);
+
   const { after, refs } = await db.transaction(async (tx) => {
     const updated = await tx
       .update(comments)
-      .set({ body: input.body, editedAt: new Date() })
+      .set({ body: resolved.storedText, editedAt: new Date() })
       .where(eq(comments.id, row.id))
       .returning();
     const after = updated[0];
@@ -395,34 +399,12 @@ export async function updateComment(
       agentContext,
     });
 
-    // An origin project that no longer exists leaves this text's numbering
-    // unresolvable, so it records nothing: see originProjectFor.
-    const analyzed =
-      origin === null
-        ? { local: [], cross: [] }
-        : await analyzeReferences(
-            tx,
-            refInputs,
-            project,
-            input.body,
-            row.createdAt,
-            { issueNumber, commentId: row.id },
-            await editAnchorFor(
-              tx,
-              refInputs,
-              project,
-              origin,
-              row.body,
-              row.createdAt,
-            ),
-          );
-    crossTargets = analyzed.cross;
-    const refs = await recordReferences(
+    const refs = await recordLocalReferences(
       tx,
-      projectId,
+      project,
       actor.id,
       { issueNumber, commentId: row.id },
-      analyzed.local,
+      resolved.local,
       agentContext,
     );
     return { after, refs };
@@ -446,7 +428,7 @@ export async function updateComment(
     actor,
     project,
     { issueNumber, commentId: row.id },
-    crossTargets,
+    resolved.cross,
     agentContext,
   );
   return toTimelineComment(ctx, after);
@@ -459,13 +441,14 @@ export async function deleteComment(
   issueNumber: number,
   commentId: number,
 ): Promise<void> {
-  const { projectId, db, row } = await loadCommentForWrite(
+  const { project, db, row } = await loadCommentForWrite(
     ctx,
     actor,
     slug,
     issueNumber,
     commentId,
   );
+  const projectId = project.id;
   let counterChanged = false;
   await db.transaction(async (tx) => {
     // A still-unresolved spec comment gives its count back (T-23); a

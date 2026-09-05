@@ -4,7 +4,7 @@ import {
   MemberSetInput,
   Project,
   ProjectCreateInput,
-  ProjectSlug,
+  ProjectRef,
   ProjectUpdateInput,
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
@@ -20,9 +20,9 @@ import {
 } from "../services/projects.ts";
 import { roleTag } from "./role-tag.ts";
 
-const slugParam = z.object({ slug: ProjectSlug });
+const slugParam = z.object({ slug: ProjectRef });
 const memberParams = z.object({
-  slug: ProjectSlug,
+  slug: ProjectRef,
   userId: z.coerce.number().int().positive(),
 });
 

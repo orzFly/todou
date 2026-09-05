@@ -132,8 +132,11 @@ todou search 全文搜索
 todou search pg_trgm --in comments
 todou issue create --title "Fix the potato" --body "It sprouted."
 todou issue view 1
-todou issue view my-project/1   # project/number, "#1", "T-1", or an issue
-                                # URL work anywhere <number> does; `show` = `view`
+todou issue view my-project/1   # project/number, "#1", "T-1", an issue URL,
+                                # or an address copied out of a body
+                                # (/projects/7/issues/1) work anywhere
+                                # <number> does; `show` = `view`. The project
+                                # may be spelled as its id everywhere too.
 todou issue close 1 --comment "done"
 todou issue transfer 1 --to other-project   # keeps every old link working
 

@@ -36,7 +36,9 @@ import { confirm } from "../prompt.ts";
 import { refFormat, withRef } from "../refs.ts";
 import {
   ensureLabels,
+  fetchProjectDirectory,
   fetchRefPrefix,
+  fetchRefSpelling,
   resolveAssignees,
   resolveClosedStatus,
   resolveLabels,
@@ -252,6 +254,10 @@ type CardRef = {
   spelled: string;
   /** The landing project's prefix, for refs written inside the card. */
   prefix: string | null;
+  /** Project id → slug, for naming who a reference event came from. */
+  slugOfProject?: (id: unknown) => string | null;
+  /** The landing project's own id, so a local reference reads as local. */
+  projectId?: number | undefined;
 };
 
 /** Between two cards of a batch, in `── timeline ──`'s visual language. */
@@ -343,8 +349,9 @@ export class IssueViewCommand extends ProjectCommand {
     const paint = makePainter(this.context.stdout, this.context.env);
     // Concurrent, because the whole point of a batch is not paying for it
     // card by card; the input order is restored for output either way.
-    const [requestPrefix, cards] = await Promise.all([
+    const [requestPrefix, directory, cards] = await Promise.all([
       fetchRefPrefix(client, project),
+      fetchProjectDirectory(client),
       Promise.all(numbers.map((n) => this.fetchCard(client, project, n, last))),
     ]);
 
@@ -363,7 +370,12 @@ export class IssueViewCommand extends ProjectCommand {
     );
     const refOf = (card: ViewedIssue): CardRef => {
       const prefix = prefixes.get(card.slug) ?? null;
-      return { prefix, spelled: this.spellRef(card, prefix) };
+      return {
+        prefix,
+        spelled: this.spellRef(card, prefix),
+        slugOfProject: directory.slugOf,
+        projectId: directory.idOf(card.slug) ?? undefined,
+      };
     };
 
     // One number is the old command, down to the byte: the failure is the
@@ -594,7 +606,8 @@ export class IssueEventsCommand extends ProjectCommand {
     const events = last === undefined ? matched : matched.slice(-last);
     const omitted = matched.length - events.length;
 
-    const refPrefix = await fetchRefPrefix(client, project);
+    const spelling = await fetchRefSpelling(client, project);
+    const refPrefix = spelling.refPrefix;
     const paint = makePainter(this.context.stdout, this.context.env);
     this.output(
       {
@@ -617,13 +630,13 @@ export class IssueEventsCommand extends ProjectCommand {
             item.type === "comment"
               ? renderTimelineItem(item, paint, {
                   issueNumber: number,
-                  refPrefix,
+                  ...spelling,
                   showId: true,
                 })
               : `${paint("dim", `event ${item.id} ·`)} ${renderTimelineItem(
                   item,
                   paint,
-                  { issueNumber: number, refPrefix },
+                  { issueNumber: number, ...spelling },
                 )}`,
           ),
           ...(cursor === undefined
@@ -1814,6 +1827,10 @@ function renderIssue(
         renderTimelineItem(item, paint, {
           issueNumber: issue.number,
           refPrefix: ref.prefix,
+          ...(ref.slugOfProject === undefined
+            ? {}
+            : { slugOfProject: ref.slugOfProject }),
+          ...(ref.projectId === undefined ? {} : { projectId: ref.projectId }),
         }),
       );
     }

@@ -6,6 +6,7 @@ import type {
   SpecCommentItem,
   SpecComments,
   SpecCommentsResolveInput,
+  SpecFileInput,
   SpecFiles,
   SpecInfo,
   SpecPushInput,
@@ -32,7 +33,9 @@ import {
   ValidationFailedError,
 } from "../errors.ts";
 import { projectForRead, requireCapability, routeInfoOf } from "./access.ts";
+import { loadReferenceInputs } from "./cross-references.ts";
 import { encodeTimelineCursor } from "./cursor.ts";
+import { resolveContent } from "./resolve-pass.ts";
 import { microIso } from "./timeline.ts";
 import {
   assertIssueReadable,
@@ -120,6 +123,25 @@ export async function pushSpec(
     assertIssueWritable,
   );
 
+  // Spec files are markdown and get the same resolve pass as a body, so a
+  // reference reads and edits the same way wherever it was written (T-266).
+  // No events, though: a spec push has never recorded a reference, and
+  // changing that is a decision of its own.
+  const refInputs = await loadReferenceInputs(ctx, db, project.id);
+  const files: SpecFileInput[] = [];
+  for (const file of input.files) {
+    const resolved = await resolveContent({
+      ctx,
+      db,
+      project,
+      actor,
+      inputs: refInputs,
+      text: file.body,
+      self: { projectId: project.id, number: issueNumber },
+    });
+    files.push({ path: file.path, body: resolved.storedText });
+  }
+
   const events: ChangeEvent[] = [];
   const result = await db.transaction(async (tx) => {
     // Serialize concurrent pushes on the issue row; the unique
@@ -145,7 +167,7 @@ export async function pushSpec(
         ? (await filesOfVersion(tx, current.id)).map((f) => [f.path, f.body])
         : [],
     );
-    const after = new Map(input.files.map((f) => [f.path, f.body]));
+    const after = new Map(files.map((f) => [f.path, f.body]));
     const added = [...after.keys()].filter((p) => !before.has(p)).sort();
     const removed = [...before.keys()].filter((p) => !after.has(p)).sort();
     const changed = [...after.keys()]
@@ -191,7 +213,7 @@ export async function pushSpec(
     if (!version) throw new Error("spec version insert returned no row");
 
     await tx.insert(specVersionFiles).values(
-      input.files.map((f) => ({
+      files.map((f) => ({
         projectId: project.id,
         versionId: version.id,
         path: f.path,

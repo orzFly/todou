@@ -125,14 +125,19 @@ export abstract class ApiCommand extends Command<CliContext> {
             ? { [AGENT_CONTEXT_HEADER]: JSON.stringify(this.agentContext) }
             : undefined,
           fetch: this.context.fetchImpl,
-          onCanonicalSlug: (canonical) => {
+          onCanonicalSlug: (canonical, requested) => {
+            // The header also fires for a project named by its id, which is
+            // a spelling every route takes rather than one that has been
+            // retired (T-266). Advising a re-link there would be telling
+            // somebody to fix something that is not broken.
+            if (requested !== null && /^\d+$/.test(requested)) return;
             if (announced.has(canonical)) return;
             announced.add(canonical);
             // Deliberately not rewriting .todou.toml / config.toml: the
             // binding may well be committed to the repository, and that is
             // the user's file to change.
             this.note(
-              `note: project "${this.ctx.project ?? "?"}" is now ` +
+              `note: project "${requested ?? this.ctx.project ?? "?"}" is now ` +
                 `"${canonical}" — run \`todou project link ${canonical}\` ` +
                 "to update this machine",
             );

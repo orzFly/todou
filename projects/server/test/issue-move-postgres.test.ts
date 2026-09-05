@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { comments, issueEvents, issues } from "../src/db/project-schema.ts";
 import { routeInfoOf } from "../src/services/access.ts";
-import { backfillRefs } from "../src/services/refs-backfill.ts";
+import { migrateRefs } from "../src/services/refs-migrate.ts";
 import { microIso } from "../src/services/timeline.ts";
 import { makeTestApp, type TestApp } from "./helpers.ts";
 
@@ -122,10 +122,10 @@ describe.skipIf(!PG_URL)("moving an issue on real postgres", () => {
     expect(after.map((row) => row.at)).toEqual(before.map((row) => row.at));
   });
 
-  it("respells up to the move's instant and no further", async () => {
-    // The boundary `ownerAt` fixes and the respell has to share: content
-    // stamped exactly at the move belongs to the new home, so it is already
-    // spelled for it. PGlite cannot show this — its clock has no
+  it("migrates up to the move's instant and no further", async () => {
+    // The boundary `ownerAt` fixes and the migration has to share: content
+    // stamped exactly at the move belongs to the new home, so a bare `#N` in
+    // it means a card here. PGlite cannot show this — its clock has no
     // sub-millisecond digits, so nothing distinguishes "at the move" from
     // "just before it" there.
     const target = await json(
@@ -134,6 +134,25 @@ describe.skipIf(!PG_URL)("moving an issue on real postgres", () => {
         body: JSON.stringify({ title: "boundary target", body: "" }),
       }),
     );
+    // A card in B with the same number, so both readings resolve and the
+    // assertion is about which project the link names rather than about
+    // whether one was written at all.
+    let twin = await json(
+      await req(`/projects/${B}/issues`, {
+        method: "POST",
+        body: JSON.stringify({ title: "twin", body: "" }),
+      }),
+    );
+    while (twin.number < target.number) {
+      twin = await json(
+        await req(`/projects/${B}/issues`, {
+          method: "POST",
+          body: JSON.stringify({ title: "filler", body: "" }),
+        }),
+      );
+    }
+    expect(twin.number).toBe(target.number);
+
     const card = await json(
       await req(`/projects/${B}/issues`, {
         method: "POST",
@@ -143,13 +162,13 @@ describe.skipIf(!PG_URL)("moving an issue on real postgres", () => {
     const before = await json(
       await req(`/projects/${B}/issues/${card.number}/comments`, {
         method: "POST",
-        body: JSON.stringify({ body: `earlier #${target.number}` }),
+        body: JSON.stringify({ body: "earlier" }),
       }),
     );
     const onTheDot = await json(
       await req(`/projects/${B}/issues/${card.number}/comments`, {
         method: "POST",
-        body: JSON.stringify({ body: `exactly #${target.number}` }),
+        body: JSON.stringify({ body: "exactly" }),
       }),
     );
 
@@ -165,13 +184,18 @@ describe.skipIf(!PG_URL)("moving an issue on real postgres", () => {
       .from(issues)
       .where(eq(issues.id, card.id));
     const at = new Date(Date.now() - 60_000);
+    // Written straight into the rows: this is what a pre-migration corpus
+    // looks like, tokens rather than links.
     await db
       .update(comments)
-      .set({ createdAt: new Date(at.getTime() - 1) })
+      .set({
+        body: `earlier #${target.number}`,
+        createdAt: new Date(at.getTime() - 1),
+      })
       .where(eq(comments.id, before.id));
     await db
       .update(comments)
-      .set({ createdAt: at })
+      .set({ body: `exactly #${target.number}`, createdAt: at })
       .where(eq(comments.id, onTheDot.id));
     await db.insert(issueEvents).values({
       projectId: ids[B] as number,
@@ -188,22 +212,22 @@ describe.skipIf(!PG_URL)("moving an issue on real postgres", () => {
       },
     });
 
-    const report = await backfillRefs(t.ctx, {
+    const report = await migrateRefs(t.ctx, {
       dryRun: false,
       slug: B,
       log: () => {},
     });
-    expect(report.changed).toBe(1);
+    expect(report.changed).toBeGreaterThanOrEqual(2);
 
     const bodies = await db
       .select({ id: comments.id, body: comments.body })
       .from(comments)
       .where(eq(comments.issueId, card.id));
     expect(bodies.find((c) => c.id === before.id)?.body).toBe(
-      `earlier ${A}#${target.number}`,
+      `earlier [#${target.number}](/projects/${ids[A]}/issues/${target.number})`,
     );
     expect(bodies.find((c) => c.id === onTheDot.id)?.body).toBe(
-      `exactly #${target.number}`,
+      `exactly [#${target.number}](/projects/${ids[B]}/issues/${target.number})`,
     );
   });
 

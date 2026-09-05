@@ -7,7 +7,7 @@ import {
   MePrefs,
   MePrefsPatch,
   MeUpdateInput,
-  ProjectSlug,
+  ProjectRef,
   ReferenceDirectory,
   TokenCreated,
   TokenCreateInput,
@@ -157,7 +157,7 @@ const markIssueReadRoute = createRoute({
     "feeds the unread markers in list responses)",
   request: {
     params: z.object({
-      slug: ProjectSlug,
+      slug: ProjectRef,
       number: z.coerce.number().int().positive(),
     }),
     body: { content: { "application/json": { schema: IssueReadInput } } },

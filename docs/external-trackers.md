@@ -29,28 +29,50 @@ On the GitHub side (repository → Settings → Autolink references):
   `https://<your-todou-host>/projects/<slug>/issues/<num>`. Commit
   messages and issue text containing `T-76` then link back to todou.
 
+## How a reference is stored
+
+A reference is resolved the moment it is submitted, and what goes into the
+database is the answer: an explicit markdown link whose destination names the
+target's project by **id**.
+
+```
+you write:   see #12
+stored as:   see [#12](/projects/7/issues/12)
+```
+
+The link text is the spelling you typed, so reading the body back and saving
+it again changes nothing. The destination is permanent: a project id never
+changes, and a card that moves keeps answering on the address it left behind.
+Nothing rewrites stored text afterwards — not a rename, not a move.
+
+That leaves one rule where there used to be several:
+
+- **A token is read under the project you are writing in, at the moment you
+  submit it.** Not under whoever owned the card when the text was first
+  written, and not under the format in force back then.
+- **A token that resolves to nothing stays plain text.** A `#999` naming no
+  card, or a project you cannot read, is stored exactly as typed and records
+  nothing. Editing that text later scans it again, so a target that appears
+  in the meantime is picked up then.
+- **A link already anchored on an id is left alone**, which is what makes
+  saving the same text twice a no-op.
+
+An external autolink (`JIRA-3`, `#12` handed to a GitHub mirror) has no
+address here to store, so it is still expanded when the text is rendered.
+
 ## What happens to existing text
 
-Nothing is rewritten, and nothing changes meaning. Content is parsed under
-the reference format that was **in force when it was created**:
-
-- `#12` written before the switch keeps rendering as a link to todou
-  issue 12 — even after `#` is handed to GitHub. Editing an old comment
-  does not change this; the anchor is its creation time.
-- `T-34` that happened to appear in old text does not become a link.
-- Issue numbers, existing `referenced` events, and their timelines are
-  stored as bare numbers and are untouched. UI strings (rich-link
-  suffixes, "referenced by …" lines, CLI headers) respell them in the
-  current format.
-
-Spec documents parse under the format in force when their version was
-pushed; markdown attachments under their upload time.
+`todou-server refs migrate` rewrites it once, under the rules that were in
+force where and when each piece was written — the last time those rules are
+consulted. See [deploy.md](deploy.md#one-off-maintenance).
 
 ## Referencing another project's issues
 
 A reference can name a project other than the one it is written in. The
-target issue's timeline records a `cross_referenced` event, the same way a
-local reference records `referenced`.
+target issue's timeline records a `referenced` event, exactly as a local one
+does — whether a reference crossed a project boundary is worked out when it
+is displayed, by comparing the project it was written in with the one being
+read.
 
 Spellings, all equivalent:
 
@@ -62,11 +84,11 @@ The prefix inside `mirror/M-12` is decoration: the slug decides the
 project and the number decides the issue, so a reference written today
 survives the target changing its format tomorrow.
 
-It survives the target changing its *slug* too. A slug a project has
-retired keeps resolving to it, and text written before the rename is
-read against who held that slug at the time — so if another project
-later takes the spelling over, old references still mean what they said,
-and only new writing goes to the new holder.
+It survives the target changing its *slug* too, and for a simpler reason
+than it used to: the slug is only read at the moment you type it. What gets
+stored is the project's id, which no rename touches. If another project later
+takes the spelling over, references written before that keep pointing where
+they always did, and only new writing goes to the new holder.
 
 A bare foreign prefix also works. Writing `M-12` in another project
 resolves to `mirror#12` when `M` had exactly one holder at the moment the
@@ -160,32 +182,16 @@ wherever the address is typed: the CLI, an attachment URL, a `#comment-N` in a
 body, and an old *card* or *spec* link opened in the web UI, which follows the
 redirect without ever reading the project the link names.
 
-### The card's own references are respelled once
+### A move changes no text and no event
 
-A bare `#12` written while the card lived in `a` means `a/12`. Read under the
-destination's numbering it would name a different card, so the move rewrites
-that one spelling into `a#12`, which names its project outright and stays
-correct through every later move. `PREFIX-12` and `#comment-N` written at the
-old address are rewritten the same way, and so is every version of the card's
-spec documents. This is the only moment the system changes text a person
-wrote.
+The card's body, its comments and every version of its spec documents arrive
+byte for byte as they were, and the reference events pointing at it are not
+touched either. Nothing needs rewriting: a stored reference is a link onto
+`(project id, number)`, and both halves outlive every move — the id never
+changes, and the number is answered by the address book.
 
-The text as its author typed it is kept as a revision, attributed to whoever
-performed the move. The card is not marked as edited: an "(edited)" mark means
-the author changed their words.
-
-Only the spans holding a reference change. The rest of the markdown is byte
-for byte what it was, and references inside code blocks or inline code are
-left alone.
-
-Where that rewrite cannot be made safely the old rule still applies: the text
-is parsed under whoever owned the card when it was written. That happens when
-another project held the origin's slug at the moment the text was written,
-because `a#12` written into that text would name that other project's card
-instead of the origin's.
-
-Cards that moved before this behaviour existed are rewritten by
-`todou-server refs backfill`, which an operator runs once.
+A bare `#12` typed into the card **after** it arrives means a card here, the
+way it does anywhere else.
 
 ### Moving back
 
@@ -278,9 +284,14 @@ against servers without the config endpoint it falls back to `#N`.
 Both degrade to the `#N` form (`{"prefix": null, "token": "#"}`) against
 a server without the config endpoint.
 
-A `cross_referenced` event carries its source as `by_project` and
-`by_issue`; spell it `<by_project>#<by_issue>` and it pastes back into any
-command that takes an issue.
+A `referenced` event carries its source as `by_project_id` and `by_issue`;
+spell it `<by_project_id>/<by_issue>` and it pastes back into any command
+that takes an issue. Whether it came from this project or another is the
+comparison between `by_project_id` and the project being read.
+
+Events written before the two types merged carry `by_project` (a slug) or no
+project at all — the second shape is a local reference. `refs migrate` gives
+every row an id; until it runs, read the older shapes as a fallback.
 
 ## Web
 

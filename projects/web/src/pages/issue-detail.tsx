@@ -1,6 +1,5 @@
 import {
   useMutation,
-  useQuery,
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
@@ -20,7 +19,6 @@ import {
   labelsQuery,
   membersQuery,
   meQuery,
-  projectQuery,
   statusesQuery,
 } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
@@ -44,7 +42,6 @@ import {
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
-import { IssueOriginProvider } from "@/components/shared/issue-origin.tsx";
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
@@ -77,7 +74,6 @@ export function IssueDetailPage() {
 
   const me = useSuspenseQuery(meQuery);
   const issue = useSuspenseQuery(issueQuery(slug, issueNumber));
-  const project = useQuery(projectQuery(slug));
   const statuses = useSuspenseQuery(statusesQuery(slug));
   const labels = useSuspenseQuery(labelsQuery(slug));
   const members = useSuspenseQuery(membersQuery(slug));
@@ -95,65 +91,60 @@ export function IssueDetailPage() {
   const trashed = issue.data.deleted_at !== null;
 
   return (
-    <IssueOriginProvider
-      moves={issue.data.moves}
-      currentProjectId={project.data?.id}
-    >
-      <div className="grid gap-6 lg:grid-cols-[1fr_240px]">
-        {/* Nothing in the trash is ever unread, so there is no position to
-          advance while looking at one — the endpoint would 404. */}
-        {!trashed && <MarkReadOnView slug={slug} number={issueNumber} />}
-        {/* Two layers on purpose: the floating bar's zero-height host has to
-          stay out of the space-y flow, which would otherwise add a gap below
-          it, and its sticky container has to span the whole column. */}
-        <div className="min-w-0">
-          <FloatingTitleBar
-            slug={slug}
-            issue={issue.data}
-            watchTarget={titleRef}
-          />
-          <div className="space-y-4">
-            {trashed && <TrashBanner slug={slug} issue={issue.data} />}
-            <div ref={titleRef}>
-              <TitleBlock slug={slug} issue={issue.data} readOnly={trashed} />
-            </div>
-            <BodyBlock slug={slug} issue={issue.data} readOnly={trashed} />
-            <SpecEntryRow slug={slug} issueNumber={issueNumber} />
-            <AttachmentList slug={slug} issueNumber={issueNumber} />
-            <Separator />
-            <Timeline
-              slug={slug}
-              issueNumber={issueNumber}
-              pendingComments={composer.pending.filter((p) => !p.failed)}
-              viewer={viewer}
-            />
-            {/* Floats at the viewport bottom while the timeline scrolls by,
-              and settles into flow at the end of the page (GitHub-style). */}
-            {!trashed && (
-              <div className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4">
-                <Composer
-                  slug={slug}
-                  issueNumber={issueNumber}
-                  onSend={composer.send}
-                  onSendWithCommands={composer.sendWithCommands}
-                  failed={composer.pending.filter((p) => p.failed)}
-                  onRetry={composer.retry}
-                />
-              </div>
-            )}
-          </div>
-        </div>
-        <Sidebar
+    <div className="grid gap-6 lg:grid-cols-[1fr_240px]">
+      {/* Nothing in the trash is ever unread, so there is no position to
+        advance while looking at one — the endpoint would 404. */}
+      {!trashed && <MarkReadOnView slug={slug} number={issueNumber} />}
+      {/* Two layers on purpose: the floating bar's zero-height host has to
+        stay out of the space-y flow, which would otherwise add a gap below
+        it, and its sticky container has to span the whole column. */}
+      <div className="min-w-0">
+        <FloatingTitleBar
           slug={slug}
           issue={issue.data}
-          statuses={statuses.data}
-          allLabels={labels.data}
-          members={members.data}
-          canDelete={isAdmin || issue.data.author.id === me.data.id}
-          trashed={trashed}
+          watchTarget={titleRef}
         />
+        <div className="space-y-4">
+          {trashed && <TrashBanner slug={slug} issue={issue.data} />}
+          <div ref={titleRef}>
+            <TitleBlock slug={slug} issue={issue.data} readOnly={trashed} />
+          </div>
+          <BodyBlock slug={slug} issue={issue.data} readOnly={trashed} />
+          <SpecEntryRow slug={slug} issueNumber={issueNumber} />
+          <AttachmentList slug={slug} issueNumber={issueNumber} />
+          <Separator />
+          <Timeline
+            slug={slug}
+            issueNumber={issueNumber}
+            pendingComments={composer.pending.filter((p) => !p.failed)}
+            viewer={viewer}
+          />
+          {/* Floats at the viewport bottom while the timeline scrolls by,
+            and settles into flow at the end of the page (GitHub-style). */}
+          {!trashed && (
+            <div className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4">
+              <Composer
+                slug={slug}
+                issueNumber={issueNumber}
+                onSend={composer.send}
+                onSendWithCommands={composer.sendWithCommands}
+                failed={composer.pending.filter((p) => p.failed)}
+                onRetry={composer.retry}
+              />
+            </div>
+          )}
+        </div>
       </div>
-    </IssueOriginProvider>
+      <Sidebar
+        slug={slug}
+        issue={issue.data}
+        statuses={statuses.data}
+        allLabels={labels.data}
+        members={members.data}
+        canDelete={isAdmin || issue.data.author.id === me.data.id}
+        trashed={trashed}
+      />
+    </div>
   );
 }
 
@@ -418,11 +409,7 @@ function BodyBlock({
             No description.
           </p>
         ) : (
-          <MarkdownView
-            slug={slug}
-            issueNumber={issue.number}
-            refDate={issue.created_at}
-          >
+          <MarkdownView slug={slug} issueNumber={issue.number}>
             {issue.body}
           </MarkdownView>
         )}

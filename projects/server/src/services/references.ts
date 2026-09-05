@@ -1,9 +1,7 @@
-import type { AgentContext } from "@todou/shared";
 import { scanReferenceTokens } from "@todou/shared";
-import { and, desc, eq, inArray, lte } from "drizzle-orm";
+import { and, desc, eq, lte } from "drizzle-orm";
 import type { Db } from "../db/driver.ts";
-import { issueEvents, issues, refFormats } from "../db/project-schema.ts";
-import { referenceable } from "./trash.ts";
+import { refFormats } from "../db/project-schema.ts";
 
 /**
  * Blank out fenced code blocks and inline code spans so their contents
@@ -75,96 +73,4 @@ export async function refPrefixAt(
     .orderBy(desc(refFormats.effectiveFrom), desc(refFormats.id))
     .limit(1);
   return rows[0]?.prefix ?? null;
-}
-
-/**
- * Record `referenced` events on the issues a saved body or comment names.
- * Events land on the REFERENCED issue's timeline. Each (target, source)
- * pair is recorded once, so edits don't spam timelines. The numbers come
- * pre-resolved from analyzeReferences, which is where the format cutoff
- * and the cross-project grammar are applied.
- */
-export async function recordReferences(
-  db: Db,
-  projectId: number,
-  actorId: number,
-  source: { issueNumber: number; commentId?: number },
-  referenced: number[],
-  agentContext: AgentContext | null = null,
-): Promise<Array<{ eventId: number; issueId: number; issueNumber: number }>> {
-  const numbers = referenced.filter((n) => n !== source.issueNumber);
-  if (numbers.length === 0) return [];
-
-  const targets = await db
-    .select({ id: issues.id, number: issues.number })
-    .from(issues)
-    .where(
-      and(
-        eq(issues.projectId, projectId),
-        inArray(issues.number, numbers),
-        // A card in the trash — or mid-move — takes no new references,
-        // exactly like a number nobody ever used (T-145, T-231).
-        referenceable,
-      ),
-    )
-    // This runs inside the writing transaction, so the share lock is what
-    // makes a single-transaction move wait: it takes FOR UPDATE on the same
-    // row, and without this an event could land on the card between the
-    // copy and the source-side cleanup that deletes it again.
-    .for("share");
-  if (targets.length === 0) return [];
-
-  const existing = await db
-    .select({ issueId: issueEvents.issueId, payload: issueEvents.payload })
-    .from(issueEvents)
-    .where(
-      and(
-        eq(issueEvents.projectId, projectId),
-        eq(issueEvents.type, "referenced"),
-        inArray(
-          issueEvents.issueId,
-          targets.map((t) => t.id),
-        ),
-      ),
-    );
-  const seen = new Set(
-    existing.map((e) => {
-      const payload = e.payload as { by_issue?: number };
-      return `${e.issueId}:${payload.by_issue}`;
-    }),
-  );
-
-  const created: Array<{
-    eventId: number;
-    issueId: number;
-    issueNumber: number;
-  }> = [];
-  for (const target of targets) {
-    if (seen.has(`${target.id}:${source.issueNumber}`)) continue;
-    const inserted = await db
-      .insert(issueEvents)
-      .values({
-        projectId,
-        issueId: target.id,
-        actorId,
-        type: "referenced",
-        agentContext,
-        payload: {
-          by_issue: source.issueNumber,
-          ...(source.commentId === undefined
-            ? {}
-            : { by_comment: source.commentId }),
-        },
-      })
-      .returning({ id: issueEvents.id });
-    const id = inserted[0]?.id;
-    if (id !== undefined) {
-      created.push({
-        eventId: id,
-        issueId: target.id,
-        issueNumber: target.number,
-      });
-    }
-  }
-  return created;
 }

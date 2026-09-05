@@ -23,10 +23,16 @@ function seededClient(slug: string): QueryClient {
 /** Mount one markdown body and wait for the router to hand it over. */
 async function mount(
   source: string,
-  { slug, client }: { slug?: string; client?: QueryClient } = {},
+  {
+    slug,
+    client,
+    preview = false,
+  }: { slug?: string; client?: QueryClient; preview?: boolean } = {},
 ): Promise<HTMLElement> {
   const { container } = renderWithProviders(
-    <MarkdownView slug={slug}>{source}</MarkdownView>,
+    <MarkdownView slug={slug} preview={preview}>
+      {source}
+    </MarkdownView>,
     client ?? testQueryClient(),
   );
   await waitFor(() => {
@@ -115,10 +121,14 @@ describe("frontmatter rendering", () => {
 
   it("still turns the body's own ref into a link", async () => {
     // The exemption is the frontmatter's, not the document's: the very token
-    // left alone above is still resolved one line below it.
+    // left alone above is still resolved one line below it. Asked of a
+    // preview, because that is where tokens are read at all since T-266 —
+    // stored text carries links, and the exemption is about what a token
+    // does on its way into storage.
     const container = await mount("---\nrelated: F-1\n---\n\nSee F-1 too.\n", {
       slug: "todou",
       client: seededClient("todou"),
+      preview: true,
     });
     expect(gridOf(container)?.querySelector("a")).toBeNull();
     await waitFor(() => {

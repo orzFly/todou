@@ -24,17 +24,18 @@ import {
   insertCommentInTx,
   toTimelineComment,
 } from "./comments.ts";
-import {
-  type CrossTarget,
-  loadReferenceInputs,
-  recordCrossReferences,
-} from "./cross-references.ts";
+import { loadReferenceInputs } from "./cross-references.ts";
 import {
   bundleIssues,
   type StatusRow,
   statusEventOf,
   toIssue,
 } from "./issues.ts";
+import {
+  type ReferenceTarget,
+  recordCrossReferences,
+  resolveContent,
+} from "./resolve-pass.ts";
 import { assertIssueWritable, gateColumns } from "./trash.ts";
 import { getUserRefs } from "./users.ts";
 
@@ -147,9 +148,21 @@ export async function executeCommands(
   const refInputs = await loadReferenceInputs(ctx, db, project.id);
 
   const body = input.body.trim() === "" ? null : input.body;
+  const resolved =
+    body === null
+      ? null
+      : await resolveContent({
+          ctx,
+          db,
+          project,
+          actor,
+          inputs: refInputs,
+          text: body,
+          self: { projectId: project.id, number: issueNumber },
+        });
   const events: ChangeEvent[] = [];
   const commandEvents: ChangeEvent[] = [];
-  let crossTargets: CrossTarget[] = [];
+  let crossTargets: ReferenceTarget[] = [];
 
   const commentRow: CommentRow | null = await db.transaction(async (tx) => {
     const addEvent = async (
@@ -179,17 +192,17 @@ export async function executeCommands(
     };
 
     let comment: CommentRow | null = null;
-    if (body !== null) {
+    if (resolved !== null) {
       const result = await insertCommentInTx(tx, {
         project,
         issue: { id: issue.id, number: issueNumber },
         actorId: actor.id,
-        body,
+        body: resolved.storedText,
+        localRefs: resolved.local,
         agentContext,
-        refInputs,
       });
       comment = result.comment;
-      crossTargets = result.crossTargets;
+      crossTargets = resolved.cross;
       events.push(...result.timeline);
     }
 

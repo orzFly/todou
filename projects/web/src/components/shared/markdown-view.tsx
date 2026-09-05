@@ -14,7 +14,6 @@ import {
   MarkdownAttachmentImage,
 } from "@/components/issue/attachment-markdown.tsx";
 import { MarkdownLink } from "@/components/shared/issue-link.tsx";
-import { useOriginSlugAt } from "@/components/shared/issue-origin.tsx";
 import { CodeBlock, fenceFilename } from "@/components/shared/pierre.tsx";
 import { isTextEmbedName } from "@/lib/attachment-preview.ts";
 import { parseAttachmentHref } from "@/lib/attachment-refs.ts";
@@ -118,31 +117,28 @@ function MarkdownPre({
 export function MarkdownView({
   children,
   slug,
-  originSlug,
   issueNumber,
   embedded = false,
-  refDate,
+  preview = false,
   rehypePlugins,
 }: {
   children: string;
   /** Enables #N → issue link rendering; omit where there is no project. */
   slug?: string;
   /**
-   * The project this text was written in, if the card has since moved
-   * (T-231). A bare `#12` means whatever it meant when it was typed, so it
-   * resolves under this project rather than the current one — reading it
-   * under the destination would point it at a different, existing card.
-   * Null means the writing project is unknown to this reader, and those
-   * refs stay plain text rather than become a guess.
+   * True for text that has NOT been through the resolve pass — a draft.
+   *
+   * Stored text carries its references as real links, resolved when it was
+   * saved; a bare token still in it is one that did not resolve, and drawing
+   * it as a link would put the guess back (T-266). A draft has been through
+   * nothing, so its tokens are shown under exactly the anchor the submission
+   * will use: this project, this instant.
+   *
+   * No surface passes it today — the composer is a plain editor with no
+   * preview pane. It is the seam one would render through, and what keeps
+   * the tokenizer's behaviour under test while the read path stops using it.
    */
-  originSlug?: string | null;
-  /**
-   * When the content was CREATED (T-80): internal refs parse under the
-   * format in force at that moment, so pre-switch text keeps pointing at
-   * this project's issues after "#" is handed to an external tracker.
-   * Omit for live text (editor previews) — that reads as "now".
-   */
-  refDate?: string;
+  preview?: boolean;
   /**
    * Enables rich attachment references (download-URL links, embedded
    * images and document cards upgrade to preview-aware components); omit
@@ -161,15 +157,6 @@ export function MarkdownView({
    */
   rehypePlugins?: ComponentProps<typeof Markdown>["rehypePlugins"];
 }) {
-  // Resolution follows the origin: same project in the ordinary case, and
-  // one extra config fetch only for text that predates a move. The context
-  // answers for every renderer under an issue without each one forwarding
-  // the card's move history by hand.
-  const fromContext = useOriginSlugAt(refDate);
-  const origin = originSlug === undefined ? fromContext : originSlug;
-  const resolveUnder = origin === undefined ? slug : (origin ?? undefined);
-  const unresolvable = origin === null;
-
   // The override map must be referentially stable across re-renders: every
   // entry is an anonymous component, and a fresh map makes React treat each
   // one as a NEW component type, unmounting and rebuilding those DOM
@@ -222,18 +209,11 @@ export function MarkdownView({
                     slug={slug}
                     issueNumber={issueNumber}
                     address={target}
-                    originSlug={resolveUnder}
                     {...props}
                   />
                 );
               }
-              return (
-                <MarkdownLink
-                  slug={slug}
-                  originSlug={resolveUnder}
-                  {...props}
-                />
-              );
+              return <MarkdownLink slug={slug} {...props} />;
             },
             img: (
               props: ComponentProps<"img"> & { node?: unknown },
@@ -259,12 +239,12 @@ export function MarkdownView({
             },
           }),
     }),
-    [children, slug, resolveUnder, issueNumber, embedded],
+    [children, slug, issueNumber, embedded],
   );
 
   const refQuery = useQuery({
-    ...referenceConfigQuery(resolveUnder ?? ""),
-    enabled: resolveUnder !== undefined,
+    ...referenceConfigQuery(slug ?? ""),
+    enabled: slug !== undefined,
   });
   // Cross-project resolution is the viewer's own: which projects they can
   // name, and which prefixes were unambiguously held when this was written.
@@ -285,35 +265,26 @@ export function MarkdownView({
   // remark-issue-refs.ts is what keeps refs out of a frontmatter value, not
   // this order.
   const remarkPlugins = useMemo(() => {
-    if (resolveUnder === undefined || unresolvable)
-      return [
-        remarkGfm,
-        [remarkFrontmatter, FRONTMATTER_FLAVOURS],
-        remarkFrontmatterTable,
-      ] as ComponentProps<typeof Markdown>["remarkPlugins"];
+    const base = [
+      remarkGfm,
+      [remarkFrontmatter, FRONTMATTER_FLAVOURS],
+      remarkFrontmatterTable,
+    ];
+    if (slug === undefined)
+      return base as ComponentProps<typeof Markdown>["remarkPlugins"];
     const directory = directoryQuery.data;
     const readable = readableQuery.data;
     const config = refConfigFor(
       refQuery.data,
-      refDate,
       directory == null || readable === undefined
         ? undefined
         : { slugs: readable.map((p) => p.slug), directory },
     );
     return [
-      remarkGfm,
-      [remarkFrontmatter, FRONTMATTER_FLAVOURS],
-      remarkFrontmatterTable,
-      [remarkIssueRefs, config],
+      ...base,
+      [remarkIssueRefs, config, { autolinksOnly: !preview }],
     ] as ComponentProps<typeof Markdown>["remarkPlugins"];
-  }, [
-    resolveUnder,
-    unresolvable,
-    refQuery.data,
-    refDate,
-    directoryQuery.data,
-    readableQuery.data,
-  ]);
+  }, [slug, preview, refQuery.data, directoryQuery.data, readableQuery.data]);
 
   return (
     // Typography lives in styles.css (.markdown-body, GitHub-style).

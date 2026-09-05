@@ -138,7 +138,7 @@ afterEach(() => {
 });
 
 describe("splitIssueRefs with a prefixed format", () => {
-  const config = refConfigFor(switchedConfig, AFTER);
+  const config = refConfigFor(switchedConfig);
 
   it("tokenizes T-N and leaves hyphenated words alone", () => {
     expect(splitIssueRefs("fixes T-76, see T-9", config)).toEqual([
@@ -173,9 +173,10 @@ describe("splitIssueRefs with a prefixed format", () => {
     ]);
   });
 
-  it("keeps pre-switch content on the old format", () => {
-    const old = refConfigFor(switchedConfig, BEFORE);
-    // "#12" was internal back then — never the autolink's.
+  it("reads the same text differently under the earlier format", () => {
+    // The tokenizer still takes whichever format it is handed; what T-266
+    // retired is asking it for a format other than the one in force now.
+    const old = { internalPrefix: null, autolinks: [] };
     expect(splitIssueRefs("see #12 and T-34", old)).toEqual([
       { type: "text", value: "see " },
       { type: "ref", number: 12, text: "#12" },
@@ -184,34 +185,37 @@ describe("splitIssueRefs with a prefixed format", () => {
   });
 });
 
-describe("MarkdownView time cutoff", () => {
-  it("renders pre-switch #N as an internal link", async () => {
+describe("MarkdownView reading and preview", () => {
+  it("expands an autolink while reading, and leaves the internal token alone", async () => {
     const client = seededClient("todou", switchedConfig, [
-      refItem(12, "Old target"),
+      refItem(34, "Never linked"),
     ]);
     const view = renderWithProviders(
-      <MarkdownView slug="todou" refDate={BEFORE}>
-        {"see #12 and T-34"}
-      </MarkdownView>,
+      <MarkdownView slug="todou">{"see #12 and T-34"}</MarkdownView>,
       client,
     );
-    const link = await waitFor(() => {
-      const el = view.container.querySelector("a[data-issue-link='12']");
+    // `#` belongs to the GitHub mirror, so it still expands at render time:
+    // an external tracker has no address here to store (T-266).
+    const external = await waitFor(() => {
+      const el = view.container.querySelector(
+        "a[href='https://github.com/o/r/issues/12']",
+      );
       expect(el).not.toBeNull();
       return el as HTMLAnchorElement;
     });
-    expect(link.getAttribute("href")).toBe("/projects/todou/issues/12");
-    // The coincidental T-34 in old text must stay plain.
-    expect(view.container.querySelectorAll("a")).toHaveLength(1);
+    expect(external.textContent).toBe("#12");
+    // T-34 is this project's own spelling. A token still sitting in stored
+    // text is one the resolve pass did not place, so it stays text.
+    expect(view.container.querySelector("a[data-issue-link='34']")).toBeNull();
     expect(view.container.textContent).toContain("T-34");
   });
 
-  it("renders post-switch #N as the external autolink and T-N internally", async () => {
+  it("resolves the draft's tokens in an editor preview", async () => {
     const client = seededClient("todou", switchedConfig, [
       refItem(7, "New target"),
     ]);
     const view = renderWithProviders(
-      <MarkdownView slug="todou" refDate={AFTER}>
+      <MarkdownView slug="todou" preview>
         {"T-7 closes #12"}
       </MarkdownView>,
       client,
@@ -321,9 +325,14 @@ function crossClient(opts: {
   return client;
 }
 
+/**
+ * The cross-project grammar as a composer preview shows it: exactly the
+ * anchor the submission will use, which is what makes a preview a preview
+ * rather than a second opinion (T-266).
+ */
 const crossView = (body: string, client: QueryClient) =>
   renderWithProviders(
-    <MarkdownView slug="todou" refDate={AFTER}>
+    <MarkdownView slug="todou" preview>
       {body}
     </MarkdownView>,
     client,

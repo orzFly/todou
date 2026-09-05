@@ -113,8 +113,11 @@ describe("time-cutoff reference recording", () => {
     events = await referencedEvents(target.number);
     expect(events).toHaveLength(2);
 
-    // Editing the PRE-switch comment keeps created_at semantics: a new
-    // "#N" ref still records, a new "T-N" ref still doesn't.
+    // Editing the PRE-switch comment reads it under the format in force NOW
+    // (T-266): what the author is typing at this moment is what gets
+    // resolved, so "T-N" records and "#N" is plain text. The links the
+    // comment already carried were resolved before the switch and stay put —
+    // a stored link is an answer, not a spelling to re-read.
     const second = await createIssue("second-target");
     const edit = await api(`/issues/${other.number}/comments/${pre.id}`, {
       method: "PATCH",
@@ -123,8 +126,8 @@ describe("time-cutoff reference recording", () => {
       }),
     });
     expect(edit.status).toBe(200);
-    expect(await referencedEvents(second.number)).toHaveLength(1);
-    expect(await referencedEvents(fourth.number)).toHaveLength(0);
+    expect(await referencedEvents(second.number)).toHaveLength(0);
+    expect(await referencedEvents(fourth.number)).toHaveLength(1);
   });
 
   it("switching back to # restores hash parsing for new content", async () => {

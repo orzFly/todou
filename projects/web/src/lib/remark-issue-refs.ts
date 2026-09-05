@@ -67,34 +67,64 @@ export function refHref(segment: RefSegment): string {
   }
 }
 
+export type RefPluginOptions = {
+  /**
+   * Leave issue tokens as plain text and linkify only external autolinks.
+   *
+   * What reading mode wants since T-266: a reference is resolved when it is
+   * submitted and stored as a real link, so a bare `#12` still sitting in
+   * stored text is one that did NOT resolve — rendering it as a link would
+   * put back the guess the whole design removes. An autolink has no address
+   * here to store, so it goes on being expanded at render time.
+   */
+  autolinksOnly?: boolean;
+};
+
 /**
  * remark plugin: turn reference tokens in text into links. Reference
  * tokens become links the MarkdownView `a` renderer recognises by their
  * fragment href and upgrades to <IssueLink>; autolink tokens become plain
  * external links. Operating on the AST (not the source) is what exempts
  * code blocks and inline code — their text lives in opaque leaf nodes.
- * Config is per-content (T-80 time cutoff); pass it via the remark options
- * tuple: `[remarkIssueRefs, config]`.
+ * Config is per-content; pass it via the remark options tuple:
+ * `[remarkIssueRefs, config, options]`.
  */
-export function remarkIssueRefs(config: RefConfig = DEFAULT_REF_CONFIG) {
-  return (tree: MdNode) => visit(tree, config);
+export function remarkIssueRefs(
+  config: RefConfig = DEFAULT_REF_CONFIG,
+  options: RefPluginOptions = {},
+) {
+  return (tree: MdNode) => visit(tree, config, options);
 }
 
-function visit(node: MdNode, config: RefConfig): void {
+function visit(
+  node: MdNode,
+  config: RefConfig,
+  options: RefPluginOptions,
+): void {
   if (node.children === undefined || OPAQUE.has(node.type)) return;
   const next: MdNode[] = [];
   for (const child of node.children) {
     if (child.type === "text" && typeof child.value === "string") {
-      const segments = splitIssueRefs(child.value, config);
+      const segments = keep(splitIssueRefs(child.value, config), options);
       if (segments.some((s) => s.type !== "text")) {
         next.push(...split(child, segments));
         continue;
       }
     }
-    visit(child, config);
+    visit(child, config, options);
     next.push(child);
   }
   node.children = next;
+}
+
+/** Demote the segment kinds this mode does not linkify back to plain text. */
+function keep(segments: RefSegment[], options: RefPluginOptions): RefSegment[] {
+  if (options.autolinksOnly !== true) return segments;
+  return segments.map((segment) =>
+    segment.type === "text" || segment.type === "ext"
+      ? segment
+      : { type: "text", value: segment.text },
+  );
 }
 
 /** The point `text` characters past `from`, counting the lines it crosses. */

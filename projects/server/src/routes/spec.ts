@@ -1,7 +1,7 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
   minRoleOf,
-  ProjectSlug,
+  ProjectRef,
   SpecComments,
   SpecCommentsResolveInput,
   SpecFiles,
@@ -25,7 +25,7 @@ import { movedResponses } from "./moved-responses.ts";
 import { roleTag } from "./role-tag.ts";
 
 const issueParams = z.object({
-  slug: ProjectSlug,
+  slug: ProjectRef,
   number: z.coerce.number().int().positive(),
 });
 const jsonBody = <T extends z.ZodType>(schema: T) => ({

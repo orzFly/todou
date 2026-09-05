@@ -1,4 +1,5 @@
 import type { TimelineComment, TodouClient } from "@todou/shared";
+import { MovedError } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
@@ -10,11 +11,15 @@ import {
   plural,
   summarize,
 } from "../format.ts";
-import { parsePositiveInt } from "../parse.ts";
+import { parseIssueRef, parsePositiveInt } from "../parse.ts";
 import { confirm } from "../prompt.ts";
 import { readQuestionsInput } from "../questions.ts";
 import { refFormat, withIssueRef } from "../refs.ts";
-import { fetchRefPrefix, resolveAssignees } from "../resolve.ts";
+import {
+  fetchRefPrefix,
+  fetchRefSpelling,
+  resolveAssignees,
+} from "../resolve.ts";
 import { drainTimeline, renderTimelineItem } from "../timeline.ts";
 import {
   assertWriteCursorFlags,
@@ -43,12 +48,14 @@ function parseCommentId(raw: string): number {
   return parsePositiveInt(COMMENT_ANCHOR.exec(raw)?.[1] ?? raw, "comment id");
 }
 
-/** The comment a whole permalink points at, fragment included. */
+/**
+ * The comment a whole permalink points at, fragment included — a full URL
+ * or the root-relative address a stored reference carries (T-266).
+ */
 function permalinkCommentId(ref: string): number | undefined {
-  if (!/^https?:\/\//i.test(ref)) return undefined;
+  if (!/^(https?:\/\/|\/)/i.test(ref)) return undefined;
   try {
-    const id = COMMENT_ANCHOR.exec(new URL(ref).hash)?.[1];
-    return id === undefined ? undefined : Number(id);
+    return parseIssueRef(ref, "issue number").commentId;
   } catch {
     return undefined;
   }
@@ -259,7 +266,8 @@ export class CommentListCommand extends ProjectCommand {
     const comments = last === undefined ? matched : matched.slice(-last);
     const omitted = matched.length - comments.length;
 
-    const refPrefix = await fetchRefPrefix(client, project);
+    const spelling = await fetchRefSpelling(client, project);
+    const refPrefix = spelling.refPrefix;
     const paint = makePainter(this.context.stdout, this.context.env);
     this.output(
       {
@@ -280,7 +288,7 @@ export class CommentListCommand extends ProjectCommand {
           ...comments.map((comment) =>
             renderTimelineItem(comment, paint, {
               issueNumber: number,
-              refPrefix,
+              ...spelling,
               showId: true,
             }),
           ),
@@ -329,18 +337,77 @@ export class CommentViewCommand extends ProjectCommand {
   protected async run(client: TodouClient): Promise<void> {
     const { project, number } = await this.resolveIssueRef(client, this.number);
     const commentId = this.resolveCommentId();
-    const comment = await client.getComment(project, number, commentId);
-    const refPrefix = await fetchRefPrefix(client, project);
+    const found = await this.fetchComment(client, project, number, commentId);
+    const spelling = await fetchRefSpelling(client, found.project);
     const paint = makePainter(this.context.stdout, this.context.env);
+    const moved =
+      found.movedFrom === undefined
+        ? ""
+        : `${paint(
+            "dim",
+            `moved from ${found.movedFrom.project}/${found.movedFrom.number}` +
+              `#comment-${found.movedFrom.commentId}`,
+          )}\n`;
     this.output(
-      withIssueRef({ ...comment, issue_number: number }, refPrefix),
+      withIssueRef(
+        { ...found.comment, issue_number: found.number },
+        spelling.refPrefix,
+      ),
       () =>
-        renderTimelineItem(comment, paint, {
-          issueNumber: number,
-          refPrefix,
+        moved +
+        renderTimelineItem(found.comment, paint, {
+          issueNumber: found.number,
+          ...spelling,
           showId: true,
         }),
     );
+  }
+
+  /**
+   * The comment, read from wherever it lives now.
+   *
+   * A permalink is written down and followed later, so an address the card
+   * has since left must keep answering — the same call `issue view` makes
+   * (T-231). Without this the CLI stopped on the 301 while the web page the
+   * link came from followed it silently.
+   */
+  private async fetchComment(
+    client: TodouClient,
+    project: string,
+    number: number,
+    commentId: number,
+  ): Promise<{
+    project: string;
+    number: number;
+    comment: Awaited<ReturnType<TodouClient["getComment"]>>;
+    movedFrom?: { project: string; number: number; commentId: number };
+  }> {
+    try {
+      const comment = await client.getComment(project, number, commentId);
+      return { project, number, comment };
+    } catch (error) {
+      if (!(error instanceof MovedError)) throw error;
+      const to = error.movedTo;
+      // A comment redirect carries the new id; an issue redirect does not,
+      // and the id it was asked for belongs to the project it left.
+      if (to.comment_id === undefined) {
+        throw new CliError(
+          `comment ${commentId} is on ${project}/${number}, which moved to ${to.slug}/${to.number}`,
+          `the ids are the old project's; read it there: todou comment list ${to.slug}/${to.number}`,
+        );
+      }
+      const comment = await client.getComment(
+        to.slug,
+        to.number,
+        to.comment_id,
+      );
+      return {
+        project: to.slug,
+        number: to.number,
+        comment,
+        movedFrom: { project, number, commentId },
+      };
+    }
   }
 
   /** The id argument, or the one a pasted permalink already carries. */

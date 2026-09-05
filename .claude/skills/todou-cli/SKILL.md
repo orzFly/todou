@@ -64,7 +64,9 @@ todou label list -p <proj>                    # label create/edit/delete: refere
 gh spellings work too: `issue show` = `view`, `issue comment` = `comment add`, `issue update` = `edit`,
 `issue status <n> <status>` = `issue move <n> <status>` = `edit --status`; `-t/-b/-F/-l/-a` on
 `issue create`, `-l/-a/-L/-S/-s --state open|closed|all` on `issue list`, `-c` on `issue close`, `@me`
-wherever a login goes. Every `<number>` also accepts `<proj>/16`, `"#16"`, `T-16` or a full URL.
+wherever a login goes. Every `<number>` also accepts `<proj>/16`, `"#16"`, `T-16`, a full URL, or the
+address a stored reference is written with (`/projects/7/issues/16`). A project may be spelled as its
+id anywhere its slug goes, `-p` included.
 
 **A prefix is resolved, not ignored.** `T-16` means the project that holds `T` — the current one if
 that is its prefix, otherwise whichever readable project claims it deployment-wide. A prefix nobody
@@ -211,6 +213,13 @@ blocking and `--poll` modes, NDJSON, stdout/stderr separation: `references/scrip
   other command; a hand-written `curl` with a pasted Bearer token is a credential leak. `todou config
   show` prints the resolved config without any token value.
 - Every timestamp is a permalink (`#comment-<id>`, `#event-<id>`); `comment view` accepts one.
+- **Write `#N` and forget about it.** The server resolves a reference when it is submitted and stores
+  the answer as a link — `[#12](/projects/7/issues/12)` — so what you read back is what it means, and
+  saving it again changes nothing. A token that comes back unchanged resolved to nothing: the card is
+  not there, or you cannot read it. That is the answer, not a rendering failure.
+- **An address in stored text pastes straight back in.** `todou issue view /projects/7/issues/12`,
+  `todou comment view /projects/7/issues/12#comment-34`, and `-p 7` all work — a project id is a
+  spelling every command takes.
 - Do not guess how a project spells its refs. A project writes `#12` or `T-12`, which is a per-project
   setting, and every command that knows an issue prints it spelled: the first line of `issue view
   --brief`, every list row, every watch line. A ref notifies the card it points at, so write one only

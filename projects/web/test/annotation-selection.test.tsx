@@ -3,6 +3,7 @@ import { fireEvent, render, waitFor } from "@testing-library/react";
 import type { IssueListItem } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
+import { projectsQuery } from "../src/api/queries.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import {
   AnnotatedMarkdown,
@@ -492,8 +493,17 @@ describe("AnnotatedMarkdown reverse mapping by block kind", () => {
       issueRefQuery("p", 12).queryKey,
       refItem(12, "A referenced issue"),
     );
+    client.setQueryData(projectsQuery.queryKey, [
+      {
+        id: 1,
+        slug: "p",
+        name: "p",
+        description: "",
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
     const { container, onStage, button } = await stageSelection(
-      "see #12 here\n",
+      "see [#12](/projects/1/issues/12) here\n",
       (c) => {
         const node = c.querySelector("p[data-loc]")?.firstChild;
         if (!node) throw new Error("no paragraph");

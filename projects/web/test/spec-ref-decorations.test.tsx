@@ -7,6 +7,7 @@ import type {
 } from "@todou/shared";
 import { describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
+import { projectsQuery } from "../src/api/queries.ts";
 import { referenceConfigQuery } from "../src/api/references.ts";
 import {
   AnnotatedMarkdown,
@@ -69,9 +70,21 @@ const refItem = (number: number, title: string): IssueListItem => ({
   moves: [],
 });
 
+/** How the resolve pass stores `T-161`: the token as text, the id as href. */
+const REF = (number: number) => `[T-${number}](/projects/1/issues/${number})`;
+
 function seeded(...numbers: number[]): QueryClient {
   const client = testQueryClient();
   client.setQueryData(referenceConfigQuery("p").queryKey, PREFIXED);
+  client.setQueryData(projectsQuery.queryKey, [
+    {
+      id: 1,
+      slug: "p",
+      name: "p",
+      description: "",
+      created_at: SINCE,
+    },
+  ]);
   for (const number of numbers) {
     client.setQueryData(
       issueRefQuery("p", number).queryKey,
@@ -191,7 +204,7 @@ describe("annotation highlights across a ref chip (T-164)", () => {
   const BODY = [
     "## 结论，就地展开",
     "",
-    "- 第一条 bullet 提到 T-161 的做法。",
+    `- 第一条 bullet 提到 ${REF(161)} 的做法。`,
     "- 第二条 bullet 没有引用。",
     "",
   ].join("\n");
@@ -231,7 +244,7 @@ describe("annotation highlights across a ref chip (T-164)", () => {
 
   it("wraps the chip in an insertion when the ref is new (compare mode)", async () => {
     const { container } = await renderSpec({
-      body: "- 参考 T-161 的既有做法。\n",
+      body: `- 参考 ${REF(161)} 的既有做法。\n`,
       baselineBody: "- 参考既有做法。\n",
       client: seeded(161),
       ready: "a[data-issue-link]",
@@ -245,7 +258,7 @@ describe("annotation highlights across a ref chip (T-164)", () => {
     // The continuation indent stretches the source span past the rendered
     // value, so the pieces cannot be measured — all of it, or none.
     const { container } = await renderSpec({
-      body: "- 第一条 bullet 提到 T-161，\n  并且换到第二行继续写。\n- 第二条。\n",
+      body: `- 第一条 bullet 提到 ${REF(161)}，\n  并且换到第二行继续写。\n- 第二条。\n`,
       annotations: [anchored("comment", 1, 3, 2, 5)],
       client: seeded(161),
       ready: "a[data-issue-link]",

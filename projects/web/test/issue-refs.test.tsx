@@ -189,10 +189,15 @@ describe("cross-project segments and their hrefs", () => {
 
 describe("MarkdownView issue refs", () => {
   it("links #N in prose but not in code blocks or inline code", async () => {
+    // A preview, because that is where a token is read at all since T-266:
+    // stored text carries the link the submission resolved, and the code
+    // exemption is what decides whether a token becomes one.
     const client = seededClient("todou", [refItem(5, "Ref target")]);
     const body = "Fixes #5 via `#6` and:\n\n```\nignore #7\n```\n";
     const view = renderWithProviders(
-      <MarkdownView slug="todou">{body}</MarkdownView>,
+      <MarkdownView slug="todou" preview>
+        {body}
+      </MarkdownView>,
       client,
     );
 

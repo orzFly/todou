@@ -66,24 +66,27 @@ export const MovedOutPayload = z.object({
 });
 export type MovedOutPayload = z.infer<typeof MovedOutPayload>;
 
-export const CrossReferencedPayload = z.object({
-  by_project: ProjectSlug.nullable(),
-  /**
-   * Absent on events written before T-231. Present, it wins over
-   * `by_project`: a slug resolved by event time can land on whoever holds
-   * that spelling now, an id cannot.
-   */
+/**
+ * One `referenced` event: who mentioned this card, named by the referring
+ * project's permanent id (T-266).
+ *
+ * Whether the mention was local or came from another project is not stored
+ * any more. It is a display property the renderer derives by comparing
+ * `by_project_id` with the project it is drawing, because a stored answer
+ * goes stale the moment either card moves.
+ *
+ * `by_project` and `by_moved` are the pre-T-266 spellings. They are still
+ * read so that a deployment renders correctly between the upgrade and the
+ * `refs migrate` run; nothing writes them any more.
+ */
+export const ReferencedPayload = z.object({
   by_project_id: Id.nullable().optional(),
   by_issue: Id.nullable(),
   by_comment: Id.nullable().optional(),
-  /**
-   * Set only on events a move rewrote. Such a row stays visible even to a
-   * reader who cannot read the project it now names — it was visible before
-   * the move, and vanishing is what the redaction rule exists to avoid.
-   */
+  by_project: ProjectSlug.nullable().optional(),
   by_moved: z.boolean().optional(),
 });
-export type CrossReferencedPayload = z.infer<typeof CrossReferencedPayload>;
+export type ReferencedPayload = z.infer<typeof ReferencedPayload>;
 
 export const TimelineComment = z.object({
   type: z.literal("comment"),

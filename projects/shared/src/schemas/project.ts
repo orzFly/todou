@@ -13,6 +13,28 @@ export const ProjectSlug = z
   );
 
 /**
+ * What a `/api/projects/{…}` path segment may say: a slug, or a project id
+ * written in digits (T-266). Stored links are anchored on the id, so every
+ * route has to answer to one; an all-digit segment is unambiguous because
+ * `ProjectSlugInput` forbids taking such a slug.
+ *
+ * The id form is a subset of the slug pattern, so the shape is the same one
+ * `ProjectSlug` accepts. It has its own name because the two say different
+ * things: this one is deliberately the wider of the pair.
+ */
+export const ProjectRef = ProjectSlug;
+
+/**
+ * The slug a project may be created or renamed to. Narrower than what routes
+ * accept: an all-digit slug would make `/projects/1/` mean two things at
+ * once, and the whole id-anchored link form rests on it meaning one.
+ */
+export const ProjectSlugInput = ProjectSlug.refine(
+  (slug) => !/^\d+$/.test(slug),
+  { error: "lowercase letters, digits, and dashes; not all digits" },
+);
+
+/**
  * Internal issue reference prefix: null = `#N`, 'T' = `T-N`. Lives here
  * rather than in references.ts because project creation takes one too, and
  * references.ts already imports this file — the other direction would cycle.
@@ -64,7 +86,7 @@ export const ProjectBrief = Project.pick({ id: true, slug: true, name: true });
 export type ProjectBrief = z.infer<typeof ProjectBrief>;
 
 export const ProjectCreateInput = z.object({
-  slug: ProjectSlug,
+  slug: ProjectSlugInput,
   name: z.string().min(1).max(200),
   description: z.string().max(4000).default(""),
   // Omitted and null both mean `#N`: no format history row is written, so
@@ -77,7 +99,7 @@ export type ProjectCreateInput = z.infer<typeof ProjectCreateInput>;
 export const ProjectUpdateInput = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().max(4000).optional(),
-  slug: ProjectSlug.optional(),
+  slug: ProjectSlugInput.optional(),
   /**
    * Take a slug another project used to hold. Required because reclaiming
    * silently would repoint that project's off-site links — including the

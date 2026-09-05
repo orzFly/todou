@@ -8,19 +8,21 @@ import { makeTestApp, PLACEMENTS, type TestApp } from "./helpers.ts";
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
 
 /**
- * References resolve under the project that owned the card when the text was
- * written (T-231 §4.2) — the half of the origin rule that lives in the writer
- * rather than the reader.
+ * Where a card has been does not change how text typed into it today is read
+ * (T-266). A bare `#N` means a card in the project the author is looking at,
+ * every time, and the links already in the text are answers resolved when
+ * they were written rather than spellings to be re-read.
  *
- * Since T-247 a move respells what it can, so this rule is what covers the
- * text it could not: every fixture here therefore carries a bare origin-local
- * ref in its STORED text, which is the condition `editAnchorFor` reads.
+ * This file used to lock the opposite rule — an edit anchored to whichever
+ * project owned the card when the text was first written (T-231 §4.2). The
+ * scenarios are the ones that made that rule necessary, kept here against
+ * the answer that replaced it.
  *
  * No executor is involved: a hand-written `moved_in` event is all an
- * ownership interval is, which is exactly why the design reads them from the
- * timeline instead of adding a column.
+ * ownership interval is, which is exactly why arrivals live in the timeline
+ * instead of in a column.
  */
-describe.each(PLACEMENTS)("reference origin (%s placement)", (placement) => {
+describe.each(PLACEMENTS)("reference anchoring (%s placement)", (placement) => {
   let t: TestApp;
   let cookie: string;
   const A = `origin-a-${placement}`;
@@ -96,17 +98,15 @@ describe.each(PLACEMENTS)("reference origin (%s placement)", (placement) => {
     await t.cleanup();
   });
 
-  it("reads a bare ref in pre-move text as the source project's", async () => {
-    const targetInA = await createIssue(A, "referred to from the past");
-    // A card in B with the same number would swallow the reference if the
-    // text were read under B's numbering — and that card really exists, so
-    // no redirect would ever fire to correct it.
-    for (let i = 0; i < targetInA.number; i += 1) {
+  it("reads a bare ref typed now as this project's, whatever the card's history", async () => {
+    const sameNumberInA = await createIssue(A, "the old numbering's card");
+    // A card in B with the same number: under the retired origin rule the
+    // reference would have gone to A's, which is the silent mis-pointing
+    // T-261 P1 measured.
+    for (let i = 0; i < sameNumberInA.number; i += 1) {
       await createIssue(B, `filler ${i}`);
     }
 
-    // `#404` names nothing in either project, so it records no event of its
-    // own — it is here to say the stored text still spells A's numbering.
     const moved = await createIssue(B, "arrived here", "placeholder #404");
     await arrivedFrom(
       moved.id,
@@ -116,29 +116,30 @@ describe.each(PLACEMENTS)("reference origin (%s placement)", (placement) => {
 
     const res = await req(`/projects/${B}/issues/${moved.number}`, {
       method: "PATCH",
-      body: JSON.stringify({ body: `see #${targetInA.number}` }),
+      body: JSON.stringify({ body: `see #${sameNumberInA.number}` }),
     });
     expect(res.status).toBe(200);
-
-    // The reference landed in A, as a cross-project one.
-    const inA = await timelineOf(A, targetInA.number);
-    const cross = inA.items.find(
-      (i: { event_type?: string }) => i.event_type === "cross_referenced",
+    // The link and the event agree, because one pass produced both.
+    expect((await json(res)).body).toBe(
+      `see [#${sameNumberInA.number}](/projects/${idB}/issues/${sameNumberInA.number})`,
     );
-    expect(cross).toBeDefined();
-    expect(cross.payload.by_project).toBe(B);
-    expect(cross.payload.by_project_id).toBe(idB);
 
-    // …and not on B's card of the same number.
-    const sameNumberInB = await timelineOf(B, targetInA.number);
+    const inB = await timelineOf(B, sameNumberInA.number);
     expect(
-      sameNumberInB.items.filter(
+      inB.items.filter(
         (i: { event_type?: string }) => i.event_type === "referenced",
+      ),
+    ).toHaveLength(1);
+
+    const inA = await timelineOf(A, sameNumberInA.number);
+    expect(
+      inA.items.filter((i: { event_type?: string }) =>
+        ["referenced", "cross_referenced"].includes(i.event_type ?? ""),
       ),
     ).toHaveLength(0);
   });
 
-  it("splits a round trip into intervals, each read under its own owner", async () => {
+  it("reads every segment under this project, whichever interval it falls in", async () => {
     const targetInA = await createIssue(A, "A's card");
     const targetInB = await createIssue(B, "B's card");
 
@@ -167,23 +168,26 @@ describe.each(PLACEMENTS)("reference origin (%s placement)", (placement) => {
     await arrivedFrom(moved.id, { id: idA, slug: A, number: 900 }, t1);
     await arrivedFrom(moved.id, { id: idB, slug: B, number: 901 }, t2);
 
+    // The body's interval belongs to A and the comment's to B. Neither
+    // matters any more: both edits are being typed in B, now.
     await req(`/projects/${B}/issues/${moved.number}`, {
       method: "PATCH",
-      body: JSON.stringify({ body: `body points at #${targetInA.number}` }),
+      body: JSON.stringify({ body: `body points at ${A}#${targetInA.number}` }),
     });
     await req(`/projects/${B}/issues/${moved.number}/comments/${comment.id}`, {
       method: "PATCH",
       body: JSON.stringify({ body: `comment points at #${targetInB.number}` }),
     });
 
+    // A's card is reached by naming A outright, which is the only spelling
+    // that means it from here.
     const inA = await timelineOf(A, targetInA.number);
-    expect(
-      inA.items.some(
-        (i: { event_type?: string }) => i.event_type === "cross_referenced",
-      ),
-    ).toBe(true);
+    const fromB = inA.items.find(
+      (i: { event_type?: string }) => i.event_type === "referenced",
+    );
+    expect(fromB).toBeDefined();
+    expect(fromB.payload.by_project_id).toBe(idB);
 
-    // The comment was written while the card was in B, so its `#N` is local.
     const inB = await timelineOf(B, targetInB.number);
     expect(
       inB.items.some(
@@ -192,10 +196,8 @@ describe.each(PLACEMENTS)("reference origin (%s placement)", (placement) => {
     ).toBe(true);
   });
 
-  it("reads an edit of respelled text under the project it lives in now", async () => {
-    // What a move leaves behind since T-247: the card's own references name
-    // their project outright, so nothing in the stored text still belongs to
-    // A's numbering — and a `#K` typed now means a card here.
+  it("reads an edit of arrived text under the project it lives in now", async () => {
+    // A `#K` typed now means a card here, whatever else the stored text says.
     const here = await createIssue(B, "a card in B");
     const moved = await createIssue(
       B,
@@ -222,7 +224,7 @@ describe.each(PLACEMENTS)("reference origin (%s placement)", (placement) => {
     ).toHaveLength(1);
   });
 
-  it("reads an edit of a respelled comment under the project it lives in now", async () => {
+  it("reads an edit of an arrived comment under the project it lives in now", async () => {
     const here = await createIssue(B, "comment target in B");
     const moved = await createIssue(B, "respelled comment host", "clean body");
     const commentRes = await req(
@@ -260,11 +262,11 @@ describe.each(PLACEMENTS)("reference origin (%s placement)", (placement) => {
     ).toHaveLength(1);
   });
 
-  it("records nothing when the source project is unknown", async () => {
+  it("records normally when an arrival names a project that is gone", async () => {
     const moved = await createIssue(B, "arrived from nowhere", "body");
-    // A `moved_in` whose source no longer resolves: the interval's owner is
-    // unknowable, and guessing "the current project" would attach the
-    // reference to a card the text never meant.
+    // A `moved_in` whose source no longer resolves. This used to make the
+    // whole card unreadable to the extractor, because the anchor could not
+    // be determined. There is no anchor to determine.
     const db = await dbOf(idB, B);
     await db.insert(issueEvents).values({
       projectId: idB,
@@ -291,7 +293,7 @@ describe.each(PLACEMENTS)("reference origin (%s placement)", (placement) => {
         (i: { event_type?: string }) =>
           i.event_type === "referenced" || i.event_type === "cross_referenced",
       ),
-    ).toHaveLength(0);
+    ).toHaveLength(1);
   });
 
   it("keeps the moved_in events out of the way of ordinary edits", async () => {

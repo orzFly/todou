@@ -82,7 +82,6 @@ function LoadedEmbed({
       render={isMarkdownDocument(attachment) ? "markdown" : "code"}
       slug={slug}
       issueNumber={issueNumber}
-      refDate={attachment.created_at}
       meta={formatSize(attachment.size)}
       downloadUrl={attachment.url}
     />

@@ -58,7 +58,6 @@ function TextPane({
       text={text.data}
       slug={slug}
       issueNumber={issueNumber}
-      refDate={target.created_at}
     />
   );
 }

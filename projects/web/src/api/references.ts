@@ -3,7 +3,6 @@ import {
   DEFAULT_REFERENCE_CONFIG,
   type ReferenceConfig,
   type ReferenceDirectory,
-  refPrefixAt,
 } from "@todou/shared";
 import { api } from "@/api/queries.ts";
 import type { RefConfig } from "@/lib/issue-refs.ts";
@@ -62,24 +61,21 @@ export type CrossRefInputs = {
 };
 
 /**
- * Tokenizer config for content anchored at `refDate` (T-80 time cutoff):
- * the internal format is the one in force when the content was created,
- * autolinks are always the current rule set. No date = "now" (UI strings,
- * editor previews). Omitting `cross` leaves the cross-project grammar off,
- * which is what UI-spelled strings want — they are never user prose.
+ * Tokenizer config as of now: the project's current format and its current
+ * autolink rules.
+ *
+ * There is no content date any more (T-266). A reference is resolved when it
+ * is submitted, so the only text a tokenizer still runs over is a draft
+ * nobody has saved — and a draft is being written at this instant, under
+ * this project. Omitting `cross` leaves the cross-project grammar off, which
+ * is what UI-spelled strings want: they are never user prose.
  */
 export function refConfigFor(
   config: ReferenceConfig | undefined,
-  refDate?: string,
   cross?: CrossRefInputs,
 ): RefConfig {
   const base = {
-    internalPrefix:
-      config === undefined
-        ? null
-        : refDate === undefined
-          ? config.format.prefix
-          : refPrefixAt(config.format.history, refDate),
+    internalPrefix: config?.format.prefix ?? null,
     autolinks: config?.autolinks ?? [],
   };
   if (cross === undefined) return base;
@@ -91,7 +87,6 @@ export function refConfigFor(
       // Absent on a pre-T-156 server, and an empty list resolves exactly
       // like no history at all.
       slugEntries: cross.directory.slug_entries ?? [],
-      ...(refDate === undefined ? {} : { at: refDate }),
     },
   };
 }

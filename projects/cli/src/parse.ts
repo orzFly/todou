@@ -82,17 +82,25 @@ export type IssueRef = {
    * decides which one it means (T-214), so it has to survive parsing.
    */
   prefix?: string;
+  /** The `#comment-<id>` a permalink carried, for commands that take one. */
+  commentId?: number;
   /** Set for URL-form refs, so callers can reject a foreign server. */
   origin?: string;
 };
 
 const ISSUE_URL_PATH = /^\/projects\/([^/]+)\/issues\/([^/]+)\/?$/;
+const COMMENT_HASH = /^#comment-(\d{1,9})$/;
 
 /**
  * An issue reference as agents habitually write it: "16", "#16", "T-16",
- * "project/16", "project/#16", "project/T-16", "project#16", or a full
- * issue URL. The "project#16" form is what cross-project references are
- * written as in prose (T-150), so it has to paste back in here.
+ * "project/16", "project/#16", "project/T-16", "project#16", a root-relative
+ * path, or a full issue URL. The "project#16" form is what cross-project
+ * references are written as in prose (T-150), so it has to paste back in
+ * here — and since T-266 the path form is what STORED references are written
+ * as, so a link copied out of a body has to as well.
+ *
+ * The project may be spelled as its id in every one of those: an id is what
+ * a stored link carries, and the server reads one wherever it reads a slug.
  *
  * `parseRefLocator` is a fast path over the shared grammar, not a
  * replacement: everything it declines falls through to the code below,
@@ -100,6 +108,7 @@ const ISSUE_URL_PATH = /^\/projects\/([^/]+)\/issues\/([^/]+)\/?$/;
  */
 export function parseIssueRef(value: string, what: string): IssueRef {
   if (/^https?:\/\//i.test(value)) return parseIssueUrl(value, what);
+  if (value.startsWith("/")) return parseIssuePath(value, what);
   const locator = parseRefLocator(value);
   if (locator !== null) {
     return {
@@ -144,8 +153,38 @@ function parseIssueUrl(value: string, what: string): IssueRef {
   return {
     project: checkSlug(match[1] as string, value),
     number: parsePositiveInt(match[2] as string, what),
+    ...commentAnchor(url.hash),
     origin: url.origin,
   };
+}
+
+/**
+ * The address a stored reference is written with: `/projects/7/issues/12`,
+ * optionally anchored at a comment. Copying one out of a body and handing it
+ * straight back to the CLI is the whole point of storing it (T-266 / T-261
+ * P4), so it is parsed here rather than left to the user to take apart.
+ */
+function parseIssuePath(value: string, what: string): IssueRef {
+  const at = value.indexOf("#");
+  const path = at === -1 ? value : value.slice(0, at);
+  const hash = at === -1 ? "" : value.slice(at);
+  const match = ISSUE_URL_PATH.exec(path);
+  if (!match) {
+    throw new CliError(
+      `"${value}" is not an issue address`,
+      "expected /projects/<project>/issues/<number>",
+    );
+  }
+  return {
+    project: checkSlug(match[1] as string, value),
+    number: parsePositiveInt(match[2] as string, what),
+    ...commentAnchor(hash),
+  };
+}
+
+function commentAnchor(hash: string): { commentId?: number } {
+  const id = COMMENT_HASH.exec(hash)?.[1];
+  return id === undefined ? {} : { commentId: Number(id) };
 }
 
 function checkSlug(slug: string, ref: string): string {

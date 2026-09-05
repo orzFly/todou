@@ -5,7 +5,7 @@ import {
   DirectUploadRequest,
   DirectUploadTicket,
   minRoleOf,
-  ProjectSlug,
+  ProjectRef,
 } from "@todou/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../auth/middleware.ts";
@@ -39,7 +39,7 @@ const uploadRoute = createRoute({
   path: "/{slug}/attachments",
   summary: `Upload a file to an issue (${minRoleOf("attachment.upload")}, multipart)`,
   request: {
-    params: z.object({ slug: ProjectSlug }),
+    params: z.object({ slug: ProjectRef }),
     body: {
       content: {
         "multipart/form-data": {
@@ -66,7 +66,7 @@ const listRoute = createRoute({
   path: "/{slug}/attachments",
   summary: "List an issue's attachments (member)",
   request: {
-    params: z.object({ slug: ProjectSlug }),
+    params: z.object({ slug: ProjectRef }),
     query: z.object({ issue_number: z.coerce.number().int().positive() }),
   },
   responses: {
@@ -83,7 +83,7 @@ const directUploadRoute = createRoute({
   path: "/{slug}/attachments/direct-uploads",
   summary: `Request a presigned direct upload (${minRoleOf("attachment.upload")}, s3 backend only)`,
   request: {
-    params: z.object({ slug: ProjectSlug }),
+    params: z.object({ slug: ProjectRef }),
     body: {
       content: { "application/json": { schema: DirectUploadRequest } },
     },
@@ -102,7 +102,7 @@ const directUploadCompleteRoute = createRoute({
   summary: `Register a finished direct upload (${minRoleOf("attachment.upload")}, s3 backend only)`,
   request: {
     params: z.object({
-      slug: ProjectSlug,
+      slug: ProjectRef,
       upload_id: z.coerce.number().int().positive(),
     }),
   },
@@ -120,7 +120,7 @@ const downloadRoute = createRoute({
   summary: "Download an attachment (member)",
   request: {
     params: z.object({
-      slug: ProjectSlug,
+      slug: ProjectRef,
       id: z.coerce.number().int().positive(),
     }),
   },
@@ -139,7 +139,7 @@ const downloadNamedRoute = createRoute({
   summary: "Download an attachment; the name segment is ignored (member)",
   request: {
     params: z.object({
-      slug: ProjectSlug,
+      slug: ProjectRef,
       id: z.coerce.number().int().positive(),
       name: z.string(),
     }),
@@ -157,7 +157,7 @@ const viewRoute = createRoute({
   summary: "Render an attachment inline, CSP-sandboxed (member)",
   request: {
     params: z.object({
-      slug: ProjectSlug,
+      slug: ProjectRef,
       id: z.coerce.number().int().positive(),
     }),
   },
@@ -175,7 +175,7 @@ const viewNamedRoute = createRoute({
     "ignored (member)",
   request: {
     params: z.object({
-      slug: ProjectSlug,
+      slug: ProjectRef,
       id: z.coerce.number().int().positive(),
       name: z.string(),
     }),

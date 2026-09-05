@@ -719,19 +719,44 @@ todou-server storage gc              # delete orphans older than expiry+24h
 Run it ad hoc or from a timer; `--min-age <hours>` widens the safety
 margin past the presign expiry.
 
-### Respelling references on cards that moved earlier
+### Storing references as links, once
 
-Moving a card rewrites the bare references its own text wrote at the old
-address into the qualified `slug#N` form. Cards moved before that behaviour
-existed still hold the bare spellings, which read as the destination's
-numbering and can land on an unrelated card. One walk fixes them:
+A reference used to be a token the reader resolved on every render, under a
+pile of rules about who owned the card and how it spelled its numbers back
+then. It is now resolved when it is submitted and stored as an explicit link
+onto the target's permanent address (see
+[external-trackers.md](external-trackers.md#how-a-reference-is-stored)).
+
+Existing text still holds tokens. One walk converts it, reading each piece
+under the rules that were in force where and when it was written — the last
+time those rules are consulted anywhere:
 
 ```sh
-todou-server refs backfill --dry-run    # report what would be rewritten
-todou-server refs backfill              # rewrite it
+todou-server refs migrate --dry-run    # report what would be rewritten
+todou-server refs migrate              # rewrite it
+todou-server refs migrate --dry-run    # confirm: nothing left to do
 ```
 
-Run it once after upgrading to a build that has the command. It is idempotent,
-so a real run after a `--dry-run` is safe, and `--project <slug>` limits the
-walk to one project. Each rewritten body or comment records a revision holding
-the original text, attributed to whoever performed that move.
+**Run it by hand, once, after deploying the build that ships it** — not from
+the deploy script. It is idempotent, so a real run after a `--dry-run` is
+safe, and `--project <slug>` limits the walk to one project.
+
+What it does:
+
+- **Bodies, comments and every version of every spec document.** A rewritten
+  body or comment records a revision holding the original text; a spec version
+  is its own history and records none. Neither is marked as edited.
+- **Reference events.** `cross_referenced` becomes `referenced`, and each row
+  gets the id of the project that wrote it. A row naming a slug nobody can
+  place keeps the shape it had, and the renderers keep their fallback for it.
+- **Nothing else.** Only the spans holding a reference change; everything
+  outside them is byte for byte what it was, code fences included.
+
+It refuses to start while any project's slug is all digits, naming them: an
+all-digit path segment is read as a project id, so such a slug would make
+`/projects/12/` mean two things. Rename them first. New projects cannot take
+one.
+
+The dry run ends with the spellings it could not resolve — a target that
+never existed, or one that is gone. Those stay verbatim, which is the
+intended answer, but the list is worth reading once before the real run.

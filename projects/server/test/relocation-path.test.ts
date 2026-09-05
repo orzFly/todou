@@ -92,6 +92,18 @@ describe("relocatedRequestPath (T-245)", () => {
     ).toBeNull();
   });
 
+  it("rewrites a path that named its project by id (T-266)", () => {
+    // Stored links are id-anchored, so a 301 now commonly starts from one.
+    // The leftover-digits guard below never looks at the project segment,
+    // which is why an id there was already safe: it is replaced outright.
+    expect(relocatedRequestPath("/api/projects/12/issues/1", "", card)).toBe(
+      "/api/projects/b/issues/7",
+    );
+    expect(
+      relocatedRequestPath("/api/projects/12/issues/1/comments/5", "", comment),
+    ).toBe("/api/projects/b/issues/7/comments/9");
+  });
+
   it("falls back when the segment after /issues is not a number", () => {
     // Same invariant from the other side: the card's number has to land
     // somewhere, or the rewrite names a project and not a card.

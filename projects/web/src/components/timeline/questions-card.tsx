@@ -56,20 +56,18 @@ function selectingInside(row: HTMLElement): boolean {
 function InlineMarkdown({
   slug,
   issueNumber,
-  refDate,
   children,
   className = "",
 }: {
   slug: string;
   issueNumber: number;
   /** created_at of the content this text belongs to (T-80 time cutoff). */
-  refDate?: string;
   children: string;
   className?: string;
 }) {
   return (
     <div className={`min-w-0 [&_.markdown-body>p]:m-0 ${className}`}>
-      <MarkdownView slug={slug} issueNumber={issueNumber} refDate={refDate}>
+      <MarkdownView slug={slug} issueNumber={issueNumber}>
         {children}
       </MarkdownView>
     </div>
@@ -85,14 +83,12 @@ export function QuestionsCard({
   issueNumber,
   commentId,
   component,
-  refDate,
 }: {
   slug: string;
   issueNumber: number;
   commentId: number;
   component: QuestionsComponent;
   /** The question comment's created_at (T-80 time cutoff). */
-  refDate?: string;
 }) {
   const status = useQuery(questionsQuery(slug, issueNumber));
   const [showDescriptions, setShowDescriptions] = useState(false);
@@ -112,8 +108,6 @@ export function QuestionsCard({
             issueNumber={issueNumber}
             question={q}
             record={answer.answers.find((a) => a.key === q.key)}
-            refDate={refDate}
-            answerDate={answer.created_at}
             showDescriptions={showDescriptions}
           />
         ))}
@@ -148,7 +142,6 @@ export function QuestionsCard({
       issueNumber={issueNumber}
       commentId={commentId}
       component={component}
-      refDate={refDate}
       // Answer state may still be loading; blocking submit (not input) is
       // enough — the POST is atomic and conflicts loudly on a double-answer.
       ready={status.isSuccess}
@@ -161,14 +154,12 @@ function AnswerForm({
   issueNumber,
   commentId,
   component,
-  refDate,
   ready,
 }: {
   slug: string;
   issueNumber: number;
   commentId: number;
   component: QuestionsComponent;
-  refDate?: string;
   ready: boolean;
 }) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>(() =>
@@ -236,7 +227,6 @@ function AnswerForm({
           slug={slug}
           issueNumber={issueNumber}
           question={q}
-          refDate={refDate}
           draft={drafts[q.key] ?? emptyDraft()}
           disabled={submit.isPending}
           onChange={(update) => patch(q.key, update)}
@@ -263,7 +253,6 @@ function QuestionForm({
   slug,
   issueNumber,
   question,
-  refDate,
   draft,
   disabled,
   onChange,
@@ -271,7 +260,6 @@ function QuestionForm({
   slug: string;
   issueNumber: number;
   question: Question;
-  refDate?: string;
   draft: Draft;
   disabled: boolean;
   onChange: (update: (d: Draft) => Draft) => void;
@@ -308,13 +296,12 @@ function QuestionForm({
           <InlineMarkdown
             slug={slug}
             issueNumber={issueNumber}
-            refDate={refDate}
             className="text-xs font-semibold text-muted-foreground uppercase"
           >
             {question.header}
           </InlineMarkdown>
         )}
-        <InlineMarkdown slug={slug} issueNumber={issueNumber} refDate={refDate}>
+        <InlineMarkdown slug={slug} issueNumber={issueNumber}>
           {question.question}
         </InlineMarkdown>
       </legend>
@@ -345,18 +332,13 @@ function QuestionForm({
                 )}
               </span>
               <span className="min-w-0 space-y-0.5">
-                <InlineMarkdown
-                  slug={slug}
-                  issueNumber={issueNumber}
-                  refDate={refDate}
-                >
+                <InlineMarkdown slug={slug} issueNumber={issueNumber}>
                   {option.label}
                 </InlineMarkdown>
                 {option.description !== undefined && (
                   <InlineMarkdown
                     slug={slug}
                     issueNumber={issueNumber}
-                    refDate={refDate}
                     className="text-xs text-muted-foreground"
                   >
                     {option.description}
@@ -410,8 +392,6 @@ function AnsweredQuestion({
   issueNumber,
   question,
   record,
-  refDate,
-  answerDate,
   showDescriptions,
 }: {
   slug: string;
@@ -419,9 +399,7 @@ function AnsweredQuestion({
   question: Question;
   record: QuestionAnswer | undefined;
   /** Question text is created with the comment... */
-  refDate?: string;
   /** ...but the free-text "other" is written when answered. */
-  answerDate?: string;
   showDescriptions: boolean;
 }) {
   const chosen = new Set(record?.selected.map((s) => s.index) ?? []);
@@ -432,13 +410,12 @@ function AnsweredQuestion({
           <InlineMarkdown
             slug={slug}
             issueNumber={issueNumber}
-            refDate={refDate}
             className="text-xs font-semibold text-muted-foreground uppercase"
           >
             {question.header}
           </InlineMarkdown>
         )}
-        <InlineMarkdown slug={slug} issueNumber={issueNumber} refDate={refDate}>
+        <InlineMarkdown slug={slug} issueNumber={issueNumber}>
           {question.question}
         </InlineMarkdown>
       </div>
@@ -456,11 +433,7 @@ function AnsweredQuestion({
                 {active && <CheckIcon className="size-4 text-primary" />}
               </span>
               <div className="min-w-0 space-y-0.5">
-                <InlineMarkdown
-                  slug={slug}
-                  issueNumber={issueNumber}
-                  refDate={refDate}
-                >
+                <InlineMarkdown slug={slug} issueNumber={issueNumber}>
                   {option.label}
                 </InlineMarkdown>
                 {showDescriptions && option.description !== undefined && (
@@ -470,7 +443,6 @@ function AnsweredQuestion({
                   <InlineMarkdown
                     slug={slug}
                     issueNumber={issueNumber}
-                    refDate={refDate}
                     className="text-xs opacity-80"
                   >
                     {option.description}
@@ -490,11 +462,7 @@ function AnsweredQuestion({
             <span className="mt-0.5 shrink-0 text-xs text-muted-foreground">
               other:
             </span>
-            <InlineMarkdown
-              slug={slug}
-              issueNumber={issueNumber}
-              refDate={answerDate}
-            >
+            <InlineMarkdown slug={slug} issueNumber={issueNumber}>
               {record.other}
             </InlineMarkdown>
           </div>

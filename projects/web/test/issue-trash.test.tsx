@@ -3,6 +3,7 @@ import { fireEvent, waitFor } from "@testing-library/react";
 import type { IssueListItem } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
+import { projectsQuery } from "../src/api/queries.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { ICONS, renderEvent } from "../src/components/timeline/event-row.tsx";
 import { NO_ENTITIES } from "../src/components/timeline/use-event-entities.ts";
@@ -65,6 +66,23 @@ const item = (
 
 const SECRET = "the artichoke plan";
 
+/** How the resolve pass stored `#5` back when the card was still there. */
+const STORED = "Blocked by [#5](/projects/1/issues/5) for now.";
+
+/** The reader's directory, so the stored id resolves back to a slug. */
+function withProjects(client: QueryClient): QueryClient {
+  client.setQueryData(projectsQuery.queryKey, [
+    {
+      id: 1,
+      slug: "todou",
+      name: "todou",
+      description: "",
+      created_at: "2026-01-01T00:00:00.000Z",
+    },
+  ]);
+  return client;
+}
+
 /**
  * The whole reason the design chose plain-text degradation over a dead link:
  * once a card is in the trash its title must not surface anywhere, and every
@@ -78,8 +96,8 @@ describe("references to a card in the trash", () => {
     client.setQueryData(issueRefQuery("todou", 5).queryKey, null);
 
     const view = renderWithProviders(
-      <MarkdownView slug="todou">{"Blocked by #5 for now."}</MarkdownView>,
-      client,
+      <MarkdownView slug="todou">{STORED}</MarkdownView>,
+      withProjects(client),
     );
 
     await waitFor(() => {
@@ -102,9 +120,9 @@ describe("references to a card in the trash", () => {
       );
     }) as typeof fetch);
 
-    const client: QueryClient = testQueryClient();
+    const client: QueryClient = withProjects(testQueryClient());
     const view = renderWithProviders(
-      <MarkdownView slug="todou">{"Blocked by #5 for now."}</MarkdownView>,
+      <MarkdownView slug="todou">{STORED}</MarkdownView>,
       client,
     );
 

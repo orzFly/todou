@@ -53,20 +53,18 @@ export function MarkdownAttachmentAnchor({
   slug,
   issueNumber,
   address,
-  originSlug,
   children,
   ...props
 }: ComponentProps<"a"> & {
   slug: string;
   issueNumber: number;
   address: AttachmentRef;
-  originSlug?: string;
   node?: { children?: Array<{ type: string; value?: string }> };
 }): ReactNode {
   const { id } = useResolved(slug, issueNumber, address);
   if (id === null) {
     return (
-      <MarkdownLink slug={slug} originSlug={originSlug} {...props}>
+      <MarkdownLink slug={slug} {...props}>
         {children}
       </MarkdownLink>
     );

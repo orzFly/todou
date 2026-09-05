@@ -20,7 +20,7 @@ import {
   MoveIssueInput,
   MoveIssueResult,
   minRoleOf,
-  ProjectSlug,
+  ProjectRef,
   RevisionPage,
   RevisionQuery,
   TimelineComment,
@@ -57,10 +57,10 @@ import { movedResponses } from "./moved-responses.ts";
 import { roleTag } from "./role-tag.ts";
 
 const issueNumber = z.coerce.number().int().positive();
-const slugParam = z.object({ slug: ProjectSlug });
-const issueParams = z.object({ slug: ProjectSlug, number: issueNumber });
+const slugParam = z.object({ slug: ProjectRef });
+const issueParams = z.object({ slug: ProjectRef, number: issueNumber });
 const commentParams = z.object({
-  slug: ProjectSlug,
+  slug: ProjectRef,
   number: issueNumber,
   commentId: z.coerce.number().int().positive(),
 });
@@ -244,7 +244,7 @@ const locateCommentRoute = createRoute({
     "Resolve a comment id to the issue carrying it (bare #comment-M refs)",
   request: {
     params: z.object({
-      slug: ProjectSlug,
+      slug: ProjectRef,
       commentId: z.coerce.number().int().positive(),
     }),
   },

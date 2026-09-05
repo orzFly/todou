@@ -195,10 +195,34 @@ describe("rich comment permalinks in markdown", () => {
     expect(link.textContent).toContain("comment by Alice");
   });
 
-  it("leaves custom-text links to the same URL untouched", async () => {
+  it("decorates a custom-text link to a card as well", async () => {
+    // Author-chosen text used to survive here, GitHub-style. Since T-266 the
+    // stored form of every reference is a custom-text link — `[#38](…)` —
+    // so the two shapes are indistinguishable in the document, and honouring
+    // the text would leave every migrated reference undecorated.
+    const client = testQueryClient();
+    client.setQueryData(
+      issueRefQuery("todou", 38).queryKey,
+      refItem(38, "Permalink target"),
+    );
     const url = `${window.location.origin}/projects/todou/issues/38#comment-136`;
     const view = renderWithProviders(
       <MarkdownView slug="todou">{`[read this](${url})`}</MarkdownView>,
+      client,
+    );
+    const link = await waitFor(() => {
+      const el = view.container.querySelector("a[data-issue-link='38']");
+      expect(el).not.toBeNull();
+      return el as HTMLAnchorElement;
+    });
+    expect(link.textContent).toContain("Permalink target");
+  });
+
+  it("leaves a link to somewhere else untouched", async () => {
+    const view = renderWithProviders(
+      <MarkdownView slug="todou">
+        {"[read this](https://example.com/projects/todou/issues/38)"}
+      </MarkdownView>,
     );
     const link = await waitFor(() => {
       const el = view.container.querySelector("a");

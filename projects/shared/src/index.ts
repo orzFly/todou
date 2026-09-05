@@ -6,7 +6,7 @@ export * from "./ownership.ts";
 export * from "./permissions.ts";
 export * from "./ref-shapes.ts";
 export * from "./references-grammar.ts";
-export * from "./respell.ts";
+export * from "./resolve-links.ts";
 export * from "./schemas/agent.ts";
 export * from "./schemas/agent-context.ts";
 export * from "./schemas/attachment.ts";

@@ -9,36 +9,18 @@ import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import type { UserRow } from "../../auth/pat.ts";
 import type { AppContext } from "../../bootstrap.ts";
 import type { Db } from "../../db/driver.ts";
-import {
-  comments,
-  issueEvents,
-  issues,
-  projectMeta,
-} from "../../db/project-schema.ts";
+import { issueEvents, issues, projectMeta } from "../../db/project-schema.ts";
 import {
   issueAddresses,
   issueMoves,
   projects,
 } from "../../db/system-schema.ts";
 import { IssueMovingError } from "../../errors.ts";
-import {
-  accessibleProjectRows,
-  type ProjectRow,
-  routeInfoOf,
-} from "../access.ts";
-import { analyzeReferences, loadReferenceInputs } from "../cross-references.ts";
+import { type ProjectRow, routeInfoOf } from "../access.ts";
 import { getIssue } from "../issues.ts";
 import { lineageOf, recordAliases, registerMove } from "../relocation.ts";
 import { clearIssueChildren, copyIssueTree, type IdMap } from "./copy.ts";
-import {
-  loadSlugResolver,
-  type MoveContext,
-  normalizeOwnEvents,
-  normalizeReferencesTo,
-  normalizeThirdParties,
-} from "./normalize.ts";
 import { type MovePlan, planMove } from "./plan.ts";
-import { assembleRespell, respellCopiedContent } from "./respell-pass.ts";
 
 /**
  * Move an issue to another project.
@@ -73,10 +55,10 @@ export async function moveIssue(
 
   const landed =
     plan.sameProjectDb && plan.systemColocated
-      ? await moveWithinDb(ctx, actor, plan, agentContext)
+      ? await moveWithinDb(actor, plan, agentContext)
       : await moveAcrossDbs(ctx, actor, plan, agentContext);
 
-  await afterCommit(ctx, actor, plan, landed);
+  await afterCommit(ctx, plan, landed);
 
   return {
     moved_to: { slug: plan.target.project.slug, number: landed.number },
@@ -87,8 +69,6 @@ export async function moveIssue(
     issue: await getIssue(ctx, actor, plan.target.project.slug, landed.number),
   };
 }
-
-type SlugLookup = Awaited<ReturnType<typeof loadSlugResolver>>;
 
 export type Landed = {
   number: number;
@@ -105,14 +85,11 @@ export type Landed = {
  * nothing for the recovery sweep to find.
  */
 async function moveWithinDb(
-  ctx: AppContext,
   actor: UserRow,
   plan: MovePlan,
   agentContext: AgentContext | null,
 ): Promise<Landed> {
   const db = plan.source.db;
-  const resolver = await loadSlugResolver(ctx);
-  const respell = await assembleRespell(ctx, plan);
   const moveToken = randomUUID();
 
   return db.transaction(async (tx) => {
@@ -140,32 +117,6 @@ async function moveWithinDb(
       number,
       reinhabit: plan.reinhabit !== null,
     });
-    await respellCopiedContent(tx, plan, respell, idMap, {
-      actorId: actor.id,
-      agentContext,
-    });
-
-    const move = moveContext(plan, number, idMap, resolver);
-    await normalizeOwnEvents(
-      tx,
-      {
-        projectId: plan.target.project.id,
-        issueId: idMap.issueId,
-        writtenUnder: plan.source.project.id,
-      },
-      move,
-    );
-    await normalizeReferencesTo(
-      tx,
-      {
-        projectId: plan.target.project.id,
-        oldNumber: plan.row.number,
-        attributedTo: plan.source.project.id,
-        exceptIssueId: idMap.issueId,
-      },
-      move,
-    );
-
     const movedInEventId = await writeMovedIn(
       tx,
       plan,
@@ -186,16 +137,6 @@ async function moveWithinDb(
       moveToken,
       actor,
       agentContext,
-    );
-    await normalizeReferencesTo(
-      tx,
-      {
-        projectId: plan.source.project.id,
-        oldNumber: plan.row.number,
-        attributedTo: plan.source.project.id,
-        exceptIssueId: plan.row.id,
-      },
-      move,
     );
 
     await recordAllAliases(tx, plan, idMap);
@@ -291,7 +232,7 @@ async function moveAcrossDbs(
   await step(4);
 
   // 5. Empty the source and raise the tombstone.
-  await retireSource(ctx, plan, copied, moveToken, actor, agentContext);
+  await retireSource(plan, copied, moveToken, actor, agentContext);
   await step(5);
 
   // 6. Nothing left for the sweep to do.
@@ -321,8 +262,6 @@ async function copyInDestination(
   agentContext: AgentContext | null,
   moveToken: string,
 ): Promise<Copied> {
-  const resolver = await loadSlugResolver(ctx);
-  const respell = await assembleRespell(ctx, plan);
   const lineage =
     plan.lineage ??
     // Minted here rather than at step 4 because the `moved_in` payload
@@ -341,30 +280,6 @@ async function copyInDestination(
       number,
       reinhabit: plan.reinhabit !== null,
     });
-    await respellCopiedContent(tx, plan, respell, idMap, {
-      actorId: actor.id,
-      agentContext,
-    });
-    const move = moveContext(plan, number, idMap, resolver);
-    await normalizeOwnEvents(
-      tx,
-      {
-        projectId: plan.target.project.id,
-        issueId: idMap.issueId,
-        writtenUnder: plan.source.project.id,
-      },
-      move,
-    );
-    await normalizeReferencesTo(
-      tx,
-      {
-        projectId: plan.target.project.id,
-        oldNumber: plan.row.number,
-        attributedTo: plan.source.project.id,
-        exceptIssueId: idMap.issueId,
-      },
-      move,
-    );
     const movedInEventId = await writeMovedIn(
       tx,
       plan,
@@ -438,22 +353,12 @@ async function finishCopying(
 
 /** Step 5: replayable, because the sweep may run it again. */
 async function retireSource(
-  ctx: AppContext,
   plan: MovePlan,
   copied: Copied,
   moveToken: string,
   actor: UserRow,
   agentContext: AgentContext | null,
-  /** The sweep passes its own: loading one reads the system tables, and it
-   * calls this while holding a transaction open on them. */
-  resolver?: SlugLookup,
 ): Promise<void> {
-  const move = moveContext(
-    plan,
-    copied.number,
-    copied.idMap,
-    resolver ?? (await loadSlugResolver(ctx)),
-  );
   await plan.source.db.transaction(async (tx) => {
     await clearIssueChildren(tx, plan.row.id);
     await raiseTombstone(tx, plan);
@@ -480,16 +385,6 @@ async function retireSource(
           and payload ->> 'move_token' = ${moveToken}
       )
     `);
-    await normalizeReferencesTo(
-      tx,
-      {
-        projectId: plan.source.project.id,
-        oldNumber: plan.row.number,
-        attributedTo: plan.source.project.id,
-        exceptIssueId: plan.row.id,
-      },
-      move,
-    );
   });
 }
 
@@ -516,9 +411,6 @@ export async function sweepMoves(ctx: AppContext): Promise<number> {
     .where(ne(issueMoves.state, "done"));
   let finished = 0;
   if (pending.length === 0) return finished;
-  // Read before the lease is taken: recovery needs it, and it reads the
-  // very tables the lease holds a transaction open on.
-  const resolver = await loadSlugResolver(ctx);
 
   for (const row of pending) {
     try {
@@ -535,7 +427,7 @@ export async function sweepMoves(ctx: AppContext): Promise<number> {
           .where(and(eq(issueMoves.id, row.id), ne(issueMoves.state, "done")))
           .for("update", { skipLocked: true });
         if (leased.length === 0) return false;
-        return recoverOne(ctx, tx, row, resolver);
+        return recoverOne(ctx, tx, row);
       });
       if (recovered) finished += 1;
     } catch (err) {
@@ -550,7 +442,6 @@ async function recoverOne(
   /** The lease's transaction: every system-tier read and write uses it. */
   system: Db,
   row: typeof issueMoves.$inferSelect,
-  resolver: SlugLookup,
 ): Promise<boolean> {
   const source = await projectRowById(system, row.fromProjectId);
   const target = await projectRowById(system, row.toProjectId);
@@ -598,13 +489,11 @@ async function recoverOne(
     await finishCopying(ctx, plan, copied, row.moveToken, system);
   }
   await retireSource(
-    ctx,
     plan,
     copied,
     row.moveToken,
     { id: row.actorId } as UserRow,
     null,
-    resolver,
   );
   await markDone(system, row.moveToken);
   return true;
@@ -698,24 +587,6 @@ async function projectRowById(
 ): Promise<ProjectRow | undefined> {
   const rows = await system.select().from(projects).where(eq(projects.id, id));
   return rows[0];
-}
-
-function moveContext(
-  plan: MovePlan,
-  number: number,
-  idMap: IdMap,
-  resolver: {
-    slugOf: (id: number) => string | null;
-    resolveSlug: (slug: string, at: Date) => number | null;
-  },
-): MoveContext {
-  return {
-    landed: plan.target.project.id,
-    landedNumber: number,
-    slugOf: resolver.slugOf,
-    resolveSlug: resolver.resolveSlug,
-    commentAlias: (oldId) => idMap.comments.get(oldId) ?? null,
-  };
 }
 
 async function nextNumber(tx: Db, projectId: number): Promise<number> {
@@ -840,32 +711,20 @@ async function recordAllAliases(
   }
 }
 
-/** Best-effort work that must not hold the move open: third parties, SSE. */
+/**
+ * The SSE announcements, which must not hold the move open.
+ *
+ * A move used to rewrite the card's text and every reference event pointing
+ * at it, here, in the source and in any third project. None of that survives
+ * T-266: the text carries permanent addresses, and an event names the
+ * referring project by an id no move changes. What is left is telling
+ * subscribers where the card went.
+ */
 async function afterCommit(
   ctx: AppContext,
-  actor: UserRow,
   plan: MovePlan,
   landed: Landed,
 ): Promise<void> {
-  // The move is already committed, so nothing here may fail it. Throwing
-  // would answer a request that succeeded with a 500 — and the caller's
-  // only reasonable reaction, retrying, now hits the tombstone's 409.
-  try {
-    const resolver = await loadSlugResolver(ctx);
-    const move = moveContext(plan, landed.number, landed.idMap, resolver);
-    await normalizeThirdParties(
-      ctx,
-      {
-        projects: await thirdPartyProjects(ctx, actor, plan, landed),
-        oldNumber: plan.row.number,
-        attributedTo: plan.source.project.id,
-      },
-      move,
-    );
-  } catch (err) {
-    console.error("normalizing third-party references after a move", err);
-  }
-
   const events: Array<[number, ChangeEvent]> = [
     [
       plan.source.project.id,
@@ -909,61 +768,4 @@ async function afterCommit(
     ]);
   }
   for (const [projectId, event] of events) ctx.bus.publish(projectId, event);
-}
-
-/**
- * The projects whose timelines can hold a reference to this card: the ones
- * its own text points at, since that is what put a `cross_referenced` row
- * there in the first place. Projects the mover cannot read are skipped —
- * they get the redirect instead, which is the fallback all of this has.
- */
-async function thirdPartyProjects(
-  ctx: AppContext,
-  actor: UserRow,
-  plan: MovePlan,
-  landed: Landed,
-): Promise<Array<{ id: number; slug: string; databaseUrl: string | null }>> {
-  const db = plan.target.db;
-  const inputs = await loadReferenceInputs(ctx, db, plan.target.project.id);
-  // Read back rather than taken from `plan.row`: the respell pass has since
-  // rewritten this text, and what it now says is what the events must match.
-  const texts = [
-    ...(await db
-      .select({ body: issues.body, at: issues.createdAt })
-      .from(issues)
-      .where(eq(issues.id, landed.issueId))),
-    ...(await db
-      .select({ body: comments.body, at: comments.createdAt })
-      .from(comments)
-      .where(eq(comments.issueId, landed.issueId))),
-  ];
-
-  const slugs = new Set<string>();
-  for (const text of texts) {
-    const analyzed = await analyzeReferences(
-      db,
-      inputs,
-      plan.target.project,
-      text.body,
-      text.at,
-      { issueNumber: landed.number },
-      plan.source.project,
-    );
-    for (const target of analyzed.cross) slugs.add(target.slug);
-  }
-  if (slugs.size === 0) return [];
-
-  const readable = await accessibleProjectRows(ctx, actor);
-  return readable
-    .filter(
-      (row) =>
-        slugs.has(row.slug) &&
-        row.id !== plan.source.project.id &&
-        row.id !== plan.target.project.id,
-    )
-    .map((row) => ({
-      id: row.id,
-      slug: row.slug,
-      databaseUrl: row.databaseUrl,
-    }));
 }

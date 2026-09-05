@@ -1,7 +1,7 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
   minRoleOf,
-  ProjectSlug,
+  ProjectRef,
   Status,
   StatusCreateInput,
   StatusUpdateInput,
@@ -15,9 +15,9 @@ import {
 } from "../services/statuses.ts";
 import { roleTag } from "./role-tag.ts";
 
-const slugParam = z.object({ slug: ProjectSlug });
+const slugParam = z.object({ slug: ProjectRef });
 const statusParams = z.object({
-  slug: ProjectSlug,
+  slug: ProjectRef,
   statusId: z.coerce.number().int().positive(),
 });
 const jsonBody = <T extends z.ZodType>(schema: T) => ({

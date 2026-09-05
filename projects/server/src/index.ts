@@ -10,7 +10,7 @@ import {
   runStartupChores,
   startHousekeeping,
 } from "./services/housekeeping.ts";
-import { backfillRefs } from "./services/refs-backfill.ts";
+import { isMigrationStopped, migrateRefs } from "./services/refs-migrate.ts";
 import {
   copyMissing,
   enumerateBlobKeys,
@@ -243,19 +243,21 @@ class StorageGcCommand extends ConfiguredCommand {
   }
 }
 
-class RefsBackfillCommand extends ConfiguredCommand {
-  static paths = [["refs", "backfill"]];
+class RefsMigrateCommand extends ConfiguredCommand {
+  static paths = [["refs", "migrate"]];
 
   static usage = Command.Usage({
-    description:
-      "Respell references in cards that moved before the move learnt to",
+    description: "Rewrite stored references as id-anchored links, once",
     details:
-      "Walks every card carrying a `moved_in` event and rewrites the bare " +
-      "references in text written at its old address into the qualified " +
-      "`slug#N` form, exactly as a move does now. Each rewritten body or " +
-      "comment records a revision holding the original text, attributed to " +
-      "whoever performed that move. Idempotent: a second run finds nothing, " +
-      "so a real run after a --dry-run is safe.",
+      "Walks every project's issue bodies, comments and spec files, reads " +
+      "each one under the rules that were in force where and when it was " +
+      "written, and stores the reference it finds as an explicit link onto " +
+      "the target's permanent address. Reference events get the same " +
+      "treatment: one type, and the referring project named by id. Each " +
+      "rewritten body or comment records a revision holding the original " +
+      "text; spec versions are their own history and record none. " +
+      "Idempotent, so a real run after a --dry-run is safe. Run it once, " +
+      "by hand, after the deploy that ships the resolve pass.",
   });
 
   dryRun = Option.Boolean("--dry-run", false, {
@@ -270,7 +272,7 @@ class RefsBackfillCommand extends ConfiguredCommand {
     const config = this.loadConfig();
     const router = await DbRouter.open(config);
     try {
-      const report = await backfillRefs(
+      const report = await migrateRefs(
         { router },
         {
           dryRun: this.dryRun,
@@ -279,13 +281,16 @@ class RefsBackfillCommand extends ConfiguredCommand {
         },
       );
       this.context.stdout.write(
-        `${this.dryRun ? "[dry-run] would respell" : "respelled"} ` +
-          `${report.rewritten} reference(s) in ${report.changed} segment(s) ` +
-          `across ${report.issues} moved card(s) in ${report.projects} ` +
-          `project(s); ${report.skipped} segment(s) skipped, ` +
-          `${report.unanchored} unanchored\n`,
+        `${this.dryRun ? "[dry-run] would write" : "wrote"} ` +
+          `${report.links} link(s) into ${report.changed} of ` +
+          `${report.segments} segment(s) across ${report.issues} card(s) in ` +
+          `${report.projects} project(s); ${report.events} event(s) merged, ` +
+          `${report.unresolved} candidate(s) left verbatim\n`,
       );
       return 0;
+    } catch (error) {
+      if (!isMigrationStopped(error)) throw error;
+      return 1;
     } finally {
       await router.close();
     }
@@ -466,7 +471,7 @@ cli.register(ServeCommand);
 cli.register(MigrateCommand);
 cli.register(StorageMigrateCommand);
 cli.register(StorageGcCommand);
-cli.register(RefsBackfillCommand);
+cli.register(RefsMigrateCommand);
 cli.register(UserListCommand);
 cli.register(UserBindSubjectCommand);
 cli.register(UserAdoptCommand);

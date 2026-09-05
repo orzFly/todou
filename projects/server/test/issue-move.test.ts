@@ -414,55 +414,46 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
     expect((await json(followed)).body).toBe("the comment");
   });
 
-  it("normalizes the reference events on both sides", async () => {
+  it("leaves the reference events on both sides untouched", async () => {
     const inA = await createIssue(A, "stays in A", "body");
     const source = await createIssue(
       A,
       "does the referencing",
       `see #${inA.number}`,
     );
-    // A's card now carries `referenced { by_issue: source }`.
-    const before = await json(
-      await req(
-        `/projects/${A}/issues/${inA.number}/timeline?limit=100`,
-        author,
-      ),
-    );
-    expect(
-      before.items.some(
-        (i: { event_type?: string }) => i.event_type === "referenced",
-      ),
-    ).toBe(true);
+    const refs = async () =>
+      (
+        await json(
+          await req(
+            `/projects/${A}/issues/${inA.number}/timeline?limit=100`,
+            author,
+          ),
+        )
+      ).items.filter((i: { event_type?: string }) =>
+        ["referenced", "cross_referenced"].includes(i.event_type ?? ""),
+      );
 
-    const result = await moved(A, source.number, B);
+    const before = await refs();
+    expect(before).toHaveLength(1);
+    expect(before[0].payload).toMatchObject({
+      by_project_id: idA,
+      by_issue: source.number,
+    });
 
-    // The event in A now says a card in B referenced it, by id.
-    const after = await json(
-      await req(
-        `/projects/${A}/issues/${inA.number}/timeline?limit=100`,
-        author,
-      ),
-    );
-    const cross = after.items.find(
-      (i: { event_type?: string }) => i.event_type === "cross_referenced",
-    );
-    expect(cross).toBeDefined();
-    expect(cross.payload.by_project_id).toBe(idB);
-    expect(cross.payload.by_issue).toBe(result.moved_to.number);
-    expect(cross.payload.by_moved).toBe(true);
-    expect(
-      after.items.some(
-        (i: { event_type?: string }) => i.event_type === "referenced",
-      ),
-    ).toBe(false);
+    await moved(A, source.number, B);
+
+    // The event says which project the reference was written in, and the
+    // move did not change that. Whether the referring card still lives there
+    // is what the address book answers, so nothing here needs rewriting.
+    expect(await refs()).toEqual(before);
   });
 
-  it("normalizes a reference event that predates by_project_id", async () => {
+  it("leaves an event that predates by_project_id exactly as it found it", async () => {
     const source = await createIssue(A, "named the old way", "body");
     const inB = await createIssue(B, "points at A by slug alone", "body");
-    // Every cross_referenced event written before T-231 looks like this:
-    // the slug and nothing else. They are the whole existing corpus on any
-    // deployment this ships to, so the rewrite has to find them.
+    // Every cross_referenced event written before T-231 looks like this: the
+    // slug and nothing else. `refs migrate` is what gives them an id; a move
+    // must not, because it would be guessing which project held that slug.
     const dbB = await dbOf(idB, B);
     await dbB.insert(issueEvents).values({
       projectId: idB,
@@ -472,7 +463,7 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
       payload: { by_project: A, by_issue: source.number },
     });
 
-    const result = await moved(A, source.number, B);
+    await moved(A, source.number, B);
 
     const after = await json(
       await req(
@@ -484,9 +475,11 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
       (i: { event_type?: string }) =>
         i.event_type === "referenced" || i.event_type === "cross_referenced",
     );
-    // The far end is now this very project, so the event is local.
-    expect(row.event_type).toBe("referenced");
-    expect(row.payload.by_issue).toBe(result.moved_to.number);
+    expect(row.event_type).toBe("cross_referenced");
+    expect(row.payload).toMatchObject({
+      by_project: A,
+      by_issue: source.number,
+    });
   });
 
   it("copies the timeline in order, to the microsecond", async () => {
@@ -610,38 +603,37 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
     }
   });
 
-  it("rewrites a third project's reference and leaves unreadable ones alone", async () => {
+  it("leaves a third project's reference alone as well", async () => {
     const inC = await createIssue(C, "referenced from the mover", "body");
     const source = await createIssue(
       A,
       "points at C",
       `related to ${C}#${inC.number}`,
     );
-    // Give the cross-reference time to land: it is written after commit.
+    // Give the cross-project event time to land: it is written after commit.
     await new Promise((r) => setTimeout(r, 50));
-    const beforeC = await json(
-      await req(
-        `/projects/${C}/issues/${inC.number}/timeline?limit=100`,
-        author,
-      ),
-    );
-    expect(
-      beforeC.items.some(
-        (i: { event_type?: string }) => i.event_type === "cross_referenced",
-      ),
-    ).toBe(true);
+    const refs = async () =>
+      (
+        await json(
+          await req(
+            `/projects/${C}/issues/${inC.number}/timeline?limit=100`,
+            author,
+          ),
+        )
+      ).items.filter((i: { event_type?: string }) =>
+        ["referenced", "cross_referenced"].includes(i.event_type ?? ""),
+      );
 
-    const result = await moved(A, source.number, B);
-    const afterC = await json(
-      await req(
-        `/projects/${C}/issues/${inC.number}/timeline?limit=100`,
-        author,
-      ),
-    );
-    const row = afterC.items.find(
-      (i: { event_type?: string }) => i.event_type === "cross_referenced",
-    );
-    expect(row.payload.by_project_id).toBe(idB);
-    expect(row.payload.by_issue).toBe(result.moved_to.number);
+    const before = await refs();
+    expect(before).toHaveLength(1);
+    expect(before[0].payload).toMatchObject({
+      by_project_id: idA,
+      by_issue: source.number,
+    });
+
+    await moved(A, source.number, B);
+    // Reaching into a third project after a move is the part that could fail
+    // silently and go unnoticed. There is nothing left to reach for.
+    expect(await refs()).toEqual(before);
   });
 });

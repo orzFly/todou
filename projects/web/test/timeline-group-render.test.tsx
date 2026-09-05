@@ -471,27 +471,28 @@ describe("EventGroup", () => {
     expect(crossLink.textContent).toContain("Mirror source");
   });
 
-  it("keeps a blanked source in the list, unlinked (T-256)", async () => {
-    // Only a reader who cannot see the source project gets the blanked
-    // payload, and the local stack's single-mode login can read every
-    // project — so this row exists nowhere but here.
-    const moved = event({
-      event_type: "cross_referenced",
-      payload: { by_project: null, by_issue: 3, by_moved: true },
+  it("keeps a source it cannot name in the list, unlinked", async () => {
+    // A row whose project the reader's directory does not answer for. The
+    // SQL predicate normally keeps such a row out entirely; what is left
+    // here is the window while the directory is still loading, and the row
+    // must render as something rather than crash the group.
+    const unnamed = event({
+      event_type: "referenced",
+      payload: { by_project_id: 987654, by_issue: 3 },
     });
     const { findByTestId, container } = renderWithProviders(
       <EventGroup
         family="referenced"
-        events={[moved]}
+        events={[unnamed]}
         slug="todou"
         issueNumber={1}
       />,
       crossClient(),
     );
     await findByTestId("event-group");
-    const row = container.querySelector(`li[id="event-${moved.id}"]`);
+    const row = container.querySelector(`li[id="event-${unnamed.id}"]`);
     expect(row).toBeTruthy();
-    expect(row?.textContent).toBe("a card that has since moved");
+    expect(row?.textContent).toContain("#3");
     expect(row?.querySelector("a")).toBeNull();
   });
 

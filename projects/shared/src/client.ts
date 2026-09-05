@@ -107,12 +107,14 @@ export type TodouClientOptions = {
    */
   batch?: boolean;
   /**
-   * Called with the project's current slug whenever a response says the
-   * path named a retired one (T-156). Batched sub-requests carry no
-   * headers, so this is a hint for the caller to nudge the user, never
+   * Called with the project's current slug whenever a response says the path
+   * named something else (T-156) — a retired slug, or the project's id
+   * (T-266). `requested` is the spelling the path used, which is how a
+   * caller tells those two apart: only the first is worth nudging about.
+   * Batched sub-requests carry no headers, so this is a hint, never
    * something to depend on for correctness.
    */
-  onCanonicalSlug?: (canonical: string) => void;
+  onCanonicalSlug?: (canonical: string, requested: string | null) => void;
 };
 
 export class TodouError extends Error {
@@ -277,7 +279,7 @@ export class TodouClient {
   #fetch: typeof fetch;
   #batch: boolean;
   #batchQueue: BatchWaiter[] = [];
-  #onCanonicalSlug?: (canonical: string) => void;
+  #onCanonicalSlug?: (canonical: string, requested: string | null) => void;
   /** Remembered per client: the backend has no batch endpoint. */
   #batchUnavailable = false;
 
@@ -349,7 +351,12 @@ export class TodouClient {
     }
     if (this.#onCanonicalSlug !== undefined) {
       const canonical = res.headers.get(CANONICAL_SLUG_HEADER);
-      if (canonical !== null) this.#onCanonicalSlug(canonical);
+      if (canonical !== null) {
+        this.#onCanonicalSlug(
+          canonical,
+          /^\/projects\/([^/?#]+)/.exec(path)?.[1] ?? null,
+        );
+      }
     }
     return res;
   }

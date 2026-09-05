@@ -398,7 +398,6 @@ export function AnnotatedMarkdown({
   issueNumber,
   body,
   baselineBody,
-  refDate,
   annotations,
   changedRanges = NO_RANGES,
   foldUnchanged = false,
@@ -418,7 +417,6 @@ export function AnnotatedMarkdown({
    */
   baselineBody?: string;
   /** The viewed spec version's push time (T-80 time cutoff). */
-  refDate?: string;
   annotations: DisplayedAnnotation[];
   /** Lines changed since the compare baseline — green highlight + ↑↓ nav. */
   changedRanges?: LineRange[];
@@ -687,7 +685,6 @@ export function AnnotatedMarkdown({
       <MarkdownView
         slug={slug}
         issueNumber={issueNumber}
-        refDate={refDate}
         rehypePlugins={rehypePlugins}
       >
         {body}

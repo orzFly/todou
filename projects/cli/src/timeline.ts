@@ -60,11 +60,18 @@ export type TimelineRenderContext = {
    */
   showId?: boolean;
   /**
-   * Project id → slug, for the `by_project_id` newer cross-references
-   * carry. Preferred over the slug in the payload, which has to be read as
+   * Project id → slug, for the `by_project_id` a reference event carries
+   * (T-266). Preferred over the slug in the payload, which has to be read as
    * of the event's own instant and goes wrong once a slug changes hands.
    */
   slugOfProject?: (id: unknown) => string | null;
+  /**
+   * The id of the project being read, so a reference can be told local from
+   * cross-project. Whether it is one or the other stopped being stored when
+   * the two event types merged: a card moves, and the stored answer would be
+   * wrong from then on.
+   */
+  projectId?: number;
 };
 
 export function renderTimelineItem(
@@ -217,27 +224,32 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
       // The payload only ever stored `{id, login}`, so historical events
       // have no display name to show (T-149).
       return `@${nested(payload.user, "login")}`;
+    // One event type since T-266. A reference from this project is spelled
+    // in its format; one from elsewhere is spelled self-containedly, so it
+    // pastes straight back into any command that takes an issue.
     case "referenced":
-      return typeof payload.by_issue === "number"
-        ? `by ${formatRef(ctx.refPrefix, payload.by_issue)}`
-        : scalarDetail(payload);
-    // Self-contained rather than spelled in this project's format: the
-    // source lives elsewhere, and `slug#N` pastes straight back into any
-    // command that takes an issue.
     case "cross_referenced": {
-      if (typeof payload.by_issue !== "number") {
-        // A move rewrote this row and blanked the far side, which is what a
-        // reader without that project is entitled to know and no more.
-        return payload.by_moved === true
-          ? "by a card in another project"
+      if (typeof payload.by_issue !== "number") return scalarDetail(payload);
+      const id = payload.by_project_id;
+      const legacy =
+        typeof payload.by_project === "string" ? payload.by_project : null;
+      // Neither spelling: a local reference from before the merge, which is
+      // the only kind the old `referenced` type ever held.
+      if (typeof id !== "number" && legacy === null) {
+        return `by ${formatRef(ctx.refPrefix, payload.by_issue)}`;
+      }
+      if (typeof id === "number" && id === ctx.projectId) {
+        return `by ${formatRef(ctx.refPrefix, payload.by_issue)}`;
+      }
+      const slug = ctx.slugOfProject?.(id) ?? legacy;
+      // An id nobody could name still pastes back in: the server reads a
+      // project id wherever it reads a slug.
+      if (slug === null) {
+        return typeof id === "number"
+          ? `by ${id}/${payload.by_issue}`
           : scalarDetail(payload);
       }
-      const slug =
-        ctx.slugOfProject?.(payload.by_project_id) ??
-        (typeof payload.by_project === "string" ? payload.by_project : null);
-      return slug === null
-        ? scalarDetail(payload)
-        : `by ${slug}#${payload.by_issue}`;
+      return `by ${slug}#${payload.by_issue}`;
     }
     case "moved_in": {
       const from =

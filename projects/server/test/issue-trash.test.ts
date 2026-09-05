@@ -399,6 +399,7 @@ describe("issue trash", () => {
   describe("references degrade and revive", () => {
     let target = 0;
     let source = 0;
+    let sourceBody = "";
 
     const eventsOf = async (n: number, who: Who) => {
       const page = await get(
@@ -416,6 +417,12 @@ describe("issue trash", () => {
         "the referring card",
         author,
         `see #${target}`,
+      );
+      sourceBody = (await get(`/projects/${SLUG}/issues/${source}`, author))
+        .body;
+      // Resolved at submission, while the target was still there.
+      expect(sourceBody).toMatch(
+        /^see \[#\d+\]\(\/projects\/\d+\/issues\/\d+\)$/,
       );
     });
 
@@ -439,11 +446,11 @@ describe("issue trash", () => {
       await trash(target);
       expect(await eventsOf(target, author)).toContain("referenced");
       expect((await restore(target, author)).status).toBe(200);
-      // The event survived untouched, so every rendered ref is a link again
-      // the moment the card is back.
+      // The event survived untouched, and so did the link: trashing a card
+      // does not reach into everything that ever named it.
       expect(await eventsOf(target, bystander)).toContain("referenced");
       const still = await get(`/projects/${SLUG}/issues/${source}`, bystander);
-      expect(still.body).toBe(`see #${target}`);
+      expect(still.body).toBe(sourceBody);
     });
 
     it("lands no new reference on a card in the trash", async () => {

@@ -12,24 +12,49 @@ import { ForbiddenError, NotFoundError } from "../errors.ts";
 
 export type ProjectRow = typeof projects.$inferSelect;
 
-/** A resolved project, and whether the caller reached it by a retired slug. */
+/**
+ * A resolved project, and whether the caller reached it by a spelling that is
+ * not its current slug — a retired slug, or its id.
+ */
 export type ProjectLookup = { project: ProjectRow; viaAlias: boolean };
 
 /**
- * The single chokepoint every `/projects/{slug}/*` route funnels through, so
- * a retired slug keeps working everywhere at once — attachment downloads and
- * the SSE stream included (T-156). Live slugs answer on the unique index and
- * never touch the history table.
+ * A digit run that survives a round trip through a JavaScript number, which
+ * is how project ids are carried everywhere else here.
  */
-export async function findProjectBySlug(
+const ID_REF = /^\d{1,15}$/;
+
+/**
+ * The single chokepoint every `/projects/{ref}/*` route funnels through, so a
+ * retired slug keeps working everywhere at once — attachment downloads and the
+ * SSE stream included (T-156). Live slugs answer on the unique index and never
+ * touch the history table.
+ *
+ * An all-digit segment is read as a project id first (T-266): stored links are
+ * anchored on the id, so every route has to answer to one. The slug ladder
+ * still runs behind it, because a project created before ids were spelled this
+ * way may hold an all-digit slug — new ones cannot, and the migration checks
+ * that none are left.
+ */
+export async function findProjectByRef(
   ctx: AppContext,
-  slug: string,
+  ref: string,
 ): Promise<ProjectLookup | null> {
   const system = ctx.router.system();
+  if (ID_REF.test(ref)) {
+    const byId = await system
+      .select()
+      .from(projects)
+      .where(eq(projects.id, Number(ref)));
+    const row = byId[0];
+    // Reached by id, so the canonical spelling for a human is still the slug:
+    // same treatment as a retired one, header included.
+    if (row) return { project: row, viaAlias: true };
+  }
   const rows = await system
     .select()
     .from(projects)
-    .where(eq(projects.slug, slug));
+    .where(eq(projects.slug, ref));
   const row = rows[0];
   if (row) return { project: row, viaAlias: false };
   // The most recent holder, which after a reclaim is the project that gave
@@ -38,18 +63,18 @@ export async function findProjectBySlug(
     .select({ project: projects })
     .from(slugHistory)
     .innerJoin(projects, eq(projects.id, slugHistory.projectId))
-    .where(eq(slugHistory.slug, slug))
+    .where(eq(slugHistory.slug, ref))
     .orderBy(desc(slugHistory.effectiveFrom), desc(slugHistory.id))
     .limit(1);
   const former = historic[0]?.project;
   return former === undefined ? null : { project: former, viaAlias: true };
 }
 
-export async function getProjectBySlug(
+export async function getProjectByRef(
   ctx: AppContext,
-  slug: string,
+  ref: string,
 ): Promise<ProjectRow> {
-  const found = await findProjectBySlug(ctx, slug);
+  const found = await findProjectByRef(ctx, ref);
   if (!found) throw new NotFoundError("project not found");
   return found.project;
 }
@@ -89,7 +114,7 @@ export async function requireProject(
   minRole: MemberRole,
   cap?: CapabilityId,
 ): Promise<{ project: ProjectRow; role: MemberRole }> {
-  const project = await getProjectBySlug(ctx, slug);
+  const project = await getProjectByRef(ctx, slug);
   const role = await projectRoleOf(ctx, project, user);
   if (role === null) throw new NotFoundError("project not found");
   if (ROLE_RANK[role] < ROLE_RANK[minRole]) {
@@ -129,7 +154,7 @@ export async function projectForRead(
   user: UserRow,
   slug: string,
 ): Promise<{ project: ProjectRow; role: MemberRole | null }> {
-  const project = await getProjectBySlug(ctx, slug);
+  const project = await getProjectByRef(ctx, slug);
   return { project, role: await projectRoleOf(ctx, project, user) };
 }
 

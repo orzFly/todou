@@ -60,12 +60,89 @@ export async function fetchReferenceDirectory(
   return pending;
 }
 
+/**
+ * Every project this account can read, by id and by slug.
+ *
+ * A reference event names the project that wrote it by id (T-266), which is
+ * the spelling that survives a rename — and the only one a reader can turn
+ * back into words. Memoized like the two above: one request per command,
+ * however many events it renders.
+ */
+export type ProjectDirectory = {
+  slugOf: (id: unknown) => string | null;
+  /** Takes either spelling: a project may be named by its id anywhere. */
+  idOf: (ref: string) => number | null;
+};
+
+const EMPTY_DIRECTORY: ProjectDirectory = {
+  slugOf: () => null,
+  idOf: () => null,
+};
+
+const PROJECTS = new WeakMap<TodouClient, Promise<ProjectDirectory>>();
+
+export async function fetchProjectDirectory(
+  client: TodouClient,
+): Promise<ProjectDirectory> {
+  const cached = PROJECTS.get(client);
+  if (cached !== undefined) return cached;
+  const pending = client
+    .listProjects()
+    .then((rows): ProjectDirectory => {
+      const bySlug = new Map(rows.map((row) => [row.slug, row.id]));
+      const byId = new Map(rows.map((row) => [row.id, row.slug]));
+      return {
+        slugOf: (id) =>
+          typeof id === "number" ? (byId.get(id) ?? null) : null,
+        idOf: (ref) => {
+          const bySlugHit = bySlug.get(ref);
+          if (bySlugHit !== undefined) return bySlugHit;
+          if (!/^\d+$/.test(ref)) return null;
+          const id = Number(ref);
+          return byId.has(id) ? id : null;
+        },
+      };
+    })
+    // Best-effort, like the config read: an unreachable list degrades the
+    // spelling, it must never fail the command.
+    .catch(() => EMPTY_DIRECTORY);
+  PROJECTS.set(client, pending);
+  return pending;
+}
+
 /** The project's current reference prefix for display spelling (T-80). */
 export async function fetchRefPrefix(
   client: TodouClient,
   project: string,
 ): Promise<string | null> {
   return (await fetchReferenceConfig(client, project))?.format.prefix ?? null;
+}
+
+/**
+ * Everything spelling a timeline takes: how this project writes its own
+ * refs, and how to name the projects other people's references came from.
+ * Both reads are memoized, so asking for the pair costs no more than asking
+ * for the prefix used to.
+ */
+export type RefSpelling = {
+  refPrefix: string | null;
+  slugOfProject: (id: unknown) => string | null;
+  projectId: number | undefined;
+};
+
+export async function fetchRefSpelling(
+  client: TodouClient,
+  project: string,
+): Promise<RefSpelling> {
+  const [refPrefix, directory] = await Promise.all([
+    fetchRefPrefix(client, project),
+    fetchProjectDirectory(client),
+  ]);
+  return {
+    refPrefix,
+    slugOfProject: directory.slugOf,
+    projectId: directory.idOf(project) ?? undefined,
+  };
 }
 
 function findByName<T extends { name: string }>(

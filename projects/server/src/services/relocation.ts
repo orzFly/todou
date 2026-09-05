@@ -1,5 +1,4 @@
 import type { IssueMove } from "@todou/shared";
-import { ownerAt } from "@todou/shared";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import type { AppEnv } from "../auth/middleware.ts";
@@ -411,35 +410,6 @@ export async function movedInHistory(
       ),
     };
   });
-}
-
-/**
- * The project a piece of this card's text was written in.
- *
- * A bare `#12` keeps meaning whatever it meant when it was typed. Recording
- * references from an edit of text the move never respelled under the current
- * project would resolve that `#12` against the wrong numbering — and land on
- * a real, unrelated card, which no redirect can undo. Everything but an edit
- * of such text answers with `project` itself.
- *
- * Null means the owning project is gone and the text's numbering cannot be
- * resolved at all. Callers record no references rather than guess: the
- * guess would be a link to a card the author never named.
- */
-export async function originProjectFor(
-  ctx: AppContext,
-  db: Db,
-  project: { id: number; slug: string },
-  issueId: number,
-  at: Date,
-): Promise<{ id: number; slug: string } | null> {
-  const moves = await movedInHistory(db, issueId);
-  if (moves.length === 0) return project;
-
-  const owner = ownerAt(moves, project.id, at.toISOString());
-  if (owner === null) return null;
-  if (owner === project.id) return project;
-  return (await projectById(ctx.router.system(), owner)) ?? null;
 }
 
 async function projectById(

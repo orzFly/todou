@@ -3,7 +3,7 @@ import {
   Label,
   LabelCreateInput,
   LabelUpdateInput,
-  ProjectSlug,
+  ProjectRef,
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
 import {
@@ -14,9 +14,9 @@ import {
 } from "../services/labels.ts";
 import { roleTag } from "./role-tag.ts";
 
-const slugParam = z.object({ slug: ProjectSlug });
+const slugParam = z.object({ slug: ProjectRef });
 const labelParams = z.object({
-  slug: ProjectSlug,
+  slug: ProjectRef,
   labelId: z.coerce.number().int().positive(),
 });
 const jsonBody = <T extends z.ZodType>(schema: T) => ({

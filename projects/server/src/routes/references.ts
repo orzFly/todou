@@ -2,7 +2,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
   Autolink,
   AutolinkCreateInput,
-  ProjectSlug,
+  ProjectRef,
   ReferenceConfig,
   RefFormatSetInput,
 } from "@todou/shared";
@@ -15,9 +15,9 @@ import {
 } from "../services/reference-config.ts";
 import { roleTag } from "./role-tag.ts";
 
-const slugParam = z.object({ slug: ProjectSlug });
+const slugParam = z.object({ slug: ProjectRef });
 const autolinkParams = z.object({
-  slug: ProjectSlug,
+  slug: ProjectRef,
   autolinkId: z.coerce.number().int().positive(),
 });
 const jsonBody = <T extends z.ZodType>(schema: T) => ({

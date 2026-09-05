@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { createMiddleware } from "hono/factory";
 import type { AppEnv } from "../auth/middleware.ts";
 import { projects } from "../db/system-schema.ts";
-import { findProjectBySlug } from "../services/access.ts";
+import { findProjectByRef } from "../services/access.ts";
 
 /**
  * Tells a client it reached the project by a slug the project no longer
@@ -12,7 +12,7 @@ import { findProjectBySlug } from "../services/access.ts";
  * Services take a slug and no request context, which is why this rides at
  * the routing layer instead: one indexed point lookup on the live slug — the
  * case for nearly every request — and only a miss pays for the history
- * lookup that `findProjectBySlug` will repeat inside the handler.
+ * lookup that `findProjectByRef` will repeat inside the handler.
  */
 export function canonicalSlugMiddleware() {
   return createMiddleware<AppEnv>(async (c, next) => {
@@ -26,7 +26,7 @@ export function canonicalSlugMiddleware() {
       .where(eq(projects.slug, requested));
     if (live.length > 0) return next();
 
-    const found = await findProjectBySlug(ctx, requested);
+    const found = await findProjectByRef(ctx, requested);
     await next();
     // A 404 or a 403 must not confirm that the slug ever existed.
     if (found !== null && c.res.ok) {

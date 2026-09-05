@@ -1,6 +1,6 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
-  ProjectSlug,
+  ProjectRef,
   SearchFacets,
   SearchPage,
   SearchQuery,
@@ -38,7 +38,7 @@ const searchRoute = createRoute({
     "Qualifiers do not count against the term limit; a query of qualifiers " +
     "alone is valid. A value that names nothing is reported in " +
     "`diagnostics` and matches nothing, rather than failing the request.",
-  request: { params: z.object({ slug: ProjectSlug }), query: SearchQuery },
+  request: { params: z.object({ slug: ProjectRef }), query: SearchQuery },
   responses: {
     200: {
       description: "Ranked hits",
@@ -58,7 +58,7 @@ const facetsRoute = createRoute({
     "both hard-capped: this is a pool for a completion dropdown, not a " +
     "report. `label:`, `status:` and `assignee:` are not here; their values " +
     "come from `/labels`, `/statuses` and `/members`.",
-  request: { params: z.object({ slug: ProjectSlug }) },
+  request: { params: z.object({ slug: ProjectRef }) },
   responses: {
     200: {
       description: "Values in use",

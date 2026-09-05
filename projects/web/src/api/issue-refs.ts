@@ -11,8 +11,18 @@ import { api } from "@/api/queries.ts";
  */
 
 type Waiter = {
-  resolve: (item: IssueListItem | null) => void;
+  resolve: (item: ResolvedIssueRef | null) => void;
   reject: (error: unknown) => void;
+};
+
+/**
+ * A resolved reference, plus where the card lives now when that is not the
+ * address the reference was written with (T-266). A stored link is anchored
+ * on a permanent address, so following one after a move would cost a
+ * redirect; knowing the current address lets the anchor point straight at it.
+ */
+export type ResolvedIssueRef = IssueListItem & {
+  at?: { slug: string; number: number };
 };
 
 const pending = new Map<string, Map<number, Waiter[]>>();
@@ -23,7 +33,7 @@ const BATCH_LIMIT = 100;
 function fetchIssueRef(
   slug: string,
   number: number,
-): Promise<IssueListItem | null> {
+): Promise<ResolvedIssueRef | null> {
   return new Promise((resolve, reject) => {
     let batch = pending.get(slug);
     if (!batch) {
@@ -89,8 +99,8 @@ async function flush(slug: string): Promise<void> {
 async function followMoved(
   slug: string,
   numbers: number[],
-): Promise<Map<number, IssueListItem>> {
-  const found = new Map<number, IssueListItem>();
+): Promise<Map<number, ResolvedIssueRef>> {
+  const found = new Map<number, ResolvedIssueRef>();
   if (numbers.length === 0) return found;
 
   const addresses = await Promise.all(
@@ -112,7 +122,10 @@ async function followMoved(
       try {
         const issue = await api.getIssue(address.to.slug, address.to.number);
         const { body: _body, ...item } = issue;
-        found.set(address.number, item as IssueListItem);
+        found.set(address.number, {
+          ...(item as IssueListItem),
+          at: { slug: address.to.slug, number: address.to.number },
+        });
       } catch {
         // Gone, or unreadable from here: plain text either way.
       }

@@ -55,14 +55,7 @@ import {
   requireCapability,
   routeInfoOf,
 } from "./access.ts";
-import {
-  analyzeReferences,
-  type CrossTarget,
-  editAnchorFor,
-  loadReferenceInputs,
-  recordCrossReferences,
-  visibleProjects,
-} from "./cross-references.ts";
+import { loadReferenceInputs, visibleProjects } from "./cross-references.ts";
 import {
   decodeListCursor as decodeCursor,
   encodeListCursor as encodeCursor,
@@ -70,8 +63,11 @@ import {
 } from "./cursor.ts";
 import { toLabel } from "./labels.ts";
 import { unreadIssueState } from "./reads.ts";
-import { recordReferences } from "./references.ts";
-import { originProjectFor } from "./relocation.ts";
+import {
+  recordCrossReferences,
+  recordLocalReferences,
+  resolveContent,
+} from "./resolve-pass.ts";
 import { recordRevision } from "./revisions.ts";
 import { toStatus } from "./statuses.ts";
 import { microIso } from "./timeline.ts";
@@ -419,7 +415,15 @@ export async function createIssue(
 
   const events: ChangeEvent[] = [];
   const refInputs = await loadReferenceInputs(ctx, db, project.id);
-  let crossTargets: CrossTarget[] = [];
+  const resolved = await resolveContent({
+    ctx,
+    db,
+    project,
+    actor,
+    inputs: refInputs,
+    text: input.body,
+    self: null,
+  });
   const row = await db.transaction(async (tx) => {
     const meta = await tx
       .update(projectMeta)
@@ -436,7 +440,7 @@ export async function createIssue(
         projectId: project.id,
         number,
         title: input.title,
-        body: input.body,
+        body: resolved.storedText,
         statusId: statusId as number,
         authorId: actor.id,
       })
@@ -486,21 +490,12 @@ export async function createIssue(
       });
     }
 
-    const analyzed = await analyzeReferences(
+    const refs = await recordLocalReferences(
       tx,
-      refInputs,
       project,
-      input.body,
-      issue.createdAt,
-      { issueNumber: number },
-    );
-    crossTargets = analyzed.cross;
-    const refs = await recordReferences(
-      tx,
-      project.id,
       actor.id,
       { issueNumber: number },
-      analyzed.local,
+      resolved.local,
       agentContext,
     );
     for (const ref of refs) {
@@ -520,7 +515,7 @@ export async function createIssue(
     actor,
     project,
     { issueNumber: row.number },
-    crossTargets,
+    resolved.cross,
     agentContext,
   );
   const bundles = await bundleIssues(ctx, db, project.id, [row], actor);
@@ -861,16 +856,29 @@ export async function updateIssue(
         ]);
 
   const refInputs = await loadReferenceInputs(ctx, db, project.id);
-  // A body edit may be re-scanning text that predates a move; whether it is
-  // read under the old owner or this one is `editAnchorFor`'s call.
-  const origin = await originProjectFor(
-    ctx,
-    db,
-    project,
-    before.id,
-    before.createdAt,
-  );
-  let crossTargets: CrossTarget[] = [];
+  // Every save is read under the project the card is in now, at this instant.
+  // A body that moved here carries links, not spellings, so there is nothing
+  // left for an origin anchor to disagree about (T-266).
+  const rescanned =
+    input.body === undefined || input.body === before.body
+      ? null
+      : await resolveContent({
+          ctx,
+          db,
+          project,
+          actor,
+          inputs: refInputs,
+          text: input.body,
+          self: { projectId: project.id, number },
+        });
+  // Sending `#12` where `[#12](…)` is already stored resolves to what is
+  // there. That is not an edit: recording a revision of identical text and
+  // stamping "(edited)" on it would punish a client for writing the token
+  // form, which is exactly what clients are told to keep doing.
+  const resolved =
+    rescanned !== null && rescanned.storedText === before.body
+      ? null
+      : rescanned;
 
   const events: ChangeEvent[] = [];
   const pushTimeline = (eventId: number | undefined) => {
@@ -999,9 +1007,9 @@ export async function updateIssue(
       updatedAt: new Date(),
     };
     if (input.title !== undefined) patch.title = input.title;
-    if (input.body !== undefined) patch.body = input.body;
+    if (resolved !== null) patch.body = resolved.storedText;
     if (input.status_id !== undefined) patch.statusId = input.status_id;
-    if (input.body !== undefined && input.body !== before.body) {
+    if (resolved !== null) {
       // History, not timeline: body edits record a revision (the
       // superseded text) and deliberately emit no event.
       await recordRevision(tx, {
@@ -1016,36 +1024,13 @@ export async function updateIssue(
     }
     await tx.update(issues).set(patch).where(eq(issues.id, before.id));
 
-    // A body whose origin project is gone records nothing: see
-    // originProjectFor.
-    if (
-      input.body !== undefined &&
-      input.body !== before.body &&
-      origin !== null
-    ) {
-      const analyzed = await analyzeReferences(
+    if (resolved !== null) {
+      const refs = await recordLocalReferences(
         tx,
-        refInputs,
         project,
-        input.body,
-        before.createdAt,
-        { issueNumber: number },
-        await editAnchorFor(
-          tx,
-          refInputs,
-          project,
-          origin,
-          before.body,
-          before.createdAt,
-        ),
-      );
-      crossTargets = analyzed.cross;
-      const refs = await recordReferences(
-        tx,
-        project.id,
         actor.id,
         { issueNumber: number },
-        analyzed.local,
+        resolved.local,
         agentContext,
       );
       for (const ref of refs) {
@@ -1066,14 +1051,16 @@ export async function updateIssue(
     issue_number: number,
   });
   for (const e of events) ctx.bus.publish(project.id, e);
-  await recordCrossReferences(
-    ctx,
-    actor,
-    project,
-    { issueNumber: number },
-    crossTargets,
-    agentContext,
-  );
+  if (resolved !== null) {
+    await recordCrossReferences(
+      ctx,
+      actor,
+      project,
+      { issueNumber: number },
+      resolved.cross,
+      agentContext,
+    );
+  }
 
   const after = await loadIssueRow(db, project.id, number);
   const bundle = (await bundleIssues(ctx, db, project.id, [after], actor))[0];
