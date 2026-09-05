@@ -1,6 +1,6 @@
 import { CANONICAL_SLUG_HEADER } from "@todou/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { makeTestApp, type TestApp } from "./helpers.ts";
+import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
@@ -135,6 +135,46 @@ describe("project id in the path", () => {
     const bySlug = await req("/projects/nobody-holds-this/issues/1");
     expect(byId.status).toBe(404);
     expect((await json(byId)).error.code).toBe((await json(bySlug)).error.code);
+  });
+
+  it("puts a write named by id through the same capability gate", async () => {
+    // The two halves have to meet: the path names the project by id (T-266)
+    // and the gate reads the role it needs from the catalog (T-264). The
+    // gate resolves whatever spelling the path used, so an id must neither
+    // bypass a check nor fail one it would have passed by slug.
+    const reader = await addUserWithToken(t.ctx, "id-routes-reader");
+    const reporter = await addUserWithToken(t.ctx, "id-routes-reporter");
+    for (const [who, role] of [
+      [reader, "reader"],
+      [reporter, "reporter"],
+    ] as const) {
+      const res = await req(`/projects/${SLUG}/members/${who.user.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ role }),
+      });
+      expect(res.status).toBe(204);
+    }
+
+    const open = (who: { authorization: string }) =>
+      t.app.request(`/api/projects/${id}/issues`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...who },
+        body: JSON.stringify({ title: "by id", body: "" }),
+      });
+
+    // `issue.create` sits at reporter, so the ladder decides the answer —
+    // not the spelling of the project.
+    expect((await open(reporter.headers)).status).toBe(201);
+    expect((await open(reader.headers)).status).toBe(403);
+
+    // …and the same request by slug agrees, which is what makes the id form
+    // a spelling rather than a second set of rules.
+    const bySlug = await t.app.request(`/api/projects/${SLUG}/issues`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...reader.headers },
+      body: JSON.stringify({ title: "by slug", body: "" }),
+    });
+    expect(bySlug.status).toBe(403);
   });
 
   it("refuses an all-digit slug on create and on rename", async () => {
