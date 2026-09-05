@@ -1109,7 +1109,58 @@ describe("SearchBox · qualifier completion", () => {
       expect(rowTexts(utils.container)[0]).toContain("kind:bug"),
     );
     fireEvent.click(optionsOf(utils.container)[0] as Element);
-    await waitFor(() => expect(input.value).toBe("label:kind:bug"));
+    // With the space that ends the word, so the next term can just be typed.
+    await waitFor(() => expect(input.value).toBe("label:kind:bug "));
+  });
+
+  it("gives every row the full width of the panel", async () => {
+    // A `<button>` row resolves `width: auto` to fit-content and shrank to a
+    // pill beside its full-width neighbours (T-268). happy-dom has no layout
+    // engine, so this only holds the two kinds of row to one width rule; the
+    // width itself is measured in a browser.
+    const utils = renderBox(seedPools(seedBox()));
+    const input = await typeInto(utils, "label:kind");
+    input.setSelectionRange(10, 10);
+    fireEvent.select(input);
+    await waitFor(() =>
+      expect(rowTexts(utils.container)[0]).toContain("kind:bug"),
+    );
+    const [completion, search] = optionsOf(utils.container);
+    expect(completion?.tagName).toBe("BUTTON");
+    expect(completion?.className).toContain("w-full");
+    expect(search?.className).toContain("w-full");
+  });
+
+  it("keeps the browser's own drop-down out of the way", async () => {
+    // Two drop-downs cover each other, and the browser's knows neither the
+    // syntax nor this project's labels (T-268).
+    const utils = renderBox(seedPools(seedBox()));
+    const input = await utils.findByLabelText("Search this project");
+    expect(input.getAttribute("autocomplete")).toBe("off");
+  });
+
+  it("offers ten rows at most, however many values there are", async () => {
+    // Forty labels opened a panel taller than the window, which then gave
+    // the page its own scrollbar (T-268).
+    const client = seedPools(seedBox());
+    client.setQueryData(
+      labelsQuery("todou").queryKey,
+      Array.from({ length: 40 }, (_, i) => ({
+        id: i + 1,
+        name: `area:${i}`,
+        color: "#111111",
+      })),
+    );
+    const utils = renderBox(client);
+    const input = await typeInto(utils, "label:");
+    input.setSelectionRange(6, 6);
+    fireEvent.select(input);
+    await waitFor(() =>
+      expect(rowTexts(utils.container)[0]).toContain("area:0"),
+    );
+    // Ten offers plus the search row, which is never spent.
+    expect(optionsOf(utils.container)).toHaveLength(11);
+    expect(rowTexts(utils.container).at(-1)).toContain("Search for");
   });
 
   it("stops offering a jump once the query carries a qualifier", async () => {

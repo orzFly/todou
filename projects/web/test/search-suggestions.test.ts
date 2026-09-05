@@ -65,6 +65,14 @@ describe("the qualifier key source", () => {
     expect(rows[0]?.apply).toEqual({ value: "部署 state:", caret: 9 });
   });
 
+  it("leaves the caret on the colon, with no space after it", () => {
+    // Only a *value* ends a word (T-268). A key is followed immediately by
+    // its value, and so is any other mid-word completion — a prefix offered
+    // as `ACC-` is there to have `1` typed onto it.
+    const { rows } = keys("har|");
+    expect(rows[0]?.apply).toEqual({ value: "harness:", caret: 8 });
+  });
+
   it("says in one line what a key takes", () => {
     const { rows } = keys("harn|");
     expect(rows[0]?.hint).toBe("which agent wrote it");
@@ -90,7 +98,19 @@ describe("the qualifier value source", () => {
     const { rows } = values("status:In|");
     const row = rows.find((r) => r.text.includes("Progress")) as CompletionRow;
     expect(row.text).toBe('"In Progress"');
-    expect(row.apply).toEqual({ value: 'status:"In Progress"', caret: 20 });
+    expect(row.apply).toEqual({ value: 'status:"In Progress" ', caret: 21 });
+  });
+
+  it("ends the word, so the next one can just be typed", () => {
+    const { rows } = values("label:kin|");
+    expect(rows[0]?.apply).toEqual({ value: "label:kind:bug ", caret: 15 });
+  });
+
+  it("does not stack a second space on one that is already there", () => {
+    const { rows } = values("label:kin| 部署");
+    // The caret still steps past the space: taking an offer leaves the reader
+    // at the start of the next word either way.
+    expect(rows[0]?.apply).toEqual({ value: "label:kind:bug 部署", caret: 15 });
   });
 
   it("offers a closed set without asking the project", () => {
@@ -117,7 +137,7 @@ describe("the qualifier value source", () => {
   it("replaces only the value under the caret", () => {
     const { rows } = values("label:area:web,kind|");
     const row = rows[0] as CompletionRow;
-    expect(row.apply.value).toBe("label:area:web,kind:bug");
+    expect(row.apply.value).toBe("label:area:web,kind:bug ");
   });
 
   it("offers nothing where no value goes", () => {
@@ -152,6 +172,36 @@ describe("row order", () => {
         search,
       ).map((r) => r.key),
     ).toEqual(["b", "search", "a"]);
+  });
+
+  const many = (prefix: string, n: number) =>
+    Array.from({ length: n }, (_, i) => row(`${prefix}${i}`));
+
+  it("stops at ten, however much a source has to say", () => {
+    // A project with forty labels used to open a panel taller than the
+    // window, which then gave the page its own scrollbar (T-268).
+    const rows = orderRows([{ matched: true, rows: many("m", 40) }], search);
+    expect(rows).toHaveLength(11);
+    expect(rows.at(-1)).toBe(search);
+  });
+
+  it("spends what the matched rows left on the ones below", () => {
+    const rows = orderRows(
+      [
+        { matched: true, rows: many("m", 3) },
+        { matched: false, rows: many("u", 20) },
+      ],
+      search,
+    ).map((r) => r.key);
+    expect(rows).toHaveLength(11);
+    expect(rows.slice(0, 4)).toEqual(["m0", "m1", "m2", "search"]);
+    expect(rows.slice(4)).toEqual(many("u", 7).map((r) => r.key));
+  });
+
+  it("gives the whole budget to the rows below when nothing matched", () => {
+    const rows = orderRows([{ matched: false, rows: many("u", 40) }], search);
+    expect(rows).toHaveLength(11);
+    expect(rows[0]).toBe(search);
   });
 });
 

@@ -40,6 +40,22 @@ describe("QualifierInput", () => {
     }
   });
 
+  it("clips one layer in, where a real input clips", () => {
+    // On the mirror itself, `overflow` cuts at its padding box, so a scrolled
+    // query keeps painting across the padding and over the search icon in it
+    // (T-268). A layer inside it cuts at the content box instead.
+    const { mirror } = mount();
+    const clip = mirror.querySelector(".overflow-hidden") as HTMLElement;
+    expect(clip).not.toBeNull();
+    expect(clip.parentElement).toBe(mirror);
+    expect(mirror.className).not.toContain("overflow-hidden");
+    // And it stays metric-free, or the two layers stop agreeing on where a
+    // glyph lands and the caret ends up beside its character.
+    for (const cls of ["px-", "py-", "p-", "text-", "border"]) {
+      expect(clip.className).not.toContain(cls);
+    }
+  });
+
   it("swaps the layers while an IME is composing", () => {
     // Pre-commit text is drawn by the browser inside the input; a transparent
     // input would swallow it, and most queries here are Chinese.

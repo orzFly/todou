@@ -45,16 +45,23 @@ export type SuggestionSource = (
  * actually prefixes something. Everything else — the full list of keys after
  * a space, say — is still shown, because that is how the syntax is
  * discovered, but it waits below.
+ *
+ * `limit` is spent here rather than inside each source, so that a source
+ * added later lands in the same budget without having to remember one. The
+ * matched rows spend it first — they are what the reader is completing — the
+ * search row is never spent, and whatever is left goes to the rest.
  */
 export function orderRows<Row>(
   results: Array<SourceResult<Row>>,
   search: Row,
+  limit = 10,
 ): Row[] {
-  return [
-    ...results.filter((r) => r.matched).flatMap((r) => r.rows),
-    search,
-    ...results.filter((r) => !r.matched).flatMap((r) => r.rows),
-  ];
+  const matched = results
+    .filter((r) => r.matched)
+    .flatMap((r) => r.rows)
+    .slice(0, limit);
+  const rest = results.filter((r) => !r.matched).flatMap((r) => r.rows);
+  return [...matched, search, ...rest.slice(0, limit - matched.length)];
 }
 
 const EMPTY: SourceResult<CompletionRow> = { matched: false, rows: [] };
@@ -91,6 +98,34 @@ function splice(
   return {
     value: query.slice(0, start) + text + query.slice(end),
     caret: start + text.length,
+  };
+}
+
+/**
+ * Splice, and leave the caret past a space, so that taking an offer ends a
+ * word rather than parking the caret against the next one.
+ *
+ * Only values do this. A key is completed to its colon and the value comes
+ * next with nothing in between, so a space there would have to be deleted
+ * again — and a prefix completed to `ACC-` is mid-word by construction.
+ *
+ * The cost, taken deliberately: `label:` reads a comma-separated list, and
+ * closing it after one value means a second one needs a backspace. That is
+ * the rare path; ending a word is every time.
+ */
+function spliceThenSpace(
+  query: string,
+  start: number,
+  end: number,
+  text: string,
+): { value: string; caret: number } {
+  const spliced = splice(query, start, end, text);
+  const after = spliced.value.slice(spliced.caret);
+  return {
+    value: /^\s/.test(after)
+      ? spliced.value
+      : `${spliced.value.slice(0, spliced.caret)} ${after}`,
+    caret: spliced.caret + 1,
   };
 }
 
@@ -185,7 +220,7 @@ export function qualifierValueSource(pools: ValuePools): SuggestionSource {
           text: quoteValue(o.value),
           ...(o.hint === undefined ? {} : { hint: o.hint }),
           icon: "value" as const,
-          apply: splice(ctx.query, start, end, quoteValue(o.value)),
+          apply: spliceThenSpace(ctx.query, start, end, quoteValue(o.value)),
         }));
       return { matched: true, rows };
     }

@@ -2,28 +2,8 @@ import type { ReactNode, RefObject } from "react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
-/** Where the caret is: an offset in the string, and pixels from the box's edge. */
-export type CaretPosition = { caret: number; x: number };
-
-let ruler: HTMLCanvasElement | null = null;
-
-/**
- * How wide the text before the caret is, in the input's own font.
- *
- * Measured on a canvas rather than by putting a marker into the mirror: a
- * marker is an element, an element can be given width by a stylesheet, and
- * width in the mirror is the one thing that must never happen. Returns 0
- * where there is no 2D context (happy-dom has none), which anchors the panel
- * at the left edge — the same place it sat before this existed.
- */
-function textWidth(input: HTMLInputElement, upTo: number): number {
-  ruler ??= document.createElement("canvas");
-  const ctx = ruler.getContext("2d");
-  if (ctx === null) return 0;
-  const style = getComputedStyle(input);
-  ctx.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-  return ctx.measureText(input.value.slice(0, upTo)).width;
-}
+/** Where the caret is: an offset in the string. */
+export type CaretPosition = { caret: number };
 
 /**
  * Everything that decides where a glyph lands, worn by both layers. They have
@@ -80,22 +60,17 @@ export function QualifierInput({
   const input = inputRef ?? own;
   const [scroll, setScroll] = useState(0);
   const [composing, setComposing] = useState(false);
-  const reported = useRef<CaretPosition>({ caret: 0, x: 0 });
+  const reported = useRef<CaretPosition>({ caret: 0 });
 
   const report = () => {
     const el = input.current;
     if (el === null) return;
     setScroll(el.scrollLeft);
     const caret = el.selectionStart ?? el.value.length;
-    const padLeft = Number.parseFloat(getComputedStyle(el).paddingLeft);
-    const x =
-      (Number.isFinite(padLeft) ? padLeft : 0) +
-      textWidth(el, caret) -
-      el.scrollLeft;
     // Only on a real change: this also runs after every render, and handing
     // the caller a fresh object each time would spin it.
-    if (reported.current.caret === caret && reported.current.x === x) return;
-    reported.current = { caret, x };
+    if (reported.current.caret === caret) return;
+    reported.current = { caret };
     onCaretChange?.(reported.current);
   };
 
@@ -116,7 +91,7 @@ export function QualifierInput({
         className={cn(
           // `items-center` because that is what an input does with its single
           // line, and a block layout would sit it at the top instead.
-          "pointer-events-none absolute inset-0 flex items-center overflow-hidden",
+          "pointer-events-none absolute inset-0 flex items-center",
           // Reaching into the spans, because each one sets its own colour and
           // a colour on the parent would lose to it.
           composing && "[&_span]:text-transparent",
@@ -124,12 +99,25 @@ export function QualifierInput({
           padding,
         )}
       >
-        <span
-          className="w-max shrink-0 whitespace-pre"
-          style={{ transform: `translateX(${-scroll}px)` }}
-        >
-          {render(value)}
-        </span>
+        {/*
+         * The clip lives one layer in, so that its border box is the outer
+         * layer's *content* box — which is where a real `input` clips. Left
+         * on the outer layer it would clip at the padding box instead, and a
+         * scrolled query would keep painting across the padding and over the
+         * search icon sitting in it (T-268).
+         *
+         * Nothing but these three classes may go here: padding, border or
+         * anything about the font would move the mirror relative to the input
+         * and stand the caret beside its character.
+         */}
+        <div className="min-w-0 flex-1 overflow-hidden">
+          <span
+            className="block w-max whitespace-pre"
+            style={{ transform: `translateX(${-scroll}px)` }}
+          >
+            {render(value)}
+          </span>
+        </div>
       </div>
       <input
         {...rest}

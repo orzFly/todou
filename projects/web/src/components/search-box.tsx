@@ -60,7 +60,12 @@ function pointsElsewhere(row: JumpRow, slug: string): boolean {
   return row.state === "ready" ? row.crossProject : row.candidate.slug !== slug;
 }
 
-const OPTION = "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm";
+/**
+ * `w-full` because a `<button>` row resolves `width: auto` to fit-content and
+ * would otherwise shrink to a pill beside its full-width neighbours; on the
+ * `<a>` and `<div>` rows, which are block already, it changes nothing.
+ */
+const OPTION = "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm";
 
 /** Nothing highlighted. Enter then submits what was typed, not an offer. */
 const NONE = -1;
@@ -70,10 +75,9 @@ const NONE = -1;
  * with the qualifier syntax and its completions (T-262).
  *
  * A form, not a button with a handler: Enter submits it the way every search
- * box on the web does, and the browser's own autofill and history come with
- * that for free. The destination is a page, so submitting navigates there
- * rather than searching in place — which is also what makes a result URL
- * shareable.
+ * box on the web does. The destination is a page, so submitting navigates
+ * there rather than searching in place — which is also what makes a result
+ * URL shareable.
  *
  * The listbox is hand-rolled rather than a radix popover because focus has to
  * stay in the input and `Content` wants to take it. Nothing is ever
@@ -119,7 +123,7 @@ export function SearchBox({
   const [dismissed, setDismissed] = useState(false);
   const [highlight, setHighlight] = useState(NONE);
   const [waiting, setWaiting] = useState(false);
-  const [position, setPosition] = useState<CaretPosition>({ caret: 0, x: 0 });
+  const [position, setPosition] = useState<CaretPosition>({ caret: 0 });
   const lastSeen = useRef(urlQuery);
   if (lastSeen.current !== urlQuery) {
     lastSeen.current = urlQuery;
@@ -197,21 +201,34 @@ export function SearchBox({
     input.current?.select();
   });
 
-  // Anchored where the caret is, not at the box's left edge — a qualifier is
-  // completed in the middle of a line — and pulled back in when that would
-  // hang the panel off the right of the window.
-  const [anchor, setAnchor] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure whenever the panel or the caret moves
+  // Ten rows already keep the panel short in an ordinary window; this is the
+  // floor under a short one, where even a few rows reach past the bottom.
+  // Measured rather than a `calc(100vh - …)`, because the same box also grows
+  // out of the narrow-screen overlay and the height above it is not a
+  // constant. Before paint, or there is a frame of the too-tall panel.
+  const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure whenever the panel opens or changes length
   useLayoutEffect(() => {
     const panel = list.current;
-    if (panel === null) return;
-    const parent = panel.offsetParent?.getBoundingClientRect();
-    const room =
-      parent === undefined
-        ? Number.POSITIVE_INFINITY
-        : window.innerWidth - 16 - parent.left - panel.offsetWidth;
-    setAnchor(Math.max(0, Math.min(position.x, room)));
-  }, [position.x, open, rows.length]);
+    if (panel === null) {
+      setMaxHeight(undefined);
+      return;
+    }
+    const measure = () => {
+      setMaxHeight(window.innerHeight - panel.getBoundingClientRect().top - 8);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [open, rows.length]);
+
+  // A scroll container can hold the highlight out of sight, and then the
+  // arrow keys are moving something the reader cannot see. The rows are the
+  // panel's only children, so the index is the child.
+  useLayoutEffect(() => {
+    if (hl === NONE) return;
+    list.current?.children[hl]?.scrollIntoView({ block: "nearest" });
+  }, [hl]);
 
   /** Accepting an offer rewrites the query; the caret goes where it says. */
   const pendingCaret = useRef<number | null>(null);
@@ -367,6 +384,11 @@ export function SearchBox({
           autoFocus={autoFocus}
           type="text"
           name="q"
+          // T-262 kept the browser's own history for free; T-268 gives it
+          // back. This box now has a panel of its own, the two drop-downs
+          // cover each other, and the browser's knows neither the `label:`
+          // syntax nor which labels this project has.
+          autoComplete="off"
           role="combobox"
           aria-expanded={open}
           aria-controls={listId}
@@ -404,9 +426,9 @@ export function SearchBox({
           // Without this, pressing on a row blurs the input first and the
           // listbox is gone before the click arrives.
           onMouseDown={(e) => e.preventDefault()}
-          style={{ left: anchor }}
+          style={{ maxHeight }}
           className={cn(
-            "absolute top-full z-50 mt-1 max-w-[calc(100vw-2rem)] rounded-lg border bg-popover p-1 shadow-lg ring-1 ring-foreground/5",
+            "absolute top-full z-50 mt-1 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg border bg-popover p-1 shadow-lg ring-1 ring-foreground/5",
             listAlign === "start"
               ? // The box starts at the edge of the screen, so the panel
                 // takes its width and stops. A floor still applies, because
@@ -414,8 +436,10 @@ export function SearchBox({
                 // title has to survive (T-215) — but the floor stops at the
                 // viewport, since a `min-width` beats a `max-width` and a
                 // flat 20rem would push the page 16px wider at 320.
-                "w-full min-w-[min(20rem,calc(100vw-2rem))]"
-              : "w-[28rem]",
+                "left-0 w-full min-w-[min(20rem,calc(100vw-2rem))]"
+              : // Centred on the box, not on the caret: the panel following
+                // the caret across the line made the reader chase it (T-268).
+                "left-1/2 w-[28rem] -translate-x-1/2",
           )}
         >
           {rows.map((row, idx) => {
