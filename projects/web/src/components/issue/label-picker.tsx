@@ -3,7 +3,7 @@ import type { Label } from "@todou/shared";
 import { CheckIcon, XIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
-import { api, useIsProjectAdmin } from "@/api/queries.ts";
+import { api, useCan } from "@/api/queries.ts";
 import { LabelChip, LabelInline } from "@/components/issue/label-chip.tsx";
 import {
   Popover,
@@ -18,9 +18,8 @@ import {
 } from "@/lib/labels.ts";
 import { cn } from "@/lib/utils";
 
-/** Label creation is admin-only server-side; the UI hides the affordance. */
 export function useCanCreateLabels(slug: string): boolean {
-  return useIsProjectAdmin(slug);
+  return useCan(slug, "label.create");
 }
 
 /** The onCreate implementation shared by all picker call sites. */

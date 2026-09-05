@@ -3,7 +3,7 @@ import {
   queryOptions,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { TodouClient } from "@todou/shared";
+import { type CapabilityId, can, TodouClient } from "@todou/shared";
 
 /**
  * Same-origin client; vite dev proxies /api to the todou server.
@@ -89,6 +89,19 @@ export const membersQuery = (slug: string) =>
     queryFn: () => api.listMembers(slug),
     staleTime: METADATA_STALE_MS,
   });
+
+/**
+ * Whether the viewer holds a capability here, answered by the same catalog
+ * the server gates on. Hiding is cosmetic — the server decides either way —
+ * but an affordance that 403s on click is worse than no affordance.
+ *
+ * Reads `viewer_role` rather than the member list, so an instance admin
+ * (admin everywhere, with no membership row) is not mistaken for a stranger.
+ */
+export function useCan(slug: string, cap: CapabilityId): boolean {
+  const project = useSuspenseQuery(projectQuery(slug));
+  return can(project.data.viewer_role ?? null, cap);
+}
 
 /**
  * Whether the viewer administers this project — the gate behind every

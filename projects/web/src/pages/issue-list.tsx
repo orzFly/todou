@@ -46,7 +46,10 @@ import {
   IssueRowMeta,
   useIssueListGrid,
 } from "@/components/issue/issue-row.tsx";
-import { useCreateLabel } from "@/components/issue/label-picker.tsx";
+import {
+  useCanCreateLabels,
+  useCreateLabel,
+} from "@/components/issue/label-picker.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { IssueListBodySkeleton } from "@/components/page-skeleton.tsx";
 import { Button } from "@/components/ui/button";
@@ -83,6 +86,7 @@ function ProjectIssueListPage({
   const members = useSuspenseQuery(membersQuery(slug));
   const counts = useSuspenseQuery(issueCountsQuery(slug, search));
   const isAdmin = useIsProjectAdmin(slug);
+  const canCreateLabels = useCanCreateLabels(slug);
   const createLabel = useCreateLabel(slug);
 
   const setSearch = (next: IssueSearch) =>
@@ -181,7 +185,7 @@ function ProjectIssueListPage({
             counts={counts.data}
             allLabels={labels.data}
             search={search}
-            onCreateLabel={isAdmin ? createLabel : undefined}
+            onCreateLabel={canCreateLabels ? createLabel : undefined}
           />
         ) : (
           <FlatIssueList
@@ -189,7 +193,7 @@ function ProjectIssueListPage({
             statuses={statuses.data}
             allLabels={labels.data}
             search={search}
-            onCreateLabel={isAdmin ? createLabel : undefined}
+            onCreateLabel={canCreateLabels ? createLabel : undefined}
           />
         )}
       </Suspense>

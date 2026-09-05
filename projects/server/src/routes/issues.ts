@@ -97,7 +97,9 @@ const countsRoute = createRoute({
 const createIssueRoute = createRoute({
   method: "post",
   path: "/{slug}/issues",
-  summary: `Open an issue ${roleTag("issue.create")}`,
+  summary:
+    `Open an issue (${minRoleOf("issue.create")}); sending a status, ` +
+    `labels or assignees with it needs ${minRoleOf("issue.triage")}`,
   request: { params: slugParam, body: jsonBody(IssueCreateInput) },
   responses: { 201: { description: "Created", ...jsonBody(Issue) } },
 });

@@ -9,6 +9,7 @@ import {
   labelsQuery,
   membersQuery,
   statusesQuery,
+  useCan,
 } from "@/api/queries.ts";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
 import {
@@ -44,6 +45,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
+import { cn } from "@/lib/utils";
 
 // Mirrors the server's choice when no status is sent with a new issue.
 export function pickDefaultStatus(statuses: Status[]): Status | undefined {
@@ -60,6 +62,10 @@ export function NewIssuePage() {
   const canCreateLabels = useCanCreateLabels(slug);
   const createLabel = useCreateLabel(slug);
   const refCompletion = useRefCompletion(slug);
+  // The three sidebar fields are `issue.triage`, which a reporter does not
+  // hold: the server refuses them outright, so offering them would only
+  // produce a 403 after the issue was already written.
+  const canTriage = useCan(slug, "issue.triage");
 
   const [title, setTitle] = useState("");
   const editor = useRef<MarkdownEditorHandle>(null);
@@ -83,9 +89,14 @@ export function NewIssuePage() {
         issue = await api.createIssue(slug, {
           title: trimmedTitle,
           body,
-          status_id: statusId === "" ? undefined : Number(statusId),
-          label_ids: labelIds,
-          assignee_ids: assigneeIds,
+          // Guarded rather than merely unset: the controls behind these are
+          // unmounted without `issue.triage`, and an empty set is what the
+          // server reads as "asked for nothing" — sending one is not a
+          // request it has to refuse.
+          status_id:
+            canTriage && statusId !== "" ? Number(statusId) : undefined,
+          label_ids: canTriage ? labelIds : [],
+          assignee_ids: canTriage ? assigneeIds : [],
         });
         createdRef.current = issue;
       }
@@ -110,7 +121,7 @@ export function NewIssuePage() {
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_240px]">
+    <div className={cn("grid gap-6", canTriage && "lg:grid-cols-[1fr_240px]")}>
       <form
         className="min-w-0 space-y-4"
         onSubmit={(e) => {
@@ -173,113 +184,117 @@ export function NewIssuePage() {
         </div>
       </form>
 
-      <aside className="space-y-5 text-sm">
-        <section className="space-y-2">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase">
-            Status
-          </h3>
-          <Select value={statusId} onValueChange={setStatusId}>
-            <SelectTrigger className="w-full">
-              <SelectValue
-                placeholder={pickDefaultStatus(statuses.data)?.name ?? "Status"}
-              />
-            </SelectTrigger>
-            <SelectContent>
-              {statuses.data.map((s) => (
-                <SelectItem key={s.id} value={String(s.id)}>
-                  <span
-                    className="size-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: s.color }}
-                    aria-hidden
-                  />
-                  {s.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </section>
+      {canTriage && (
+        <aside className="space-y-5 text-sm">
+          <section className="space-y-2">
+            <h3 className="text-xs font-medium text-muted-foreground uppercase">
+              Status
+            </h3>
+            <Select value={statusId} onValueChange={setStatusId}>
+              <SelectTrigger className="w-full">
+                <SelectValue
+                  placeholder={
+                    pickDefaultStatus(statuses.data)?.name ?? "Status"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {statuses.data.map((s) => (
+                  <SelectItem key={s.id} value={String(s.id)}>
+                    <span
+                      className="size-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: s.color }}
+                      aria-hidden
+                    />
+                    {s.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </section>
 
-        <section className="space-y-2">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase">
-            Labels
-          </h3>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <LabelChips
-              labels={labels.data.filter((label) =>
+          <section className="space-y-2">
+            <h3 className="text-xs font-medium text-muted-foreground uppercase">
+              Labels
+            </h3>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <LabelChips
+                labels={labels.data.filter((label) =>
+                  labelIds.includes(label.id),
+                )}
+              />
+            </div>
+            <LabelPicker
+              allLabels={labels.data}
+              selected={labels.data.filter((label) =>
                 labelIds.includes(label.id),
               )}
+              onToggle={(label) =>
+                setLabelIds((prev) =>
+                  prev.includes(label.id)
+                    ? prev.filter((id) => id !== label.id)
+                    : [...prev, label.id],
+                )
+              }
+              onCreate={canCreateLabels ? createLabel : undefined}
+              trigger={
+                <Button variant="outline" size="sm">
+                  Edit labels
+                </Button>
+              }
             />
-          </div>
-          <LabelPicker
-            allLabels={labels.data}
-            selected={labels.data.filter((label) =>
-              labelIds.includes(label.id),
-            )}
-            onToggle={(label) =>
-              setLabelIds((prev) =>
-                prev.includes(label.id)
-                  ? prev.filter((id) => id !== label.id)
-                  : [...prev, label.id],
-              )
-            }
-            onCreate={canCreateLabels ? createLabel : undefined}
-            trigger={
-              <Button variant="outline" size="sm">
-                Edit labels
-              </Button>
-            }
-          />
-        </section>
+          </section>
 
-        <section className="space-y-2">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase">
-            Assignees
-          </h3>
-          <div className="flex flex-wrap gap-2">
-            {members.data
-              .filter((member) => assigneeIds.includes(member.user.id))
-              .map((member) => (
-                <UserChip key={member.user.id} user={member.user} />
-              ))}
-          </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
-                Edit assignees
-              </Button>
-            </DropdownMenuTrigger>
-            {/* Name plus login needs more room than the trigger's width,
+          <section className="space-y-2">
+            <h3 className="text-xs font-medium text-muted-foreground uppercase">
+              Assignees
+            </h3>
+            <div className="flex flex-wrap gap-2">
+              {members.data
+                .filter((member) => assigneeIds.includes(member.user.id))
+                .map((member) => (
+                  <UserChip key={member.user.id} user={member.user} />
+                ))}
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm">
+                  Edit assignees
+                </Button>
+              </DropdownMenuTrigger>
+              {/* Name plus login needs more room than the trigger's width,
                 which is what the menu defaults to. */}
-            <DropdownMenuContent className="w-auto">
-              {members.data.map((member) => (
-                <DropdownMenuItem
-                  key={member.user.id}
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    setAssigneeIds((prev) =>
-                      prev.includes(member.user.id)
-                        ? prev.filter((id) => id !== member.user.id)
-                        : [...prev, member.user.id],
-                    );
-                  }}
-                >
-                  <span className="w-4">
-                    {assigneeIds.includes(member.user.id) && (
-                      <CheckIcon className="size-4" />
-                    )}
-                  </span>
-                  <span className="whitespace-nowrap">
-                    {displayNameOf(member.user)}
-                  </span>
-                  <span className="whitespace-nowrap text-muted-foreground">
-                    @{member.user.login}
-                  </span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </section>
-      </aside>
+              <DropdownMenuContent className="w-auto">
+                {members.data.map((member) => (
+                  <DropdownMenuItem
+                    key={member.user.id}
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      setAssigneeIds((prev) =>
+                        prev.includes(member.user.id)
+                          ? prev.filter((id) => id !== member.user.id)
+                          : [...prev, member.user.id],
+                      );
+                    }}
+                  >
+                    <span className="w-4">
+                      {assigneeIds.includes(member.user.id) && (
+                        <CheckIcon className="size-4" />
+                      )}
+                    </span>
+                    <span className="whitespace-nowrap">
+                      {displayNameOf(member.user)}
+                    </span>
+                    <span className="whitespace-nowrap text-muted-foreground">
+                      @{member.user.login}
+                    </span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </section>
+        </aside>
+      )}
     </div>
   );
 }

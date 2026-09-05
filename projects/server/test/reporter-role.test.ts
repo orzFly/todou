@@ -128,6 +128,97 @@ describe("the reporter role", () => {
     });
   });
 
+  describe("what a reporter may not set while opening an issue", () => {
+    /** POST with `extra` merged into a valid body. */
+    const open = (who: keyof typeof members, extra: object) =>
+      t.app.request(`/api/projects/${slug}/issues`, {
+        method: "POST",
+        headers: as(who),
+        body: JSON.stringify({ title: "opened with extras", ...extra }),
+      });
+
+    it("refuses a status, and says which capability is missing", async () => {
+      const statuses = await json(
+        await t.app.request(`/api/projects/${slug}/statuses`, {
+          headers: as("reporter"),
+        }),
+      );
+      const res = await open("reporter", { status_id: statuses[1].id });
+      expect(res.status).toBe(403);
+      expect((await json(res)).error.message).toMatch(/issue\.triage/);
+    });
+
+    it("refuses labels", async () => {
+      const label = await json(
+        await t.app.request(`/api/projects/${slug}/labels`, {
+          method: "POST",
+          headers: admin(),
+          body: JSON.stringify({ name: "for-the-create-gate" }),
+        }),
+      );
+      expect((await open("reporter", { label_ids: [label.id] })).status).toBe(
+        403,
+      );
+    });
+
+    it("refuses assignees", async () => {
+      const res = await open("reporter", {
+        assignee_ids: [members.reporter.id],
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it("refuses before it validates the ids, so the role is what it names", async () => {
+      // A label that does not exist would be a 422 on its own; the point is
+      // that the role is decided first.
+      const res = await open("reporter", { label_ids: [999_999] });
+      expect(res.status).toBe(403);
+    });
+
+    it("takes the empty arrays every client sends by default", async () => {
+      const res = await open("reporter", { label_ids: [], assignee_ids: [] });
+      expect(res.status).toBe(201);
+    });
+
+    it("lands the issue in the project's default status", async () => {
+      const statuses = await json(
+        await t.app.request(`/api/projects/${slug}/statuses`, {
+          headers: as("reporter"),
+        }),
+      );
+      const fallback = statuses.find(
+        (s: { is_default: boolean }) => s.is_default,
+      );
+      const created = await json(await open("reporter", {}));
+      expect(created.status.id).toBe(fallback.id);
+    });
+
+    it("still lets a writer open an issue with all three", async () => {
+      const statuses = await json(
+        await t.app.request(`/api/projects/${slug}/statuses`, {
+          headers: as("writer"),
+        }),
+      );
+      const label = await json(
+        await t.app.request(`/api/projects/${slug}/labels`, {
+          method: "POST",
+          headers: as("writer"),
+          body: JSON.stringify({ name: "writer-may" }),
+        }),
+      );
+      const res = await open("writer", {
+        status_id: statuses[1].id,
+        label_ids: [label.id],
+        assignee_ids: [members.writer.id],
+      });
+      expect(res.status).toBe(201);
+      const created = await json(res);
+      expect(created.status.id).toBe(statuses[1].id);
+      expect(created.labels).toHaveLength(1);
+      expect(created.assignees).toHaveLength(1);
+    });
+  });
+
   describe("what a reporter may change", () => {
     it("edits the title and body of its own issue", async () => {
       const issue = await openIssue("reporter", "typo in the titel");

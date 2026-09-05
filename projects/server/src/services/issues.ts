@@ -340,6 +340,41 @@ async function validateAssigneeIds(
   }
 }
 
+/**
+ * Status, assignees and labels belong to `issue.triage`, but no route is only
+ * about them: they ride along on the create and the update, both of which a
+ * reporter may otherwise call. So the capability is enforced per field, at
+ * both endpoints, rather than at either one's door.
+ */
+const mayTriage = (role: MemberRole): boolean =>
+  ROLE_RANK[role] >= ROLE_RANK[minRoleOf("issue.triage")];
+
+/**
+ * Refused rather than quietly dropped: a 201 carrying a status the caller
+ * did not ask for reads as success, and neither `todou issue create --status
+ * Done` nor a form has any way to notice it did not take.
+ *
+ * An empty array is not a request. `label_ids` and `assignee_ids` default to
+ * `[]` in the schema, so treating presence as intent — the rule `PATCH` can
+ * use, where the same fields are optional — would refuse every issue a
+ * reporter ever opened.
+ */
+function assertMaySetTriageFields(
+  input: IssueCreateInput,
+  role: MemberRole,
+): void {
+  if (mayTriage(role)) return;
+  const asked =
+    input.status_id !== undefined ||
+    input.label_ids.length > 0 ||
+    input.assignee_ids.length > 0;
+  if (!asked) return;
+  throw new ForbiddenError(
+    `requires ${minRoleOf("issue.triage")} role (issue.triage): a reporter ` +
+      "may open an issue but not set its status, labels or assignees",
+  );
+}
+
 export async function createIssue(
   ctx: AppContext,
   actor: UserRow,
@@ -347,7 +382,15 @@ export async function createIssue(
   input: IssueCreateInput,
   agentContext: AgentContext | null = null,
 ): Promise<Issue> {
-  const { project } = await requireCapability(ctx, actor, slug, "issue.create");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "issue.create",
+  );
+  // Before the id validations below, so a reporter is told about the role
+  // rather than about a label id they were never allowed to send.
+  assertMaySetTriageFields(input, role);
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   await validateLabelIds(db, project.id, input.label_ids);
@@ -738,8 +781,7 @@ const OWN_ISSUE_FIELDS = new Set(["title", "body"]);
 /**
  * `PATCH issue` is one gate over five fields, so lowering `issue.update` to
  * reporter would hand out the status column and the label set along with the
- * typo fix. The other three fields keep their own capability, checked here
- * because the endpoint they belong to is shared with the two that moved.
+ * typo fix.
  *
  * Runs after `assertIssueWritable` so a card the caller may not see stays a
  * 404 rather than becoming a 403 that confirms it exists.
@@ -750,8 +792,7 @@ function assertMayEditFields(
   actor: UserRow,
   role: MemberRole,
 ): void {
-  const triage = minRoleOf("issue.triage");
-  if (ROLE_RANK[role] >= ROLE_RANK[triage]) return;
+  if (mayTriage(role)) return;
   const touched = Object.entries(input)
     .filter(([, value]) => value !== undefined)
     .map(([key]) => key);
@@ -760,8 +801,8 @@ function assertMayEditFields(
     touched.every((field) => OWN_ISSUE_FIELDS.has(field));
   if (ownEditOnly) return;
   throw new ForbiddenError(
-    `requires ${triage} role (issue.triage): a reporter may only edit the ` +
-      "title and body of their own issue",
+    `requires ${minRoleOf("issue.triage")} role (issue.triage): a reporter ` +
+      "may only edit the title and body of their own issue",
   );
 }
 
