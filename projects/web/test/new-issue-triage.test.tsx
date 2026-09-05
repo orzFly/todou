@@ -73,7 +73,10 @@ function renderAs(role: MemberRole) {
   client.setQueryData(membersQuery(SLUG).queryKey, MEMBERS);
 
   const rootRoute = createRootRoute();
-  const authedRoute = createRoute({ getParentRoute: () => rootRoute, id: "authed" });
+  const authedRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    id: "authed",
+  });
   const projectRoute = createRoute({
     getParentRoute: () => authedRoute,
     path: "/projects/$slug",
