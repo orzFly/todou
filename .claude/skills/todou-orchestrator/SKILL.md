@@ -6,11 +6,11 @@ disable-model-invocation: true
 
 # todou orchestrator
 
-You dispatch and shepherd work; the tracker is the single source of truth. Dispatch cards, relay
-between the user and the worker agents, merge, deploy. Write as little code yourself as possible and
-send one-off work to subagents. Read `/todou-cli` first; the herdr commands are in
-`references/herdr.md`. Project facts (slug, deploy command, main repo path) come from the host
-project's CLAUDE.md or memory.
+You dispatch and shepherd work; the tracker is the single source of truth. Dispatch cards, merge,
+deploy, and stay out of the cards you handed off (`While a worker is alive`). Write as little code
+yourself as possible and send one-off work to subagents. Read `/todou-cli` first; the herdr commands
+are in `references/herdr.md`. Project facts (slug, deploy command, main repo path) come from the
+host project's CLAUDE.md or memory.
 
 ## Opening the session
 
@@ -28,25 +28,17 @@ The block comes out before any dispatch. Ahead of it you may run only the reads 
 `todou config show`, `todou agent can-i-follow`, the card, `herdr agent list`; `herdr tab create`,
 `herdr agent start`, `herdr agent prompt`, the background `todou watch` and every write to the
 tracker wait until it is out. Emit it as text ahead of those tool calls: the user's chance to
-correct a wrong model or cap lasts until the first agent starts on it.
+correct a wrong model or cap lasts until the first agent starts on it. A value that changes
+mid-session reprints the block, ahead of the first dispatch that uses it.
 
-The project you look up rather than recall: `todou config show` prints the project the CLI resolves
-for the repository you are in, usually through its git binding. Only when nothing is bound does the
-slug come from the host project's CLAUDE.md or memory.
-
-Each phase's row holds the pair of flags you will pass at dispatch, `--kind` and `--model` on
-`herdr agent start`. The two rows are independent: a session may plan under one harness and
-implement under another. The harness you yourself run in is not reported, because it decides
-nothing about the agents you launch.
-
-The models and the cap come from the user, said aloud or standing in memory, and often nothing was
-said. Then apply the defaults in `Dispatching` below and mark the value as a default, so a wrong
-assumption costs one line to correct instead of a whole task. Those defaults are rules rather than
-values — report the model id you will actually pass, not the rule that picked it.
-
-A value that changes mid-session reprints the block under the same rule, ahead of the first dispatch
-that uses it. A model swapped or a cap raised is the case this exists for: the reprint is where the
-user can still refuse the new value.
+`project` is looked up, not recalled: `todou config show` prints the project the CLI resolves for the
+repository you are in, usually through its git binding, and only when nothing is bound does the slug
+come from the host project's CLAUDE.md or memory. Each phase's row holds the `--kind` and `--model`
+you will pass to `herdr agent start`, and the two rows are independent. Your own harness is not
+reported, because it decides nothing about the agents you launch. Models and cap come from the user,
+said aloud or standing in memory; when nothing was said, apply the defaults in `Dispatching` below
+and mark the value as a default, so a wrong assumption costs one line to correct instead of a whole
+task. Report the model id you will actually pass, not the rule that picked it.
 
 ## The background watch
 
@@ -56,28 +48,26 @@ Keep one running in the background:
 todou watch -p <proj> --since <cursor> --debounce 60 --forever
 ```
 
-Before you start it, run `todou agent can-i-follow` and do what it says — how this session should
-carry a standing watch is its answer, not a guess.
-
-Run it without `--json`; the line format carries each comment's opening, which is what you act on.
-It returns with events (exit 0) or a fatal error (exit 1, which you report). Heartbeat lines on stderr
-show it is alive. When the harness kills the task, the notification is your wake-up: restart the watch
-from the same cursor. After handling a batch, restart from the printed cursor.
+Before you start it, run `todou agent can-i-follow` and do what it says. Run it without `--json`: the
+line format carries each comment's opening, which is what you act on. Exit codes, heartbeats and
+restarting a killed watch from the same cursor are as `/todou-cli` describes; after handling a batch,
+restart from the printed cursor.
 
 | Event | Reaction |
 |---|---|
 | User opens a card | Triage it now (below). Opening a card is not a go signal |
 | User moves a card to Next | Dispatch a worker |
-| User comments on a card | Owning worker alive: relay to it. Otherwise file a follow-up card or handle it yourself |
+| User comments on a card | Owning worker alive: nothing, its own watch delivered it. Otherwise file a follow-up card or handle it yourself |
+| A worker comments, asks or pushes a spec | Nothing (`While a worker is alive`) |
+| A worker moves its card to Ready to Ship | Queue it for the next merge batch |
 | Informational comment | Nothing; the comment is the record |
 
 The watch skips your own agent session, not your account, so a worker on the same machine login does
 wake you when it moves a card or comments. Two cases still need `herdr agent wait` attached to every
 working agent: a harness that reports no session id falls back to account-level filtering, under which
 the whole fleet is invisible; and an agent that dies mid-task writes nothing. Re-attach the wait
-whenever you prompt an agent again. Do not attach to an idle agent: the wait resolves at once and
-tells you nothing, and an agent parked at a review gate is waiting on the user, whose review the
-watch sees.
+whenever you prompt an agent again, and never attach to an idle one — it resolves at once and tells
+you nothing, and an agent parked at a review gate is waiting on the user, whose review the watch sees.
 
 To cover a gap before the watch started: `todou api GET '/projects/<proj>/activity?after=…'`, then
 check that every user action was handled.
@@ -101,51 +91,46 @@ todou issue edit <N> -p <proj> --add-label 'area:<area>' --add-label 'kind:bug'
 ```
 
 Triage produces labels, not comments. Do not post scheduling notes ("collides with those two cards"):
-the collision is speculative until both are dispatched, and every ref fires an event on the card it
-names. Keep the ordering in your head and act on it at dispatch. Comment only when the card itself
-misses something: a wrong premise, a hidden dependency, two proposals of very different size. Bulk
-triage of a backlog is subagent work.
+every ref fires an event on the card it names, and the collision is speculative until both are
+dispatched. Keep the ordering in your head and act on it at dispatch. Comment only when the card
+itself misses something: a wrong premise, a hidden dependency, two proposals of very different size.
+Bulk triage of a backlog is subagent work.
 
 ## Dispatching
 
 One herdr tab per task, always with `--cwd <main repo>` passed explicitly. The command sequence is in
-`references/herdr.md`, the launch flags in `references/claude.md`.
-
-Every dispatch happens with the session block already out; a model or cap that changed since the last
-one reprints it first (`Opening the session`).
+`references/herdr.md`, the launch flags in `references/claude.md`. Every dispatch happens with the
+session block already out; a model or cap that changed since the last one reprints it first
+(`Opening the session`).
 
 - Every agent gets its own worktree; the brief says nothing about worktrees.
-- Models follow the phase, and which model serves which phase is a per-session decision — the
-  user's standing instruction, or yours at dispatch. Naming one here would be wrong within days.
-  Planning (`/todou-brainstorm`, `/todou-plan`) inherits the current session's model unless the
-  user named a planning model; implementation (`/todou-impl-plan`) takes the strongest model
-  available unless the user named one. A card that needs a design therefore takes two agents: the
-  planning brief says to stop when the plan is approved; then retire that agent and dispatch a
-  fresh implementation agent on the same card with `/todou-impl-plan`. The hand-off travels through
-  the card and the spec, never through agent memory.
-- Subagents (the Agent tool) take investigations, merges and deploys, on the implementation
-  phase's model — not the cheapest one to hand.
+- Models follow the phase, and which model serves which phase is a per-session decision — the user's
+  standing instruction, or yours at dispatch; naming one here would be wrong within days. Planning
+  (`/todou-brainstorm`, `/todou-plan`) inherits the current session's model unless the user named a
+  planning model; implementation (`/todou-impl-plan`) takes the strongest model available unless the
+  user named one. A card that needs a design therefore takes two agents: the planning brief says to
+  stop when the plan is approved, and that agent is retired before a fresh one is dispatched on the
+  same card with `/todou-impl-plan`. The hand-off travels through the card and the spec, never
+  through agent memory.
+- Subagents (the Agent tool) take investigations, merges and deploys, on the implementation phase's
+  model — not the cheapest one to hand.
 
 The task brief carries only what is specific to this task: the skill to run on the first line, the
 card number, and the conflict fences (what every other in-flight agent is touching, so changes stay
-inside the agent's own territory). Standing instructions that apply to every task, such as moving the
-card to In Progress, how to verify locally, and the wrap-up flow, belong in the project's CLAUDE.md or
-AGENTS.md and in `/todou-cli`, not in each brief.
-
-Your reading of the problem, your suspicion about the cause and your preferred design stay out of the
-brief: a worker reads it as instructions, and a stray opinion becomes a decision the user never saw.
-Post such thoughts as a comment on the card, where the user can overrule them.
+inside the agent's own territory). Standing instructions that apply to every task — moving the card to
+In Progress, how to verify locally, the wrap-up flow — belong in the project's CLAUDE.md or AGENTS.md
+and in `/todou-cli`. Your reading of the problem, your suspicion about the cause and your preferred
+design stay out of it as well, because a worker reads the brief as instructions; post such thoughts
+as a comment on the card, where the user can overrule them.
 
 Cards labelled `needs-brainstorm` go through `/todou-brainstorm`: first line of the brief, then the
 card number and context. That skill owns the dialogue and hands off to `/todou-plan`. For smaller
 look-and-feel decisions, the brief says at minimum: post mockups or a proposal to the issue first, no
 implementation until the user decides, keep the card In Progress.
 
-Every task gets a fresh agent; do not reuse one.
-
-A `--wait` timeout is not a failure. Read the agent's state before concluding anything from one, and
-never prompt a working agent; if it is working, re-attach. A long `working` is worth no more than its
-tail says (`references/herdr.md`).
+Every task gets a fresh agent; do not reuse one. A `--wait` timeout is not a failure: read the
+agent's state before concluding anything from one, and never prompt a working agent — if it is
+working, re-attach. A long `working` is worth no more than its tail says (`references/herdr.md`).
 
 At most three workers run at once unless the user sets another number; subagents do not count. When
 the cap is full, leave the next card in Next and say so; Next is the queue. A slot frees when its card
@@ -185,9 +170,9 @@ subagent and check the results.
 - A user decision is a question comment on the card, never AskUserQuestion (see `/todou-cli`).
 - Problems found in passing, and needs the user mentions aloud, become cards at once. A request that
   arrived outside the tracker (terminal, chat) is quoted verbatim in the card body; that quote is the
-  only trace the tracker will have.
-- After "take a break" or "no new work": the watch, relaying and shepherding of dispatched tasks
-  continue; you start no new work.
+  only trace the tracker will have. What arrives on a live worker's card is that worker's to file.
+- After "take a break" or "no new work": the watch and the shepherding of dispatched tasks continue;
+  you start no new work.
 
 ## Interruption recovery
 
@@ -201,6 +186,22 @@ REFRESH:
 3. Leave working agents alone; re-attach their waits.
 4. If your background watch died, restart it from the last processed cursor. Nothing is lost across
    the gap.
+
+## While a worker is alive
+
+A dispatched card is its worker's until the worker is retired.
+
+- **Do not reproduce its output.** Comments, questions, specs and numbers are on the card and the
+  user reads them there. Answer when asked; unasked, say nothing.
+- **Do not carry messages to it.** Its own `issue watch` already delivered what the user wrote there.
+- **Do not act on its card** — not the follow-up card it was asked to open, not its title, not a
+  comment in its place. Two hands reaching for one card race by construction: the duplicate you
+  would search for does not exist yet when you look, so only not reaching closes the window.
+
+Intervene for a conflict (two agents in the same files, two cards on the same work, a merge that will
+not come out) or an accident (a dead or cut-off agent, a lost worktree, a broken deploy), report both
+to the user, and say nothing else unasked about someone else's card. Dispatching, triage, filing what
+arrives outside a live card, merging, deploying, Shipped and retiring stay yours.
 
 ## Saving context
 

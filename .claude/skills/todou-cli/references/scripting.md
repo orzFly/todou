@@ -1,8 +1,7 @@
 # Scripting against the CLI
 
 What a script needs from todou: machine-readable shapes, exit codes and cursor plumbing. An agent
-reading for itself uses the default human output, which already carries every id, ref, count and
-cursor.
+reading for itself uses the default human output instead.
 
 ## Exit codes of the wait commands, by mode
 
@@ -16,15 +15,22 @@ cursor.
   after three attempts.
 - `--follow` on `todou watch` or `issue watch` (standing mode, implies `--forever`): 0 = it stopped
   on purpose — the push channel refused delivery and it degraded, which is the same verdict a
-  one-shot delivery gives;
-  1 = fatal. There is no "nothing new" ending, because it does not end on quiet. Before any exit,
-  including a fatal one, uds mode flushes the entries it cannot confirm were delivered plus a
-  `cursor:` line to stdout, so the position is never lost; feed that cursor back to `--since`.
+  one-shot delivery gives; 1 = fatal. There is no "nothing new" ending, because it does not end on
+  quiet. Before any exit, including a fatal one, uds mode flushes the entries it cannot confirm were
+  delivered plus a `cursor:` line to stdout, so the position is never lost; feed that cursor back to
+  `--since`, and read the explanation it writes to stderr.
 
 All waits subscribe to the server's change feed and return within about a second of a new entry;
 `--interval` (default 2s) is the poll cadence used while the feed is unavailable. `question wait` and
 `spec wait` read the state they wait for before blocking, so a result that is already in is returned
 without waiting.
+
+## The two `--follow` transports
+
+`--follow=stdout` writes each batch to stdout, which is the form a supervisor wants when it runs a
+command and reads its output. `--follow=uds` pushes into a Claude Code session instead, and names its
+sender `@todou-watch-<slug>` for a project watch and `@todou-watch-<slug>-<number>` for a card watch,
+so several watches on one session stay tellable apart without opening the message.
 
 ## `--json` on the waits is NDJSON
 

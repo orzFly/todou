@@ -8,8 +8,8 @@ disable-model-invocation: true
 
 Turn an idea into a fully formed design by talking with the user on the todou issue. Every question,
 answer and revision stays in the timeline, so whoever implements the design can replay the decisions.
-Questions follow the "Asking the user questions" section of `/todou-cli`; the review gate follows its
-"Spec documents" section.
+Questions follow the "Asking the user questions" section of `/todou-cli`; the review gate, and what a
+spec document may and may not contain, follow its "Spec documents" section.
 
 <HARD-GATE>
 Write no code, scaffold nothing and invoke no implementation skill until the user has approved the
@@ -20,15 +20,14 @@ pushed as a spec and approved.
 
 ## Steps
 
-1. Move the card to In Progress, then run `todou agent can-i-follow` and do what it says, so
-   comments arriving while you work reach you. Explore the project context: files, docs, recent
-   commits, `todou issue view N` for the card and its discussion.
+1. Move the card to In Progress, then run `todou agent can-i-follow` and do what it says. Explore the
+   project context: files, docs, recent commits, `todou issue view N` for the card and its discussion.
 2. Ask clarifying questions on the issue: purpose, constraints, success criteria. Build a mockup or
    demo when a question is easier to answer from a picture (see Visual material).
 3. Write the design to a scratch directory made with `mktemp -d`. The approaches you weighed and your
    recommendation go into the document, never into a comment.
 4. Self-review the documents, then push with `todou spec push <n> <dir> -p <proj> --message
-   "brainstorm v1" --wait` and act on the outcome (see Review gate).
+   "brainstorm v1" --wait` and act on the outcome.
 5. After `approved`, invoke `/todou-plan`.
 
 ## Working through the idea
@@ -45,9 +44,6 @@ pushed as a spec and approved.
 - Follow the existing structure and patterns. Where existing code has problems that affect the work,
   include targeted improvements in the design. When you notice a refactor that would help but is not
   required, ask the user with a native question; the decision is theirs.
-- Design for isolation: units with one clear purpose, communicating through defined interfaces,
-  understandable without reading their internals. Smaller units are also easier for you to hold in
-  context and to edit reliably.
 - Write the spec as soon as you understand what you are building. Do not summarize the design in a
   comment first and ask whether to write it up: the user would read the same text twice, and a comment
   has neither inline annotations nor a diff against the previous version.
@@ -55,35 +51,15 @@ pushed as a spec and approved.
 
 ## The documents
 
-- `proposal.md` holds the user's original requirements that have no tracker trace: requirements from
-  the terminal or other outside channels, quoted verbatim without commentary. Card body, comments and
-  question answers are referenced, never copied. Keep the file current: new information goes in,
-  corrections replace the relevant sentences, and what a review annotation established is recorded as
-  the requirement it now is, not as a note about the annotation.
+- `proposal.md` holds the user's original requirements that have no tracker trace, kept current as
+  `/todou-cli` describes.
 - `brainstorm.md` is the design the user reviews: approaches weighed, option chosen, options rejected
   and why. Scale each section to its complexity. Cover architecture, components, data flow, error
   handling and testing.
 
-A spec document states the design as it stands, not how it got there. No "v3 said X, v4 changed it
-to Y" passages, no "the review asked for Z", and no list of corrections to another document: a
-correction rewrites the sentence it corrects and folds its reason into the prose. Where a change came
-from is already recorded — in the card's comments and in the spec's own version history.
-
 Self-review before pushing: remove placeholders and vague requirements, resolve contradictions
 between sections, confirm the scope fits one implementation plan, and rewrite any requirement that can
 be read two ways.
-
-## Review gate
-
-`spec push … --wait` ends with one of these lines:
-
-- `approved` → step 5.
-- `changes requested` → `todou spec comments <n> --unresolved`, revise, update `proposal.md`,
-  `todou spec resolve <n> <ids…>`, push again with `--if-version <v> --wait`.
-- `feedback` → the user wrote in plain comments. Treat it as review feedback, revise, and point them
-  at the review controls in your next comment.
-
-A killed wait is re-entered with `todou spec wait <n> --since <cursor>`.
 
 ## Hand-off
 

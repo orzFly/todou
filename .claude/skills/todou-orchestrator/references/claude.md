@@ -1,7 +1,7 @@
 # Launching a claude agent under herdr
 
 `herdr agent start … --kind claude -- <flags>` hands everything after `--` to claude itself. This
-file covers those flags and the behaviour they buy. Which model, which card and which brief go to an
+file covers those flags and the behaviour they buy; which model, which card and which brief go to an
 agent are dispatch decisions, and they stay in `SKILL.md`.
 
 ## Launch flags
@@ -27,7 +27,7 @@ On a `--worktree` launch the exit also decides the worktree's fate:
 - A clean or committed worktree is removed silently, branch included. Commits already merged into
   master survive; unmerged commits are destroyed.
 - A dirty worktree stops on an interactive keep/remove menu, default Keep. Answer it with `send-keys`
-  (see `references/herdr.md`): the second item removes and discards, a plain `enter` keeps.
+  (see `herdr.md`): the second item removes and discards, a plain `enter` keeps.
 - The cleanup follows the session's own record of what it changed, not git state, so commits injected
   into the worktree from outside that session are destroyed silently however clean git looks.
 

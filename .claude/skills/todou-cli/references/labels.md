@@ -1,12 +1,10 @@
 # Labels
 
-Do not pre-create labels. A label flag on a write creates a missing label, prints
-`created label 'X' (#color) · recolor: …` on stderr, and continues. `todou label create` is for
-recoloring plans and bulk setup.
+A label flag on a write creates a missing label, prints `created label 'X' (#color) · recolor: …` on
+stderr, and continues.
 
-- Adding and replacing are different flags. `--add-label` and `--remove-label` edit the set in place.
-  `--label` and `--labels` replace the whole set and print what they dropped. The two styles cannot
-  be combined in one command. Use `--add-label` unless you mean to replace.
+- `--label` and `--labels` replace the whole set and print what they dropped; `--add-label` and
+  `--remove-label` edit it in place. The two styles cannot be combined in one command.
 - Both forms accept several names: repeat the flag or comma-separate the names, so
   `--add-label 'area:cli,kind:bug'` is two labels. The server keeps that parseable: a label name may
   not contain a comma (422), and whitespace is normalized, so `'area:   cli'` is stored and matched as

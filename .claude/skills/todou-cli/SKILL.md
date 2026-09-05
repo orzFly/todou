@@ -18,20 +18,20 @@ are in `references/` next to this file.
 3. Read the human output. It carries every id, ref, count and cursor you need. Use `--json` only when
    a script parses stdout (`references/scripting.md`). `todou api <method> <path>` covers anything
    the CLI lacks.
-4. A write you will wait on returns the cursor to wait from. `spec push` and `comment add` end with a
-   `cursor:` line: the position of the write itself, so every entry answering it is after that cursor
-   and the write's own event is not. Wait from that cursor. A cursor taken after the write can already
-   be past the answer, and a wait started there never returns. `--print-cursor` prints the bare cursor
-   for `cursor=$(…)`; `--since <cursor>` on the same write lists what arrived after that cursor. Other
-   writes do not return a cursor yet; `issue view` or `todou watch --poll --print-cursor` gives a
-   current one.
+4. Wait from the cursor the write itself printed. `spec push` and `comment add` end with a `cursor:`
+   line holding their own position, so every answering entry is after it; a cursor taken afterwards
+   can already be past the answer, and a wait started there never returns. `--print-cursor` prints it
+   bare for `cursor=$(…)`, `--since <cursor>` on the same write lists what arrived after it. Other
+   writes print no cursor; `issue view` or `todou watch --poll --print-cursor` gives a current one.
 5. Experiments go to the sandbox project when the deployment has one, never to the real tracker.
 
 ## Command cheat sheet
 
 ```bash
 todou search <terms…> -p <proj> [--in issues,comments,specs] [--status X] [--limit N]
-#   ^ the only read that sees comments and specs; substring, so 中文 works
+#   ^ the only read that sees comments and specs, where conclusions and verdicts are written;
+#     case-insensitive substrings joined by AND (so 中文 works); each hit names what to read
+#     next; issue list -q covers titles and bodies only. Details: references/search.md
 todou issue list -p <proj> [--open|--closed|--status X,Y|--unread|-q text]  # ends with a count
 todou issue view 16 -p <proj>       # prints a cursor at the end, for watch --since
 todou issue view 16 --brief         # header + status only, no body, no timeline
@@ -71,32 +71,19 @@ id anywhere its slug goes, `-p` included.
 **A prefix is resolved, not ignored.** `T-16` means the project that holds `T` — the current one if
 that is its prefix, otherwise whichever readable project claims it deployment-wide. A prefix nobody
 holds, one several projects hold, and one that disagrees with `-p/--project` are all refused (exit 1)
-before anything is read, so a ref pasted from another project can no longer hand you a different
-card. `-p` therefore stays a fence: to reach another project either drop it or write `alpha/16`.
-`<proj>/T-16` is checked against that project's own prefixes, current and retired.
+before anything is read, so a ref pasted from another project cannot hand you a different card. `-p`
+therefore stays a fence: to reach another project either drop it or write `alpha/16`. `<proj>/T-16`
+is checked against that project's own prefixes, current and retired.
 
 ## Several cards at once
-
-```bash
-todou issue list -p <proj> --status Next,'In Progress'   # which cards are moving
-todou issue view 12 15 23 --brief                        # where each one stands
-todou issue edit 12 15 23 --status Next                  # move them together
-```
 
 - `--status` and `--label` accept several names, repeated or comma-separated, and match any of them.
 - `view` prints the cards in the order given, each with its own cursor. A number that cannot be read
   prints an error in its place, the others still print, and the exit code is 1.
-- `edit` reads every card before it writes any. A mistyped number fails the command with nothing
-  written. Writes happen in order and stop at the first failure, naming what was not attempted.
-  Rerunning the whole list is safe. `--title` and `--body` are refused on several cards. `close`,
+- `edit` reads every card before it writes any, so a mistyped number fails the command with nothing
+  written. Writes happen in order and stop at the first failure, naming what was not attempted;
+  rerunning the whole list is safe. `--title` and `--body` are refused on several cards. `close`,
   `delete`, `comment add` and `spec status` take one card.
-
-## Search
-
-`todou search` is the only read that covers comments and spec documents, which is where conclusions
-and verdicts are written; `issue list -q` covers titles and bodies only. Terms are case-insensitive
-substrings joined by AND. Each hit names what to read next: `comment <id>`, `spec <path>` or `issue`.
-Details: `references/search.md`.
 
 ## Writing bodies
 
@@ -114,16 +101,15 @@ questions travel in one call. Stdin is a single stream, so only one of the two m
 A path given to `--body` is caught, because that one-word slip would post a filename as the whole
 body: `--body /dev/stdin`, `--body -` and `--body /dev/fd/63` are refused before anything is written;
 an existing file path still posts, with a warning (`--allow-body-path` silences both). `comment add`
-echoes the body's size and opening next to the new id; that line proves what was posted.
-
-Attach a value that starts with `--` to its flag: `--title=--body …`.
+echoes the body's size and opening next to the new id; that line proves what was posted. Attach a
+value that starts with `--` to its flag: `--title=--body …`.
 
 ## Filing what the user asked for
 
 A request to file a card asks for the card, not for a report.
 
-1. Create the card first. Reading code, reproducing and scoping happen on the card afterwards. The one
-   read to do before creating is `todou search`: an existing card on the same subject gets a comment
+1. Create the card first; reading code, reproducing and scoping happen on the card afterwards. The
+   one read to do first is `todou search`: an existing card on the same subject gets a comment
    instead of a duplicate.
 2. Quote the user's original words verbatim in the body. Your reading of them goes above the quote.
 3. Split what was said into units of work. Two unrelated complaints in one sentence are two cards;
@@ -149,59 +135,46 @@ todou watch -p <proj> --follow=uds                                     # stay re
 todou issue watch 16 -p <proj> --follow=uds                            # the same, on one card
 ```
 
-- Which way of waiting this harness can actually use is not something to guess: run
-  `todou agent can-i-follow` and do what it says. It reads no server and resolves no project, so it
-  answers at any point in a session, and it is the only place that judgement is written down.
-- Use `--forever` (`spec wait` always behaves this way): one call, no loop around it. The command
-  ends in exactly two ways: exit 0 with entries, or exit 1 on a fatal error, which you report.
-  Timeouts and outages are handled inside the command, which resumes from the cursor it holds. The
-  waits subscribe to the server's change feed, so a new entry returns within about a second;
-  `--interval` (default 2s) is the fallback poll cadence. Under `--forever`, `--timeout` is the
-  heartbeat interval (default 600s): one `still watching …` line on stderr per interval shows that
-  the wait is alive.
+- Which way of waiting this harness can use is not something to guess: run `todou agent can-i-follow`
+  and do what it says. It reads no server and resolves no project, so it answers at any point in a
+  session, and it is the only place that judgement is written down.
+- Use `--forever` (`spec wait` always behaves this way): one call, no loop around it, ending only as
+  exit 0 with entries or exit 1 on a fatal error, which you report. Timeouts and outages are handled
+  inside the command, which resumes from the cursor it holds.
 - A wait killed from outside (the harness stopping a background task) is not an error. The kill
   notification is your wake-up; restart the wait with the same cursor, every time. A short self-poll
   instead costs an agent turn per tick.
-- `--follow` (on `todou watch` and `issue watch` alike) does not exit with the first batch: it stays
-  resident and delivers every batch, so a sentinel costs one background task rather than a tool call
-  per batch. Two transports, never guessed from the environment: `--follow` / `--follow=stdout`
-  writes each batch to stdout (for a supervisor that runs a command and reads its output),
-  `--follow=uds` (alias `claude-code-messaging`) pushes each batch as a message into the Claude Code
-  session that exported `CLAUDE_CODE_MESSAGING_SOCKET`, and refuses up front if it is unset. Implies
-  `--forever`; conflicts with `--poll` and `--print-cursor`, on both commands. `--debounce` defaults
-  to **60s** here, because the receiving side charges every message a fixed boilerplate cost —
-  merging is nearly always the better trade — and `--debounce 0` restores immediate delivery.
-- **Under `--follow=uds` stdout stays empty while pushing works**, because a background task's stdout
-  is delivered in full at exit and printing as well as pushing would hand you every batch twice. The
-  one thing it writes is the degrade: if the session holds, refuses or drops a message, the watch
-  writes the batches it cannot account for plus the cursor to stdout, explains itself on stderr, and
-  exits 0 — the plain "wait, print, exit" behaviour, only with the accumulated batches. Every exit
-  path flushes, a fatal error included, so there is always a cursor to resume from. Each push states
-  the range it covers as `since:` / `cursor:` lines, and one push's `cursor` is the next one's
-  `since`: if they ever fail to line up, a notification went missing. The sender is named
-  `@todou-watch-<slug>` for a project watch and `@todou-watch-<slug>-<number>` for a card watch, so
-  several watches on one session stay tellable apart without opening the message.
-- A wait returns only for entries created after its cursor. When you wait for a state (a verdict, an
-  answer, a status), read the state first and block only while it is not there yet. `spec wait` and
-  `question wait` do this themselves; before an `issue watch`, run `issue view --brief`.
-- Each line reads `<ref> <who> <what> <when>: <summary>`. A comment line carries the start of its
-  body, which is what you act on (`--summary <chars>` sets the width, default 120). The output ends
-  with a `cursor:` line; resume from that cursor. A newer cursor skips what arrived in between.
-  `--debounce N` waits N seconds after the first entry and returns one batch.
+- `--follow` (on both commands) does not exit with the first batch: it stays resident and delivers
+  every batch, so a sentinel costs one background task rather than a tool call per batch. Two
+  transports, never guessed from the environment: `--follow` / `--follow=stdout` writes each batch to
+  stdout; `--follow=uds` (alias `claude-code-messaging`) pushes it into the Claude Code session that
+  exported `CLAUDE_CODE_MESSAGING_SOCKET`, and refuses up front if it is unset. Implies `--forever`;
+  conflicts with `--poll` and `--print-cursor`, on both commands. `--debounce` defaults to **60s**
+  here, because the receiving side charges every message a fixed boilerplate cost; `--debounce 0`
+  restores immediate delivery.
+- **Under `--follow=uds` stdout stays empty while pushing works**, because printing as well as
+  pushing would hand you every batch twice. What it writes instead is the degrade: the batches it
+  could not get delivered, plus a `cursor:` line, then exit 0. Each push's `since:` / `cursor:` lines
+  chain into the next, and a break in that chain means a notification went missing. The degrade path,
+  the sender names and the exit codes: `references/scripting.md`.
+- A wait returns only for entries created after its cursor, so when you wait for a state (a verdict,
+  an answer, a status), read the state first and block only while it is not there yet. `spec wait`
+  and `question wait` do this themselves; before an `issue watch`, run `issue view --brief`.
+- Each line reads `<ref> <who> <what> <when>: <summary>`, a comment line carrying the start of its
+  body, which is what you act on (`--summary <chars>` sets the width, default 120). Resume from the
+  closing `cursor:` line; a newer cursor skips what arrived in between. `--debounce N` returns one
+  batch N seconds after the first entry.
 - `issue watch` and `todou watch` skip entries from your own agent session, not from your whole
   account, so a sibling agent on the same machine account does wake them; `spec wait` skips the whole
   account. Entries without an agent session (the web UI) count as the account. `--any-actor` turns
   the filter off; `issue watch --exclude-actor <login>` filters one account instead.
 
-A single-issue cursor does not cross a move: it is a row position in the project the card has
-left. `issue watch` on a moved card prints `moved to …` and a cursor for its new home; reopen the
-watch there with that cursor.
-
-A current cursor for a wait that no write precedes: `cursor=$(todou watch -p <proj> --poll
---print-cursor)`, or `cursor=$(todou issue watch <n> -p <proj> --poll --print-cursor)` for one card.
-Unread marks: `issue list` marks unseen activity by others with `●`, `--unread`
-filters to it, `view` marks the card read; the state is per user on the server. Exit codes of the
-blocking and `--poll` modes, NDJSON, stdout/stderr separation: `references/scripting.md`.
+A single-issue cursor does not cross a move: it is a row position in the project the card has left.
+`issue watch` on a moved card prints `moved to …` and a cursor for its new home; reopen the watch
+there with that cursor. For a wait that no write precedes, `--poll --print-cursor` gives a current
+one. `issue list` marks unseen activity by others with `●`, and `--unread` filters to it. Heartbeat
+and poll cadence, cursor recipes, unread state, exit codes, NDJSON and stdout/stderr separation:
+`references/scripting.md`.
 
 ## Attachments, permalinks, refs
 
@@ -209,9 +182,9 @@ blocking and `--poll` modes, NDJSON, stdout/stderr separation: `references/scrip
   embeds it inline. Attach single-file demo pages (mockups, prototypes) to the issue instead of
   leaving them on local disk. `attach list` is the authoritative set; `attach download <id|name>`
   reads one back.
-- Do not copy a token out of `config.toml`. `attach download` and `todou api` authenticate like every
-  other command; a hand-written `curl` with a pasted Bearer token is a credential leak. `todou config
-  show` prints the resolved config without any token value.
+- Do not copy a token out of `config.toml`: `attach download` and `todou api` authenticate like every
+  other command, so a hand-written `curl` with a pasted Bearer token is a credential leak for
+  nothing. `todou config show` prints the resolved config without any token value.
 - Every timestamp is a permalink (`#comment-<id>`, `#event-<id>`); `comment view` accepts one.
 - **Write `#N` and forget about it.** The server resolves a reference when it is submitted and stores
   the answer as a link — `[#12](/projects/7/issues/12)` — so what you read back is what it means, and
@@ -220,13 +193,12 @@ blocking and `--poll` modes, NDJSON, stdout/stderr separation: `references/scrip
 - **An address in stored text pastes straight back in.** `todou issue view /projects/7/issues/12`,
   `todou comment view /projects/7/issues/12#comment-34`, and `-p 7` all work — a project id is a
   spelling every command takes.
-- Do not guess how a project spells its refs. A project writes `#12` or `T-12`, which is a per-project
-  setting, and every command that knows an issue prints it spelled: the first line of `issue view
-  --brief`, every list row, every watch line. A ref notifies the card it points at, so write one only
-  when the link carries meaning; do not enumerate incidental cards, and write "this card" instead of
-  a ref to the card you are on. In source and commit messages use the project's form; where the
-  project has no prefix, name the tracker in prose instead of writing `#N`, because a public mirror
-  autolinks `#N` to its own issues.
+- Do not guess how a project spells its refs: `#12` or `T-12` is a per-project setting, and every
+  command that knows an issue prints it spelled. A ref notifies the card it points at, so write one
+  only when the link carries meaning; do not enumerate incidental cards, and write "this card"
+  instead of a ref to the card you are on. In source and commit messages use the project's form;
+  where the project has no prefix, name the tracker in prose instead of writing `#N`, because a
+  public mirror autolinks `#N` to its own issues.
 
 Details: `references/rich-content.md`.
 
@@ -243,7 +215,7 @@ A tracker comment is a record the user scans between other work, not an essay.
   the result. Open with the point and stop when it is made.
 
 State failures plainly: cause, then fix. If something stays open, name the single thing that unblocks
-it. Length follows evidence. A shipped-summary with test counts, shas and a surprising diff can run
+it. Length follows evidence: a shipped-summary with test counts, shas and a surprising diff can run
 long; a triage note cannot.
 
 ## Status flow (who moves what)
@@ -284,7 +256,7 @@ todou question wait 16 <commentId> -p <proj> --forever   # blocks until answered
 - All text fields are markdown; validation is strict, and an unknown field fails with its path named.
   The user answers all questions of one comment together; "decline to answer" is built in; options and
   a free-text "other" can coexist. `question list <n> --unanswered` shows what is still open.
-- One comment carries two or three closely related questions, each with your recommendation and the
+- One comment carries two or three closely related questions, each with your recommendation and its
   reasoning, so the user can answer with a few characters.
 
 ## Spec documents (plans, proposals, reviewable docs)
@@ -304,6 +276,14 @@ todou spec resolve <n> <commentIds…>
 todou spec review <n> --approve | --request-changes [--body …]
 ```
 
+A spec document states the design as it stands, not how it got there. No "v3 said X, v4 changed it to
+Y" passages, no "the review asked for Z", and no list of corrections to another document: a correction
+rewrites the sentence it corrects and folds its reason into the prose. Where a change came from is
+already recorded — in the card's comments and in the spec's own version history. `proposal.md` holds
+the user's requirements that have no tracker trace, quoted verbatim without commentary; the card body,
+comments and question answers are referenced, never copied; and what a review annotation established
+is recorded as the requirement it now is, not as a note about the annotation.
+
 **The review gate is one command**: `spec push … --wait`. It pushes, waits on the whole issue from the
 push's own position, and reads the verdict from the spec's state at every wake-up. The last stdout
 line is the outcome; all three exit 0, only a fatal error exits 1.
@@ -312,7 +292,7 @@ line is the outcome; all three exit 0, only a fatal error exits 1.
 |---|---|---|
 | `approved · spec v2` (with `· N unresolved annotations` when any remain) | approve verdict on the current version; remaining annotations are nits to fix while implementing | proceed |
 | `changes requested · spec v3 · N unresolved annotations` | request-changes verdict, or annotations left unresolved on an unreviewed version (a revision pushed without `spec resolve`) | revision loop |
-| `feedback · no verdict on spec v2 yet` | someone else wrote on the card; their entries print above | fold them into the documents, reply if a reply is owed, then `spec wait` again |
+| `feedback · no verdict on spec v2 yet` | someone else wrote on the card; their entries print above | fold them into the documents, reply if a reply is owed, point the user at the review controls, then push if the documents changed and `spec wait` again if they did not |
 
 Revision loop:
 
@@ -323,7 +303,7 @@ Revision loop:
    the text across versions.
 
 Re-entry after a killed wait: `todou spec wait <n> --since <cursor>` with the cursor from the
-`cursor:` line. Without `--since` the wait starts where the current version was pushed and replays what
-was said since. The server enforces two rules: a verdict counts only against the latest version, and
-the account that pushed a version cannot review it. Do not poll `spec status` instead of waiting, and
-do not read a verdict off the event stream; `spec wait` reads the spec's state for you.
+`cursor:` line; without `--since` the wait starts where the current version was pushed and replays
+what was said since. The server enforces two rules: a verdict counts only against the latest version,
+and the account that pushed a version cannot review it. Do not poll `spec status` instead of waiting,
+and do not read a verdict off the event stream; `spec wait` reads the spec's state for you.

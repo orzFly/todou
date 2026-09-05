@@ -1,8 +1,6 @@
 # Searching a project
 
-`todou search` is the only read that covers comments and spec documents, which is where conclusions,
-verdicts and measurements are written. `issue list -q` covers titles and bodies only. Search before
-paging through cards by hand.
+Search before paging through cards by hand.
 
 ```bash
 todou search 全文搜索 -p <proj>              # anywhere in the project

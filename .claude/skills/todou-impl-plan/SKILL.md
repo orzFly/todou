@@ -15,9 +15,8 @@ Execute a plan that lives as an approved spec set on a todou issue. Read `/todou
    check has nothing to wake it.
 2. `todou spec pull <n> <dir> -p <proj>` into a scratch directory made with `mktemp -d`. Read
    whichever exist: `proposal.md` (requirements), `design.md`, `api.md`, `plan.md` (the steps).
-3. Move the card to In Progress, then run `todou agent can-i-follow` and do what it says, so
-   comments arriving while you work reach you. Follow `plan.md`; with several steps, track them in
-   a task list.
+3. Move the card to In Progress, then run `todou agent can-i-follow` and do what it says. Follow
+   `plan.md`; with several steps, track them in a task list.
 4. Verify against the plan's acceptance criteria, commit on your branch without merging, move the
    card to Ready to Ship, post a summary comment, report in the terminal.
 
@@ -26,8 +25,7 @@ Execute a plan that lives as an approved spec set on a todou issue. Read `/todou
 Small deviations get a note in the summary comment. Anything that changes the design gets a native
 question on the card (`comment add --questions` + `question wait`) before you proceed, and the answer
 goes into `proposal.md` on the next spec push, if there is one — written as the requirement it now
-is, not as a note about the question. A spec document states the design as it stands; where a change
-came from is already in the card's comments and in the spec's version history.
+is, not as a note about the question (`/todou-cli`, "Spec documents").
 
 ## The commit message
 
