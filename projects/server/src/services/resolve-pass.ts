@@ -28,6 +28,7 @@ import {
   type ReferenceToken,
   type ResolvedTarget,
   type ResolveEdit,
+  resolveSlugAt,
   scanReferenceTokens,
   spliceResolved,
 } from "@todou/shared";
@@ -249,7 +250,7 @@ export async function resolveText(
     return { storedText: text, cards: [], unresolved: [] };
   }
 
-  const resolver = new Resolver(world);
+  const resolver = new Resolver(world, config);
   const edits: ResolveEdit[] = [];
   const unresolved: string[] = [];
   const cards = new Map<string, ReferenceTarget>();
@@ -356,12 +357,37 @@ class Resolver {
   private readonly db: Db;
   private readonly project: ProjectRow;
   private readonly world: ResolveWorld;
+  private readonly config: ScanConfig;
 
-  constructor(world: ResolveWorld) {
+  constructor(world: ResolveWorld, config: ScanConfig) {
     this.world = world;
     this.ctx = world.ctx;
     this.db = world.hereDb;
     this.project = world.here;
+    this.config = config;
+  }
+
+  /**
+   * The slug an href was written with, read as of when it was written.
+   *
+   * A slug is a name its project can give up, and the scanner already reads
+   * a token's slug this way (T-156) — an href has to agree with it, or the
+   * same reference resolves two ways depending on how it was spelled. Two
+   * things go wrong without it: a retired slug resolves to nothing, and a
+   * RECLAIMED one resolves to whoever holds the name today, which is a real
+   * but entirely unrelated project.
+   */
+  private canonicalSlug(slug: string): string {
+    const cross = this.config.cross;
+    if (cross?.slugEntries === undefined) return slug;
+    return (
+      resolveSlugAt(
+        cross.slugEntries,
+        cross.slugs,
+        slug,
+        cross.at ?? new Date().toISOString(),
+      ) ?? slug
+    );
   }
 
   async resolve(target: CandidateTarget): Promise<Resolution | null> {
@@ -386,7 +412,7 @@ class Resolver {
       .where(
         pointer.kind === "id"
           ? eq(projects.id, pointer.id)
-          : eq(projects.slug, pointer.slug),
+          : eq(projects.slug, this.canonicalSlug(pointer.slug)),
       );
     const row = rows[0] ?? null;
     this.projectByRef.set(key, row);

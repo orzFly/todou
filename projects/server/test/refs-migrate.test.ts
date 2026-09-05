@@ -401,6 +401,59 @@ describe("refs migrate", () => {
     expect(id[B]).not.toBe(thiefId);
   });
 
+  it("reads a retired slug in a link's href the same way as in a token", async () => {
+    // Measured on the dogfood corpus: every unresolved candidate in one
+    // project was an attachment URL spelling that project's PREVIOUS slug.
+    // A token would have resolved — the scanner normalises it through the
+    // slug history — so an href that did not was the two paths disagreeing.
+    const renamed = await req("/projects", {
+      method: "POST",
+      body: JSON.stringify({ slug: `${B}-old`, name: "renamed later" }),
+    });
+    expect(renamed.status).toBe(201);
+    const projectId = ((await json(renamed)) as { id: number }).id;
+    const target = await createIssue(`${B}-old`, "still here");
+
+    const form = new FormData();
+    form.append("issue_number", String(target.number));
+    form.append("file", new File(["hi"], "shot.png", { type: "image/png" }));
+    const upload = await t.app.request(`/api/projects/${B}-old/attachments`, {
+      method: "POST",
+      headers: { cookie },
+      body: form,
+    });
+    expect(upload.status).toBe(201);
+    const attachmentId = ((await json(upload)) as { id: number }).id;
+
+    const whileHeld = new Date();
+    await new Promise((r) => setTimeout(r, 5));
+    const card = await createIssue(A, "wrote the old spellings");
+    await setBody(
+      A,
+      card.id,
+      `card ${B}-old#${target.number} and file ` +
+        `[shot](/api/projects/${B}-old/attachments/${attachmentId}/download/shot.png)`,
+    );
+    const dbA = await dbOf(A);
+    await dbA
+      .update(issues)
+      .set({ createdAt: whileHeld })
+      .where(eq(issues.id, card.id));
+
+    const rename = await req(`/projects/${B}-old`, {
+      method: "PATCH",
+      body: JSON.stringify({ slug: `${B}-new` }),
+    });
+    expect(rename.status).toBe(200);
+
+    await run(false);
+
+    expect(await bodyOf(A, card.id)).toBe(
+      `card [${B}-old#${target.number}](/projects/${projectId}/issues/${target.number}) ` +
+        `and file [shot](/api/projects/${projectId}/attachments/${attachmentId}/download/shot.png)`,
+    );
+  });
+
   it("merges the events and leaves a slug it cannot place alone", async () => {
     const target = await createIssue(A, "event target");
     const dbA = await dbOf(A);
