@@ -2,6 +2,8 @@ import type { ReferenceDirectory } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import {
   couldBeRef,
+  couldNameProject,
+  foldRefSpelling,
   type JumpCandidate,
   type JumpContext,
   refJumpCandidates,
@@ -207,6 +209,116 @@ describe("refJumpCandidates · ordinary queries", () => {
   it("stays out of the way of anything that is not one whole reference", () => {
     for (const q of ["T-215 折行", "1234567890", "全文搜索", "", "   "]) {
       expect(of(q), q).toEqual([]);
+    }
+  });
+});
+
+describe("foldRefSpelling", () => {
+  it("puts each half of a reference in the only case it can have", () => {
+    // A slug is all-lower and a prefix all-upper at the schema level, so
+    // there is exactly one spelling to fold towards and nothing to guess.
+    expect(foldRefSpelling("m-11")).toBe("M-11");
+    expect(foldRefSpelling("MIRROR/11")).toBe("mirror/11");
+    expect(foldRefSpelling("Mirror#11")).toBe("mirror#11");
+    expect(foldRefSpelling("MIRROR/m-11")).toBe("mirror/M-11");
+    expect(foldRefSpelling("MIRROR#1#comment-2")).toBe("mirror#1#comment-2");
+    expect(foldRefSpelling("MY-PROJ/1")).toBe("my-proj/1");
+    // The `-$` half of the lookahead: a prefix waiting for its number.
+    expect(foldRefSpelling("acc-")).toBe("ACC-");
+    expect(foldRefSpelling("ACCEL/")).toBe("accel/");
+  });
+
+  it("leaves alone anything that is not shaped like a reference", () => {
+    for (const text of ["#comment-1462", "my-proj-1", "2026-09", "全文搜索"]) {
+      expect(foldRefSpelling(text), text).toBe(text);
+    }
+  });
+});
+
+describe("refJumpCandidates · case folding", () => {
+  const shifted: Array<[string, JumpCandidate[]]> = [
+    ["m-11", issue("mirror", 11)],
+    ["MIRROR/11", issue("mirror", 11)],
+    ["Mirror/11", issue("mirror", 11)],
+    ["MIRROR#11", issue("mirror", 11)],
+    ["mirror/m-11", issue("mirror", 11, { writtenPrefix: "M" })],
+    ["MIRROR/m-11", issue("mirror", 11, { writtenPrefix: "M" })],
+    ["TODOU/1", issue("todou", 1)],
+    ["MIRROR#1#comment-2", issue("mirror", 1, { commentId: 2 })],
+  ];
+
+  it("reaches the same card the canonical spelling reaches", () => {
+    for (const [q, expected] of shifted) expect(of(q), q).toEqual(expected);
+  });
+
+  it("folds nothing that already resolved, so no jump moves", () => {
+    // The invariant the whole rung rests on: folding is a second attempt
+    // after the first found nothing, never a rewrite of the first.
+    const lower = { prefix: "GH-", url_template: "https://gh/<num>" };
+    expect(of("gh-9", { autolinks: [{ ...lower, prefix: "gh-" }] })).toEqual([
+      { kind: "external", href: "https://gh/9", text: "gh-9" },
+    ]);
+    // Written upper-case, the same query has to be folded to get there —
+    // and arrives spelled the way the rule writes it.
+    expect(of("gh-9", { autolinks: [lower] })).toEqual([
+      { kind: "external", href: "https://gh/9", text: "GH-9" },
+    ]);
+  });
+
+  it("still offers nothing where the folded spelling names nobody", () => {
+    // `covid-19` does fold to `COVID-19`; no project holds `COVID`.
+    for (const q of ["covid-19", "my-proj-1", "2026-09", "c-1", "x-215"]) {
+      expect(of(q), q).toEqual([]);
+    }
+  });
+});
+
+describe("refJumpCandidates · a project named without a card", () => {
+  const project = (slug: string): JumpCandidate[] => [
+    { kind: "project", slug },
+  ];
+
+  it("takes the four shapes that name a project and stop", () => {
+    for (const q of ["M-", "m-", "mirror/", "MIRROR/", "mirror#", "mirror/#"]) {
+      expect(of(q), q).toEqual(project("mirror"));
+    }
+    expect(of("todou/")).toEqual(project("todou"));
+  });
+
+  it("says nothing about a project the reader cannot reach", () => {
+    // Contested resolves to nothing at all; unreadable is dropped before it
+    // could become a request, which is what keeps it a secret (T-150).
+    expect(of("C-")).toEqual([]);
+    expect(of("X-")).toEqual([]);
+    expect(of("hidden/")).toEqual([]);
+    expect(of("nowhere/")).toEqual([]);
+  });
+
+  it("wants the separator, and leaves a card a card", () => {
+    // A bare project name is a perfectly good search term; `sandbox` and
+    // `homelab` especially.
+    expect(of("mirror")).toEqual([]);
+    expect(of("M")).toEqual([]);
+    expect(of("M-1")).toEqual(issue("mirror", 1));
+  });
+
+  it("stays shut with the cross-project grammar", () => {
+    // `mirror/1` does not resolve without a directory either.
+    expect(of("mirror/", { directory: null })).toEqual([]);
+    expect(of("M-", { directory: null })).toEqual([]);
+  });
+});
+
+describe("couldNameProject", () => {
+  it("passes the shapes Enter has to resolve without any digits", () => {
+    for (const q of ["ACC-", "acc-", "accel/", "ACCEL#", "accel/#", " ACC- "]) {
+      expect(couldNameProject(q), q).toBe(true);
+    }
+  });
+
+  it("rejects a card, a bare word, and anything with a space in it", () => {
+    for (const q of ["T-215", "accel", "ACC- 部署", "", "   "]) {
+      expect(couldNameProject(q), q).toBe(false);
     }
   });
 });

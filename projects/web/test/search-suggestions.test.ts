@@ -4,6 +4,8 @@ import {
   type CompletionRow,
   hasQualifier,
   orderRows,
+  type ProjectRefOption,
+  projectRefSource,
   qualifierKeySource,
   qualifierValueSource,
   type SuggestionContext,
@@ -143,6 +145,81 @@ describe("the qualifier value source", () => {
   it("offers nothing where no value goes", () => {
     expect(values("部署|")).toEqual({ matched: false, rows: [] });
     expect(values("label:a |")).toEqual({ matched: false, rows: [] });
+  });
+});
+
+const PROJECTS: ProjectRefOption[] = [
+  { slug: "todou", name: "Todou", spellings: ["T-", "todou/"] },
+  { slug: "accel", name: "Accel", spellings: ["ACC-", "accel/"] },
+  { slug: "homelab", name: "Homelab", spellings: ["homelab/"] },
+];
+
+const projects = (marked: string) => projectRefSource(PROJECTS)(at(marked));
+
+describe("the project reference source", () => {
+  it("completes a prefix without being asked for the shift key", () => {
+    const { matched, rows } = projects("ac|");
+    expect(matched).toBe(true);
+    expect(rows.map((r) => r.text)).toEqual(["ACC-"]);
+    expect(rows[0]?.hint).toBe("Accel");
+    expect(rows[0]?.apply).toEqual({ value: "ACC-", caret: 4 });
+  });
+
+  it("leaves the caret against the completion, so a number can follow", () => {
+    // The whole path this exists for: `ac` Tab `1` reaches ACC-1. A space
+    // here would break it, which is why only values get one (T-268).
+    expect(projects("ac|").rows[0]?.apply.value).toBe("ACC-");
+  });
+
+  it("offers one row per project, however many spellings match", () => {
+    // `ac` prefixes both `ACC-` and `accel/`; they are synonyms, and a
+    // second row would spend a line of ten to say the same thing twice.
+    expect(projects("ac|").rows).toHaveLength(1);
+  });
+
+  it("moves on to the slug once the prefix is no longer a prefix", () => {
+    expect(projects("acce|").rows.map((r) => r.text)).toEqual(["accel/"]);
+  });
+
+  it("reaches a slug whose project's prefix does not match", () => {
+    expect(projects("TOD|").rows.map((r) => r.text)).toEqual(["todou/"]);
+  });
+
+  it("does not care which case any of it was typed in", () => {
+    for (const marked of ["AC|", "Ac|", "aC|"]) {
+      expect(
+        projects(marked).rows.map((r) => r.text),
+        marked,
+      ).toEqual(["ACC-"]);
+    }
+  });
+
+  it("has only the slug for a project with no prefix", () => {
+    expect(projects("home|").rows.map((r) => r.text)).toEqual(["homelab/"]);
+  });
+
+  it("does not offer to complete a word to itself", () => {
+    expect(projects("ACC-|").rows).toEqual([]);
+    expect(projects("accel/|").rows).toEqual([]);
+  });
+
+  it("stays quiet on an empty word", () => {
+    // Projects are not a closed set the way the seven keys are, and the
+    // project switcher is in the same header row.
+    expect(projects("|")).toEqual({ matched: false, rows: [] });
+    expect(projects("部署 |")).toEqual({ matched: false, rows: [] });
+  });
+
+  it("stays out of a filter and out of quotes", () => {
+    expect(projects("harness:ac|").rows).toEqual([]);
+    expect(projects('"ac|').rows).toEqual([]);
+  });
+
+  it("rewrites only the word the caret is in", () => {
+    expect(projects("部署 ac|").rows[0]?.apply).toEqual({
+      value: "部署 ACC-",
+      caret: 7,
+    });
   });
 });
 

@@ -127,6 +127,25 @@ export const issueCompletionQuery = (slug: string) =>
     staleTime: 60_000,
   });
 
+/**
+ * What a project is working on right now, for the search box's peek at a
+ * project named without a card number (T-263). Open only, because the peek
+ * is an invitation to pick up live work rather than a history — and short,
+ * because it shares one ten-row panel with everything else on offer.
+ */
+export const recentOpenIssuesQuery = (slug: string, limit: number) =>
+  queryOptions({
+    queryKey: ["issue-peek", slug, limit],
+    queryFn: () =>
+      api.listIssues(slug, {
+        category: "open",
+        sort: "updated",
+        order: "desc",
+        limit,
+      }),
+    staleTime: 60_000,
+  });
+
 /** Title/body search behind the same completion, for what the window misses. */
 export const issueCompletionSearchQuery = (slug: string, q: string) =>
   queryOptions({

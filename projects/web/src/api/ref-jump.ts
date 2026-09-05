@@ -11,6 +11,7 @@ import {
   commentRefQuery,
   issueRefQuery,
 } from "@/api/issue-refs.ts";
+import { recentOpenIssuesQuery } from "@/api/issues.ts";
 import { projectsQuery } from "@/api/queries.ts";
 import {
   referenceConfigQuery,
@@ -20,6 +21,8 @@ import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import { qualifiedRefSpelling } from "@/lib/issue-refs.ts";
 import {
   couldBeRef,
+  couldNameProject,
+  foldRefSpelling,
   type JumpCandidate,
   type JumpContext,
   refJumpCandidates,
@@ -60,6 +63,12 @@ export type JumpRow =
       commentBy: string | null;
       crossProject: boolean;
     }
+  /**
+   * A project's home page, for a query that names the project and stops
+   * there (T-263). No state: the name comes from a list the box has already
+   * read, so this row is either there at once or not at all.
+   */
+  | { kind: "project"; slug: string; spelled: string; name: string }
   | { kind: "external"; href: string; text: string; host: string };
 
 /** `checkQualifiedPrefix`'s rule (T-214): what the project writes now, or ever wrote. */
@@ -71,7 +80,7 @@ function writesPrefix(config: ReferenceConfig, prefix: string): boolean {
 }
 
 const isCard = (candidate: JumpCandidate): candidate is JumpCardCandidate =>
-  candidate.kind !== "external";
+  candidate.kind === "issue" || candidate.kind === "comment";
 
 function jumpContext(
   slug: string,
@@ -212,6 +221,18 @@ export function useJumpRows(slug: string, q: string): JumpRow[] {
     }
   }
   for (const candidate of candidates) {
+    if (candidate.kind === "project") {
+      rows.push({
+        kind: "project",
+        slug: candidate.slug,
+        // What the reader typed, in the spelling the project actually has:
+        // `MIRROR/` is offered back as `mirror/`.
+        spelled: foldRefSpelling(q.trim()),
+        name:
+          projects.data?.find((project) => project.slug === candidate.slug)
+            ?.name ?? candidate.slug,
+      });
+    }
     if (candidate.kind === "external") {
       rows.push({
         kind: "external",
@@ -224,6 +245,77 @@ export function useJumpRows(slug: string, q: string): JumpRow[] {
     }
   }
   return rows;
+}
+
+/** How many of a project's cards the box shows beneath its home row. */
+export const PROJECT_PEEK = 5;
+
+/** One card of the peek, spelled so it can be typed back into the box. */
+export type ProjectPeekRow = {
+  kind: "project-issue";
+  slug: string;
+  number: number;
+  spelled: string;
+  item: IssueListItem;
+};
+
+/** The prefix a project writes now, from a directory already in hand. */
+function currentPrefixOf(
+  directory: ReferenceDirectory | null | undefined,
+  slug: string,
+): string | null {
+  if (directory == null) return null;
+  const now = Date.now();
+  const held = directory.entries.find(
+    (entry) =>
+      entry.slug === slug &&
+      Date.parse(entry.from) <= now &&
+      (entry.to === null || now < Date.parse(entry.to)),
+  );
+  return held?.prefix ?? null;
+}
+
+/**
+ * What a project named without a number is working on (T-263). Naming a
+ * project is a weaker intention than naming a card — the reader may be on
+ * their way to one and not remember its number — so the home row comes with
+ * the few cards that moved most recently.
+ *
+ * Open only, and never a placeholder: these are an offer beside the one the
+ * reader actually made, and a skeleton for them would push the home row
+ * around while they are reading it. They appear when they arrive.
+ */
+export function useProjectPeek(
+  slug: string,
+  target: string | null,
+): ProjectPeekRow[] {
+  const directory = useQuery({
+    ...referenceDirectoryQuery,
+    enabled: target !== null,
+  });
+  const issues = useQuery({
+    ...recentOpenIssuesQuery(target ?? "", PROJECT_PEEK),
+    enabled: target !== null,
+  });
+  const items = issues.data?.items;
+  return useMemo(() => {
+    if (target === null || items === undefined) return [];
+    const prefix = currentPrefixOf(directory.data, target);
+    return items.slice(0, PROJECT_PEEK).map(
+      (item): ProjectPeekRow => ({
+        kind: "project-issue",
+        slug: target,
+        number: item.number,
+        // Spelled as the jump row spells a card: plainly at home, qualified
+        // elsewhere, so a ref copied out of the panel says what it means.
+        spelled:
+          target === slug
+            ? formatRef(prefix, item.number)
+            : qualifiedRefSpelling(target, prefix, item.number),
+        item,
+      }),
+    );
+  }, [slug, target, items, directory.data]);
 }
 
 async function cardPromise(
@@ -269,6 +361,7 @@ async function cardPromise(
 /** Where Enter goes; null = nowhere in particular, so search for the text. */
 export type JumpDestination =
   | { kind: "issue"; target: JumpTarget }
+  | { kind: "project"; slug: string }
   | { kind: "external"; href: string };
 
 /**
@@ -287,7 +380,9 @@ export async function jumpDestinationPromise(
   slug: string,
   q: string,
 ): Promise<JumpDestination | null> {
-  if (!couldBeRef(q)) return null;
+  // Two gates, because the shapes are two: a card ends in digits, a project
+  // named on its own ends in the separator that would have preceded them.
+  if (!couldBeRef(q) && !couldNameProject(q)) return null;
   const [config, directory, projects] = await Promise.all([
     client.fetchQuery(referenceConfigQuery(slug)).catch(() => null),
     client.fetchQuery(referenceDirectoryQuery).catch(() => null),
@@ -301,6 +396,12 @@ export async function jumpDestinationPromise(
     // is the renderer's degradation too.
     jumpContext(slug, config, directory, projects),
   );
+  // A project needs no lookup at all: the candidate only exists because the
+  // directory already resolved it, so Enter does not wait on a round trip.
+  const project = candidates.find((candidate) => candidate.kind === "project");
+  if (project?.kind === "project")
+    return { kind: "project", slug: project.slug };
+
   const card = candidates.find(isCard);
   if (card !== undefined) {
     const target = await cardPromise(client, card);

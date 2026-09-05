@@ -1,9 +1,13 @@
 import {
   type AutolinkRule,
+  PREFIX_PATTERN,
   parseRefLocator,
   type ReferenceDirectory,
   type ReferenceToken,
+  resolveClaim,
+  resolveSlugAt,
   type ScanConfig,
+  SLUG_PATTERN,
   scanReferenceTokens,
 } from "@todou/shared";
 import { parseIssuePermalink } from "@/lib/timeline-anchors.ts";
@@ -44,10 +48,106 @@ export type JumpCandidate =
     }
   /** A bare `#comment-M`: which issue carries it is a lookup away. */
   | { kind: "comment"; slug: string; commentId: number }
+  /** A project named without a card: `ACC-`, `accel/` (T-263). */
+  | { kind: "project"; slug: string }
   | { kind: "external"; href: string; text: string };
 
 const LOCAL_TAIL = /^(\d{1,9})(?:#comment-(\d{1,9}))?$/;
 const COMMENT_SUFFIX = /#comment-\d{1,9}$/;
+
+/**
+ * The canonical case of a reference: lower in the slug position, upper in the
+ * prefix position. A slug is all-lower and a prefix all-upper at the schema
+ * level, and the two character sets do not overlap — so the canonical
+ * spelling of a string is unique and folding needs no disambiguation. It is
+ * not a guess about what the reader meant, only the one spelling their
+ * keystrokes could have been aiming at.
+ *
+ * The classes come from `ref-shapes.ts` with `i` added, so the shapes still
+ * live in exactly one place. The `-$` half of the prefix lookahead is for a
+ * prefix typed without a number yet (`acc-`), which names a project rather
+ * than a card.
+ */
+const SLUG_AT = new RegExp(`^(${SLUG_PATTERN})(?=[#/])`, "i");
+const PREFIX_AT = new RegExp(`^(${PREFIX_PATTERN})(?=-(?:\\d|$))`, "i");
+const TAIL_PREFIX = new RegExp(`^/(${PREFIX_PATTERN})(?=-(?:\\d|$))`, "i");
+
+export function foldRefSpelling(text: string): string {
+  // Qualified before bare, the order `claimAt` resolves them in.
+  const slug = SLUG_AT.exec(text);
+  if (slug !== null) {
+    const head = (slug[1] as string).toLowerCase();
+    const rest = text.slice(head.length);
+    const tail = TAIL_PREFIX.exec(rest);
+    return tail === null
+      ? head + rest
+      : `${head}/${(tail[1] as string).toUpperCase()}${rest.slice(
+          (tail[1] as string).length + 1,
+        )}`;
+  }
+  const prefix = PREFIX_AT.exec(text);
+  if (prefix !== null) {
+    const head = (prefix[1] as string).toUpperCase();
+    return head + text.slice(head.length);
+  }
+  return text;
+}
+
+/** `ACC-`, `accel/`, `accel#`, `accel/#` — a project, and no card in it. */
+const PROJECT_BY_PREFIX = new RegExp(`^(${PREFIX_PATTERN})-$`);
+const PROJECT_BY_SLUG = new RegExp(`^(${SLUG_PATTERN})(?:#|/#?)$`);
+
+/**
+ * Does this name a project without naming a card? Asked before the directory
+ * has been read, so `couldBeRef`'s "ends in digits" test — which is about
+ * cards — cannot answer it and Enter needs its own.
+ */
+export function couldNameProject(q: string): boolean {
+  const text = foldRefSpelling(q.trim());
+  return PROJECT_BY_PREFIX.test(text) || PROJECT_BY_SLUG.test(text);
+}
+
+/**
+ * The project a whole query names, if that is all it does (T-263). Folded
+ * unconditionally: unlike a card spelling there is no original reading to
+ * preserve, since none of these shapes resolves to anything today.
+ *
+ * Both resolvers are the shared grammar's own, so a contested prefix stays
+ * unresolved and a project the viewer cannot read never reaches a query —
+ * no new parser, and no new way to learn that a project exists.
+ */
+function projectAt(text: string, ctx: JumpContext): JumpCandidate | null {
+  const directory = ctx.directory;
+  // Shut directory, shut grammar: `mirror/1` does not resolve either, so
+  // `mirror/` has nothing to be.
+  if (directory === null) return null;
+  const now = new Date().toISOString();
+
+  const qualified = PROJECT_BY_SLUG.exec(text);
+  if (qualified !== null) {
+    const slug = resolveSlugAt(
+      // Absent on a pre-T-156 server, where `resolveSlugAt` falls back to
+      // the live slugs on its own.
+      directory.slug_entries ?? [],
+      ctx.readableSlugs,
+      qualified[1] as string,
+      now,
+    );
+    return slug === null ? null : { kind: "project", slug };
+  }
+
+  const prefixed = PROJECT_BY_PREFIX.exec(text);
+  if (prefixed !== null) {
+    const slug = resolveClaim(
+      directory.entries,
+      directory.contested,
+      prefixed[1] as string,
+      now,
+    );
+    return slug === null ? null : { kind: "project", slug };
+  }
+  return null;
+}
 
 /**
  * This project's own card, spelled the way a search box receives it: a bare
@@ -169,6 +269,10 @@ export function refJumpCandidates(
   ctx: JumpContext,
 ): JumpCandidate[] {
   const text = q.trim();
+
+  const project = projectAt(foldRefSpelling(text), ctx);
+  if (project !== null) return readableOnly([project], ctx);
+
   if (!couldBeRef(text)) return [];
 
   if (/^https?:\/\//i.test(text)) {
@@ -182,7 +286,14 @@ export function refJumpCandidates(
   const local = localRefAt(text, ctx.prefix);
   if (local !== null) out.push({ kind: "issue", slug: ctx.slug, ...local });
 
-  const token = wholeToken(text, ctx);
+  // Folding is a fallback, never an override: a spelling that resolves as
+  // written keeps resolving to exactly what it did, and `writtenPrefixOf`
+  // reads the string that produced the token. So every query that jumps
+  // somewhere today jumps to the same place, and folding only fills in
+  // where nothing was offered at all.
+  const written = wholeToken(text, ctx);
+  const folded = written === null ? foldRefSpelling(text) : text;
+  const token = written ?? wholeToken(folded, ctx);
   if (token?.type === "autolink") {
     out.push({ kind: "external", href: token.href, text: token.text });
   } else if (out.length === 0 && token?.type === "issue") {
@@ -191,7 +302,7 @@ export function refJumpCandidates(
       slug: token.slug ?? ctx.slug,
       number: token.number,
       ...(token.commentId === undefined ? {} : { commentId: token.commentId }),
-      ...writtenPrefixOf(text),
+      ...writtenPrefixOf(folded),
     });
   } else if (out.length === 0 && token?.type === "comment") {
     out.push({ kind: "comment", slug: ctx.slug, commentId: token.commentId });

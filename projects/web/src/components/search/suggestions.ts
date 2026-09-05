@@ -19,7 +19,7 @@ export type CompletionRow = {
   text: string;
   /** A few words at most, on the same line. */
   hint?: string;
-  icon: "qualifier" | "value";
+  icon: "qualifier" | "value" | "project";
   /** The whole query after accepting this, and where the caret lands. */
   apply: { value: string; caret: number };
 };
@@ -71,7 +71,7 @@ const EMPTY: SourceResult<CompletionRow> = { matched: false, rows: [] };
  * where a key cannot go at all: inside a filter, which already has one, and
  * inside quotes, which is how one asks for a literal.
  */
-function textAt(
+export function textAt(
   ctx: SuggestionContext,
 ): { start: number; text: string } | null {
   for (const part of ctx.parts) {
@@ -225,6 +225,66 @@ export function qualifierValueSource(pools: ValuePools): SuggestionSource {
       return { matched: true, rows };
     }
     return EMPTY;
+  };
+}
+
+/** A project in the completion pool, with its equivalent spellings ranked. */
+export type ProjectRefOption = {
+  slug: string;
+  /** The project's name, the short grey note at the end of the line. */
+  name: string;
+  /**
+   * Insertable spellings, best first: `["ACC-", "accel/"]` where there is a
+   * prefix, `["homelab/"]` where there is not.
+   */
+  spellings: string[];
+};
+
+/**
+ * Projects, offered against the bare word the caret is in and matched
+ * case-insensitively — which is the point: `ac` has to reach `ACC-` and
+ * `TOD` has to reach `todou/`, and reaching for shift first is exactly the
+ * thing that does not happen mid-query.
+ *
+ * **One row per project.** The spellings are synonyms, so a second row for
+ * the same project buys the reader nothing and costs a line of a panel that
+ * only has ten. The best one that matches wins; typing one more character
+ * (`acce`, past the prefix) is how the other one is asked for.
+ *
+ * Nothing is completed to itself: once `ACC-` is typed, offering `ACC-` is
+ * an offer to press Tab for no change.
+ */
+export function projectRefSource(pool: ProjectRefOption[]): SuggestionSource {
+  return (ctx) => {
+    const token = textAt(ctx);
+    if (token === null) return EMPTY;
+    const typed = token.text.toLowerCase();
+    if (typed === "") return EMPTY;
+
+    const rows: CompletionRow[] = [];
+    for (const project of pool) {
+      const spelling = project.spellings.find(
+        (candidate) =>
+          candidate.toLowerCase().startsWith(typed) &&
+          candidate.toLowerCase() !== typed,
+      );
+      if (spelling === undefined) continue;
+      rows.push({
+        key: `project:${project.slug}`,
+        text: spelling,
+        hint: project.name,
+        icon: "project" as const,
+        // No trailing space: a prefix is completed to `ACC-` so that a
+        // number can be typed straight onto it (T-268).
+        apply: splice(
+          ctx.query,
+          token.start,
+          token.start + token.text.length,
+          spelling,
+        ),
+      });
+    }
+    return { matched: rows.length > 0, rows };
   };
 }
 

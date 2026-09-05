@@ -18,6 +18,7 @@ import type {
 } from "@todou/shared";
 import { describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
+import { recentOpenIssuesQuery } from "../src/api/issues.ts";
 import {
   labelsQuery,
   membersQuery,
@@ -25,6 +26,7 @@ import {
   projectsQuery,
   statusesQuery,
 } from "../src/api/queries.ts";
+import { PROJECT_PEEK } from "../src/api/ref-jump.ts";
 import {
   referenceConfigQuery,
   referenceDirectoryQuery,
@@ -94,6 +96,9 @@ const refItem = (number: number, title: string): IssueListItem => ({
 const DIRECTORY: ReferenceDirectory = {
   entries: [
     { prefix: "M", slug: "mirror", from: "2020-01-01T00:00:00.000Z", to: null },
+    // Every prefix the viewer may see, their own project's included — which
+    // is what the server sends, and what the completion pool is built from.
+    { prefix: "T", slug: "todou", from: "2020-01-01T00:00:00.000Z", to: null },
   ],
   contested: [],
 };
@@ -258,6 +263,19 @@ describe("search results", () => {
     expect(link?.getAttribute("target")).toBe("_blank");
   });
 
+  it("offers the project's home when a shared link names one", async () => {
+    // `?q=M-` is where the box's own offer lands when it is shared, so the
+    // page has to make the same offer (T-215's rule, one rung further).
+    const { client } = seeded({ items: [], has_more: false }, { q: "M-" });
+    const { findByText } = renderWithProviders(
+      <SearchResults slug="todou" search={{ q: "M-" }} />,
+      client,
+    );
+    const link = (await findByText("M-")).closest("a");
+    expect(link?.getAttribute("href")).toBe("/projects/mirror");
+    expect(link?.textContent).toContain("Mirror");
+  });
+
   it("says so when nothing matched", async () => {
     const { client, params } = seeded({ items: [], has_more: false });
     const { findByText } = renderWithProviders(
@@ -292,6 +310,8 @@ function renderBox(
   const projectRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/projects/$slug",
+    // The box now navigates to a project home as well (T-263).
+    component: Boxes,
   });
   const searchRoute = createRoute({
     getParentRoute: () => projectRoute,
@@ -902,6 +922,17 @@ function seedPools(client: QueryClient): QueryClient {
 const rowTexts = (container: HTMLElement) =>
   optionsOf(container).map((o) => o.textContent ?? "");
 
+/** Mirror's open cards, for the peek under a project's home row (T-263). */
+function seedPeek(client: QueryClient, count = 3): QueryClient {
+  client.setQueryData(recentOpenIssuesQuery("mirror", PROJECT_PEEK).queryKey, {
+    items: Array.from({ length: count }, (_, i) =>
+      refItem(i + 1, `卡 ${i + 1}`),
+    ),
+    next_cursor: null,
+  });
+  return client;
+}
+
 /**
  * The results page mounted on its own route, so a chip's `navigate()` lands
  * somewhere the assertions can read.
@@ -1193,6 +1224,117 @@ describe("SearchBox · qualifier completion", () => {
         search: { q: "harness:codex is:comment 部署" },
       }),
     );
+  });
+
+  it("completes a project's prefix from a word typed without the shift key", async () => {
+    const utils = renderBox(seedPools(seedBox()));
+    await typeInto(utils, "mi");
+    await waitFor(() =>
+      expect(rowTexts(utils.container)[0]).toContain("mirror/"),
+    );
+    // Above the search row, and still not chosen for the reader.
+    expect(rowTexts(utils.container)[1]).toContain("Search for");
+    const input = await utils.findByLabelText("Search this project");
+    expect(input.getAttribute("aria-activedescendant")).toBeNull();
+  });
+
+  it("takes the completion on Tab and leaves the caret ready for a number", async () => {
+    const client = seedPeek(seedPools(seedBox()));
+    const utils = renderBox(client);
+    const input = await typeInto(utils, "m");
+    await waitFor(() => expect(rowTexts(utils.container)[0]).toContain("M-"));
+
+    fireEvent.keyDown(input, { key: "Tab" });
+    // No trailing space: `m` Tab `1` has to reach M-1 in three keystrokes.
+    await waitFor(() => expect(input.value).toBe("M-"));
+    expect(input.selectionStart).toBe(2);
+  });
+
+  it("offers the project's home first once its name is complete", async () => {
+    const client = seedPeek(seedPools(seedBox()));
+    const utils = renderBox(client);
+    await typeInto(utils, "M-");
+    await waitFor(() =>
+      expect(rowTexts(utils.container)[0]).toContain("Mirror"),
+    );
+    const [home] = optionsOf(utils.container);
+    expect(home?.getAttribute("href")).toBe("/projects/mirror");
+    expect(home?.textContent).toContain("M-");
+    // Enter with nothing arrowed onto follows it: searching the literal
+    // `M-` would only find text that happens to spell it.
+    submit(utils.container);
+    await waitFor(() =>
+      expect(utils.where().pathname).toBe("/projects/mirror"),
+    );
+  });
+
+  it("lists what the named project is working on, under its home row", async () => {
+    const client = seedPeek(seedPools(seedBox()), PROJECT_PEEK);
+    const utils = renderBox(client);
+    await typeInto(utils, "mirror/");
+    await waitFor(() =>
+      expect(rowTexts(utils.container).join("\n")).toContain("卡 1"),
+    );
+    const texts = rowTexts(utils.container);
+    expect(texts[0]).toContain("mirror/");
+    expect(texts[1]).toContain("mirror/M-1");
+    // Five cards at most, then the search row — the ten-row budget is
+    // shared, not added to (T-268).
+    expect(optionsOf(utils.container)).toHaveLength(2 + PROJECT_PEEK);
+    expect(texts.at(-1)).toContain("Search for");
+    const card = optionsOf(utils.container)[1] as Element;
+    expect(card.getAttribute("href")).toBe("/projects/mirror/issues/1");
+  });
+
+  it("keeps the panel within ten rows when a project has more open cards", async () => {
+    const client = seedPeek(seedPools(seedBox()), 40);
+    const utils = renderBox(client);
+    await typeInto(utils, "mirror/");
+    await waitFor(() =>
+      expect(rowTexts(utils.container).join("\n")).toContain("卡 1"),
+    );
+    expect(optionsOf(utils.container).length).toBeLessThanOrEqual(11);
+  });
+
+  it("searches, rather than jumping, when the query is more than a name", async () => {
+    const utils = renderBox(seedPeek(seedPools(seedBox())));
+    await typeInto(utils, "M- 部署");
+    submit(utils.container);
+    await waitFor(() =>
+      expect(utils.where()).toEqual({
+        pathname: "/projects/todou/search",
+        search: { q: "M- 部署" },
+      }),
+    );
+  });
+
+  it("keeps completing projects behind a qualifier, but offers no jump", async () => {
+    // `hasQualifier` shuts the jump off, because following it would drop
+    // the filter. Completion is the other path and stays open.
+    const utils = renderBox(seedPeek(seedPools(seedBox())));
+    await typeInto(utils, "label:kind:bug mi");
+    await waitFor(() =>
+      expect(rowTexts(utils.container).join("\n")).toContain("mirror/"),
+    );
+    expect(
+      optionsOf(utils.container).some(
+        (o) => o.getAttribute("href") === "/projects/mirror",
+      ),
+    ).toBe(false);
+  });
+
+  it("points an empty box at the search page rather than at an empty search", async () => {
+    const utils = renderBox(seedPools(seedBox()));
+    const input = await utils.findByLabelText("Search this project");
+    input.focus();
+    fireEvent.focusIn(input);
+    await waitFor(() => expect(listboxOf(utils.container)).not.toBeNull());
+    const [first] = optionsOf(utils.container);
+    expect(first?.textContent).toContain("search page");
+    expect(first?.textContent).not.toContain("Search for");
+    // A blank query, not `?q=` — the page's own empty state is the syntax
+    // help, and that is what this row is for.
+    expect(first?.getAttribute("href")).toBe("/projects/todou/search");
   });
 
   it("paints the query behind the input, character for character", async () => {

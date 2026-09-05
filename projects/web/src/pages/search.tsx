@@ -273,6 +273,25 @@ function JumpBanner({ slug, q }: { slug: string; q: string }) {
             </a>
           );
         }
+        if (row.kind === "project") {
+          return (
+            <Link
+              key={row.slug}
+              to="/projects/$slug"
+              params={{ slug: row.slug }}
+              className={JUMP_BOX}
+            >
+              <ArrowRightIcon
+                className="size-4 shrink-0 text-muted-foreground"
+                aria-hidden
+              />
+              <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                {row.spelled}
+              </span>
+              <span className="truncate font-medium">{row.name}</span>
+            </Link>
+          );
+        }
         if (row.state !== "ready") return null;
         return (
           <Link

@@ -1,10 +1,15 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { parseSearchQuery } from "@todou/shared";
+import {
+  type Project,
+  parseSearchQuery,
+  type ReferenceDirectory,
+} from "@todou/shared";
 import {
   ArrowRightIcon,
   ExternalLinkIcon,
   FilterIcon,
+  FolderIcon,
   SearchIcon,
   TagIcon,
 } from "lucide-react";
@@ -13,14 +18,18 @@ import {
   labelsQuery,
   membersQuery,
   projectQuery,
+  projectsQuery,
   statusesQuery,
 } from "@/api/queries.ts";
 import {
   type JumpRow,
   type JumpTarget,
   jumpDestinationPromise,
+  type ProjectPeekRow,
   useJumpRows,
+  useProjectPeek,
 } from "@/api/ref-jump.ts";
+import { referenceDirectoryQuery } from "@/api/references.ts";
 import { searchFacetsQuery } from "@/api/search.ts";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import {
@@ -35,6 +44,8 @@ import {
   type CompletionRow,
   hasQualifier,
   orderRows,
+  type ProjectRefOption,
+  projectRefSource,
   qualifierKeySource,
   qualifierValueSource,
   type ValuePools,
@@ -47,17 +58,58 @@ import { cn } from "@/lib/utils";
 /** The last row, always present: what the box did before it understood refs. */
 type SearchRow = { kind: "search" };
 type CompletionBoxRow = { kind: "completion"; row: CompletionRow };
-type BoxRow = JumpRow | SearchRow | CompletionBoxRow;
+type BoxRow = JumpRow | ProjectPeekRow | SearchRow | CompletionBoxRow;
 
 type Destination =
   | { to: "card"; target: JumpTarget }
+  | { to: "project"; slug: string }
   | { to: "external"; href: string }
   | { to: "search" };
 
 /** Would this row leave the project? The search row then says where it searches. */
 function pointsElsewhere(row: JumpRow, slug: string): boolean {
   if (row.kind === "external") return true;
+  if (row.kind === "project") return row.slug !== slug;
   return row.state === "ready" ? row.crossProject : row.candidate.slug !== slug;
+}
+
+/**
+ * How each project can be named, best spelling first (T-263). The prefix
+ * form comes first because it is the shorter of two synonyms and the one a
+ * card number attaches to directly.
+ *
+ * Retired claims are left out on purpose. They still *resolve* — someone
+ * typing a project's old name from memory is exactly who `resolveSlugAt`
+ * exists for — but a completion teaches a spelling, and there is no reason
+ * to teach one that is on its way out. A contested prefix is left out for a
+ * stronger reason: it resolves to nothing at all.
+ */
+function projectPool(
+  projects: readonly Project[] | undefined,
+  directory: ReferenceDirectory | null | undefined,
+): ProjectRefOption[] {
+  if (projects === undefined) return [];
+  const now = Date.now();
+  const covers = (from: string, to: string | null) =>
+    Date.parse(from) <= now && (to === null || now < Date.parse(to));
+  return projects.map((project) => {
+    const claim = directory?.entries.find(
+      (entry) => entry.slug === project.slug && covers(entry.from, entry.to),
+    );
+    const usable =
+      claim !== undefined &&
+      !(directory?.contested ?? []).some(
+        (fight) =>
+          fight.prefix === claim.prefix && covers(fight.from, fight.to),
+      );
+    return {
+      slug: project.slug,
+      name: project.name,
+      spellings: usable
+        ? [`${(claim as { prefix: string }).prefix}-`, `${project.slug}/`]
+        : [`${project.slug}/`],
+    };
+  });
 }
 
 /**
@@ -69,6 +121,17 @@ const OPTION = "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm";
 
 /** Nothing highlighted. Enter then submits what was typed, not an offer. */
 const NONE = -1;
+
+/**
+ * One glyph per kind of offer. A row is a short run of monospace and a few
+ * grey words, so the icon carries the whole distinction between a key, a
+ * value and a project.
+ */
+const COMPLETION_ICON = {
+  qualifier: FilterIcon,
+  value: TagIcon,
+  project: FolderIcon,
+} satisfies Record<CompletionRow["icon"], typeof FilterIcon>;
 
 /**
  * The project's search box, in the header on every project page (T-141),
@@ -145,6 +208,10 @@ export function SearchBox({
   const statuses = useQuery({ ...statusesQuery(slug), enabled: asked });
   const members = useQuery({ ...membersQuery(slug), enabled: asked });
   const facets = useQuery(searchFacetsQuery(slug, asked));
+  // The same two the jump offer reads, so completing a project name costs
+  // nothing beyond what resolving one already did.
+  const projects = useQuery({ ...projectsQuery, enabled: asked });
+  const directory = useQuery({ ...referenceDirectoryQuery, enabled: asked });
 
   const pools: ValuePools = useMemo(
     () => ({
@@ -173,14 +240,32 @@ export function SearchBox({
   // A jump that silently drops `label:bug` is a lie about where it goes, so
   // the offer only stands for a query that is nothing but a reference.
   const jumpRows = useJumpRows(slug, hasQualifier(parts) ? "" : value);
+  const named = jumpRows.find((row) => row.kind === "project");
+  // A project named without a card is a weaker aim than a card: the reader
+  // may well be on their way to one whose number they do not remember.
+  const peek = useProjectPeek(
+    slug,
+    named?.kind === "project" ? named.slug : null,
+  );
+  const projectRefs = useMemo(
+    () => projectPool(projects.data, directory.data),
+    [projects.data, directory.data],
+  );
   const completions = useMemo(() => {
     const ctx = { slug, query: value, caret: position.caret, parts };
-    return [qualifierKeySource(ctx), qualifierValueSource(pools)(ctx)];
-  }, [slug, value, position.caret, parts, pools]);
+    return [
+      qualifierKeySource(ctx),
+      qualifierValueSource(pools)(ctx),
+      projectRefSource(projectRefs)(ctx),
+    ];
+  }, [slug, value, position.caret, parts, pools, projectRefs]);
 
   const rows: BoxRow[] = orderRows<BoxRow>(
     [
-      { matched: true, rows: jumpRows },
+      // One source, so the ten-row budget covers the peek too: the home row
+      // is what the reader named and the cards below it come out of the same
+      // allowance as everything else (T-268).
+      { matched: true, rows: [...jumpRows, ...peek] },
       ...completions.map((result) => ({
         matched: result.matched,
         rows: result.rows.map(
@@ -273,12 +358,20 @@ export function SearchBox({
     if (chosen?.kind === "issue" && chosen.state === "ready") {
       return { to: "card", target: chosen };
     }
+    if (chosen?.kind === "project") return { to: "project", slug: chosen.slug };
+    if (chosen?.kind === "project-issue") {
+      return {
+        to: "card",
+        target: { slug: chosen.slug, number: chosen.number },
+      };
+    }
     if (chosen?.kind === "completion") return { to: "search" };
     if (hasQualifier(parts)) return { to: "search" };
     setWaiting(true);
     try {
       const found = await jumpDestinationPromise(queryClient, slug, value);
       if (found?.kind === "issue") return { to: "card", target: found.target };
+      if (found?.kind === "project") return { to: "project", slug: found.slug };
       if (found?.kind === "external")
         return { to: "external", href: found.href };
     } finally {
@@ -312,6 +405,11 @@ export function SearchBox({
               // scroll races it.
               hashScrollIntoView: false,
             }),
+      });
+    } else if (destination.to === "project") {
+      navigate({
+        to: "/projects/$slug",
+        params: { slug: destination.slug },
       });
     } else if (destination.to === "external") {
       // A tab opened after an await can meet a popup blocker — the click
@@ -444,29 +542,47 @@ export function SearchBox({
         >
           {rows.map((row, idx) => {
             if (row.kind === "search") {
+              // With nothing typed there is no search to offer, so the row
+              // stops pretending to be one: `Search for “”` searched for
+              // nothing, while the page it leads to is a real destination —
+              // the syntax help and the domain chips live there.
+              const blank = query === "";
               return (
                 <Link
                   key="search"
                   to="/projects/$slug/search"
                   params={{ slug }}
-                  search={{ q: query }}
+                  search={blank ? {} : { q: query }}
                   {...optionProps(idx)}
                   onMouseMove={() => setHighlight(idx)}
                   onClick={closeUnlessNewTab}
                 >
-                  <SearchIcon
-                    className="size-3.5 shrink-0 text-muted-foreground"
-                    aria-hidden
-                  />
+                  {blank ? (
+                    <ArrowRightIcon
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                      aria-hidden
+                    />
+                  ) : (
+                    <SearchIcon
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                      aria-hidden
+                    />
+                  )}
                   <span className="truncate">
-                    Search for “{query}”
-                    {elsewhere && ` in ${project.data?.name ?? slug}`}
+                    {blank ? (
+                      "search page"
+                    ) : (
+                      <>
+                        Search for “{query}”
+                        {elsewhere && ` in ${project.data?.name ?? slug}`}
+                      </>
+                    )}
                   </span>
                 </Link>
               );
             }
             if (row.kind === "completion") {
-              const Icon = row.row.icon === "qualifier" ? FilterIcon : TagIcon;
+              const Icon = COMPLETION_ICON[row.row.icon];
               return (
                 // A button, not a link: it goes nowhere, it rewrites the
                 // query in place. Focus stays in the input regardless — the
@@ -491,6 +607,52 @@ export function SearchBox({
                     </span>
                   )}
                 </button>
+              );
+            }
+            if (row.kind === "project") {
+              return (
+                <Link
+                  key="project"
+                  to="/projects/$slug"
+                  params={{ slug: row.slug }}
+                  {...optionProps(idx)}
+                  onMouseMove={() => setHighlight(idx)}
+                  onClick={closeUnlessNewTab}
+                >
+                  <ArrowRightIcon
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                    aria-hidden
+                  />
+                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                    {row.spelled}
+                  </span>
+                  <span className="truncate">{row.name}</span>
+                </Link>
+              );
+            }
+            if (row.kind === "project-issue") {
+              return (
+                <Link
+                  key={`peek-${row.number}`}
+                  to="/projects/$slug/issues/$number"
+                  params={{ slug: row.slug, number: String(row.number) }}
+                  {...optionProps(idx)}
+                  onMouseMove={() => setHighlight(idx)}
+                  onClick={closeUnlessNewTab}
+                >
+                  {/* Where the arrow goes on every other row. These cards
+                      are offered rather than asked for, and the empty
+                      column is what says so — one indent, no new glyph. */}
+                  <span className="size-3.5 shrink-0" aria-hidden />
+                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                    {row.spelled}
+                  </span>
+                  <span className="truncate">{row.item.title}</span>
+                  <StatusPill
+                    status={row.item.status}
+                    className="ml-auto shrink-0"
+                  />
+                </Link>
               );
             }
             if (row.kind === "external") {

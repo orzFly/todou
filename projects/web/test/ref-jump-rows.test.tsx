@@ -13,8 +13,15 @@ import {
   commentRefQuery,
   issueRefQuery,
 } from "../src/api/issue-refs.ts";
+import { recentOpenIssuesQuery } from "../src/api/issues.ts";
 import { projectsQuery } from "../src/api/queries.ts";
-import { type JumpRow, useJumpRows } from "../src/api/ref-jump.ts";
+import {
+  type JumpRow,
+  PROJECT_PEEK,
+  type ProjectPeekRow,
+  useJumpRows,
+  useProjectPeek,
+} from "../src/api/ref-jump.ts";
 import {
   referenceConfigQuery,
   referenceDirectoryQuery,
@@ -74,6 +81,9 @@ const comment = (id: number): TimelineComment => ({
 const DIRECTORY: ReferenceDirectory = {
   entries: [
     { prefix: "M", slug: "mirror", from: "2020-01-01T00:00:00.000Z", to: null },
+    // This project's own claim is in there too, as the server sends it: the
+    // directory is every prefix the viewer may see, their own included.
+    { prefix: "T", slug: "todou", from: "2020-01-01T00:00:00.000Z", to: null },
   ],
   contested: [],
 };
@@ -123,6 +133,34 @@ async function rowsOf(client: QueryClient, q: string): Promise<JumpRow[]> {
   const { findByTestId } = renderWithProviders(<Probe q={q} />, client);
   const pre = await findByTestId("rows");
   return JSON.parse(pre.textContent ?? "[]") as JumpRow[];
+}
+
+function PeekProbe({ target }: { target: string | null }) {
+  return (
+    <pre data-testid="peek">
+      {JSON.stringify(useProjectPeek("todou", target))}
+    </pre>
+  );
+}
+
+async function peekOf(
+  client: QueryClient,
+  target: string | null,
+): Promise<ProjectPeekRow[]> {
+  const { findByTestId } = renderWithProviders(
+    <PeekProbe target={target} />,
+    client,
+  );
+  const pre = await findByTestId("peek");
+  return JSON.parse(pre.textContent ?? "[]") as ProjectPeekRow[];
+}
+
+function seedPeek(client: QueryClient, slug: string, count: number) {
+  client.setQueryData(recentOpenIssuesQuery(slug, PROJECT_PEEK).queryKey, {
+    items: Array.from({ length: count }, (_, i) => item(i + 1, `卡 ${i + 1}`)),
+    next_cursor: null,
+  });
+  return client;
 }
 
 describe("useJumpRows", () => {
@@ -237,6 +275,58 @@ describe("useJumpRows", () => {
         commentBy: "Alice",
       },
     ]);
+  });
+
+  it("offers a project's home for a query that names one and stops", async () => {
+    // Nothing is seeded beyond the context every other case seeds: the row
+    // reads the project list the box has already fetched, so anything that
+    // needed a lookup would be stuck pending here instead of ready.
+    const client = seedContext(testQueryClient());
+    expect(await rowsOf(client, "M-")).toEqual([
+      { kind: "project", slug: "mirror", spelled: "M-", name: "mirror" },
+    ]);
+  });
+
+  it("offers the project's home spelled the way the project spells it", async () => {
+    const client = seedContext(testQueryClient());
+    expect(await rowsOf(client, "MIRROR/")).toMatchObject([
+      { kind: "project", spelled: "mirror/" },
+    ]);
+  });
+
+  it("offers nothing for a project the viewer cannot read", async () => {
+    const client = seedContext(testQueryClient());
+    expect(await rowsOf(client, "hidden/")).toEqual([]);
+  });
+
+  it("offers no project home while the directory is unreadable", async () => {
+    const client = seedContext(testQueryClient());
+    client.setQueryData(referenceDirectoryQuery.queryKey, null);
+    expect(await rowsOf(client, "mirror/")).toEqual([]);
+  });
+
+  it("peeks at what a named project is working on, spelled to be typed back", async () => {
+    const client = seedPeek(seedContext(testQueryClient()), "mirror", 2);
+    const rows = await peekOf(client, "mirror");
+    expect(rows).toHaveLength(2);
+    // Qualified, like the jump row: a ref copied out of the panel has to
+    // keep meaning the same card when it is pasted back here.
+    expect(rows[0]).toMatchObject({
+      kind: "project-issue",
+      slug: "mirror",
+      number: 1,
+      spelled: "mirror/M-1",
+    });
+  });
+
+  it("spells this project's own cards plainly", async () => {
+    const client = seedPeek(seedContext(testQueryClient()), "todou", 1);
+    expect(await peekOf(client, "todou")).toMatchObject([{ spelled: "T-1" }]);
+  });
+
+  it("asks nothing, and shows nothing, without a project to peek at", async () => {
+    const client = seedPeek(seedContext(testQueryClient()), "mirror", 2);
+    expect(await peekOf(client, null)).toEqual([]);
   });
 
   it("names the host of an external link, and asks nobody about it", async () => {
