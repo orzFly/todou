@@ -27,7 +27,7 @@ export type JumpContext = {
   autolinks: readonly AutolinkRule[];
   /** Slugs the viewer may name; anything else is not a candidate. */
   readableSlugs: readonly string[];
-  /** Null, or `since: null`, = the cross-project grammar stays shut. */
+  /** Null = the cross-project grammar stays shut. */
   directory: ReferenceDirectory | null;
   /** `window.location.origin`, for recognising our own pasted URLs. */
   origin: string;
@@ -87,7 +87,7 @@ function localRefAt(
 function scanConfigOf(ctx: JumpContext): ScanConfig {
   const base = { internalPrefix: ctx.prefix, autolinks: ctx.autolinks };
   const directory = ctx.directory;
-  if (directory === null || directory.since === null) return base;
+  if (directory === null) return base;
   return {
     ...base,
     cross: {
@@ -98,7 +98,6 @@ function scanConfigOf(ctx: JumpContext): ScanConfig {
       },
       // Absent on a pre-T-156 server, where an empty list reads the same.
       slugEntries: directory.slug_entries ?? [],
-      since: directory.since,
       // No `at`: a box resolves what the spelling means now, not what it
       // would have meant when some text was written.
     },

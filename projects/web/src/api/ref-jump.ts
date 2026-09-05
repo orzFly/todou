@@ -76,7 +76,7 @@ const isCard = (candidate: JumpCandidate): candidate is JumpCardCandidate =>
 function jumpContext(
   slug: string,
   config: ReferenceConfig,
-  directory: ReferenceDirectory,
+  directory: ReferenceDirectory | null,
   projects: readonly { slug: string }[],
 ): JumpContext {
   return {
@@ -299,12 +299,7 @@ export async function jumpDestinationPromise(
     q,
     // A directory that cannot be read is one that resolves nothing, which
     // is the renderer's degradation too.
-    jumpContext(
-      slug,
-      config,
-      directory ?? { since: null, entries: [], contested: [] },
-      projects,
-    ),
+    jumpContext(slug, config, directory, projects),
   );
   const card = candidates.find(isCard);
   if (card !== undefined) {

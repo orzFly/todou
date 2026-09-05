@@ -71,11 +71,9 @@ export type SlugClaimEntry = z.infer<typeof SlugClaimEntry>;
 
 /**
  * What a client needs to resolve a bare `PREFIX-N` (T-150), trimmed to the
- * viewer's readable projects. `since` null means the deployment has no
- * cutoff recorded, which reads as "cross-project grammar off".
+ * viewer's readable projects.
  */
 export const ReferenceDirectory = z.object({
-  since: Timestamp.nullable(),
   entries: z.array(PrefixClaimEntry),
   contested: z.array(ContestedInterval),
   // Optional so a client talking to a pre-T-156 server degrades to "no

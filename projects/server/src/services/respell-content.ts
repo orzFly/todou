@@ -155,7 +155,6 @@ export async function anchorAt(
       slugs: owner.inputs.slugs,
       directory: owner.inputs.directory,
       slugEntries: owner.inputs.slugEntries,
-      since: owner.inputs.since,
       at: at.toISOString(),
     },
   };

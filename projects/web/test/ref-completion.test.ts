@@ -232,7 +232,6 @@ function seededClient(options?: {
     autolinks: [],
   };
   const directory: ReferenceDirectory = {
-    since: "2020-01-01T00:00:00.000Z",
     entries: [...DIRECTORY.entries],
     contested: [...DIRECTORY.contested],
   };

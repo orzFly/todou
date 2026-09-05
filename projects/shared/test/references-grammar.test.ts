@@ -23,7 +23,6 @@ function crossConfig(over: Partial<ScanConfig> = {}): ScanConfig {
     cross: {
       slugs: ["todou", "mirror"],
       directory: DIRECTORY,
-      since: SINCE,
       at: AFTER,
     },
     ...over,
@@ -206,7 +205,7 @@ describe("bare foreign prefixes", () => {
     expect(
       refs("fixes T-12", {
         ...config,
-        cross: { slugs: ["todou"], since: SINCE, at: AFTER },
+        cross: { slugs: ["todou"], at: AFTER },
       }),
     ).toEqual([]);
   });
@@ -265,25 +264,30 @@ describe("comment anchors", () => {
   });
 });
 
-describe("the cross-syntax cutoff", () => {
-  it("stays closed for content written before it", () => {
-    const config = crossConfig({ internalPrefix: "T" });
-    const pre: ScanConfig = {
-      ...config,
-      cross: { ...config.cross, slugs: ["todou"], since: SINCE, at: BEFORE },
-    };
-    expect(refs("todou/T-12", pre)).toEqual([{ slug: null, number: 12 }]);
-    expect(refs("#comment-99", pre)).toEqual([]);
+const dated = (at: string): ScanConfig => ({
+  internalPrefix: null,
+  cross: { slugs: ["todou"], directory: DIRECTORY, at },
+});
+
+describe("content written before the directory's holds", () => {
+  it("resolves a qualified form and a standalone comment anchor", () => {
+    expect(refs("see todou#12", dated(BEFORE))).toEqual([
+      { slug: "todou", number: 12 },
+    ]);
+    expect(scanReferenceTokens("see #comment-99", dated(BEFORE))[1]).toEqual({
+      type: "comment",
+      commentId: 99,
+      start: 4,
+      end: 15,
+      text: "#comment-99",
+    });
   });
 
-  it("fails closed when the cutoff is unknown", () => {
-    const config = crossConfig();
-    expect(
-      refs("todou#12", {
-        ...config,
-        cross: { slugs: ["todou"], since: null, at: AFTER },
-      }),
-    ).toEqual([]);
+  it("leaves a bare prefix nobody held at that instant as text", () => {
+    expect(refs("fixes T-12", dated(BEFORE))).toEqual([]);
+    expect(refs("fixes T-12", dated(AFTER))).toEqual([
+      { slug: "todou", number: 12 },
+    ]);
   });
 });
 
@@ -368,7 +372,6 @@ function historyConfig(at: string, entries = SLUG_ENTRIES): ScanConfig {
     internalPrefix: null,
     cross: {
       slugs: ["todou", "handover"],
-      since: SINCE,
       at,
       slugEntries: entries,
     },

@@ -164,9 +164,7 @@ describe.skipIf(!PG_URL)("moving an issue on real postgres", () => {
       .select({ authorId: issues.authorId })
       .from(issues)
       .where(eq(issues.id, card.id));
-    // Ahead of now, so both comments stay clear of this deployment's
-    // `cross_refs_since` — a fresh database seeds that at migration time.
-    const at = new Date(Date.now() + 60_000);
+    const at = new Date(Date.now() - 60_000);
     await db
       .update(comments)
       .set({ createdAt: new Date(at.getTime() - 1) })

@@ -238,9 +238,10 @@ export function refCompletionSource(
       prefix: config.format.prefix,
       autolinks: config.autolinks,
       readableSlugs: projects?.map((p) => p.slug) ?? [],
-      // No cutoff (or a server predating T-150) means bare and qualified
-      // foreign forms never resolve — the renderer's rule exactly.
-      directory: directory?.since === null ? null : (directory ?? null),
+      // No directory (a server predating T-150, or one that could not be
+      // read) means bare and qualified foreign forms never resolve — the
+      // renderer's rule exactly.
+      directory: directory ?? null,
     });
     if (found === null) return null;
 

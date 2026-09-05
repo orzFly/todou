@@ -8,7 +8,6 @@ import {
   specVersionFiles,
   specVersions,
 } from "../src/db/project-schema.ts";
-import { systemSettings } from "../src/db/system-schema.ts";
 import { routeInfoOf } from "../src/services/access.ts";
 import { makeTestApp, PLACEMENTS, type TestApp } from "./helpers.ts";
 
@@ -92,13 +91,6 @@ describe.each(PLACEMENTS)("move respell (%s placement)", (placement) => {
     return { db, ...row };
   };
 
-  const setCutoff = (at: Date) =>
-    t.ctx.router
-      .system()
-      .update(systemSettings)
-      .set({ value: at.toISOString() })
-      .where(eq(systemSettings.key, "cross_refs_since"));
-
   beforeAll(async () => {
     t = await makeTestApp(placement);
     cookie = await t.login();
@@ -110,9 +102,6 @@ describe.each(PLACEMENTS)("move respell (%s placement)", (placement) => {
       expect(res.status).toBe(201);
       id[slug] = ((await json(res)) as { id: number }).id;
     }
-    // Every fixture below is meant to be post-cutoff content, including the
-    // ones whose created_at is forced into the past.
-    await setCutoff(new Date("2020-01-01T00:00:00Z"));
   });
 
   afterAll(async () => {
@@ -368,32 +357,6 @@ describe.each(PLACEMENTS)("move respell (%s placement)", (placement) => {
           ),
         ),
     ).toHaveLength(0);
-  });
-
-  it("leaves text written before the cross grammar opened untouched", async () => {
-    const target = await createIssue(A, "pre-cross target");
-    const card = await createIssue(A, "old text", `see #${target.number}`);
-    // With the cutoff ahead of this text, the qualified form would not parse
-    // under its anchor — writing one would kill a live reference.
-    await setCutoff(new Date(Date.now() + 3_600_000));
-    try {
-      const result = await move(A, card.number, B);
-      const after = await landed(B, result.moved_to.number);
-      expect(after.body).toBe(`see #${target.number}`);
-      expect(
-        await after.db
-          .select({ id: revisions.id })
-          .from(revisions)
-          .where(
-            and(
-              eq(revisions.subjectType, "issue_body"),
-              eq(revisions.subjectId, after.id),
-            ),
-          ),
-      ).toHaveLength(0);
-    } finally {
-      await setCutoff(new Date("2020-01-01T00:00:00Z"));
-    }
   });
 
   it("composes across a second move and survives a round trip", async () => {

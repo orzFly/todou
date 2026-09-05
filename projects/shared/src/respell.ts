@@ -141,10 +141,9 @@ function sameTarget(a: Target, b: Target): boolean {
  * scanner rather than re-derived.
  *
  * Anything but the origin itself means the qualified form cannot be written
- * here: a pre-`cross_refs_since` anchor has the whole grammar shut, and a slug
- * another project held at that instant would resolve to that project. Both
- * would turn a meaning-preserving rewrite into a wrong reference, and both are
- * caught before a single span moves.
+ * here: a slug another project held at that instant would resolve to that
+ * project, which would turn a meaning-preserving rewrite into a wrong
+ * reference. It is caught before a single span moves.
  */
 function resolvesToOrigin(inputs: RespellInputs): boolean {
   for (const token of scanReferenceTokens(

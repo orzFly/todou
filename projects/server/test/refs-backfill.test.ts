@@ -6,7 +6,6 @@ import {
   issues,
   revisions,
 } from "../src/db/project-schema.ts";
-import { systemSettings } from "../src/db/system-schema.ts";
 import { routeInfoOf } from "../src/services/access.ts";
 import { backfillRefs } from "../src/services/refs-backfill.ts";
 import { makeTestApp, type TestApp } from "./helpers.ts";
@@ -87,12 +86,6 @@ describe("refs backfill", () => {
       expect(res.status).toBe(201);
       id[slug] = ((await json(res)) as { id: number }).id;
     }
-    await t.ctx.router
-      .system()
-      .update(systemSettings)
-      .set({ value: new Date("2020-01-01T00:00:00Z").toISOString() })
-      .where(eq(systemSettings.key, "cross_refs_since"));
-
     const target = await json(
       await req(`/projects/${A}/issues`, {
         method: "POST",

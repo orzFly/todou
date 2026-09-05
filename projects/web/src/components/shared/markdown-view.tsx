@@ -296,7 +296,7 @@ export function MarkdownView({
     const config = refConfigFor(
       refQuery.data,
       refDate,
-      directory === undefined || readable === undefined
+      directory == null || readable === undefined
         ? undefined
         : { slugs: readable.map((p) => p.slug), directory },
     );

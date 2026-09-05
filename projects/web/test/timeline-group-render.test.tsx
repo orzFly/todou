@@ -110,7 +110,6 @@ const configOf = (prefix: string): ReferenceConfig => ({
 });
 
 const directory: ReferenceDirectory = {
-  since: SINCE,
   entries: [{ prefix: "M", slug: "mirror", from: SINCE, to: null }],
   contested: [],
 };

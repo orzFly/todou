@@ -11,7 +11,7 @@ import {
 
 const SINCE = "2026-01-01T00:00:00Z";
 const AT = "2026-06-01T00:00:00Z";
-const PRE_CROSS = "2025-06-01T00:00:00Z";
+const LONG_AGO = "2025-06-01T00:00:00Z";
 const ORIGIN = "homelab";
 
 const DIRECTORY = {
@@ -25,7 +25,6 @@ function anchorOf(over: Partial<ScanConfig> = {}): ScanConfig {
     cross: {
       slugs: [ORIGIN, "roise", "todou"],
       directory: DIRECTORY,
-      since: SINCE,
       at: AT,
     },
     ...over,
@@ -233,20 +232,17 @@ describe("respellForMove", () => {
     );
   });
 
-  it("abandons a segment written before the cross grammar opened", () => {
+  it("respells a segment written long before the directory's holds", () => {
     const inputs = inputsOf({
       anchor: anchorOf({
         cross: {
           slugs: [ORIGIN, "roise", "todou"],
           directory: DIRECTORY,
-          since: SINCE,
-          at: PRE_CROSS,
+          at: LONG_AGO,
         },
       }),
     });
-    // The qualified form does not resolve under this anchor, so writing it
-    // would kill a live reference rather than preserve it.
-    expect(respellForMove("see #12", inputs)).toEqual(abandoned("see #12"));
+    respelt("see #12", inputs, `see ${ORIGIN}#12`);
   });
 
   it("abandons a segment whose origin slug named someone else back then", () => {
@@ -258,7 +254,6 @@ describe("respellForMove", () => {
           slugEntries: [
             { slug: ORIGIN, canonical: "roise", from: SINCE, to: null },
           ],
-          since: SINCE,
           at: AT,
         },
       }),

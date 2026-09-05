@@ -26,22 +26,15 @@ export const referenceConfigQuery = (slug: string) =>
     staleTime: 60_000,
   });
 
-/** No cutoff = the cross-project grammar stays shut, which is the T-150 default. */
-const NO_DIRECTORY: ReferenceDirectory = {
-  since: null,
-  entries: [],
-  contested: [],
-};
-
 export const referenceDirectoryQuery = queryOptions({
   queryKey: ["reference-directory"],
-  queryFn: async (): Promise<ReferenceDirectory> => {
+  queryFn: async (): Promise<ReferenceDirectory | null> => {
     try {
       return await api.getReferenceDirectory();
     } catch (error) {
-      // Servers predating T-150 have no endpoint; bare PREFIX-N then
-      // simply never resolves, and qualified forms carry on.
-      if ((error as { status?: number }).status === 404) return NO_DIRECTORY;
+      // Servers predating T-150 have no endpoint; without a directory
+      // nothing foreign resolves, and this project's own forms carry on.
+      if ((error as { status?: number }).status === 404) return null;
       throw error;
     }
   },
@@ -98,7 +91,6 @@ export function refConfigFor(
       // Absent on a pre-T-156 server, and an empty list resolves exactly
       // like no history at all.
       slugEntries: cross.directory.slug_entries ?? [],
-      since: cross.directory.since,
       ...(refDate === undefined ? {} : { at: refDate }),
     },
   };

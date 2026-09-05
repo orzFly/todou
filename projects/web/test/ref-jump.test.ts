@@ -14,7 +14,6 @@ import {
  * its cards.
  */
 const DIRECTORY: ReferenceDirectory = {
-  since: "2020-01-01T00:00:00.000Z",
   entries: [
     { prefix: "M", slug: "mirror", from: "2020-01-01T00:00:00.000Z", to: null },
     { prefix: "X", slug: "hidden", from: "2020-01-01T00:00:00.000Z", to: null },
@@ -198,11 +197,9 @@ describe("refJumpCandidates · autolinks", () => {
 
 describe("refJumpCandidates · the cross-project grammar shut", () => {
   it("resolves nothing foreign, and this project's own numbers as ever", () => {
-    for (const directory of [null, { ...DIRECTORY, since: null }]) {
-      expect(of("mirror#3", { directory })).toEqual([]);
-      expect(of("M-3", { directory })).toEqual([]);
-      expect(of("#215", { directory })).toEqual(issue("todou", 215));
-    }
+    expect(of("mirror#3", { directory: null })).toEqual([]);
+    expect(of("M-3", { directory: null })).toEqual([]);
+    expect(of("#215", { directory: null })).toEqual(issue("todou", 215));
   });
 });
 

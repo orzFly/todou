@@ -101,7 +101,6 @@ function seeded(): QueryClient {
     autolinks: [],
   });
   const directory: ReferenceDirectory = {
-    since: "2020-01-01T00:00:00.000Z",
     entries: [],
     contested: [],
   };

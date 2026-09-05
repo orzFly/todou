@@ -10,41 +10,18 @@ import type { UserRow } from "../auth/pat.ts";
 import type { AppContext, DbContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { refFormats } from "../db/project-schema.ts";
-import {
-  projects,
-  refPrefixes,
-  slugHistory,
-  systemSettings,
-} from "../db/system-schema.ts";
+import { projects, refPrefixes, slugHistory } from "../db/system-schema.ts";
 import {
   accessibleProjectRows,
   type ProjectRow,
   routeInfoOf,
 } from "./access.ts";
 
-const CROSS_REFS_SINCE = "cross_refs_since";
-
 /** Open end of a hold, so "still held" sorts after every real timestamp. */
 const OPEN = Number.POSITIVE_INFINITY;
 
 type FormatRow = { prefix: string | null; effectiveFrom: Date };
 type Hold = { prefix: string; slug: string; from: number; to: number };
-
-/**
- * The instant this deployment opened the cross-project grammar, seeded by
- * the migration that created the mirror. A missing row means the feature
- * is off — the whole grammar fails closed rather than guessing a cutoff.
- */
-export async function crossRefsSince(db: Db): Promise<string | null> {
-  const rows = await db
-    .select({ value: systemSettings.value })
-    .from(systemSettings)
-    .where(eq(systemSettings.key, CROSS_REFS_SINCE));
-  const raw = rows[0]?.value;
-  if (typeof raw !== "string") return null;
-  const at = new Date(raw);
-  return Number.isNaN(at.getTime()) ? null : at.toISOString();
-}
 
 export async function mirrorRefFormat(
   db: Db,
@@ -293,17 +270,14 @@ export async function referenceDirectory(
   ctx: AppContext,
   actor: UserRow,
 ): Promise<ReferenceDirectory> {
-  const system = ctx.router.system();
-  const [holds, slugHolds, readable, since] = await Promise.all([
+  const [holds, slugHolds, readable] = await Promise.all([
     allHolds(ctx),
     allSlugHolds(ctx),
     accessibleProjectRows(ctx, actor),
-    crossRefsSince(system),
   ]);
   const visible = new Set(readable.map((row) => row.slug));
   const visibleIds = new Set(readable.map((row) => row.id));
   return {
-    since,
     entries: holds.filter((hold) => visible.has(hold.slug)).map(entryOf),
     contested: contestedWindows(holds),
     // No contested counterpart: a slug has one holder at a time, so a

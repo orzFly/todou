@@ -179,10 +179,10 @@ for byte what it was, and references inside code blocks or inline code are
 left alone.
 
 Where that rewrite cannot be made safely the old rule still applies: the text
-is parsed under whoever owned the card when it was written. The main case is
-text written before this deployment opened the cross-project reference syntax,
-because the qualified form does not parse under the grammar in force back
-then.
+is parsed under whoever owned the card when it was written. That happens when
+another project held the origin's slug at the moment the text was written,
+because `a#12` written into that text would name that other project's card
+instead of the origin's.
 
 Cards that moved before this behaviour existed are rewritten by
 `todou-server refs backfill`, which an operator runs once.

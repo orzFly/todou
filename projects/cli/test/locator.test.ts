@@ -40,7 +40,6 @@ const SANDBOX_CONFIG: ReferenceConfig = {
 
 function held(rows: Array<[prefix: string, slug: string]>): ReferenceDirectory {
   return {
-    since: SINCE,
     entries: rows.map(([prefix, slug]) => ({
       prefix,
       slug,
@@ -119,7 +118,6 @@ describe("resolvePrefixedRef, rung 3: the cross-project directory", () => {
 
   it("ignores a hold that has lapsed by now", () => {
     const lapsed: ReferenceDirectory = {
-      since: SINCE,
       entries: [{ prefix: "CH", slug: "mica", from: SINCE, to: NOW }],
       contested: [],
     };

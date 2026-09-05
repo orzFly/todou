@@ -300,9 +300,13 @@ export const movedIds = pgTable(
   ],
 );
 
-// Deployment-wide settings, validated at the service layer. Holds
-// `cross_refs_since`: the instant this instance ran the T-150 migration,
-// which is the cutoff the cross-project grammar opens at.
+// Deployment-wide settings, validated at the service layer.
+//
+// The `cross_refs_since` row is still seeded by `0005_cross-refs.sql` and no
+// longer read by anything: T-260 took the cutoff out of the grammar. It is
+// kept rather than deleted because the code that read it failed closed on a
+// missing row — a rollback to any pre-T-260 build would find nothing and turn
+// the whole cross-project grammar off deployment-wide.
 export const systemSettings = pgTable("system_settings", {
   key: text("key").primaryKey(),
   value: jsonb("value").notNull(),

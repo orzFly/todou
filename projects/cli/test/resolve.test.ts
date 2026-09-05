@@ -88,11 +88,7 @@ describe("reference reads, memoized per client (T-214)", () => {
   const config = { format: { prefix: "T", history: [] }, autolinks: [] };
   const routes: Route[] = [
     ["GET", "/api/projects/todou/references/config", config],
-    [
-      "GET",
-      "/api/me/reference-directory",
-      { since: null, entries: [], contested: [] },
-    ],
+    ["GET", "/api/me/reference-directory", { entries: [], contested: [] }],
   ];
 
   it("reads one config per client, however often it is asked", async () => {

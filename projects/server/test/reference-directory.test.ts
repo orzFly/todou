@@ -72,10 +72,8 @@ describe("reference prefix directory T-150", () => {
     await t.cleanup();
   });
 
-  it("seeds a cutoff the migration recorded", async () => {
-    const page = await directory();
-    expect(typeof page.since).toBe("string");
-    expect(Number.isNaN(Date.parse(page.since))).toBe(false);
+  it("reports no cutoff, the grammar no longer having one (T-260)", async () => {
+    expect(await directory()).not.toHaveProperty("since");
   });
 
   it("mirrors a format change as it is written", async () => {

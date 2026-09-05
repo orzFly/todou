@@ -79,7 +79,6 @@ const refItem = (number: number, title: string): IssueListItem => ({
 });
 
 const DIRECTORY: ReferenceDirectory = {
-  since: "2020-01-01T00:00:00.000Z",
   entries: [
     { prefix: "M", slug: "mirror", from: "2020-01-01T00:00:00.000Z", to: null },
   ],

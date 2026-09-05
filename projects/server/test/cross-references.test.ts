@@ -1,7 +1,8 @@
 import type { ChangeEvent } from "@todou/shared";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { systemSettings } from "../src/db/system-schema.ts";
+import { issues } from "../src/db/project-schema.ts";
+import { routeInfoOf } from "../src/services/access.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
@@ -19,6 +20,7 @@ describe("cross-project references T-150", () => {
   let t: TestApp;
   let cookie: string;
   let bob: Awaited<ReturnType<typeof addUserWithToken>>;
+  const projectId: Record<string, number> = {};
   const headers = () => ({ "content-type": "application/json", cookie });
 
   const createIssue = async (
@@ -60,12 +62,14 @@ describe("cross-project references T-150", () => {
     await settle();
   };
 
-  const setCutoff = (at: Date) =>
-    t.ctx.router
-      .system()
-      .update(systemSettings)
-      .set({ value: at.toISOString() })
-      .where(eq(systemSettings.key, "cross_refs_since"));
+  const dbOf = async (slug: string) =>
+    t.ctx.router.forProject(
+      routeInfoOf({
+        id: projectId[slug] as number,
+        slug,
+        databaseUrl: null,
+      } as Parameters<typeof routeInfoOf>[0]),
+    );
 
   beforeAll(async () => {
     t = await makeTestApp();
@@ -77,6 +81,7 @@ describe("cross-project references T-150", () => {
         body: JSON.stringify({ slug, name: `Xref ${slug}` }),
       });
       expect(res.status).toBe(201);
+      projectId[slug] = (await json(res)).id;
     }
     bob = await addUserWithToken(t.ctx, "xref-bob");
     const res = await t.app.request(
@@ -224,23 +229,26 @@ describe("cross-project references T-150", () => {
     expect(await events(SRC, target, "referenced")).toHaveLength(1);
   });
 
-  it("leaves content written before the cutoff on the old grammar", async () => {
-    await setCutoff(new Date(Date.now() + 60 * 60 * 1000));
-    try {
-      const target = await createIssue(DST, "pre-cutoff target");
-      const local = await createIssue(SRC, "pre-cutoff local");
-      await createIssue(
-        SRC,
-        "pre-cutoff source",
-        `${DST}/T-${local} and #comment-1`,
+  it("records a cross reference from text written years ago", async () => {
+    const target = await createIssue(DST, "old-text target");
+    const source = await createIssue(SRC, "old-text source");
+    const db = await dbOf(SRC);
+    await db
+      .update(issues)
+      .set({ createdAt: new Date("2020-01-01T00:00:00Z") })
+      .where(
+        and(
+          eq(issues.projectId, projectId[SRC] as number),
+          eq(issues.number, source),
+        ),
       );
-      expect(await events(DST, target, "cross_referenced")).toHaveLength(0);
-      // Under the old grammar the trailing T-N of a qualified form is just
-      // a local reference again.
-      expect(await events(SRC, local, "referenced")).toHaveLength(1);
-    } finally {
-      await setCutoff(new Date(0));
-    }
+    const res = await t.app.request(`/api/projects/${SRC}/issues/${source}`, {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify({ body: `see ${DST}#${target}` }),
+    });
+    expect(res.status).toBe(200);
+    expect(await events(DST, target, "cross_referenced")).toHaveLength(1);
   });
 });
 

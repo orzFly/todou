@@ -25,7 +25,6 @@ import {
   routeInfoOf,
 } from "./access.ts";
 import {
-  crossRefsSince,
   globalPrefixDirectory,
   globalSlugEntries,
 } from "./reference-directory.ts";
@@ -118,7 +117,6 @@ export async function visibleProjects(
 
 /** Everything the grammar needs beyond the text itself, loaded once per write. */
 export type ReferenceInputs = {
-  since: string | null;
   directory: PrefixDirectory;
   slugs: string[];
   slugEntries: SlugClaim[];
@@ -149,8 +147,7 @@ export async function loadReferenceInputs(
   projectId: number,
 ): Promise<ReferenceInputs> {
   const system = ctx.router.system();
-  const [since, slugRows, links, mirror, slugEntries] = await Promise.all([
-    crossRefsSince(system),
+  const [slugRows, links, mirror, slugEntries] = await Promise.all([
     system.select({ slug: projects.slug }).from(projects),
     db
       .select({ prefix: autolinks.prefix, urlTemplate: autolinks.urlTemplate })
@@ -160,7 +157,6 @@ export async function loadReferenceInputs(
     globalSlugEntries(ctx),
   ]);
   return {
-    since,
     directory: mirror,
     slugs: slugRows.map((row) => row.slug),
     slugEntries,
@@ -184,7 +180,6 @@ function anchorConfig(
       slugs: inputs.slugs,
       directory: inputs.directory,
       slugEntries: inputs.slugEntries,
-      since: inputs.since,
       at: at.toISOString(),
     },
   };

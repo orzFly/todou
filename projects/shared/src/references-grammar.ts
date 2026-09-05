@@ -62,8 +62,6 @@ export type CrossRefInput = {
   directory?: PrefixDirectory;
   /** Absent = `slugs` alone decides a qualified form, as before T-156. */
   slugEntries?: readonly SlugClaim[];
-  /** `cross_refs_since`. Null/absent means "unknown", which turns the grammar off. */
-  since?: string | null;
   /** When the content was written; omitted reads as now. */
   at?: string;
 };
@@ -312,23 +310,6 @@ export function resolveSlugAt(
   return latest === null ? null : latest.canonical;
 }
 
-/**
- * The cross grammar only opens for content written at or after the
- * deployment's `cross_refs_since` (the T-80 discipline: existing text
- * never changes meaning under a new syntax). An unknown or unparseable
- * cutoff fails closed.
- */
-function crossActiveAt(cross: CrossRefInput | undefined): CrossRefInput | null {
-  if (cross === undefined) return null;
-  if (cross.since === undefined || cross.since === null) return null;
-  const since = Date.parse(cross.since);
-  if (Number.isNaN(since)) return null;
-  if (cross.at === undefined) return cross;
-  const at = Date.parse(cross.at);
-  if (Number.isNaN(at) || at < since) return null;
-  return cross;
-}
-
 type Claim = { token: ReferenceToken | null; end: number };
 
 const span = (text: string, start: number, end: number): Span => ({
@@ -470,7 +451,7 @@ export function scanReferenceTokens(
   text: string,
   config: ScanConfig,
 ): ReferenceToken[] {
-  const cross = crossActiveAt(config.cross);
+  const cross = config.cross ?? null;
   const out: ReferenceToken[] = [];
   let pending = 0;
   let at = 0;

@@ -287,7 +287,6 @@ const project = (id: number, slug: string): Project => ({
 const directory = (
   over: Partial<ReferenceDirectory> = {},
 ): ReferenceDirectory => ({
-  since: SWITCH_AT,
   entries: [{ prefix: "M", slug: "mirror", from: SWITCH_AT, to: null }],
   contested: [],
   ...over,
