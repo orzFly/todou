@@ -18,6 +18,24 @@ const RECEIPT_WINDOW_MS = 30_000;
  */
 const MAX_FAILURES = 3;
 
+/**
+ * The longest payload the receiver accepts. It appends each chunk to a
+ * buffer and destroys the connection when the buffer passes this length,
+ * before it looks for a line break — so the budget covers the auth line,
+ * the frame and the newline together, not each line on its own. Measured in
+ * claude 2.1.258; the docs say "about a million characters".
+ */
+const MAX_PAYLOAD_CHARS = 1_048_576;
+
+/**
+ * The first line of every connection, in the serialization Claude Code
+ * itself writes. Only the first frame counts as an auth frame, and only a
+ * fresh connection can carry one, so every push sends it again.
+ */
+function authFrame(token: string): string {
+  return `${JSON.stringify({ type: "auth", token })}\n`;
+}
+
 /** Why the push channel is unusable: a receipt status, or `unreachable`. */
 export type Rejection = { status: string; reason?: string };
 
@@ -88,8 +106,19 @@ export type PeerPushOptions<T> = {
   fromMode?: "bypass" | "prompting";
   clock?: Clock;
   receiptWindowMs?: number;
+  /**
+   * The session's CLAUDE_CODE_MESSAGING_TOKEN, absent on Claude Code before
+   * v2.1.228. It is a credential: no diagnostic on any path here may print
+   * the payload or this value, which is why the failure paths describe the
+   * error alone and never what was written.
+   */
+  token?: string;
+  /** Test seam for the platform branches; production reads process.platform. */
+  platform?: NodeJS.Platform;
+  /** One diagnostic line at open time; only the Windows branch uses it. */
+  note?: (message: string) => void;
   /** Test seam; production leaves it unset and a real socket is dialled. */
-  dial?: (target: string, line: string) => Promise<void>;
+  dial?: (target: string, payload: string) => Promise<void>;
 };
 
 /**
@@ -117,6 +146,18 @@ export async function openPeerPush<T>(
   const clock = opts.clock ?? systemClock;
   const receiptWindowMs = opts.receiptWindowMs ?? RECEIPT_WINDOW_MS;
   const dial = opts.dial ?? dialSocket;
+  // Native Windows is the only platform that requires the auth line, and the
+  // only one where the socket is a named pipe rather than a file. WSL 2
+  // reports "linux", which is the split the docs draw as well.
+  const isWindows = (opts.platform ?? process.platform) === "win32";
+  if (isWindows && opts.token === undefined) {
+    throw new Error(
+      "CLAUDE_CODE_MESSAGING_TOKEN is not set; native Windows closes any " +
+        "connection that does not open with a valid auth line, and sends no " +
+        "receipt for what it discards",
+    );
+  }
+  const auth = opts.token === undefined ? "" : authFrame(opts.token);
   // Bound to the *target's* directory on purpose: a reply address in the
   // same directory only has to end in `.sock`, while any other permitted
   // directory also constrains the file name to a pid-derived shape.
@@ -156,8 +197,10 @@ export async function openPeerPush<T>(
       type?: unknown;
       action?: unknown;
       status?: unknown;
+      status_detail?: unknown;
       reason?: unknown;
       orig_msg_id?: unknown;
+      dropped_msg_ids?: unknown;
     };
     try {
       frame = JSON.parse(line);
@@ -167,11 +210,27 @@ export async function openPeerPush<T>(
     if (frame.type !== "control" || frame.action !== "peer_message_status") {
       return;
     }
-    if (typeof frame.status !== "string" || !NEGATIVE.has(frame.status)) return;
+    if (typeof frame.status !== "string") return;
+    // A local `refused` verdict travels as an expired status carrying the
+    // real cause in status_detail; reporting "aged out unread" would send
+    // the user looking at the wrong setting.
+    const status =
+      frame.status === "expired" && frame.status_detail === "refused"
+        ? "refused"
+        : frame.status;
+    if (!NEGATIVE.has(status)) return;
     prune();
-    if (!outstanding.some((batch) => batch.msgId === frame.orig_msg_id)) return;
+    // A batched drop receipt names the message that triggered it in
+    // orig_msg_id and the messages actually discarded in a list; a full
+    // queue discards older messages than the one that overflowed it, so the
+    // two are not the same set.
+    const ids = new Set<unknown>([
+      frame.orig_msg_id,
+      ...(Array.isArray(frame.dropped_msg_ids) ? frame.dropped_msg_ids : []),
+    ]);
+    if (!outstanding.some((batch) => ids.has(batch.msgId))) return;
     reject({
-      status: frame.status,
+      status,
       ...(typeof frame.reason === "string" ? { reason: frame.reason } : {}),
     });
   };
@@ -203,7 +262,10 @@ export async function openPeerPush<T>(
   });
 
   // A crash leaves the socket node behind and bind would fail EADDRINUSE.
-  rmSync(self, { force: true });
+  // A named pipe has no filesystem node to leave behind, so on Windows this
+  // has nothing to clean and can fail with something other than ENOENT,
+  // which would degrade the whole channel over a no-op.
+  if (!isWindows) rmSync(self, { force: true });
   await new Promise<void>((resolve, reject_) => {
     server.once("error", reject_);
     server.listen(self, () => {
@@ -214,6 +276,15 @@ export async function openPeerPush<T>(
       resolve();
     });
   });
+  // Said only once the channel is up, because a channel that never opened
+  // has no delivery for this to qualify.
+  if (isWindows) {
+    opts.note?.(
+      "--follow=uds is unverified on native Windows: the push carries its " +
+        "auth line, but nothing here has confirmed that receipts come back, " +
+        "so a refusal there may pass as delivered",
+    );
+  }
 
   return {
     send: async (items, since, cursor) => {
@@ -227,34 +298,64 @@ export async function openPeerPush<T>(
             };
       awaiting = batch;
       const msgId = randomUUID();
-      const content = wrapEnvelope({
-        from,
-        fromName: opts.fromName,
-        fromMode: opts.fromMode,
-        body: opts.render(batch.items, batch.since, batch.cursor),
-      });
-      const frame = JSON.stringify({
-        type: "user",
-        // Queued rather than interrupting: a batch of tracker activity is
-        // news the agent should see next, not mid-turn.
-        priority: "next",
-        from,
-        msg_id: msgId,
-        message: { role: "user", content },
-      });
+      const build = (body: string) =>
+        JSON.stringify({
+          type: "user",
+          // Queued rather than interrupting: a batch of tracker activity is
+          // news the agent should see next, not mid-turn.
+          priority: "next",
+          from,
+          msg_id: msgId,
+          message: {
+            role: "user",
+            content: wrapEnvelope({
+              from,
+              fromName: opts.fromName,
+              fromMode: opts.fromMode,
+              body,
+            }),
+          },
+        });
+      let payload = `${auth}${build(
+        opts.render(batch.items, batch.since, batch.cursor),
+      )}\n`;
+      if (payload.length > MAX_PAYLOAD_CHARS) {
+        // Over the cap the receiver destroys the connection and sends no
+        // receipt, which this channel would read as a delivery. The range
+        // still goes out, so the reader can re-read the entries from the
+        // tracker.
+        payload = `${auth}${build(
+          [
+            `This batch of ${batch.items.length} ${
+              batch.items.length === 1 ? "entry" : "entries"
+            } was too large to push — re-read it from the since cursor below`,
+            opts.render([], batch.since, batch.cursor),
+          ].join("\n"),
+        )}\n`;
+      }
       try {
-        await dial(opts.target, `${frame}\n`);
+        await dial(opts.target, payload);
       } catch (error) {
         failures += 1;
         const code = (error as NodeJS.ErrnoException).code;
-        // The socket being gone means the session is gone: there is no
-        // recipient to queue for, however many times we try.
+        // ENOENT / ECONNREFUSED: the session is gone, there is no recipient
+        // to queue for. EACCES / EPERM: a sandbox is refusing the socket,
+        // and no number of retries changes a setting.
+        const blocked = code === "EACCES" || code === "EPERM";
         if (
           code === "ENOENT" ||
           code === "ECONNREFUSED" ||
+          blocked ||
           failures >= MAX_FAILURES
         ) {
-          reject({ status: "unreachable", reason: describeError(error) });
+          reject({
+            status: "unreachable",
+            // describeError reports the error alone; the payload carries the
+            // token and never belongs in a diagnostic.
+            reason: blocked
+              ? `${describeError(error)} — a sandbox may be refusing unix sockets (sandbox.network.allowUnixSockets, sandbox.network.allowAllUnixSockets)`
+              : describeError(error),
+          });
         }
         return;
       }
@@ -288,13 +389,13 @@ export async function openPeerPush<T>(
       for (const socket of sockets) socket.destroy();
       sockets.clear();
       server.close();
-      rmSync(self, { force: true });
+      if (!isWindows) rmSync(self, { force: true });
     },
   };
 }
 
 /** One frame per connection, write end shut so the peer sees its length. */
-function dialSocket(target: string, line: string): Promise<void> {
+function dialSocket(target: string, payload: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const socket = connect(target);
     let settled = false;
@@ -306,6 +407,6 @@ function dialSocket(target: string, line: string): Promise<void> {
       else resolve();
     };
     socket.on("error", settle);
-    socket.on("connect", () => socket.end(line, () => settle()));
+    socket.on("connect", () => socket.end(payload, () => settle()));
   });
 }

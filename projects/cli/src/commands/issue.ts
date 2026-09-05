@@ -1002,6 +1002,7 @@ export class IssueWatchCommand extends ProjectCommand {
           renderHuman(items, since, cursor, plain),
         emit,
         socket: this.context.env.CLAUDE_CODE_MESSAGING_SOCKET,
+        token: this.context.env.CLAUDE_CODE_MESSAGING_TOKEN,
         sessionId: this.agentContext?.session_id,
         clock: this.clock,
         note: (line) => this.note(line),

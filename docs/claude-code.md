@@ -50,16 +50,39 @@ everything else, including a supervisor that runs a command and reads its
 output; the transport is never inferred from the environment, because such
 a supervisor is started *by* the session and has the variable set too.
 
-Three things about the message channel, all measured rather than
-documented, and each of them silent when wrong:
+The session exports `CLAUDE_CODE_MESSAGING_TOKEN` next to the socket path
+(Claude Code v2.1.228 and later), and every connection opens with that
+token on its first line, as `{"type":"auth","token":"…"}`. On POSIX the
+line is optional and a wrong token is tolerated; on native Windows it is
+required, and a connection that opens without it is closed with no receipt
+for what was discarded. Where the variable is missing — a POSIX session
+from v2.1.224 to v2.1.227 exported the socket but no token — the watch
+pushes anyway, and on Windows it degrades to the one-shot mode it has
+without `--follow`.
+
+The message channel has details that were measured rather than documented,
+and each of them is silent when written wrong:
 
 - `msg_id` must be a UUID. A message with a custom id is still delivered,
   but the receipt comes back without an `orig_msg_id`, so nothing can be
   correlated to it and a refusal goes unnoticed.
 - The sender's reply address must be a `uds:` URI over an absolute `.sock`
   path that the sender itself is listening on, or no receipt is sent at all.
+- The auth line has to be the *first* line on the connection. Only the
+  first frame is read as an auth frame, so a connection that opens with a
+  blank line or unparseable JSON is closed wherever the token is required.
+- One payload may not exceed about a million characters, counting the auth
+  line, the frame and its trailing newline together. Past that the receiver
+  destroys the connection and sends no receipt, so a batch too large to
+  push goes out as its entry count and its cursor range instead, and the
+  reader re-reads those entries from the tracker.
 - A session that accepts messages outright sends no positive receipt, so
   "delivered" can only mean "nothing negative arrived within the window".
+
+On native Windows the push direction is complete — the connection carries
+its auth line — while the receipt direction has not been verified on any
+Windows machine. `--follow=uds` therefore stays available there and says so
+on stderr when it opens: a refusal may pass as delivered.
 
 The sender's display name states which watch a message came from:
 `todou-watch-<slug>` for a project watch (`todou-watch-aa-bb` across a list,
@@ -68,12 +91,20 @@ for a single card. It is a display label only — the receiving side's
 admission check never reads it — but a session holding one project watch and
 three card watches would otherwise show the same sender five times.
 
-The session's `crossSessionInbound` setting is what decides whether the
-push works. It short-circuits the admission check **ahead of** the rule
-that lets a session's own processes through, so `"hold"` or `"refuse"`
-stops even a background task that session started itself. In that case the
-watch does not push blind: it writes the batches it cannot account for and
-its cursor to stdout, names the setting on stderr, and exits 0.
+Whether the push is delivered is decided by the receiving session's
+admission check, in this order. An explicit `crossSessionInbound` setting
+wins outright: `"hold"` or `"refuse"` stops even a background task that
+session started itself, and the watch does not push blind — it writes the
+batches it cannot account for and its cursor to stdout, names the setting
+on stderr, and exits 0. With no explicit setting, the session asks whether
+the sender is one of its own child processes — read from the ancestor chain
+on Linux, and from the token on native Windows, in a container where Claude
+Code runs as PID 1, and on macOS once the sending process has exited — and
+delivers straight through when it is, without reading the permission mode
+at all. The attested `from-mode` decides only the remaining case: no
+explicit setting and a sender that is not a descendant of the session,
+which is what a watch started from an unrelated shell with the socket path
+exported into it looks like.
 
 ## Where the metadata comes from
 
@@ -87,9 +118,10 @@ its cursor to stdout, names the setting on stderr, and exits 0.
 - permission mode (`--follow=uds` only, so a push can attest to it) —
   the same transcript tail, newest `permissionMode` wins, so switching mode
   mid-session is picked up. `plan` attests nothing: what the receiving side
-  normalizes it to depends on a flag the transcript does not record, and a
-  wrongly attested mode is held outright while an unattested one is held
-  only if the target session is in bypass.
+  normalizes it to depends on a flag the transcript does not record, and in
+  the one case that reads the mode at all (above), a wrongly attested mode
+  is held outright while an unattested one is held only if the target
+  session is in bypass.
 
 ## Optional: a stable `CLAUDE_MODEL` via hooks
 

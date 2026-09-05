@@ -185,6 +185,8 @@ export async function openFollow<T>(opts: {
     cursor: string | undefined,
   ) => void;
   socket: string | undefined;
+  /** CLAUDE_CODE_MESSAGING_TOKEN, for the push's auth line (T-255). */
+  token: string | undefined;
   sessionId: string | undefined;
   clock: Clock;
   note: (line: string) => void;
@@ -211,6 +213,8 @@ export async function openFollow<T>(opts: {
       opened = await open<T>({
         // `followTransport` refuses an unset socket before any I/O.
         target: opts.socket as string,
+        token: opts.token,
+        note: opts.note,
         clock: opts.clock,
         fromName: `${FROM_PREFIX}-${opts.subject}`,
         // Attested only where the transcript is unambiguous: an
@@ -225,7 +229,7 @@ export async function openFollow<T>(opts: {
       });
     } catch (error) {
       opts.note(
-        `--follow=uds could not open its receipt socket (${describeError(error)}) — ` +
+        `--follow=uds could not open its push channel (${describeError(error)}) — ` +
           "delivering one batch and exiting, as without --follow",
       );
       return oneShot;
