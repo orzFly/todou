@@ -213,11 +213,17 @@ export const INVALIDATE_COALESCE_MS = 300;
  * non-200 response — which is exactly what a reverse proxy answers (502)
  * while the server restarts. After any drop we run a full compensation
  * invalidate since events may have been missed.
+ *
+ * `enabled` exists for the shell's first paint: the header now renders before
+ * `/api/me` answers (T-265), and until it does there is no telling whether a
+ * session exists to stream — opening one regardless earns a visitor without
+ * one a run of 401s and reconnects on the way to /login.
  */
-export function useUserEvents() {
+export function useUserEvents(enabled = true) {
   const queryClient = useQueryClient();
 
   useEffect(() => {
+    if (!enabled) return;
     let source: EventSource | null = null;
     let disposed = false;
     let dropped = false;
@@ -322,5 +328,5 @@ export function useUserEvents() {
       pending = [];
       source?.close();
     };
-  }, [queryClient]);
+  }, [queryClient, enabled]);
 }

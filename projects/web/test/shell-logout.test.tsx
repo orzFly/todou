@@ -43,4 +43,19 @@ describe("AppShell logout visibility", () => {
     await openUserMenu("forward");
     expect(screen.queryByText("Log out")).toBeNull();
   });
+
+  it("renders the header before the account arrives, with no menu to open", async () => {
+    const view = renderWithProviders(<AppShell>x</AppShell>);
+    // The header is the point of T-265: it exists while /api/me is in flight.
+    const header = await waitFor(() => {
+      const found = view.container.querySelector("header");
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    expect(header.querySelector("[data-slot=skeleton]")).not.toBeNull();
+    // No account, so nothing to act on: the trigger must not be there at all
+    // rather than open onto an empty menu.
+    expect(screen.queryByText("User")).toBeNull();
+    expect(screen.queryByText("@user")).toBeNull();
+  });
 });

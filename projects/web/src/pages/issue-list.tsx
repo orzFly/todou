@@ -17,7 +17,7 @@ import type {
   Status,
 } from "@todou/shared";
 import { ArrowLeftIcon, Trash2Icon } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { Suspense, useLayoutEffect, useRef, useState } from "react";
 import {
   csvToIds,
   effectiveCategory,
@@ -48,6 +48,7 @@ import {
 } from "@/components/issue/issue-row.tsx";
 import { useCreateLabel } from "@/components/issue/label-picker.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
+import { IssueListBodySkeleton } from "@/components/page-skeleton.tsx";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useHeaderHeight } from "@/lib/use-header-height.ts";
@@ -168,24 +169,30 @@ function ProjectIssueListPage({
           </Button>
         )}
       </div>
-      {grouped ? (
-        <GroupedIssueList
-          slug={slug}
-          statuses={statuses.data}
-          counts={counts.data}
-          allLabels={labels.data}
-          search={search}
-          onCreateLabel={isAdmin ? createLabel : undefined}
-        />
-      ) : (
-        <FlatIssueList
-          slug={slug}
-          statuses={statuses.data}
-          allLabels={labels.data}
-          search={search}
-          onCreateLabel={isAdmin ? createLabel : undefined}
-        />
-      )}
+      {/* Changing the category re-reads the list but not the counts, so the
+          toolbar above has nothing to wait for — this boundary is what keeps
+          it standing while the body underneath reloads (T-265). Nested below
+          the shell's, so it is the one that catches. */}
+      <Suspense fallback={<IssueListBodySkeleton />}>
+        {grouped ? (
+          <GroupedIssueList
+            slug={slug}
+            statuses={statuses.data}
+            counts={counts.data}
+            allLabels={labels.data}
+            search={search}
+            onCreateLabel={isAdmin ? createLabel : undefined}
+          />
+        ) : (
+          <FlatIssueList
+            slug={slug}
+            statuses={statuses.data}
+            allLabels={labels.data}
+            search={search}
+            onCreateLabel={isAdmin ? createLabel : undefined}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }

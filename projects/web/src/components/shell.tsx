@@ -6,11 +6,12 @@ import {
   useParams,
 } from "@tanstack/react-router";
 import type { Me } from "@todou/shared";
-import type { ReactNode } from "react";
+import { type ReactNode, Suspense } from "react";
 import { api, authModeQuery, projectQuery } from "@/api/queries.ts";
 import { useUserEvents } from "@/api/useUserEvents.ts";
 import { VersionFooter } from "@/components/footer.tsx";
 import { InboxButton } from "@/components/inbox-button.tsx";
+import { PagePending } from "@/components/page-skeleton.tsx";
 import { NewIssueButton, ProjectNav } from "@/components/project-nav.tsx";
 import { ProjectSwitcher } from "@/components/project-switcher.tsx";
 import { SearchBox } from "@/components/search-box.tsx";
@@ -26,11 +27,26 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Skeleton } from "@/components/ui/skeleton";
 import { MD_UP, SM_UP, useMediaQuery } from "@/lib/use-media-query.ts";
 
-export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
+export function AppShell({
+  me,
+  children,
+}: {
+  /**
+   * Absent until `/api/me` answers. The header is rendered anyway (T-265):
+   * nothing else in it needs an account — the slug comes from the route, and
+   * the switcher, the nav, the search and the inbox each hold their own query.
+   */
+  me?: Me;
+  children: ReactNode;
+}) {
   // One user-level stream for every page and every readable project (T-122).
-  useUserEvents();
+  // Held shut until the account is known: with no session there is none to
+  // subscribe to, and an unauthenticated visitor would collect a run of 401s
+  // on the way to /login.
+  useUserEvents(me !== undefined);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const logout = useMutation({
@@ -119,36 +135,46 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
             )}
             <InboxButton />
             <ThemeMenu />
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm">
-                  <UserChip user={me} />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {/* The chip in the trigger already carries the display name;
-                    the label is what tells you which account that is. */}
-                <DropdownMenuLabel>@{me.login}</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem asChild>
-                  <Link to="/settings/profile">Profile</Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link to="/settings/agents">Agents</Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link to="/settings/tokens">Personal tokens</Link>
-                </DropdownMenuItem>
-                {canLogout && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onSelect={() => logout.mutate()}>
-                      Log out
-                    </DropdownMenuItem>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {me === undefined ? (
+              /* The account button's own footprint (`size="sm"` is h-7 px-2.5),
+                 so the row does not reshuffle when /api/me lands. No menu
+                 hangs off it: there is no account to act on yet. */
+              <div className="flex h-7 items-center gap-1 px-2.5">
+                <Skeleton className="size-5 rounded-full" />
+                <Skeleton className="h-4 w-16" />
+              </div>
+            ) : (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm">
+                    <UserChip user={me} />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {/* The chip in the trigger already carries the display name;
+                      the label is what tells you which account that is. */}
+                  <DropdownMenuLabel>@{me.login}</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild>
+                    <Link to="/settings/profile">Profile</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/settings/agents">Agents</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/settings/tokens">Personal tokens</Link>
+                  </DropdownMenuItem>
+                  {canLogout && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={() => logout.mutate()}>
+                        Log out
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
         </div>
         {/* The project row, and the only thing that makes the header two
@@ -163,7 +189,15 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
           </div>
         )}
       </header>
-      <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
+      {/* The app's only Suspense boundary, and it has to live here rather
+          than anywhere above: the router builds just one, around the root
+          `<Outlet/>` (`Match.js:144`), which sits above this whole shell — so
+          any page's cold `useSuspenseQuery` used to take the header, the nav,
+          the search box and the footer down with it (T-265). Drawn inside
+          `<main>`, it can only ever replace the page. */}
+      <main className="mx-auto max-w-6xl px-4 py-6">
+        <Suspense fallback={<PagePending />}>{children}</Suspense>
+      </main>
       {!fillsViewport && <VersionFooter />}
     </div>
   );

@@ -10,9 +10,12 @@ import {
 import { issueSearchSchema } from "@/api/issues.ts";
 import { meQuery } from "@/api/queries.ts";
 import { searchPageSchema } from "@/api/search.ts";
+import {
+  PagePending,
+  type PageSkeletonKind,
+} from "@/components/page-skeleton.tsx";
 import { AppShell } from "@/components/shell.tsx";
 import { TitleController } from "@/components/title-controller.tsx";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/sonner";
 import { parseSpecSearch } from "@/lib/spec-search.ts";
 import { AgentsSettingsPage } from "@/pages/agents-settings.tsx";
@@ -63,14 +66,6 @@ const authedRoute = createRoute({
 
 function AuthedLayout() {
   const me = useQuery(meQuery);
-  if (me.isPending) {
-    return (
-      <div className="mx-auto max-w-6xl space-y-4 px-4 py-10">
-        <Skeleton className="h-8 w-40" />
-        <Skeleton className="h-32 w-full" />
-      </div>
-    );
-  }
   if (me.isError) {
     const status = (me.error as { status?: number }).status;
     if (status === 401) {
@@ -91,7 +86,12 @@ function AuthedLayout() {
   }
   return (
     <AppShell me={me.data}>
-      <Outlet />
+      {/* Deliberately not `<Outlet/>` while the account is in flight (T-265).
+          Mounting the page here would fire its queries alongside /api/me, and
+          a visitor without a session can take the page's 401 first — long
+          enough to flash that route's errorComponent before <Navigate> sends
+          them to /login. The cost is that first-paint fetching stays serial. */}
+      {me.isPending ? <PagePending /> : <Outlet />}
     </AppShell>
   );
 }
@@ -111,6 +111,7 @@ const projectsRoute = createRoute({
     search.new === true || search.new === 1 || search.new === "1"
       ? { new: true }
       : {},
+  staticData: { pageSkeleton: "sections" },
 });
 
 const projectRoute = createRoute({
@@ -125,6 +126,7 @@ const projectIndexRoute = createRoute({
   path: "/",
   component: IssueListPage,
   validateSearch: (search) => issueSearchSchema.parse(search),
+  staticData: { pageSkeleton: "list" },
 });
 
 declare module "@tanstack/react-router" {
@@ -136,6 +138,12 @@ declare module "@tanstack/react-router" {
      * card's old address outlives the reader's access to the project that
      * once held it, and only this route knows where the card went. */
     resolvesProjectMiss?: boolean;
+    /**
+     * Which shape `AppShell` draws inside `<main>` while this route's data is
+     * in flight. A declaration rather than a `pendingComponent` on purpose —
+     * see the note over `createRouter` (T-265).
+     */
+    pageSkeleton?: PageSkeletonKind;
   }
 }
 
@@ -143,7 +151,7 @@ const projectBoardRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "board",
   component: BoardPage,
-  staticData: { fillsViewport: true },
+  staticData: { fillsViewport: true, pageSkeleton: "board" },
 });
 
 const projectSearchRoute = createRoute({
@@ -158,6 +166,7 @@ const newIssueRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "issues/new",
   component: NewIssuePage,
+  staticData: { pageSkeleton: "sections" },
 });
 
 const issueRoute = createRoute({
@@ -165,7 +174,7 @@ const issueRoute = createRoute({
   path: "issues/$number",
   component: IssueDetailPage,
   errorComponent: IssueRouteError,
-  staticData: { resolvesProjectMiss: true },
+  staticData: { resolvesProjectMiss: true, pageSkeleton: "detail" },
 });
 
 // Lazy: the spec view drags @pierre/diffs and the annotation layer along —
@@ -183,12 +192,14 @@ const specViewRoute = createRoute({
   // Not lazy, unlike the component above: an error boundary that arrived in
   // the spec page's own chunk could not answer for a spec that is not here.
   errorComponent: SpecRouteError,
+  staticData: { pageSkeleton: "detail" },
 });
 
 const projectSettingsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "settings",
   component: ProjectSettingsPage,
+  staticData: { pageSkeleton: "sections" },
 });
 
 const inboxRoute = createRoute({
@@ -201,6 +212,7 @@ const profileSettingsRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/settings/profile",
   component: ProfileSettingsPage,
+  staticData: { pageSkeleton: "sections" },
 });
 
 const agentsSettingsRoute = createRoute({
@@ -211,12 +223,14 @@ const agentsSettingsRoute = createRoute({
   // and stays out of the URL.
   validateSearch: (search): { state?: "deactivated" } =>
     search.state === "deactivated" ? { state: "deactivated" } : {},
+  staticData: { pageSkeleton: "sections" },
 });
 
 const tokensSettingsRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/settings/tokens",
   component: TokensSettingsPage,
+  staticData: { pageSkeleton: "sections" },
 });
 
 const cliAuthRoute = createRoute({
@@ -247,6 +261,16 @@ const routeTree = rootRoute.addChildren([
   ]),
 ]);
 
+/**
+ * Do not add `pendingComponent` to a route here, and do not add
+ * `defaultPendingComponent` to this call. Either one makes the router build a
+ * Suspense boundary of its own per route (`Match.js:39`, v1.170.25), nested
+ * deeper than the one `AppShell` draws inside `<main>` and therefore the one
+ * that actually catches — with the route's fallback, not the shell's. Which
+ * of the two wins then takes reading the router's source to work out. One
+ * boundary plus `staticData.pageSkeleton` leaves exactly one possible
+ * behaviour (T-265).
+ */
 export const router = createRouter({ routeTree });
 
 declare module "@tanstack/react-router" {
