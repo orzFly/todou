@@ -16,7 +16,7 @@ import type {
   SearchItem,
   SearchPage,
 } from "@todou/shared";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
 import { recentOpenIssuesQuery } from "../src/api/issues.ts";
 import {
@@ -43,6 +43,10 @@ import { SearchBox } from "../src/components/search-box.tsx";
 import { SearchHighlight } from "../src/components/search-highlight.tsx";
 import { groupByIssue, SearchResults } from "../src/pages/search.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
+
+// The box remembers what it was asked to search (T-270), and one case's
+// searches would otherwise turn up as history rows in the next one's panel.
+afterEach(() => localStorage.clear());
 
 const status = {
   id: 1,
@@ -1170,9 +1174,10 @@ describe("SearchBox · qualifier completion", () => {
     expect(input.getAttribute("autocomplete")).toBe("off");
   });
 
-  it("offers ten rows at most, however many values there are", async () => {
+  it("offers twenty rows at most, however many values there are", async () => {
     // Forty labels opened a panel taller than the window, which then gave
-    // the page its own scrollbar (T-268).
+    // the page its own scrollbar (T-268). The budget went to twenty with
+    // T-270; the panel's own height cap is what holds a short window.
     const client = seedPools(seedBox());
     client.setQueryData(
       labelsQuery("todou").queryKey,
@@ -1189,8 +1194,8 @@ describe("SearchBox · qualifier completion", () => {
     await waitFor(() =>
       expect(rowTexts(utils.container)[0]).toContain("area:0"),
     );
-    // Ten offers plus the search row, which is never spent.
-    expect(optionsOf(utils.container)).toHaveLength(11);
+    // Twenty offers plus the search row, which is never spent.
+    expect(optionsOf(utils.container)).toHaveLength(21);
     expect(rowTexts(utils.container).at(-1)).toContain("Search for");
   });
 

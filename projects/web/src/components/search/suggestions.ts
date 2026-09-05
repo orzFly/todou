@@ -29,7 +29,12 @@ export type CompletionRow = {
  * recognises. `matched` is the whole ordering rule: a source that only
  * *could* be useful stays below the search row.
  */
-export type SourceResult<Row> = { matched: boolean; rows: Row[] };
+export type SourceResult<Row> = {
+  matched: boolean;
+  rows: Row[];
+  /** Takes only what the other sources left, and never crowds them out. */
+  yields?: boolean;
+};
 
 export type SuggestionSource = (
   ctx: SuggestionContext,
@@ -50,18 +55,32 @@ export type SuggestionSource = (
  * added later lands in the same budget without having to remember one. The
  * matched rows spend it first — they are what the reader is completing — the
  * search row is never spent, and whatever is left goes to the rest.
+ *
+ * A source marked `yields` waits for both of those to be served and takes
+ * only the remainder. History (T-270) is the one that does: a completion or a
+ * jump answers the string being typed right now, history answers what was
+ * searched before, and the seven qualifier keys are the only place the syntax
+ * can be discovered — so history is what gives way when the panel is full.
  */
 export function orderRows<Row>(
   results: Array<SourceResult<Row>>,
   search: Row,
-  limit = 10,
+  limit = 20,
 ): Row[] {
-  const matched = results
-    .filter((r) => r.matched)
-    .flatMap((r) => r.rows)
-    .slice(0, limit);
-  const rest = results.filter((r) => !r.matched).flatMap((r) => r.rows);
-  return [...matched, search, ...rest.slice(0, limit - matched.length)];
+  const band = (yields: boolean, matched: boolean) =>
+    results
+      .filter((r) => (r.yields ?? false) === yields && r.matched === matched)
+      .flatMap((r) => r.rows);
+
+  const firmMatched = band(false, true);
+  const firmRest = band(false, false);
+  const room = Math.max(0, limit - firmMatched.length - firmRest.length);
+  const softMatched = band(true, true).slice(0, room);
+  const softRest = band(true, false).slice(0, room - softMatched.length);
+
+  const matched = [...firmMatched, ...softMatched].slice(0, limit);
+  const rest = [...firmRest, ...softRest].slice(0, limit - matched.length);
+  return [...matched, search, ...rest];
 }
 
 const EMPTY: SourceResult<CompletionRow> = { matched: false, rows: [] };
@@ -247,8 +266,8 @@ export type ProjectRefOption = {
  * thing that does not happen mid-query.
  *
  * **One row per project.** The spellings are synonyms, so a second row for
- * the same project buys the reader nothing and costs a line of a panel that
- * only has ten. The best one that matches wins; typing one more character
+ * the same project buys the reader nothing and costs a line of a panel whose
+ * budget every source shares. The best one that matches wins; typing one more character
  * (`acce`, past the prefix) is how the other one is asked for.
  *
  * Nothing is completed to itself: once `ACC-` is typed, offering `ACC-` is

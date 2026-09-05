@@ -173,7 +173,7 @@ describe("the project reference source", () => {
 
   it("offers one row per project, however many spellings match", () => {
     // `ac` prefixes both `ACC-` and `accel/`; they are synonyms, and a
-    // second row would spend a line of ten to say the same thing twice.
+    // second row would spend a line of the shared budget saying it twice.
     expect(projects("ac|").rows).toHaveLength(1);
   });
 
@@ -254,11 +254,11 @@ describe("row order", () => {
   const many = (prefix: string, n: number) =>
     Array.from({ length: n }, (_, i) => row(`${prefix}${i}`));
 
-  it("stops at ten, however much a source has to say", () => {
+  it("stops at twenty, however much a source has to say", () => {
     // A project with forty labels used to open a panel taller than the
     // window, which then gave the page its own scrollbar (T-268).
     const rows = orderRows([{ matched: true, rows: many("m", 40) }], search);
-    expect(rows).toHaveLength(11);
+    expect(rows).toHaveLength(21);
     expect(rows.at(-1)).toBe(search);
   });
 
@@ -266,19 +266,68 @@ describe("row order", () => {
     const rows = orderRows(
       [
         { matched: true, rows: many("m", 3) },
-        { matched: false, rows: many("u", 20) },
+        { matched: false, rows: many("u", 30) },
       ],
       search,
     ).map((r) => r.key);
-    expect(rows).toHaveLength(11);
+    expect(rows).toHaveLength(21);
     expect(rows.slice(0, 4)).toEqual(["m0", "m1", "m2", "search"]);
-    expect(rows.slice(4)).toEqual(many("u", 7).map((r) => r.key));
+    expect(rows.slice(4)).toEqual(many("u", 17).map((r) => r.key));
   });
 
   it("gives the whole budget to the rows below when nothing matched", () => {
     const rows = orderRows([{ matched: false, rows: many("u", 40) }], search);
-    expect(rows).toHaveLength(11);
+    expect(rows).toHaveLength(21);
     expect(rows[0]).toBe(search);
+  });
+});
+
+describe("a source that yields", () => {
+  const row = (key: string) => ({ key }) as { key: string };
+  const search = row("search");
+  const many = (prefix: string, n: number) =>
+    Array.from({ length: n }, (_, i) => row(`${prefix}${i}`));
+
+  it("takes what the firm sources left, and stays above the search row", () => {
+    const rows = orderRows(
+      [
+        { matched: false, rows: many("k", 7) },
+        { matched: true, yields: true, rows: many("h", 40) },
+      ],
+      search,
+    ).map((r) => r.key);
+    expect(rows.slice(0, 13)).toEqual(many("h", 13).map((r) => r.key));
+    expect(rows[13]).toBe("search");
+    // The keys are the whole list of them, one row short of nothing: that is
+    // what yielding buys, and it is the only place the syntax is discovered.
+    expect(rows.slice(14)).toEqual(many("k", 7).map((r) => r.key));
+  });
+
+  it("offers nothing at all once the firm sources have spent the budget", () => {
+    const rows = orderRows(
+      [
+        { matched: true, rows: many("m", 20) },
+        { matched: true, yields: true, rows: many("h", 5) },
+      ],
+      search,
+    ).map((r) => r.key);
+    expect(rows).toEqual([...many("m", 20).map((r) => r.key), "search"]);
+  });
+
+  it("serves its own matched band before its weaker one", () => {
+    const rows = orderRows(
+      [
+        { matched: false, rows: many("k", 17) },
+        { matched: true, yields: true, rows: many("h", 2) },
+        { matched: false, yields: true, rows: many("c", 5) },
+      ],
+      search,
+    ).map((r) => r.key);
+    expect(rows.slice(0, 2)).toEqual(["h0", "h1"]);
+    expect(rows[2]).toBe("search");
+    expect(rows.slice(3)).toEqual(
+      [...many("k", 17), row("c0")].map((r) => r.key),
+    );
   });
 });
 

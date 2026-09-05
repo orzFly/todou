@@ -9,18 +9,25 @@ import {
 import { fireEvent, render, waitFor } from "@testing-library/react";
 import type {
   IssueListItem,
+  Label,
   Me,
   Project,
   ReferenceDirectory,
 } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
-import { projectQuery, projectsQuery } from "../src/api/queries.ts";
+import {
+  labelsQuery,
+  meQuery,
+  projectQuery,
+  projectsQuery,
+} from "../src/api/queries.ts";
 import {
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
 import { AppShell } from "../src/components/shell.tsx";
+import { historyKey, readHistory } from "../src/lib/search-history.ts";
 import { testQueryClient } from "./render.tsx";
 
 /**
@@ -87,6 +94,7 @@ const refItem = (number: number, title: string): IssueListItem => ({
 function seeded(): QueryClient {
   const client = testQueryClient();
   client.setQueryData(["auth-mode"], { mode: "single" });
+  client.setQueryData(meQuery.queryKey, me);
   const project: Project = {
     id: 1,
     slug: "todou",
@@ -147,7 +155,7 @@ function renderShellAt(width: number) {
     routeTree: rootRoute.addChildren([projectRoute.addChildren(children)]),
     history: createMemoryHistory({ initialEntries: ["/projects/todou"] }),
   });
-  return render(<RouterProvider router={router} />);
+  return { ...render(<RouterProvider router={router} />), client, router };
 }
 
 const boxes = (root: ParentNode) => root.querySelectorAll("input[name='q']");
@@ -160,7 +168,10 @@ function rows(view: { container: HTMLElement }) {
   return { first: header.children[0], project: header.children[1] };
 }
 
-afterEach(() => happyDom.happyDOM.setViewport({ width: 1024 }));
+afterEach(() => {
+  happyDom.happyDOM.setViewport({ width: 1024 });
+  localStorage.clear();
+});
 
 describe("the header's search, wide", () => {
   it("seats the box between the two clusters, and folds nothing", async () => {
@@ -329,5 +340,181 @@ describe("the header's project row", () => {
       icon.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(boxes(view.container)).toHaveLength(0);
+  });
+});
+
+const NOW = Date.parse("2026-09-05T12:00:00Z");
+
+function seedHistory(entries: string[], slug = "todou") {
+  localStorage.setItem(
+    historyKey(me.id),
+    JSON.stringify({
+      [slug]: entries.map((q, i) => ({ q, t: NOW - i * 1000 })),
+    }),
+  );
+}
+
+const remembered = (slug = "todou") =>
+  (readHistory(me.id)[slug] ?? []).map((e) => e.q);
+
+type View = { container: HTMLElement };
+const panel = (view: View) => view.container.querySelector('[role="listbox"]');
+const options = (view: View) => [
+  ...(panel(view)?.querySelectorAll('[role="option"]') ?? []),
+];
+const historyRows = (view: View) =>
+  options(view).filter((o) => o.querySelector('button[aria-label^="Forget"]'));
+
+async function openedOn(entries: string[]) {
+  seedHistory(entries);
+  const view = renderShellAt(1280);
+  const input = (await view.findByLabelText(
+    "Search this project",
+  )) as HTMLInputElement;
+  fireEvent.focusIn(input);
+  await waitFor(() =>
+    expect(historyRows(view)).toHaveLength(Math.min(entries.length, 13)),
+  );
+  return { view, input };
+}
+
+describe("the search box's own history", () => {
+  it("fills a focused empty box with history, the search page, then the keys", async () => {
+    const { view, input } = await openedOn(["label:area:web", "补全 面板"]);
+
+    const texts = options(view).map((o) => o.textContent);
+    expect(texts.slice(0, 2)).toEqual(["label:area:web", "补全 面板"]);
+    expect(texts[2]).toContain("search page");
+    // The full key table is the only place the syntax can be discovered, so
+    // it is what history is not allowed to push out.
+    expect(texts.slice(3)).toHaveLength(7);
+    expect(input.getAttribute("aria-activedescendant")).toBeNull();
+  });
+
+  it("takes what the key list leaves and no more", async () => {
+    const { view } = await openedOn(
+      Array.from({ length: 20 }, (_, i) => `查询 ${i}`),
+    );
+    expect(historyRows(view)).toHaveLength(13);
+    expect(options(view)).toHaveLength(21);
+    expect(options(view).slice(14)).toHaveLength(7);
+  });
+
+  it("stands aside entirely once the completions have spent the budget", async () => {
+    seedHistory(["bug"]);
+    const view = renderShellAt(1280);
+    const labels: Label[] = Array.from({ length: 25 }, (_, i) => ({
+      id: i + 1,
+      name: `label-${i}`,
+      color: "#3b82f6",
+    }));
+    view.client.setQueryData(labelsQuery("todou").queryKey, labels);
+    const input = await view.findByLabelText("Search this project");
+    fireEvent.focusIn(input);
+    fireEvent.change(input, { target: { value: "label:" } });
+
+    await waitFor(() => expect(options(view)).toHaveLength(21));
+    expect(historyRows(view)).toHaveLength(0);
+  });
+
+  it("lifts a prefix hit above the search row and leaves a substring below", async () => {
+    seedHistory(["补全 面板 排序", "搜索框 补全"]);
+    const view = renderShellAt(1280);
+    const input = await view.findByLabelText("Search this project");
+    fireEvent.focusIn(input);
+    fireEvent.change(input, { target: { value: "补全" } });
+
+    await waitFor(() => expect(historyRows(view)).toHaveLength(2));
+    const texts = options(view).map((o) => o.textContent);
+    expect(texts[0]).toBe("补全 面板 排序");
+    expect(texts[1]).toContain("Search for");
+    expect(texts[2]).toBe("搜索框 补全");
+  });
+
+  it("runs the remembered search, and moves that entry back to the front", async () => {
+    const { view } = await openedOn(["bug", "spec"]);
+
+    const link = historyRows(view)[1]?.querySelector("a") as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/projects/todou/search?q=spec");
+    fireEvent.click(link);
+
+    await waitFor(() =>
+      expect(view.router.state.location.pathname).toBe(
+        "/projects/todou/search",
+      ),
+    );
+    expect(remembered()).toEqual(["spec", "bug"]);
+  });
+
+  it("loads a highlighted entry back into the box on Tab", async () => {
+    const { view, input } = await openedOn(["label:area:web"]);
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Tab" });
+
+    await waitFor(() => expect(input.value).toBe("label:area:web"));
+    expect(input.selectionStart).toBe("label:area:web".length);
+    expect(view.router.state.location.pathname).toBe("/projects/todou");
+  });
+
+  it("forgets the highlighted entry on Shift+Delete, panel still open", async () => {
+    const { view, input } = await openedOn(["bug", "spec"]);
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Delete", shiftKey: true });
+
+    await waitFor(() => expect(historyRows(view)).toHaveLength(1));
+    expect(panel(view)).not.toBeNull();
+    expect(remembered()).toEqual(["spec"]);
+  });
+
+  it("forgets an entry from its own button, and goes nowhere", async () => {
+    const { view } = await openedOn(["bug", "spec"]);
+
+    const button = historyRows(view)[0]?.querySelector(
+      "button",
+    ) as HTMLButtonElement;
+    fireEvent.click(button);
+
+    await waitFor(() => expect(historyRows(view)).toHaveLength(1));
+    expect(remembered()).toEqual(["spec"]);
+    expect(view.router.state.location.pathname).toBe("/projects/todou");
+  });
+
+  it("remembers a query as it is submitted", async () => {
+    const view = renderShellAt(1280);
+    const input = await view.findByLabelText("Search this project");
+    fireEvent.focusIn(input);
+    fireEvent.change(input, { target: { value: "全文搜索" } });
+    fireEvent.submit(input.closest("form") as HTMLFormElement);
+
+    await waitFor(() => expect(remembered()).toEqual(["全文搜索"]));
+  });
+
+  it("remembers nothing about an input that turned out to be a jump", async () => {
+    // A ref is navigation, not a search: `T-141` is quicker to retype than to
+    // find, and the card has better ways back.
+    const view = renderShellAt(1280);
+    const input = await view.findByLabelText("Search this project");
+    fireEvent.focusIn(input);
+    fireEvent.change(input, { target: { value: "T-141" } });
+    fireEvent.submit(input.closest("form") as HTMLFormElement);
+
+    await waitFor(() =>
+      expect(view.router.state.location.pathname).toBe(
+        "/projects/todou/issues/141",
+      ),
+    );
+    expect(readHistory(me.id)).toEqual({});
+  });
+
+  it("keeps one project's history out of another's box", async () => {
+    seedHistory(["theirs"], "accel");
+    const view = renderShellAt(1280);
+    const input = await view.findByLabelText("Search this project");
+    fireEvent.focusIn(input);
+
+    await waitFor(() => expect(panel(view)).not.toBeNull());
+    expect(historyRows(view)).toHaveLength(0);
   });
 });

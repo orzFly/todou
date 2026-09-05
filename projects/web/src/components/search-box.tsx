@@ -7,11 +7,13 @@ import {
 } from "@todou/shared";
 import {
   ArrowRightIcon,
+  ClockIcon,
   ExternalLinkIcon,
   FilterIcon,
   FolderIcon,
   SearchIcon,
   TagIcon,
+  XIcon,
 } from "lucide-react";
 import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
@@ -31,6 +33,7 @@ import {
 } from "@/api/ref-jump.ts";
 import { referenceDirectoryQuery } from "@/api/references.ts";
 import { searchFacetsQuery } from "@/api/search.ts";
+import { useSearchHistory } from "@/api/search-history.ts";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import {
   highlightParts,
@@ -51,6 +54,7 @@ import {
   type ValuePools,
 } from "@/components/search/suggestions.ts";
 import { Skeleton } from "@/components/ui/skeleton";
+import { matchHistory, type SearchHistoryEntry } from "@/lib/search-history.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import { useSlashShortcut } from "@/lib/use-slash-shortcut.ts";
 import { cn } from "@/lib/utils";
@@ -58,13 +62,27 @@ import { cn } from "@/lib/utils";
 /** The last row, always present: what the box did before it understood refs. */
 type SearchRow = { kind: "search" };
 type CompletionBoxRow = { kind: "completion"; row: CompletionRow };
-type BoxRow = JumpRow | ProjectPeekRow | SearchRow | CompletionBoxRow;
+/** A query searched here before (T-270). */
+type HistoryBoxRow = { kind: "history"; q: string };
+type BoxRow =
+  | JumpRow
+  | ProjectPeekRow
+  | SearchRow
+  | CompletionBoxRow
+  | HistoryBoxRow;
+
+const historyRow = (entry: SearchHistoryEntry): BoxRow => ({
+  kind: "history",
+  q: entry.q,
+});
 
 type Destination =
   | { to: "card"; target: JumpTarget }
   | { to: "project"; slug: string }
   | { to: "external"; href: string }
-  | { to: "search" };
+  // The query travels with the destination because a history row searches for
+  // its own text, not for what is in the box.
+  | { to: "search"; q: string };
 
 /** Would this row leave the project? The search row then says where it searches. */
 function pointsElsewhere(row: JumpRow, slug: string): boolean {
@@ -257,10 +275,19 @@ export function SearchBox({
     ];
   }, [slug, value, position.caret, parts, pools, projectRefs]);
 
+  const history = useSearchHistory(slug);
+  // Matched against the whole query rather than the word under the caret: an
+  // entry is one entire past search, which is not the kind of thing a
+  // completion is.
+  const past = useMemo(
+    () => matchHistory(history.entries, value),
+    [history.entries, value],
+  );
+
   const rows: BoxRow[] = orderRows<BoxRow>(
     [
-      // One source, so the ten-row budget covers the peek too: the home row
-      // is what the reader named and the cards below it come out of the same
+      // One source, so one budget covers the peek too: the home row is what
+      // the reader named and the cards below it come out of the same
       // allowance as everything else (T-268).
       { matched: true, rows: [...jumpRows, ...peek] },
       ...completions.map((result) => ({
@@ -269,6 +296,8 @@ export function SearchBox({
           (row): BoxRow => ({ kind: "completion" as const, row }),
         ),
       })),
+      { matched: true, yields: true, rows: past.starts.map(historyRow) },
+      { matched: false, yields: true, rows: past.contains.map(historyRow) },
     ],
     { kind: "search" },
   );
@@ -314,11 +343,11 @@ export function SearchBox({
 
   /** Accepting an offer rewrites the query; the caret goes where it says. */
   const pendingCaret = useRef<number | null>(null);
-  const accept = (row: CompletionRow) => {
-    setValue(row.apply.value);
+  const accept = (apply: { value: string; caret: number }) => {
+    setValue(apply.value);
     setHighlight(NONE);
     setDismissed(false);
-    pendingCaret.current = row.apply.caret;
+    pendingCaret.current = apply.caret;
   };
   useLayoutEffect(() => {
     const caret = pendingCaret.current;
@@ -330,11 +359,22 @@ export function SearchBox({
     el.setSelectionRange(caret, caret);
   });
 
-  /** The first row Tab may take — the search row and a jump are not offers. */
-  const acceptable = (from: number): CompletionRow | null => {
+  /**
+   * What Tab takes — the search row and a jump are not offers.
+   *
+   * A highlighted history row loads its whole query into the box, which is
+   * what T-262's Tab already means: take the offer and keep editing. With
+   * nothing highlighted Tab still falls back to the first *completion* and
+   * never to history — an unaimed Tab means "finish the word I am typing",
+   * and a whole past query is a long way from that.
+   */
+  const acceptable = (
+    from: number,
+  ): { value: string; caret: number } | null => {
     const at = rows[from];
-    if (at?.kind === "completion") return at.row;
-    for (const row of rows) if (row.kind === "completion") return row.row;
+    if (at?.kind === "completion") return at.row.apply;
+    if (at?.kind === "history") return { value: at.q, caret: at.q.length };
+    for (const row of rows) if (row.kind === "completion") return row.row.apply;
     return null;
   };
 
@@ -347,9 +387,10 @@ export function SearchBox({
   const decide = async (): Promise<Destination> => {
     // Esc hid the offer, and hiding it has to mean something: Enter then
     // does the plain thing rather than following an invisible highlight.
-    if (dismissed) return { to: "search" };
+    if (dismissed) return { to: "search", q: query };
     const chosen = open && hl !== NONE ? rows[hl] : undefined;
-    if (chosen?.kind === "search") return { to: "search" };
+    if (chosen?.kind === "search") return { to: "search", q: query };
+    if (chosen?.kind === "history") return { to: "search", q: chosen.q };
     if (chosen?.kind === "external")
       return { to: "external", href: chosen.href };
     if (chosen?.kind === "issue" && chosen.state === "ready") {
@@ -362,8 +403,8 @@ export function SearchBox({
         target: { slug: chosen.slug, number: chosen.number },
       };
     }
-    if (chosen?.kind === "completion") return { to: "search" };
-    if (hasQualifier(parts)) return { to: "search" };
+    if (chosen?.kind === "completion") return { to: "search", q: query };
+    if (hasQualifier(parts)) return { to: "search", q: query };
     setWaiting(true);
     try {
       const found = await jumpDestinationPromise(queryClient, slug, value);
@@ -374,19 +415,21 @@ export function SearchBox({
     } finally {
       setWaiting(false);
     }
-    return { to: "search" };
+    return { to: "search", q: query };
   };
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (query === "") return;
     const chosen = open && hl !== NONE ? rows[hl] : undefined;
     // Enter on a completion takes it and stays put; the reader is still
     // building the query, not asking for it.
     if (chosen?.kind === "completion") {
-      accept(chosen.row);
+      accept(chosen.row.apply);
       return;
     }
+    // An empty box has nothing to submit — unless a history row is what is
+    // being submitted, which is the whole point of offering them there.
+    if (query === "" && chosen?.kind !== "history") return;
     const destination = await decide();
     setDismissed(true);
     if (destination.to === "card") {
@@ -414,10 +457,11 @@ export function SearchBox({
       // link so there is always a way that cannot be blocked.
       window.open(destination.href, "_blank", "noreferrer");
     } else {
+      history.record(destination.q);
       navigate({
         to: "/projects/$slug/search",
         params: { slug },
-        search: { q: query },
+        search: { q: destination.q },
       });
     }
   };
@@ -430,11 +474,17 @@ export function SearchBox({
       }
       setDismissed(true);
     } else if (e.key === "Tab" && open && !e.shiftKey) {
-      const row = acceptable(hl);
-      if (row === null) return;
-      accept(row);
+      const apply = acceptable(hl);
+      if (apply === null) return;
+      accept(apply);
     } else if (!open) {
       return;
+    } else if (e.key === "Delete" && e.shiftKey) {
+      // The address bar's own gesture for the same thing. macOS has no
+      // Delete key of its own; the row's button is the path there.
+      const at = rows[hl];
+      if (at?.kind !== "history") return;
+      history.forget(at.q);
     } else if (e.key === "ArrowDown") {
       setHighlight(Math.min(hl + 1, rows.length - 1));
     } else if (e.key === "ArrowUp") {
@@ -552,7 +602,12 @@ export function SearchBox({
                   search={blank ? {} : { q: query }}
                   {...optionProps(idx)}
                   onMouseMove={() => setHighlight(idx)}
-                  onClick={closeUnlessNewTab}
+                  onClick={(e) => {
+                    // The blank row leads to the search page rather than to a
+                    // search, so there is nothing to remember.
+                    if (!blank) history.record(query);
+                    closeUnlessNewTab(e);
+                  }}
                 >
                   {blank ? (
                     <ArrowRightIcon
@@ -589,7 +644,7 @@ export function SearchBox({
                   key={row.row.key}
                   {...optionProps(idx)}
                   onMouseMove={() => setHighlight(idx)}
-                  onClick={() => accept(row.row)}
+                  onClick={() => accept(row.row.apply)}
                 >
                   <Icon
                     className="size-3.5 shrink-0 text-muted-foreground"
@@ -604,6 +659,58 @@ export function SearchBox({
                     </span>
                   )}
                 </button>
+              );
+            }
+            if (row.kind === "history") {
+              // The only row whose `role="option"` sits on a container rather
+              // than on the link: a delete button cannot live inside an `<a>`,
+              // so the two go side by side and the link takes the rest of the
+              // line so that nothing is lost from the click target.
+              const props = optionProps(idx);
+              return (
+                <div
+                  key={`history:${row.q}`}
+                  {...props}
+                  // Both are already in `optionProps`; the linter cannot see
+                  // them inside a spread and reads this as an inert div.
+                  role="option"
+                  tabIndex={-1}
+                  className={cn(props.className, "group")}
+                  onMouseMove={() => setHighlight(idx)}
+                >
+                  <Link
+                    to="/projects/$slug/search"
+                    params={{ slug }}
+                    search={{ q: row.q }}
+                    tabIndex={-1}
+                    className="flex min-w-0 flex-1 items-center gap-2"
+                    onClick={(e) => {
+                      history.record(row.q);
+                      closeUnlessNewTab(e);
+                    }}
+                  >
+                    <ClockIcon
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                      aria-hidden
+                    />
+                    <span className="truncate">
+                      {highlightParts(row.q, parseSearchQuery(row.q), known)}
+                    </span>
+                  </Link>
+                  <button
+                    type="button"
+                    // Focus stays in the input, as everywhere else in the panel.
+                    tabIndex={-1}
+                    aria-label={`Forget “${row.q}”`}
+                    className={cn(
+                      "shrink-0 rounded-sm p-0.5 text-muted-foreground opacity-0 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100",
+                      idx === hl && "opacity-100",
+                    )}
+                    onClick={() => history.forget(row.q)}
+                  >
+                    <XIcon className="size-3.5" aria-hidden />
+                  </button>
+                </div>
               );
             }
             if (row.kind === "project") {
