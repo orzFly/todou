@@ -5,7 +5,7 @@ import type {
   Status,
   TodouClient,
 } from "@todou/shared";
-import { canonicalizeLabelName, TodouError } from "@todou/shared";
+import { canonicalizeLabelName, minRoleOf, TodouError } from "@todou/shared";
 import { CliError } from "./errors.ts";
 
 /**
@@ -236,9 +236,12 @@ async function createLabel(
       if (fresh) return fresh;
     }
     if (error.status === 403) {
+      // Still reachable below that role — a reporter's `--label <new name>`
+      // creates the label before the issue.
+      const role = minRoleOf("label.create");
       throw new CliError(
-        `label "${name}" does not exist here, and creating one needs the admin role`,
-        `ask a project admin for \`todou label create ${shellArg(name)} -p ${project}\`, ` +
+        `label "${name}" does not exist here, and creating one needs the ${role} role`,
+        `ask a project ${role} for \`todou label create ${shellArg(name)} -p ${project}\`, ` +
           `or pick an existing one from \`todou label list -p ${project}\``,
       );
     }

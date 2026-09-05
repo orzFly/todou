@@ -12,6 +12,7 @@ import {
   listLabels,
   updateLabel,
 } from "../services/labels.ts";
+import { roleTag } from "./role-tag.ts";
 
 const slugParam = z.object({ slug: ProjectSlug });
 const labelParams = z.object({
@@ -33,7 +34,7 @@ const listRoute = createRoute({
 const createRouteDef = createRoute({
   method: "post",
   path: "/{slug}/labels",
-  summary: "Create a label (admin)",
+  summary: `Create a label ${roleTag("label.create")}`,
   request: { params: slugParam, body: jsonBody(LabelCreateInput) },
   responses: { 201: { description: "Created", ...jsonBody(Label) } },
 });
@@ -41,7 +42,7 @@ const createRouteDef = createRoute({
 const patchRoute = createRoute({
   method: "patch",
   path: "/{slug}/labels/{labelId}",
-  summary: "Update a label (admin)",
+  summary: `Update a label ${roleTag("label.update")}`,
   request: { params: labelParams, body: jsonBody(LabelUpdateInput) },
   responses: { 200: { description: "Updated", ...jsonBody(Label) } },
 });
@@ -49,7 +50,7 @@ const patchRoute = createRoute({
 const deleteRoute = createRoute({
   method: "delete",
   path: "/{slug}/labels/{labelId}",
-  summary: "Delete a label (admin)",
+  summary: `Delete a label ${roleTag("label.delete")}`,
   request: { params: labelParams },
   responses: { 204: { description: "Deleted" } },
 });

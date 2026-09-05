@@ -1,5 +1,6 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
+  minRoleOf,
   ProjectSlug,
   SpecComments,
   SpecCommentsResolveInput,
@@ -21,6 +22,7 @@ import {
   submitSpecReview,
 } from "../services/spec.ts";
 import { movedResponses } from "./moved-responses.ts";
+import { roleTag } from "./role-tag.ts";
 
 const issueParams = z.object({
   slug: ProjectSlug,
@@ -56,8 +58,8 @@ const specPushRoute = createRoute({
   method: "post",
   path: "/{slug}/issues/{number}/spec/push",
   summary:
-    "Replace the spec with the pushed file set (writer); a change becomes " +
-    "one new whole-set version, no change is a no-op",
+    `Replace the spec with the pushed file set ${roleTag("spec.push")}; a ` +
+    "change becomes one new whole-set version, no change is a no-op",
   description:
     "The result carries a `cursor` (T-182): resume a timeline read or a " +
     "watch from it — `--since <cursor>` — and every entry created after " +
@@ -75,7 +77,8 @@ const specReviewRoute = createRoute({
   path: "/{slug}/issues/{number}/spec/reviews",
   summary:
     "Submit one atomic review: verdict + optional summary + staged inline " +
-    "comments (writer; the pusher of the reviewed version is rejected)",
+    `comments (${minRoleOf("spec.review")}; the pusher of the reviewed ` +
+    "version is rejected)",
   request: { params: issueParams, body: jsonBody(SpecReviewSubmitInput) },
   responses: {
     201: { description: "Review", ...jsonBody(SpecReviewResult) },
@@ -98,7 +101,7 @@ const specCommentsRoute = createRoute({
 const specResolveRoute = createRoute({
   method: "post",
   path: "/{slug}/issues/{number}/spec/comments/resolve",
-  summary: "Resolve inline spec comments (writer); one-way, one event",
+  summary: `Resolve inline spec comments ${roleTag("spec.resolve")}; one-way, one event`,
   request: { params: issueParams, body: jsonBody(SpecCommentsResolveInput) },
   responses: {
     200: {

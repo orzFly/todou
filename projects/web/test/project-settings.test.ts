@@ -1,8 +1,20 @@
+import { MEMBER_ROLES } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import {
   normalizeHexColor,
   PRESET_COLORS,
+  ROLES,
 } from "../src/pages/project-settings.tsx";
+
+describe("the member role picker", () => {
+  it("offers every role, most privileged first", () => {
+    expect(ROLES).toEqual(["admin", "writer", "reporter", "reader"]);
+  });
+
+  it("stays in step with the schema rather than keeping its own list", () => {
+    expect(ROLES).toEqual([...MEMBER_ROLES]);
+  });
+});
 
 describe("normalizeHexColor", () => {
   it("canonicalizes case and a missing hash", () => {

@@ -28,7 +28,7 @@ import {
   SlugReservedError,
   ValidationFailedError,
 } from "../errors.ts";
-import { type ProjectRow, requireProject, routeInfoOf } from "./access.ts";
+import { type ProjectRow, requireCapability, routeInfoOf } from "./access.ts";
 import { mirrorRefFormat } from "./reference-directory.ts";
 
 export function toProject(row: ProjectRow, viewerRole?: MemberRole): Project {
@@ -289,7 +289,12 @@ export async function updateProject(
   slug: string,
   input: ProjectUpdateInput,
 ): Promise<Project> {
-  const { project } = await requireProject(ctx, actor, slug, "admin");
+  const { project } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "project.update",
+  );
   const system = ctx.router.system();
   const rename =
     input.slug !== undefined && input.slug !== project.slug ? input.slug : null;
@@ -336,7 +341,12 @@ export async function deleteProject(
   actor: UserRow,
   slug: string,
 ): Promise<void> {
-  const { project } = await requireProject(ctx, actor, slug, "admin");
+  const { project } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "project.delete",
+  );
   const system = ctx.router.system();
   const url = ctx.router.resolveProjectUrl(routeInfoOf(project));
 

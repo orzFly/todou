@@ -9,6 +9,7 @@ import type {
   TokenCreateInput,
   TokenListItem,
 } from "@todou/shared";
+import { ROLE_RANK } from "@todou/shared";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -220,15 +221,8 @@ export async function revokeAgentToken(
   await revokeToken(ctx.router.system(), agent.id, tokenId);
 }
 
-/**
- * Display order, not a permission order — access.ts keeps its own RANK
- * ascending by privilege for comparisons, and does not export it.
- */
-const ROLE_ORDER: Record<MemberRole, number> = {
-  admin: 0,
-  writer: 1,
-  reader: 2,
-};
+/** Most privileged first, which is the reverse of the comparison order. */
+const roleOrder = (role: MemberRole): number => -ROLE_RANK[role];
 
 const toBrief = (p: typeof projects.$inferSelect): ProjectBrief => ({
   id: p.id,
@@ -300,7 +294,7 @@ export async function listAgentMemberships(
       .sort(
         (a, b) =>
           a.agent_id - b.agent_id ||
-          ROLE_ORDER[a.role] - ROLE_ORDER[b.role] ||
+          roleOrder(a.role) - roleOrder(b.role) ||
           a.project.slug.localeCompare(b.project.slug),
       ),
     manageable_projects: manageable

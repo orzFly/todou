@@ -4,7 +4,7 @@ import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import { projectMembers, users } from "../db/system-schema.ts";
 import { ConflictError, NotFoundError } from "../errors.ts";
-import { requireProject } from "./access.ts";
+import { requireCapability } from "./access.ts";
 import { getUserRefs } from "./users.ts";
 
 export async function listMembers(
@@ -12,7 +12,7 @@ export async function listMembers(
   actor: UserRow,
   slug: string,
 ): Promise<Member[]> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project } = await requireCapability(ctx, actor, slug, "member.list");
   const system = ctx.router.system();
   const rows = await system
     .select()
@@ -37,7 +37,7 @@ export async function setMember(
   userId: number,
   role: MemberRole,
 ): Promise<void> {
-  const { project } = await requireProject(ctx, actor, slug, "admin");
+  const { project } = await requireCapability(ctx, actor, slug, "member.set");
   const system = ctx.router.system();
 
   const target = await system
@@ -69,7 +69,12 @@ export async function removeMember(
   slug: string,
   userId: number,
 ): Promise<void> {
-  const { project } = await requireProject(ctx, actor, slug, "admin");
+  const { project } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "member.remove",
+  );
   await ensureNotLastAdmin(ctx, project.id, userId);
   const deleted = await ctx.router
     .system()

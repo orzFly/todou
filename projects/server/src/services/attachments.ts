@@ -29,7 +29,7 @@ import { S3Storage } from "../storage/s3.ts";
 import {
   type ProjectRow,
   projectForRead,
-  requireProject,
+  requireCapability,
   routeInfoOf,
 } from "./access.ts";
 import { visibleProjects } from "./cross-references.ts";
@@ -92,7 +92,12 @@ export async function uploadAttachment(
   file: File,
   agentContext: AgentContext | null = null,
 ): Promise<Attachment> {
-  const { project, role } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "attachment.upload",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   const maxBytes = ctx.config.storage.max_upload_mb * 1024 * 1024;
@@ -194,7 +199,12 @@ export async function requestDirectUpload(
   slug: string,
   input: DirectUploadRequest,
 ): Promise<DirectUploadTicket> {
-  const { project, role } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "attachment.upload",
+  );
   // The size gate precedes the backend gate: an oversize declaration means
   // no upload path will take the file, so clients probing this endpoint
   // first (the CLI does) learn that before shipping a single body byte —
@@ -266,7 +276,12 @@ export async function completeDirectUpload(
   uploadId: number,
   agentContext: AgentContext | null = null,
 ): Promise<Attachment> {
-  const { project, role } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "attachment.upload",
+  );
   if (!(ctx.storage instanceof S3Storage)) {
     throw new DirectUploadUnavailableError();
   }

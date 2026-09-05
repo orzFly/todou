@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import type { MoveIssueResult, Project } from "@todou/shared";
+import { can, type MoveIssueResult, type Project } from "@todou/shared";
 import { useState } from "react";
 import { movePreviewQuery, useMoveIssueMutation } from "@/api/issues.ts";
 import { projectsQuery } from "@/api/queries.ts";
@@ -46,8 +46,10 @@ export function MoveIssueDialog({
     (project) =>
       project.slug !== slug &&
       // The server checks this again; listing only what the mover can
-      // actually write into keeps the picker from offering dead ends.
-      (project.viewer_role === "admin" || project.viewer_role === "writer"),
+      // actually write into keeps the picker from offering dead ends. The
+      // destination's own capability, not the source's: what is being asked
+      // is whether a card may be brought *into* this project.
+      can(project.viewer_role ?? null, "issue.move_in"),
   );
 
   const close = (next: boolean) => {

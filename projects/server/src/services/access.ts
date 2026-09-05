@@ -1,4 +1,9 @@
-import type { MemberRole } from "@todou/shared";
+import {
+  type CapabilityId,
+  type MemberRole,
+  minRoleOf,
+  ROLE_RANK,
+} from "@todou/shared";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -6,8 +11,6 @@ import { projectMembers, projects, slugHistory } from "../db/system-schema.ts";
 import { ForbiddenError, NotFoundError } from "../errors.ts";
 
 export type ProjectRow = typeof projects.$inferSelect;
-
-const RANK: Record<MemberRole, number> = { reader: 0, writer: 1, admin: 2 };
 
 /** A resolved project, and whether the caller reached it by a retired slug. */
 export type ProjectLookup = { project: ProjectRow; viaAlias: boolean };
@@ -73,20 +76,44 @@ export async function projectRoleOf(
 /**
  * Loads the project and enforces the minimum role. Non-members get a 404
  * (not 403) so project existence is never leaked.
+ *
+ * Call `requireCapability` instead: a role passed as a literal here is a
+ * requirement written down where neither the permission table nor anyone
+ * changing the rules will find it, which is what the catalog exists to end.
+ * A test in this package fails on any such call site outside this file.
  */
 export async function requireProject(
   ctx: AppContext,
   user: UserRow,
   slug: string,
   minRole: MemberRole,
+  cap?: CapabilityId,
 ): Promise<{ project: ProjectRow; role: MemberRole }> {
   const project = await getProjectBySlug(ctx, slug);
   const role = await projectRoleOf(ctx, project, user);
   if (role === null) throw new NotFoundError("project not found");
-  if (RANK[role] < RANK[minRole]) {
-    throw new ForbiddenError(`requires ${minRole} role`);
+  if (ROLE_RANK[role] < ROLE_RANK[minRole]) {
+    // Naming the capability turns the 403 into the one line of the catalog
+    // to go read, rather than a role the reader must then hunt for.
+    const detail = cap === undefined ? "" : ` (${cap})`;
+    throw new ForbiddenError(`requires ${minRole} role${detail}`);
   }
   return { project, role };
+}
+
+/**
+ * The gate every `/projects/{slug}/*` write and role-scoped read goes
+ * through. The role it demands is not written here but read from the shared
+ * capability catalog, so the permission table the UI renders and the check
+ * that enforces it cannot disagree.
+ */
+export async function requireCapability(
+  ctx: AppContext,
+  user: UserRow,
+  slug: string,
+  cap: CapabilityId,
+): Promise<{ project: ProjectRow; role: MemberRole }> {
+  return requireProject(ctx, user, slug, minRoleOf(cap), cap);
 }
 
 /**

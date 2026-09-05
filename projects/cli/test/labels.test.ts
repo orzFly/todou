@@ -1,3 +1,4 @@
+import { minRoleOf } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import { labelColorFor } from "../src/resolve.ts";
 import { fakeFetch, loggedInEnv, type Route, runCli } from "./harness.ts";
@@ -180,7 +181,7 @@ describe("label auto-creation (T-135)", () => {
     expect(posted?.label_ids).toEqual([12]);
   });
 
-  it("explains the admin role when creation is forbidden", async () => {
+  it("names the role the catalog requires when creation is forbidden", async () => {
     const { fetchImpl } = fakeFetch([
       ["GET", "/api/projects/todou/labels", [bug]],
       [
@@ -189,7 +190,10 @@ describe("label auto-creation (T-135)", () => {
         {
           __status: 403,
           body: {
-            error: { code: "forbidden", message: "requires admin role" },
+            error: {
+              code: "forbidden",
+              message: "requires writer role (label.create)",
+            },
           },
         },
       ],
@@ -199,7 +203,9 @@ describe("label auto-creation (T-135)", () => {
       { fetchImpl, env: loggedInEnv("todou") },
     );
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("needs the admin role");
+    expect(result.stderr).toContain(
+      `needs the ${minRoleOf("label.create")} role`,
+    );
     expect(result.stderr).toContain("todou label create 'needs-triage'");
   });
 

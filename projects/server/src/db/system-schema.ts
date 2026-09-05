@@ -1,3 +1,4 @@
+import { MEMBER_ROLES } from "@todou/shared";
 import {
   type AnyPgColumn,
   bigint,
@@ -321,7 +322,10 @@ export const projectMembers = pgTable(
     userId: bigint("user_id", { mode: "number" })
       .notNull()
       .references(() => users.id),
-    role: text("role", { enum: ["admin", "writer", "reader"] }).notNull(),
+    // Taken from the schema rather than spelled again: the column is plain
+    // `text` in postgres, so this list is a TypeScript-only constraint and a
+    // copy that fell behind would narrow reads, not reject writes.
+    role: text("role", { enum: MEMBER_ROLES }).notNull(),
     createdAt: createdAt(),
   },
   (t) => [

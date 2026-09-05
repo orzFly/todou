@@ -4,6 +4,7 @@ import {
   Attachment,
   DirectUploadRequest,
   DirectUploadTicket,
+  minRoleOf,
   ProjectSlug,
 } from "@todou/shared";
 import type { Context } from "hono";
@@ -36,7 +37,7 @@ const blobResponses = {
 const uploadRoute = createRoute({
   method: "post",
   path: "/{slug}/attachments",
-  summary: "Upload a file to an issue (writer, multipart)",
+  summary: `Upload a file to an issue (${minRoleOf("attachment.upload")}, multipart)`,
   request: {
     params: z.object({ slug: ProjectSlug }),
     body: {
@@ -80,7 +81,7 @@ const listRoute = createRoute({
 const directUploadRoute = createRoute({
   method: "post",
   path: "/{slug}/attachments/direct-uploads",
-  summary: "Request a presigned direct upload (writer, s3 backend only)",
+  summary: `Request a presigned direct upload (${minRoleOf("attachment.upload")}, s3 backend only)`,
   request: {
     params: z.object({ slug: ProjectSlug }),
     body: {
@@ -98,7 +99,7 @@ const directUploadRoute = createRoute({
 const directUploadCompleteRoute = createRoute({
   method: "post",
   path: "/{slug}/attachments/direct-uploads/{upload_id}/complete",
-  summary: "Register a finished direct upload (writer, s3 backend only)",
+  summary: `Register a finished direct upload (${minRoleOf("attachment.upload")}, s3 backend only)`,
   request: {
     params: z.object({
       slug: ProjectSlug,

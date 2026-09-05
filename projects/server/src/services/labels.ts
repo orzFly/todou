@@ -4,7 +4,7 @@ import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import { labels } from "../db/project-schema.ts";
 import { ConflictError, NotFoundError } from "../errors.ts";
-import { requireProject, routeInfoOf } from "./access.ts";
+import { requireCapability, routeInfoOf } from "./access.ts";
 
 type LabelRow = typeof labels.$inferSelect;
 
@@ -17,7 +17,7 @@ export async function listLabels(
   actor: UserRow,
   slug: string,
 ): Promise<Label[]> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project } = await requireCapability(ctx, actor, slug, "label.list");
   const db = await ctx.router.forProject(routeInfoOf(project));
   const rows = await db
     .select()
@@ -33,7 +33,7 @@ export async function createLabel(
   slug: string,
   input: LabelCreateInput,
 ): Promise<Label> {
-  const { project } = await requireProject(ctx, actor, slug, "admin");
+  const { project } = await requireCapability(ctx, actor, slug, "label.create");
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   const clash = await db
@@ -64,7 +64,7 @@ export async function updateLabel(
   labelId: number,
   input: LabelUpdateInput,
 ): Promise<Label> {
-  const { project } = await requireProject(ctx, actor, slug, "admin");
+  const { project } = await requireCapability(ctx, actor, slug, "label.update");
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   if (input.name !== undefined) {
@@ -102,7 +102,7 @@ export async function deleteLabel(
   slug: string,
   labelId: number,
 ): Promise<void> {
-  const { project } = await requireProject(ctx, actor, slug, "admin");
+  const { project } = await requireCapability(ctx, actor, slug, "label.delete");
   const db = await ctx.router.forProject(routeInfoOf(project));
   const deleted = await db
     .delete(labels)

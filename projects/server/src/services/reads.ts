@@ -14,7 +14,7 @@ import { NotFoundError } from "../errors.ts";
 import {
   accessibleProjectRows,
   type ProjectRow,
-  requireProject,
+  requireCapability,
   routeInfoOf,
 } from "./access.ts";
 import {
@@ -195,7 +195,12 @@ export async function markIssueRead(
   number: number,
   input: IssueReadInput,
 ): Promise<void> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "issue.mark_read",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issueRows = await db
     .select({ id: issues.id })
@@ -256,7 +261,12 @@ export async function bulkMarkRead(
   } else {
     scope = [];
     for (const slug of new Set(input.projects)) {
-      const { project } = await requireProject(ctx, actor, slug, "reader");
+      const { project } = await requireCapability(
+        ctx,
+        actor,
+        slug,
+        "issue.mark_read",
+      );
       scope.push(project);
     }
   }

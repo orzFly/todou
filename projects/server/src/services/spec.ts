@@ -31,7 +31,7 @@ import {
   NotFoundError,
   ValidationFailedError,
 } from "../errors.ts";
-import { projectForRead, requireProject, routeInfoOf } from "./access.ts";
+import { projectForRead, requireCapability, routeInfoOf } from "./access.ts";
 import { encodeTimelineCursor } from "./cursor.ts";
 import { microIso } from "./timeline.ts";
 import {
@@ -104,7 +104,12 @@ export async function pushSpec(
   input: SpecPushInput,
   agentContext: AgentContext | null = null,
 ): Promise<SpecPushResult> {
-  const { project, role } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "spec.push",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(
     db,
@@ -479,7 +484,12 @@ export async function submitSpecReview(
   input: SpecReviewSubmitInput,
   agentContext: AgentContext | null = null,
 ): Promise<SpecReviewResult> {
-  const { project, role } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "spec.review",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(
     db,
@@ -718,7 +728,12 @@ export async function resolveSpecComments(
   input: SpecCommentsResolveInput,
   agentContext: AgentContext | null = null,
 ): Promise<{ resolved: number[] }> {
-  const { project, role } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "spec.resolve",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(
     db,

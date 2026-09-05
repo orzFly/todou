@@ -11,7 +11,7 @@ import {
   issues,
   specVersions,
 } from "../db/project-schema.ts";
-import { requireProject, routeInfoOf } from "./access.ts";
+import { requireCapability, routeInfoOf } from "./access.ts";
 import { live } from "./trash.ts";
 
 /** One table that records who wrote a row, and how to reach its card. */
@@ -73,7 +73,7 @@ export async function searchFacets(
   actor: UserRow,
   slug: string,
 ): Promise<SearchFacets> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project } = await requireCapability(ctx, actor, slug, "search.run");
   const db: Db = await ctx.router.forProject(routeInfoOf(project));
 
   const byAgent = new Map<string | null, number>();

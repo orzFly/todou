@@ -9,7 +9,7 @@ import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { issues, statuses } from "../db/project-schema.ts";
 import { ConflictError, NotFoundError } from "../errors.ts";
-import { requireProject, routeInfoOf } from "./access.ts";
+import { requireCapability, routeInfoOf } from "./access.ts";
 
 type StatusRow = typeof statuses.$inferSelect;
 
@@ -29,7 +29,7 @@ export async function listStatuses(
   actor: UserRow,
   slug: string,
 ): Promise<Status[]> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project } = await requireCapability(ctx, actor, slug, "status.list");
   const db = await ctx.router.forProject(routeInfoOf(project));
   const rows = await db
     .select()
@@ -45,7 +45,12 @@ export async function createStatus(
   slug: string,
   input: StatusCreateInput,
 ): Promise<Status> {
-  const { project } = await requireProject(ctx, actor, slug, "admin");
+  const { project } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "status.manage",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   await ensureNameFree(db, project.id, input.name);
@@ -77,7 +82,12 @@ export async function updateStatus(
   statusId: number,
   input: StatusUpdateInput,
 ): Promise<Status> {
-  const { project } = await requireProject(ctx, actor, slug, "admin");
+  const { project } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "status.manage",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   if (input.name !== undefined) {
@@ -128,7 +138,12 @@ export async function deleteStatus(
   slug: string,
   statusId: number,
 ): Promise<void> {
-  const { project } = await requireProject(ctx, actor, slug, "admin");
+  const { project } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "status.manage",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   const referencing = await db

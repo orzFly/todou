@@ -13,6 +13,7 @@ import {
   getReferenceConfig,
   setReferenceFormat,
 } from "../services/reference-config.ts";
+import { roleTag } from "./role-tag.ts";
 
 const slugParam = z.object({ slug: ProjectSlug });
 const autolinkParams = z.object({
@@ -36,7 +37,7 @@ const configRoute = createRoute({
 const formatRoute = createRoute({
   method: "put",
   path: "/{slug}/references/format",
-  summary: "Set the internal reference format (admin)",
+  summary: `Set the internal reference format ${roleTag("reference.manage")}`,
   request: { params: slugParam, body: jsonBody(RefFormatSetInput) },
   responses: {
     200: { description: "Updated config", ...jsonBody(ReferenceConfig) },
@@ -46,7 +47,7 @@ const formatRoute = createRoute({
 const createAutolinkRoute = createRoute({
   method: "post",
   path: "/{slug}/references/autolinks",
-  summary: "Add an autolink rule (admin)",
+  summary: `Add an autolink rule ${roleTag("reference.manage")}`,
   request: { params: slugParam, body: jsonBody(AutolinkCreateInput) },
   responses: { 201: { description: "Created", ...jsonBody(Autolink) } },
 });
@@ -54,7 +55,7 @@ const createAutolinkRoute = createRoute({
 const deleteAutolinkRoute = createRoute({
   method: "delete",
   path: "/{slug}/references/autolinks/{autolinkId}",
-  summary: "Remove an autolink rule (admin)",
+  summary: `Remove an autolink rule ${roleTag("reference.manage")}`,
   request: { params: autolinkParams },
   responses: { 204: { description: "Deleted" } },
 });

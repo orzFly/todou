@@ -51,7 +51,7 @@ import {
 } from "../db/project-schema.ts";
 import { projectMembers, users } from "../db/system-schema.ts";
 import { ValidationFailedError } from "../errors.ts";
-import { requireProject, routeInfoOf } from "./access.ts";
+import { requireCapability, routeInfoOf } from "./access.ts";
 import { issueFilterConditions } from "./issues.ts";
 import { toStatus } from "./statuses.ts";
 
@@ -559,7 +559,7 @@ export async function searchProject(
   slug: string,
   query: SearchQuery,
 ): Promise<SearchPage> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project } = await requireCapability(ctx, actor, slug, "search.run");
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   const parts = parseSearchQuery(query.q);

@@ -26,7 +26,16 @@ export const InternalRefPrefix = z
   .nullable();
 export type InternalRefPrefix = z.infer<typeof InternalRefPrefix>;
 
-export const MemberRole = z.enum(["admin", "writer", "reader"]);
+/**
+ * Descending authority, because pickers render this list in order.
+ * `ROLE_RANK` in permissions.ts is the same order as numbers, and the two are
+ * tied together by a test rather than by this comment.
+ *
+ * Spelled as a tuple beside the schema because drizzle's `text({ enum })`
+ * needs the literals, and `z.enum(...).options` widens them to `string`.
+ */
+export const MEMBER_ROLES = ["admin", "writer", "reporter", "reader"] as const;
+export const MemberRole = z.enum(MEMBER_ROLES);
 export type MemberRole = z.infer<typeof MemberRole>;
 
 export const Project = z.object({

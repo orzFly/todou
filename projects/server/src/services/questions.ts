@@ -20,7 +20,7 @@ import {
   NotFoundError,
   ValidationFailedError,
 } from "../errors.ts";
-import { projectForRead, requireProject, routeInfoOf } from "./access.ts";
+import { projectForRead, requireCapability, routeInfoOf } from "./access.ts";
 import {
   assertIssueReadable,
   assertIssueWritable,
@@ -172,7 +172,12 @@ export async function submitAnswers(
   input: AnswersSubmitInput,
   agentContext: AgentContext | null = null,
 ): Promise<TimelineEvent> {
-  const { project, role } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "question.answer",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(db, project.id, issueNumber);
   assertIssueWritable(issue, actor, role);

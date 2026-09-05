@@ -19,6 +19,7 @@ import {
   IssueUpdateInput,
   MoveIssueInput,
   MoveIssueResult,
+  minRoleOf,
   ProjectSlug,
   RevisionPage,
   RevisionQuery,
@@ -53,6 +54,7 @@ import {
 } from "../services/revisions.ts";
 import { getProjectActivity, getTimeline } from "../services/timeline.ts";
 import { movedResponses } from "./moved-responses.ts";
+import { roleTag } from "./role-tag.ts";
 
 const issueNumber = z.coerce.number().int().positive();
 const slugParam = z.object({ slug: ProjectSlug });
@@ -95,7 +97,7 @@ const countsRoute = createRoute({
 const createIssueRoute = createRoute({
   method: "post",
   path: "/{slug}/issues",
-  summary: "Open an issue (writer)",
+  summary: `Open an issue ${roleTag("issue.create")}`,
   request: { params: slugParam, body: jsonBody(IssueCreateInput) },
   responses: { 201: { description: "Created", ...jsonBody(Issue) } },
 });
@@ -116,8 +118,9 @@ const patchIssueRoute = createRoute({
   method: "patch",
   path: "/{slug}/issues/{number}",
   summary:
-    "Update title/body/status/assignees/labels (writer); every change is " +
-    "recorded as a timeline event",
+    `Update title/body (${minRoleOf("issue.update")}, own issue only) or ` +
+    `status/assignees/labels (${minRoleOf("issue.triage")}); every change ` +
+    "is recorded as a timeline event",
   request: { params: issueParams, body: jsonBody(IssueUpdateInput) },
   responses: { 200: { description: "Updated", ...jsonBody(Issue) } },
 });
@@ -185,7 +188,7 @@ const activityRoute = createRoute({
 const createCommentRoute = createRoute({
   method: "post",
   path: "/{slug}/issues/{number}/comments",
-  summary: "Comment on an issue (writer)",
+  summary: `Comment on an issue ${roleTag("comment.create")}`,
   description:
     "The response carries the comment plus a `cursor` (T-182): resume a " +
     "timeline read or a watch from it — `--since <cursor>` — and every " +
@@ -202,7 +205,8 @@ const createCommandsRoute = createRoute({
   method: "post",
   path: "/{slug}/issues/{number}/commands",
   summary:
-    "Comment and apply incremental field commands in one transaction (writer)",
+    "Comment and apply incremental field commands in one transaction " +
+    roleTag("comment.commands"),
   description:
     "What the web composer submits when the draft carried `/close`-style " +
     "command lines (T-161). Commands are incremental — one label added, one " +
@@ -296,8 +300,8 @@ const submitAnswersRoute = createRoute({
   method: "post",
   path: "/{slug}/issues/{number}/comments/{commentId}/answers",
   summary:
-    "Answer every question of a comment atomically (writer); one answer " +
-    "per comment, ever — answers cannot be edited",
+    `Answer every question of a comment atomically ${roleTag("question.answer")}; ` +
+    "one answer per comment, ever — answers cannot be edited",
   request: { params: commentParams, body: jsonBody(AnswersSubmitInput) },
   responses: {
     201: { description: "Answered", ...jsonBody(TimelineEvent) },

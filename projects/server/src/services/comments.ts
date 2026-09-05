@@ -15,7 +15,7 @@ import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { comments, issueEvents, issues } from "../db/project-schema.ts";
 import { ForbiddenError, NotFoundError } from "../errors.ts";
-import { projectForRead, requireProject, routeInfoOf } from "./access.ts";
+import { projectForRead, requireCapability, routeInfoOf } from "./access.ts";
 import {
   analyzeReferences,
   type CrossTarget,
@@ -174,7 +174,12 @@ export async function createComment(
   input: CommentCreateInput,
   agentContext: AgentContext | null = null,
 ): Promise<CommentCreateResult> {
-  const { project, role } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "comment.create",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(db, project.id, issueNumber);
   assertIssueWritable(issue, actor, role);
@@ -316,7 +321,12 @@ async function loadCommentForWrite(
   issueNumber: number,
   commentId: number,
 ): Promise<{ projectId: number; db: Db; row: CommentRow }> {
-  const { project, role } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "comment.modify",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(db, project.id, issueNumber);
   assertIssueWritable(issue, actor, role);

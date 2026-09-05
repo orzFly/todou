@@ -12,7 +12,7 @@ import {
 } from "../../db/project-schema.ts";
 import { projectMembers } from "../../db/system-schema.ts";
 import { ForbiddenError, ValidationFailedError } from "../../errors.ts";
-import { type ProjectRow, requireProject, routeInfoOf } from "../access.ts";
+import { type ProjectRow, requireCapability, routeInfoOf } from "../access.ts";
 import { loadIssueRow } from "../issues.ts";
 import { lineageOf, tombstoneNumberOf } from "../relocation.ts";
 import { assertIssueWritable } from "../trash.ts";
@@ -63,11 +63,11 @@ export async function planMove(
   number: number,
   toSlug: string,
 ): Promise<MovePlan> {
-  const { project: source, role } = await requireProject(
+  const { project: source, role } = await requireCapability(
     ctx,
     actor,
     slug,
-    "writer",
+    "issue.move",
   );
   const sourceDb = await ctx.router.forProject(routeInfoOf(source));
   const row = await loadIssueRow(sourceDb, source.id, number);
@@ -80,11 +80,11 @@ export async function planMove(
   }
 
   // A project the mover cannot see is a 404 from here, same as anywhere.
-  const { project: target } = await requireProject(
+  const { project: target } = await requireCapability(
     ctx,
     actor,
     toSlug,
-    "writer",
+    "issue.move_in",
   );
   if (target.id === source.id) {
     throw new ValidationFailedError("that issue is already in this project");

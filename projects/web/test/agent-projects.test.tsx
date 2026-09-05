@@ -176,12 +176,14 @@ describe("agent projects column (T-227)", () => {
     const invalidate = vi.spyOn(client, "invalidateQueries");
     const dialog = await openDialog();
 
+    // Typeahead lands on the first role starting with the letter, which is
+    // reporter now that it sits above reader in the list.
     fireEvent.keyDown(dialog.getByRole("combobox", { name: "role in Alpha" }), {
       key: "R",
     });
 
     await waitFor(() =>
-      expect(spy).toHaveBeenCalledWith("alpha", BOT.id, "reader"),
+      expect(spy).toHaveBeenCalledWith("alpha", BOT.id, "reporter"),
     );
     await waitFor(() => {
       const keys = invalidatedKeys(invalidate);

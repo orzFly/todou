@@ -18,7 +18,7 @@ import {
 } from "../db/project-schema.ts";
 import { projectMembers } from "../db/system-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
-import { requireProject, routeInfoOf } from "./access.ts";
+import { requireCapability, routeInfoOf } from "./access.ts";
 import {
   type CommentRow,
   insertCommentInTx,
@@ -56,7 +56,12 @@ export async function executeCommands(
   input: CommandSubmitInput,
   agentContext: AgentContext | null = null,
 ): Promise<CommandSubmitResult> {
-  const { project, role } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "comment.commands",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issueRows = await db
     .select({

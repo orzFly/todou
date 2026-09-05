@@ -11,7 +11,10 @@ import { streamSSE } from "hono/streaming";
 import type { AppEnv } from "../auth/middleware.ts";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
-import { accessibleProjectRows, requireProject } from "../services/access.ts";
+import {
+  accessibleProjectRows,
+  requireCapability,
+} from "../services/access.ts";
 
 const HEARTBEAT_MS = 30_000;
 
@@ -230,11 +233,11 @@ export function sseRoutes() {
   app.openapi(projectEventsRoute, async (c) => {
     const ctx = c.get("appCtx");
     const user = c.get("user");
-    const { project } = await requireProject(
+    const { project } = await requireCapability(
       ctx,
       user,
       c.req.valid("param").slug,
-      "reader",
+      "project.stream",
     );
     return streamChanges(c, ctx, user, {
       kind: "project",

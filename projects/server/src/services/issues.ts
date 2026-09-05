@@ -13,6 +13,7 @@ import type {
   Status,
   UserRef,
 } from "@todou/shared";
+import { minRoleOf, ROLE_RANK } from "@todou/shared";
 import {
   and,
   asc,
@@ -51,7 +52,7 @@ import {
 import {
   type ProjectRow,
   projectForRead,
-  requireProject,
+  requireCapability,
   routeInfoOf,
 } from "./access.ts";
 import {
@@ -346,7 +347,7 @@ export async function createIssue(
   input: IssueCreateInput,
   agentContext: AgentContext | null = null,
 ): Promise<Issue> {
-  const { project } = await requireProject(ctx, actor, slug, "writer");
+  const { project } = await requireCapability(ctx, actor, slug, "issue.create");
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   await validateLabelIds(db, project.id, input.label_ids);
@@ -603,7 +604,12 @@ export async function listIssues(
   slug: string,
   query: IssueListQuery,
 ): Promise<{ items: Issue[]; next_cursor: string | null }> {
-  const { project, role } = await requireProject(ctx, actor, slug, "reader");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "issue.list",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   // The trash orders by when a card went in, whatever `sort` says: deleting
@@ -702,7 +708,7 @@ export async function countIssuesByCategory(
   slug: string,
   query: IssueCountsQuery,
 ): Promise<IssueCounts> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project } = await requireCapability(ctx, actor, slug, "issue.count");
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   const counts: IssueCounts = { open: 0, closed: 0, by_status: {} };
@@ -726,6 +732,39 @@ export async function countIssuesByCategory(
   return counts;
 }
 
+/** The fields `issue.update` grants below `issue.triage`, on your own issue. */
+const OWN_ISSUE_FIELDS = new Set(["title", "body"]);
+
+/**
+ * `PATCH issue` is one gate over five fields, so lowering `issue.update` to
+ * reporter would hand out the status column and the label set along with the
+ * typo fix. The other three fields keep their own capability, checked here
+ * because the endpoint they belong to is shared with the two that moved.
+ *
+ * Runs after `assertIssueWritable` so a card the caller may not see stays a
+ * 404 rather than becoming a 403 that confirms it exists.
+ */
+function assertMayEditFields(
+  input: IssueUpdateInput,
+  before: { authorId: number | null },
+  actor: UserRow,
+  role: MemberRole,
+): void {
+  const triage = minRoleOf("issue.triage");
+  if (ROLE_RANK[role] >= ROLE_RANK[triage]) return;
+  const touched = Object.entries(input)
+    .filter(([, value]) => value !== undefined)
+    .map(([key]) => key);
+  const ownEditOnly =
+    before.authorId === actor.id &&
+    touched.every((field) => OWN_ISSUE_FIELDS.has(field));
+  if (ownEditOnly) return;
+  throw new ForbiddenError(
+    `requires ${triage} role (issue.triage): a reporter may only edit the ` +
+      "title and body of their own issue",
+  );
+}
+
 export async function updateIssue(
   ctx: AppContext,
   actor: UserRow,
@@ -734,10 +773,16 @@ export async function updateIssue(
   input: IssueUpdateInput,
   agentContext: AgentContext | null = null,
 ): Promise<Issue> {
-  const { project, role } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "issue.update",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const before = await loadIssueRow(db, project.id, number);
   assertIssueWritable(before, actor, role);
+  assertMayEditFields(input, before, actor, role);
 
   if (input.label_ids !== undefined) {
     await validateLabelIds(db, project.id, input.label_ids);
@@ -1012,7 +1057,12 @@ async function setTrashed(
   trashed: boolean,
   agentContext: AgentContext | null,
 ): Promise<{ project: ProjectRow; db: Db; row: IssueRow }> {
-  const { project, role } = await requireProject(ctx, actor, slug, "writer");
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "issue.trash",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const row = await loadIssueRow(db, project.id, number);
 
@@ -1111,15 +1161,4 @@ export async function restoreIssue(
   const bundle = (await bundleIssues(ctx, db, project.id, [row], actor))[0];
   if (!bundle) throw new Error("bundle missing");
   return toIssue(bundle);
-}
-
-export async function requireIssueProject(
-  ctx: AppContext,
-  actor: UserRow,
-  slug: string,
-  minRole: "reader" | "writer" | "admin",
-): Promise<{ project: ProjectRow; db: Db }> {
-  const { project } = await requireProject(ctx, actor, slug, minRole);
-  const db = await ctx.router.forProject(routeInfoOf(project));
-  return { project, db };
 }

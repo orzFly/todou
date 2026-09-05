@@ -38,7 +38,7 @@ import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { comments, issueEvents, issues } from "../db/project-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
-import { projectForRead, requireProject, routeInfoOf } from "./access.ts";
+import { projectForRead, requireCapability, routeInfoOf } from "./access.ts";
 import {
   crossRefVisibleCondition,
   type VisibleProjects,
@@ -593,7 +593,12 @@ export async function getProjectActivity(
   slug: string,
   query: ActivityQuery,
 ): Promise<ActivityPage> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "activity.read",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
 
   const backward = query.last;
@@ -699,7 +704,12 @@ export async function getCrossActivity(
 
   const watched: WatchedProject[] = [];
   for (const slug of slugs) {
-    const { project } = await requireProject(ctx, actor, slug, "reader");
+    const { project } = await requireCapability(
+      ctx,
+      actor,
+      slug,
+      "activity.read",
+    );
     watched.push({
       slug,
       projectId: project.id,

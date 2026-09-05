@@ -1,5 +1,6 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
+  minRoleOf,
   ProjectSlug,
   Status,
   StatusCreateInput,
@@ -12,6 +13,7 @@ import {
   listStatuses,
   updateStatus,
 } from "../services/statuses.ts";
+import { roleTag } from "./role-tag.ts";
 
 const slugParam = z.object({ slug: ProjectSlug });
 const statusParams = z.object({
@@ -33,7 +35,7 @@ const listRoute = createRoute({
 const createRouteDef = createRoute({
   method: "post",
   path: "/{slug}/statuses",
-  summary: "Create a status (admin)",
+  summary: `Create a status ${roleTag("status.manage")}`,
   request: { params: slugParam, body: jsonBody(StatusCreateInput) },
   responses: { 201: { description: "Created", ...jsonBody(Status) } },
 });
@@ -41,7 +43,7 @@ const createRouteDef = createRoute({
 const patchRoute = createRoute({
   method: "patch",
   path: "/{slug}/statuses/{statusId}",
-  summary: "Update or reorder a status (admin)",
+  summary: `Update or reorder a status ${roleTag("status.manage")}`,
   request: { params: statusParams, body: jsonBody(StatusUpdateInput) },
   responses: { 200: { description: "Updated", ...jsonBody(Status) } },
 });
@@ -49,7 +51,7 @@ const patchRoute = createRoute({
 const deleteRoute = createRoute({
   method: "delete",
   path: "/{slug}/statuses/{statusId}",
-  summary: "Delete a status (admin; 409 while issues reference it)",
+  summary: `Delete a status (${minRoleOf("status.manage")}; 409 while issues reference it)`,
   request: { params: statusParams },
   responses: { 204: { description: "Deleted" } },
 });

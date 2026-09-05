@@ -8,7 +8,7 @@ import {
   ProjectUpdateInput,
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
-import { requireProject } from "../services/access.ts";
+import { requireCapability } from "../services/access.ts";
 import { listMembers, removeMember, setMember } from "../services/members.ts";
 import {
   createProject,
@@ -18,6 +18,7 @@ import {
   toProject,
   updateProject,
 } from "../services/projects.ts";
+import { roleTag } from "./role-tag.ts";
 
 const slugParam = z.object({ slug: ProjectSlug });
 const memberParams = z.object({
@@ -57,7 +58,7 @@ const getRoute = createRoute({
 const patchRoute = createRoute({
   method: "patch",
   path: "/{slug}",
-  summary: "Update project (admin)",
+  summary: `Update project ${roleTag("project.update")}`,
   request: { params: slugParam, body: jsonBody(ProjectUpdateInput) },
   responses: { 200: { description: "Updated", ...jsonBody(Project) } },
 });
@@ -65,7 +66,7 @@ const patchRoute = createRoute({
 const deleteRoute = createRoute({
   method: "delete",
   path: "/{slug}",
-  summary: "Delete project (admin)",
+  summary: `Delete project ${roleTag("project.delete")}`,
   request: { params: slugParam },
   responses: { 204: { description: "Deleted" } },
 });
@@ -83,7 +84,7 @@ const listMembersRoute = createRoute({
 const setMemberRoute = createRoute({
   method: "put",
   path: "/{slug}/members/{userId}",
-  summary: "Add a member or change their role (admin)",
+  summary: `Add a member or change their role ${roleTag("member.set")}`,
   request: { params: memberParams, body: jsonBody(MemberSetInput) },
   responses: { 204: { description: "Member set" } },
 });
@@ -91,7 +92,7 @@ const setMemberRoute = createRoute({
 const removeMemberRoute = createRoute({
   method: "delete",
   path: "/{slug}/members/{userId}",
-  summary: "Remove a member (admin)",
+  summary: `Remove a member ${roleTag("member.remove")}`,
   request: { params: memberParams },
   responses: { 204: { description: "Member removed" } },
 });
@@ -114,11 +115,11 @@ export function projectRoutes() {
 
   app.openapi(getRoute, async (c) => {
     const ctx = c.get("appCtx");
-    const { project, role } = await requireProject(
+    const { project, role } = await requireCapability(
       ctx,
       c.get("user"),
       c.req.valid("param").slug,
-      "reader",
+      "project.read",
     );
     return c.json(
       {

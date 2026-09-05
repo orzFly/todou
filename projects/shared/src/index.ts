@@ -3,6 +3,7 @@ export const TODOU = "todou";
 export * from "./client.ts";
 export * from "./events.ts";
 export * from "./ownership.ts";
+export * from "./permissions.ts";
 export * from "./ref-shapes.ts";
 export * from "./references-grammar.ts";
 export * from "./respell.ts";

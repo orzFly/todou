@@ -6,6 +6,7 @@ import {
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
   formatRef,
+  MEMBER_ROLES,
   type Member,
   type MemberRole,
   type ProjectUpdateInput,
@@ -37,6 +38,7 @@ import { referenceConfigQuery } from "@/api/references.ts";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { AddAgentPicker } from "@/components/shared/add-agent-picker.tsx";
+import { RolePermissionsDialog } from "@/components/shared/role-permissions-table.tsx";
 import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,7 +66,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { PRESET_COLORS } from "@/lib/labels.ts";
 
-const ROLES: MemberRole[] = ["admin", "writer", "reader"];
+/** Exported so a test can hold the picker to the schema's own list. */
+export const ROLES: readonly MemberRole[] = MEMBER_ROLES;
 
 export { PRESET_COLORS };
 
@@ -460,7 +463,12 @@ export function MembersSection({ slug }: { slug: string }) {
           <TableHeader>
             <TableRow>
               <TableHead>User</TableHead>
-              <TableHead className="w-36">Role</TableHead>
+              <TableHead className="w-44">
+                <div className="flex flex-col items-start">
+                  Role
+                  <RolePermissionsDialog />
+                </div>
+              </TableHead>
               <TableHead className="w-16" />
             </TableRow>
           </TableHeader>

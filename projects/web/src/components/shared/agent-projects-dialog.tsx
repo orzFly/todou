@@ -33,6 +33,7 @@ import { cn } from "@/lib/utils";
 const ROLE_DOT: Record<MemberRole, string> = {
   admin: "bg-violet-500",
   writer: "bg-sky-500",
+  reporter: "bg-teal-500",
   reader: "bg-muted-foreground",
 };
 

@@ -12,7 +12,7 @@ import type { Db } from "../db/driver.ts";
 import { autolinks, refFormats } from "../db/project-schema.ts";
 import { projects, slugHistory } from "../db/system-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
-import { requireProject, routeInfoOf } from "./access.ts";
+import { requireCapability, routeInfoOf } from "./access.ts";
 import { mirrorRefFormat } from "./reference-directory.ts";
 
 /** GitHub's autolink rule: no prefix may be a prefix of another. */
@@ -87,7 +87,12 @@ export async function getReferenceConfig(
   actor: UserRow,
   slug: string,
 ): Promise<ReferenceConfig> {
-  const { project } = await requireProject(ctx, actor, slug, "reader");
+  const { project } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "reference.read",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
   return loadConfig(db, project.id);
 }
@@ -98,7 +103,12 @@ export async function setReferenceFormat(
   slug: string,
   input: RefFormatSetInput,
 ): Promise<ReferenceConfig> {
-  const { project } = await requireProject(ctx, actor, slug, "admin");
+  const { project } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "reference.manage",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const config = await loadConfig(db, project.id);
   // Same format again: no history row, or every no-op PUT would move the
@@ -132,7 +142,12 @@ export async function createAutolink(
   slug: string,
   input: AutolinkCreateInput,
 ): Promise<Autolink> {
-  const { project } = await requireProject(ctx, actor, slug, "admin");
+  const { project } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "reference.manage",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const config = await loadConfig(db, project.id);
   // Only the CURRENT internal token is protected — overlapping a
@@ -174,7 +189,12 @@ export async function deleteAutolink(
   slug: string,
   autolinkId: number,
 ): Promise<void> {
-  const { project } = await requireProject(ctx, actor, slug, "admin");
+  const { project } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "reference.manage",
+  );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const deleted = await db
     .delete(autolinks)
