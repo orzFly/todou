@@ -243,10 +243,7 @@ export function SearchBox({
   const named = jumpRows.find((row) => row.kind === "project");
   // A project named without a card is a weaker aim than a card: the reader
   // may well be on their way to one whose number they do not remember.
-  const peek = useProjectPeek(
-    slug,
-    named?.kind === "project" ? named.slug : null,
-  );
+  const peek = useProjectPeek(named?.kind === "project" ? named : null);
   const projectRefs = useMemo(
     () => projectPool(projects.data, directory.data),
     [projects.data, directory.data],

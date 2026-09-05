@@ -135,20 +135,19 @@ async function rowsOf(client: QueryClient, q: string): Promise<JumpRow[]> {
   return JSON.parse(pre.textContent ?? "[]") as JumpRow[];
 }
 
-function PeekProbe({ target }: { target: string | null }) {
-  return (
-    <pre data-testid="peek">
-      {JSON.stringify(useProjectPeek("todou", target))}
-    </pre>
-  );
+/** The home row the peek hangs under: which project, and how it was named. */
+type Named = { slug: string; spelled: string } | null;
+
+function PeekProbe({ named }: { named: Named }) {
+  return <pre data-testid="peek">{JSON.stringify(useProjectPeek(named))}</pre>;
 }
 
 async function peekOf(
   client: QueryClient,
-  target: string | null,
+  named: Named,
 ): Promise<ProjectPeekRow[]> {
   const { findByTestId } = renderWithProviders(
-    <PeekProbe target={target} />,
+    <PeekProbe named={named} />,
     client,
   );
   const pre = await findByTestId("peek");
@@ -307,21 +306,39 @@ describe("useJumpRows", () => {
 
   it("peeks at what a named project is working on, spelled to be typed back", async () => {
     const client = seedPeek(seedContext(testQueryClient()), "mirror", 2);
-    const rows = await peekOf(client, "mirror");
+    const rows = await peekOf(client, { slug: "mirror", spelled: "mirror/" });
     expect(rows).toHaveLength(2);
-    // Qualified, like the jump row: a ref copied out of the panel has to
-    // keep meaning the same card when it is pasted back here.
+    // The home row's spelling carried on, so the number is the only thing
+    // left to type and the row does not repeat the name above it.
     expect(rows[0]).toMatchObject({
       kind: "project-issue",
       slug: "mirror",
       number: 1,
-      spelled: "mirror/M-1",
+      spelled: "mirror/1",
     });
   });
 
-  it("spells this project's own cards plainly", async () => {
+  // One `it` per spelling rather than a loop inside one: the probes render
+  // into the same document, and only the boundary between tests clears it.
+  for (const [spelled, expected] of [
+    ["M-", "M-1"],
+    ["mirror/", "mirror/1"],
+    ["mirror#", "mirror#1"],
+    ["mirror/#", "mirror/#1"],
+  ] as const) {
+    it(`carries ${spelled} on into ${expected}`, async () => {
+      const client = seedPeek(seedContext(testQueryClient()), "mirror", 1);
+      expect(await peekOf(client, { slug: "mirror", spelled })).toMatchObject([
+        { spelled: expected },
+      ]);
+    });
+  }
+
+  it("spells this project's own cards the same way", async () => {
     const client = seedPeek(seedContext(testQueryClient()), "todou", 1);
-    expect(await peekOf(client, "todou")).toMatchObject([{ spelled: "T-1" }]);
+    expect(
+      await peekOf(client, { slug: "todou", spelled: "T-" }),
+    ).toMatchObject([{ spelled: "T-1" }]);
   });
 
   it("asks nothing, and shows nothing, without a project to peek at", async () => {

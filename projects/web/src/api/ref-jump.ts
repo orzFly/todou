@@ -259,22 +259,6 @@ export type ProjectPeekRow = {
   item: IssueListItem;
 };
 
-/** The prefix a project writes now, from a directory already in hand. */
-function currentPrefixOf(
-  directory: ReferenceDirectory | null | undefined,
-  slug: string,
-): string | null {
-  if (directory == null) return null;
-  const now = Date.now();
-  const held = directory.entries.find(
-    (entry) =>
-      entry.slug === slug &&
-      Date.parse(entry.from) <= now &&
-      (entry.to === null || now < Date.parse(entry.to)),
-  );
-  return held?.prefix ?? null;
-}
-
 /**
  * What a project named without a number is working on (T-263). Naming a
  * project is a weaker intention than naming a card — the reader may be on
@@ -284,15 +268,17 @@ function currentPrefixOf(
  * Open only, and never a placeholder: these are an offer beside the one the
  * reader actually made, and a skeleton for them would push the home row
  * around while they are reading it. They appear when they arrive.
+ *
+ * Takes the home row rather than its slug, because the cards are spelled by
+ * carrying that row's spelling on rather than by looking a format up.
  */
 export function useProjectPeek(
-  slug: string,
-  target: string | null,
+  named: { slug: string; spelled: string } | null,
 ): ProjectPeekRow[] {
-  const directory = useQuery({
-    ...referenceDirectoryQuery,
-    enabled: target !== null,
-  });
+  const target = named?.slug ?? null;
+  // The home row's own spelling, which is the query folded to the case the
+  // project actually has.
+  const typed = named?.spelled ?? "";
   const issues = useQuery({
     ...recentOpenIssuesQuery(target ?? "", PROJECT_PEEK),
     enabled: target !== null,
@@ -300,22 +286,26 @@ export function useProjectPeek(
   const items = issues.data?.items;
   return useMemo(() => {
     if (target === null || items === undefined) return [];
-    const prefix = currentPrefixOf(directory.data, target);
     return items.slice(0, PROJECT_PEEK).map(
       (item): ProjectPeekRow => ({
         kind: "project-issue",
         slug: target,
         number: item.number,
-        // Spelled as the jump row spells a card: plainly at home, qualified
-        // elsewhere, so a ref copied out of the panel says what it means.
-        spelled:
-          target === slug
-            ? formatRef(prefix, item.number)
-            : qualifiedRefSpelling(target, prefix, item.number),
+        // The reader's own spelling continued: `accel/` gives `accel/1` and
+        // `ACC-` gives `ACC-1`, which is the next thing they were going to
+        // type and no longer repeats the home row sitting directly above.
+        //
+        // Safe in every shape that reaches here, because a home row only
+        // exists for four of them: the three slug-qualified ones name their
+        // project in the grammar itself, and the bare `P-` came out of the
+        // same uncontested claim `resolveClaim` reads back. So none of these
+        // can be read as a card of the project being searched — which is why
+        // the qualified spelling was chosen in the first place.
+        spelled: `${typed}${item.number}`,
         item,
       }),
     );
-  }, [slug, target, items, directory.data]);
+  }, [target, typed, items]);
 }
 
 async function cardPromise(

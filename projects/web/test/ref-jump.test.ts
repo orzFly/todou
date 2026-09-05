@@ -307,6 +307,16 @@ describe("refJumpCandidates · a project named without a card", () => {
     expect(of("mirror/", { directory: null })).toEqual([]);
     expect(of("M-", { directory: null })).toEqual([]);
   });
+
+  it("reads each of those four back, with a number, as that project's card", () => {
+    // What lets the peek rows beneath the home row carry the reader's own
+    // spelling on rather than qualify themselves: read back here, on a page
+    // whose own cards are `T-N`, every shape that opened a home row still
+    // names mirror.
+    for (const named of ["M-", "mirror/", "mirror#", "mirror/#"]) {
+      expect(of(`${named}1`), named).toEqual(issue("mirror", 1));
+    }
+  });
 });
 
 describe("couldNameProject", () => {

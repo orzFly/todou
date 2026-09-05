@@ -1277,13 +1277,32 @@ describe("SearchBox · qualifier completion", () => {
     );
     const texts = rowTexts(utils.container);
     expect(texts[0]).toContain("mirror/");
-    expect(texts[1]).toContain("mirror/M-1");
+    expect(texts[1]).toContain("mirror/1");
     // Five cards at most, then the search row — the ten-row budget is
     // shared, not added to (T-268).
     expect(optionsOf(utils.container)).toHaveLength(2 + PROJECT_PEEK);
     expect(texts.at(-1)).toContain("Search for");
     const card = optionsOf(utils.container)[1] as Element;
     expect(card.getAttribute("href")).toBe("/projects/mirror/issues/1");
+  });
+
+  it("spells those cards the way the box is being typed in", async () => {
+    // The same five cards, named by prefix instead of by slug: the row is
+    // the reader's own keystrokes with the number filled in, so it neither
+    // repeats the home row above it nor makes them retype the name.
+    const client = seedPeek(seedPools(seedBox()), PROJECT_PEEK);
+    const utils = renderBox(client);
+    await typeInto(utils, "M-");
+    await waitFor(() =>
+      expect(rowTexts(utils.container).join("\n")).toContain("卡 1"),
+    );
+    const texts = rowTexts(utils.container);
+    expect(texts[0]).toContain("M-");
+    expect(texts[1]).toContain("M-1");
+    expect(texts[1]).not.toContain("mirror/");
+    expect(optionsOf(utils.container)[1]?.getAttribute("href")).toBe(
+      "/projects/mirror/issues/1",
+    );
   });
 
   it("keeps the panel within ten rows when a project has more open cards", async () => {
