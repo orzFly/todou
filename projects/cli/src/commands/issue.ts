@@ -51,7 +51,16 @@ import {
   tailCursor,
 } from "../timeline.ts";
 import {
+  cursorLines,
+  FOLLOW_DEBOUNCE_SEC,
+  followOption,
+  followTransport,
+  openFollow,
+} from "../watch-follow.ts";
+import {
+  checkPrintCursor,
   normalizeTypes,
+  printableCursor,
   quietNote,
   type RetryOptions,
   resolveSelfFilter,
@@ -663,6 +672,16 @@ export class IssueWatchCommand extends ProjectCommand {
       much body a line carries (default 120). The batch ends with its
       \`cursor:\` line, as before.
 
+      \`--poll --print-cursor\` writes the next cursor alone to stdout and
+      exits 0 whether or not anything was new — the cursor is the product,
+      so "nothing new" is not a failure. That is the whole of bootstrapping
+      a position: \`cursor=$(todou issue watch <n> --poll --print-cursor)\`,
+      with no JSON and no \`jq\` in the way. It conflicts with \`--json\`,
+      which already ends its batch with a cursor record. A card that has
+      moved prints nothing and exits 1: its re-anchored cursor is a position
+      in another project, and handing that back as this card's would be
+      worse than capturing nothing.
+
       \`--json\` emits NDJSON: one compact JSON record per line, so a file
       this is appended to stays parseable line by line. Item lines have the
       shape they always had, and the batch ends with one
@@ -706,7 +725,48 @@ export class IssueWatchCommand extends ProjectCommand {
       old history is already past it and returns immediately. \`--timeout\`
       only bounds the quiet phase, so a watch that catches news right before
       the deadline still gets its full window; \`--poll\` ignores
-      \`--debounce\`. Off by default — first news returns immediately.
+      \`--debounce\`. Off by default — first news returns immediately, and
+      \`--debounce 0\` says the same thing explicitly.
+
+      \`--follow\` stops the watch from exiting with its first batch: it
+      stays resident and delivers every batch as it arrives, which spares an
+      agent a tool call per batch — and spares it forgetting to re-open the
+      watch at all. It implies \`--forever\` and defaults \`--debounce\` to
+      60 seconds; conflicts with \`--poll\` and \`--print-cursor\`.
+
+      The transport is explicit, never guessed. \`--follow\` and
+      \`--follow=stdout\` write each batch to stdout in the format above,
+      which is what a supervisor that runs a command and reads its output
+      wants. \`--follow=uds\` (alias \`--follow=claude-code-messaging\`)
+      instead pushes each batch as a message to the Claude Code session that
+      exported \`CLAUDE_CODE_MESSAGING_SOCKET\`, and refuses up front if that
+      variable is unset. Auto-detection would get the first case wrong: a
+      supervisor runs this command *from* the session, so that variable is
+      set there too.
+
+      Under \`--follow=uds\` stdout stays empty while pushing works — a
+      background task's stdout is delivered in full when the process exits,
+      so printing as well as pushing would hand every batch over twice. Each
+      push carries the range it covers as \`since:\` and \`cursor:\` lines,
+      and one push's \`cursor\` is the next one's \`since\`, so a reader can
+      see for itself that nothing went missing. The receiving session names
+      the sender \`todou-watch-<slug>-<number>\`, which is how a batch from
+      this card is told apart from one a project-wide \`todou watch\` sent.
+
+      Delivery is confirmed, and an unconfirmable push degrades rather than
+      going out blind. If the receiving session holds, refuses or drops a
+      message — or its socket is gone — the watch writes the batches it
+      cannot account for, plus the cursor, to stdout, explains itself on
+      stderr, and exits 0: exactly the pre-\`--follow\` behaviour, only with
+      the accumulated batches. Nothing is lost on the way there: a push that
+      fails to write is re-sent with the next batch, and every exit path —
+      including a fatal error — flushes the unconfirmed entries and the
+      position first, so a restart resumes from that \`--since\`.
+
+      A card that moves mid-watch is not followed, with or without
+      \`--follow\`: a single-issue cursor is a row position in the project
+      the card has left, so the watch hands back the new ref and a cursor to
+      re-anchor from and leaves reopening the watch to the caller.
     `,
     examples: [
       [
@@ -717,7 +777,10 @@ export class IssueWatchCommand extends ProjectCommand {
         "One-shot poll for new comments since a cursor",
         'todou issue watch 33 --poll --since "$CURSOR" --type comment',
       ],
-      ["Bootstrap a cursor at now", "todou issue watch 33 --poll --json"],
+      [
+        "Bootstrap a cursor at now",
+        "cursor=$(todou issue watch 33 --poll --print-cursor)",
+      ],
       [
         "Batch a burst of edits into one wake-up",
         "todou issue watch 33 --timeout 3300 --debounce 45",
@@ -725,6 +788,10 @@ export class IssueWatchCommand extends ProjectCommand {
       [
         "Wait for a verdict, however long it takes",
         'todou issue watch 33 --since "$CURSOR" --debounce 60 --forever',
+      ],
+      [
+        "Stay resident and push each batch into this Claude Code session",
+        "todou issue watch 33 --follow=uds",
       ],
       [
         "Feed a script, line by line",
@@ -767,10 +834,28 @@ export class IssueWatchCommand extends ProjectCommand {
   summary = Option.String("--summary", {
     description: "Body characters per line in text mode (default 120)",
   });
+  printCursor = Option.Boolean("--print-cursor", false, {
+    description: "With --poll: print the next cursor alone and exit 0",
+  });
+  follow = followOption();
 
   protected async run(client: TodouClient): Promise<number> {
+    // Ahead of resolveIssueRef, which is a network round trip: `--follow=uds`
+    // with no socket in the environment fails whatever the card turns out to
+    // be, so there is nothing to look up first. Same "before any I/O" rule
+    // `todou watch` keeps, and the same fact a test can assert — no calls.
+    const transport = followTransport({
+      raw: this.follow,
+      poll: this.poll,
+      printCursor: this.printCursor,
+      socket: this.context.env.CLAUDE_CODE_MESSAGING_SOCKET,
+    });
+    checkPrintCursor(this.printCursor, { poll: this.poll, json: this.json });
     const { project, number } = await this.resolveIssueRef(client, this.number);
-    const mode = watchMode(this.poll, this.forever);
+    // A standing watch is a `--forever` watch with somewhere to deliver to:
+    // it must never come back empty-handed either, and the conflict with
+    // --poll is already refused above, so watchMode cannot object.
+    const mode = watchMode(this.poll, this.forever || transport !== null);
     const retry = watchRetryOptions(
       mode,
       (line) => this.note(line),
@@ -785,9 +870,13 @@ export class IssueWatchCommand extends ProjectCommand {
         ? 2
         : parseSeconds(this.interval, "--interval");
     const debounceSec =
-      this.debounce === undefined
-        ? undefined
-        : parseSeconds(this.debounce, "--debounce");
+      this.debounce !== undefined
+        ? // `zero` because a standing watch needs a way back to immediate
+          // delivery, and 0 already names it: "return on the first entry".
+          parseSeconds(this.debounce, "--debounce", { zero: true })
+        : transport === null
+          ? undefined
+          : FOLLOW_DEBOUNCE_SEC;
     const summaryChars =
       this.summary === undefined
         ? 120
@@ -812,6 +901,18 @@ export class IssueWatchCommand extends ProjectCommand {
       if (!(error instanceof MovedError)) throw error;
       const { slug, number: landed } = error.movedTo;
       const cursor = await arrivalCursor(client, slug, landed);
+      if (this.printCursor) {
+        // A command substitution would capture the prose below whole and
+        // call it a cursor, and the re-anchored cursor is a position in
+        // another project: handing that back as this card's is worse than
+        // capturing nothing.
+        throw new CliError(
+          `this issue moved to ${slug}/${landed}`,
+          cursor === null
+            ? `re-open the watch there: todou issue watch ${slug}/${landed} --poll --print-cursor`
+            : `re-anchor with: todou issue watch ${slug}/${landed} --since ${cursor}`,
+        );
+      }
       this.output({ moved_to: error.movedTo, cursor }, () =>
         [
           `moved to ${slug}/${landed}`,
@@ -829,6 +930,42 @@ export class IssueWatchCommand extends ProjectCommand {
     // Timeline entries carry no issue number of their own, so the envelope
     // is the only place a watcher can read the project's ref format off.
     const ref_format = refFormat(refPrefix);
+    // A push body is read by a model, never by a terminal: makePainter with
+    // no stream sees no isTTY and hands back the identity function.
+    const plain = makePainter(undefined, this.context.env);
+    // One renderer behind all three consumers — the one-shot batch, a
+    // standing batch on stdout, and a push body — so no reader ever has to
+    // reconcile two spellings of the same entry.
+    const renderHuman = (
+      items: TimelineItem[],
+      since: string | undefined,
+      cursor: string | undefined,
+      pen: ReturnType<typeof makePainter>,
+    ) =>
+      [
+        ...items.map((item) =>
+          renderActivityLine(item, pen, {
+            refLabel: formatRef(refPrefix, number),
+            issueNumber: number,
+            refPrefix,
+            summaryChars,
+          }),
+        ),
+        ...cursorLines(since, cursor, pen),
+      ].join("\n");
+    const emit = (
+      items: TimelineItem[],
+      since: string | undefined,
+      cursor: string | undefined,
+    ) =>
+      this.outputBatch([...items, cursorRecord(cursor, ref_format)], () =>
+        renderHuman(items, since, cursor, paint),
+      );
+    const emitCursorOnly = (cursor: string | undefined) => {
+      this.context.stdout.write(
+        `${printableCursor(cursor, "on this issue")}\n`,
+      );
+    };
     // Transport, not truth (T-123): the feed only says "there may be
     // something to pull", so the cursor, the filters and the exit codes are
     // the same code as when this polled. A watch on one card narrows the
@@ -845,45 +982,71 @@ export class IssueWatchCommand extends ProjectCommand {
           clock: this.clock,
         });
     try {
-      return await runWatchLoop<TimelineItem>({
-        ...mode,
-        timeoutSec,
-        intervalSec,
-        debounceSec,
+      const follow = await openFollow<TimelineItem>({
+        transport,
+        // A prefix-less project spells this `<slug>/<number>` rather than
+        // an ambiguous `#N`: the header is there to be re-run by hand, and
+        // that form names no project and needs quoting to survive a shell.
+        label: `todou issue watch ${
+          refPrefix === null
+            ? `${project}/${number}`
+            : formatRef(refPrefix, number)
+        }`,
+        // An identifier, not a ref: `slug-number` is already unique and
+        // short, and the ref spelling has a job of its own in the label.
+        subject: `${project}-${number}`,
         baseline,
-        retry,
-        clock: this.clock,
+        intervalSec,
         wait: nudges?.wait,
-        onQuiet: (_cursor, totalMs) =>
-          this.note(quietNote("still watching", timeoutSec, totalMs)),
-        drain: (after) =>
-          drainTimeline(client, project, number, { after, types, ...self }),
-        onItems: (items, cursor) =>
-          this.outputBatch([...items, cursorRecord(cursor, ref_format)], () =>
-            [
-              ...items.map((item) =>
-                renderActivityLine(item, paint, {
-                  refLabel: formatRef(refPrefix, number),
-                  issueNumber: number,
-                  refPrefix,
-                  summaryChars,
-                }),
-              ),
-              paint("dim", `cursor: ${cursor}`),
-            ].join("\n"),
-          ),
-        onEmpty: (cursor) =>
-          this.outputBatch([cursorRecord(cursor, ref_format)], () =>
-            [
-              this.poll
-                ? "no new activity"
-                : `no new activity within ${timeoutSec}s`,
-              ...(cursor === undefined
-                ? []
-                : [paint("dim", `cursor: ${cursor}`)]),
-            ].join("\n"),
-          ),
+        render: (items, since, cursor) =>
+          renderHuman(items, since, cursor, plain),
+        emit,
+        socket: this.context.env.CLAUDE_CODE_MESSAGING_SOCKET,
+        sessionId: this.agentContext?.session_id,
+        clock: this.clock,
+        note: (line) => this.note(line),
+        open: this.context.openPeerPush,
       });
+      try {
+        return await runWatchLoop<TimelineItem>({
+          ...mode,
+          timeoutSec,
+          intervalSec,
+          debounceSec,
+          baseline,
+          retry,
+          clock: this.clock,
+          wait: follow.wait,
+          afterItems: follow.afterItems,
+          shouldStop: follow.shouldStop,
+          onQuiet: (cursor, totalMs) => {
+            follow.seen(cursor);
+            this.note(quietNote("still watching", timeoutSec, totalMs));
+          },
+          drain: (after) =>
+            drainTimeline(client, project, number, { after, types, ...self }),
+          onItems: (items, cursor) => {
+            follow.seen(cursor);
+            if (this.printCursor) return emitCursorOnly(cursor);
+            if (!follow.silent) emit(items, follow.since(), cursor);
+          },
+          onEmpty: (cursor) => {
+            if (this.printCursor) return emitCursorOnly(cursor);
+            this.outputBatch([cursorRecord(cursor, ref_format)], () =>
+              [
+                this.poll
+                  ? "no new activity"
+                  : `no new activity within ${timeoutSec}s`,
+                ...(cursor === undefined
+                  ? []
+                  : [paint("dim", `cursor: ${cursor}`)]),
+              ].join("\n"),
+            );
+          },
+        });
+      } finally {
+        follow.finish();
+      }
     } finally {
       nudges?.close();
     }

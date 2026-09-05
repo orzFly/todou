@@ -1868,6 +1868,108 @@ describe("issue watch", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('unknown --type "bogus"');
   });
+
+  describe("--poll --print-cursor (T-254)", () => {
+    const cardRoutes = (items: unknown[], cursor: string | null) =>
+      watchFetch([
+        [
+          "GET",
+          "/api/projects/todou/issues/3/timeline",
+          (_init: RequestInit, url: URL) =>
+            url.searchParams.get("after") === "c0"
+              ? pageWith(items, cursor)
+              : pageWith([], null),
+        ],
+      ]);
+
+    it("prints the cursor alone and exits 0 on an empty poll", async () => {
+      const { fetchImpl } = cardRoutes([], null);
+      const result = await runCli(
+        ["issue", "watch", "3", "--poll", "--since", "c0", "--print-cursor"],
+        { fetchImpl, env: loggedInEnv("todou") },
+      );
+      // The default poll answers with prose here; the cursor was still
+      // produced, and it is the whole product of this flag.
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("c0\n");
+    });
+
+    it("prints the advanced cursor when there were entries too", async () => {
+      const { fetchImpl } = cardRoutes([newComment], "c1");
+      const result = await runCli(
+        ["issue", "watch", "3", "--poll", "--since", "c0", "--print-cursor"],
+        { fetchImpl, env: loggedInEnv("todou") },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("c1\n");
+    });
+
+    it("refuses --json, a blocking watch and --follow", async () => {
+      const { fetchImpl } = cardRoutes([], null);
+      const run = (argv: string[]) =>
+        runCli(["issue", "watch", "3", ...argv], {
+          fetchImpl,
+          env: loggedInEnv("todou"),
+        });
+
+      const withJson = await run(["--poll", "--print-cursor", "--json"]);
+      expect(withJson.exitCode).toBe(1);
+      expect(withJson.stderr).toContain("both want stdout");
+
+      const blocking = await run(["--print-cursor"]);
+      expect(blocking.exitCode).toBe(1);
+      expect(blocking.stderr).toContain("only makes sense with --poll");
+
+      const standing = await run(["--follow", "--print-cursor"]);
+      expect(standing.exitCode).toBe(1);
+      expect(standing.stderr).toContain(
+        "--follow conflicts with --print-cursor",
+      );
+    });
+
+    it("says so rather than printing an empty cursor", async () => {
+      const { fetchImpl } = watchFetch([
+        ["GET", "/api/projects/todou/issues/3/timeline", pageWith([], null)],
+      ]);
+      const result = await runCli(
+        ["issue", "watch", "3", "--poll", "--print-cursor"],
+        { fetchImpl, env: loggedInEnv("todou") },
+      );
+      // An empty capture would silently mean "start at now" at the next
+      // call, which is the confusion this flag exists to end.
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("no cursor to print");
+      expect(result.stderr).toContain("on this issue");
+    });
+
+    it("refuses to hand back another project's cursor for a moved card", async () => {
+      const { fetchImpl } = watchFetch([
+        [
+          "GET",
+          "/api/projects/todou/issues/3/timeline",
+          { __status: 301, body: { moved_to: { slug: "other", number: 45 } } },
+        ],
+        [
+          "GET",
+          "/api/projects/other/issues/45/timeline",
+          pageWith([], "cur-45"),
+        ],
+      ]);
+      const result = await runCli(
+        ["issue", "watch", "3", "--poll", "--print-cursor"],
+        { fetchImpl, env: loggedInEnv("todou") },
+      );
+      // Without --print-cursor this prints two lines of prose and exits 0;
+      // a command substitution would capture those as "the cursor".
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("moved to other/45");
+      expect(result.stderr).toContain(
+        "todou issue watch other/45 --since cur-45",
+      );
+    });
+  });
 });
 
 describe("status/label list", () => {

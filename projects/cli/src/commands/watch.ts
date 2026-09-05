@@ -9,16 +9,23 @@ import { cursorRecord, ProjectCommand } from "../api-command.ts";
 import { openChangeNudges } from "../change-nudges.ts";
 import { CliError } from "../errors.ts";
 import { makePainter } from "../format.ts";
-import { detectPermissionMode } from "../harness/claude-code.ts";
 import { drainPaged } from "../paginate.ts";
 import { parsePositiveInt, parseSeconds } from "../parse.ts";
-import { openPeerPush, type PeerPush } from "../peer-push.ts";
 import { type RefFormat, refFormat, withIssueRef } from "../refs.ts";
 import { fetchRefPrefix } from "../resolve.ts";
 import { renderActivityLine } from "../timeline.ts";
 import {
-  describeError,
+  cursorLines,
+  FOLLOW_DEBOUNCE_SEC,
+  followOption,
+  followTransport,
+  openFollow,
+  type Transport,
+} from "../watch-follow.ts";
+import {
+  checkPrintCursor,
   normalizeTypes,
+  printableCursor,
   quietNote,
   type RetryOptions,
   resolveSelfFilter,
@@ -30,78 +37,6 @@ import {
   watchRetryOptions,
   watchTimeoutSec,
 } from "../watch-loop.ts";
-
-/** Which channel a standing watch delivers each batch over. */
-type Transport = "stdout" | "uds";
-
-/**
- * The batching window a standing watch defaults to. The receiving side
- * appends ~140 tokens of boilerplate to every peer message with no way to
- * turn it off, so ten notifications pay for it ten times while one merged
- * notification pays once: message *count* costs far more than message
- * length, which makes waiting a minute to merge almost always the better
- * trade. `--debounce 0` opts back into immediate delivery.
- */
-const FOLLOW_DEBOUNCE_SEC = 60;
-
-/**
- * The display label a push attests to. It only decides how the receiving
- * session names the sender and takes no part in its admission check, so
- * unlike the permission mode there is nothing here to get wrong.
- */
-const FROM_NAME = "todou-watch";
-
-/**
- * What to change, per receipt status. `crossSessionInbound` short-circuits
- * the receiving session's admission check *ahead* of its own-process rule,
- * so it holds or refuses even a background process that session started
- * itself — which is why it is the setting to name in every refusal here.
- */
-const REJECTION_HINT: Record<string, string> = {
-  held: 'queued for approval — crossSessionInbound: "accept" delivers without confirming each one',
-  refused: 'crossSessionInbound is set to "refuse"',
-  denied: "the user declined it",
-  dropped: "the session discarded it",
-  expired: "it aged out unread",
-  unreachable: "the session's socket could not be written to",
-};
-
-/** The standing-mode plumbing a watch branch hands to `runWatchLoop`. */
-type Follow<T> = {
-  afterItems?: (
-    items: T[],
-    cursor: string | undefined,
-  ) => Promise<"continue" | "stop">;
-  shouldStop?: () => boolean;
-  wait: ((maxMs: number) => Promise<void>) | undefined;
-  /** Where the batch being delivered starts; unset outside standing mode. */
-  since: () => string | undefined;
-  /** True while a push owns delivery, so stdout must stay empty. */
-  silent: boolean;
-  /** Records a position the loop reported, for the exit flush. */
-  seen: (cursor: string | undefined) => void;
-  /** Hands over what is not known to have landed, then closes. */
-  finish: () => void;
-};
-
-/**
- * How every batch ends. `since` appears only in standing mode, where the
- * pair states the range this batch covers — so a reader comparing one
- * message's `since` against the previous one's `cursor` can tell for itself
- * whether a notification went missing, instead of that being knowable only
- * on the sending side. A one-shot batch has no predecessor to abut and
- * keeps the single `cursor:` line it always had.
- */
-function cursorLines(
-  since: string | undefined,
-  cursor: string | undefined,
-  paint: ReturnType<typeof makePainter>,
-): string[] {
-  return [
-    ...(since === undefined ? [] : [paint("dim", `since: ${since}`)]),
-    paint("dim", `cursor: ${cursor}`),
-  ];
-}
 
 export class WatchCommand extends ProjectCommand {
   static paths = [["watch"]];
@@ -334,54 +269,19 @@ export class WatchCommand extends ProjectCommand {
   printCursor = Option.Boolean("--print-cursor", false, {
     description: "With --poll: print the next cursor alone and exit 0",
   });
-  // `tolerateBoolean` only accepts `--follow=<value>`, never `--follow
-  // <value>`, so a bare `--follow` cannot swallow the next argument.
-  follow = Option.String("--follow", {
-    tolerateBoolean: true,
-    description:
-      "Stay resident and deliver every batch: =stdout (the default) or =uds to push into the Claude Code session (conflicts with --poll)",
-  });
+  follow = followOption();
 
   protected async run(client: TodouClient): Promise<number> {
     // Every one of these is decided before the first request: a watch that
     // cannot push has to say so up front, not after a batch is in hand with
     // nowhere to send it.
-    const transport = this.followTransport();
-    if (transport !== null) {
-      if (this.poll) {
-        throw new CliError(
-          "--follow conflicts with --poll",
-          "--poll checks once and leaves; --follow is the opposite — it never leaves",
-        );
-      }
-      if (this.printCursor) {
-        throw new CliError(
-          "--follow conflicts with --print-cursor",
-          "--print-cursor writes one bare cursor and exits; a standing watch keeps minting them",
-        );
-      }
-      if (
-        transport === "uds" &&
-        !this.context.env.CLAUDE_CODE_MESSAGING_SOCKET
-      ) {
-        throw new CliError(
-          "CLAUDE_CODE_MESSAGING_SOCKET is not set in this environment",
-          "--follow=uds pushes to the Claude Code session that exports it — use --follow=stdout anywhere else",
-        );
-      }
-    }
-    if (this.printCursor && !this.poll) {
-      throw new CliError(
-        "--print-cursor only makes sense with --poll",
-        "a blocking watch prints its own `cursor:` line when it returns",
-      );
-    }
-    if (this.printCursor && this.json) {
-      throw new CliError(
-        "--print-cursor and --json both want stdout",
-        "drop one — --json already ends its batch with a cursor record",
-      );
-    }
+    const transport = followTransport({
+      raw: this.follow,
+      poll: this.poll,
+      printCursor: this.printCursor,
+      socket: this.context.env.CLAUDE_CODE_MESSAGING_SOCKET,
+    });
+    checkPrintCursor(this.printCursor, { poll: this.poll, json: this.json });
     const slugs = this.resolveSlugs();
     // A standing watch is a `--forever` watch with somewhere to deliver to:
     // it must never come back empty-handed either, and the conflict with
@@ -544,15 +444,21 @@ export class WatchCommand extends ProjectCommand {
           () => renderHuman(items, since, cursor, paint),
         );
 
-      const follow = await this.openFollow<ActivityItem>({
+      const follow = await openFollow<ActivityItem>({
         transport: opts.transport,
         label: `todou watch -p ${project}`,
+        subject: project,
         baseline,
         intervalSec,
         wait: opts.wait,
         render: (items, since, cursor) =>
           renderHuman(items, since, cursor, plain),
         emit,
+        socket: this.context.env.CLAUDE_CODE_MESSAGING_SOCKET,
+        sessionId: this.agentContext?.session_id,
+        clock: this.clock,
+        note: (line) => this.note(line),
+        open: this.context.openPeerPush,
       });
       try {
         return await runWatchLoop<ActivityItem>({
@@ -668,15 +574,23 @@ export class WatchCommand extends ProjectCommand {
         () => renderHuman(items, since, cursor, paint),
       );
 
-    const follow = await this.openFollow<CrossActivityItem>({
+    const follow = await openFollow<CrossActivityItem>({
       transport: opts.transport,
       label: `todou watch ${projects === undefined ? "--all-projects" : `-p ${projects}`}`,
+      // The slug list is already de-duplicated, and joining it whole rather
+      // than truncating keeps six watched projects merely long-named.
+      subject: slugs === null ? "all" : slugs.join("-"),
       baseline,
       intervalSec,
       wait: opts.wait,
       render: (items, since, cursor) =>
         renderHuman(items, since, cursor, plain),
       emit,
+      socket: this.context.env.CLAUDE_CODE_MESSAGING_SOCKET,
+      sessionId: this.agentContext?.session_id,
+      clock: this.clock,
+      note: (line) => this.note(line),
+      open: this.context.openPeerPush,
     });
     try {
       return await runWatchLoop<CrossActivityItem>({
@@ -719,151 +633,6 @@ export class WatchCommand extends ProjectCommand {
   }
 
   /**
-   * `--follow`, `--follow=stdout`, `--follow=uds` (alias
-   * `claude-code-messaging`), or null when the flag is absent.
-   *
-   * Deliberately not inferred from the environment. A supervisor that runs
-   * a command and reads its stdout is started *by* the session, so
-   * CLAUDE_CODE_MESSAGING_SOCKET is set for it too — guessing by that
-   * variable would send exactly the batches that belong on stdout down the
-   * push channel instead. A bare `--follow` means stdout because stdout is
-   * the transport with no outside dependency.
-   */
-  private followTransport(): Transport | null {
-    if (this.follow === undefined || this.follow === false) return null;
-    if (this.follow === true || this.follow === "stdout") return "stdout";
-    if (this.follow === "uds" || this.follow === "claude-code-messaging") {
-      return "uds";
-    }
-    throw new CliError(
-      `unknown --follow transport "${this.follow}"`,
-      "valid transports: stdout (the default), uds (alias claude-code-messaging)",
-    );
-  }
-
-  /**
-   * The standing-mode plumbing (T-252): the two hooks `runWatchLoop` needs,
-   * a wait a refusal can cut short, and the flush that hands over whatever
-   * is not known to have been delivered.
-   *
-   * A push that cannot be opened degrades here instead of pushing blind.
-   * The failure this flag exists to remove is a batch disappearing into a
-   * hold with nobody the wiser, so a watch that cannot confirm delivery has
-   * no business claiming any: it falls back to the one batch and the exit
-   * that `todou watch` has always done.
-   */
-  private async openFollow<T>(opts: {
-    transport: Transport | null;
-    /** Names the command in a push header, so a reader can re-run it. */
-    label: string;
-    baseline: string | undefined;
-    intervalSec: number;
-    wait: ((maxMs: number) => Promise<void>) | undefined;
-    render: (
-      items: T[],
-      since: string | undefined,
-      cursor: string | undefined,
-    ) => string;
-    emit: (
-      items: T[],
-      since: string | undefined,
-      cursor: string | undefined,
-    ) => void;
-  }): Promise<Follow<T>> {
-    /** Newest position the loop has reported, for the exit flush. */
-    let seenCursor = opts.baseline;
-    /** Where the next batch's range starts: the last delivered cursor. */
-    let rangeStart = opts.baseline;
-    const oneShot: Follow<T> = {
-      wait: opts.wait,
-      since: () => undefined,
-      silent: false,
-      seen: () => {},
-      finish: () => {},
-    };
-    if (opts.transport === null) return oneShot;
-
-    let opened: PeerPush<T> | null = null;
-    if (opts.transport === "uds") {
-      const open = this.context.openPeerPush ?? openPeerPush;
-      try {
-        opened = await open<T>({
-          // Guarded in run() before any I/O; unset is refused there.
-          target: this.context.env.CLAUDE_CODE_MESSAGING_SOCKET as string,
-          clock: this.clock,
-          fromName: FROM_NAME,
-          // Attested only where the transcript is unambiguous: an
-          // unattested message is held only if the target session is in
-          // bypass, while a wrongly attested one is held outright.
-          fromMode: detectPermissionMode(this.agentContext?.session_id),
-          render: (items, since, cursor) =>
-            [
-              `${opts.label} — ${items.length} new ${items.length === 1 ? "entry" : "entries"}`,
-              opts.render(items, since, cursor),
-            ].join("\n"),
-        });
-      } catch (error) {
-        this.note(
-          `--follow=uds could not open its receipt socket (${describeError(error)}) — ` +
-            "delivering one batch and exiting, as without --follow",
-        );
-        return oneShot;
-      }
-    }
-
-    const push = opened;
-    return {
-      since: () => rangeStart,
-      silent: push !== null,
-      seen: (cursor) => {
-        seenCursor = cursor;
-      },
-      wait:
-        push === null
-          ? opts.wait
-          : (maxMs) =>
-              // Racing the refusal is what makes it noticed during the
-              // quiet phase, where `shouldStop` can then act on it,
-              // instead of whenever the next batch happens to land.
-              Promise.race([
-                (
-                  opts.wait ??
-                  ((ms: number) =>
-                    this.clock.sleep(Math.min(opts.intervalSec * 1000, ms)))
-                )(maxMs),
-                push.whenRejected,
-              ]),
-      afterItems: async (items, cursor) => {
-        if (push !== null) await push.send(items, rangeStart, cursor);
-        rangeStart = cursor;
-        seenCursor = cursor;
-        return push?.rejected ? "stop" : "continue";
-      },
-      shouldStop: push === null ? undefined : () => push.rejected !== null,
-      finish: () => {
-        if (push === null) return;
-        const held = push.unconfirmed();
-        // The one moment uds mode writes to stdout. Whatever ended the
-        // watch — a refusal, a fatal error — the background task's own
-        // completion notice carries this over, which is the behaviour from
-        // before this flag: print and exit, only with the accumulated
-        // batches. The position goes out even with nothing held, so a
-        // restart has a `--since` to resume from.
-        opts.emit(held.items, held.since, held.cursor ?? seenCursor);
-        const why = push.rejected;
-        if (why !== null) {
-          this.note(
-            `--follow=uds stopped: push ${why.status} ` +
-              `(${REJECTION_HINT[why.status] ?? "the receiving session did not take it"})` +
-              `${why.reason === undefined ? "" : ` — ${why.reason}`}`,
-          );
-        }
-        push.close();
-      },
-    };
-  }
-
-  /**
    * The watch set: a comma-separated -p (or TODOU_PROJECT) list, or null
    * for --all-projects, where enumeration is the server's job — done per
    * request, so a long watch picks up projects created after it started.
@@ -892,20 +661,10 @@ export class WatchCommand extends ProjectCommand {
     return slugs;
   }
 
-  /**
-   * `--print-cursor`: stdout carries the cursor and nothing else, so the
-   * whole output is what a command substitution wants. A watch set with no
-   * activity mints no cursor, and an empty capture silently starting from
-   * "now" is the failure mode this flag exists to remove — so say so.
-   */
   private emitCursorOnly(cursor: string | undefined): void {
-    if (cursor === undefined) {
-      throw new CliError(
-        "no cursor to print: nothing has happened in the watch set yet",
-        "the first comment or event mints one; until then omit --since, which already means now",
-      );
-    }
-    this.context.stdout.write(`${cursor}\n`);
+    this.context.stdout.write(
+      `${printableCursor(cursor, "in the watch set")}\n`,
+    );
   }
 
   private emitEmpty(

@@ -33,13 +33,15 @@ issue URL. Output is not left to guesswork either: `--json` spells every
 issue number in the project's own reference format (see
 [docs/external-trackers.md](external-trackers.md)).
 
-## Pushing activity into the session: `watch --follow=uds`
+## Pushing activity into the session: `--follow=uds`
 
-`todou watch --follow=uds` stays resident and delivers each batch of
-activity as a message to the Claude Code session that started it, instead
-of printing one batch and exiting. Run it as a background task and the
-session is told when something happens, rather than having to re-open the
-watch each time — or forgetting to.
+`todou watch --follow=uds` and `todou issue watch <n> --follow=uds` stay
+resident and deliver each batch of activity as a message to the Claude Code
+session that started them, instead of printing one batch and exiting. Run
+one as a background task and the session is told when something happens,
+rather than having to re-open the watch each time — or forgetting to. The
+two commands differ only in what they watch: every issue of a project set,
+or one card.
 
 It needs `CLAUDE_CODE_MESSAGING_SOCKET`, which Claude Code exports to the
 subprocesses it spawns, and refuses with that variable named if it is
@@ -59,6 +61,13 @@ documented, and each of them silent when wrong:
 - A session that accepts messages outright sends no positive receipt, so
   "delivered" can only mean "nothing negative arrived within the window".
 
+The sender's display name states which watch a message came from:
+`todou-watch-<slug>` for a project watch (`todou-watch-aa-bb` across a list,
+`todou-watch-all` under `--all-projects`) and `todou-watch-<slug>-<number>`
+for a single card. It is a display label only — the receiving side's
+admission check never reads it — but a session holding one project watch and
+three card watches would otherwise show the same sender five times.
+
 The session's `crossSessionInbound` setting is what decides whether the
 push works. It short-circuits the admission check **ahead of** the rule
 that lets a session's own processes through, so `"hold"` or `"refuse"`
@@ -75,7 +84,7 @@ its cursor to stdout, names the setting on stderr, and exits 0.
   (`~/.claude/projects/*/<session-id>.jsonl`, an *unofficial* format) and
   falls back to a `CLAUDE_MODEL` variable if you export one. Detection
   failures just omit the field; they never break a command.
-- permission mode (`watch --follow=uds` only, so a push can attest to it) —
+- permission mode (`--follow=uds` only, so a push can attest to it) —
   the same transcript tail, newest `permissionMode` wins, so switching mode
   mid-session is picked up. `plan` attests nothing: what the receiving side
   normalizes it to depends on a flag the transcript does not record, and a

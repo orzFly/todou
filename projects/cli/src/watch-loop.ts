@@ -82,6 +82,50 @@ export function watchMode(poll: boolean, forever: boolean): WatchMode {
 }
 
 /**
+ * The two contradictions `--print-cursor` can be in, worded once so both
+ * watches refuse them identically.
+ */
+export function checkPrintCursor(
+  printCursor: boolean,
+  opts: { poll: boolean; json: boolean },
+): void {
+  if (!printCursor) return;
+  if (!opts.poll) {
+    throw new CliError(
+      "--print-cursor only makes sense with --poll",
+      "a blocking watch prints its own `cursor:` line when it returns",
+    );
+  }
+  if (opts.json) {
+    throw new CliError(
+      "--print-cursor and --json both want stdout",
+      "drop one — --json already ends its batch with a cursor record",
+    );
+  }
+}
+
+/**
+ * The bare cursor `--print-cursor` writes, or the refusal to write an empty
+ * one: stdout carries the cursor and nothing else, so the whole output is
+ * what a command substitution wants, and something with no activity yet
+ * mints no cursor. An empty capture silently meaning "start at now" on the
+ * next call is the confusion this flag exists to end — so say so instead.
+ * `subject` names what has been quiet ("in the watch set", "on this issue").
+ */
+export function printableCursor(
+  cursor: string | undefined,
+  subject: string,
+): string {
+  if (cursor === undefined) {
+    throw new CliError(
+      `no cursor to print: nothing has happened ${subject} yet`,
+      "the first comment or event mints one; until then omit --since, which already means now",
+    );
+  }
+  return cursor;
+}
+
+/**
  * How much quiet the watch tolerates: the timeout a blocking watch exits 3
  * at, or under `--forever` the gap between heartbeats. That is why the
  * default splits — 60s is a fair bound to give up at, and far too shrill a

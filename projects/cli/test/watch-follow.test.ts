@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { systemClock } from "../src/clock.ts";
-import type { PeerPush, PeerPushOptions, Rejection } from "../src/peer-push.ts";
 import { runWatchLoop } from "../src/watch-loop.ts";
+import { fakePeerPush } from "./fake-peer-push.ts";
 import {
   fakeFetch,
   loggedInEnv,
@@ -140,97 +139,6 @@ const change = {
 
 /** How a standing watch is stopped in a test: the drain turns fatal. */
 const FATAL = { __status: 404, body: { code: "not_found", message: "gone" } };
-
-type FakePush = {
-  /** Injected through CliContext in place of the real socket transport. */
-  open: <T>(opts: PeerPushOptions<T>) => Promise<PeerPush<T>>;
-  /** Every push in order: the rendered body and the range it claimed. */
-  pushes: Array<{
-    body: string;
-    since: string | undefined;
-    cursor: string | undefined;
-  }>;
-  closed: () => boolean;
-};
-
-/**
- * A stand-in for the cross-session transport, faithful about the two things
- * the command depends on: a `send` that returns before any verdict is in,
- * and a receipt window after which a batch counts as landed. The wire
- * format itself is `peer-push.test.ts`'s business.
- */
-function fakePeerPush(
-  opts: {
-    /** Refuse the channel a beat after the nth send (1-based). */
-    rejectAfter?: { send: number; rejection: Rejection };
-    /** Fail to open at all, the way a bind collision does. */
-    failOpen?: Error;
-  } = {},
-): FakePush {
-  const pushes: FakePush["pushes"] = [];
-  let closed = false;
-  let rejected: Rejection | null = null;
-  let announce = () => {};
-  const whenRejected = new Promise<void>((resolve) => {
-    announce = resolve;
-  });
-
-  async function open<T>(o: PeerPushOptions<T>): Promise<PeerPush<T>> {
-    if (opts.failOpen) throw opts.failOpen;
-    const clock = o.clock ?? systemClock;
-    const windowMs = o.receiptWindowMs ?? 30_000;
-    const held: Array<{
-      items: T[];
-      since: string | undefined;
-      cursor: string | undefined;
-      expiresAt: number;
-    }> = [];
-    const prune = () => {
-      while ((held[0]?.expiresAt ?? Number.POSITIVE_INFINITY) <= clock.now()) {
-        held.shift();
-      }
-    };
-    return {
-      send: async (items, since, cursor) => {
-        pushes.push({ body: o.render(items, since, cursor), since, cursor });
-        held.push({
-          items: [...items],
-          since,
-          cursor,
-          expiresAt: clock.now() + windowMs,
-        });
-        if (opts.rejectAfter?.send === pushes.length) {
-          const { rejection } = opts.rejectAfter;
-          // A receipt arrives over a connection of its own, after the write
-          // has already returned — so the caller sees a clean send and
-          // learns of the refusal once it is back to waiting. A timer, not
-          // a microtask, is what puts it on the far side of that.
-          setTimeout(() => {
-            rejected = rejection;
-            announce();
-          }, 0);
-        }
-      },
-      get rejected() {
-        return rejected;
-      },
-      unconfirmed: () => {
-        prune();
-        return {
-          items: held.flatMap((batch) => batch.items),
-          since: held[0]?.since,
-          cursor: held.at(-1)?.cursor,
-        };
-      },
-      whenRejected,
-      close: () => {
-        closed = true;
-      },
-    };
-  }
-
-  return { open, pushes, closed: () => closed };
-}
 
 /**
  * The route table every command-level case here drains through: one reply
@@ -487,6 +395,59 @@ describe("watch --follow=uds (T-252)", () => {
     ]);
     expect(result.stderr).toContain("bind EADDRINUSE");
     expect(push.pushes).toHaveLength(0);
+  });
+});
+
+describe("watch --follow=uds sender name (T-254)", () => {
+  const udsEnv = {
+    ...loggedInEnv(),
+    CLAUDE_CODE_MESSAGING_SOCKET: "/run/cc-socks/4242.sock",
+  };
+  /** The cross-project route table: one fatal drain, nothing else needed. */
+  const crossRoutes = () => {
+    const sse: SseStub = sseStub();
+    return fakeFetch([
+      ["GET", "/api/me", me],
+      ["GET", "/api/events", () => sse.reply()],
+      ["GET", "/api/activity", () => FATAL],
+    ]).fetchImpl;
+  };
+  // The name is settled when the channel opens, before any batch exists, so
+  // every case here lets the first drain turn fatal rather than staging a
+  // delivery it would not read anything more out of.
+  const nameFrom = async (argv: string[], fetchImpl: typeof fetch) => {
+    const push = fakePeerPush();
+    const result = await runCli(["watch", ...argv, "--since", "a0"], {
+      fetchImpl,
+      env: udsEnv,
+      clock: virtualClock(),
+      openPeerPush: push.open,
+    });
+    expect(result.exitCode).toBe(1);
+    return push.fromName;
+  };
+
+  it("names one watched project", async () => {
+    expect(
+      await nameFrom(
+        ["-p", "todou", "--follow=uds"],
+        activityRoutes([]).fetchImpl,
+      ),
+    ).toBe("todou-watch-todou");
+  });
+
+  it("names a multi-project watch set in full", async () => {
+    // Not truncated: a slug is lowercase alphanumerics and dashes, so a long
+    // watch set only makes a long name, never an invalid envelope.
+    expect(await nameFrom(["-p", "aa,bb", "--follow=uds"], crossRoutes())).toBe(
+      "todou-watch-aa-bb",
+    );
+  });
+
+  it("names an --all-projects watch", async () => {
+    expect(
+      await nameFrom(["--all-projects", "--follow=uds"], crossRoutes()),
+    ).toBe("todou-watch-all");
   });
 });
 

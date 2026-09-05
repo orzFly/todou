@@ -143,6 +143,7 @@ todou question wait 16 <commentId> -p <proj> --forever                 # answers
 todou spec push 16 <dir> -p <proj> --message "v2" --wait               # push, then wait for the verdict
 todou spec wait 16 -p <proj> [--since <cursor>]                        # re-enter that wait
 todou watch -p <proj> --follow=uds                                     # stay resident, push each batch to this session
+todou issue watch 16 -p <proj> --follow=uds                            # the same, on one card
 ```
 
 - Use `--forever` (`spec wait` always behaves this way): one call, no loop around it. The command
@@ -155,15 +156,15 @@ todou watch -p <proj> --follow=uds                                     # stay re
 - A wait killed from outside (the harness stopping a background task) is not an error. The kill
   notification is your wake-up; restart the wait with the same cursor, every time. A short self-poll
   instead costs an agent turn per tick.
-- `todou watch --follow` does not exit with its first batch: it stays resident and delivers every
-  batch, so a sentinel costs one background task rather than a tool call per batch. Two transports,
-  never guessed from the environment: `--follow` / `--follow=stdout` writes each batch to stdout (for
-  a supervisor that runs a command and reads its output), `--follow=uds` (alias
-  `claude-code-messaging`) pushes each batch as a message into the Claude Code session that exported
-  `CLAUDE_CODE_MESSAGING_SOCKET`, and refuses up front if it is unset. Implies `--forever`; conflicts
-  with `--poll` and `--print-cursor`. `--debounce` defaults to **60s** here, because the receiving
-  side charges every message a fixed boilerplate cost — merging is nearly always the better trade —
-  and `--debounce 0` restores immediate delivery.
+- `--follow` (on `todou watch` and `issue watch` alike) does not exit with the first batch: it stays
+  resident and delivers every batch, so a sentinel costs one background task rather than a tool call
+  per batch. Two transports, never guessed from the environment: `--follow` / `--follow=stdout`
+  writes each batch to stdout (for a supervisor that runs a command and reads its output),
+  `--follow=uds` (alias `claude-code-messaging`) pushes each batch as a message into the Claude Code
+  session that exported `CLAUDE_CODE_MESSAGING_SOCKET`, and refuses up front if it is unset. Implies
+  `--forever`; conflicts with `--poll` and `--print-cursor`, on both commands. `--debounce` defaults
+  to **60s** here, because the receiving side charges every message a fixed boilerplate cost —
+  merging is nearly always the better trade — and `--debounce 0` restores immediate delivery.
 - **Under `--follow=uds` stdout stays empty while pushing works**, because a background task's stdout
   is delivered in full at exit and printing as well as pushing would hand you every batch twice. The
   one thing it writes is the degrade: if the session holds, refuses or drops a message, the watch
@@ -171,7 +172,9 @@ todou watch -p <proj> --follow=uds                                     # stay re
   exits 0 — the plain "wait, print, exit" behaviour, only with the accumulated batches. Every exit
   path flushes, a fatal error included, so there is always a cursor to resume from. Each push states
   the range it covers as `since:` / `cursor:` lines, and one push's `cursor` is the next one's
-  `since`: if they ever fail to line up, a notification went missing.
+  `since`: if they ever fail to line up, a notification went missing. The sender is named
+  `@todou-watch-<slug>` for a project watch and `@todou-watch-<slug>-<number>` for a card watch, so
+  several watches on one session stay tellable apart without opening the message.
 - A wait returns only for entries created after its cursor. When you wait for a state (a verdict, an
   answer, a status), read the state first and block only while it is not there yet. `spec wait` and
   `question wait` do this themselves; before an `issue watch`, run `issue view --brief`.
@@ -189,7 +192,8 @@ left. `issue watch` on a moved card prints `moved to …` and a cursor for its n
 watch there with that cursor.
 
 A current cursor for a wait that no write precedes: `cursor=$(todou watch -p <proj> --poll
---print-cursor)`. Unread marks: `issue list` marks unseen activity by others with `●`, `--unread`
+--print-cursor)`, or `cursor=$(todou issue watch <n> -p <proj> --poll --print-cursor)` for one card.
+Unread marks: `issue list` marks unseen activity by others with `●`, `--unread`
 filters to it, `view` marks the card read; the state is per user on the server. Exit codes of the
 blocking and `--poll` modes, NDJSON, stdout/stderr separation: `references/scripting.md`.
 
