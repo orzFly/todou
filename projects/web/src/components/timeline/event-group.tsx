@@ -6,9 +6,13 @@ import { AttachmentEventLink } from "@/components/issue/attachment-list.tsx";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
-import { IssueLink } from "@/components/shared/issue-link.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
-import { EventRow, ICONS } from "@/components/timeline/event-row.tsx";
+import {
+  EventRow,
+  ICONS,
+  referenceSource,
+  useEventRenderContext,
+} from "@/components/timeline/event-row.tsx";
 import {
   type MergeFamily,
   netStatusChain,
@@ -204,6 +208,7 @@ function ReferencedGroup({
   slug: string;
   issueNumber: number;
 }) {
+  const ctx = useEventRenderContext(slug, issueNumber);
   const first = events[0];
   const last = events[events.length - 1];
   if (!first || !last) return null;
@@ -248,15 +253,7 @@ function ReferencedGroup({
             title={event.created_at}
             className="py-1"
           >
-            <IssueLink
-              slug={slug}
-              number={Number(event.payload.by_issue)}
-              commentId={
-                typeof event.payload.by_comment === "number"
-                  ? event.payload.by_comment
-                  : undefined
-              }
-            />
+            {referenceSource(event, ctx).node}
           </li>
         ))}
       </ul>

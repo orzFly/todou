@@ -201,53 +201,17 @@ export function renderEvent(
         text: `${verb} ${text}`,
       };
     }
-    case "referenced": {
-      // Deep-links to the referencing comment when the event recorded one;
-      // older events without by_comment link the issue.
-      const commentId =
-        typeof payload.by_comment === "number" ? payload.by_comment : undefined;
-      return plain(
-        `referenced by ${formatRef(ctx.refConfig.internalPrefix, Number(payload.by_issue))}`,
-        commentId,
-      );
-    }
+    case "referenced":
     case "cross_referenced": {
-      const project = payload.by_project;
-      const number = payload.by_issue;
-      // A row a move rewrote stays visible with its far side blanked; it was
-      // visible before the move, and losing it would be the disappearance
-      // the redaction rule exists to prevent.
-      if (payload.by_moved === true && project === null) {
-        return plain("referenced by a card that has since moved");
-      }
-      // Self-contained on purpose: the source lives in another project, so
-      // this project's format would spell a number that means nothing here.
-      const text = `referenced by ${String(project)}#${String(number)}`;
-      if (typeof project !== "string" || typeof number !== "number")
-        return plain(text);
-      // An id beats a slug: a slug has to be read as of the event's own
-      // instant, and after it changes hands that answer is a guess.
-      const byId =
-        typeof payload.by_project_id === "number"
-          ? ctx.slugOfProject?.(payload.by_project_id)
-          : undefined;
-      const slug =
-        byId ??
-        resolveSlugAt(ctx.slugEntries, [], project, event.created_at) ??
-        project;
+      const source = referenceSource(event, ctx);
       return {
         node: (
           <>
             {"referenced by "}
-            <IssueLink
-              slug={slug}
-              number={number}
-              crossProject
-              fallback={`${slug}#${number}`}
-            />
+            {source.node}
           </>
         ),
-        text,
+        text: `referenced by ${source.text}`,
       };
     }
     case "attachment_added": {
@@ -396,6 +360,76 @@ export function renderEvent(
       };
     }
   }
+}
+
+/**
+ * The far side of a reference event — the card that pointed here — with no
+ * "referenced by" in front of it. A merged run says that once in its header
+ * and then lists sources bare, so the verb belongs to the caller. Both
+ * reference types resolve here so neither surface can spell one of them the
+ * other's way: a cross-project number read as this project's names a real
+ * card, which is a wrong link nothing downstream can catch.
+ */
+export function referenceSource(
+  event: TimelineEvent,
+  ctx: EventRenderContext,
+): { node: ReactNode; text: string } {
+  const { payload } = event;
+  // Deep-links to the referencing comment when the event recorded one;
+  // older events without by_comment link the issue.
+  const commentId =
+    typeof payload.by_comment === "number" ? payload.by_comment : undefined;
+
+  if (event.event_type === "referenced") {
+    const number = Number(payload.by_issue);
+    const text = formatRef(ctx.refConfig.internalPrefix, number);
+    return {
+      node:
+        ctx.slug === undefined ? (
+          text
+        ) : (
+          <IssueLink slug={ctx.slug} number={number} commentId={commentId} />
+        ),
+      text,
+    };
+  }
+
+  const project = payload.by_project;
+  const number = payload.by_issue;
+  // A row a move rewrote stays visible with its far side blanked; it was
+  // visible before the move, and losing it would be the disappearance
+  // the redaction rule exists to prevent.
+  if (payload.by_moved === true && project === null) {
+    const moved = "a card that has since moved";
+    return { node: moved, text: moved };
+  }
+  // Self-contained on purpose: the source lives in another project, so
+  // this project's format would spell a number that means nothing here.
+  const text = `${String(project)}#${String(number)}`;
+  if (typeof project !== "string" || typeof number !== "number")
+    return { node: text, text };
+  // An id beats a slug: a slug has to be read as of the event's own
+  // instant, and after it changes hands that answer is a guess.
+  const byId =
+    typeof payload.by_project_id === "number"
+      ? ctx.slugOfProject?.(payload.by_project_id)
+      : undefined;
+  const slug =
+    byId ??
+    resolveSlugAt(ctx.slugEntries, [], project, event.created_at) ??
+    project;
+  return {
+    node: (
+      <IssueLink
+        slug={slug}
+        number={number}
+        commentId={commentId}
+        crossProject
+        fallback={`${slug}#${number}`}
+      />
+    ),
+    text,
+  };
 }
 
 export const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {

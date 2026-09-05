@@ -1,7 +1,22 @@
+import { QueryClient } from "@tanstack/react-query";
 import { fireEvent, waitFor } from "@testing-library/react";
-import type { AgentContext, TimelineEvent, UserRef } from "@todou/shared";
+import type {
+  AgentContext,
+  IssueListItem,
+  Project,
+  ReferenceConfig,
+  ReferenceDirectory,
+  TimelineEvent,
+  UserRef,
+} from "@todou/shared";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
+import { issueRefQuery } from "../src/api/issue-refs.ts";
+import { projectsQuery } from "../src/api/queries.ts";
+import {
+  referenceConfigQuery,
+  referenceDirectoryQuery,
+} from "../src/api/references.ts";
 import { EventGroup } from "../src/components/timeline/event-group.tsx";
 import { renderWithProviders } from "./render.tsx";
 
@@ -50,6 +65,87 @@ const move = (from: [number, string], to: [number, string], at: string) =>
     },
     created_at: at,
   });
+
+const refItem = (number: number, title: string): IssueListItem => ({
+  id: number,
+  number,
+  title,
+  status: {
+    id: 1,
+    name: "In Progress",
+    category: "open",
+    color: "#bf8700",
+    position: 2,
+    is_default: false,
+  },
+  author: {
+    id: 1,
+    login: "alice",
+    display_name: "Alice",
+    kind: "human",
+    avatar_url: null,
+    owner: null,
+  },
+  assignees: [],
+  labels: [],
+  created_at: "2026-08-12T00:00:00Z",
+  updated_at: "2026-08-12T00:00:00Z",
+  body_edited_at: null,
+  open_questions: 0,
+  spec_version: null,
+  spec_review_status: null,
+  spec_unresolved_comments: 0,
+  deleted_at: null,
+  deleted_by: null,
+  unread: false,
+  unread_comments: 0,
+  moves: [],
+});
+
+const SINCE = "2026-08-01T00:00:00.000Z";
+
+const configOf = (prefix: string): ReferenceConfig => ({
+  format: { prefix, history: [{ prefix, effective_from: SINCE }] },
+  autolinks: [],
+});
+
+const directory: ReferenceDirectory = {
+  since: SINCE,
+  entries: [{ prefix: "M", slug: "mirror", from: SINCE, to: null }],
+  contested: [],
+};
+
+const project = (id: number, slug: string): Project => ({
+  id,
+  slug,
+  name: slug,
+  description: "",
+  created_at: SINCE,
+});
+
+/**
+ * A viewer on `todou` who may also read `mirror` (project id 2, the
+ * by_project_id the payloads carry), with `targets` seeding the batched
+ * lookups each IssueLink makes.
+ */
+function crossClient(
+  targets: Array<[string, IssueListItem]> = [],
+): QueryClient {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  client.setQueryData(referenceConfigQuery("todou").queryKey, configOf("T"));
+  client.setQueryData(referenceConfigQuery("mirror").queryKey, configOf("M"));
+  client.setQueryData(referenceDirectoryQuery.queryKey, directory);
+  client.setQueryData(projectsQuery.queryKey, [
+    project(1, "todou"),
+    project(2, "mirror"),
+  ]);
+  for (const [slug, item] of targets) {
+    client.setQueryData(issueRefQuery(slug, item.number).queryKey, item);
+  }
+  return client;
+}
 
 describe("EventGroup", () => {
   it("summarizes a mixed labels run GitHub-style", async () => {
@@ -331,6 +427,102 @@ describe("EventGroup", () => {
       `a[href*="event-${only.id}"]`,
     ) as HTMLAnchorElement | null;
     expect(stamp?.title).toBe(only.created_at);
+  });
+
+  it("points each source at its own project (T-256)", async () => {
+    const local = event({
+      event_type: "referenced",
+      payload: { by_issue: 7 },
+    });
+    const cross = event({
+      event_type: "cross_referenced",
+      payload: { by_project: "mirror", by_project_id: 2, by_issue: 3 },
+    });
+    const { findByTestId, container } = renderWithProviders(
+      <EventGroup
+        family="referenced"
+        events={[local, cross]}
+        slug="todou"
+        issueNumber={1}
+      />,
+      crossClient([
+        ["todou", refItem(7, "Local source")],
+        ["mirror", refItem(3, "Mirror source")],
+      ]),
+    );
+    const group = await findByTestId("event-group");
+    expect(group.textContent).toContain("referenced 2 times");
+
+    const localLink = await waitFor(() => {
+      const el = container.querySelector('a[data-issue-link="7"]');
+      expect(el).not.toBeNull();
+      return el as HTMLAnchorElement;
+    });
+    expect(localLink.getAttribute("href")).toBe("/projects/todou/issues/7");
+
+    // The guard on the list row's own resolution: spelling by_issue in this
+    // project's terms lands on todou#3, a real card and therefore a wrong
+    // link nothing later can catch.
+    const crossLink = await waitFor(() => {
+      const el = container.querySelector('a[data-issue-project="mirror"]');
+      expect(el).not.toBeNull();
+      return el as HTMLAnchorElement;
+    });
+    expect(crossLink.getAttribute("href")).toBe("/projects/mirror/issues/3");
+    expect(crossLink.textContent).toContain("Mirror source");
+  });
+
+  it("keeps a blanked source in the list, unlinked (T-256)", async () => {
+    // Only a reader who cannot see the source project gets the blanked
+    // payload, and the local stack's single-mode login can read every
+    // project — so this row exists nowhere but here.
+    const moved = event({
+      event_type: "cross_referenced",
+      payload: { by_project: null, by_issue: 3, by_moved: true },
+    });
+    const { findByTestId, container } = renderWithProviders(
+      <EventGroup
+        family="referenced"
+        events={[moved]}
+        slug="todou"
+        issueNumber={1}
+      />,
+      crossClient(),
+    );
+    await findByTestId("event-group");
+    const row = container.querySelector(`li[id="event-${moved.id}"]`);
+    expect(row).toBeTruthy();
+    expect(row?.textContent).toBe("a card that has since moved");
+    expect(row?.querySelector("a")).toBeNull();
+  });
+
+  it("deep-links a cross-project source to its comment (T-256)", async () => {
+    const cross = event({
+      event_type: "cross_referenced",
+      payload: {
+        by_project: "mirror",
+        by_project_id: 2,
+        by_issue: 3,
+        by_comment: 42,
+      },
+    });
+    const { container } = renderWithProviders(
+      <EventGroup
+        family="referenced"
+        events={[cross]}
+        slug="todou"
+        issueNumber={1}
+      />,
+      crossClient([["mirror", refItem(3, "Mirror source")]]),
+    );
+    const link = await waitFor(() => {
+      const el = container.querySelector('a[data-comment-link="42"]');
+      expect(el).not.toBeNull();
+      return el as HTMLAnchorElement;
+    });
+    expect(link.getAttribute("href")).toBe(
+      "/projects/mirror/issues/3#comment-42",
+    );
   });
 
   it("links every attached file", async () => {

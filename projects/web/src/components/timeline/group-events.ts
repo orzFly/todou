@@ -35,12 +35,16 @@ export function windowMsFor(family: MergeFamily): number {
  * that a collapsed group would hide), and rare types stay standalone.
  * label_added and label_removed share a family on purpose: one triage
  * gesture often does both, and GitHub renders that as a single row.
+ * referenced and cross_referenced likewise: the reader cares who pointed
+ * here, not whether they did it from this project, and every row says so
+ * itself.
  */
 const FAMILY_BY_TYPE: Partial<Record<IssueEventType, MergeFamily>> = {
   status_changed: "status",
   label_added: "labels",
   label_removed: "labels",
   referenced: "referenced",
+  cross_referenced: "referenced",
   attachment_added: "attachments",
 };
 

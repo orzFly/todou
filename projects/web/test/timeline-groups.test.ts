@@ -84,7 +84,11 @@ describe("familyOf", () => {
     expect(familyOf("label_added")).toBe("labels");
     expect(familyOf("label_removed")).toBe("labels");
     expect(familyOf("referenced")).toBe("referenced");
+    expect(familyOf("cross_referenced")).toBe("referenced");
     expect(familyOf("attachment_added")).toBe("attachments");
+    // Every remaining type, so "nothing else" is a claim and not a sample —
+    // cross_referenced sat outside both lists and merged nowhere for two
+    // releases without a single test going red (T-256).
     for (const standalone of [
       "opened",
       "closed",
@@ -96,6 +100,10 @@ describe("familyOf", () => {
       "spec_pushed",
       "spec_review",
       "spec_comments_resolved",
+      "deleted",
+      "restored",
+      "moved_in",
+      "moved_out",
     ] as const) {
       expect(familyOf(standalone)).toBeNull();
     }
@@ -199,6 +207,54 @@ describe("groupTimeline", () => {
       }),
     ]);
     expect(kinds(units)).toEqual(["group:1", "group:1"]);
+  });
+
+  it("folds cross-project references into the same run (T-256)", () => {
+    const HOURS = 3_600_000;
+    const units = groupTimeline([
+      event({ event_type: "referenced", payload: { by_issue: 7 }, atMs: 0 }),
+      event({
+        event_type: "cross_referenced",
+        payload: { by_project: "mirror", by_issue: 3 },
+        atMs: 4 * HOURS,
+      }),
+      event({
+        event_type: "referenced",
+        payload: { by_issue: 8 },
+        atMs: 9 * HOURS,
+      }),
+      event({
+        event_type: "cross_referenced",
+        payload: { by_project: "mirror", by_issue: 4 },
+        atMs: 20 * HOURS,
+      }),
+    ]);
+    // Same family, so the hour-scale gaps windowMsFor exempts apply here too.
+    expect(kinds(units)).toEqual(["group:4"]);
+  });
+
+  it("emits a lone cross-project reference as a group too (T-256)", () => {
+    const units = groupTimeline([
+      event({
+        event_type: "cross_referenced",
+        payload: { by_project: "mirror", by_issue: 3 },
+        atMs: 0,
+      }),
+    ]);
+    expect(kinds(units)).toEqual(["group:1"]);
+  });
+
+  it("splits a mixed reference run on an interleaved comment", () => {
+    const units = groupTimeline([
+      event({
+        event_type: "cross_referenced",
+        payload: { by_project: "mirror", by_issue: 3 },
+        atMs: 0,
+      }),
+      comment(1000),
+      event({ event_type: "referenced", payload: { by_issue: 8 }, atMs: 2000 }),
+    ]);
+    expect(kinds(units)).toEqual(["group:1", "item", "group:1"]);
   });
 
   it("emits a lone referenced event as a group, unlike other families", () => {
