@@ -1,0 +1,14 @@
+todou v0.4.0
+
+An issue can move to another project, keeping every link that pointed at
+its old address. A reference is resolved once now — when you write it,
+stored as a link onto the target's permanent address — which retires the
+pile of rules every reader used to re-apply. Search grew qualifiers such
+as is:, label: and harness:, the box resolves what you type as a
+reference, and reporter joins reader, writer and admin as a role.
+
+Two passes to run by hand after the deploy, in this order: todou-server
+refs migrate, then attachments relabel. Breaking for anything rendering
+a timeline: cross_referenced is no longer written, so a 0.3.1 CLI prints
+a cross-project mention under the wrong project's prefix. Move the
+server and the CLI together.
