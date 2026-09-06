@@ -10,7 +10,7 @@ import type {
   ReferenceDirectory,
 } from "@todou/shared";
 import { describe, expect, it } from "vitest";
-import { issueRefQuery } from "../src/api/issue-refs.ts";
+import { issueRefQuery, type ResolvedIssueRef } from "../src/api/issue-refs.ts";
 import {
   issueCompletionQuery,
   issueCompletionSearchQuery,
@@ -330,6 +330,23 @@ describe("refCompletionSource", () => {
     client.setQueryData(issueRefQuery("todou", 999).queryKey, item(999, "Old"));
     const result = await completeAt(client, "todou", "#999");
     expect(result?.options.map((o) => o.label)).toEqual(["#999"]);
+  });
+
+  it("completes a moved card at the number that was typed", async () => {
+    const client = seededClient({
+      pages: { todou: [item(1, "One")], mirror: [] },
+    });
+    const moved: ResolvedIssueRef = {
+      ...item(45, "Landed in harbor"),
+      at: { slug: "harbor", number: 45 },
+    };
+    client.setQueryData(issueRefQuery("mirror", 3).queryKey, moved);
+    const result = await completeAt(client, "todou", "see mirror#3");
+    // `mirror#45` is a different card, or none. The written form resolves to
+    // the moved card when it is stored, so the typed number is the right one
+    // to hand back (T-274).
+    expect(result?.options[0]?.apply).toBe("mirror#3");
+    expect(result?.options[0]?.detail).toBe("Landed in harbor");
   });
 
   it("falls back to a server search for a word query", async () => {

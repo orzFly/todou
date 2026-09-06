@@ -255,11 +255,19 @@ export function refCompletionSource(
     // A number past the recent window still has to be completable, and a
     // word deserves a real search: neither is in the cached page.
     if (/^[0-9]+$/.test(found.query)) {
+      const asked = Number(found.query);
       const exact = await queryClient
-        .fetchQuery(issueRefQuery(found.slug, Number(found.query)))
+        .fetchQuery(issueRefQuery(found.slug, asked))
         .catch(() => null);
       if (context.aborted) return null;
-      if (exact !== null && !seen.has(exact.number)) items.unshift(exact);
+      // The number asked for, not the one the lookup came back with: a moved
+      // card answers from its new home, and the option is spelled against the
+      // project asked, where that number names a different card or none. The
+      // written form stays resolvable because the resolve pass follows the
+      // move when it stores the link.
+      if (exact !== null && !seen.has(asked)) {
+        items.unshift({ ...exact, number: asked });
+      }
     } else if (found.query.length >= 2) {
       const hits = await queryClient
         .fetchQuery(issueCompletionSearchQuery(found.slug, found.query))

@@ -1,8 +1,21 @@
 import { QueryClient } from "@tanstack/react-query";
+import { waitFor } from "@testing-library/react";
+import {
+  type IssueListItem,
+  MePrefs,
+  type ReferenceConfig,
+} from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { issueRefQuery } from "../src/api/issue-refs.ts";
+import { issueRefQuery, type ResolvedIssueRef } from "../src/api/issue-refs.ts";
+import { prefsQuery } from "../src/api/prefs.ts";
+import { referenceConfigQuery } from "../src/api/references.ts";
+import { IssueLink } from "../src/components/shared/issue-link.tsx";
+import { renderWithProviders, testQueryClient } from "./render.tsx";
 
-const issue = (number: number, title: string) => ({
+const issue = (
+  number: number,
+  title: string,
+): IssueListItem & { body: string } => ({
   id: number,
   number,
   title,
@@ -19,7 +32,7 @@ const issue = (number: number, title: string) => ({
     id: 1,
     login: "user",
     display_name: "User",
-    kind: "human",
+    kind: "human" as const,
     avatar_url: null,
     owner: null,
   },
@@ -135,5 +148,123 @@ describe("references to a moved card", () => {
       "/api/projects/a/issues/102",
       "/api/projects/a/issues/103",
     ]);
+  });
+});
+
+const refConfig = (prefix: string | null): ReferenceConfig => ({
+  format: { prefix, history: [] },
+  autolinks: [],
+});
+
+/**
+ * How a reference to a moved card reads (T-274). One card throughout: written
+ * as `homelab/CH-84`, living at `harbor/HB-30` since.
+ */
+describe("rendering a reference to a moved card", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const moved = (): ResolvedIssueRef => {
+    const { body: _body, ...item } = issue(30, "emoji 选择器：搜索排序");
+    return { ...item, at: { slug: "harbor", number: 30 } };
+  };
+
+  /** Nothing is meant to reach the network; a miss must not hang the render. */
+  const offline = () =>
+    vi.stubGlobal(
+      "fetch",
+      (async () =>
+        new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
+    );
+
+  const seeded = ({
+    destination = true,
+    ref = moved(),
+  }: {
+    destination?: boolean;
+    ref?: ResolvedIssueRef;
+  } = {}): QueryClient => {
+    const client = testQueryClient();
+    client.setQueryData(prefsQuery.queryKey, MePrefs.parse({}));
+    client.setQueryData(
+      referenceConfigQuery("homelab").queryKey,
+      refConfig("CH"),
+    );
+    if (destination) {
+      client.setQueryData(
+        referenceConfigQuery("harbor").queryKey,
+        refConfig("HB"),
+      );
+    }
+    client.setQueryData(issueRefQuery("homelab", 84).queryKey, ref);
+    return client;
+  };
+
+  const linkOf = async (
+    client: QueryClient,
+    pageSlug: string | undefined,
+    asWritten = false,
+  ): Promise<HTMLAnchorElement> => {
+    offline();
+    const view = renderWithProviders(
+      <IssueLink
+        slug="homelab"
+        number={84}
+        pageSlug={pageSlug}
+        asWritten={asWritten}
+      />,
+      client,
+    );
+    return await waitFor(() => {
+      const el = view.container.querySelector("a");
+      expect(el).not.toBeNull();
+      expect(el?.textContent).toContain("emoji 选择器");
+      return el as HTMLAnchorElement;
+    });
+  };
+
+  it("spells the card where it lives now, not where it was written", async () => {
+    const link = await linkOf(seeded(), "todou");
+    expect(link.textContent).toBe("harbor/HB-30 emoji 选择器：搜索排序");
+    expect(link.getAttribute("href")).toBe("/projects/harbor/issues/30");
+    expect(link.getAttribute("data-issue-project")).toBe("harbor");
+    expect(link.getAttribute("data-issue-link")).toBe("30");
+    expect(link.title).toBe("harbor/HB-30 emoji 选择器：搜索排序 (Todo)");
+  });
+
+  it("names the project when the card moved out of the reader's own", async () => {
+    // The regression this card is about: spelled at the written address this
+    // reads `CH-84`, a bare ref that claims a card homelab no longer holds.
+    const link = await linkOf(seeded(), "homelab");
+    expect(link.textContent).toBe("harbor/HB-30 emoji 选择器：搜索排序");
+    expect(link.getAttribute("data-issue-project")).toBe("harbor");
+  });
+
+  it("drops the project when the card moved into the reader's own", async () => {
+    const link = await linkOf(seeded(), "harbor");
+    expect(link.textContent).toBe("HB-30 emoji 选择器：搜索排序");
+    expect(link.getAttribute("data-issue-project")).toBeNull();
+  });
+
+  it("keeps the written address where the sentence is about the address", async () => {
+    // `moved this in from …`: following the card would point the link's own
+    // words at the card the reader is already on.
+    const link = await linkOf(seeded(), "harbor", true);
+    expect(link.textContent).toBe("homelab/CH-84 emoji 选择器：搜索排序");
+    expect(link.getAttribute("href")).toBe("/projects/harbor/issues/30");
+  });
+
+  it("leaves a card that never moved exactly as written", async () => {
+    const { body: _body, ...stayed } = issue(84, "emoji 选择器：搜索排序");
+    const link = await linkOf(seeded({ ref: stayed }), "todou");
+    expect(link.textContent).toBe("homelab/CH-84 emoji 选择器：搜索排序");
+    expect(link.getAttribute("href")).toBe("/projects/homelab/issues/84");
+  });
+
+  it("degrades to the numeric form until the destination's prefix lands", async () => {
+    const link = await linkOf(seeded({ destination: false }), "todou");
+    expect(link.textContent).toBe("harbor#30 emoji 选择器：搜索排序");
   });
 });

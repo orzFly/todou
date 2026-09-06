@@ -197,8 +197,11 @@ describe("stored id-anchored references", () => {
       queries,
     );
 
-    const link = await anchor(view, 12);
+    // The attributes sit next to the href and describe the link that was
+    // rendered, so after a move they name the new address too (T-274).
+    const link = await anchor(view, 45);
     expect(link.getAttribute("href")).toBe("/projects/b/issues/45");
+    expect(link.getAttribute("data-issue-project")).toBe("b");
   });
 
   it("carries a comment anchor into the link", async () => {

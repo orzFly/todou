@@ -25,35 +25,57 @@ import { commentAnchor } from "@/lib/timeline-anchors.ts";
  * CURRENT format (T-80) — only user-authored text is anchored to its
  * created_at.
  *
- * `crossProject` switches the spelling to the self-contained form: the
- * reader is looking at another project's issue and a bare "T-12" would
- * read as one of this project's own.
+ * A reference names a card, not an address: `slug`/`number` are where it was
+ * written, which is only how the row is found, while everything the reader
+ * sees names where that card is now. Spelling one that moved at its written
+ * address hands the reader a project and a number that today belong to a
+ * different card — or to none.
+ *
+ * `asWritten` is the one exception, for a sentence that really is about an
+ * address rather than a card: a migration's source and destination, which
+ * following the card would collapse onto the card being read.
  */
 export function IssueLink({
   slug,
   number,
   commentId,
-  crossProject = false,
+  pageSlug,
+  asWritten = false,
   fallback,
 }: {
   slug: string;
   number: number;
   commentId?: number;
-  crossProject?: boolean;
+  /**
+   * The project the reader is on; `undefined` off any project page, which
+   * spells every ref in full. No default: a caller that forgot it would
+   * silently inherit "wherever this was written is home".
+   */
+  pageSlug: string | undefined;
+  asWritten?: boolean;
   /** Literal text to show when the ref resolves to nothing; defaults to the spelling. */
   fallback?: string;
 }) {
   const ref = useQuery(issueRefQuery(slug, number));
-  const config = useQuery(referenceConfigQuery(slug));
+  // Where the card is NOW. A stored link is anchored on an address that
+  // never changes, so following one after a move would spend a redirect;
+  // pointing the anchor at the current address spends none.
+  const at = ref.data?.at;
+  const toSlug = at?.slug ?? slug;
+  const toNumber = at?.number ?? number;
+  const shownSlug = asWritten ? slug : toSlug;
+  const shownNumber = asWritten ? number : toNumber;
+  const config = useQuery(referenceConfigQuery(shownSlug));
   const comment = useQuery({
     ...commentRefQuery(slug, number, commentId ?? 0),
     enabled: commentId !== undefined,
   });
   const refLeads = useRefPlacement("reference") === "before";
   const prefix = config.data?.format.prefix ?? null;
+  const crossProject = shownSlug !== pageSlug;
   const spelled = crossProject
-    ? qualifiedRefSpelling(slug, prefix, number)
-    : formatRef(prefix, number);
+    ? qualifiedRefSpelling(shownSlug, prefix, shownNumber)
+    : formatRef(prefix, shownNumber);
 
   // Across projects a failed lookup degrades exactly like a miss: a link
   // the viewer cannot follow would announce that the project exists
@@ -64,12 +86,6 @@ export function IssueLink({
   }
 
   const item = ref.data;
-  // Where the card is NOW. A stored link is anchored on an address that
-  // never changes, so following one after a move would spend a redirect;
-  // pointing the anchor at the current address spends none.
-  const at = item?.at;
-  const toSlug = at?.slug ?? slug;
-  const toNumber = at?.number ?? number;
   const commentNote =
     commentId === undefined
       ? null
@@ -90,8 +106,8 @@ export function IssueLink({
       // The timeline owns anchor positioning (highlight + lazy page
       // loading); the router's own scroll would race it.
       hashScrollIntoView={false}
-      data-issue-link={number}
-      data-issue-project={crossProject ? slug : undefined}
+      data-issue-link={shownNumber}
+      data-issue-project={crossProject ? shownSlug : undefined}
       data-comment-link={commentId}
       className="font-medium hover:underline"
       title={
@@ -164,7 +180,7 @@ function CommentLink({
       slug={home}
       number={located.data.issue_number}
       commentId={located.data.comment.id}
-      crossProject={home !== pageSlug}
+      pageSlug={pageSlug}
       fallback={fallback}
     />
   );
@@ -255,7 +271,7 @@ export function MarkdownLink({
         slug={stored.slug}
         number={stored.number}
         commentId={stored.commentId}
-        crossProject={stored.slug !== slug}
+        pageSlug={slug}
         fallback={written}
       />
     );
@@ -268,7 +284,7 @@ export function MarkdownLink({
         slug={home}
         number={Number(refMatch[1])}
         commentId={numberOr(refMatch[2])}
-        crossProject={home !== slug}
+        pageSlug={slug}
         fallback={written}
       />
     );
@@ -280,7 +296,7 @@ export function MarkdownLink({
         slug={xrefMatch[1]}
         number={Number(xrefMatch[2])}
         commentId={numberOr(xrefMatch[3])}
-        crossProject
+        pageSlug={slug}
         fallback={written}
       />
     );

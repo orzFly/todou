@@ -168,6 +168,16 @@ export function useJumpRows(slug: string, q: string): JumpRow[] {
     ...issueRefQuery(target?.slug ?? slug, target?.number ?? 0),
     enabled: target !== null && prefixOk,
   });
+  // The reader typed an address; the row is about the card behind it. Once
+  // the lookup says the card moved, the row names where it is now — and so
+  // does Enter, which then spends no redirect getting there.
+  const shown = issue.data?.at ?? target;
+  const shownConfig = useQuery({
+    ...referenceConfigQuery(shown?.slug ?? slug),
+    // Same key as targetConfig for a card that never moved, so the common
+    // case costs no second request.
+    enabled: shown !== null,
+  });
   const note = useQuery({
     ...commentRefQuery(
       target?.slug ?? slug,
@@ -187,36 +197,42 @@ export function useJumpRows(slug: string, q: string): JumpRow[] {
         (targetConfig.isPending ||
           (prefixOk &&
             (issue.isPending ||
+              shownConfig.isPending ||
               (target.commentId !== undefined && note.isPending))))));
 
   const spelled =
-    target === null
+    shown === null
       ? ""
-      : target.slug === slug
-        ? formatRef(prefix, target.number)
+      : shown.slug === slug
+        ? formatRef(prefix, shown.number)
         : qualifiedRefSpelling(
-            target.slug,
-            targetConfig.data?.format.prefix ?? null,
-            target.number,
+            shown.slug,
+            shownConfig.data?.format.prefix ?? null,
+            shown.number,
           );
 
   const rows: JumpRow[] = [];
   if (card !== undefined) {
     if (pending) {
       rows.push({ kind: "issue", state: "pending", candidate: card });
-    } else if (target !== null && prefixOk && issue.data != null) {
+    } else if (
+      target !== null &&
+      shown !== null &&
+      prefixOk &&
+      issue.data != null
+    ) {
       rows.push({
         kind: "issue",
         state: "ready",
-        slug: target.slug,
-        number: target.number,
+        slug: shown.slug,
+        number: shown.number,
         ...(target.commentId === undefined
           ? {}
           : { commentId: target.commentId }),
         spelled,
         item: issue.data,
         commentBy: note.data ? displayNameOf(note.data.author) : null,
-        crossProject: target.slug !== slug,
+        crossProject: shown.slug !== slug,
       });
     }
   }
@@ -334,9 +350,12 @@ async function cardPromise(
 
     const item = await client.fetchQuery(issueRefQuery(candidate.slug, number));
     if (item === null) return null;
+    // Enter and the row are two paths to one answer; a moved card has to
+    // come out of both as the address it lives at today.
+    const at = item.at ?? { slug: candidate.slug, number };
     return {
-      slug: candidate.slug,
-      number,
+      slug: at.slug,
+      number: at.number,
       ...(candidate.commentId === undefined
         ? {}
         : { commentId: candidate.commentId }),

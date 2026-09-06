@@ -329,7 +329,8 @@ export function renderEvent(
             <IssueLink
               slug={slug}
               number={number}
-              crossProject
+              pageSlug={ctx.slug}
+              asWritten
               fallback={`${slug}#${number}`}
             />
             {suffix}
@@ -351,7 +352,8 @@ export function renderEvent(
             <IssueLink
               slug={slug}
               number={number}
-              crossProject
+              pageSlug={ctx.slug}
+              asWritten
               fallback={`${slug}#${number}`}
             />
           </>
@@ -426,7 +428,7 @@ export function referenceSource(
         slug={slug}
         number={number}
         commentId={commentId}
-        crossProject={!local}
+        pageSlug={ctx.slug}
         fallback={text}
       />
     ),
@@ -478,6 +480,7 @@ function linkifyIssueRefs(
         slug={slug}
         number={segment.number}
         commentId={commentId}
+        pageSlug={slug}
       />
     ) : segment.type === "text" ? (
       segment.value

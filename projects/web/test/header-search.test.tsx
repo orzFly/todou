@@ -256,9 +256,8 @@ describe("the header's search, narrow", () => {
  * T-215's jump row meeting T-231's tombstones. `useJumpRows` resolves a card
  * through the same `issueRefQuery` batcher <IssueLink> uses, so the probe that
  * turns a moved card's ref into a live one is inherited rather than repeated —
- * this pins that it is still shared. The row keeps the address the reader
- * typed, which is the tombstone, and the tombstone is what redirects; only the
- * title comes from where the card actually lives now.
+ * this pins that it is still shared. The reader typed the tombstone's address;
+ * the row answers with the card's, so following it costs no redirect (T-274).
  */
 describe("the header's search, a card that moved away", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -269,7 +268,7 @@ describe("the header's search, a card that moved away", () => {
       headers: { "content-type": "application/json" },
     });
 
-  it("offers the card at its old address, titled from the new one", async () => {
+  it("offers the card at the address it lives at now", async () => {
     vi.stubGlobal("fetch", (async (input: unknown) => {
       const url = String(input);
       // The list excludes tombstones, so 123 comes back a miss.
@@ -292,7 +291,7 @@ describe("the header's search, a card that moved away", () => {
 
     const row = await waitFor(() => {
       const found = view.container.querySelector(
-        '[role="listbox"] a[href="/projects/todou/issues/123"]',
+        '[role="listbox"] a[href="/projects/b/issues/45"]',
       );
       if (found === null) throw new Error("no jump row yet");
       return found;

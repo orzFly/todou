@@ -472,7 +472,12 @@ describe("IssueLink ref placement (T-153, T-157)", () => {
 
   const renderLink = async (reference: RefPlacement, commentId?: number) => {
     const view = renderWithProviders(
-      <IssueLink slug="todou" number={7} commentId={commentId} />,
+      <IssueLink
+        slug="todou"
+        number={7}
+        commentId={commentId}
+        pageSlug="todou"
+      />,
       orderedClient(reference),
     );
     return await waitFor(() => {

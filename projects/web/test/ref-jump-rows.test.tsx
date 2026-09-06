@@ -12,6 +12,7 @@ import {
   commentLocationQuery,
   commentRefQuery,
   issueRefQuery,
+  type ResolvedIssueRef,
 } from "../src/api/issue-refs.ts";
 import { recentOpenIssuesQuery } from "../src/api/issues.ts";
 import { projectsQuery } from "../src/api/queries.ts";
@@ -123,16 +124,42 @@ function seedContext(
 }
 
 /** The hook's output verbatim, so a test reads what the box will read. */
-function Probe({ q }: { q: string }) {
-  return (
-    <pre data-testid="rows">{JSON.stringify(useJumpRows("todou", q))}</pre>
-  );
+function Probe({ slug, q }: { slug: string; q: string }) {
+  return <pre data-testid="rows">{JSON.stringify(useJumpRows(slug, q))}</pre>;
 }
 
-async function rowsOf(client: QueryClient, q: string): Promise<JumpRow[]> {
-  const { findByTestId } = renderWithProviders(<Probe q={q} />, client);
+async function rowsOf(
+  client: QueryClient,
+  q: string,
+  slug = "todou",
+): Promise<JumpRow[]> {
+  const { findByTestId } = renderWithProviders(
+    <Probe slug={slug} q={q} />,
+    client,
+  );
   const pre = await findByTestId("rows");
   return JSON.parse(pre.textContent ?? "[]") as JumpRow[];
+}
+
+/** `mirror/M-3` as it is today: `harbor/HB-30` (T-274). */
+function seedMoved(client: QueryClient): QueryClient {
+  client.setQueryData(referenceConfigQuery("harbor").queryKey, config("HB"));
+  client.setQueryData(projectsQuery.queryKey, (prev: Project[] | undefined) => [
+    ...(prev ?? []),
+    {
+      id: 3,
+      slug: "harbor",
+      name: "harbor",
+      description: "",
+      created_at: "2026-01-01T00:00:00.000Z",
+    },
+  ]);
+  const moved: ResolvedIssueRef = {
+    ...item(30, "Landed in harbor"),
+    at: { slug: "harbor", number: 30 },
+  };
+  client.setQueryData(issueRefQuery("mirror", 3).queryKey, moved);
+  return client;
 }
 
 /** The home row the peek hangs under: which project, and how it was named. */
@@ -196,6 +223,34 @@ describe("useJumpRows", () => {
       spelled: "mirror/M-3",
       crossProject: true,
     });
+  });
+
+  it("offers a moved card at the address it lives at now", async () => {
+    const client = seedMoved(seedContext(testQueryClient()));
+    // Enter must land here too, or the reader watches the URL change under
+    // them while the server redirects.
+    expect(await rowsOf(client, "M-3")).toMatchObject([
+      {
+        state: "ready",
+        slug: "harbor",
+        number: 30,
+        spelled: "harbor/HB-30",
+        crossProject: true,
+      },
+    ]);
+  });
+
+  it("stops calling a moved card cross-project once it moved in here", async () => {
+    const client = seedMoved(seedContext(testQueryClient()));
+    expect(await rowsOf(client, "M-3", "harbor")).toMatchObject([
+      {
+        state: "ready",
+        slug: "harbor",
+        number: 30,
+        spelled: "HB-30",
+        crossProject: false,
+      },
+    ]);
   });
 
   it("offers nothing when the card is not there", async () => {

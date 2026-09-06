@@ -240,7 +240,7 @@ describe("rich comment permalinks in markdown", () => {
       refItem(5, "Plain ref"),
     );
     const view = renderWithProviders(
-      <IssueLink slug="todou" number={5} />,
+      <IssueLink slug="todou" number={5} pageSlug="todou" />,
       client,
     );
     const link = await waitFor(() => {
