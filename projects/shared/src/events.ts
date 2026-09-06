@@ -47,5 +47,19 @@ export type ChangeEvent = z.infer<typeof ChangeEvent>;
  * from, so one user-level stream can carry every readable project (T-122).
  * The slug slot matches CrossActivityItem's (T-93).
  */
-export const CrossChangeEvent = ChangeEvent.extend({ project: ProjectSlug });
+export const CrossChangeEvent = ChangeEvent.extend({
+  project: ProjectSlug,
+  /**
+   * Computed per receiver (T-273): after this change, is `issue_number` in
+   * *your* inbox? Only connections that subscribed with `?inbox=1` get it.
+   * Absent means the server did not work it out — not subscribed, no
+   * `issue_number`, an entity the inbox does not track, a failed judgement
+   * or a flood — and the client must then refetch unconditionally.
+   *
+   * This keeps ChangeEvent's pointer-only promise: it is not entity data
+   * but a boolean derived from what this receiver may already read, and it
+   * answers only "should you refetch".
+   */
+  inbox: z.boolean().optional(),
+});
 export type CrossChangeEvent = z.infer<typeof CrossChangeEvent>;

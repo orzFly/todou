@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EventBus } from "../src/events/bus.ts";
+import { INBOX_JUDGE_QUEUE_MAX } from "../src/routes/sse.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
@@ -457,5 +458,189 @@ describe("user-level SSE stream (T-122)", () => {
       project: "closing",
     });
     await stream.end();
+  });
+
+  // Whether a change concerns the receiver is a question only the server can
+  // answer (T-273): the payload is a pointer, so a client seeing it has no
+  // way to tell. Opt-in, because a subscriber that treats events as a bare
+  // nudge would be paying for an answer it never reads.
+  describe("per-receiver inbox field (T-273)", () => {
+    let zoe: Awaited<ReturnType<typeof addUserWithToken>>;
+    let alphaId: number;
+
+    /** Reading the inbox mints the caller's read frontier for a project;
+     *  without one, activity is dated before the reader's epoch and the
+     *  judgement rightly calls it read. The web client loads it at boot. */
+    const readInbox = async (who: Record<string, string>) => {
+      const res = await t.app.request("/api/me/inbox", { headers: who });
+      expect(res.status).toBe(200);
+    };
+
+    const commentAs = async (
+      slug: string,
+      issue: number,
+      body: string,
+      who: Record<string, string>,
+    ) => {
+      const res = await t.app.request(
+        `/api/projects/${slug}/issues/${issue}/comments`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", ...who },
+          body: JSON.stringify({ body }),
+        },
+      );
+      expect(res.status).toBe(201);
+    };
+
+    /** The next change frame of a given entity, skipping the others one
+     *  write fans out into. */
+    // biome-ignore lint/suspicious/noExplicitAny: test-side frame poking
+    const nextOf = async (stream: SseReader, entity: string): Promise<any> => {
+      for (;;) {
+        const event = await stream.next("change");
+        if (event.entity === entity) return event;
+      }
+    };
+
+    beforeAll(async () => {
+      zoe = await addUserWithToken(t.ctx, "sse-zoe");
+      await setMember("alpha", zoe.user.id, "writer");
+      const res = await t.app.request("/api/projects/alpha", {
+        headers: { cookie },
+      });
+      expect(res.status).toBe(200);
+      alphaId = (await json(res)).id;
+    });
+
+    it("omits the field entirely without ?inbox=1", async () => {
+      // The CLI and every pre-T-273 client subscribe this way, and this is
+      // what keeps them from paying for a judgement they never read.
+      await readInbox(zoe.headers);
+      const stream = await SseReader.open("/api/events", zoe.headers);
+      await commentAs("alpha", 1, "no field please", { cookie });
+      // Both frames one comment fans out into: its timeline entry and the
+      // issue's own touch.
+      for (let i = 0; i < 2; i++) {
+        expect(await stream.next("change")).not.toHaveProperty("inbox");
+      }
+      stream.abort();
+    });
+
+    it("says true for a card that just entered the reader's inbox", async () => {
+      await readInbox(zoe.headers);
+      const stream = await SseReader.open("/api/events?inbox=1", zoe.headers);
+      const res = await t.app.request("/api/projects/alpha/issues", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ title: "opened for zoe" }),
+      });
+      expect(res.status).toBe(201);
+      const event = await nextOf(stream, "issue");
+      expect(event).toMatchObject({ action: "created", inbox: true });
+      stream.abort();
+    });
+
+    it("tells two receivers apart on one event", async () => {
+      // The writer's own comment cannot light their badge (the candidate
+      // scans exclude the actor), while the same event puts the card in the
+      // other reader's inbox. One event, two answers.
+      await readInbox(zoe.headers);
+      await readInbox({ cookie });
+      const created = await t.app.request("/api/projects/alpha/issues", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...zoe.headers },
+        body: JSON.stringify({ title: "zoe's card" }),
+      });
+      expect(created.status).toBe(201);
+      const number = (await json(created)).number;
+      // Read away the card itself, so the comment below is the only thing
+      // that can put it back in this reader's inbox.
+      const read = await t.app.request(
+        `/api/projects/alpha/issues/${number}/read`,
+        { method: "PUT", headers: headers(), body: "{}" },
+      );
+      expect(read.status).toBe(204);
+      await new Promise((r) => setTimeout(r, 5));
+
+      const hers = await SseReader.open("/api/events?inbox=1", zoe.headers);
+      const mine = await SseReader.open("/api/events?inbox=1", { cookie });
+
+      await commentAs("alpha", number, "zoe speaking", zoe.headers);
+      expect(await nextOf(hers, "timeline")).toMatchObject({ inbox: false });
+      expect(await nextOf(mine, "timeline")).toMatchObject({ inbox: true });
+
+      hers.abort();
+      mine.abort();
+    });
+
+    it("omits the field on events that name no issue", async () => {
+      const stream = await SseReader.open("/api/events?inbox=1", { cookie });
+      const res = await t.app.request("/api/projects/alpha/labels", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ name: "no-issue-here" }),
+      });
+      expect(res.status).toBe(201);
+      const event = await nextOf(stream, "label");
+      expect(event).not.toHaveProperty("inbox");
+      stream.abort();
+    });
+
+    it("still delivers the event when the judgement throws", async () => {
+      const stream = await SseReader.open("/api/events?inbox=1", { cookie });
+      const forProject = t.ctx.router.forProject.bind(t.ctx.router);
+      // Published straight onto the bus so the failure lands in the drain
+      // loop and nowhere else — an API write would take the same broken
+      // route on its way in.
+      t.ctx.router.forProject = () => {
+        throw new Error("judgement stub: no database for you");
+      };
+      try {
+        t.ctx.bus.publish(alphaId, {
+          entity: "comment",
+          id: 1,
+          action: "created",
+          issue_number: 1,
+        });
+        const event = await nextOf(stream, "comment");
+        expect(event).not.toHaveProperty("inbox");
+      } finally {
+        t.ctx.router.forProject = forProject;
+      }
+
+      // The stream survived it: the next event is judged as usual.
+      t.ctx.bus.publish(alphaId, {
+        entity: "comment",
+        id: 1,
+        action: "created",
+        issue_number: 1,
+      });
+      expect(await nextOf(stream, "comment")).toHaveProperty("inbox");
+      stream.abort();
+    });
+
+    it("stops judging while the connection's backlog is deep", async () => {
+      const stream = await SseReader.open("/api/events?inbox=1", { cookie });
+      const burst = INBOX_JUDGE_QUEUE_MAX + 8;
+      for (let i = 0; i < burst; i++) {
+        t.ctx.bus.publish(alphaId, {
+          entity: "comment",
+          id: i + 1,
+          action: "created",
+          issue_number: 1,
+        });
+      }
+      const seen = [];
+      for (let i = 0; i < burst; i++)
+        seen.push(await nextOf(stream, "comment"));
+
+      // The front of the burst is skipped and the tail is judged: the
+      // degradation follows the backlog, and lifts on its own once the
+      // connection catches up.
+      expect(seen[0]).not.toHaveProperty("inbox");
+      expect(seen[burst - 1]).toHaveProperty("inbox");
+      stream.abort();
+    });
   });
 });

@@ -1,4 +1,4 @@
-import type { InboxItem, InboxPage, InboxQuery } from "@todou/shared";
+import type { InboxItem, InboxPage, InboxQuery, MePrefs } from "@todou/shared";
 import { and, eq, gt, inArray, isNotNull, max, ne, or, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -28,6 +28,59 @@ import { ensureFrontier, unreadIssueState } from "./reads.ts";
 import { live } from "./trash.ts";
 
 type ProjectSlice = { items: InboxItem[]; truncated: boolean };
+
+/**
+ * Whether one issue belongs in one user's inbox, given the facts about it.
+ * Pure and exported because two paths need the same answer from different
+ * fetches (T-273): the list below reads its facts in bulk, the per-event
+ * judgement on the SSE path reads one card's. A second copy of these rules
+ * would drift, and drift here reads as "someone wrote to you and the badge
+ * stayed dark".
+ *
+ * `pendingSpecReview` and `openQuestions` come back out because callers
+ * report them: they are what the row says the issue is waiting for.
+ */
+export function inboxKeepCheck(input: {
+  isClosed: boolean;
+  isUnread: boolean;
+  unreadComments: number;
+  /** Author of the current spec version, when it is still unreviewed. */
+  specAuthorId: number | null;
+  openQuestions: number;
+  userId: number;
+  showWeakUnread: boolean;
+}): { keep: boolean; pendingSpecReview: boolean; openQuestions: number } {
+  // Closing an issue retires both pending reasons (T-111), so a closed
+  // issue only survives on unread activity of its own — a new foreign
+  // comment (or, with the weak toggle on, a foreign event). The flag goes
+  // false with it: telling the reader to review a spec on a closed issue
+  // is the staleness T-111 is about.
+  const pendingSpecReview =
+    !input.isClosed &&
+    input.specAuthorId !== null &&
+    input.specAuthorId !== input.userId;
+  const openQuestions = input.isClosed ? 0 : input.openQuestions;
+  const result = { pendingSpecReview, openQuestions };
+
+  // Candidates are a slight superset (e.g. an unreviewed spec the caller
+  // pushed themself); only issues with a live reason stay.
+  if (!input.isUnread && !pendingSpecReview && openQuestions === 0) {
+    return { keep: false, ...result };
+  }
+  // Weak unread is event-only news, which `show_weak_unread` is allowed to
+  // hide (T-77). A card someone else just opened never lands here: its top
+  // post counts as the first unread comment (T-151).
+  if (
+    !input.showWeakUnread &&
+    input.isUnread &&
+    input.unreadComments === 0 &&
+    !pendingSpecReview &&
+    openQuestions === 0
+  ) {
+    return { keep: false, ...result };
+  }
+  return { keep: true, ...result };
+}
 
 async function projectInbox(
   ctx: AppContext,
@@ -215,28 +268,17 @@ async function projectInbox(
     const row = bundle.row;
     const isUnread = unread.has(row.id);
     const specAuthor = specAuthors.get(row.id);
-    // Closing an issue retires both pending reasons (T-111), so a closed
-    // issue only survives on unread activity of its own — a new foreign
-    // comment (or, with the weak toggle on, a foreign event). The flag goes
-    // false with it: telling the reader to review a spec on a closed issue
-    // is the staleness the card is about.
-    const isClosed = bundle.status.category === "closed";
-    const pendingSpecReview =
-      !isClosed && specAuthor !== undefined && specAuthor.authorId !== userId;
-    const openQuestions = isClosed ? 0 : row.openQuestions;
-    // Candidates are a slight superset (e.g. an unreviewed spec the caller
-    // pushed themself); only rows with a live reason stay.
-    if (!isUnread && !pendingSpecReview && openQuestions === 0) continue;
     const unreadComments = counts.get(row.id) ?? 0;
-    if (
-      !showWeakUnread &&
-      isUnread &&
-      unreadComments === 0 &&
-      !pendingSpecReview &&
-      openQuestions === 0
-    ) {
-      continue;
-    }
+    const { keep, pendingSpecReview, openQuestions } = inboxKeepCheck({
+      isClosed: bundle.status.category === "closed",
+      isUnread,
+      unreadComments,
+      specAuthorId: specAuthor?.authorId ?? null,
+      openQuestions: row.openQuestions,
+      userId,
+      showWeakUnread,
+    });
+    if (!keep) continue;
 
     const at = [
       commentLatest.get(row.id),
@@ -266,6 +308,79 @@ async function projectInbox(
     items: slice.slice(0, limit).map((s) => s.item),
     truncated: slice.length > limit,
   };
+}
+
+/**
+ * The same question as `projectInbox`, asked about one issue: is it in this
+ * user's inbox right now (T-273)? Same rules via `inboxKeepCheck`, different
+ * fetch — the list scans a project, this reads one card, so the SSE path can
+ * tell a receiver whether a change concerns them without the list's cost.
+ *
+ * `prefs` and `visible` come from the caller because the SSE loop holds a
+ * connection-lifetime copy of the visible set; `prefs` it re-reads per
+ * judgement, since changing a preference emits no event to invalidate on.
+ */
+export async function issueInInbox(
+  db: Db,
+  project: ProjectRow,
+  actor: UserRow,
+  issueNumber: number,
+  prefs: MePrefs,
+  visible: VisibleProjects,
+): Promise<boolean> {
+  const rows = await db
+    .select({
+      id: issues.id,
+      openQuestions: issues.openQuestions,
+      specReviewStatus: issues.specReviewStatus,
+      specVersion: issues.specVersion,
+      category: statuses.category,
+    })
+    .from(issues)
+    .innerJoin(statuses, eq(issues.statusId, statuses.id))
+    .where(
+      and(
+        eq(issues.projectId, project.id),
+        eq(issues.number, issueNumber),
+        // Same choke point as the list's (T-145): a deleted issue is in
+        // nobody's inbox, whichever way the caller arrived at it.
+        live,
+      ),
+    );
+  const row = rows[0];
+  if (!row) return false;
+
+  const { unread, counts } = await unreadIssueState(
+    db,
+    project.id,
+    actor.id,
+    [row.id],
+    visible,
+  );
+
+  let specAuthorId: number | null = null;
+  if (row.specReviewStatus === "unreviewed" && row.specVersion !== null) {
+    const versionRows = await db
+      .select({ authorId: specVersions.authorId })
+      .from(specVersions)
+      .where(
+        and(
+          eq(specVersions.issueId, row.id),
+          eq(specVersions.number, row.specVersion),
+        ),
+      );
+    specAuthorId = versionRows[0]?.authorId ?? null;
+  }
+
+  return inboxKeepCheck({
+    isClosed: row.category === "closed",
+    isUnread: unread.has(row.id),
+    unreadComments: counts.get(row.id) ?? 0,
+    specAuthorId,
+    openQuestions: row.openQuestions,
+    userId: actor.id,
+    showWeakUnread: prefs.show_weak_unread,
+  }).keep;
 }
 
 /**

@@ -25,8 +25,14 @@ type QueryKeyLike = ReadonlyArray<unknown>;
  * edit or delete) deliberately do not bump, so they cannot move a row
  * between board columns or reorder an updated-sorted list, and pages
  * without the row have nothing visible to change.
+ *
+ * `containsIssue` is the same shape for the cross-project inbox (T-273),
+ * where a row is identified by project and number rather than number alone.
  */
-export type InvalidationScope = "refetch" | { contains: number };
+export type InvalidationScope =
+  | "refetch"
+  | { contains: number }
+  | { containsIssue: { project: string; number: number } };
 export type Invalidation = { key: QueryKeyLike; scope: InvalidationScope };
 
 const refetch = (key: QueryKeyLike): Invalidation => ({
@@ -113,20 +119,42 @@ export function invalidationsFor(
  *
  * Only entities that can move a row in or out: comments and timeline entries
  * (unread counts, questions), spec pushes and reviews (pending review), and
- * issue updates — closing one retires both pending reasons (T-111). Events
- * carry no actor, so the user's own writes refetch too; the server answer is
- * authoritative either way, and one coalescing window collapses a burst.
+ * issue updates — closing one retires both pending reasons (T-111).
+ *
+ * Whether a given change concerns *this* reader is a question the payload
+ * cannot answer — it is a pointer, with no actor and no state — so the
+ * server answers it per receiver in `inbox` (T-273). Without that answer
+ * every event in the feed refetched, which on a busy account meant a
+ * request a second for a badge that had not moved.
  */
-export function inboxInvalidations(event: ChangeEvent): Invalidation[] {
+export function inboxInvalidations(event: CrossChangeEvent): Invalidation[] {
   switch (event.entity) {
     case "issue":
     case "comment":
     case "timeline":
     case "spec":
-      return [refetch(["inbox"])];
+      break;
     default:
       return [];
   }
+  // Absent means the server did not work it out — an older server, a
+  // subscription that did not ask, a failed judgement, a flood — and the
+  // only safe reading of "I don't know" is the pre-T-273 one.
+  if (event.inbox === undefined || event.issue_number === undefined) {
+    return [refetch(["inbox"])];
+  }
+  if (event.inbox) return [refetch(["inbox"])];
+  // Not in your inbox — but it may have been a moment ago, and then the
+  // cached page still shows it and has to lose it. A page that never held
+  // it has nothing to do at all.
+  return [
+    {
+      key: ["inbox"],
+      scope: {
+        containsIssue: { project: event.project, number: event.issue_number },
+      },
+    },
+  ];
 }
 
 /**
@@ -146,6 +174,28 @@ export function pageContainsIssue(data: unknown, issueNumber: number): boolean {
   );
 }
 
+/**
+ * Shape test for `containsIssue`: an inbox page holding the row. Anything
+ * that is not a list of rows — the badge count, an error state — is false,
+ * so it is left alone.
+ */
+export function inboxHoldsIssue(
+  data: unknown,
+  project: string,
+  issueNumber: number,
+): boolean {
+  if (typeof data !== "object" || data === null) return false;
+  const items = (data as { items?: unknown }).items;
+  if (!Array.isArray(items)) return false;
+  return items.some((item) => {
+    if (typeof item !== "object" || item === null) return false;
+    if ((item as { number?: unknown }).number !== issueNumber) return false;
+    const itemProject = (item as { project?: unknown }).project;
+    if (typeof itemProject !== "object" || itemProject === null) return false;
+    return (itemProject as { slug?: unknown }).slug === project;
+  });
+}
+
 export function applyInvalidation(
   queryClient: QueryClient,
   invalidation: Invalidation,
@@ -153,6 +203,19 @@ export function applyInvalidation(
   const { key, scope } = invalidation;
   if (scope === "refetch") {
     queryClient.invalidateQueries({ queryKey: key });
+    return;
+  }
+  if ("containsIssue" in scope) {
+    // No stale-marking pass here, unlike `contains` below. There the row
+    // may have moved and every page is suspect; here the server has said
+    // this change does not concern the reader, so a cache without the row
+    // has nothing to reconsider.
+    const { project, number } = scope.containsIssue;
+    queryClient.invalidateQueries({
+      queryKey: key,
+      refetchType: "active",
+      predicate: (query) => inboxHoldsIssue(query.state.data, project, number),
+    });
     return;
   }
   queryClient.invalidateQueries({ queryKey: key, refetchType: "none" });
@@ -283,7 +346,7 @@ export function useUserEvents(enabled = true) {
     const connect = () => {
       reconnectTimer = undefined;
       if (disposed) return;
-      const es = new EventSource(api.userEventsUrl());
+      const es = new EventSource(api.userEventsUrl({ inbox: true }));
       source = es;
       armStallTimer();
 

@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
-import type { ChangeEvent } from "@todou/shared";
+import type { CrossChangeEvent } from "@todou/shared";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   INVALIDATE_COALESCE_MS,
+  inboxHoldsIssue,
   inboxInvalidations,
   invalidationsFor,
   pageContainsIssue,
@@ -74,20 +75,80 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
   });
 });
 
-describe("inboxInvalidations (T-112)", () => {
-  const forEntity = (entity: ChangeEvent["entity"]) =>
-    inboxInvalidations({ entity, id: 1, action: "created", issue_number: 7 });
-
-  it("rides the user stream for anything that can move an inbox row", () => {
-    for (const entity of ["issue", "comment", "timeline", "spec"] as const) {
-      expect(forEntity(entity)).toEqual([{ key: ["inbox"], scope: "refetch" }]);
-    }
+describe("inboxInvalidations (T-112, T-273)", () => {
+  const event = (over: Partial<CrossChangeEvent> = {}): CrossChangeEvent => ({
+    entity: "comment",
+    id: 1,
+    action: "created",
+    issue_number: 7,
+    project: "todou",
+    ...over,
   });
 
   it("stays out of the way for entities the inbox cannot show", () => {
     for (const entity of ["label", "member", "project", "status"] as const) {
-      expect(forEntity(entity)).toEqual([]);
+      expect(inboxInvalidations(event({ entity }))).toEqual([]);
     }
+  });
+
+  it("refetches whenever the server did not judge the event", () => {
+    // No `inbox` field: a server predating T-273, a subscription that did
+    // not opt in, a judgement that failed, or a flood. All the same to us.
+    for (const entity of ["issue", "comment", "timeline", "spec"] as const) {
+      expect(inboxInvalidations(event({ entity }))).toEqual([
+        { key: ["inbox"], scope: "refetch" },
+      ]);
+    }
+  });
+
+  it("refetches when the card is in the reader's inbox", () => {
+    expect(inboxInvalidations(event({ inbox: true }))).toEqual([
+      { key: ["inbox"], scope: "refetch" },
+    ]);
+  });
+
+  it("narrows to the cached row when the card is not", () => {
+    expect(inboxInvalidations(event({ inbox: false }))).toEqual([
+      {
+        key: ["inbox"],
+        scope: { containsIssue: { project: "todou", number: 7 } },
+      },
+    ]);
+  });
+
+  it("refetches a judged event that names no issue", () => {
+    // The server never sends this pair, and if one ever arrives there is
+    // no row to narrow to — so fall back to the safe, slow answer.
+    expect(
+      inboxInvalidations(
+        event({ entity: "issue", issue_number: undefined, inbox: false }),
+      ),
+    ).toEqual([{ key: ["inbox"], scope: "refetch" }]);
+  });
+});
+
+describe("inboxHoldsIssue", () => {
+  const page = { items: [{ number: 7, project: { slug: "todou" } }] };
+
+  it("finds the row by project and number", () => {
+    expect(inboxHoldsIssue(page, "todou", 7)).toBe(true);
+  });
+
+  it("misses the same number in another project", () => {
+    expect(inboxHoldsIssue(page, "other", 7)).toBe(false);
+  });
+
+  it("misses another number in the same project", () => {
+    expect(inboxHoldsIssue(page, "todou", 8)).toBe(false);
+  });
+
+  it("tolerates empty caches", () => {
+    expect(inboxHoldsIssue(undefined, "todou", 7)).toBe(false);
+  });
+
+  it("rejects anything that is not a list of rows", () => {
+    expect(inboxHoldsIssue({ count: 3 }, "todou", 7)).toBe(false);
+    expect(inboxHoldsIssue({ items: [{ number: 7 }] }, "todou", 7)).toBe(false);
   });
 });
 
@@ -161,13 +222,20 @@ describe("useUserEvents", () => {
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     );
     const hook = renderHook(() => useUserEvents(), { wrapper });
-    return { spy, hook };
+    return { spy, hook, queryClient };
   }
+
+  /** Calls the spy recorded against exactly the `["inbox"]` key. */
+  const inboxCalls = (spy: ReturnType<typeof setup>["spy"]) =>
+    spy.mock.calls.filter(
+      (call) => JSON.stringify(call[0]?.queryKey) === JSON.stringify(["inbox"]),
+    );
 
   it("subscribes to the user feed and invalidates on change events", async () => {
     const { spy } = setup();
     const source = MockEventSource.instances[0];
-    expect(source?.url).toBe("/api/events");
+    // Opting in is what makes the server judge each event (T-273).
+    expect(source?.url).toBe("/api/events?inbox=1");
 
     source?.emit("change", {
       entity: "timeline",
@@ -207,6 +275,8 @@ describe("useUserEvents", () => {
   it("carries the inbox badge for every project (T-112, T-122)", async () => {
     const { spy } = setup();
     const source = MockEventSource.instances[0];
+    // No `inbox` field, which is what a server predating T-273 sends: the
+    // badge still refreshes, at the old cost.
     source?.emit("change", {
       entity: "comment",
       id: 9,
@@ -217,6 +287,75 @@ describe("useUserEvents", () => {
     await waitFor(() =>
       expect(spy).toHaveBeenCalledWith({ queryKey: ["inbox"] }),
     );
+  });
+
+  it("refetches the inbox when the server says the card is in it", async () => {
+    const { spy } = setup();
+    MockEventSource.instances[0]?.emit("change", {
+      entity: "comment",
+      id: 9,
+      action: "created",
+      issue_number: 3,
+      project: "elsewhere",
+      inbox: true,
+    });
+    await waitFor(() =>
+      expect(spy).toHaveBeenCalledWith({ queryKey: ["inbox"] }),
+    );
+  });
+
+  it("leaves the cached inbox alone when the card is not in it", () => {
+    // The point of the whole card: not "refetch less often" but "leave the
+    // cache untouched" — no refetch and no stale mark.
+    vi.useFakeTimers();
+    const { spy, queryClient } = setup();
+    queryClient.setQueryData(["inbox"], {
+      items: [{ number: 99, project: { slug: "todou" } }],
+      truncated: false,
+    });
+    MockEventSource.instances[0]?.emit("change", {
+      entity: "timeline",
+      id: 9,
+      action: "created",
+      issue_number: 3,
+      project: "todou",
+      inbox: false,
+    });
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+
+    // The same burst did invalidate what it should, so an implementation
+    // that simply never connected could not pass this.
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["timeline", "todou", 3] });
+    expect(queryClient.getQueryState(["inbox"])?.isInvalidated).toBe(false);
+    // What it does send is a predicate that matches no cached page — never
+    // the stale-marking broadcast the `contains` scope uses.
+    for (const call of inboxCalls(spy)) {
+      expect(call[0]?.refetchType).toBe("active");
+      expect(call[0]?.predicate).toBeTypeOf("function");
+    }
+  });
+
+  it("still invalidates a false when the cache is holding that row", () => {
+    vi.useFakeTimers();
+    const { spy, queryClient } = setup();
+    queryClient.setQueryData(["inbox"], {
+      items: [{ number: 7, project: { slug: "todou" } }],
+      truncated: false,
+    });
+    MockEventSource.instances[0]?.emit("change", {
+      entity: "comment",
+      id: 9,
+      action: "created",
+      issue_number: 7,
+      project: "todou",
+      inbox: false,
+    });
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+
+    expect(queryClient.getQueryState(["inbox"])?.isInvalidated).toBe(true);
+    const calls = inboxCalls(spy);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[0]?.refetchType).toBe("active");
   });
 
   it("ignores malformed payloads", () => {

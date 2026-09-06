@@ -893,8 +893,17 @@ export class TodouClient {
   /** EventSource URL for the project change feed. */
   eventsUrl = (slug: string) => `${this.#baseUrl}/api/projects/${slug}/events`;
 
-  /** EventSource URL for the user-level cross-project feed (T-122). */
-  userEventsUrl = () => `${this.#baseUrl}/api/events`;
+  /**
+   * EventSource URL for the user-level cross-project feed (T-122).
+   *
+   * `inbox` asks the server to judge every event against the caller's inbox
+   * and stamp the answer on it (T-273). Opt-in and spelled at the call site
+   * because it costs the server a handful of queries per event: worth it
+   * for a client that keeps an inbox badge on screen, waste for one that
+   * treats events as a bare nudge to refetch something else.
+   */
+  userEventsUrl = (opts?: { inbox?: boolean }) =>
+    `${this.#baseUrl}/api/events${opts?.inbox ? "?inbox=1" : ""}`;
 
   /**
    * Subscribes to the user-level change feed (T-122) over plain `fetch`

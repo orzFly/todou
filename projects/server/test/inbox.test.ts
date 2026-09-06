@@ -1,4 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  accessibleProjectRows,
+  type ProjectRow,
+  routeInfoOf,
+} from "../src/services/access.ts";
+import { visibleProjects } from "../src/services/cross-references.ts";
+import { issueInInbox } from "../src/services/inbox.ts";
+import { readPrefs } from "../src/services/prefs.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
@@ -476,6 +484,179 @@ describe("cross-project inbox T-97", () => {
     const full = await items();
     expect(full.truncated).toBe(false);
     for (const n of nums) await markRead(PB, n);
+  });
+
+  // The SSE path judges one card at a time (T-273) while the list scans a
+  // project. Two fetches, one rule — so the test that matters is not what
+  // either answers, but that they never disagree.
+  describe("issueInInbox agrees with the list, card for card (T-273)", () => {
+    // Its own project: an unreviewed spec is in everyone's inbox regardless
+    // of read state, so these fixtures would follow later tests around.
+    const PC = "inbox-judge";
+    let project: ProjectRow;
+
+    async function markReadAs(
+      slug: string,
+      number: number,
+      who: Record<string, string>,
+    ): Promise<void> {
+      await settle();
+      const res = await t.app.request(
+        `/api/projects/${slug}/issues/${number}/read`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json", ...who },
+          body: "{}",
+        },
+      );
+      expect(res.status).toBe(204);
+    }
+
+    async function setWeakUnread(on: boolean): Promise<void> {
+      const res = await t.app.request("/api/me/prefs", {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...bob.headers },
+        body: JSON.stringify({ show_weak_unread: on }),
+      });
+      expect(res.status).toBe(200);
+    }
+
+    /** Both paths' verdict on each card, for bob, as they stand right now. */
+    async function verdicts(
+      numbers: number[],
+    ): Promise<Record<number, { list: boolean; single: boolean }>> {
+      const page = await items("", bob.headers);
+      const db = await t.ctx.router.forProject(routeInfoOf(project));
+      const prefs = await readPrefs(t.ctx.router.system(), bob.user.id);
+      const visible = await visibleProjects(t.ctx, bob.user);
+      const out: Record<number, { list: boolean; single: boolean }> = {};
+      for (const n of numbers) {
+        out[n] = {
+          list: rowOf(page, PC, n) !== undefined,
+          single: await issueInInbox(db, project, bob.user, n, prefs, visible),
+        };
+      }
+      return out;
+    }
+
+    beforeAll(async () => {
+      const created = await t.app.request("/api/projects", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ slug: PC, name: "Inbox Judge" }),
+      });
+      expect(created.status).toBe(201);
+      const member = await t.app.request(
+        `/api/projects/${PC}/members/${bob.user.id}`,
+        {
+          method: "PUT",
+          headers: headers(),
+          body: JSON.stringify({ role: "writer" }),
+        },
+      );
+      expect(member.status).toBe(204);
+
+      // Mints bob's frontier here before any fixture exists; without it
+      // every card below would be dated before his epoch and read on
+      // arrival.
+      await items("", bob.headers);
+      await settle();
+
+      const rows = await accessibleProjectRows(t.ctx, bob.user);
+      const row = rows.find((r) => r.slug === PC);
+      if (!row) throw new Error(`bob cannot read ${PC}`);
+      project = row;
+    });
+
+    it("covers every reason a card is in or out", async () => {
+      // Alice is the foreign actor here; bob is the reader being judged.
+      const unreadComment = await createIssue(PC, "alice wrote to bob");
+      await comment(PC, unreadComment, headers(), "for bob");
+
+      const ownActivity = await createIssueAs(PC, bob.headers, "bob's own");
+      await comment(PC, ownActivity, bob.headers, "note to self");
+
+      const closedQuestion = await createIssue(PC, "asked, then closed");
+      await ask(PC, closedQuestion, headers(), "still worth it?");
+      await setStatus(PC, closedQuestion, "closed");
+      await markReadAs(PC, closedQuestion, bob.headers);
+
+      const specForBob = await createIssue(PC, "spec awaiting bob");
+      await pushSpec(PC, specForBob, headers());
+
+      const specByBob = await createIssueAs(PC, bob.headers, "bob's own spec");
+      await pushSpec(PC, specByBob, bob.headers);
+
+      const trashed = await createIssue(PC, "unread, then deleted");
+      await comment(PC, trashed, headers(), "about to vanish");
+      const gone = await t.app.request(
+        `/api/projects/${PC}/issues/${trashed}`,
+        { method: "DELETE", headers: headers() },
+      );
+      expect(gone.status).toBe(204);
+
+      const expected = {
+        [unreadComment]: true,
+        [ownActivity]: false,
+        [closedQuestion]: false,
+        [specForBob]: true,
+        [specByBob]: false,
+        [trashed]: false,
+      };
+      const seen = await verdicts(Object.keys(expected).map(Number));
+      for (const [number, want] of Object.entries(expected)) {
+        expect({ number, ...seen[Number(number)] }).toEqual({
+          number,
+          list: want,
+          single: want,
+        });
+      }
+
+      await markReadAs(PC, unreadComment, bob.headers);
+      await markReadAs(PC, specForBob, bob.headers);
+    });
+
+    it("follows show_weak_unread on an open and a closed card", async () => {
+      // Event-only news on a card bob has already read: the weak-unread
+      // state the toggle governs. The closed one is the same shape after
+      // T-111 has retired its other reasons — measured semantics, not a bug.
+      const open = await createIssue(PC, "read, then retitled");
+      const closed = await createIssue(PC, "read, then closed");
+      await markReadAs(PC, open, bob.headers);
+      await markReadAs(PC, closed, bob.headers);
+      await settle();
+
+      const retitle = await t.app.request(
+        `/api/projects/${PC}/issues/${open}`,
+        {
+          method: "PATCH",
+          headers: headers(),
+          body: JSON.stringify({ title: "read, then retitled (again)" }),
+        },
+      );
+      expect(retitle.status).toBe(200);
+      await setStatus(PC, closed, "closed");
+
+      for (const on of [true, false, true]) {
+        await setWeakUnread(on);
+        const seen = await verdicts([open, closed]);
+        expect(seen[open]).toEqual({ list: on, single: on });
+        expect(seen[closed]).toEqual({ list: on, single: on });
+      }
+
+      await setWeakUnread(true);
+      await markReadAs(PC, open, bob.headers);
+      await markReadAs(PC, closed, bob.headers);
+    });
+
+    it("says false for a number nobody ever used", async () => {
+      const db = await t.ctx.router.forProject(routeInfoOf(project));
+      const prefs = await readPrefs(t.ctx.router.system(), bob.user.id);
+      const visible = await visibleProjects(t.ctx, bob.user);
+      expect(
+        await issueInInbox(db, project, bob.user, 999_999, prefs, visible),
+      ).toBe(false);
+    });
   });
 
   it("works for machine accounts without special casing", async () => {
