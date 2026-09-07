@@ -13,7 +13,7 @@ import type {
   ReferenceDirectory,
 } from "@todou/shared";
 import type { ReactElement } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   attachmentsQuery,
   attachmentTextQuery,
@@ -24,6 +24,18 @@ import {
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
+
+// A `.txt` embed renders through CodeBlock, whose real pierre CodeView is
+// lazy and paints into a shadow root: the document text sits in the light
+// DOM only until that chunk lands, so an assertion on it races the import.
+vi.mock("@pierre/diffs/react", () => ({
+  CodeView: ({ items }: { items: Array<{ file: { contents: string } }> }) => (
+    <pre>
+      <code>{items.map((item) => item.file.contents).join("\n")}</code>
+    </pre>
+  ),
+  MultiFileDiff: () => null,
+}));
 
 const config: ReferenceConfig = {
   format: { prefix: null, history: [] },
@@ -194,12 +206,11 @@ describe("stored id-anchored attachment references", () => {
 
     // The worst of the ten forms before this card: image syntax on a text
     // attachment fell through to a bare <img>, i.e. a broken-image icon.
-    const card = await waitFor(() => {
+    await waitFor(() => {
       const el = view.container.querySelector("[aria-label='expand a.txt']");
       expect(el).not.toBeNull();
       return el as HTMLElement;
     });
-    expect(card).not.toBeNull();
     expect(view.container.textContent).toContain("hello from a.txt");
     expect(view.container.querySelector("img")).toBeNull();
   });
