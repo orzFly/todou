@@ -179,6 +179,54 @@ export type Follow<T> = {
 };
 
 /**
+ * The `fromMode` a `--follow=uds` push attests, re-read for every push
+ * (T-292).
+ *
+ * Both halves of that matter and neither is worth doing alone: a resident
+ * watch outlives the mode its user started in, and — because a `/clear`
+ * retires the session id without ending the process — it outlives the
+ * transcript that mode was read from too. Re-reading the wrong transcript
+ * follows nothing; reading the right one once still freezes at open time.
+ *
+ * It says on stderr what it attests, at the first push and at every change,
+ * because the value is otherwise invisible: it goes onto a wire nobody here
+ * reads and produces no local output, so a read that silently never
+ * succeeded would leave the old behaviour in place while looking fixed.
+ */
+export function attestedMode(opts: {
+  session: () => string | undefined;
+  /** Test seam; production leaves it unset and the real home is read. */
+  home?: string;
+  note: (line: string) => void;
+}): () => "bypass" | "prompting" | undefined {
+  let reported = false;
+  let last: "bypass" | "prompting" | undefined;
+  return () => {
+    const session = opts.session();
+    // `detectPermissionMode` takes its home default on `undefined`, so
+    // production passing the unset seam straight through needs no branch.
+    const mode = detectPermissionMode(session, opts.home);
+    if (reported && mode === last) return mode;
+    const what = mode ?? "no permission mode";
+    const where = `for session ${session ?? "(unknown)"}`;
+    // "No mode" is not self-explanatory, so that line states what it costs
+    // rather than what it is.
+    const consequence =
+      mode === undefined
+        ? " — such a push is held only if the receiving session is in bypass"
+        : "";
+    opts.note(
+      reported
+        ? `--follow=uds now attests ${what} ${where}, was ${last ?? "nothing"}${consequence}`
+        : `--follow=uds attests ${what} ${where}${consequence}`,
+    );
+    reported = true;
+    last = mode;
+    return mode;
+  };
+}
+
+/**
  * The standing-mode plumbing (T-252): the two hooks `runWatchLoop` needs,
  * a wait a refusal can cut short, and the flush that hands over whatever
  * is not known to have been delivered.
@@ -211,7 +259,14 @@ export async function openFollow<T>(opts: {
   socket: string | undefined;
   /** CLAUDE_CODE_MESSAGING_TOKEN, for the push's auth line (T-255). */
   token: string | undefined;
-  sessionId: string | undefined;
+  /**
+   * Asked again for every push, never captured: a standing watch outlives
+   * the session id it started under, and a `/clear` retires that id without
+   * ending this process.
+   */
+  session: () => string | undefined;
+  /** Test seam; production leaves it unset and the real home is read. */
+  home?: string;
   clock: Clock;
   note: (line: string) => void;
   /** Test seam; production leaves it unset and a real socket is dialled. */
@@ -243,8 +298,14 @@ export async function openFollow<T>(opts: {
         fromName: `${FROM_PREFIX}-${opts.subject}`,
         // Attested only where the transcript is unambiguous: an
         // unattested message is held only if the target session is in
-        // bypass, while a wrongly attested one is held outright.
-        fromMode: detectPermissionMode(opts.sessionId),
+        // bypass, while a wrongly attested one is held outright. A function
+        // because the claim is about the sender at the moment each frame
+        // goes out, and a standing watch outlives that moment.
+        fromMode: attestedMode({
+          session: opts.session,
+          home: opts.home,
+          note: opts.note,
+        }),
         render: (items, since, cursor) =>
           [
             `${opts.label} — ${items.length} new ${items.length === 1 ? "entry" : "entries"}`,

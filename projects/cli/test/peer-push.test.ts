@@ -216,7 +216,7 @@ describe("openPeerPush wire format (T-252)", () => {
       target: peer.target,
       render,
       fromName: "todou-watch-T-252",
-      fromMode: "bypass",
+      fromMode: () => "bypass",
       clock: virtualClock(),
     });
     await push.send(["entry one"], "c0", "c1");
@@ -300,7 +300,7 @@ describe("openPeerPush auth line (T-255)", () => {
       target: peer.target,
       render,
       fromName: "todou-watch-T-252",
-      fromMode: "bypass",
+      fromMode: () => "bypass",
       clock: virtualClock(),
     });
     await push.send(["entry one"], "c0", "c1");
@@ -453,6 +453,61 @@ describe("openPeerPush payload limit (T-255)", () => {
     expect((peer.frames[0] as Frame).message.content).toContain(
       "batch of 1 entry was too large to push",
     );
+
+    push.close();
+    await peer.close();
+  });
+});
+
+describe("openPeerPush attested mode (T-292)", () => {
+  it("asks again for every push", async () => {
+    const peer = await fakePeer("mode-per-push");
+    const modes: Array<"bypass" | "prompting"> = ["bypass", "prompting"];
+    let asked = 0;
+    const push = await openPeerPush<string>({
+      target: peer.target,
+      render,
+      fromName: "todou-watch",
+      clock: virtualClock(),
+      fromMode: () => modes[asked++],
+    });
+    await push.send(["entry one"], "c0", "c1");
+    await peer.received(1);
+    await push.send(["entry two"], "c1", "c2");
+    await peer.received(2);
+
+    // Read once at channel open this would attest "bypass" twice, which is
+    // the whole of what a resident watch gets wrong.
+    expect((peer.frames[0] as Frame).message.content).toContain(
+      'from-mode="bypass"',
+    );
+    expect((peer.frames[1] as Frame).message.content).toContain(
+      'from-mode="prompting"',
+    );
+
+    push.close();
+    await peer.close();
+  });
+
+  it("asks once per push, not once per rendering", async () => {
+    const peer = await fakePeer("mode-oversize");
+    let asked = 0;
+    const push = await openPeerPush<string>({
+      target: peer.target,
+      render,
+      fromName: "todou-watch",
+      clock: virtualClock(),
+      fromMode: () => {
+        asked += 1;
+        return "bypass";
+      },
+    });
+    // The oversize path below renders a second time, and a batch's two
+    // renderings must not be able to disagree about who sent them.
+    await push.send(["x".repeat(1_100_000)], "c0", "c1");
+    await peer.received(1);
+
+    expect(asked).toBe(1);
 
     push.close();
     await peer.close();

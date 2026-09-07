@@ -9,6 +9,7 @@ export type FakePush = {
     body: string;
     since: string | undefined;
     cursor: string | undefined;
+    mode: string | undefined;
   }>;
   /** The display name the channel was opened with; unset until it opens. */
   fromName: string | undefined;
@@ -16,10 +17,15 @@ export type FakePush = {
 };
 
 /**
- * A stand-in for the cross-session transport, faithful about the two things
- * the command depends on: a `send` that returns before any verdict is in,
- * and a receipt window after which a batch counts as landed. The wire
- * format itself is `peer-push.test.ts`'s business.
+ * A stand-in for the cross-session transport, faithful about the three
+ * things the command depends on: a `send` that returns before any verdict is
+ * in, a receipt window after which a batch counts as landed, and a
+ * `fromMode` asked once per push rather than once per channel (T-292). The
+ * wire format itself is `peer-push.test.ts`'s business.
+ *
+ * The third one is faithfulness the compiler cannot ask for: `fromMode` is
+ * optional, so a fake that never called it would still typecheck — and every
+ * assertion about an attested mode would pass while testing nothing.
  */
 export function fakePeerPush(
   opts: {
@@ -58,7 +64,13 @@ export function fakePeerPush(
     };
     return {
       send: async (items, since, cursor) => {
-        pushes.push({ body: o.render(items, since, cursor), since, cursor });
+        const mode = o.fromMode?.();
+        pushes.push({
+          body: o.render(items, since, cursor),
+          since,
+          cursor,
+          mode,
+        });
         held.push({
           items: [...items],
           since,

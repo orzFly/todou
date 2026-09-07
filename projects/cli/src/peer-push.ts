@@ -147,8 +147,13 @@ export type PeerPushOptions<T> = {
   ) => string;
   /** Display label on the receiving side; never part of its admission check. */
   fromName: string;
-  /** Attested permission mode, where it can be read without guessing. */
-  fromMode?: "bypass" | "prompting";
+  /**
+   * Attested permission mode, where it can be read without guessing. Called
+   * once per push rather than read once per channel, because the attestation
+   * is a claim about the sender at the moment its frame goes out and a
+   * resident watch outlives the mode it opened in.
+   */
+  fromMode?: () => "bypass" | "prompting" | undefined;
   clock?: Clock;
   receiptWindowMs?: number;
   /**
@@ -392,6 +397,10 @@ export async function openPeerPush<T>(
             };
       awaiting = batch;
       const msgId = randomUUID();
+      // Once per push rather than once per `build`: `build` runs a second
+      // time on the oversize path below, and a batch's two renderings must
+      // not be able to disagree about who sent them.
+      const fromMode = opts.fromMode?.();
       const build = (body: string) =>
         JSON.stringify({
           type: "user",
@@ -405,7 +414,7 @@ export async function openPeerPush<T>(
             content: wrapEnvelope({
               from,
               fromName: opts.fromName,
-              fromMode: opts.fromMode,
+              fromMode,
               body,
             }),
           },

@@ -145,12 +145,19 @@ exported into it looks like.
   falls back to a `CLAUDE_MODEL` variable if you export one. Detection
   failures just omit the field; they never break a command.
 - permission mode (`--follow=uds` only, so a push can attest to it) —
-  the same transcript tail, newest `permissionMode` wins, so switching mode
-  mid-session is picked up. `plan` attests nothing: what the receiving side
-  normalizes it to depends on a flag the transcript does not record, and in
-  the one case that reads the mode at all (above), a wrongly attested mode
-  is held outright while an unattested one is held only if the target
-  session is in bypass.
+  the same transcript tail, newest `permissionMode` wins. Read for every
+  push rather than once per channel, and read for the session id the watch
+  holds *now* (the `session_id` bullet above), so a `/clear` does not leave
+  a resident watch attesting off the transcript it retired. The transcript
+  stamps the mode at each prompt and again as it grows, but not at the
+  moment of a switch — so a switch made while the session sits idle is
+  attested only once that session writes again. A watch says on stderr what
+  it is attesting, at its first push and at every change:
+  `--follow=uds attests bypass for session <id>`. `plan` attests nothing:
+  what the receiving side normalizes it to depends on a flag the transcript
+  does not record, and in the one case that reads the mode at all (above), a
+  wrongly attested mode is held outright while an unattested one is held
+  only if the target session is in bypass.
 
 ## Optional: a stable `CLAUDE_MODEL` via hooks
 

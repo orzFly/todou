@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
+import { attestedMode } from "../src/watch-follow.ts";
 import { runWatchLoop } from "../src/watch-loop.ts";
 import { fakePeerPush } from "./fake-peer-push.ts";
 import {
@@ -269,6 +273,12 @@ describe("watch --follow=uds (T-252)", () => {
     // The header names the command, so a reader can re-run it by hand.
     expect(push.pushes[0]?.body).toContain(
       "todou watch -p todou — 1 new entry",
+    );
+    // This environment sets no session id, so there is nothing to attest —
+    // and the watch says so rather than leaving the value invisible (T-292).
+    expect(push.pushes[0]?.mode).toBeUndefined();
+    expect(result.stderr).toContain(
+      "--follow=uds attests no permission mode for session (unknown)",
     );
     expect(push.closed()).toBe(true);
   });
@@ -666,5 +676,222 @@ describe("watch --follow argument handling (T-252)", () => {
       expect.stringContaining("comment 9"),
       "cursor: a1",
     ]);
+  });
+});
+
+describe("watch --follow=uds attested mode (T-292)", () => {
+  const home = mkdtempSync(join(tmpdir(), "todou-attested-home-"));
+  afterAll(() => rmSync(home, { recursive: true, force: true }));
+
+  const SID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const modeLine = (mode: string) =>
+    JSON.stringify({ type: "permission-mode", permissionMode: mode });
+
+  function writeTranscript(sid: string, mode: string): void {
+    const dir = join(home, ".claude", "projects", "-proj-a");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${sid}.jsonl`), modeLine(mode));
+  }
+
+  /**
+   * The record T-289's reader answers from. `pid` and `messagingSocketPath`
+   * are both vetted against the socket before it will hand back an id, so a
+   * record missing either yields nothing and the cases below would be
+   * asserting on a fallback instead of on what they mean to test.
+   */
+  function writeSessionRecord(pid: number, socket: string, sid: string): void {
+    const dir = join(home, ".claude", "sessions");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, `${pid}.json`),
+      JSON.stringify({ pid, sessionId: sid, messagingSocketPath: socket }),
+    );
+  }
+
+  /** Each command case gets its own pid, so one's record cannot answer another's. */
+  const udsEnvFor = (sid: string, socket: string) => ({
+    ...loggedInEnv(),
+    CLAUDECODE: "1",
+    CLAUDE_CODE_SESSION_ID: sid,
+    CLAUDE_CODE_MESSAGING_SOCKET: socket,
+  });
+
+  it("re-reads the transcript on every call", () => {
+    writeTranscript(SID, "bypassPermissions");
+    const notes: string[] = [];
+    const mode = attestedMode({
+      session: () => SID,
+      home,
+      note: (line) => notes.push(line),
+    });
+
+    expect(mode()).toBe("bypass");
+    writeTranscript(SID, "default");
+    // Half the card in one assertion: the second push carries what the
+    // session is now, not what it was when the channel opened.
+    expect(mode()).toBe("prompting");
+
+    expect(notes).toEqual([
+      `--follow=uds attests bypass for session ${SID}`,
+      `--follow=uds now attests prompting for session ${SID}, was bypass`,
+    ]);
+  });
+
+  it("says it once while nothing changes", () => {
+    writeTranscript(SID, "bypassPermissions");
+    const notes: string[] = [];
+    const mode = attestedMode({
+      session: () => SID,
+      home,
+      note: (line) => notes.push(line),
+    });
+
+    for (let i = 0; i < 5; i++) expect(mode()).toBe("bypass");
+
+    // A line per push would bury the changes, which are the news.
+    expect(notes).toEqual([`--follow=uds attests bypass for session ${SID}`]);
+  });
+
+  it("states the consequence where there is no mode to attest", () => {
+    const notes: string[] = [];
+    const mode = attestedMode({
+      session: () => undefined,
+      home,
+      note: (line) => notes.push(line),
+    });
+
+    expect(mode()).toBeUndefined();
+    expect(mode()).toBeUndefined();
+
+    expect(notes).toEqual([
+      "--follow=uds attests no permission mode for session (unknown) — " +
+        "such a push is held only if the receiving session is in bypass",
+    ]);
+  });
+
+  it("attests nothing once plan mode is the newest word", () => {
+    // T-252's contract, unchanged — asserted here because a live toggle
+    // into plan mode is now a path this function takes, rather than one
+    // settled before the channel opened.
+    const planSid = "ffffffff-1111-2222-3333-444444444444";
+    writeTranscript(planSid, "plan");
+    const notes: string[] = [];
+    const mode = attestedMode({
+      session: () => planSid,
+      home,
+      note: (line) => notes.push(line),
+    });
+
+    expect(mode()).toBeUndefined();
+    expect(notes).toEqual([
+      `--follow=uds attests no permission mode for session ${planSid} — ` +
+        "such a push is held only if the receiving session is in bypass",
+    ]);
+  });
+
+  it("attests for the id the record names, not the one in the environment", async () => {
+    // The pin: an implementation that turned `fromMode` into a function but
+    // went on closing over the startup id passes every other case in this
+    // file and fails only this one. The environment's id is the retired
+    // one a `/clear` leaves behind, and its transcript still says
+    // `default` — so reading it would attest `prompting`.
+    const envSid = "11111111-1111-1111-1111-111111111111";
+    const fileSid = "22222222-2222-2222-2222-222222222222";
+    const socket = "/run/cc-socks/4242.sock";
+    writeTranscript(envSid, "default");
+    writeTranscript(fileSid, "bypassPermissions");
+    writeSessionRecord(4242, socket, fileSid);
+
+    const clock = virtualClock();
+    const push = fakePeerPush();
+    const { fetchImpl } = activityRoutes([
+      ...batch([comment(9, 3, clock.iso())], "a1"),
+      quiet,
+      quiet,
+    ]);
+
+    await runCli(
+      [
+        "watch",
+        "-p",
+        "todou",
+        "--since",
+        "a0",
+        "--follow=uds",
+        "--interval",
+        "2",
+        "--timeout",
+        "300",
+      ],
+      {
+        fetchImpl,
+        env: udsEnvFor(envSid, socket),
+        clock,
+        openPeerPush: push.open,
+        home,
+      },
+    );
+
+    expect(push.pushes).toHaveLength(1);
+    expect(push.pushes[0]?.mode).toBe("bypass");
+  });
+
+  it("reads the mode again for the second push", async () => {
+    // The other pin: this one fails if the value is read once at channel
+    // open, however live the id it was read for.
+    const sid = "33333333-3333-3333-3333-333333333333";
+    const socket = "/run/cc-socks/4343.sock";
+    writeTranscript(sid, "bypassPermissions");
+    writeSessionRecord(4343, socket, sid);
+
+    const clock = virtualClock();
+    const push = fakePeerPush();
+    const routes = activityRoutes([
+      ...batch([comment(9, 3, clock.iso())], "a1"),
+      quiet,
+      ...batch([comment(10, 4, clock.iso())], "a2"),
+    ]);
+    routes.sse.push("change", change);
+    let rewritten = false;
+    const fetchImpl: typeof fetch = (...args) => {
+      // Switched between the two pushes, which is the only place the change
+      // proves anything: a value captured at open time cannot see it.
+      if (!rewritten && push.pushes.length === 1) {
+        rewritten = true;
+        writeTranscript(sid, "default");
+      }
+      return routes.fetchImpl(...args);
+    };
+
+    const result = await runCli(
+      [
+        "watch",
+        "-p",
+        "todou",
+        "--since",
+        "a0",
+        "--follow=uds",
+        "--debounce",
+        "0",
+        "--interval",
+        "2",
+        "--timeout",
+        "300",
+      ],
+      {
+        fetchImpl,
+        env: udsEnvFor(sid, socket),
+        clock,
+        openPeerPush: push.open,
+        home,
+      },
+    );
+
+    expect(push.pushes).toHaveLength(2);
+    expect(push.pushes[0]?.mode).toBe("bypass");
+    expect(push.pushes[1]?.mode).toBe("prompting");
+    expect(result.stderr).toContain(
+      `--follow=uds now attests prompting for session ${sid}, was bypass`,
+    );
   });
 });
