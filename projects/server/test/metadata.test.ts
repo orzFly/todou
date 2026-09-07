@@ -618,6 +618,19 @@ describe("issue metadata", () => {
     });
   });
 
+  it("keeps the three routes in the OpenAPI document", async () => {
+    // Not decoration: a response or parameter schema `@hono/zod-openapi`
+    // cannot convert makes this document 500 rather than failing anywhere
+    // near the route that caused it.
+    const res = await t.app.request("/api/openapi.json");
+    expect(res.status).toBe(200);
+    const paths = Object.keys((await json(res)).paths);
+    expect(paths).toContain("/api/projects/{slug}/issues/{number}/metadata");
+    expect(paths).toContain(
+      "/api/projects/{slug}/issues/{number}/metadata/namespaces",
+    );
+  });
+
   describe("who may read and write", () => {
     it("lets a reader read but not write", async () => {
       const number = await newCard("reader rights");
