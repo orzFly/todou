@@ -1,4 +1,10 @@
-import type { InboxItem, InboxPage, InboxQuery, MePrefs } from "@todou/shared";
+import type {
+  InboxItem,
+  InboxPage,
+  InboxQuery,
+  InboxRowState,
+  MePrefs,
+} from "@todou/shared";
 import { and, eq, gt, inArray, isNotNull, max, ne, or, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -311,29 +317,37 @@ async function projectInbox(
 }
 
 /**
- * The same question as `projectInbox`, asked about one issue: is it in this
- * user's inbox right now (T-273)? Same rules via `inboxKeepCheck`, different
- * fetch — the list scans a project, this reads one card, so the SSE path can
- * tell a receiver whether a change concerns them without the list's cost.
+ * The same question as `projectInbox`, asked about one issue: which row does
+ * it occupy in this user's inbox right now (T-275)? `null` when it occupies
+ * none. Same rules via `inboxKeepCheck`, different fetch — the list scans a
+ * project, this reads one card, so the SSE path can tell a receiver what a
+ * change did to their inbox without the list's cost.
+ *
+ * The return type used to be a boolean (T-273). Clients now compare the row
+ * against the one they have cached, so the answer has to be the row itself:
+ * a change that touches an issue already in the inbox without moving any of
+ * these fields needs no refetch, and a boolean cannot say that.
  *
  * `prefs` and `visible` come from the caller because the SSE loop holds a
  * connection-lifetime copy of the visible set; `prefs` it re-reads per
- * judgement, since changing a preference emits no event to invalidate on.
+ * judgement, since changing a preference emits no change event to
+ * invalidate on.
  */
-export async function issueInInbox(
+export async function inboxRowState(
   db: Db,
   project: ProjectRow,
   actor: UserRow,
   issueNumber: number,
   prefs: MePrefs,
   visible: VisibleProjects,
-): Promise<boolean> {
+): Promise<InboxRowState | null> {
   const rows = await db
     .select({
       id: issues.id,
       openQuestions: issues.openQuestions,
       specReviewStatus: issues.specReviewStatus,
       specVersion: issues.specVersion,
+      updatedAt: issues.updatedAt,
       category: statuses.category,
     })
     .from(issues)
@@ -348,7 +362,7 @@ export async function issueInInbox(
       ),
     );
   const row = rows[0];
-  if (!row) return false;
+  if (!row) return null;
 
   const { unread, counts } = await unreadIssueState(
     db,
@@ -372,7 +386,7 @@ export async function issueInInbox(
     specAuthorId = versionRows[0]?.authorId ?? null;
   }
 
-  return inboxKeepCheck({
+  const { keep, pendingSpecReview } = inboxKeepCheck({
     isClosed: row.category === "closed",
     isUnread: unread.has(row.id),
     unreadComments: counts.get(row.id) ?? 0,
@@ -380,7 +394,23 @@ export async function issueInInbox(
     openQuestions: row.openQuestions,
     userId: actor.id,
     showWeakUnread: prefs.show_weak_unread,
-  }).keep;
+  });
+  if (!keep) return null;
+
+  return {
+    updated_at: row.updatedAt.toISOString(),
+    unread: unread.has(row.id),
+    unread_comments: counts.get(row.id) ?? 0,
+    // The two counters come from different places, which is what the
+    // InboxItem the client has cached also does: `pending_spec_review` is
+    // the keep-check's value, `open_questions` is the raw column, because
+    // the list builds it through `toIssue` from `bundle.row.openQuestions`
+    // (services/issues.ts). They differ on a closed issue that still holds
+    // unanswered questions, and a fingerprint that used the keep-check's
+    // zero there would never match the cached row.
+    pending_spec_review: pendingSpecReview,
+    open_questions: row.openQuestions,
+  };
 }
 
 /**

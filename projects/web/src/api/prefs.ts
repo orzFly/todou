@@ -11,8 +11,9 @@ import { api } from "@/api/queries.ts";
 export const prefsQuery = queryOptions({
   queryKey: ["me-prefs"],
   queryFn: () => api.getMyPrefs(),
-  // Preferences change through this tab's own toggle, almost never behind
-  // our back — no point refetching on every window focus.
+  // A change from another tab or device arrives as a `me` event (T-275),
+  // and this tab's own toggle invalidates on settle, so the only thing a
+  // focus refetch would add is a request that finds the same values.
   staleTime: 60_000,
 });
 

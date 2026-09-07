@@ -4,12 +4,13 @@ import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 
 /**
- * Read positions are private and eventless — no timeline entry, no SSE, no
- * /activity row — so a mark-read is invisible to every change signal the app
- * has. The mutating client is the only party that knows the inbox shrank, and
- * must say so itself or the badge keeps its old count until something
- * unrelated happens to refresh it (T-112). Every mark-read, single or bulk,
- * goes through here; an undefined slug is the cross-project scope.
+ * Read positions write no timeline entry, no change event and no /activity
+ * row, so a mark-read is invisible to every signal that travels by project.
+ * The mutating client says so itself: it is the party that knows, and while
+ * the stream is down it is the only one (the server's `me` event, T-275,
+ * covers the account's *other* tabs and cannot cover a disconnected one).
+ * Every mark-read, single or bulk, goes through here; an undefined slug is
+ * the cross-project scope.
  */
 const readInvalidations = (
   slug?: string,

@@ -3,14 +3,37 @@ import {
   queryOptions,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { type CapabilityId, can, TodouClient } from "@todou/shared";
+import {
+  type CapabilityId,
+  can,
+  ORIGIN_HEADER,
+  TodouClient,
+} from "@todou/shared";
+
+/**
+ * This tab, as far as the server is concerned (T-275). Minted once per
+ * module evaluation, so every tab gets its own, and sent on every request;
+ * the writes that emit a `me` event echo it back, which is how a tab
+ * recognizes its own write and skips invalidating twice.
+ *
+ * randomUUID needs a secure context and is missing under happy-dom, so the
+ * fallback is not decoration — the value only has to be unlikely to collide
+ * with another tab of the same account.
+ */
+export const clientOrigin =
+  typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 /**
  * Same-origin client; vite dev proxies /api to the todou server.
  * Batching is off under vitest (MODE=test): the suites stub fetch with
  * per-path fake servers that must keep seeing plain GETs.
  */
-export const api = new TodouClient({ batch: import.meta.env.MODE !== "test" });
+export const api = new TodouClient({
+  batch: import.meta.env.MODE !== "test",
+  headers: { [ORIGIN_HEADER]: clientOrigin },
+});
 
 export const queryClient = new QueryClient({
   defaultOptions: {

@@ -1,3 +1,4 @@
+import type { InboxRowState } from "@todou/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   accessibleProjectRows,
@@ -5,7 +6,7 @@ import {
   routeInfoOf,
 } from "../src/services/access.ts";
 import { visibleProjects } from "../src/services/cross-references.ts";
-import { issueInInbox } from "../src/services/inbox.ts";
+import { inboxRowState } from "../src/services/inbox.ts";
 import { readPrefs } from "../src/services/prefs.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
 
@@ -488,8 +489,12 @@ describe("cross-project inbox T-97", () => {
 
   // The SSE path judges one card at a time (T-273) while the list scans a
   // project. Two fetches, one rule — so the test that matters is not what
-  // either answers, but that they never disagree.
-  describe("issueInInbox agrees with the list, card for card (T-273)", () => {
+  // either answers, but that they never disagree. Since T-275 the single
+  // path returns the whole row rather than a boolean, and clients compare it
+  // field by field against the list's, so the agreement is checked field by
+  // field too: a mismatch on any one of them reads as a badge that refuses
+  // to move, or as a refetch on every event.
+  describe("inboxRowState agrees with the list, field for field (T-275)", () => {
     // Its own project: an unreviewed spec is in everyone's inbox regardless
     // of read state, so these fixtures would follow later tests around.
     const PC = "inbox-judge";
@@ -521,22 +526,83 @@ describe("cross-project inbox T-97", () => {
       expect(res.status).toBe(200);
     }
 
-    /** Both paths' verdict on each card, for bob, as they stand right now. */
-    async function verdicts(
+    /** The five deciding fields of the list's row, or null when it has none. */
+    function listFingerprint(
+      page: {
+        items: {
+          number: number;
+          project: { slug: string };
+          updated_at: string;
+          unread: boolean;
+          unread_comments: number;
+          pending_spec_review: boolean;
+          open_questions: number;
+        }[];
+      },
+      number: number,
+    ): InboxRowState | null {
+      const row = page.items.find(
+        (i) => i.project.slug === PC && i.number === number,
+      );
+      if (row === undefined) return null;
+      return {
+        updated_at: row.updated_at,
+        unread: row.unread,
+        unread_comments: row.unread_comments,
+        pending_spec_review: row.pending_spec_review,
+        open_questions: row.open_questions,
+      };
+    }
+
+    /** Both paths' row for each card, for bob, as they stand right now. */
+    async function fingerprints(
       numbers: number[],
-    ): Promise<Record<number, { list: boolean; single: boolean }>> {
+    ): Promise<
+      Record<
+        number,
+        { list: InboxRowState | null; single: InboxRowState | null }
+      >
+    > {
       const page = await items("", bob.headers);
       const db = await t.ctx.router.forProject(routeInfoOf(project));
       const prefs = await readPrefs(t.ctx.router.system(), bob.user.id);
       const visible = await visibleProjects(t.ctx, bob.user);
-      const out: Record<number, { list: boolean; single: boolean }> = {};
+      const out: Record<
+        number,
+        { list: InboxRowState | null; single: InboxRowState | null }
+      > = {};
       for (const n of numbers) {
         out[n] = {
-          list: rowOf(page, PC, n) !== undefined,
-          single: await issueInInbox(db, project, bob.user, n, prefs, visible),
+          list: listFingerprint(page, n),
+          single: await inboxRowState(db, project, bob.user, n, prefs, visible),
         };
       }
       return out;
+    }
+
+    /** Every card's two answers agree, and presence is what was expected. */
+    async function expectAgreement(
+      expected: Record<number, boolean>,
+    ): Promise<
+      Record<
+        number,
+        { list: InboxRowState | null; single: InboxRowState | null }
+      >
+    > {
+      const seen = await fingerprints(Object.keys(expected).map(Number));
+      for (const [key, present] of Object.entries(expected)) {
+        const number = Number(key);
+        const { list, single } = seen[number] as {
+          list: InboxRowState | null;
+          single: InboxRowState | null;
+        };
+        expect({ number, single }).toEqual({ number, single: list });
+        expect({ number, present: single !== null }).toEqual({
+          number,
+          present,
+        });
+      }
+      return seen;
     }
 
     beforeAll(async () => {
@@ -595,25 +661,116 @@ describe("cross-project inbox T-97", () => {
       );
       expect(gone.status).toBe(204);
 
-      const expected = {
+      const seen = await expectAgreement({
         [unreadComment]: true,
         [ownActivity]: false,
         [closedQuestion]: false,
         [specForBob]: true,
         [specByBob]: false,
         [trashed]: false,
-      };
-      const seen = await verdicts(Object.keys(expected).map(Number));
-      for (const [number, want] of Object.entries(expected)) {
-        expect({ number, ...seen[Number(number)] }).toEqual({
-          number,
-          list: want,
-          single: want,
-        });
-      }
+      });
+
+      // Agreement alone would also hold if both paths reported zeroes, so
+      // the two reasons a row exists are pinned to their actual values.
+      expect(seen[unreadComment]?.single).toMatchObject({
+        unread: true,
+        // The card opened by someone else counts as the first of them
+        // (T-151), and the comment on it as the second.
+        unread_comments: 2,
+        pending_spec_review: false,
+        open_questions: 0,
+      });
+      expect(seen[specForBob]?.single).toMatchObject({
+        pending_spec_review: true,
+      });
 
       await markReadAs(PC, unreadComment, bob.headers);
       await markReadAs(PC, specForBob, bob.headers);
+    });
+
+    // The one place the fingerprint's fields do not come from one source:
+    // `pending_spec_review` is the keep-check's value, `open_questions` is
+    // the raw column, because that is what the list's InboxItem carries.
+    // A closed card with both an unreviewed foreign spec and unanswered
+    // questions is where the two spellings visibly differ, so an
+    // implementation that zeroed both would pass every other case here.
+    it("keeps open_questions raw on a closed card that stays in", async () => {
+      const closed = await createIssue(PC, "closed, asked, then answered to");
+      await ask(PC, closed, headers(), "still open?");
+      await pushSpec(PC, closed, headers());
+      await setStatus(PC, closed, "closed");
+      await markReadAs(PC, closed, bob.headers);
+      // A foreign comment after the read position is the only reason a
+      // closed card is still in the inbox (T-111).
+      await settle();
+      expect((await comment(PC, closed, headers(), "one more")).status).toBe(
+        201,
+      );
+
+      const seen = await expectAgreement({ [closed]: true });
+      expect(seen[closed]?.single).toMatchObject({
+        unread: true,
+        unread_comments: 1,
+        // Retired by closing, so the reader is not sent to review it.
+        pending_spec_review: false,
+        // Still on the row, and still what the list reports.
+        open_questions: 1,
+      });
+
+      await markReadAs(PC, closed, bob.headers);
+    });
+
+    // The premise of the "mark stale, do not refetch" branch: content edits
+    // move `updated_at` and unpaired timeline entries do not, so the client
+    // can tell "the row's card changed" from "nothing about the row changed".
+    it("moves updated_at on a label change but not on a comment edit", async () => {
+      const card = await createIssue(PC, "watch its updated_at");
+      const commentId = (await json(
+        await comment(PC, card, headers(), "first"),
+      )) as { id: number };
+      await settle();
+
+      const before = await expectAgreement({ [card]: true });
+      const label = (await json(
+        await t.app.request(`/api/projects/${PC}/labels`, {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({ name: "watched", color: "#336699" }),
+        }),
+      )) as { id: number };
+      await settle();
+      const labelled = await t.app.request(
+        `/api/projects/${PC}/issues/${card}`,
+        {
+          method: "PATCH",
+          headers: headers(),
+          body: JSON.stringify({ label_ids: [label.id] }),
+        },
+      );
+      expect(labelled.status).toBe(200);
+
+      const afterLabel = await expectAgreement({ [card]: true });
+      expect(afterLabel[card]?.single?.updated_at).not.toBe(
+        before[card]?.single?.updated_at,
+      );
+
+      await settle();
+      const edited = await t.app.request(
+        `/api/projects/${PC}/issues/${card}/comments/${commentId.id}`,
+        {
+          method: "PATCH",
+          headers: headers(),
+          body: JSON.stringify({ body: "first, revised" }),
+        },
+      );
+      expect(edited.status).toBe(200);
+
+      const afterEdit = await expectAgreement({ [card]: true });
+      expect(afterEdit[card]?.single?.updated_at).toBe(
+        afterLabel[card]?.single?.updated_at,
+      );
+
+      await markReadAs(PC, card, bob.headers);
     });
 
     it("follows show_weak_unread on an open and a closed card", async () => {
@@ -639,9 +796,7 @@ describe("cross-project inbox T-97", () => {
 
       for (const on of [true, false, true]) {
         await setWeakUnread(on);
-        const seen = await verdicts([open, closed]);
-        expect(seen[open]).toEqual({ list: on, single: on });
-        expect(seen[closed]).toEqual({ list: on, single: on });
+        await expectAgreement({ [open]: on, [closed]: on });
       }
 
       await setWeakUnread(true);
@@ -649,13 +804,13 @@ describe("cross-project inbox T-97", () => {
       await markReadAs(PC, closed, bob.headers);
     });
 
-    it("says false for a number nobody ever used", async () => {
+    it("says null for a number nobody ever used", async () => {
       const db = await t.ctx.router.forProject(routeInfoOf(project));
       const prefs = await readPrefs(t.ctx.router.system(), bob.user.id);
       const visible = await visibleProjects(t.ctx, bob.user);
       expect(
-        await issueInInbox(db, project, bob.user, 999_999, prefs, visible),
-      ).toBe(false);
+        await inboxRowState(db, project, bob.user, 999_999, prefs, visible),
+      ).toBeNull();
     });
   });
 

@@ -185,8 +185,10 @@ export async function unreadIssueState(
 /**
  * Advance the caller's last-seen position on an issue. Monotonic — a late
  * request with an older `up_to` never regresses the position. Private
- * state: no timeline event and no SSE, so watching agents stay asleep and
- * other users see nothing.
+ * state: no timeline event and no change event, so watching agents stay
+ * asleep and other users see nothing. The route does notify the caller's
+ * own opt-in connections afterwards, over the `me` event that carries only
+ * to this user (T-275) — see services/me-events.ts.
  */
 export async function markIssueRead(
   ctx: AppContext,
@@ -238,7 +240,7 @@ export async function markIssueRead(
  * Mark everything read across a scope of projects (T-100) — the inbox's
  * "Mark all read" and a project's own are the same call, told apart by
  * `projects`. Same family as markIssueRead: monotonic, no timeline event,
- * no SSE.
+ * no change event, and the same `me` notification from the route.
  *
  * Advancing the frontier alone would not do it. `unreadIssueState` reads
  * each issue's threshold as `coalesce(issue_reads.last_seen_at, frontier)`,

@@ -3,8 +3,11 @@ import {
   type ChangeEntity,
   type ChangeEvent,
   type CrossChangeEvent,
+  type InboxRowState,
+  type MeEvent,
   ProjectRef,
   SSE_CHANGE_EVENT,
+  SSE_ME_EVENT,
   SSE_PING_EVENT,
 } from "@todou/shared";
 import type { Context } from "hono";
@@ -22,7 +25,7 @@ import {
   type VisibleProjects,
   visibleProjects,
 } from "../services/cross-references.ts";
-import { issueInInbox } from "../services/inbox.ts";
+import { inboxRowState } from "../services/inbox.ts";
 import { readPrefs } from "../services/prefs.ts";
 
 const HEARTBEAT_MS = 30_000;
@@ -57,10 +60,14 @@ const inboxParam = z
   .openapi({
     param: { name: "inbox", in: "query" },
     description:
-      "Opt in to the per-receiver `inbox` field on change events (T-273): " +
-      "whether the event's issue is in the subscriber's inbox after the " +
-      "change. Without it the server does not compute the field at all, so " +
-      "subscribers that only use events as a nudge pay nothing.",
+      "Opt in to per-receiver inbox signals (T-275). Change events then " +
+      "carry `inbox_row`, the deciding fields of the event issue's row in " +
+      "the subscriber's inbox after the change (`null` when it holds no " +
+      "row, key absent when the server declined to work it out), and the " +
+      "connection additionally receives `me` events for the subscriber's " +
+      "own read positions and preferences. Without it the server computes " +
+      "nothing and sends neither, so subscribers that only use events as a " +
+      "nudge pay nothing.",
   });
 
 const userEventsRoute = createRoute({
@@ -119,11 +126,24 @@ function streamChanges(
     let crossRefVisible: VisibleProjects | null = null;
 
     const queue: Array<{ projectId: number; event: ChangeEvent }> = [];
+    // Kept out of `queue` on purpose: INBOX_JUDGE_QUEUE_MAX measures how
+    // many events are waiting to be judged, and a `me` event triggers no
+    // judgement. Mixing the two would make that threshold read high for
+    // work that never happens.
+    const meQueue: MeEvent[] = [];
     let wake: (() => void) | null = null;
     const unsubscribe = ctx.bus.subscribe((projectId, event) => {
       queue.push({ projectId, event });
       wake?.();
     });
+    // Only an opt-in connection registers: `?inbox=1` now means "send me
+    // the inbox signals computed for me", of which this is one.
+    const unsubscribeMe = wantInbox
+      ? ctx.bus.subscribeMe(user.id, (event) => {
+          meQueue.push(event);
+          wake?.();
+        })
+      : null;
     // Process shutdown must end the stream from the server side: SSE
     // responses never finish on their own, and every one of them would
     // otherwise hold `server.close()` open until it is severed (T-56).
@@ -133,25 +153,26 @@ function streamChanges(
     stream.onAbort(() => wake?.());
 
     /**
-     * Is the event's issue in this receiver's inbox now? `undefined` means
-     * the server declined to work it out, which the client reads as "refetch
-     * anyway" — so every non-boolean way out of here is safe, only slower.
+     * Which row does the event's issue occupy in this receiver's inbox now,
+     * or `null` for none? `undefined` means the server declined to work it
+     * out, which the client reads as "refetch anyway" — so every way out of
+     * here other than a row or a `null` is safe, only slower.
      */
     const judge = async (
       project: ProjectRow,
       event: ChangeEvent,
-    ): Promise<boolean | undefined> => {
+    ): Promise<InboxRowState | null | undefined> => {
       if (event.issue_number === undefined) return undefined;
       if (!INBOX_ENTITIES.has(event.entity)) return undefined;
       if (queue.length > INBOX_JUDGE_QUEUE_MAX) return undefined;
       try {
         crossRefVisible ??= await visibleProjects(ctx, user);
         // Read per judgement, never cached: changing a preference emits no
-        // event, so a cached copy could go stale in the one direction that
-        // matters — a card that should light the badge and does not.
+        // change event, so a cached copy could go stale in the one direction
+        // that matters — a card that should light the badge and does not.
         const prefs = await readPrefs(ctx.router.system(), user.id);
         const db = await ctx.router.forProject(routeInfoOf(project));
-        return await issueInInbox(
+        return await inboxRowState(
           db,
           project,
           user,
@@ -169,8 +190,11 @@ function streamChanges(
     const send = async (project: ProjectRow, event: ChangeEvent) => {
       const payload: CrossChangeEvent = { ...event, project: project.slug };
       if (wantInbox) {
-        const inbox = await judge(project, event);
-        if (inbox !== undefined) payload.inbox = inbox;
+        const row = await judge(project, event);
+        // `null` is an answer and has to travel; only `undefined` omits the
+        // key, which is how the client tells "not in your inbox" apart from
+        // "the server did not work it out".
+        if (row !== undefined) payload.inbox_row = row;
       }
       return stream.writeSSE({
         event: SSE_CHANGE_EVENT,
@@ -205,6 +229,13 @@ function streamChanges(
       await stream.writeSSE({ event: "hello", data: "{}" });
 
       while (!closed && !stream.aborted && !shutdown.aborted) {
+        while (meQueue.length > 0 && !stream.aborted && !closed) {
+          const event = meQueue.shift() as MeEvent;
+          await stream.writeSSE({
+            event: SSE_ME_EVENT,
+            data: JSON.stringify(event),
+          });
+        }
         while (queue.length > 0 && !stream.aborted && !closed) {
           const { projectId, event } = queue.shift() as {
             projectId: number;
@@ -314,6 +345,7 @@ function streamChanges(
       }
     } finally {
       unsubscribe();
+      unsubscribeMe?.();
       shutdown.removeEventListener("abort", onShutdown);
     }
   });

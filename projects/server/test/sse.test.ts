@@ -1,6 +1,9 @@
+import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readFrontiers } from "../src/db/project-schema.ts";
 import { EventBus } from "../src/events/bus.ts";
 import { INBOX_JUDGE_QUEUE_MAX } from "../src/routes/sse.ts";
+import { accessibleProjectRows, routeInfoOf } from "../src/services/access.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
@@ -36,6 +39,35 @@ describe("EventBus", () => {
     bus.subscribe((_pid, e) => seen.push(e.id));
     bus.publish(1, { entity: "issue", id: 1, action: "created" });
     expect(seen).toEqual([1]);
+  });
+
+  it("routes me events by user id (T-275)", () => {
+    const bus = new EventBus();
+    const mine: string[] = [];
+    const theirs: string[] = [];
+    const off = bus.subscribeMe(1, (e) => mine.push(e.kind));
+    bus.subscribeMe(2, (e) => theirs.push(e.kind));
+
+    bus.publishMe(1, { kind: "prefs" });
+    expect(mine).toEqual(["prefs"]);
+    expect(theirs).toEqual([]);
+
+    // A user nobody is listening for is not an error; the event is dropped.
+    bus.publishMe(3, { kind: "prefs" });
+
+    off();
+    bus.publishMe(1, { kind: "prefs" });
+    expect(mine).toEqual(["prefs"]);
+  });
+
+  it("reports whether a user has a me subscriber (T-275)", () => {
+    const bus = new EventBus();
+    expect(bus.hasMeSubscriber(1)).toBe(false);
+    const off = bus.subscribeMe(1, () => {});
+    expect(bus.hasMeSubscriber(1)).toBe(true);
+    expect(bus.hasMeSubscriber(2)).toBe(false);
+    off();
+    expect(bus.hasMeSubscriber(1)).toBe(false);
   });
 });
 
@@ -214,6 +246,38 @@ describe("user-level SSE stream (T-122)", () => {
         }
         const { value, done } = await this.#reader.read();
         if (done) throw new Error(`stream ended waiting for ${name}`);
+        this.#buffer += this.#decoder.decode(value, { stream: true });
+        let cut = this.#buffer.indexOf("\n\n");
+        while (cut !== -1) {
+          const raw = this.#buffer.slice(0, cut);
+          this.#buffer = this.#buffer.slice(cut + 2);
+          let event = "message";
+          const data: string[] = [];
+          for (const line of raw.split("\n")) {
+            if (line.startsWith("event:")) event = line.slice(6).trim();
+            else if (line.startsWith("data:")) data.push(line.slice(5).trim());
+          }
+          this.#frames.push({ event, data: data.join("\n") });
+          cut = this.#buffer.indexOf("\n\n");
+        }
+      }
+    }
+
+    /**
+     * The next frame of any name but `ping`. `next` skips names it was not
+     * asked for, so an assertion that some event never arrives has to read
+     * frames without naming one — otherwise a leaked frame is skipped in
+     * silence and the test passes for the wrong reason.
+     */
+    async nextFrame(): Promise<{ event: string; data: string }> {
+      for (;;) {
+        const frame = this.#frames.shift();
+        if (frame) {
+          if (frame.event === "ping") continue;
+          return frame;
+        }
+        const { value, done } = await this.#reader.read();
+        if (done) throw new Error("stream ended waiting for a frame");
         this.#buffer += this.#decoder.decode(value, { stream: true });
         let cut = this.#buffer.indexOf("\n\n");
         while (cut !== -1) {
@@ -464,9 +528,31 @@ describe("user-level SSE stream (T-122)", () => {
   // answer (T-273): the payload is a pointer, so a client seeing it has no
   // way to tell. Opt-in, because a subscriber that treats events as a bare
   // nudge would be paying for an answer it never reads.
-  describe("per-receiver inbox field (T-273)", () => {
+  describe("per-receiver inbox row (T-275)", () => {
     let zoe: Awaited<ReturnType<typeof addUserWithToken>>;
     let alphaId: number;
+
+    /** The five deciding fields of one row of /api/me/inbox. */
+    const inboxRowOf = async (
+      who: Record<string, string>,
+      slug: string,
+      number: number,
+    ) => {
+      const res = await t.app.request("/api/me/inbox", { headers: who });
+      expect(res.status).toBe(200);
+      const row = (await json(res)).items.find(
+        (i: { number: number; project: { slug: string } }) =>
+          i.project.slug === slug && i.number === number,
+      );
+      if (row === undefined) return null;
+      return {
+        updated_at: row.updated_at,
+        unread: row.unread,
+        unread_comments: row.unread_comments,
+        pending_spec_review: row.pending_spec_review,
+        open_questions: row.open_questions,
+      };
+    };
 
     /** Reading the inbox mints the caller's read frontier for a project;
      *  without one, activity is dated before the reader's epoch and the
@@ -522,12 +608,12 @@ describe("user-level SSE stream (T-122)", () => {
       // Both frames one comment fans out into: its timeline entry and the
       // issue's own touch.
       for (let i = 0; i < 2; i++) {
-        expect(await stream.next("change")).not.toHaveProperty("inbox");
+        expect(await stream.next("change")).not.toHaveProperty("inbox_row");
       }
       stream.abort();
     });
 
-    it("says true for a card that just entered the reader's inbox", async () => {
+    it("describes the row of a card that just entered the reader's inbox", async () => {
       await readInbox(zoe.headers);
       const stream = await SseReader.open("/api/events?inbox=1", zoe.headers);
       const res = await t.app.request("/api/projects/alpha/issues", {
@@ -536,8 +622,16 @@ describe("user-level SSE stream (T-122)", () => {
         body: JSON.stringify({ title: "opened for zoe" }),
       });
       expect(res.status).toBe(201);
+      const number = (await json(res)).number;
       const event = await nextOf(stream, "issue");
-      expect(event).toMatchObject({ action: "created", inbox: true });
+      expect(event).toMatchObject({ action: "created" });
+      // Field for field what /me/inbox would hand the same reader: the
+      // client compares the two, so any disagreement is a refetch that
+      // never stops or a badge that never moves.
+      expect(event.inbox_row).toEqual(
+        await inboxRowOf(zoe.headers, "alpha", number),
+      );
+      expect(event.inbox_row).toMatchObject({ unread: true });
       stream.abort();
     });
 
@@ -567,8 +661,16 @@ describe("user-level SSE stream (T-122)", () => {
       const mine = await SseReader.open("/api/events?inbox=1", { cookie });
 
       await commentAs("alpha", number, "zoe speaking", zoe.headers);
-      expect(await nextOf(hers, "timeline")).toMatchObject({ inbox: false });
-      expect(await nextOf(mine, "timeline")).toMatchObject({ inbox: true });
+      const hersEvent = await nextOf(hers, "timeline");
+      const mineEvent = await nextOf(mine, "timeline");
+      // Null rather than an absent key: "not in your inbox" is an answer,
+      // and the client acts on it (it may still hold a stale row).
+      expect("inbox_row" in hersEvent).toBe(true);
+      expect(hersEvent.inbox_row).toBeNull();
+      expect(mineEvent.inbox_row).toEqual(
+        await inboxRowOf({ cookie }, "alpha", number),
+      );
+      expect(mineEvent.inbox_row).not.toBeNull();
 
       hers.abort();
       mine.abort();
@@ -583,7 +685,7 @@ describe("user-level SSE stream (T-122)", () => {
       });
       expect(res.status).toBe(201);
       const event = await nextOf(stream, "label");
-      expect(event).not.toHaveProperty("inbox");
+      expect("inbox_row" in event).toBe(false);
       stream.abort();
     });
 
@@ -604,7 +706,9 @@ describe("user-level SSE stream (T-122)", () => {
           issue_number: 1,
         });
         const event = await nextOf(stream, "comment");
-        expect(event).not.toHaveProperty("inbox");
+        // `in`, not `=== undefined`: the latter would also accept a null,
+        // which means something else entirely.
+        expect("inbox_row" in event).toBe(false);
       } finally {
         t.ctx.router.forProject = forProject;
       }
@@ -616,7 +720,7 @@ describe("user-level SSE stream (T-122)", () => {
         action: "created",
         issue_number: 1,
       });
-      expect(await nextOf(stream, "comment")).toHaveProperty("inbox");
+      expect("inbox_row" in (await nextOf(stream, "comment"))).toBe(true);
       stream.abort();
     });
 
@@ -638,8 +742,278 @@ describe("user-level SSE stream (T-122)", () => {
       // The front of the burst is skipped and the tail is judged: the
       // degradation follows the backlog, and lifts on its own once the
       // connection catches up.
-      expect(seen[0]).not.toHaveProperty("inbox");
-      expect(seen[burst - 1]).toHaveProperty("inbox");
+      expect("inbox_row" in seen[0]).toBe(false);
+      expect("inbox_row" in seen[burst - 1]).toBe(true);
+      stream.abort();
+    });
+  });
+
+  // Read positions and preferences write no change event, so these are the
+  // two dimensions the T-273 signal could not cover at all (T-275).
+  describe("me events (T-275)", () => {
+    let ivy: Awaited<ReturnType<typeof addUserWithToken>>;
+
+    const readInbox = async (who: Record<string, string>) => {
+      const res = await t.app.request("/api/me/inbox", { headers: who });
+      expect(res.status).toBe(200);
+    };
+
+    const markRead = async (
+      slug: string,
+      number: number,
+      who: Record<string, string>,
+      origin?: string,
+    ) => {
+      const res = await t.app.request(
+        `/api/projects/${slug}/issues/${number}/read`,
+        {
+          method: "PUT",
+          headers: {
+            "content-type": "application/json",
+            ...who,
+            ...(origin === undefined ? {} : { "x-todou-origin": origin }),
+          },
+          body: "{}",
+        },
+      );
+      expect(res.status).toBe(204);
+    };
+
+    /** Ivy's own /me/inbox row for a card of alpha, or null for none. */
+    const inboxRowOfIvy = async (number: number) => {
+      const res = await t.app.request("/api/me/inbox", {
+        headers: ivy.headers,
+      });
+      expect(res.status).toBe(200);
+      return (
+        (await json(res)).items.find(
+          (i: { number: number; project: { slug: string } }) =>
+            i.project.slug === "alpha" && i.number === number,
+        ) ?? null
+      );
+    };
+
+    /** A card of alpha that is in ivy's inbox because she has not read it. */
+    const cardForIvy = async (title: string): Promise<number> => {
+      await readInbox(ivy.headers);
+      await new Promise((r) => setTimeout(r, 5));
+      const res = await t.app.request("/api/projects/alpha/issues", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ title }),
+      });
+      expect(res.status).toBe(201);
+      return (await json(res)).number;
+    };
+
+    beforeAll(async () => {
+      ivy = await addUserWithToken(t.ctx, "sse-ivy");
+      await setMember("alpha", ivy.user.id, "writer");
+    });
+
+    it("goes to the reader who wrote it and to nobody else", async () => {
+      const number = await cardForIvy("ivy's to read");
+      const hers = await SseReader.open("/api/events?inbox=1", ivy.headers);
+      const mine = await SseReader.open("/api/events?inbox=1", { cookie });
+
+      await markRead("alpha", number, ivy.headers);
+      const frame = await hers.nextFrame();
+      expect(frame.event).toBe("me");
+      expect(JSON.parse(frame.data)).toMatchObject({
+        kind: "issue_read",
+        project: "alpha",
+        issue_number: number,
+      });
+
+      // The other stream must see nothing of it. Read frames without
+      // naming an event, so a leaked `me` frame cannot be skipped in
+      // silence, and use an ordinary change event as the marker.
+      await comment("alpha", 1, "marker for the other stream");
+      const other = await mine.nextFrame();
+      expect(other.event).toBe("change");
+
+      hers.abort();
+      mine.abort();
+    });
+
+    it("says nothing to a stream that did not ask for inbox signals", async () => {
+      const number = await cardForIvy("ivy's second");
+      const stream = await SseReader.open("/api/events", ivy.headers);
+      await markRead("alpha", number, ivy.headers);
+      await comment("alpha", 1, "marker for the plain stream");
+      expect((await stream.nextFrame()).event).toBe("change");
+      stream.abort();
+    });
+
+    it("carries the row the reader is left with, or null for none", async () => {
+      const number = await cardForIvy("ivy's third");
+      const stream = await SseReader.open("/api/events?inbox=1", ivy.headers);
+
+      // Unread was this card's only reason to be there, so reading it
+      // leaves no row — and the event says so with a null rather than by
+      // leaving the field out.
+      await markRead("alpha", number, ivy.headers);
+      const event = JSON.parse((await stream.nextFrame()).data);
+      expect(event.inbox_row).toBeNull();
+      expect(await inboxRowOfIvy(number)).toBeNull();
+      stream.abort();
+    });
+
+    it("carries a row when reading leaves the card in the inbox", async () => {
+      const number = await cardForIvy("ivy's fourth, with a question");
+      const asked = await t.app.request(
+        `/api/projects/alpha/issues/${number}/comments`,
+        {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({
+            body: "which one?",
+            component: {
+              type: "questions",
+              questions: [
+                {
+                  question: "Pick one",
+                  options: [{ label: "left" }, { label: "right" }],
+                },
+              ],
+            },
+          }),
+        },
+      );
+      expect(asked.status).toBe(201);
+      const stream = await SseReader.open("/api/events?inbox=1", ivy.headers);
+
+      await markRead("alpha", number, ivy.headers);
+      const event = JSON.parse((await stream.nextFrame()).data);
+      const row = await inboxRowOfIvy(number);
+      expect(event.inbox_row).toEqual({
+        updated_at: row.updated_at,
+        unread: row.unread,
+        unread_comments: row.unread_comments,
+        pending_spec_review: row.pending_spec_review,
+        open_questions: row.open_questions,
+      });
+      expect(event.inbox_row).toMatchObject({
+        unread: false,
+        unread_comments: 0,
+        open_questions: 1,
+      });
+      stream.abort();
+    });
+
+    it("echoes x-todou-origin back, truncated, and omits it when absent", async () => {
+      const number = await cardForIvy("ivy's fifth");
+      const stream = await SseReader.open("/api/events?inbox=1", ivy.headers);
+
+      await markRead("alpha", number, ivy.headers, "tab-one");
+      expect(JSON.parse((await stream.nextFrame()).data).origin).toBe(
+        "tab-one",
+      );
+
+      await markRead("alpha", number, ivy.headers);
+      expect("origin" in JSON.parse((await stream.nextFrame()).data)).toBe(
+        false,
+      );
+
+      const long = "x".repeat(200);
+      await markRead("alpha", number, ivy.headers, long);
+      const echoed = JSON.parse((await stream.nextFrame()).data).origin;
+      expect(echoed).toBe("x".repeat(64));
+      stream.abort();
+    });
+
+    it("reports a bulk sweep, with its scope when it had one", async () => {
+      await readInbox(ivy.headers);
+      const stream = await SseReader.open("/api/events?inbox=1", ivy.headers);
+
+      const scoped = await t.app.request("/api/me/read", {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...ivy.headers },
+        body: JSON.stringify({ projects: ["alpha"] }),
+      });
+      expect(scoped.status).toBe(204);
+      expect(JSON.parse((await stream.nextFrame()).data)).toMatchObject({
+        kind: "reads_swept",
+        projects: ["alpha"],
+      });
+
+      const all = await t.app.request("/api/me/read", {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...ivy.headers },
+        body: "{}",
+      });
+      expect(all.status).toBe(204);
+      const event = JSON.parse((await stream.nextFrame()).data);
+      expect(event).toMatchObject({ kind: "reads_swept" });
+      expect("projects" in event).toBe(false);
+      stream.abort();
+    });
+
+    it("reports a preference change", async () => {
+      const stream = await SseReader.open("/api/events?inbox=1", ivy.headers);
+      const res = await t.app.request("/api/me/prefs", {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...ivy.headers },
+        body: JSON.stringify({ show_weak_unread: false }),
+      });
+      expect(res.status).toBe(200);
+      const frame = await stream.nextFrame();
+      expect(frame.event).toBe("me");
+      expect(JSON.parse(frame.data)).toMatchObject({ kind: "prefs" });
+      stream.abort();
+
+      const back = await t.app.request("/api/me/prefs", {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...ivy.headers },
+        body: JSON.stringify({ show_weak_unread: true }),
+      });
+      expect(back.status).toBe(200);
+    });
+
+    /**
+     * With nobody listening the fingerprint must not be computed at all,
+     * pinned to a side effect rather than to a stub: the judgement runs
+     * through `unreadIssueState`, which inserts the reader's read frontier
+     * for a project on first use. A user who has never had unread state
+     * computed in a project therefore has no frontier row there — until
+     * something computes one. This is also the semantics ?inbox=1 protects:
+     * the hot path must not mint frontiers on people's behalf.
+     */
+    it("skips the fingerprint when no connection is listening", async () => {
+      const hal = await addUserWithToken(t.ctx, "sse-hal");
+      await createProject("frontierless");
+      await setMember("frontierless", hal.user.id, "writer");
+      const created = await t.app.request("/api/projects/frontierless/issues", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ title: "never judged" }),
+      });
+      expect(created.status).toBe(201);
+      const number = (await json(created)).number;
+
+      const rows = await accessibleProjectRows(t.ctx, hal.user);
+      const project = rows.find((r) => r.slug === "frontierless");
+      if (!project) throw new Error("hal cannot read frontierless");
+      const db = await t.ctx.router.forProject(routeInfoOf(project));
+      const frontiers = async () =>
+        db
+          .select({ userId: readFrontiers.userId })
+          .from(readFrontiers)
+          .where(
+            and(
+              eq(readFrontiers.projectId, project.id),
+              eq(readFrontiers.userId, hal.user.id),
+            ),
+          );
+
+      expect(await frontiers()).toEqual([]);
+      await markRead("frontierless", number, hal.headers);
+      expect(await frontiers()).toEqual([]);
+
+      const stream = await SseReader.open("/api/events?inbox=1", hal.headers);
+      await markRead("frontierless", number, hal.headers);
+      await stream.nextFrame();
+      expect(await frontiers()).toHaveLength(1);
       stream.abort();
     });
   });

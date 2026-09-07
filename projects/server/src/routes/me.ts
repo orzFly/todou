@@ -7,6 +7,7 @@ import {
   MePrefs,
   MePrefsPatch,
   MeUpdateInput,
+  ORIGIN_HEADER,
   ProjectRef,
   ReferenceDirectory,
   TokenCreated,
@@ -16,6 +17,12 @@ import {
 import type { AppEnv } from "../auth/middleware.ts";
 import { ForbiddenError, ValidationFailedError } from "../errors.ts";
 import { listAgentMemberships } from "../services/agents.ts";
+import {
+  notifyIssueRead,
+  notifyPrefsChanged,
+  notifyReadsSwept,
+  originOf,
+} from "../services/me-events.ts";
 import { readPrefs, updatePrefs } from "../services/prefs.ts";
 import { deleteAvatar, setAvatar, updateProfile } from "../services/profile.ts";
 import { bulkMarkRead, markIssueRead } from "../services/reads.ts";
@@ -276,27 +283,45 @@ export function meRoutes() {
   });
 
   app.openapi(patchPrefsRoute, async (c) => {
-    const db = c.get("appCtx").router.system();
-    return c.json(
-      await updatePrefs(db, c.get("user").id, c.req.valid("json")),
-      200,
+    const ctx = c.get("appCtx");
+    const user = c.get("user");
+    const prefs = await updatePrefs(
+      ctx.router.system(),
+      user.id,
+      c.req.valid("json"),
     );
+    notifyPrefsChanged(ctx, user, originOf(c.req.header(ORIGIN_HEADER)));
+    return c.json(prefs, 200);
   });
 
+  // The three writes below notify after their own await, never before: the
+  // bus contract is that a subscriber woken by an event reads committed data.
   app.openapi(markIssueReadRoute, async (c) => {
+    const ctx = c.get("appCtx");
+    const user = c.get("user");
     const { slug, number } = c.req.valid("param");
-    await markIssueRead(
-      c.get("appCtx"),
-      c.get("user"),
+    await markIssueRead(ctx, user, slug, number, c.req.valid("json"));
+    await notifyIssueRead(
+      ctx,
+      user,
       slug,
       number,
-      c.req.valid("json"),
+      originOf(c.req.header(ORIGIN_HEADER)),
     );
     return c.body(null, 204);
   });
 
   app.openapi(bulkReadRoute, async (c) => {
-    await bulkMarkRead(c.get("appCtx"), c.get("user"), c.req.valid("json"));
+    const ctx = c.get("appCtx");
+    const user = c.get("user");
+    const input = c.req.valid("json");
+    await bulkMarkRead(ctx, user, input);
+    notifyReadsSwept(
+      ctx,
+      user,
+      input.projects,
+      originOf(c.req.header(ORIGIN_HEADER)),
+    );
     return c.body(null, 204);
   });
 
