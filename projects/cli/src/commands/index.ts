@@ -40,6 +40,12 @@ import {
 } from "./label.ts";
 import { LoginCommand } from "./login.ts";
 import {
+  MetadataGetCommand,
+  MetadataNamespacesCommand,
+  MetadataSetCommand,
+  MetadataUnsetCommand,
+} from "./metadata.ts";
+import {
   ProjectEditCommand,
   ProjectLinkCommand,
   ProjectListCommand,
@@ -117,6 +123,10 @@ export const commands: Array<CommandClass<CliContext>> = [
   LabelCreateCommand,
   LabelEditCommand,
   LabelDeleteCommand,
+  MetadataGetCommand,
+  MetadataNamespacesCommand,
+  MetadataSetCommand,
+  MetadataUnsetCommand,
   StatusListCommand,
   StatusCreateCommand,
   StatusEditCommand,

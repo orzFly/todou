@@ -6,10 +6,12 @@ import type {
   IssueCountsQuery,
   IssueCreateInput,
   IssueListQuery,
+  IssueMetadataEntry,
   IssueMove,
   IssueUpdateInput,
   Label,
   MemberRole,
+  MetadataNamespaceSelector,
   Status,
   UserRef,
 } from "@todou/shared";
@@ -62,6 +64,7 @@ import {
   type ListCursor,
 } from "./cursor.ts";
 import { toLabel } from "./labels.ts";
+import { metadataEntriesByIssue, metadataRowsFor } from "./metadata.ts";
 import { unreadIssueState } from "./reads.ts";
 import {
   recordCrossReferences,
@@ -117,6 +120,12 @@ export type IssueBundle = {
   deletedBy: UserRef | null;
   /** Arrivals in this card's history, oldest first (T-231). */
   moves: IssueMove[];
+  /**
+   * Present only when the request named namespaces with `?metadata=`
+   * (T-282). Undefined means nobody asked; an empty array means somebody
+   * asked and this card holds nothing under those namespaces.
+   */
+  metadata?: IssueMetadataEntry[];
 };
 
 export function toIssue(bundle: IssueBundle): Issue {
@@ -142,6 +151,9 @@ export function toIssue(bundle: IssueBundle): Issue {
     deleted_at: bundle.row.deletedAt?.toISOString() ?? null,
     deleted_by: bundle.deletedBy,
     moves: bundle.moves,
+    // Written only when it was asked for: the key's absence is the answer
+    // "nobody asked", which `[]` would erase.
+    ...(bundle.metadata === undefined ? {} : { metadata: bundle.metadata }),
   };
 }
 
@@ -235,6 +247,14 @@ export async function bundleIssues(
   rows: IssueRow[],
   /** Whose view this is; decides which move sources may be named. */
   actor: UserRow,
+  /**
+   * `metadata` names the namespaces to fetch alongside the page (T-282).
+   * One extra query for the whole page, whatever its size — which is the
+   * point of doing it here rather than per card: under PGlite a project's
+   * queries share one handle, so the number of queries is the only thing
+   * worth saving.
+   */
+  opts?: { metadata?: MetadataNamespaceSelector },
 ): Promise<IssueBundle[]> {
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.id);
@@ -255,13 +275,25 @@ export async function bundleIssues(
     .from(issueAssignees)
     .where(inArray(issueAssignees.issueId, ids));
 
+  const metadataRows =
+    opts?.metadata === undefined
+      ? undefined
+      : await metadataRowsFor(db, ids, opts.metadata);
+
   const refIds = [
     ...rows.map((r) => r.authorId),
     ...rows.map((r) => r.deletedBy).filter((id) => id !== null),
     ...assigneeRows.map((a) => a.userId),
+    // Resolved in the same lookup rather than a second one, which is what
+    // keeps `?metadata=` to exactly one extra query for a whole page.
+    ...(metadataRows?.map((m) => m.updatedBy) ?? []),
   ];
   const refs = await getUserRefs(ctx.router.system(), refIds);
   const moves = await movesOf(ctx, db, projectIds, ids, actor);
+  const metadata =
+    metadataRows === undefined
+      ? undefined
+      : metadataEntriesByIssue(ids, metadataRows, refs);
   const ghost = (id: number): UserRef => ({
     id,
     login: "ghost",
@@ -289,6 +321,9 @@ export async function bundleIssues(
           ? null
           : (refs.get(row.deletedBy) ?? ghost(row.deletedBy)),
       moves: moves.get(row.id) ?? [],
+      ...(metadata === undefined
+        ? {}
+        : { metadata: metadata.get(row.id) ?? [] }),
     };
   });
 }
@@ -544,6 +579,7 @@ export async function getIssue(
   actor: UserRow,
   slug: string,
   number: number,
+  opts?: { metadata?: MetadataNamespaceSelector },
 ): Promise<Issue> {
   // A card link is the kind of address that gets written down, so who may
   // follow it is decided by where the card is now (T-242), not by the
@@ -552,7 +588,9 @@ export async function getIssue(
   const db = await ctx.router.forProject(routeInfoOf(project));
   const row = await loadIssueRow(db, project.id, number);
   assertIssueReadable(row, actor, role);
-  const bundle = (await bundleIssues(ctx, db, [project.id], [row], actor))[0];
+  const bundle = (
+    await bundleIssues(ctx, db, [project.id], [row], actor, opts)
+  )[0];
   if (!bundle) throw new Error("bundle missing");
   return toIssue(bundle);
 }
@@ -737,7 +775,9 @@ export async function listIssues(
         })
       : null;
 
-  const bundles = await bundleIssues(ctx, db, [project.id], page, actor);
+  const bundles = await bundleIssues(ctx, db, [project.id], page, actor, {
+    metadata: query.metadata,
+  });
   const { unread, counts } = await unreadIssueState(
     db,
     [project.id],

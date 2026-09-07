@@ -175,6 +175,12 @@ export function invalidationsFor(
             refetch(["spec-files", slug, event.issue_number, "current"]),
             refetch(["issue", slug, event.issue_number]),
           ];
+    case "metadata":
+      // Deliberately not on `["issue", …]`: a metadata write does not touch
+      // the card, so only its own key goes stale (T-282).
+      return event.issue_number === undefined
+        ? []
+        : [refetch(["issue-metadata", slug, event.issue_number])];
     case "status":
       return [refetch(["statuses", slug]), refetch(["issues", slug])];
     case "label":

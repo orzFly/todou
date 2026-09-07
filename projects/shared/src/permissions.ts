@@ -104,6 +104,19 @@ export const CAPABILITIES = [
   { id: "spec.review", minRole: "writer", enforce: "gate" },
   { id: "spec.resolve", minRole: "writer", enforce: "gate" },
 
+  // Machine-written state on a card (T-282). Two entries of their own rather
+  // than borrowing `issue.read` / `issue.update`, because the whole point of
+  // this catalog is that moving a `minRole` is itself the behaviour change —
+  // raising the bar later should be one line here and nothing else.
+  //
+  // Reading is a reader's: "written by tools, hidden by default" means it is
+  // absent from output unless asked for, not that it is confidential, and the
+  // web page shows all of it to whoever can see the card. Writing is a
+  // writer's: an orchestrator is usually exactly a writer, and `ownerOnly`
+  // would be plainly wrong — other people's cards are what it writes to.
+  { id: "metadata.read", minRole: "reader", enforce: "addressed" },
+  { id: "metadata.write", minRole: "writer", enforce: "gate" },
+
   { id: "label.list", minRole: "reader", enforce: "gate" },
   // Putting a label on a card has always been a writer's to do; keeping the
   // catalog it draws from at admin only meant asking someone else to type

@@ -332,6 +332,7 @@ describe("copyIssueTree", () => {
       "issue_assignees",
       "issue_events",
       "issue_labels",
+      "issue_metadata",
       "issue_reads",
       "pending_uploads",
       "revisions",

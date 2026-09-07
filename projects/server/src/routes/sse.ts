@@ -5,6 +5,7 @@ import {
   type CrossChangeEvent,
   type InboxRowState,
   type MeEvent,
+  MetadataNamespaceSelector,
   ProjectRef,
   SSE_CHANGE_EVENT,
   SSE_ME_EVENT,
@@ -70,6 +71,22 @@ const inboxParam = z
       "nudge pay nothing.",
   });
 
+/**
+ * Which metadata namespaces this connection wants (T-282). Absent means it
+ * wants none, and then the server neither computes nor sends anything —
+ * which is why `todou watch` is never woken by a metadata write.
+ */
+const metadataParam = MetadataNamespaceSelector.optional().openapi({
+  param: { name: "metadata", in: "query" },
+  description:
+    "Opt in to `metadata` change events (T-282): a comma-separated list of " +
+    "namespaces, or `*` for all of them. Such an event carries the whole " +
+    "entry — namespace, key, value, and who wrote it when — which is safe " +
+    "here precisely because metadata read permission is project visibility " +
+    "and nothing finer, the same filter this feed already applies. Without " +
+    "the parameter no metadata event is delivered at all.",
+});
+
 const userEventsRoute = createRoute({
   method: "get",
   path: "/events",
@@ -85,7 +102,9 @@ const userEventsRoute = createRoute({
     "refetch the lists unconditionally. The subscription follows membership " +
     "changes live: being added to a project starts its events mid-stream, " +
     "being removed silences them.",
-  request: { query: z.object({ inbox: inboxParam }) },
+  request: {
+    query: z.object({ inbox: inboxParam, metadata: metadataParam }),
+  },
   responses: { 200: { description: "text/event-stream" } },
 });
 
@@ -99,7 +118,7 @@ const projectEventsRoute = createRoute({
     "REST. The stream closes when the caller loses access to the project.",
   request: {
     params: z.object({ slug: ProjectRef }),
-    query: z.object({ inbox: inboxParam }),
+    query: z.object({ inbox: inboxParam, metadata: metadataParam }),
   },
   responses: { 200: { description: "text/event-stream" } },
 });
@@ -110,6 +129,8 @@ function streamChanges(
   user: UserRow,
   scope: Scope,
   wantInbox: boolean,
+  /** Undefined = this connection asked for no metadata at all. */
+  wantMetadata: MetadataNamespaceSelector | undefined,
 ) {
   return streamSSE(c, async (stream) => {
     // The visible set decides delivery per event; each row carries the slug
@@ -193,7 +214,21 @@ function streamChanges(
       }
     };
 
+    /**
+     * Does this connection want to hear about that namespace? A membership
+     * test on a set held in memory — deliberately not routed through
+     * `judge()`, whose queue length measures events waiting on database
+     * work, which this is not.
+     */
+    const wantsMetadata = (event: ChangeEvent): boolean => {
+      if (wantMetadata === undefined) return false;
+      if (wantMetadata === "*") return true;
+      const namespace = event.metadata?.namespace;
+      return namespace !== undefined && wantMetadata.includes(namespace);
+    };
+
     const send = async (project: ProjectRow, event: ChangeEvent) => {
+      if (event.entity === "metadata" && !wantsMetadata(event)) return;
       const payload: CrossChangeEvent = { ...event, project: project.slug };
       if (wantInbox) {
         const row = await judge(project, event);
@@ -367,6 +402,7 @@ export function sseRoutes() {
       c.get("user"),
       { kind: "all" },
       c.req.valid("query").inbox === "1",
+      c.req.valid("query").metadata,
     ),
   );
 
@@ -385,6 +421,7 @@ export function sseRoutes() {
       user,
       { kind: "project", row: project },
       c.req.valid("query").inbox === "1",
+      c.req.valid("query").metadata,
     );
   });
 

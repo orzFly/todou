@@ -1018,6 +1018,122 @@ describe("user-level SSE stream (T-122)", () => {
       stream.abort();
     });
   });
+
+  // Default off, and the default is the load-bearing half: `todou watch`
+  // resumes from a cursor, metadata writes leave no timeline row to resume
+  // from, and a subscription that delivers live events it can never replay
+  // after a disconnect is worse than none (T-282).
+  describe("metadata subscription (T-282)", () => {
+    let number = 0;
+
+    const setMetadata = async (key: string, value: string, ns = "orch") => {
+      const res = await t.app.request(
+        `/api/projects/alpha/issues/${number}/metadata`,
+        {
+          method: "PATCH",
+          headers: headers(),
+          body: JSON.stringify({
+            entries: [{ namespace: ns, key, value }],
+          }),
+        },
+      );
+      expect(res.status).toBe(200);
+    };
+
+    beforeAll(async () => {
+      const res = await t.app.request("/api/projects/alpha/issues", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ title: "metadata on the wire" }),
+      });
+      expect(res.status).toBe(201);
+      number = (await json(res)).number as number;
+    });
+
+    it("sends nothing to a connection that did not ask", async () => {
+      const stream = await SseReader.open("/api/events", { cookie });
+      await setMetadata("phase", "plan");
+      // A comment behind it, so "nothing arrived" is proved by the next
+      // frame being the comment rather than by a timeout.
+      await comment("alpha", number, "after the metadata write");
+      const frame = await stream.nextFrame();
+      expect(JSON.parse(frame.data).entity).not.toBe("metadata");
+      stream.abort();
+    });
+
+    it("sends only the subscribed namespaces", async () => {
+      const stream = await SseReader.open("/api/events?metadata=orch", {
+        cookie,
+      });
+      await setMetadata("run", "green", "ci");
+      await setMetadata("phase", "impl");
+      const event = await stream.next("change");
+      expect(event.entity).toBe("metadata");
+      expect(event.metadata.namespace).toBe("orch");
+      expect(event.metadata.key).toBe("phase");
+      stream.abort();
+    });
+
+    it("sends every namespace under the star", async () => {
+      const stream = await SseReader.open("/api/events?metadata=*", {
+        cookie,
+      });
+      await setMetadata("run", "amber", "ci");
+      await setMetadata("phase", "review");
+      const first = await stream.next("change");
+      const second = await stream.next("change");
+      expect([first.metadata.namespace, second.metadata.namespace]).toEqual([
+        "ci",
+        "orch",
+      ]);
+      stream.abort();
+    });
+
+    it("carries the whole entry, and a null value for a deletion", async () => {
+      const stream = await SseReader.open("/api/events?metadata=*", {
+        cookie,
+      });
+      await setMetadata("doomed", "here");
+      const created = await stream.next("change");
+      expect(created.issue_number).toBe(number);
+      expect(created.project).toBe("alpha");
+      expect(created.action).toBe("created");
+      expect(created.metadata).toMatchObject({
+        namespace: "orch",
+        key: "doomed",
+        value: "here",
+      });
+      expect(created.metadata.updated_by.login).toBeDefined();
+      expect(Date.parse(created.metadata.updated_at)).not.toBeNaN();
+
+      const removed = await t.app.request(
+        `/api/projects/alpha/issues/${number}/metadata`,
+        {
+          method: "PATCH",
+          headers: headers(),
+          body: JSON.stringify({
+            entries: [{ namespace: "orch", key: "doomed", value: null }],
+          }),
+        },
+      );
+      expect(removed.status).toBe(200);
+      const deleted = await stream.next("change");
+      expect(deleted.action).toBe("deleted");
+      expect(deleted.metadata.value).toBeNull();
+      stream.abort();
+    });
+
+    it("takes the same parameter on the per-project stream", async () => {
+      const stream = await SseReader.open(
+        "/api/projects/alpha/events?metadata=orch",
+        { cookie },
+      );
+      await setMetadata("phase", "shipped");
+      const event = await stream.next("change");
+      expect(event.entity).toBe("metadata");
+      stream.abort();
+    });
+  });
 });
 
 /**

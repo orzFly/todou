@@ -14,6 +14,8 @@ import {
   canonicalQualifierValue,
   HARNESS_IDS,
   isSpecialQualifierValue,
+  MetadataKey,
+  MetadataNamespace,
   parseSearchQuery,
   SEARCH_DOMAINS,
   SEARCH_MAX_FILTERS,
@@ -43,6 +45,7 @@ import {
   issueAssignees,
   issueEvents,
   issueLabels,
+  issueMetadata,
   issues,
   labels,
   specVersionFiles,
@@ -308,6 +311,65 @@ function agentContextByDomain(
   );
 }
 
+/**
+ * One `metadata:` value read as a condition (T-282):
+ *
+ *   orch              the namespace holds any key at all
+ *   orch/phase        that key exists, whatever its value
+ *   orch/phase=spec   that key holds exactly this value
+ *
+ * `/` and `=` are outside the namespace and key character sets, so the splits
+ * are unambiguous, and only the first `=` splits — a value may contain more.
+ * A trailing `=` asks for the empty string, which is a value like any other
+ * and not the same as the key being absent.
+ */
+type MetadataCondition = {
+  namespace: string;
+  key: string | null;
+  value: string | null;
+  /** Whether the parts are spellable as a stored namespace and key. */
+  wellFormed: boolean;
+};
+
+function parseMetadataCondition(raw: string): MetadataCondition {
+  const slash = raw.indexOf("/");
+  const namespace = slash === -1 ? raw : raw.slice(0, slash);
+  const rest = slash === -1 ? null : raw.slice(slash + 1);
+  const equals = rest === null ? -1 : rest.indexOf("=");
+  const key =
+    rest === null ? null : equals === -1 ? rest : rest.slice(0, equals);
+  const value = rest === null || equals === -1 ? null : rest.slice(equals + 1);
+  return {
+    namespace,
+    key,
+    value,
+    wellFormed:
+      MetadataNamespace.safeParse(namespace).success &&
+      (key === null || MetadataKey.safeParse(key).success),
+  };
+}
+
+/**
+ * That condition as a correlated `EXISTS`, which is what makes `metadata:` a
+ * filter on the card rather than text to be searched — and what lets
+ * `-metadata:…` mean the clean "cards without this".
+ *
+ * The lookup goes through `(project_id, namespace, key)`; the value is
+ * compared back in the heap, deliberately, because a 4096-byte value does not
+ * fit in a btree entry.
+ */
+function metadataCondition(asked: MetadataCondition): SQL {
+  const parts: SQL[] = [
+    sql`${issueMetadata.issueId} = ${issues.id}`,
+    sql`${issueMetadata.namespace} = ${asked.namespace}`,
+  ];
+  if (asked.key !== null) parts.push(sql`${issueMetadata.key} = ${asked.key}`);
+  if (asked.value !== null) {
+    parts.push(sql`${issueMetadata.value} = ${asked.value}`);
+  }
+  return sql`exists (select 1 from ${issueMetadata} where ${and(...parts)})`;
+}
+
 /** Logins of this project's members, for `assignee:`. */
 async function projectMemberLogins(
   ctx: AppContext,
@@ -533,6 +595,29 @@ async function planQualifiers(
       case "session":
         agentContextByDomain(plan, filter, "session");
         break;
+
+      case "metadata": {
+        const alternatives: SQL[] = [];
+        for (const value of filter.values) {
+          const asked = parseMetadataCondition(value);
+          if (!asked.wellFormed) {
+            // A note rather than an error, the way every `free` qualifier
+            // treats a value it cannot check. Nothing stored can carry a
+            // namespace or key outside the character set, so matching it
+            // literally and matching nothing are the same answer here.
+            plan.diagnostics.push({
+              severity: "note",
+              key: "metadata",
+              value,
+              message: `"${value}" is not a metadata condition (<namespace>[/<key>[=<value>]]); matching it literally`,
+              suggestion: null,
+            });
+          }
+          alternatives.push(metadataCondition(asked));
+        }
+        plan.issue.push(applyNegation(filter, or(...alternatives) as SQL));
+        break;
+      }
     }
   }
 

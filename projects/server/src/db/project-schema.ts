@@ -209,6 +209,48 @@ export const issueLabels = pgTable(
   (t) => [primaryKey({ columns: [t.issueId, t.labelId] })],
 );
 
+// Machine-written state hung off an issue (T-282), shaped like k8s
+// annotations. No surrogate id: the table is only ever reached through an
+// issue, `(issue, namespace, key)` is the entry's name, and an upsert lands
+// straight on the primary key — the same choice issue_labels and
+// issue_assignees make.
+//
+// `project_id` is not only the schema-wide rule here: a search condition asks
+// "which cards in this project have orch/phase = spec", and that direction
+// starts from the project.
+//
+// The reverse-lookup index deliberately excludes `value`. A value may be 4096
+// bytes while a btree entry tops out near 2704, so indexing it would make a
+// legal write fail outright. `(project_id, namespace, key)` is selective
+// enough; the equality on the value is done back in the heap.
+export const issueMetadata = pgTable(
+  "issue_metadata",
+  {
+    projectId: projectId(),
+    issueId: bigint("issue_id", { mode: "number" })
+      .notNull()
+      .references(() => issues.id, { onDelete: "cascade" }),
+    namespace: text("namespace").notNull(),
+    key: text("key").notNull(),
+    value: text("value").notNull(),
+    // Where the current value came from, not a version: an overwrite replaces
+    // both. Deliberately not a mirror of issues.updated_at — a metadata write
+    // never bumps that one.
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedBy: bigint("updated_by", { mode: "number" }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.issueId, t.namespace, t.key] }),
+    index("issue_metadata_project_ns_key_idx").on(
+      t.projectId,
+      t.namespace,
+      t.key,
+    ),
+  ],
+);
+
 export const comments = pgTable(
   "comments",
   {

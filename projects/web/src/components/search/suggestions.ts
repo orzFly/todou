@@ -160,6 +160,7 @@ const KEY_HINT: Record<SearchQualifier, string> = {
   assignee: "a login, or @me",
   harness: "which agent wrote it",
   session: "which session wrote it",
+  metadata: "ns, ns/key or ns/key=value",
 };
 
 /**

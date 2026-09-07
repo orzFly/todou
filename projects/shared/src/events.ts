@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { Id, Timestamp } from "./schemas/common.ts";
+import { MetadataKey, MetadataNamespace } from "./schemas/metadata.ts";
 import { ProjectSlug } from "./schemas/project.ts";
+import { UserRef } from "./schemas/user.ts";
 
 /** SSE event name used on the project change feed. */
 export const SSE_CHANGE_EVENT = "change";
@@ -32,6 +34,7 @@ export const ChangeEntity = z.enum([
   "timeline",
   "attachment",
   "spec",
+  "metadata",
 ]);
 export type ChangeEntity = z.infer<typeof ChangeEntity>;
 
@@ -74,11 +77,37 @@ export const IssueListRow = z.discriminatedUnion("kind", [
 export type IssueListRow = z.infer<typeof IssueListRow>;
 
 /**
+ * The whole metadata entry a `metadata` event is about (T-282). `value` is
+ * null when the key was deleted.
+ *
+ * Carrying the entry rather than a pointer is allowed by one specific,
+ * checkable condition: metadata read permission has a single level, project
+ * visibility, and the feed already filters by exactly that. The filter and
+ * the permission boundary coincide, so the data cannot reach anyone who could
+ * not GET it.
+ *
+ * The boundary of the exception, as an implementation constraint: if metadata
+ * ever gains per-namespace permission, the data comes out of the event first,
+ * or that new permission leaks from its first day.
+ *
+ * `updated_by` costs no query — the writer is the caller of the request that
+ * published the event, already resolved during authentication.
+ */
+export const MetadataChange = z.object({
+  namespace: MetadataNamespace,
+  key: MetadataKey,
+  value: z.string().nullable(),
+  updated_at: Timestamp,
+  updated_by: UserRef,
+});
+export type MetadataChange = z.infer<typeof MetadataChange>;
+
+/**
  * Change notification: a pointer, plus `list_row` where the publisher could
  * say where the card landed. Clients refetch through the authorized REST API
  * rather than reading entity data off the feed.
  *
- * `list_row` is the one exception to that, and it holds because of what it
+ * `list_row` is the first exception to that, and it holds because of what it
  * carries rather than because it carries nothing (T-279):
  *
  * - An event only reaches subscribers who can read the project, and every
@@ -87,13 +116,26 @@ export type IssueListRow = z.infer<typeof IssueListRow>;
  *   sends `{kind:"gone"}` alone — no status, no labels, no assignees.
  * - Never the title or the body. The judgement does not need them, and a page
  *   filtering on `q=` refetches broadly regardless.
+ *
+ * `metadata` is the second, on the condition written on `MetadataChange`.
  */
 export const ChangeEvent = z.object({
   entity: ChangeEntity,
+  /**
+   * The entity's id, except where the entity has none: a `metadata` event
+   * carries the *issue* id, because a metadata entry's name is
+   * `(issue, namespace, key)` and it has no surrogate id. A `member` event
+   * already sets the same precedent with a user id.
+   */
   id: Id,
   action: ChangeAction,
   issue_number: Id.optional(),
   list_row: IssueListRow.optional(),
+  /**
+   * Present on a `metadata` event, and only reaches a connection that
+   * subscribed to that namespace. One changed key is one event.
+   */
+  metadata: MetadataChange.optional(),
 });
 export type ChangeEvent = z.infer<typeof ChangeEvent>;
 

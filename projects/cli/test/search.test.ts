@@ -287,6 +287,18 @@ describe("joinSearchTerms", () => {
     expect(joinSearchTerms(["kind:bug 慢"])).toBe('"kind:bug 慢"');
     expect(joinSearchTerms(["含空格的 自由词"])).toBe('"含空格的 自由词"');
   });
+
+  it("keeps a metadata condition's value whole (T-282)", () => {
+    // The whole `<ns>/<key>=<value>` is the qualifier's value, so the space
+    // inside it is re-quoted like any other — the shared grammar knowing the
+    // key is all this needs.
+    expect(joinSearchTerms(["metadata:ci/last-run=a b"])).toBe(
+      'metadata:"ci/last-run=a b"',
+    );
+    expect(joinSearchTerms(["meta:orch/phase=in progress"])).toBe(
+      'meta:"orch/phase=in progress"',
+    );
+  });
 });
 
 describe("paintSnippet", () => {

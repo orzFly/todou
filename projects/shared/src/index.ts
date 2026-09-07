@@ -22,6 +22,7 @@ export * from "./schemas/component.ts";
 export * from "./schemas/cursor-envelope.ts";
 export * from "./schemas/inbox.ts";
 export * from "./schemas/issue.ts";
+export * from "./schemas/metadata.ts";
 export * from "./schemas/move.ts";
 export * from "./schemas/prefs.ts";
 export * from "./schemas/project.ts";

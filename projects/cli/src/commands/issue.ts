@@ -76,9 +76,15 @@ import {
   watchRetryOptions,
   watchTimeoutSec,
 } from "../watch-loop.ts";
+import { metadataInline, renderMetadata, selectorOf } from "./metadata.ts";
 import { specVerdict } from "./spec.ts";
 
-function issueRow(issue: IssueListItem, refPrefix: string | null): string[] {
+function issueRow(
+  issue: IssueListItem,
+  refPrefix: string | null,
+  /** Only under `--metadata`; the column does not exist otherwise (T-282). */
+  withMetadata = false,
+): string[] {
   // Old servers omit both fields entirely; undefined reads as "not unread"
   // and the marker degrades to the plain dot (T-77). The count is exact —
   // terminal columns self-size, so the web's 99+ cap buys nothing here.
@@ -97,6 +103,7 @@ function issueRow(issue: IssueListItem, refPrefix: string | null): string[] {
     // deliberately leaves updated_at alone, so it would show pre-deletion
     // activity here. Everywhere else deleted_at is null and nothing changes.
     relativeTime(issue.deleted_at ?? issue.updated_at),
+    ...(withMetadata ? [metadataInline(issue.metadata ?? [])] : []),
   ];
 }
 
@@ -139,6 +146,9 @@ export class IssueListCommand extends ProjectCommand {
   });
   deleted = Option.Boolean("--deleted", false, {
     description: "List the trash instead (newest deletion first)",
+  });
+  metadata = Option.Array("--metadata", [], {
+    description: "Add a column of metadata in these namespaces (* = all)",
   });
 
   protected async run(client: TodouClient): Promise<void> {
@@ -196,6 +206,8 @@ export class IssueListCommand extends ProjectCommand {
       order: parseChoice(this.order, ["asc", "desc"], "--order"),
       limit: this.limit ? parsePositiveInt(this.limit, "--limit") : undefined,
       deleted: this.deleted ? true : undefined,
+      metadata:
+        this.metadata.length === 0 ? undefined : selectorOf(this.metadata),
     });
 
     const shown = this.unread
@@ -215,7 +227,11 @@ export class IssueListCommand extends ProjectCommand {
           return this.unread ? "no unread issues" : "no issues";
         }
         const paint = makePainter(this.context.stdout, this.context.env);
-        const body = table(shown.items.map((i) => issueRow(i, refPrefix)));
+        const body = table(
+          shown.items.map((i) =>
+            issueRow(i, refPrefix, this.metadata.length > 0),
+          ),
+        );
         const n = shown.items.length;
         // A count nobody has to derive: `--json | jq length` was the only way
         // to answer "how many", and it re-fetched the page to do it.
@@ -340,6 +356,9 @@ export class IssueViewCommand extends ProjectCommand {
   last = Option.String("--last", {
     description: "Keep only the newest N timeline entries",
   });
+  metadata = Option.Array("--metadata", [], {
+    description: "Also show metadata in these namespaces (* = all)",
+  });
 
   protected async run(client: TodouClient): Promise<number> {
     if (this.brief && this.timelineOnly) {
@@ -452,7 +471,13 @@ export class IssueViewCommand extends ProjectCommand {
     asTyped?: string,
   ): Promise<ViewedIssue> {
     try {
-      const issue = await client.getIssue(project, number);
+      const issue = await client.getIssue(project, number, {
+        // Absent unless asked for, so a plain `issue view` sends the same
+        // request and prints the same bytes it did before (T-282).
+        ...(this.metadata.length === 0
+          ? {}
+          : { metadata: selectorOf(this.metadata) }),
+      });
       if (this.brief)
         return { number, slug: project, issue, timeline: [], omitted: 0 };
       const { items: drained, cursor } = await drainTimeline(
@@ -1910,6 +1935,13 @@ function renderIssue(
         : "";
     lines.push(
       `spec: v${issue.spec_version} · ${status}${unresolved} (todou spec status/pull/comments)`,
+    );
+  }
+  if (issue.metadata !== undefined && issue.metadata.length > 0) {
+    lines.push(
+      "",
+      paint("dim", "── metadata ──"),
+      renderMetadata(issue.metadata),
     );
   }
   if (sections.body && issue.body.trim() !== "") {
