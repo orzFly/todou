@@ -1,6 +1,7 @@
 import type { Attachment } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import {
+  type AttachmentAddress,
   attachmentAnchorHref,
   attachmentAnswersTo,
   attachmentHref,
@@ -8,11 +9,13 @@ import {
   parseAttachmentHref,
 } from "@/lib/attachment-refs.ts";
 
+const slugProject = (slug: string) => ({ kind: "slug", slug }) as const;
+
 describe("parseAttachmentHref", () => {
   it("parses the bare download URL", () => {
     expect(
       parseAttachmentHref("/api/projects/demo/attachments/12/download"),
-    ).toEqual({ slug: "demo", id: 12, name: null });
+    ).toEqual({ project: slugProject("demo"), id: 12, name: null });
   });
 
   it("parses the named form and decodes the name", () => {
@@ -20,18 +23,18 @@ describe("parseAttachmentHref", () => {
       parseAttachmentHref(
         "/api/projects/demo/attachments/12/download/shot%20%281%29.png",
       ),
-    ).toEqual({ slug: "demo", id: 12, name: "shot (1).png" });
+    ).toEqual({ project: slugProject("demo"), id: 12, name: "shot (1).png" });
   });
 
   it("parses the /view twin, so a URL copied out of the UI renders rich", () => {
     expect(
       parseAttachmentHref("/api/projects/demo/attachments/12/view"),
-    ).toEqual({ slug: "demo", id: 12, name: null });
+    ).toEqual({ project: slugProject("demo"), id: 12, name: null });
     expect(
       parseAttachmentHref(
         "/api/projects/demo/attachments/12/view/shot%20%281%29.png",
       ),
-    ).toEqual({ slug: "demo", id: 12, name: "shot (1).png" });
+    ).toEqual({ project: slugProject("demo"), id: 12, name: "shot (1).png" });
   });
 
   it("rejects other URLs", () => {
@@ -47,6 +50,47 @@ describe("parseAttachmentHref", () => {
   });
 });
 
+/**
+ * The stored spelling (T-266): everything the resolve pass writes, and every
+ * body it has already rewritten, names the project by id. Reading it back as
+ * a slug named "72" is what left all of it unenhanced (T-290).
+ */
+describe("parseAttachmentHref on id-anchored hrefs", () => {
+  it("reads the project segment as an id", () => {
+    expect(
+      parseAttachmentHref("/api/projects/72/attachments/1970/download/x.txt"),
+    ).toEqual({ project: { kind: "id", id: 72 }, id: 1970, name: "x.txt" });
+  });
+
+  it("reads the /view twin the same way", () => {
+    expect(
+      parseAttachmentHref("/api/projects/72/attachments/1970/view/x.txt"),
+    ).toEqual({ project: { kind: "id", id: 72 }, id: 1970, name: "x.txt" });
+  });
+
+  it("stops calling a digit run an id once it no longer fits a number", () => {
+    // The lower bound of "digits mean an id": a slug of only digits is
+    // refused at the schema, but a run too long to be an exact number is
+    // not an id either, and must stay a spelling that resolves to nothing.
+    expect(
+      parseAttachmentHref(
+        "/api/projects/1234567890123456/attachments/3/download/x.txt",
+      ),
+    ).toEqual({
+      project: slugProject("1234567890123456"),
+      id: 3,
+      name: "x.txt",
+    });
+  });
+
+  it("has no name when the segment is empty", () => {
+    // `name` feeds isTextEmbedName, which must not be handed "".
+    expect(
+      parseAttachmentHref("/api/projects/72/attachments/1970/download/"),
+    ).toEqual({ project: { kind: "id", id: 72 }, id: 1970, name: null });
+  });
+});
+
 describe("attachmentHref", () => {
   it("round-trips through parse", () => {
     const href = attachmentHref("demo", 7, "shot (1).png");
@@ -54,7 +98,7 @@ describe("attachmentHref", () => {
       "/api/projects/demo/attachments/7/download/shot%20%281%29.png",
     );
     expect(parseAttachmentHref(href)).toEqual({
-      slug: "demo",
+      project: slugProject("demo"),
       id: 7,
       name: "shot (1).png",
     });
@@ -102,10 +146,16 @@ describe("attachmentAnswersTo (T-242)", () => {
     created_at: "2026-09-01T00:00:00Z",
     aliases,
   });
-  const ref = (href: string) => {
+  // This function is past the point where a project is named by id: landing
+  // one takes the reader's directory and therefore a hook, so the id-anchored
+  // half of the path is covered in attachment-refs-stored.test.tsx instead.
+  const address = (href: string): AttachmentAddress => {
     const parsed = parseAttachmentHref(href);
     if (parsed === null) throw new Error(`unparseable: ${href}`);
-    return parsed;
+    if (parsed.project.kind !== "slug") {
+      throw new Error(`not landed: ${href}`);
+    }
+    return { slug: parsed.project.slug, id: parsed.id, name: parsed.name };
   };
 
   it("matches the attachment's own address", () => {
@@ -113,7 +163,7 @@ describe("attachmentAnswersTo (T-242)", () => {
     expect(
       attachmentAnswersTo(
         found,
-        ref("/api/projects/b/attachments/7/download/note.txt"),
+        address("/api/projects/b/attachments/7/download/note.txt"),
         "b",
       ),
     ).toBe(true);
@@ -124,7 +174,7 @@ describe("attachmentAnswersTo (T-242)", () => {
     expect(
       attachmentAnswersTo(
         found,
-        ref("/api/projects/a/attachments/88/download/note.txt"),
+        address("/api/projects/a/attachments/88/download/note.txt"),
         "b",
       ),
     ).toBe(true);
@@ -137,7 +187,7 @@ describe("attachmentAnswersTo (T-242)", () => {
     expect(
       attachmentAnswersTo(
         live,
-        ref("/api/projects/a/attachments/88/download/note.txt"),
+        address("/api/projects/a/attachments/88/download/note.txt"),
         "b",
       ),
     ).toBe(false);
@@ -151,7 +201,7 @@ describe("attachmentAnswersTo (T-242)", () => {
       "/api/projects/a/attachments/88/download",
       "/api/projects/b/attachments/7/view",
     ]) {
-      expect(attachmentAnswersTo(found, ref(href), "b")).toBe(true);
+      expect(attachmentAnswersTo(found, address(href), "b")).toBe(true);
     }
   });
 });

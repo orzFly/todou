@@ -1,5 +1,8 @@
 import type { ComponentProps, ReactNode } from "react";
-import { useAttachmentForRef } from "@/api/attachments.ts";
+import {
+  useAttachmentAddress,
+  useAttachmentForRef,
+} from "@/api/attachments.ts";
 import { AttachmentDocumentEmbed } from "@/components/issue/attachment-embed.tsx";
 import {
   AttachmentInlineImage,
@@ -18,12 +21,14 @@ import type { AttachmentRef } from "@/lib/attachment-refs.ts";
  *
  * Both pick the id the same way:
  *
- *   const id = found?.id ?? (address.slug === slug ? address.id : null)
+ *   const id = found?.id ?? (here ? ref.id : null)
  *
- * which leaves an address written under THIS project byte-for-byte as it was
- * before this card, including while the attachment list is still loading.
- * Only a foreign address waits for the list, and what it replaces is an
- * element that was broken anyway.
+ * where `here` means the reference landed on the project being read. Landing
+ * a slug spelling asks nothing, so such an address still renders byte-for-byte
+ * as it did before the attachment list arrives. An id spelling waits for the
+ * project directory instead, which the surrounding `MarkdownView` has already
+ * put in flight; the frame before it answers is the plain link a foreign
+ * address has always shown.
  */
 
 type Resolved = {
@@ -38,13 +43,14 @@ type Resolved = {
 function useResolved(
   slug: string,
   issueNumber: number,
-  address: AttachmentRef,
+  ref: AttachmentRef,
 ): Resolved {
+  const address = useAttachmentAddress(ref);
   const found = useAttachmentForRef(slug, issueNumber, address);
+  const here = address != null && address.slug === slug;
   return {
-    id: found?.id ?? (address.slug === slug ? address.id : null),
-    viaAlias:
-      found != null && !(address.slug === slug && address.id === found.id),
+    id: found?.id ?? (here ? ref.id : null),
+    viaAlias: found != null && !(here && ref.id === found.id),
     url: found?.url,
   };
 }
