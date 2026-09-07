@@ -769,6 +769,86 @@ describe("search qualifiers", () => {
     });
   });
 
+  // Metadata narrows which cards match; it is never itself searched (T-282).
+  // The server does not parse a value, so an equality is all a condition can
+  // ask, and a substring match would break that.
+  describe("metadata: as a condition (T-282)", () => {
+    /** The distinct cards a query found, in ascending order. */
+    const cardsOf = async (q: string) => {
+      const { items } = await search(q);
+      return [...new Set(items.map((i) => i.issue.number))].sort();
+    };
+
+    const setMetadata = async (n: number, entries: unknown[]) => {
+      const res = await t.app.request(
+        `/api/projects/${QUAL}/issues/${n}/metadata`,
+        {
+          method: "PATCH",
+          headers: headers(),
+          body: JSON.stringify({ entries }),
+        },
+      );
+      expect(res.status).toBe(200);
+    };
+
+    beforeAll(async () => {
+      await setMetadata(1, [
+        { namespace: "orch", key: "phase", value: "spec" },
+      ]);
+      await setMetadata(2, [
+        { namespace: "orch", key: "phase", value: "plan" },
+        { namespace: "ci", key: "run", value: "green" },
+        // A value carrying the separator, to pin that only the first `=`
+        // splits the condition.
+        { namespace: "ci", key: "cmd", value: "a=b" },
+        // A word that exists nowhere else in the project.
+        { namespace: "ci", key: "note", value: "zqxjkv" },
+      ]);
+    });
+
+    it("matches at three grains and inverts cleanly", async () => {
+      expect(await cardsOf("metadata:orch 限定符锚点")).toEqual([1, 2]);
+      expect(await cardsOf("metadata:orch/phase 限定符锚点")).toEqual([1, 2]);
+      expect(await cardsOf("metadata:orch/phase=spec 限定符锚点")).toEqual([1]);
+      expect(await cardsOf("metadata:orch/phase=gone 限定符锚点")).toEqual([]);
+      // Not "cards whose value differs" but "cards without that entry", which
+      // is what an EXISTS under a negation gives.
+      expect(await cardsOf("-metadata:orch/phase=spec 限定符锚点")).toEqual([
+        2, 3,
+      ]);
+    });
+
+    it("splits only the first `=`", async () => {
+      expect(await cardsOf("metadata:ci/cmd=a=b 限定符锚点")).toEqual([2]);
+      expect(await cardsOf("metadata:ci/cmd=a 限定符锚点")).toEqual([]);
+    });
+
+    it("stands alone, with no free term beside it", async () => {
+      expect(await cardsOf("metadata:ci")).toEqual([2]);
+    });
+
+    it("answers to the short spelling", async () => {
+      expect(await cardsOf("meta:orch/phase=plan 限定符锚点")).toEqual([2]);
+    });
+
+    it("never lets a value be found as text", async () => {
+      // The guard on "a condition, not a document": `zqxjkv` is stored in a
+      // metadata value and nowhere else, and searching for it finds nothing.
+      expect(await cardsOf("zqxjkv")).toEqual([]);
+      expect(await cardsOf("metadata:ci/note=zqxjkv")).toEqual([2]);
+    });
+
+    it("notes a malformed condition instead of refusing the query", async () => {
+      const { items, diagnostics } = await search("metadata:Orch 限定符锚点");
+      expect(items).toEqual([]);
+      expect(diagnostics[0]).toMatchObject({
+        severity: "note",
+        key: "metadata",
+        value: "Orch",
+      });
+    });
+  });
+
   describe("diagnostics", () => {
     it("reports a value that names nothing, and returns no rows", async () => {
       const { items, diagnostics } = await search("label:不存在 限定符锚点");

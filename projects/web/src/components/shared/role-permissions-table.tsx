@@ -68,6 +68,11 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
   },
   {
     group: "Read",
+    label: "Read the metadata tools keep on a card",
+    caps: ["metadata.read"],
+  },
+  {
+    group: "Read",
     label: "Search, and see labels, statuses, reference rules and members",
     caps: [
       "search.run",
@@ -139,6 +144,11 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
     group: "Collaborate",
     label: "Create, recolor and delete labels",
     caps: ["label.create", "label.update", "label.delete"],
+  },
+  {
+    group: "Collaborate",
+    label: "Write the metadata tools keep on a card",
+    caps: ["metadata.write"],
   },
 
   {

@@ -14,6 +14,7 @@ import type {
   Project,
   ReferenceDirectory,
 } from "@todou/shared";
+import { SEARCH_QUALIFIERS } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
 import {
@@ -356,6 +357,10 @@ function seedHistory(entries: string[], slug = "todou") {
 const remembered = (slug = "todou") =>
   (readHistory(me.id)[slug] ?? []).map((e) => e.q);
 
+/** The qualifier keys the box always offers, and `orderRows`' own limit. */
+const KEY_COUNT = Object.keys(SEARCH_QUALIFIERS).length;
+const ROW_BUDGET = 20;
+
 type View = { container: HTMLElement };
 const panel = (view: View) => view.container.querySelector('[role="listbox"]');
 const options = (view: View) => [
@@ -372,7 +377,9 @@ async function openedOn(entries: string[]) {
   )) as HTMLInputElement;
   fireEvent.focusIn(input);
   await waitFor(() =>
-    expect(historyRows(view)).toHaveLength(Math.min(entries.length, 13)),
+    expect(historyRows(view)).toHaveLength(
+      Math.min(entries.length, ROW_BUDGET - KEY_COUNT),
+    ),
   );
   return { view, input };
 }
@@ -385,8 +392,9 @@ describe("the search box's own history", () => {
     expect(texts.slice(0, 2)).toEqual(["label:area:web", "补全 面板"]);
     expect(texts[2]).toContain("search page");
     // The full key table is the only place the syntax can be discovered, so
-    // it is what history is not allowed to push out.
-    expect(texts.slice(3)).toHaveLength(7);
+    // it is what history is not allowed to push out. Counted off the
+    // registry, so a new qualifier does not fail a test about history.
+    expect(texts.slice(3)).toHaveLength(KEY_COUNT);
     expect(input.getAttribute("aria-activedescendant")).toBeNull();
   });
 
@@ -394,9 +402,11 @@ describe("the search box's own history", () => {
     const { view } = await openedOn(
       Array.from({ length: 20 }, (_, i) => `查询 ${i}`),
     );
-    expect(historyRows(view)).toHaveLength(13);
-    expect(options(view)).toHaveLength(21);
-    expect(options(view).slice(14)).toHaveLength(7);
+    // Twenty rows plus the search row, and the key table takes its share
+    // first; history gets whatever is left.
+    expect(historyRows(view)).toHaveLength(ROW_BUDGET - KEY_COUNT);
+    expect(options(view)).toHaveLength(ROW_BUDGET + 1);
+    expect(options(view).slice(-KEY_COUNT)).toHaveLength(KEY_COUNT);
   });
 
   it("stands aside entirely once the completions have spent the budget", async () => {

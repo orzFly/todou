@@ -28,6 +28,7 @@ import { inboxRoutes } from "./routes/inbox.ts";
 import { issueRoutes } from "./routes/issues.ts";
 import { labelRoutes } from "./routes/labels.ts";
 import { meRoutes } from "./routes/me.ts";
+import { metadataRoutes } from "./routes/metadata.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { referenceRoutes } from "./routes/references.ts";
 import { searchRoutes } from "./routes/search.ts";
@@ -164,6 +165,7 @@ export function createApp(ctx: AppContext) {
   api.route("/projects", statusRoutes());
   api.route("/projects", referenceRoutes());
   api.route("/projects", labelRoutes());
+  api.route("/projects", metadataRoutes());
   api.route("/projects", issueRoutes());
   api.route("/projects", searchRoutes());
   api.route("/projects", specRoutes());

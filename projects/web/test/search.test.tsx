@@ -1247,10 +1247,20 @@ describe("SearchBox · qualifier completion", () => {
     const client = seedPeek(seedPools(seedBox()));
     const utils = renderBox(client);
     const input = await typeInto(utils, "m");
-    await waitFor(() => expect(rowTexts(utils.container)[0]).toContain("M-"));
+    // `metadata:` shares this first letter (T-282) and qualifier keys are the
+    // earlier completion source, so the project ref is the second row now.
+    await waitFor(() =>
+      expect(rowTexts(utils.container)[0]).toContain("metadata:"),
+    );
+    expect(rowTexts(utils.container)[1]).toContain("M-");
 
+    // Nothing is highlighted until the first ArrowDown, which lands on row
+    // zero; the second reaches the project ref.
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "Tab" });
-    // No trailing space: `m` Tab `1` has to reach M-1 in three keystrokes.
+    // No trailing space: what follows a prefix is the number, and Tab must
+    // leave the caret where it can be typed.
     await waitFor(() => expect(input.value).toBe("M-"));
     expect(input.selectionStart).toBe(2);
   });

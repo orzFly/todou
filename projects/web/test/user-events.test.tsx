@@ -11,6 +11,7 @@ import type {
   IssueListFilter,
   IssueListRow,
   MeEvent,
+  MetadataChange,
 } from "@todou/shared";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +29,7 @@ import {
   invalidationsFor,
   isSharedKey,
   meInvalidations,
+  metadataEntryDiffers,
   pageContainsIssue,
   pageHasUnreadRow,
   RECONNECT_BASE_MS,
@@ -173,10 +175,48 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
     ]);
   });
 
+  it("takes a metadata event to its own key alone (T-282)", () => {
+    const change: MetadataChange = {
+      namespace: "orch",
+      key: "phase",
+      value: "plan",
+      updated_at: AT,
+      updated_by: {
+        id: 7,
+        login: "toolbot",
+        display_name: "Toolbot",
+        kind: "machine",
+        avatar_url: null,
+        owner: null,
+      },
+    };
+    // Not `["issue", …]`: a metadata write does not touch the card, so
+    // nothing else on the page has gone stale.
+    expect(
+      invalidationsFor(
+        {
+          entity: "metadata",
+          id: 11,
+          action: "updated",
+          issue_number: 42,
+          metadata: change,
+        },
+        "todou",
+      ),
+    ).toEqual([
+      {
+        key: ["issue-metadata", "todou", 42],
+        scope: { metadataRows: [change] },
+      },
+    ]);
+  });
+
   it("covers reconnect compensation broadly, inbox included", () => {
     const keys = reconnectInvalidations();
     expect(keys.length).toBeGreaterThanOrEqual(6);
     expect(keys).toContainEqual(["inbox"]);
+    // Metadata rides the same stream and has to be caught up after a gap.
+    expect(keys).toContainEqual(["issue-metadata"]);
     // Slug-less prefixes: the user-level stream spans every project, so
     // the compensation must too.
     expect(keys).toContainEqual(["issues"]);
@@ -464,6 +504,70 @@ describe("inboxAttentionDiffers / inboxRowContentDiffers", () => {
   });
 });
 
+describe("metadataEntryDiffers (T-282)", () => {
+  const writer = {
+    id: 7,
+    login: "toolbot",
+    display_name: "Toolbot",
+    kind: "machine" as const,
+    avatar_url: null,
+    owner: null,
+  };
+  const change = (over: Partial<MetadataChange> = {}): MetadataChange => ({
+    namespace: "orch",
+    key: "phase",
+    value: "plan",
+    updated_at: AT,
+    updated_by: writer,
+    ...over,
+  });
+  const cached = (value: string, updated_at = AT) => ({
+    entries: [
+      {
+        namespace: "orch",
+        key: "phase",
+        value,
+        updated_at,
+        updated_by: writer,
+      },
+    ],
+  });
+
+  it("does nothing when the cache already holds exactly this", () => {
+    // The whole point of putting the entry in the event: the tab that wrote
+    // gets its own echo back, and a tool replaying a state it already wrote
+    // costs nobody a request.
+    expect(metadataEntryDiffers(cached("plan"), change())).toBe(false);
+  });
+
+  it("refetches on a different value or a different moment", () => {
+    expect(
+      metadataEntryDiffers(cached("plan"), change({ value: "impl" })),
+    ).toBe(true);
+    expect(
+      metadataEntryDiffers(cached("plan"), change({ updated_at: LATER })),
+    ).toBe(true);
+  });
+
+  it("reads a deletion as a difference exactly while the key is cached", () => {
+    expect(metadataEntryDiffers(cached("plan"), change({ value: null }))).toBe(
+      true,
+    );
+    expect(metadataEntryDiffers({ entries: [] }, change({ value: null }))).toBe(
+      false,
+    );
+  });
+
+  it("wants the new key when the cache has never seen it", () => {
+    expect(metadataEntryDiffers({ entries: [] }, change())).toBe(true);
+  });
+
+  it("leaves anything that is not an entry list alone", () => {
+    expect(metadataEntryDiffers(undefined, change())).toBe(false);
+    expect(metadataEntryDiffers({ items: [] }, change())).toBe(false);
+  });
+});
+
 describe("pageHasUnreadRow", () => {
   it("finds a row that still shows unread", () => {
     expect(pageHasUnreadRow({ items: [{ number: 7, unread: true }] }, 7)).toBe(
@@ -616,8 +720,10 @@ describe("useUserEvents", () => {
   it("subscribes to the user feed and invalidates on change events", async () => {
     const { spy } = setup();
     const source = MockEventSource.instances[0];
-    // Opting in is what makes the server judge each event (T-273).
-    expect(source?.url).toBe("/api/events?inbox=1");
+    // Opting in is what makes the server judge each event (T-273). Metadata
+    // is subscribed for every namespace because one account holds one stream
+    // and the leader cannot know which card a sibling tab is on (T-282).
+    expect(source?.url).toBe("/api/events?inbox=1&metadata=*");
 
     source?.emit("change", {
       entity: "timeline",
@@ -1461,7 +1567,9 @@ describe("useUserEvents tab sharing (T-276)", () => {
     await twoTabs();
     expect(MockEventSource.instances).toHaveLength(1);
     // Still opted in, so the server still judges each event per receiver.
-    expect(MockEventSource.instances[0]?.url).toBe("/api/events?inbox=1");
+    expect(MockEventSource.instances[0]?.url).toBe(
+      "/api/events?inbox=1&metadata=*",
+    );
   });
 
   it("invalidates in both tabs from the leader's single stream", async () => {

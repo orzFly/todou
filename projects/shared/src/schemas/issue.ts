@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Cursor, Id, Timestamp } from "./common.ts";
+import { IssueMetadataEntry, MetadataNamespaceSelector } from "./metadata.ts";
 import { Label, ProjectSlug, Status, StatusCategory } from "./project.ts";
 import { UserRef } from "./user.ts";
 
@@ -80,6 +81,14 @@ export const Issue = z.object({
    * the intervals still line up and only their owner is unknown.
    */
   moves: z.array(IssueMove).default([]),
+  /**
+   * Metadata (T-282), returned only when the request named the namespaces it
+   * wants with `?metadata=`. Optional rather than defaulted to `[]`, because
+   * "nobody asked" and "asked, and this card has nothing under those
+   * namespaces" are different answers — the same distinction `inbox_row`
+   * keeps between an absent key and null.
+   */
+  metadata: z.array(IssueMetadataEntry).optional(),
 });
 export type Issue = z.infer<typeof Issue>;
 
@@ -145,6 +154,12 @@ export const IssueListQuery = z.object({
     (v) => (typeof v === "string" ? v === "1" || v === "true" : v),
     z.boolean().default(false),
   ),
+  /**
+   * Fetch each row's metadata under these namespaces along with the page
+   * (T-282). One extra query for the whole page, so the cost does not grow
+   * with `limit`; omitting it costs nothing and returns nothing.
+   */
+  metadata: MetadataNamespaceSelector.optional(),
 });
 export type IssueListQuery = z.infer<typeof IssueListQuery>;
 

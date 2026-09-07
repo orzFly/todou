@@ -172,6 +172,24 @@ describe("part offsets", () => {
     expect(part.key).toBe("label");
   });
 
+  it("reads `meta:` as the metadata key, under its canonical spelling", () => {
+    expect(filters("meta:orch/phase=spec")).toEqual([
+      { key: "metadata", negated: false, values: ["orch/phase=spec"] },
+    ]);
+    expect(filters("-META:orch")).toEqual([
+      { key: "metadata", negated: true, values: ["orch"] },
+    ]);
+  });
+
+  it("keeps a metadata value whole, `=` and spaces included", () => {
+    expect(filters('metadata:"ci/last-run=a b"')).toEqual([
+      { key: "metadata", negated: false, values: ["ci/last-run=a b"] },
+    ]);
+    expect(filters("metadata:orch/note=a=b")).toEqual([
+      { key: "metadata", negated: false, values: ["orch/note=a=b"] },
+    ]);
+  });
+
   it("points each value span at its own source slice, quotes included", () => {
     const q = '-label:"kind:bug",area:web';
     const [part] = parseSearchQuery(q);

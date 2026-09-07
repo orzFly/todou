@@ -70,6 +70,32 @@ export class SlugReservedError extends DomainError {
   }
 }
 
+/**
+ * An `if_match` expectation on a metadata write did not hold (T-282). The
+ * details carry every failed key with the value actually stored, so the
+ * caller can retry without a second GET; nothing was written.
+ *
+ * 409 rather than 412 because `ErrorStatus` has no 412 and "what you think is
+ * there is not what is there" is a conflict either way. A code of its own
+ * rather than `ConflictError`, whose code is fixed at `"conflict"`: the caller
+ * has to tell a lost race — where retrying is the right move — apart from a
+ * frozen card, where it is not.
+ */
+export class MetadataPreconditionError extends DomainError {
+  constructor(
+    failed: Array<{ namespace: string; key: string; current: string | null }>,
+  ) {
+    super(
+      409,
+      "metadata_precondition",
+      `if_match did not hold for ${failed
+        .map((f) => `${f.namespace}/${f.key}`)
+        .join(", ")}`,
+      { failed },
+    );
+  }
+}
+
 export class ValidationFailedError extends DomainError {
   constructor(message = "validation failed", details?: unknown) {
     super(422, "validation_failed", message, details);

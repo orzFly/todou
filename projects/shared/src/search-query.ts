@@ -22,7 +22,8 @@ export type SearchQualifier =
   | "label"
   | "assignee"
   | "harness"
-  | "session";
+  | "session"
+  | "metadata";
 
 /**
  * How a key's values are decided:
@@ -75,7 +76,31 @@ export const SEARCH_QUALIFIERS: Record<SearchQualifier, QualifierSpec> = {
   assignee: { kind: "named", values: [], aliases: {}, special: ["@me"] },
   harness: { kind: "free", values: [], aliases: {}, special: ["none"] },
   session: { kind: "free", values: [], aliases: {}, special: [] },
+  /**
+   * `metadata:<ns>[/<key>[=<value>]]` (T-282). `free`, like `harness:` and
+   * `session:`, because the value does not name a row in the project and
+   * there is no set to check it against. Unlike those two it narrows the
+   * *card* rather than the matched text, so it plans as an issue-level
+   * condition and `-metadata:…` means "cards without this".
+   */
+  metadata: { kind: "free", values: [], aliases: {}, special: [] },
 };
+
+/**
+ * Every spelling of a key, canonical ones included, mapping to the canonical
+ * one. Separate from `QualifierSpec.aliases`, which names alternative
+ * spellings of a key's *values*.
+ *
+ * Only completions read the canonical list, so an alias is offered under its
+ * canonical spelling and still parses when typed.
+ */
+export const SEARCH_QUALIFIER_KEYS: Readonly<Record<string, SearchQualifier>> =
+  {
+    ...(Object.fromEntries(
+      Object.keys(SEARCH_QUALIFIERS).map((k) => [k, k]),
+    ) as Record<SearchQualifier, SearchQualifier>),
+    meta: "metadata",
+  };
 
 /** `is:` in the spelling `?in=` and `--in` use. */
 export const SEARCH_IS_DOMAIN: Record<string, SearchDomain> = {
@@ -187,8 +212,11 @@ function scanFilter(q: string, at: number): SearchPart | null {
   while (i < q.length && KEY_BODY.test(q[i] as string)) i += 1;
   const keyEnd = i;
   if (q[i] !== ":") return null;
-  const key = q.slice(keyStart, keyEnd).toLowerCase();
-  if (!Object.hasOwn(SEARCH_QUALIFIERS, key)) return null;
+  const typed = q.slice(keyStart, keyEnd).toLowerCase();
+  const key = Object.hasOwn(SEARCH_QUALIFIER_KEYS, typed)
+    ? (SEARCH_QUALIFIER_KEYS[typed] as SearchQualifier)
+    : null;
+  if (key === null) return null;
   i += 1;
 
   const values: SearchValue[] = [];
@@ -208,7 +236,7 @@ function scanFilter(q: string, at: number): SearchPart | null {
     start: at,
     end: i,
     raw: q.slice(at, i),
-    key: key as SearchQualifier,
+    key,
     negated,
     keyStart,
     keyEnd,

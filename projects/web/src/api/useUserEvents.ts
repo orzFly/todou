@@ -13,6 +13,7 @@ import {
   type IssueListRow,
   type MeEvent,
   MeEvent as MeEventSchema,
+  type MetadataChange,
   SSE_CHANGE_EVENT,
   SSE_ME_EVENT,
   SSE_PING_EVENT,
@@ -85,7 +86,8 @@ export type IssueListVerdict =
 export type InvalidationScope =
   | "refetch"
   | { inboxRows: InboxRowVerdict[] }
-  | { issueRows: IssueListVerdict[] };
+  | { issueRows: IssueListVerdict[] }
+  | { metadataRows: MetadataChange[] };
 export type Invalidation = { key: QueryKeyLike; scope: InvalidationScope };
 
 const refetch = (key: QueryKeyLike): Invalidation => ({
@@ -174,6 +176,20 @@ export function invalidationsFor(
             refetch(["spec", slug, event.issue_number]),
             refetch(["spec-files", slug, event.issue_number, "current"]),
             refetch(["issue", slug, event.issue_number]),
+          ];
+    case "metadata":
+      // Deliberately not on `["issue", …]`: a metadata write does not touch
+      // the card, so only its own key goes stale (T-282). And the event
+      // carries the whole entry, so the cache is compared against it first
+      // — the tab that wrote gets its own echo back, and an orchestrator
+      // replaying a state it already wrote emits nothing at all.
+      return event.issue_number === undefined || event.metadata === undefined
+        ? []
+        : [
+            {
+              key: ["issue-metadata", slug, event.issue_number],
+              scope: { metadataRows: [event.metadata] },
+            },
           ];
     case "status":
       return [refetch(["statuses", slug]), refetch(["issues", slug])];
@@ -372,6 +388,42 @@ export function inboxRowContentDiffers(
   const cached = inboxRowIn(data, project, issueNumber);
   if (cached === undefined) return false;
   return cached.updated_at !== row.updated_at;
+}
+
+/**
+ * Does this cache entry disagree with what the event says one metadata key
+ * now holds (T-282)?
+ *
+ * The event carries the entry itself, so this is a comparison rather than a
+ * guess: same value and same `updated_at` means the cache is already right,
+ * which is what makes the writing tab's own echo and an orchestrator's
+ * replayed state cost nothing. A deletion (`value: null`) disagrees exactly
+ * when the cache still holds the key.
+ *
+ * Anything that is not an entry list reads as "does not hold it" and is left
+ * alone. A cache entry that has never fetched this card has nothing to
+ * compare and nothing to refetch either — `invalidateQueries` on a key with
+ * no active query is a no-op.
+ */
+export function metadataEntryDiffers(
+  data: unknown,
+  change: MetadataChange,
+): boolean {
+  if (typeof data !== "object" || data === null) return false;
+  const entries = (data as { entries?: unknown }).entries;
+  if (!Array.isArray(entries)) return false;
+  const cached = entries.find(
+    (entry) =>
+      typeof entry === "object" &&
+      entry !== null &&
+      (entry as { namespace?: unknown }).namespace === change.namespace &&
+      (entry as { key?: unknown }).key === change.key,
+  ) as { value?: unknown; updated_at?: unknown } | undefined;
+  if (change.value === null) return cached !== undefined;
+  if (cached === undefined) return true;
+  return (
+    cached.value !== change.value || cached.updated_at !== change.updated_at
+  );
 }
 
 /**
@@ -591,6 +643,18 @@ export function applyInvalidation(
     });
     return;
   }
+  if ("metadataRows" in scope) {
+    const changes = scope.metadataRows;
+    queryClient.invalidateQueries({
+      queryKey: key,
+      refetchType: maxRefetch,
+      predicate: (query) =>
+        changes.some((change) =>
+          metadataEntryDiffers(query.state.data, change),
+        ),
+    });
+    return;
+  }
   // One pass, and no broad stale-marking one beside it. The pass that used
   // to precede `contains` marked every page under the key stale on the
   // grounds that a row may have moved — but a `contains` verdict comes from
@@ -658,7 +722,12 @@ export function coalesceBatch(batch: Invalidation[]): Invalidation[] {
       out.push(inv);
       continue;
     }
-    const kind = "inboxRows" in scope ? "inboxRows" : "issueRows";
+    const kind =
+      "inboxRows" in scope
+        ? "inboxRows"
+        : "issueRows" in scope
+          ? "issueRows"
+          : "metadataRows";
     const mergeId = `${kind}:${idOf(inv.key)}`;
     const into = merged.get(mergeId);
     if (into === undefined) {
@@ -668,7 +737,9 @@ export function coalesceBatch(batch: Invalidation[]): Invalidation[] {
         scope:
           "inboxRows" in scope
             ? { inboxRows: [...scope.inboxRows] }
-            : { issueRows: [...scope.issueRows] },
+            : "issueRows" in scope
+              ? { issueRows: [...scope.issueRows] }
+              : { metadataRows: [...scope.metadataRows] },
       });
       out.push(merged.get(mergeId) as Invalidation);
       continue;
@@ -686,6 +757,14 @@ export function coalesceBatch(batch: Invalidation[]): Invalidation[] {
       "issueRows" in target
     ) {
       target.issueRows.push(...scope.issueRows);
+    } else if (
+      "metadataRows" in scope &&
+      typeof target === "object" &&
+      "metadataRows" in target
+    ) {
+      // A burst that moves several keys of one card asks the one question
+      // once, for the same reason the two scopes above do.
+      target.metadataRows.push(...scope.metadataRows);
     }
   }
   return out;
@@ -747,6 +826,7 @@ export function reconnectInvalidations(): QueryKeyLike[] {
     ["attachments"],
     ["spec"],
     ["spec-files"],
+    ["issue-metadata"],
     ["statuses"],
     ["labels"],
     ["members"],
@@ -934,7 +1014,14 @@ export function useUserEvents(userId?: number) {
     const connect = () => {
       reconnectTimer = undefined;
       if (disposed) return;
-      const es = new EventSource(api.userEventsUrl({ inbox: true }));
+      // Every namespace, because one account holds one stream (T-276) and
+      // the leader cannot know which card its sibling tabs are looking at.
+      // Not a contradiction of "default off": that is the protocol's
+      // default, and this is the explicit opt-in that matches a page which
+      // shows all of it.
+      const es = new EventSource(
+        api.userEventsUrl({ inbox: true, metadata: "*" }),
+      );
       source = es;
       armStallTimer();
 

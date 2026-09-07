@@ -17,6 +17,7 @@ import {
   IssueListQuery,
   IssueQuestions,
   IssueUpdateInput,
+  MetadataNamespaceSelector,
   MoveIssueInput,
   MoveIssueResult,
   minRoleOf,
@@ -108,7 +109,14 @@ const getIssueRoute = createRoute({
   method: "get",
   path: "/{slug}/issues/{number}",
   summary: "Issue details",
-  request: { params: issueParams },
+  description:
+    "`metadata` names the namespaces to return alongside the card (`*` for " +
+    "all of them). Without it the field is absent altogether and nothing " +
+    "is read — which is a different answer from an empty list.",
+  request: {
+    params: issueParams,
+    query: z.object({ metadata: MetadataNamespaceSelector.optional() }),
+  },
   responses: {
     200: { description: "Issue", ...jsonBody(Issue) },
     ...movedResponses,
@@ -369,7 +377,9 @@ export function issueRoutes() {
   app.openapi(getIssueRoute, async (c) => {
     const { slug, number } = c.req.valid("param");
     return c.json(
-      await getIssue(c.get("appCtx"), c.get("user"), slug, number),
+      await getIssue(c.get("appCtx"), c.get("user"), slug, number, {
+        metadata: c.req.valid("query").metadata,
+      }),
       200,
     );
   });

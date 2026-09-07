@@ -7,6 +7,7 @@ import {
   issueAssignees,
   issueEvents,
   issueLabels,
+  issueMetadata,
   issueReads,
   issues,
   pendingUploads,
@@ -129,6 +130,12 @@ export const ISSUE_CHILD_TABLES: ReadonlyArray<{
         );
       }
     },
+  },
+  {
+    name: "issue_metadata",
+    copied: true,
+    clearSource: (db, id) =>
+      db.delete(issueMetadata).where(eq(issueMetadata.issueId, id)),
   },
   {
     name: "issue_reads",
@@ -302,8 +309,49 @@ export async function copyIssueTree(
     commentMap,
     attachmentMap,
   });
+  await copyMetadata(src, dst, { targetId, oldIssueId, issueId });
 
   return { issueId, comments: commentMap, attachments: attachmentMap };
+}
+
+/**
+ * Metadata (T-282). Read whole rather than in batches: the table has no
+ * surrogate id for `readBatches` to page on, and the per-issue quota bounds
+ * one card's rows at namespaces × keys — a single read either way.
+ *
+ * `updated_at` travels at microsecond precision like every other stamp in
+ * this file. It is not part of any cursor; two precisions inside one copy
+ * routine is just the next bug waiting to be written.
+ */
+async function copyMetadata(
+  src: Db,
+  dst: Db,
+  ids: { targetId: number; oldIssueId: number; issueId: number },
+): Promise<void> {
+  const rows = await src
+    .select({
+      namespace: issueMetadata.namespace,
+      key: issueMetadata.key,
+      value: issueMetadata.value,
+      updatedAt: micro(issueMetadata.updatedAt),
+      updatedBy: issueMetadata.updatedBy,
+    })
+    .from(issueMetadata)
+    .where(eq(issueMetadata.issueId, ids.oldIssueId));
+  if (rows.length === 0) return;
+
+  await dst.insert(issueMetadata).values(
+    rows.map((row) => ({
+      projectId: ids.targetId,
+      issueId: ids.issueId,
+      namespace: row.namespace,
+      key: row.key,
+      value: row.value,
+      updatedAt: atMicro(row.updatedAt),
+      updatedBy: row.updatedBy,
+      // biome-ignore lint/suspicious/noExplicitAny: SQL expressions for µs
+    })) as any,
+  );
 }
 
 /**

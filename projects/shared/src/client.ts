@@ -36,6 +36,9 @@ import type {
   IssueCounts,
   IssueCreateInput,
   IssueListPage,
+  IssueMetadataList,
+  IssueMetadataNamespaceList,
+  IssueMetadataWriteInput,
   IssueQuestions,
   IssueReadInput,
   IssueUpdateInput,
@@ -47,6 +50,7 @@ import type {
   MemberRole,
   MePrefs,
   MePrefsPatch,
+  MetadataNamespaceSelector,
   MeUpdateInput,
   Project,
   ProjectCreateInput,
@@ -634,8 +638,15 @@ export class TodouClient {
     });
   createIssue = (slug: string, input: IssueCreateInput) =>
     this.request<Issue>("POST", `/projects/${slug}/issues`, { json: input });
-  getIssue = (slug: string, number: number) =>
-    this.request<Issue>("GET", `/projects/${slug}/issues/${number}`);
+  getIssue = (
+    slug: string,
+    number: number,
+    /** `metadata` fetches those namespaces with the card (T-282). */
+    opts?: { metadata?: MetadataNamespaceSelector },
+  ) =>
+    this.request<Issue>("GET", `/projects/${slug}/issues/${number}`, {
+      query: { metadata: opts?.metadata },
+    });
   updateIssue = (slug: string, number: number, input: IssueUpdateInput) =>
     this.request<Issue>("PATCH", `/projects/${slug}/issues/${number}`, {
       json: input,
@@ -649,6 +660,37 @@ export class TodouClient {
     this.request<MoveIssueResult>(
       "POST",
       `/projects/${slug}/issues/${number}/move`,
+      { json: input },
+    );
+  /**
+   * Metadata under the named namespaces (T-282). `namespace` is required —
+   * `"*"` for all of them — because asking for none is a typo rather than a
+   * request for nothing.
+   */
+  getIssueMetadata = (
+    slug: string,
+    number: number,
+    namespaces: MetadataNamespaceSelector,
+  ) =>
+    this.request<IssueMetadataList>(
+      "GET",
+      `/projects/${slug}/issues/${number}/metadata`,
+      { query: { namespace: namespaces } },
+    );
+  listIssueMetadataNamespaces = (slug: string, number: number) =>
+    this.request<IssueMetadataNamespaceList>(
+      "GET",
+      `/projects/${slug}/issues/${number}/metadata/namespaces`,
+    );
+  /** Answers with the whole new state of every namespace it touched. */
+  writeIssueMetadata = (
+    slug: string,
+    number: number,
+    input: IssueMetadataWriteInput,
+  ) =>
+    this.request<IssueMetadataList>(
+      "PATCH",
+      `/projects/${slug}/issues/${number}/metadata`,
       { json: input },
     );
   markIssueRead = (slug: string, number: number, input: IssueReadInput = {}) =>
@@ -936,8 +978,15 @@ export class TodouClient {
    * for a client that keeps an inbox badge on screen, waste for one that
    * treats events as a bare nudge to refetch something else.
    */
-  userEventsUrl = (opts?: { inbox?: boolean }) =>
-    `${this.#baseUrl}/api/events${opts?.inbox ? "?inbox=1" : ""}`;
+  userEventsUrl = (opts?: {
+    inbox?: boolean;
+    /** Namespaces whose metadata events this stream wants (T-282). */
+    metadata?: MetadataNamespaceSelector;
+  }) =>
+    `${this.#baseUrl}/api/events${queryString({
+      inbox: opts?.inbox ? "1" : undefined,
+      metadata: opts?.metadata,
+    })}`;
 
   /**
    * Subscribes to the user-level change feed (T-122) over plain `fetch`

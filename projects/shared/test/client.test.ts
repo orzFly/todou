@@ -69,6 +69,43 @@ describe("TodouClient", () => {
     );
   });
 
+  it("addresses the metadata endpoints (T-282)", async () => {
+    const { fetch, calls } = mockFetch(200, { entries: [] });
+    const client = new TodouClient({ fetch });
+    await client.getIssueMetadata("todou", 282, ["orch", "ci"]);
+    await client.getIssueMetadata("todou", 282, "*");
+    await client.getIssue("todou", 282, { metadata: "*" });
+    // No namespaces asked for means no parameter at all, which is what the
+    // server reads as "do not return the field".
+    await client.getIssue("todou", 282);
+    await client.listIssueMetadataNamespaces("todou", 282);
+    await client.writeIssueMetadata("todou", 282, {
+      entries: [{ namespace: "orch", key: "phase", value: "plan" }],
+    });
+    expect(calls.map((c) => c.url)).toEqual([
+      "/api/projects/todou/issues/282/metadata?namespace=orch%2Cci",
+      "/api/projects/todou/issues/282/metadata?namespace=*",
+      "/api/projects/todou/issues/282?metadata=*",
+      "/api/projects/todou/issues/282",
+      "/api/projects/todou/issues/282/metadata/namespaces",
+      "/api/projects/todou/issues/282/metadata",
+    ]);
+    expect(calls[5]?.init.method).toBe("PATCH");
+  });
+
+  it("puts both stream subscriptions in the events URL (T-282)", async () => {
+    const { fetch } = mockFetch(200, {});
+    const client = new TodouClient({ fetch });
+    expect(client.userEventsUrl()).toBe("/api/events");
+    expect(client.userEventsUrl({ inbox: true })).toBe("/api/events?inbox=1");
+    expect(client.userEventsUrl({ inbox: true, metadata: "*" })).toBe(
+      "/api/events?inbox=1&metadata=*",
+    );
+    expect(client.userEventsUrl({ metadata: ["orch"] })).toBe(
+      "/api/events?metadata=orch",
+    );
+  });
+
   it("sends bearer tokens when configured", async () => {
     const { fetch, calls } = mockFetch(200, { id: 1 });
     const client = new TodouClient({
