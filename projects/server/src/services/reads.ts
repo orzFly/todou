@@ -1,5 +1,6 @@
 import type { BulkReadInput, IssueReadInput } from "@todou/shared";
 import { and, eq, gt, inArray, max, ne, sql } from "drizzle-orm";
+import type { PgColumn } from "drizzle-orm/pg-core";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
@@ -24,49 +25,94 @@ import {
 import { live } from "./trash.ts";
 
 /**
- * The user's unread epoch in this project, created lazily on first use so
- * history before a user starts reading never counts as unread (T-35's CLI
- * bootstrap semantics). Insert-then-reselect keeps concurrent first calls
+ * The user's unread epoch in each of these projects, created lazily on first
+ * use so history before a user starts reading never counts as unread (T-35's
+ * CLI bootstrap semantics). Insert-then-reselect keeps concurrent first calls
  * safe — board columns fire several list queries at once on first load.
  *
  * "First use" includes a list that comes back empty (T-151): a project the
  * user has looked at while it had nothing in it is still a project they have
  * started reading, and skipping the frontier there would leave the next batch
  * of foreign cards dated before it — arriving already read.
+ *
+ * Every caller that reads a frontier threshold through a join has to run this
+ * first, or `coalesce(last_seen_at, frontier_at)` is NULL for a project with
+ * no row yet and every comparison against it drops the row (T-278).
  */
+export async function ensureFrontiers(
+  db: Db,
+  projectIds: number[],
+  userId: number,
+): Promise<Map<number, Date>> {
+  if (projectIds.length === 0) return new Map();
+  const wanted = [...new Set(projectIds)];
+  const select = (ids: number[]) =>
+    db
+      .select({
+        projectId: readFrontiers.projectId,
+        frontierAt: readFrontiers.frontierAt,
+      })
+      .from(readFrontiers)
+      .where(
+        and(
+          inArray(readFrontiers.projectId, ids),
+          eq(readFrontiers.userId, userId),
+        ),
+      );
+
+  const found = new Map(
+    (await select(wanted)).map((r) => [r.projectId, r.frontierAt]),
+  );
+  const missing = wanted.filter((id) => !found.has(id));
+  if (missing.length === 0) return found;
+
+  const now = new Date();
+  await db
+    .insert(readFrontiers)
+    .values(
+      missing.map((projectId) => ({ projectId, userId, frontierAt: now })),
+    )
+    .onConflictDoNothing();
+  for (const r of await select(missing)) found.set(r.projectId, r.frontierAt);
+  for (const id of missing) {
+    if (!found.has(id)) throw new Error("read frontier missing after insert");
+  }
+  return found;
+}
+
+/** One project's frontier; see `ensureFrontiers`. */
 export async function ensureFrontier(
   db: Db,
   projectId: number,
   userId: number,
 ): Promise<Date> {
-  const found = await db
-    .select({ frontierAt: readFrontiers.frontierAt })
-    .from(readFrontiers)
-    .where(
-      and(
-        eq(readFrontiers.projectId, projectId),
-        eq(readFrontiers.userId, userId),
-      ),
-    );
-  if (found[0]) return found[0].frontierAt;
+  const frontier = (await ensureFrontiers(db, [projectId], userId)).get(
+    projectId,
+  );
+  if (!frontier) throw new Error("read frontier missing after insert");
+  return frontier;
+}
 
-  await db
-    .insert(readFrontiers)
-    .values({ projectId, userId, frontierAt: new Date() })
-    .onConflictDoNothing();
-  const row = (
-    await db
-      .select({ frontierAt: readFrontiers.frontierAt })
-      .from(readFrontiers)
-      .where(
-        and(
-          eq(readFrontiers.projectId, projectId),
-          eq(readFrontiers.userId, userId),
-        ),
-      )
-  )[0];
-  if (!row) throw new Error("read frontier missing after insert");
-  return row.frontierAt;
+/**
+ * The threshold an unread comparison runs against, as a join rather than a
+ * bound value (T-278): `read_frontiers` joined on the row's own project, so
+ * one scan can span several projects and so both sides of the comparison are
+ * column references. Binding the frontier as a JS `Date` truncated it to
+ * milliseconds while `last_seen_at` stayed microsecond-exact — the two
+ * precisions no longer disagree.
+ *
+ * `ensureFrontiers` has to have run for every project in scope, or the join
+ * finds nothing and the row falls out.
+ *
+ * Exported because the inbox's candidate discovery has to compare against the
+ * same threshold this file's scans do; a second spelling of the join is the
+ * shape the two drifting apart would take.
+ */
+export function frontierJoin(userId: number, projectId: PgColumn) {
+  return and(
+    eq(readFrontiers.projectId, projectId),
+    eq(readFrontiers.userId, userId),
+  );
 }
 
 /**
@@ -79,15 +125,22 @@ export async function ensureFrontier(
  * the weak, event-only kind `show_weak_unread` is allowed to hide.
  * Two thresholded counts plus a grouped-max scan over events — cheap at
  * list-page sizes, and self-healing on comment deletion.
+ *
+ * `projectIds` is a set because the inbox asks about every project sharing one
+ * database in a single pass (T-278). Callers looking at one project pass
+ * `[project.id]`; issue ids are unique per database, so nothing crosses.
  */
 export async function unreadIssueState(
   db: Db,
-  projectId: number,
+  projectIds: number[],
   userId: number,
   issueIds: number[],
   visible: VisibleProjects,
 ): Promise<{ unread: Set<number>; counts: Map<number, number> }> {
-  const frontier = await ensureFrontier(db, projectId, userId);
+  // Runs even for an empty issue set: creating the frontier is this call's
+  // side effect on a project the user has now looked at (T-151), and the
+  // joins below have nothing to read without it.
+  const frontiers = await ensureFrontiers(db, projectIds, userId);
   if (issueIds.length === 0) return { unread: new Set(), counts: new Map() };
 
   // The per-issue threshold lives in SQL so the count and the boolean come
@@ -103,11 +156,12 @@ export async function unreadIssueState(
         eq(issueReads.userId, userId),
       ),
     )
+    .leftJoin(readFrontiers, frontierJoin(userId, comments.projectId))
     .where(
       and(
         inArray(comments.issueId, issueIds),
         ne(comments.authorId, userId),
-        sql`${comments.createdAt} > coalesce(${issueReads.lastSeenAt}, ${frontier})`,
+        sql`${comments.createdAt} > coalesce(${issueReads.lastSeenAt}, ${readFrontiers.frontierAt})`,
       ),
     )
     .groupBy(comments.issueId);
@@ -124,42 +178,48 @@ export async function unreadIssueState(
       issueReads,
       and(eq(issueReads.issueId, issues.id), eq(issueReads.userId, userId)),
     )
+    .leftJoin(readFrontiers, frontierJoin(userId, issues.projectId))
     .where(
       and(
         inArray(issues.id, issueIds),
         ne(issues.authorId, userId),
         live,
-        sql`${issues.createdAt} > coalesce(${issueReads.lastSeenAt}, ${frontier})`,
+        sql`${issues.createdAt} > coalesce(${issueReads.lastSeenAt}, ${readFrontiers.frontierAt})`,
       ),
     );
   for (const { issueId } of freshIssues) {
     counts.set(issueId, (counts.get(issueId) ?? 0) + 1);
   }
 
+  // `projectId` comes back so the read-position fallback below knows whose
+  // frontier to compare against; it is functionally determined by the issue,
+  // so grouping by it splits nothing.
   const latestEvents = await db
     .select({
       issueId: issueEvents.issueId,
+      projectId: issueEvents.projectId,
       latest: max(issueEvents.createdAt),
     })
     .from(issueEvents)
+    .leftJoin(readFrontiers, frontierJoin(userId, issueEvents.projectId))
     .where(
       and(
         inArray(issueEvents.issueId, issueIds),
         ne(issueEvents.actorId, userId),
-        gt(issueEvents.createdAt, frontier),
+        gt(issueEvents.createdAt, readFrontiers.frontierAt),
         // Same predicate the timeline reads under: an event the viewer
         // cannot see must never light the card that carries it.
         crossRefVisibleCondition(visible.slugs, visible.ids),
       ),
     )
-    .groupBy(issueEvents.issueId);
+    .groupBy(issueEvents.issueId, issueEvents.projectId);
 
   const unread = new Set(counts.keys());
 
-  const latestForeign = new Map<number, Date>();
-  for (const { issueId, latest } of latestEvents) {
+  const latestForeign = new Map<number, { at: Date; projectId: number }>();
+  for (const { issueId, projectId, latest } of latestEvents) {
     if (latest === null || unread.has(issueId)) continue;
-    latestForeign.set(issueId, latest);
+    latestForeign.set(issueId, { at: latest, projectId });
   }
   if (latestForeign.size > 0) {
     const readRows = await db
@@ -175,8 +235,9 @@ export async function unreadIssueState(
         ),
       );
     const lastSeen = new Map(readRows.map((r) => [r.issueId, r.lastSeenAt]));
-    for (const [issueId, latest] of latestForeign) {
-      if (latest > (lastSeen.get(issueId) ?? frontier)) unread.add(issueId);
+    for (const [issueId, { at, projectId }] of latestForeign) {
+      const threshold = lastSeen.get(issueId) ?? frontiers.get(projectId);
+      if (threshold !== undefined && at > threshold) unread.add(issueId);
     }
   }
   return { unread, counts };

@@ -6,7 +6,7 @@ import {
   routeInfoOf,
 } from "../src/services/access.ts";
 import { visibleProjects } from "../src/services/cross-references.ts";
-import { inboxRowState } from "../src/services/inbox.ts";
+import { groupInbox, inboxRowState } from "../src/services/inbox.ts";
 import { readPrefs } from "../src/services/prefs.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
 
@@ -811,6 +811,145 @@ describe("cross-project inbox T-97", () => {
       expect(
         await inboxRowState(db, project, bob.user, 999_999, prefs, visible),
       ).toBeNull();
+    });
+  });
+
+  // With weak unread hidden, discovery skips the event scan (T-278). That is
+  // derived from `inboxKeepCheck`, not enforced by it: the day a new keep
+  // reason depends on an event, the trimmed path starts losing rows and
+  // nothing says so. So what is pinned here is not which cards are in the
+  // page — it is that the two discovery paths cannot disagree. Add such a
+  // reason (T-279 is next door) and this test goes red, instead of a badge
+  // that quietly stops lighting up.
+  describe("trimming discovers the same page (T-278)", () => {
+    const PT = "inbox-trim";
+    let project: ProjectRow;
+
+    /**
+     * The page one discovery path produces. `showWeakUnread` stays false —
+     * the trimmed setting — while `includeEventScan` varies, which is a safe
+     * combination by construction: a wider candidate set, the same rules.
+     */
+    async function page(includeEventScan: boolean, limit: number) {
+      const db = await t.ctx.router.forProject(routeInfoOf(project));
+      const visible = await visibleProjects(t.ctx, bob.user);
+      return groupInbox(
+        t.ctx,
+        db,
+        [project],
+        bob.user,
+        limit,
+        false,
+        includeEventScan,
+        visible,
+      );
+    }
+
+    beforeAll(async () => {
+      const created = await t.app.request("/api/projects", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ slug: PT, name: "Inbox Trim" }),
+      });
+      expect(created.status).toBe(201);
+      const member = await t.app.request(
+        `/api/projects/${PT}/members/${bob.user.id}`,
+        {
+          method: "PUT",
+          headers: headers(),
+          body: JSON.stringify({ role: "writer" }),
+        },
+      );
+      expect(member.status).toBe(204);
+
+      // Mints bob's frontier before any fixture exists, as above.
+      await items("", bob.headers);
+      await settle();
+
+      const rows = await accessibleProjectRows(t.ctx, bob.user);
+      const row = rows.find((r) => r.slug === PT);
+      if (!row) throw new Error(`bob cannot read ${PT}`);
+      project = row;
+    });
+
+    it("agrees on rows, counters, order and truncation", async () => {
+      // One card per reason a card stays, so an equal comparison is a
+      // comparison of something. Alice is the foreign actor, bob the reader.
+      const foreignComment = await createIssueAs(PT, bob.headers, "bob asked");
+      await comment(PT, foreignComment, headers(), "alice answered");
+      await settle();
+
+      const foreignOpened = await createIssue(PT, "alice opened this"); // T-151
+      await settle();
+
+      const specCard = await createIssueAs(PT, bob.headers, "bob's card");
+      await pushSpec(PT, specCard, headers());
+      await settle();
+
+      const questionCard = await createIssueAs(PT, bob.headers, "bob's other");
+      await ask(PT, questionCard, headers(), "which one?");
+      await settle();
+
+      const closedLoud = await createIssueAs(PT, bob.headers, "closed, loud");
+      await setStatus(PT, closedLoud, "closed");
+      await comment(PT, closedLoud, headers(), "one more thing");
+      await settle();
+
+      // Cards whose only news is an event: bob's own, retitled by alice. The
+      // trimmed path never turns them up; the wide path turns them up and
+      // drops them at the keep-check. Both pages must come out without them.
+      for (let i = 0; i < 3; i++) {
+        const n = await createIssueAs(PT, bob.headers, `event only ${i}`);
+        const res = await t.app.request(`/api/projects/${PT}/issues/${n}`, {
+          method: "PATCH",
+          headers: headers(),
+          body: JSON.stringify({ title: `event only ${i}, retitled` }),
+        });
+        expect(res.status).toBe(200);
+      }
+      await settle();
+
+      async function datedAt(number: number): Promise<string> {
+        const row = (await page(false, 50)).items.find(
+          (i) => i.number === number,
+        );
+        if (!row) throw new Error(`card ${number} left the trimmed page`);
+        return row.last_activity_at;
+      }
+      const beforeRef = await datedAt(foreignComment);
+
+      // A `referenced` event is the one kind of foreign news that lands on a
+      // card without touching its `updated_at` (services/resolve-pass.ts), so
+      // nothing but the event scan can date it. It is what keeps the
+      // comparison below from being a tautology.
+      await comment(PT, foreignOpened, headers(), `see #${foreignComment}`);
+      await settle();
+
+      // The assertion of this test, first so that it is the one a broken
+      // derivation reports: one generous limit and one that cuts. Order
+      // inside a slice comes from `last_activity_at`, so the truncating run
+      // is where a timestamp the trimmed path failed to find surfaces as a
+      // different row being dropped.
+      for (const limit of [50, 2]) {
+        expect(await page(false, limit)).toEqual(await page(true, limit));
+      }
+      expect((await page(false, 2)).truncated).toBe(true);
+
+      // The rest only establishes that the pages compared above had the
+      // fixtures in them. Update these if a keep reason changes; the loop
+      // above is the one that must not be relaxed.
+      expect(
+        (await page(true, 50)).items.map((i) => i.number).sort((a, b) => a - b),
+      ).toEqual(
+        [
+          foreignComment,
+          foreignOpened,
+          specCard,
+          questionCard,
+          closedLoud,
+        ].sort((a, b) => a - b),
+      );
+      expect((await datedAt(foreignComment)).localeCompare(beforeRef)).toBe(1);
     });
   });
 

@@ -341,7 +341,7 @@ export async function executeCommands(
   const after = await db.select().from(issues).where(eq(issues.id, issue.id));
   const row = after[0];
   if (!row) throw new NotFoundError("issue not found");
-  const bundle = (await bundleIssues(ctx, db, project.id, [row], actor))[0];
+  const bundle = (await bundleIssues(ctx, db, [project.id], [row], actor))[0];
   if (!bundle) throw new Error("bundle missing");
 
   let comment: TimelineComment | null = null;

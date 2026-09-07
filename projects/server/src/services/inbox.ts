@@ -8,12 +8,14 @@ import type {
 import { and, eq, gt, inArray, isNotNull, max, ne, or, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
+import type { ProjectRouteInfo } from "../config.ts";
 import type { Db } from "../db/driver.ts";
 import {
   comments,
   issueEvents,
   issueReads,
   issues,
+  readFrontiers,
   specVersions,
   statuses,
 } from "../db/project-schema.ts";
@@ -28,12 +30,25 @@ import {
   type VisibleProjects,
   visibleProjects,
 } from "./cross-references.ts";
-import { bundleIssues, toIssue } from "./issues.ts";
+import { bundleIssues, type IssueBundle, toIssue } from "./issues.ts";
 import { readPrefs } from "./prefs.ts";
-import { ensureFrontier, unreadIssueState } from "./reads.ts";
+import { ensureFrontiers, frontierJoin, unreadIssueState } from "./reads.ts";
 import { live } from "./trash.ts";
 
-type ProjectSlice = { items: InboxItem[]; truncated: boolean };
+type GroupSlice = { items: InboxItem[]; truncated: boolean };
+
+/**
+ * What the keep-check already decided about a row, held while the group waits
+ * to learn its newest foreign event — `last_activity_at` needs that, and the
+ * trimmed path only fetches it for rows that got this far.
+ */
+type KeptState = {
+  isUnread: boolean;
+  unreadComments: number;
+  pendingSpecReview: boolean;
+  openQuestions: number;
+  specCreatedAt: Date | undefined;
+};
 
 /**
  * Whether one issue belongs in one user's inbox, given the facts about it.
@@ -88,17 +103,39 @@ export function inboxKeepCheck(input: {
   return { keep: true, ...result };
 }
 
-async function projectInbox(
+/**
+ * One pass over the projects that share a database (T-278). Every query below
+ * spans the whole group, because `project_id = $1` is the only thing that was
+ * per-project about them — the rest are keyed by issue id, and issue ids are
+ * unique within a database, which is exactly what a group is. Eight projects
+ * in one database therefore cost the same fifteen queries as one.
+ *
+ * `includeEventScan` is separate from `showWeakUnread` on purpose: the first
+ * decides whether discovery runs the event scan, the second is a judgement
+ * rule. They are not the same question, and the test that pins the trimming
+ * needs to vary one without touching the other. `includeEventScan: true` with
+ * `showWeakUnread: false` is a safe combination — a wider candidate set,
+ * unchanged judgement — which is why pinning the trimming takes no back door
+ * into production code.
+ *
+ * Exported for that test alone; the route reaches it through `getInbox`.
+ */
+export async function groupInbox(
   ctx: AppContext,
   db: Db,
-  project: ProjectRow,
+  projects: ProjectRow[],
   actor: UserRow,
   limit: number,
   showWeakUnread: boolean,
+  includeEventScan: boolean,
   visible: VisibleProjects,
-): Promise<ProjectSlice> {
+): Promise<GroupSlice> {
   const userId = actor.id;
-  const frontier = await ensureFrontier(db, project.id, userId);
+  const projectIds = projects.map((p) => p.id);
+  const projectById = new Map(projects.map((p) => [p.id, p]));
+  // Before anything reads a threshold: the scans below take the frontier from
+  // a join, and a project without a row there loses every one of its issues.
+  await ensureFrontiers(db, projectIds, userId);
 
   // Candidate discovery mirrors unreadIssueState's thresholds — including
   // the asymmetry where a per-issue position older than the frontier keeps
@@ -114,20 +151,21 @@ async function projectInbox(
         eq(issueReads.userId, userId),
       ),
     )
+    .leftJoin(readFrontiers, frontierJoin(userId, comments.projectId))
     .where(
       and(
-        eq(comments.projectId, project.id),
+        inArray(comments.projectId, projectIds),
         ne(comments.authorId, userId),
-        sql`${comments.createdAt} > coalesce(${issueReads.lastSeenAt}, ${frontier})`,
+        sql`${comments.createdAt} > coalesce(${issueReads.lastSeenAt}, ${readFrontiers.frontierAt})`,
       ),
     )
     .groupBy(comments.issueId);
 
   // Cards opened by someone else, on the comment threshold rather than the
   // event one: the top post counts as a comment (T-151), so the asymmetry
-  // above applies to it too. `opened` reaches eventCand as well, but only
-  // above the frontier floor — which would drop exactly the cards a stale
-  // per-issue position is meant to keep.
+  // above applies to it too. `opened` reaches the event scan as well, but
+  // only above the frontier floor — which would drop exactly the cards a
+  // stale per-issue position is meant to keep.
   const issueCand = await db
     .select({ issueId: issues.id })
     .from(issues)
@@ -135,37 +173,50 @@ async function projectInbox(
       issueReads,
       and(eq(issueReads.issueId, issues.id), eq(issueReads.userId, userId)),
     )
+    .leftJoin(readFrontiers, frontierJoin(userId, issues.projectId))
     .where(
       and(
-        eq(issues.projectId, project.id),
+        inArray(issues.projectId, projectIds),
         ne(issues.authorId, userId),
-        sql`${issues.createdAt} > coalesce(${issueReads.lastSeenAt}, ${frontier})`,
+        sql`${issues.createdAt} > coalesce(${issueReads.lastSeenAt}, ${readFrontiers.frontierAt})`,
       ),
     );
 
-  const eventCand = await db
-    .select({
-      issueId: issueEvents.issueId,
-      latest: max(issueEvents.createdAt),
-    })
-    .from(issueEvents)
-    .leftJoin(
-      issueReads,
-      and(
-        eq(issueReads.issueId, issueEvents.issueId),
-        eq(issueReads.userId, userId),
-      ),
-    )
-    .where(
-      and(
-        eq(issueEvents.projectId, project.id),
-        ne(issueEvents.actorId, userId),
-        gt(issueEvents.createdAt, frontier),
-        sql`${issueEvents.createdAt} > coalesce(${issueReads.lastSeenAt}, ${frontier})`,
-        crossRefVisibleCondition(visible.slugs, visible.ids),
-      ),
-    )
-    .groupBy(issueEvents.issueId);
+  // Both event scans come off this builder, differing in nothing but the id
+  // restriction: the wide one discovers candidates, the narrow one only dates
+  // the rows that survived the keep-check. Two spellings of this predicate is
+  // how the trimmed path would start reporting timestamps the full path does
+  // not, and nothing would say so.
+  const eventScan = (onlyIssues?: number[]) =>
+    db
+      .select({
+        issueId: issueEvents.issueId,
+        latest: max(issueEvents.createdAt),
+      })
+      .from(issueEvents)
+      .leftJoin(
+        issueReads,
+        and(
+          eq(issueReads.issueId, issueEvents.issueId),
+          eq(issueReads.userId, userId),
+        ),
+      )
+      .leftJoin(readFrontiers, frontierJoin(userId, issueEvents.projectId))
+      .where(
+        and(
+          inArray(issueEvents.projectId, projectIds),
+          ne(issueEvents.actorId, userId),
+          gt(issueEvents.createdAt, readFrontiers.frontierAt),
+          sql`${issueEvents.createdAt} > coalesce(${issueReads.lastSeenAt}, ${readFrontiers.frontierAt})`,
+          crossRefVisibleCondition(visible.slugs, visible.ids),
+          onlyIssues === undefined
+            ? undefined
+            : inArray(issueEvents.issueId, onlyIssues),
+        ),
+      )
+      .groupBy(issueEvents.issueId);
+
+  const eventCand = includeEventScan ? await eventScan() : [];
 
   // Closed issues are excluded here and neutralized again at the keep-check
   // below: once an issue is closed its unreviewed spec and unanswered
@@ -177,7 +228,7 @@ async function projectInbox(
     .innerJoin(statuses, eq(issues.statusId, statuses.id))
     .where(
       and(
-        eq(issues.projectId, project.id),
+        inArray(issues.projectId, projectIds),
         ne(statuses.category, "closed"),
         or(
           gt(issues.openQuestions, 0),
@@ -206,10 +257,10 @@ async function projectInbox(
     .select()
     .from(issues)
     .where(and(inArray(issues.id, ids), live));
-  const bundles = await bundleIssues(ctx, db, project.id, rows, actor);
+  const bundles = await bundleIssues(ctx, db, projectIds, rows, actor);
   const { unread, counts } = await unreadIssueState(
     db,
-    project.id,
+    projectIds,
     userId,
     ids,
     visible,
@@ -265,11 +316,8 @@ async function projectInbox(
   const commentLatest = new Map(
     commentCand.flatMap((r) => (r.latest ? [[r.issueId, r.latest]] : [])),
   );
-  const eventLatest = new Map(
-    eventCand.flatMap((r) => (r.latest ? [[r.issueId, r.latest]] : [])),
-  );
 
-  const slice: { item: InboxItem; at: Date }[] = [];
+  const kept: { bundle: IssueBundle; state: KeptState }[] = [];
   for (const bundle of bundles) {
     const row = bundle.row;
     const isUnread = unread.has(row.id);
@@ -285,35 +333,71 @@ async function projectInbox(
       showWeakUnread,
     });
     if (!keep) continue;
-
-    const at = [
-      commentLatest.get(row.id),
-      eventLatest.get(row.id),
-      pendingSpecReview ? specAuthor?.createdAt : undefined,
-      openQuestions > 0 ? questionTimes.get(row.id) : undefined,
-    ]
-      .filter((d): d is Date => d !== undefined)
-      .reduce((a, b) => (a > b ? a : b), row.updatedAt);
-
-    const { body: _body, ...listItem } = toIssue(bundle);
-    slice.push({
-      at,
-      item: {
-        ...listItem,
-        unread: isUnread,
-        unread_comments: unreadComments,
-        project: { slug: project.slug, name: project.name },
-        last_activity_at: at.toISOString(),
-        pending_spec_review: pendingSpecReview,
+    kept.push({
+      bundle,
+      state: {
+        isUnread,
+        unreadComments,
+        pendingSpecReview,
+        openQuestions,
+        specCreatedAt: specAuthor?.createdAt,
       },
     });
   }
 
-  slice.sort((a, b) => b.at.getTime() - a.at.getTime());
-  return {
-    items: slice.slice(0, limit).map((s) => s.item),
-    truncated: slice.length > limit,
-  };
+  // When discovery skipped the event scan, `last_activity_at` still needs the
+  // newest foreign event — it just needs it for the handful of rows that
+  // stayed, not for every card in the group.
+  const eventRows = includeEventScan
+    ? eventCand
+    : kept.length === 0
+      ? []
+      : await eventScan(kept.map((k) => k.bundle.row.id));
+  const eventLatest = new Map(
+    eventRows.flatMap((r) => (r.latest ? [[r.issueId, r.latest]] : [])),
+  );
+
+  // `limit` is per project and `truncated` is "some project was cut", so the
+  // group's rows split back apart before they are sorted and sliced. One sort
+  // over the whole group would let a busy project eat a quiet one's rows.
+  const slices = new Map<number, { item: InboxItem; at: Date }[]>();
+  for (const { bundle, state } of kept) {
+    const row = bundle.row;
+    const at = [
+      commentLatest.get(row.id),
+      eventLatest.get(row.id),
+      state.pendingSpecReview ? state.specCreatedAt : undefined,
+      state.openQuestions > 0 ? questionTimes.get(row.id) : undefined,
+    ]
+      .filter((d): d is Date => d !== undefined)
+      .reduce((a, b) => (a > b ? a : b), row.updatedAt);
+
+    const project = projectById.get(row.projectId);
+    if (!project) throw new Error(`issue ${row.id} is outside the inbox group`);
+    const { body: _body, ...listItem } = toIssue(bundle);
+    const slice = slices.get(row.projectId) ?? [];
+    slice.push({
+      at,
+      item: {
+        ...listItem,
+        unread: state.isUnread,
+        unread_comments: state.unreadComments,
+        project: { slug: project.slug, name: project.name },
+        last_activity_at: at.toISOString(),
+        pending_spec_review: state.pendingSpecReview,
+      },
+    });
+    slices.set(row.projectId, slice);
+  }
+
+  const items: InboxItem[] = [];
+  let truncated = false;
+  for (const slice of slices.values()) {
+    slice.sort((a, b) => b.at.getTime() - a.at.getTime());
+    items.push(...slice.slice(0, limit).map((s) => s.item));
+    truncated ||= slice.length > limit;
+  }
+  return { items, truncated };
 }
 
 /**
@@ -366,7 +450,7 @@ export async function inboxRowState(
 
   const { unread, counts } = await unreadIssueState(
     db,
-    project.id,
+    [project.id],
     actor.id,
     [row.id],
     visible,
@@ -414,10 +498,47 @@ export async function inboxRowState(
 }
 
 /**
+ * Run `tasks`, at most `limit` of them in flight, results in input order.
+ *
+ * The bound is a correctness requirement, not a tuning knob. `DbRouter` keeps
+ * at most `database.projects.max_open` project handles and closes the LRU one
+ * past that; serially that handle is always idle, but concurrently it could be
+ * a handle with queries on it, and closing it cuts them off mid-flight. At or
+ * under `max_open` every handle in flight was just touched by `forProject` and
+ * so is never the eviction candidate.
+ *
+ * One task runs exactly as sequentially as a bare `await` would, which is the
+ * whole of `placement=shared` — hence no separate serial path to keep in step
+ * with this one.
+ */
+async function inFlight<T>(
+  limit: number,
+  tasks: (() => Promise<T>)[],
+): Promise<T[]> {
+  const out: T[] = new Array(tasks.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (let i = next++; i < tasks.length; i = next++) {
+      const task = tasks[i];
+      if (task === undefined) return;
+      out[i] = await task();
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, tasks.length) }, worker),
+  );
+  return out;
+}
+
+/**
  * Cross-project attention aggregation (T-97): flat, sorted by
  * last_activity_at desc — grouping is the client's business. A project db
  * being unreachable fails the whole request; a silently missing project
  * is worse than a loud error.
+ *
+ * Projects sharing a database are read in one pass, and the groups that remain
+ * run concurrently (T-278) — under `placement=shared` that is a single group,
+ * so this is the same shape as the loop it replaced.
  */
 export async function getInbox(
   ctx: AppContext,
@@ -445,23 +566,47 @@ export async function getInbox(
   // still gets to see references from every project its caller can read.
   const visible = await visibleProjects(ctx, actor);
 
-  const items: InboxItem[] = [];
-  let truncated = false;
+  // Projects that resolve to one database are one unit of work: they can be
+  // read in a single pass, and `forProject` needs opening only once for the
+  // whole group (any member resolves to the same url).
+  const groups = new Map<
+    string,
+    { route: ProjectRouteInfo; projects: ProjectRow[] }
+  >();
   for (const project of scope) {
-    const db = await ctx.router.forProject(routeInfoOf(project));
-    const slice = await projectInbox(
-      ctx,
-      db,
-      project,
-      actor,
-      query.limit,
-      prefs.show_weak_unread,
-      visible,
-    );
-    items.push(...slice.items);
-    truncated ||= slice.truncated;
+    const route = routeInfoOf(project);
+    const url = ctx.router.resolveProjectUrl(route);
+    const group = groups.get(url);
+    if (group) group.projects.push(project);
+    else groups.set(url, { route, projects: [project] });
   }
 
+  const slices = await inFlight(
+    ctx.config.database.projects.max_open,
+    [...groups.values()].map((group) => async (): Promise<GroupSlice> => {
+      const db = await ctx.router.forProject(group.route);
+      return groupInbox(
+        ctx,
+        db,
+        group.projects,
+        actor,
+        query.limit,
+        prefs.show_weak_unread,
+        // With weak unread hidden, the event scan cannot turn up a row that
+        // survives: the three surviving reasons — unread comments, a spec
+        // awaiting the reader, open questions — are each found by one of the
+        // other scans, and an event-only card falls at the second guard. So
+        // the scan runs only when weak unread is on. This is derived from
+        // `inboxKeepCheck`, which means a new event-dependent reason silently
+        // invalidates it; "trimming discovers the same page" in
+        // test/inbox.test.ts is the guard that turns red instead.
+        prefs.show_weak_unread,
+        visible,
+      );
+    }),
+  );
+
+  const items = slices.flatMap((s) => s.items);
   items.sort((a, b) => b.last_activity_at.localeCompare(a.last_activity_at));
-  return { items, truncated };
+  return { items, truncated: slices.some((s) => s.truncated) };
 }

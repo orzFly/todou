@@ -156,7 +156,7 @@ export function toIssue(bundle: IssueBundle): Issue {
 async function movesOf(
   ctx: AppContext,
   db: Db,
-  projectId: number,
+  projectIds: number[],
   ids: number[],
   actor: UserRow,
 ): Promise<Map<number, IssueMove[]>> {
@@ -171,7 +171,7 @@ async function movesOf(
     .from(issueEvents)
     .where(
       and(
-        eq(issueEvents.projectId, projectId),
+        inArray(issueEvents.projectId, projectIds),
         eq(issueEvents.type, "moved_in"),
         inArray(issueEvents.issueId, ids),
       ),
@@ -220,11 +220,18 @@ export async function loadIssueRow(
   return row;
 }
 
-/** Bulk-assemble DTO parts for a set of issue rows (2 project-db queries). */
+/**
+ * Bulk-assemble DTO parts for a set of issue rows (2 project-db queries).
+ *
+ * `projectIds` is a set so the inbox can bundle every project sharing one
+ * database in a single pass (T-278). Single-project callers pass
+ * `[project.id]`; ids are unique per database, so merging the status and
+ * move lookups across projects cannot cross wires.
+ */
 export async function bundleIssues(
   ctx: AppContext,
   db: Db,
-  projectId: number,
+  projectIds: number[],
   rows: IssueRow[],
   /** Whose view this is; decides which move sources may be named. */
   actor: UserRow,
@@ -235,7 +242,7 @@ export async function bundleIssues(
   const statusRows = await db
     .select()
     .from(statuses)
-    .where(eq(statuses.projectId, projectId));
+    .where(inArray(statuses.projectId, projectIds));
   const statusById = new Map(statusRows.map((s) => [s.id, toStatus(s)]));
 
   const labelRows = await db
@@ -254,7 +261,7 @@ export async function bundleIssues(
     ...assigneeRows.map((a) => a.userId),
   ];
   const refs = await getUserRefs(ctx.router.system(), refIds);
-  const moves = await movesOf(ctx, db, projectId, ids, actor);
+  const moves = await movesOf(ctx, db, projectIds, ids, actor);
   const ghost = (id: number): UserRef => ({
     id,
     login: "ghost",
@@ -518,7 +525,7 @@ export async function createIssue(
     resolved.cross,
     agentContext,
   );
-  const bundles = await bundleIssues(ctx, db, project.id, [row], actor);
+  const bundles = await bundleIssues(ctx, db, [project.id], [row], actor);
   const bundle = bundles[0];
   if (!bundle) throw new Error("bundle missing");
   return toIssue(bundle);
@@ -537,7 +544,7 @@ export async function getIssue(
   const db = await ctx.router.forProject(routeInfoOf(project));
   const row = await loadIssueRow(db, project.id, number);
   assertIssueReadable(row, actor, role);
-  const bundle = (await bundleIssues(ctx, db, project.id, [row], actor))[0];
+  const bundle = (await bundleIssues(ctx, db, [project.id], [row], actor))[0];
   if (!bundle) throw new Error("bundle missing");
   return toIssue(bundle);
 }
@@ -722,10 +729,10 @@ export async function listIssues(
         })
       : null;
 
-  const bundles = await bundleIssues(ctx, db, project.id, page, actor);
+  const bundles = await bundleIssues(ctx, db, [project.id], page, actor);
   const { unread, counts } = await unreadIssueState(
     db,
-    project.id,
+    [project.id],
     actor.id,
     page.map((r) => r.id),
     await visibleProjects(ctx, actor),
@@ -1063,7 +1070,7 @@ export async function updateIssue(
   }
 
   const after = await loadIssueRow(db, project.id, number);
-  const bundle = (await bundleIssues(ctx, db, project.id, [after], actor))[0];
+  const bundle = (await bundleIssues(ctx, db, [project.id], [after], actor))[0];
   if (!bundle) throw new Error("bundle missing");
   return toIssue(bundle);
 }
@@ -1186,7 +1193,7 @@ export async function restoreIssue(
     false,
     agentContext,
   );
-  const bundle = (await bundleIssues(ctx, db, project.id, [row], actor))[0];
+  const bundle = (await bundleIssues(ctx, db, [project.id], [row], actor))[0];
   if (!bundle) throw new Error("bundle missing");
   return toIssue(bundle);
 }

@@ -115,4 +115,117 @@ describe.skipIf(!PG_URL)("inbox unread candidates on real postgres", () => {
     expect(row.unread).toBe(true);
     expect(row.unread_comments).toBe(1);
   });
+
+  /**
+   * The other side of the same comparison, and an intentional narrowing
+   * (T-278). The frontier used to reach SQL as a bound JS `Date`, which holds
+   * milliseconds, while `last_seen_at` was a column reference at full
+   * precision — so the two sides of one `coalesce` disagreed, and the
+   * frontier side was the looser of them. Reading the frontier from a join
+   * makes both sides columns.
+   *
+   * The behaviour change is real but narrow: `ensureFrontier` writes
+   * `new Date()`, which has no microseconds to lose. Only `bulkMarkRead`
+   * mints a frontier finer than a millisecond — `greatest(now(), $at)` off
+   * the server clock or off a request's `up_to` — so what changes is
+   * projects the reader has hit "mark all read" on, never a fresh one.
+   * There, activity inside the frontier's own millisecond but before it now
+   * counts as read, which is what the frontier says.
+   *
+   * Invisible under PGlite, which is why this lives here.
+   */
+  describe("a frontier's microseconds are not rounded away", () => {
+    const slug2 = `inbox-pg-frontier-${Date.now().toString(36)}`;
+    // Ahead of real time: `bulkMarkRead` takes `greatest(existing, up_to)`,
+    // and the frontier minted below is dated now, so only a later position
+    // is honoured exactly.
+    const FRONTIER = "2027-04-04T10:00:00.123456Z";
+    const BEFORE_US = "2027-04-04T10:00:00.123200Z";
+    const AFTER_US = "2027-04-04T10:00:00.123900Z";
+
+    beforeAll(async () => {
+      const created = await t.app.request("/api/projects", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ slug: slug2, name: "Frontier (postgres)" }),
+      });
+      expect(created.status).toBe(201);
+      const member = await t.app.request(
+        `/api/projects/${slug2}/members/${bob.user.id}`,
+        {
+          method: "PUT",
+          headers: headers(),
+          body: JSON.stringify({ role: "writer" }),
+        },
+      );
+      expect(member.status).toBe(204);
+      expect(
+        (await t.app.request("/api/me/inbox", { headers: { cookie } })).ok,
+      ).toBe(true);
+    });
+
+    it("counts only the comment past them, not the one inside", async () => {
+      // Alice authors the card so nothing but bob's comments can decide it:
+      // a card opened by someone else would count on its own (T-151).
+      const created = await t.app.request(`/api/projects/${slug2}/issues`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ title: "frontier microseconds" }),
+      });
+      expect(created.status).toBe(201);
+      const { number } = await json(created);
+
+      const db = t.ctx.router.system();
+      for (const [at, body] of [
+        [BEFORE_US, "inside the frontier's millisecond, before it"],
+        [AFTER_US, "inside the frontier's millisecond, after it"],
+      ] as const) {
+        const posted = await t.app.request(
+          `/api/projects/${slug2}/issues/${number}/comments`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json", ...bob.headers },
+            body: JSON.stringify({ body }),
+          },
+        );
+        expect(posted.status).toBe(201);
+        const { id } = await json(posted);
+        await db.execute(
+          sql`update comments set created_at = ${at}::timestamptz where id = ${id}`,
+        );
+      }
+
+      const project = await json(
+        await t.app.request(`/api/projects/${slug2}`, { headers: { cookie } }),
+      );
+      await db.execute(
+        sql`update issue_events set created_at = '2027-04-04T09:00:00Z'::timestamptz
+            where issue_id in (select id from issues
+                               where project_id = ${project.id}
+                                 and number = ${number})`,
+      );
+
+      // "Mark all read" is the only way to a frontier with microseconds in
+      // it, and it leaves no issue_reads row for a card alice never opened,
+      // so the frontier is the whole threshold.
+      const marked = await t.app.request("/api/me/read", {
+        method: "PUT",
+        headers: headers(),
+        body: JSON.stringify({ projects: [slug2], up_to: FRONTIER }),
+      });
+      expect(marked.status).toBe(204);
+
+      const page = await json(
+        await t.app.request("/api/me/inbox", { headers: { cookie } }),
+      );
+      const row = page.items.find(
+        (i: { number: number; project: { slug: string } }) =>
+          i.project.slug === slug2 && i.number === number,
+      );
+      // A millisecond-truncated frontier reads as `…123000Z` and lets both
+      // comments through, so this said 2 before the join.
+      expect(row).toBeDefined();
+      expect(row.unread_comments).toBe(1);
+    });
+  });
 });
