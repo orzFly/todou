@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   parseColor,
+  parseCommentId,
   parseIssueRef,
+  parsePositiveInt,
   parseSeconds,
   splitCommaList,
 } from "../src/parse.ts";
@@ -202,5 +204,39 @@ describe("parseSeconds", () => {
     expect(() => parseSeconds("-1", "--debounce", { zero: true })).toThrow(
       /non-negative/,
     );
+  });
+});
+
+describe("parsePositiveInt", () => {
+  it("rejects zero and below by default", () => {
+    expect(parsePositiveInt("7", "--last")).toBe(7);
+    expect(() => parsePositiveInt("0", "--last")).toThrow(/positive integer/);
+    expect(() => parsePositiveInt("-1", "--last")).toThrow(/positive integer/);
+  });
+
+  it("admits zero where it names a real setting", () => {
+    expect(parsePositiveInt("0", "--summary", { zero: true })).toBe(0);
+    expect(() => parsePositiveInt("-1", "--summary", { zero: true })).toThrow(
+      /non-negative/,
+    );
+  });
+});
+
+/**
+ * One parser behind every command that takes a comment id, so the string a
+ * renderer prints pastes back into any of them (T-283).
+ */
+describe("parseCommentId", () => {
+  it("takes every spelling a reader can end up holding", () => {
+    expect(parseCommentId("123")).toBe(123);
+    expect(parseCommentId("#123")).toBe(123);
+    expect(parseCommentId("comment-123")).toBe(123);
+    expect(parseCommentId("#comment-123")).toBe(123);
+  });
+
+  it("refuses what is not an id", () => {
+    expect(() => parseCommentId("0")).toThrow(/comment id/);
+    expect(() => parseCommentId("#comment-abc")).toThrow(/comment id/);
+    expect(() => parseCommentId("")).toThrow(/comment id/);
   });
 });

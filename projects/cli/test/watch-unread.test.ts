@@ -306,17 +306,18 @@ describe("watch (project-level)", () => {
       ["watch", "-p", "todou", "--poll", "--since", "a0"],
       { fetchImpl, env: loggedInEnv() },
     );
-    expect(result.stdout).toContain("#3 User commented");
+    expect(result.stdout).toContain("#3 #comment-9 User commented");
     expect(result.stdout).toContain("web comment");
     expect(result.stdout).toContain("cursor: a1");
   });
 
   /**
    * The failure T-175 was filed for: a stream that names the entry type and
-   * stops there is one whose reader never learns what was said. A comment
-   * showing its body is the acceptance criterion, not a nicety.
+   * stops there is one whose reader never learns what was said. T-283 took
+   * it the rest of the way — the body arrives whole, so the reader has no
+   * second fetch to make.
    */
-  it("shows the start of a comment body, one line per entry", async () => {
+  it("gives a comment's whole body, header line then indented continuation", async () => {
     const instruction =
       "要在 dogfood 上开——先把 CLI 发布到镜像里\n\n然后再回来说一声";
     const { fetchImpl } = fakeFetch([
@@ -350,15 +351,20 @@ describe("watch (project-level)", () => {
     );
     expect(result.exitCode).toBe(0);
     const lines = result.stdout.trimEnd().split("\n");
-    expect(lines).toHaveLength(3);
-    expect(lines[0]).toContain("要在 dogfood 上开——先把 CLI 发布到镜像里");
-    // Folded onto its line: the second paragraph rides along, no wrapping.
-    expect(lines[0]).toContain("然后再回来说一声");
-    expect(lines[1]).toMatch(/^#4 User status_changed \(Todo → Next\) /);
-    expect(lines[2]).toBe("cursor: a1");
+    expect(lines).toHaveLength(5);
+    expect(lines[0]).toMatch(
+      /^#3 #comment-9 User commented .+: 要在 dogfood 上开——先把 CLI 发布到镜像里$/,
+    );
+    // A real newline, not a fold: the paragraph break survives and the
+    // continuation carries the indent that keeps a `^\S` split honest.
+    expect(lines[1]).toBe("");
+    expect(lines[2]).toBe("  然后再回来说一声");
+    expect(lines[3]).toMatch(/^#4 User status_changed \(Todo → Next\) /);
+    expect(lines[4]).toBe("cursor: a1");
   });
 
-  it("--summary caps how much body a line carries", async () => {
+  /** One fixture for every `--summary` shape below. */
+  const bodyRun = async (argv: string[], body: string) => {
     const { fetchImpl } = fakeFetch([
       ["GET", "/api/me", me],
       [
@@ -366,15 +372,100 @@ describe("watch (project-level)", () => {
         "/api/projects/todou/activity",
         (_init: RequestInit, url: URL) =>
           url.searchParams.get("after") === "a0"
-            ? page([{ ...webComment, body: "0123456789abcdefghij" }], "a1")
+            ? page([{ ...webComment, body }], "a1")
             : page([], null),
       ],
     ]);
-    const result = await runCli(
-      ["watch", "-p", "todou", "--poll", "--since", "a0", "--summary", "10"],
+    return runCli(
+      ["watch", "-p", "todou", "--poll", "--since", "a0", ...argv],
       { fetchImpl, env: loggedInEnv() },
     );
+  };
+
+  it("--summary=<n> caps how much body a line carries", async () => {
+    const result = await bodyRun(["--summary=10"], "0123456789abcdefghij");
     expect(result.stdout.split("\n")[0]).toMatch(/: 0123456789…$/);
+  });
+
+  /**
+   * The `=` is not a style choice: an optional-argument flag cannot also
+   * take a space-separated value, so the old spelling has to fail loudly
+   * rather than truncate at some other width (T-283).
+   */
+  it("refuses the space-separated --summary the old flag took", async () => {
+    const result = await bodyRun(["--summary", "10"], "0123456789abcdefghij");
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain('Extraneous positional argument ("10")');
+  });
+
+  it("a bare --summary means 120 characters", async () => {
+    const result = await bodyRun(["--summary"], "很长的中文正文。".repeat(30));
+    const lines = result.stdout.trimEnd().split("\n");
+    expect(lines).toHaveLength(2);
+    expect(lines[0]?.endsWith("…")).toBe(true);
+    expect(Array.from(lines[0]?.split(": ").at(-1) ?? "")).toHaveLength(121);
+  });
+
+  it("--summary=0 prints exactly what no --summary at all prints", async () => {
+    const body = "第一段\n\n第二段";
+    const capped = await bodyRun(["--summary=0"], body);
+    const plain = await bodyRun([], body);
+    expect(capped.stdout).toBe(plain.stdout);
+    expect(plain.stdout).toContain("  第二段");
+  });
+
+  /**
+   * `issue watch` parses `--summary` in its own code, so a suite that only
+   * covers `todou watch` would pass with one of the two left broken.
+   */
+  describe("issue watch", () => {
+    const timeline = (items: unknown[], next: string | null) => ({
+      items,
+      prev_cursor: null,
+      next_cursor: next,
+    });
+    const run = async (argv: string[], body: string) => {
+      const { fetchImpl } = fakeFetch([
+        ["GET", "/api/me", me],
+        [
+          "GET",
+          "/api/projects/todou/issues/3/timeline",
+          (_init: RequestInit, url: URL) =>
+            url.searchParams.get("after") === "c0"
+              ? timeline([{ ...webComment, body }], "c1")
+              : timeline([], null),
+        ],
+      ]);
+      return runCli(
+        [
+          "issue",
+          "watch",
+          "3",
+          "-p",
+          "todou",
+          "--poll",
+          "--since",
+          "c0",
+          ...argv,
+        ],
+        { fetchImpl, env: loggedInEnv() },
+      );
+    };
+
+    it("gives the whole body by default", async () => {
+      const result = await run([], "第一段\n\n第二段");
+      const lines = result.stdout.trimEnd().split("\n");
+      expect(lines[0]).toMatch(/^#3 #comment-9 User commented .+: 第一段$/);
+      expect(lines[1]).toBe("");
+      expect(lines[2]).toBe("  第二段");
+    });
+
+    it("--summary=<n> cuts it back to one line", async () => {
+      const result = await run(["--summary=10"], "0123456789abcdefghij");
+      const lines = result.stdout.trimEnd().split("\n");
+      expect(lines[0]).toMatch(/: 0123456789…$/);
+      expect(lines).toHaveLength(2);
+    });
   });
 
   it("--debounce batches a cross-issue burst into one wake-up", async () => {

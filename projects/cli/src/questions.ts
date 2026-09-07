@@ -59,12 +59,18 @@ export function decodeAnswerEvent(
   return parsed.success ? parsed.data : null;
 }
 
-/** Question block for `issue view` / `question list`, 1-based numbering. */
+/**
+ * Question block for `issue view` / `question list` / a watch line, 1-based
+ * numbering. `descriptions: false` is for the watch, where the question and
+ * its option labels are what a reader needs to answer and the descriptions
+ * would multiply the length of an entry nobody asked to read in full.
+ */
 export function renderQuestions(
   component: QuestionsComponent,
   paint: Painter,
-  indent = "  ",
+  opts: { indent?: string; descriptions?: boolean } = {},
 ): string[] {
+  const indent = opts.indent ?? "  ";
   const lines: string[] = [];
   for (const q of component.questions) {
     const mode = q.multiple ? "multi-select" : "single-select";
@@ -75,7 +81,9 @@ export function renderQuestions(
     }
     q.options.forEach((option, i) => {
       const description =
-        option.description === undefined ? "" : ` — ${option.description}`;
+        option.description === undefined || opts.descriptions === false
+          ? ""
+          : ` — ${option.description}`;
       lines.push(`${indent}  ${i + 1}) ${option.label}${description}`);
     });
   }

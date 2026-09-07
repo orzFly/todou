@@ -11,6 +11,7 @@ import {
   resolveLabels,
   resolveStatus,
 } from "../resolve.ts";
+import { commentRef } from "../timeline.ts";
 
 const DOMAINS = ["issues", "comments", "specs"] as const;
 
@@ -69,7 +70,12 @@ function diagnosticLine(diagnostic: SearchDiagnostic): string {
 
 /** The addressable handle for a hit: what you would read next to see it. */
 function locator(item: SearchItem): string {
-  if (item.kind === "comment") return `comment ${item.comment_id}`;
+  // The id is nullable per the wire schema — which cannot say "present
+  // exactly when kind is comment" — so the bare kind is the fallback rather
+  // than a handle spelled around a null.
+  if (item.kind === "comment") {
+    return item.comment_id === null ? "comment" : commentRef(item.comment_id);
+  }
   if (item.kind === "spec") return `spec ${item.spec_path}`;
   return "issue";
 }
@@ -87,7 +93,7 @@ export class SearchCommand extends ProjectCommand {
       issue that means the title and the body count as one place.
 
       Every line is \`<ref>  <where>  <snippet>\`, where \`<where>\` is the
-      id to read next — \`comment <id>\`, \`spec <path>\`, or plain
+      id to read next — \`#comment-<id>\`, \`spec <path>\`, or plain
       \`issue\`. Hits are ordered by domain (issue title, then issue body,
       then comment, then spec) and then by recency.
 

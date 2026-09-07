@@ -526,17 +526,19 @@ describe("spec comments", () => {
     });
     expect(run.exitCode).toBe(0);
     expect(run.stdout).toContain(
-      "#412 design.md:3-4 (v1) by Sam Reviewer · unresolved, outdated",
+      "#comment-412 design.md:3-4 (v1) by Sam Reviewer · unresolved, outdated",
     );
     expect(run.stdout).toContain("  > Anchors point at…");
     expect(run.stdout).toContain(
-      "#415 notes/phases.md:5-5 (v2) by Sam Reviewer · resolved by Claude Agent",
+      "#comment-415 notes/phases.md:5-5 (v2) by Sam Reviewer · resolved by Claude Agent",
     );
     // Column-anchored comments spell `line.column` on each end (T-142);
     // the two above carry no columns and keep the plain line form.
     // #419's author carries no display_name — the shape an older server
     // sends — and falls back to the login (T-149).
-    expect(run.stdout).toContain("#419 design.md:7.12-7.34 (v2) by user");
+    expect(run.stdout).toContain(
+      "#comment-419 design.md:7.12-7.34 (v2) by user",
+    );
   });
 
   it("--unresolved and --file filter locally", async () => {
@@ -581,6 +583,25 @@ describe("spec resolve", () => {
     expect(run.stdout).toContain("resolved 2 comment(s)");
     expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
       comment_ids: [412, 415],
+    });
+  });
+
+  /** The spelling `spec comments` now prints has to paste back in here. */
+  it("takes the #comment-<id> spelling the listing prints", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      [
+        "POST",
+        "/api/projects/proj/issues/23/spec/comments/resolve",
+        { resolved: [412] },
+      ],
+    ]);
+    const run = await runCli(["spec", "resolve", "23", "#comment-412"], {
+      fetchImpl,
+      env: ENV,
+    });
+    expect(run.exitCode).toBe(0);
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
+      comment_ids: [412],
     });
   });
 

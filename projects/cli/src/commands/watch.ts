@@ -13,7 +13,7 @@ import { drainPaged } from "../paginate.ts";
 import { parsePositiveInt, parseSeconds } from "../parse.ts";
 import { type RefFormat, refFormat, withIssueRef } from "../refs.ts";
 import { fetchRefPrefix } from "../resolve.ts";
-import { renderActivityLine } from "../timeline.ts";
+import { BARE_SUMMARY_CHARS, renderActivityLine } from "../timeline.ts";
 import {
   cursorLines,
   FOLLOW_DEBOUNCE_SEC,
@@ -75,12 +75,28 @@ export class WatchCommand extends ProjectCommand {
       \`GET /activity\` (T-93); against an older server it fails with a
       clear error while single-project mode keeps working.
 
-      Without \`--json\` every entry prints as exactly one line —
-      \`<ref> <who> <what> <when>: <summary>\` — and a comment shows the
-      start of its body, so a sentinel reading the stream sees what was
-      said and not merely that something was said. \`--summary <chars>\`
-      sets how much body a line carries (default 120). The batch ends with
-      its \`cursor:\` line, as before.
+      Without \`--json\` an entry prints as one block: a header line —
+      \`<ref> #comment-<id> <who> <what> <when>:\` — and then the comment's
+      body **in full**, so a sentinel reading the stream sees what was said
+      rather than its first fifth. Continuation lines are indented two
+      spaces, which keeps a \`^\\S\` split one-entry-per-piece and leaves a
+      fenced code block inside a body intact. An entry an agent wrote names
+      its harness and session after the author —
+      \`(claude-code, <session>)\` — which is how sibling sessions sharing a
+      machine account are told apart, and it is the same session id this
+      command filters on. A comment carrying questions has them appended:
+      each question and its option labels, descriptions left out. The batch
+      ends with its \`cursor:\` line, as before.
+
+      \`--summary\` asks for the stricter shape instead: exactly one line
+      per entry, body folded onto it and cut. Bare it means
+      ${BARE_SUMMARY_CHARS} characters, \`--summary=<n>\` picks the width,
+      and \`--summary=0\` is the default again — the whole body. **Only the
+      \`=\` form is accepted**: a flag whose argument is optional cannot
+      also take a space-separated one, so \`--summary 10\` fails with an
+      extraneous-argument error instead of quietly cutting at 10.
+      \`--json\` has always emitted whole bodies and is untouched, so the
+      two modes now agree on their default.
 
       Exit codes: 0 = new entries were printed (in any watched project) or
       a \`--poll\` finished its one check, news or not; 3 = a blocking watch
@@ -207,6 +223,10 @@ export class WatchCommand extends ProjectCommand {
         'todou watch --poll --since "$CURSOR" --type comment',
       ],
       [
+        "One line per entry instead of whole bodies (note the `=`)",
+        "todou watch -p todou --poll --summary=120",
+      ],
+      [
         "Bootstrap a cursor at now",
         "cursor=$(todou watch -p todou --poll --print-cursor)",
       ],
@@ -264,7 +284,8 @@ export class WatchCommand extends ProjectCommand {
     description: "Watch every accessible project (conflicts with -p)",
   });
   summary = Option.String("--summary", {
-    description: "Body characters per line in text mode (default 120)",
+    tolerateBoolean: true,
+    description: `Truncate bodies to this many chars, one line per entry (bare --summary = ${BARE_SUMMARY_CHARS}; default 0 = the whole body; --summary=<n> only, not --summary <n>)`,
   });
   printCursor = Option.Boolean("--print-cursor", false, {
     description: "With --poll: print the next cursor alone and exit 0",
@@ -308,9 +329,11 @@ export class WatchCommand extends ProjectCommand {
           ? undefined
           : FOLLOW_DEBOUNCE_SEC;
     const summaryChars =
-      this.summary === undefined
-        ? 120
-        : parsePositiveInt(this.summary, "--summary");
+      this.summary === undefined || this.summary === false
+        ? 0
+        : this.summary === true
+          ? BARE_SUMMARY_CHARS
+          : parsePositiveInt(this.summary, "--summary", { zero: true });
     const self = this.anyActor
       ? {}
       : await resolveSelfFilter(client, this.agentContext, retry);

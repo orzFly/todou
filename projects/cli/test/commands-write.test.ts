@@ -576,9 +576,7 @@ describe("comment add", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(posted).toEqual({ body: "a note" });
-    expect(result.stdout).toBe(
-      "comment 1 on #7 (#comment-1) · 6 chars: a note\n",
-    );
+    expect(result.stdout).toBe("#comment-1 on #7 · 6 chars: a note\n");
   });
 
   it("keeps the --json envelope free of the echoed id line", async () => {
@@ -628,9 +626,7 @@ describe("comment add", () => {
       { fetchImpl, env: loggedInEnv() },
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe(
-      "comment 1 on #7 (#comment-1) · 6 chars: a note\n",
-    );
+    expect(result.stdout).toBe("#comment-1 on #7 · 6 chars: a note\n");
   });
 });
 
@@ -712,7 +708,7 @@ describe("comment add, --body given a path", () => {
     );
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe(
-      "comment 1 on #7 (#comment-1) · 10 chars: 守法落地了 第二段\n",
+      "#comment-1 on #7 · 10 chars: 守法落地了 第二段\n",
     );
   });
 });
@@ -757,7 +753,7 @@ describe("comment add cursor", () => {
   it("closes the human output with the cursor to wait from", async () => {
     const { run } = await add([]);
     expect(run.stdout).toBe(
-      `comment 51 on #7 (#comment-51) · 6 chars: a note\ncursor: ${CURSOR} (issue watch --since <cursor>)\n`,
+      `#comment-51 on #7 · 6 chars: a note\ncursor: ${CURSOR} (issue watch --since <cursor>)\n`,
     );
   });
 
@@ -765,7 +761,7 @@ describe("comment add cursor", () => {
     const { run } = await add(["--print-cursor"]);
     expect(run.exitCode).toBe(0);
     expect(run.stdout).toBe(`${CURSOR}\n`);
-    expect(run.stderr).toContain("comment 51 on #7");
+    expect(run.stderr).toContain("#comment-51 on #7");
   });
 
   it("--print-cursor and --json both want stdout, so nothing is posted", async () => {
@@ -818,7 +814,7 @@ describe("comment edit", () => {
     );
     expect(result.exitCode).toBe(0);
     expect(patched).toEqual({ body: "fixed note" });
-    expect(result.stdout).toBe("edited comment 12 on #7\n");
+    expect(result.stdout).toBe("edited #comment-12 on #7\n");
   });
 
   it("rejects a non-numeric comment id", async () => {

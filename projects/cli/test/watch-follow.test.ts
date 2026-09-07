@@ -273,6 +273,54 @@ describe("watch --follow=uds (T-252)", () => {
     expect(push.closed()).toBe(true);
   });
 
+  /**
+   * The path T-283 was really about: this body is read by a model that
+   * cannot go and fetch the rest, and a fence whose two markers were folded
+   * onto one line leaves it unable to tell where the code stops.
+   */
+  it("pushes a comment's whole body, code fence and id included", async () => {
+    const clock = virtualClock();
+    const push = fakePeerPush();
+    const instruction = [
+      "补充更全面的环境变量信息：",
+      "",
+      "```bash",
+      "HERMES_SESSION_PLATFORM=telegram",
+      "```",
+      "",
+      "此外，`_HERMES_GATEWAY=1` 也是一个强力信号。",
+    ].join("\n");
+    const { fetchImpl } = activityRoutes([
+      ...batch([{ ...comment(9, 3, clock.iso()), body: instruction }], "a1"),
+      quiet,
+      quiet,
+    ]);
+
+    await runCli(
+      [
+        "watch",
+        "-p",
+        "todou",
+        "--since",
+        "a0",
+        "--follow=uds",
+        "--interval",
+        "2",
+        "--timeout",
+        "300",
+      ],
+      { fetchImpl, env: udsEnv, clock, openPeerPush: push.open },
+    );
+
+    const body = push.pushes[0]?.body ?? "";
+    expect(body).toContain("#comment-9");
+    expect(body).toContain("\n  ```bash\n");
+    expect(body).toContain("\n  HERMES_SESSION_PLATFORM=telegram\n");
+    expect(body).toContain("\n  ```\n");
+    expect(body).toContain("此外，`_HERMES_GATEWAY=1` 也是一个强力信号。");
+    expect(body).not.toContain("…");
+  });
+
   it("degrades on a refusal: hands over the batch, says why, exits 0", async () => {
     const clock = virtualClock();
     const push = fakePeerPush({

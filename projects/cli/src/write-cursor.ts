@@ -21,9 +21,6 @@ import {
  * shape or the meaning of `--since`.
  */
 
-/** Body characters a missed entry shows, matching `issue watch`'s default. */
-const SUMMARY_CHARS = 120;
-
 export type WriteCursorFlags = {
   json: boolean;
   printCursor: boolean;
@@ -215,8 +212,11 @@ function noteMissed(
       renderActivityLine(item, emit.paint, {
         refLabel: formatRef(emit.refPrefix, emit.issueNumber),
         issueNumber: emit.issueNumber,
+        // No flag reaches here either, and this report says "you missed
+        // these while you were writing" — cutting them is what would send
+        // the reader back for the rest.
+        summaryChars: 0,
         refPrefix: emit.refPrefix,
-        summaryChars: SUMMARY_CHARS,
       }),
     );
   }

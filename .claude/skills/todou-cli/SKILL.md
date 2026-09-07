@@ -160,10 +160,16 @@ todou issue watch 16 -p <proj> --follow=uds                            # the sam
 - A wait returns only for entries created after its cursor, so when you wait for a state (a verdict,
   an answer, a status), read the state first and block only while it is not there yet. `spec wait`
   and `question wait` do this themselves; before an `issue watch`, run `issue view --brief`.
-- Each line reads `<ref> <who> <what> <when>: <summary>`, a comment line carrying the start of its
-  body, which is what you act on (`--summary <chars>` sets the width, default 120). Resume from the
-  closing `cursor:` line; a newer cursor skips what arrived in between. `--debounce N` returns one
-  batch N seconds after the first entry.
+- An entry is a block, not a line: a header reading `<ref> #comment-<id> <who> <what> <when>:` and
+  then the comment's body **in full** — that body is what you act on, and you no longer have to fetch
+  the rest of it. Continuation lines are indented two spaces, so splitting on `^\S` still gives one
+  entry per piece. An entry an agent wrote names its harness and session after the author,
+  `(claude-code, <session>)`; a question comment has its questions and option labels appended.
+  Resume from the closing `cursor:` line; a newer cursor skips what arrived in between. `--debounce N`
+  returns one batch N seconds after the first entry.
+- `--summary` buys back one line per entry, body folded and cut: bare it means 120 characters,
+  `--summary=<n>` picks the width, `--summary=0` is the default (no truncation). **Only the `=` form
+  works** — `--summary 10` fails with an extraneous-argument error.
 - `issue watch` and `todou watch` skip entries from your own agent session, not from your whole
   account, so a sibling agent on the same machine account does wake them; `spec wait` skips the whole
   account. Entries without an agent session (the web UI) count as the account. `--any-actor` turns
@@ -296,7 +302,8 @@ line is the outcome; all three exit 0, only a fatal error exits 1.
 
 Revision loop:
 
-1. `todou spec comments <n> -p <proj> --unresolved` lists each annotation with id, file, anchor and body.
+1. `todou spec comments <n> -p <proj> --unresolved` lists each annotation with id, file, anchor and
+   body. The id prints as `#comment-<id>`, which `spec resolve` takes verbatim — do not strip it.
 2. Revise the documents. Requirement changes go into `proposal.md` as well.
 3. `todou spec resolve <n> <ids…>` for each annotation you addressed.
 4. Push again with `--if-version <v> --wait`. The guard rejects a concurrent push; annotations follow

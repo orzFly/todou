@@ -70,7 +70,7 @@ describe("todou search", () => {
     const lines = res.stdout.trimEnd().split("\n");
     expect(lines).toHaveLength(4);
     expect(lines[0]).toMatch(/^T-141\s+issue\s+增加项目内全文搜索功能$/);
-    expect(lines[1]).toMatch(/^T-141\s+comment 88\s+实测：全文搜索走 GIN$/);
+    expect(lines[1]).toMatch(/^T-141\s+#comment-88\s+实测：全文搜索走 GIN$/);
     expect(lines[2]).toMatch(/^T-141\s+spec design\.md\s+全文搜索的定稿$/);
     expect(lines[3]).toBe("3 hits");
 

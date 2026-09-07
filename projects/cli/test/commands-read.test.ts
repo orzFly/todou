@@ -951,8 +951,8 @@ describe("comment list", () => {
       env: loggedInEnv("todou"),
     });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("comment 1 · Claude commented");
-    expect(result.stdout).toContain("comment 2 · Bot One commented");
+    expect(result.stdout).toContain("#comment-1 · Claude commented");
+    expect(result.stdout).toContain("#comment-2 · Bot One commented");
     // The whole body, not the one-line summary a watch prints — the point
     // of the command is reading what was said without truncation.
     expect(result.stdout).toContain("second paragraph");
@@ -970,9 +970,9 @@ describe("comment list", () => {
       env: loggedInEnv("todou"),
     });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("comment 1 ·");
-    expect(result.stdout).toContain("comment 3 ·");
-    expect(result.stdout).not.toContain("comment 2 ·");
+    expect(result.stdout).toContain("#comment-1 ·");
+    expect(result.stdout).toContain("#comment-3 ·");
+    expect(result.stdout).not.toContain("#comment-2 ·");
   });
 
   it("filters by a named login", async () => {
@@ -992,8 +992,8 @@ describe("comment list", () => {
       { fetchImpl, env: loggedInEnv("todou") },
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("comment 2 ·");
-    expect(result.stdout).not.toContain("comment 1 ·");
+    expect(result.stdout).toContain("#comment-2 ·");
+    expect(result.stdout).not.toContain("#comment-1 ·");
   });
 
   it("filters by body text, case-insensitively", async () => {
@@ -1003,8 +1003,8 @@ describe("comment list", () => {
       env: loggedInEnv("todou"),
     });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("comment 2 ·");
-    expect(result.stdout).not.toContain("comment 1 ·");
+    expect(result.stdout).toContain("#comment-2 ·");
+    expect(result.stdout).not.toContain("#comment-1 ·");
   });
 
   it("distinguishes a card with no comments from filters that miss", async () => {
@@ -1037,8 +1037,8 @@ describe("comment list", () => {
       env: loggedInEnv("todou"),
     });
     expect(newest.stdout).toContain("… 2 earlier comments");
-    expect(newest.stdout).toContain("comment 3 ·");
-    expect(newest.stdout).not.toContain("comment 1 ·");
+    expect(newest.stdout).toContain("#comment-3 ·");
+    expect(newest.stdout).not.toContain("#comment-1 ·");
 
     const one = fakeFetch([timelineRoute()]);
     const singular = await runCli(["comment", "list", "3", "--last", "2"], {
@@ -1099,7 +1099,7 @@ describe("comment view", () => {
         env: loggedInEnv("todou"),
       });
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("comment 123 · Claude commented");
+      expect(result.stdout).toContain("#comment-123 · Claude commented");
       expect(result.stdout).toContain("the decision was to migrate");
     }
   });
@@ -1187,7 +1187,7 @@ describe("comment delete", () => {
       env: loggedInEnv("todou"),
     });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe("deleted comment 123 on #3\n");
+    expect(result.stdout).toBe("deleted #comment-123 on #3\n");
     expect(
       calls.some(
         (c) =>
@@ -1223,7 +1223,7 @@ describe("comment delete", () => {
     expect(result.stderr).toContain("cancelled");
     // The prompt names author, card and body, so the wrong id is caught here.
     expect(result.stderr).toContain(
-      'Delete comment 123 by Claude on #3? "posted on the wrong card"',
+      'Delete #comment-123 by Claude on #3? "posted on the wrong card"',
     );
     expect(calls.some((c) => c.init.method === "DELETE")).toBe(false);
   });
@@ -1319,7 +1319,7 @@ describe("issue events", () => {
     });
     expect(result.exitCode).toBe(0);
     // Comment ids and event ids overlap, so the kind is always named.
-    expect(result.stdout).toContain("comment 1 · Claude commented");
+    expect(result.stdout).toContain("#comment-1 · Claude commented");
     expect(result.stdout).not.toContain("event 1 ·");
   });
 

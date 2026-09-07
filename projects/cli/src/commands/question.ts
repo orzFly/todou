@@ -22,14 +22,14 @@ import {
   personName,
   relativeTime,
 } from "../format.ts";
-import { parsePositiveInt, parseSeconds } from "../parse.ts";
+import { parseCommentId, parseSeconds } from "../parse.ts";
 import {
   decodeAnswerEvent,
   renderAnswerRecords,
   renderQuestions,
 } from "../questions.ts";
 import { fetchRefPrefix } from "../resolve.ts";
-import { drainTimeline } from "../timeline.ts";
+import { commentRef, drainTimeline } from "../timeline.ts";
 import {
   quietNote,
   retryTransient,
@@ -50,7 +50,7 @@ type AnswerResult = {
 
 function renderAnswerResult(result: AnswerResult, paint: Painter): string {
   return [
-    `${paint("cyan", personName(result.actor))} answered comment ${result.comment_id} ${relativeTime(result.created_at)}:`,
+    `${paint("cyan", personName(result.actor))} answered ${commentRef(result.comment_id)} ${relativeTime(result.created_at)}:`,
     ...renderAnswerRecords(result.answers, paint),
   ].join("\n");
 }
@@ -67,7 +67,7 @@ async function findQuestionComment(
     // "issue N", not the project's ref spelling: a failure path should not
     // spend a round trip on the reference config just to phrase itself.
     throw new CliError(
-      `comment ${commentId} on issue ${number} carries no questions`,
+      `${commentRef(commentId)} on issue ${number} carries no questions`,
       `list question comments with \`todou question list ${number}\``,
     );
   }
@@ -112,7 +112,7 @@ export class QuestionListCommand extends ProjectCommand {
             )
           : paint("yellow", "awaiting answer");
         lines.push(
-          `${paint("bold", `comment ${item.comment_id}`)} · ${personName(item.author)} ${relativeTime(item.created_at)} · ${state}`,
+          `${paint("bold", commentRef(item.comment_id))} · ${personName(item.author)} ${relativeTime(item.created_at)} · ${state}`,
         );
         lines.push(
           ...renderQuestions(
@@ -183,7 +183,7 @@ export class QuestionWaitCommand extends ProjectCommand {
 
   protected async run(client: TodouClient): Promise<number> {
     const { project, number } = await this.resolveIssueRef(client, this.number);
-    const commentId = parsePositiveInt(this.commentId, "comment id");
+    const commentId = parseCommentId(this.commentId);
     const mode = watchMode(this.poll, this.forever);
     const retry = watchRetryOptions(
       mode,
@@ -278,7 +278,7 @@ export class QuestionWaitCommand extends ProjectCommand {
           this.output({ comment_id: commentId, answer: null }, () =>
             this.poll
               ? "not answered yet"
-              : `no answer within ${timeoutSec}s (comment ${commentId} on issue ${number})`,
+              : `no answer within ${timeoutSec}s (${commentRef(commentId)} on issue ${number})`,
           ),
       });
     } finally {
@@ -329,7 +329,7 @@ export class QuestionAnswerCommand extends ProjectCommand {
 
   protected async run(client: TodouClient): Promise<void> {
     const { project, number } = await this.resolveIssueRef(client, this.number);
-    const commentId = parsePositiveInt(this.commentId, "comment id");
+    const commentId = parseCommentId(this.commentId);
     const input =
       this.answersInput === undefined
         ? await this.buildFromFlags(client, project, number, commentId)
@@ -343,7 +343,8 @@ export class QuestionAnswerCommand extends ProjectCommand {
     const refPrefix = this.json ? null : await fetchRefPrefix(client, project);
     this.output(
       item,
-      () => `answered comment ${commentId} on ${formatRef(refPrefix, number)}`,
+      () =>
+        `answered ${commentRef(commentId)} on ${formatRef(refPrefix, number)}`,
     );
   }
 
@@ -397,7 +398,7 @@ export class QuestionAnswerCommand extends ProjectCommand {
     const question = item.questions[0];
     if (item.questions.length !== 1 || question === undefined) {
       throw new CliError(
-        `comment ${commentId} has ${item.questions.length} questions — flags only cover one`,
+        `${commentRef(commentId)} has ${item.questions.length} questions — flags only cover one`,
         "submit them together with --answers",
       );
     }

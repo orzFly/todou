@@ -3,13 +3,15 @@ import { describe, expect, it } from "vitest";
 import type { Painter } from "../src/format.ts";
 import {
   type ActivityLineContext,
+  BARE_SUMMARY_CHARS,
   renderActivityLine,
   renderTimelineItem,
 } from "../src/timeline.ts";
 
 /**
- * T-175: a watch prints one line per entry, and a comment's line has to
- * show what was said. These are the wordings a sentinel reads.
+ * T-175: a watch prints one entry per block, and a comment's block has to
+ * show what was said — whole, since T-283, with the truncated one-line
+ * shape kept behind `--summary`. These are the wordings a sentinel reads.
  */
 
 /** Colors are noise here; the line's text is the whole subject. */
@@ -28,7 +30,7 @@ const ctx: ActivityLineContext = {
   refLabel: "T-146",
   issueNumber: 146,
   refPrefix: "T",
-  summaryChars: 120,
+  summaryChars: 0,
 };
 
 const comment = (over: Partial<TimelineComment> = {}): TimelineComment => ({
@@ -56,25 +58,31 @@ const event = (over: Partial<TimelineEvent> = {}): TimelineEvent => ({
 });
 
 describe("renderActivityLine", () => {
-  it("shows the start of a comment body — the point of the exercise", () => {
+  it("shows a comment body — the point of the exercise", () => {
     const line = renderActivityLine(
       comment({ body: "要在 dogfood 上开——先把 CLI 发布到镜像里" }),
       paint,
       ctx,
     );
     expect(line).toMatch(
-      /^T-146 User commented .+: 要在 dogfood 上开——先把 CLI 发布到镜像里$/,
+      /^T-146 #comment-757 User commented .+: 要在 dogfood 上开——先把 CLI 发布到镜像里$/,
     );
     expect(line.split("\n")).toHaveLength(1);
   });
 
-  it("folds a multi-paragraph body onto its one line", () => {
+  it("gives a multi-paragraph body its real newlines", () => {
     const line = renderActivityLine(
       comment({ body: "first\n\n  second\tthird  " }),
       paint,
       ctx,
     );
-    expect(line.endsWith(": first second third")).toBe(true);
+    const lines = line.split("\n");
+    expect(lines).toHaveLength(3);
+    expect(lines[0]?.endsWith(": first")).toBe(true);
+    // A blank line stays blank rather than collecting the indent, so the
+    // paragraph break survives a reader that trims nothing.
+    expect(lines[1]).toBe("");
+    expect(lines[2]).toBe("    second\tthird");
   });
 
   it("truncates by code point, not by byte", () => {
@@ -175,7 +183,7 @@ describe("renderActivityLine", () => {
       ctx,
     );
     expect(line).toMatch(
-      /^T-146 User answered comment 757 .+: storage=Reuse mechanism A; rollout=next week$/,
+      /^T-146 User answered #comment-757 .+: storage=Reuse mechanism A; rollout=next week$/,
     );
   });
 
@@ -205,6 +213,197 @@ describe("renderActivityLine", () => {
   it("uses the ref label it is handed, whatever the stream spells", () => {
     expect(
       renderActivityLine(comment(), paint, { ...ctx, refLabel: "backend/7" }),
-    ).toMatch(/^backend\/7 User commented /);
+    ).toMatch(/^backend\/7 #comment-757 User commented /);
+  });
+
+  /**
+   * The reason folding onto one line was rejected: a fence whose opening
+   * and closing markers land on the same line leaves the model reading it
+   * unable to tell where the code stops — and that reader is on the path
+   * this card is fixing (`--follow=uds`).
+   */
+  it("leaves a fenced code block inside a body intact", () => {
+    const line = renderActivityLine(
+      comment({
+        body: "环境变量：\n\n```bash\nHERMES_SESSION_PLATFORM=telegram\n```\n\n就这些。",
+      }),
+      paint,
+      ctx,
+    );
+    const lines = line.split("\n");
+    expect(lines.filter((l) => l === "  ```bash")).toHaveLength(1);
+    expect(lines.filter((l) => l === "  ```")).toHaveLength(1);
+    expect(lines).toContain("  HERMES_SESSION_PLATFORM=telegram");
+  });
+
+  it("gives an answer's free text whole, however long", () => {
+    const other = "唉，".repeat(100);
+    const line = renderActivityLine(
+      event({
+        event_type: "question_answered",
+        payload: {
+          comment_id: 757,
+          answers: [{ key: "q1", selected: [], other, declined: false }],
+        },
+      }),
+      paint,
+      ctx,
+    );
+    expect(line).toContain(`q1=${other}`);
+    expect(line).not.toContain("…");
+  });
+
+  it("expands a question comment's questions and option labels", () => {
+    const line = renderActivityLine(
+      comment({
+        body: "两个问题",
+        component: {
+          type: "questions",
+          questions: [
+            {
+              key: "storage",
+              question: "Where should X live?",
+              options: [
+                { label: "Reuse A", description: "cheaper, but couples them" },
+                { label: "New entity" },
+              ],
+              multiple: false,
+            },
+            {
+              key: "rollout",
+              question: "When?",
+              options: [{ label: "Now" }, { label: "Later" }],
+              multiple: false,
+            },
+          ],
+        },
+      }),
+      paint,
+      ctx,
+    );
+    expect(line).toContain("Where should X live?");
+    expect(line).toContain("1) Reuse A");
+    expect(line).toContain("2) New entity");
+    expect(line).toContain("When?");
+    // Descriptions are what would multiply the length of an entry nobody
+    // asked to read in full; the labels are enough to answer with.
+    expect(line).not.toContain("cheaper, but couples them");
+  });
+
+  describe("--summary", () => {
+    const capped: ActivityLineContext = {
+      ...ctx,
+      summaryChars: BARE_SUMMARY_CHARS,
+    };
+
+    it("folds a multi-line body back onto exactly one line", () => {
+      const line = renderActivityLine(
+        comment({ body: `开头\n\n${"很长的中文正文。".repeat(30)}` }),
+        paint,
+        capped,
+      );
+      expect(line.split("\n")).toHaveLength(1);
+      expect(line.endsWith("…")).toBe(true);
+    });
+
+    it("keeps the questions badge but drops the block it heads", () => {
+      const line = renderActivityLine(
+        comment({
+          body: "一个问题",
+          component: {
+            type: "questions",
+            questions: [
+              {
+                key: "storage",
+                question: "Where should X live?",
+                options: [{ label: "Reuse A" }],
+                multiple: false,
+              },
+            ],
+          },
+        }),
+        paint,
+        capped,
+      );
+      expect(line).toContain("[questions ×1]: 一个问题");
+      expect(line).not.toContain("Where should X live?");
+      expect(line.split("\n")).toHaveLength(1);
+    });
+  });
+
+  describe("agent provenance", () => {
+    const context = {
+      agent: "claude-code",
+      session_id: "9de4032d-4325-4337-943f-f0f0c14cac9c",
+    };
+
+    it("names the harness and session of a comment an agent wrote", () => {
+      expect(
+        renderActivityLine(comment({ agent_context: context }), paint, ctx),
+      ).toContain(
+        "User (claude-code, 9de4032d-4325-4337-943f-f0f0c14cac9c) commented",
+      );
+    });
+
+    it("names them on an event too", () => {
+      expect(
+        renderActivityLine(event({ agent_context: context }), paint, ctx),
+      ).toContain(
+        "User (claude-code, 9de4032d-4325-4337-943f-f0f0c14cac9c) status_changed",
+      );
+    });
+
+    it("adds nothing at all for a write with no agent behind it", () => {
+      expect(renderActivityLine(comment(), paint, ctx)).not.toContain("(");
+      expect(renderActivityLine(event(), paint, ctx)).toContain(
+        "User status_changed",
+      );
+    });
+
+    it("prints the harness alone when no session came with it", () => {
+      expect(
+        renderActivityLine(
+          comment({ agent_context: { agent: "hermes-agent" } }),
+          paint,
+          ctx,
+        ),
+      ).toContain("User (hermes-agent) commented");
+    });
+  });
+});
+
+describe("renderTimelineItem", () => {
+  it("heads every comment with its id, asked for or not", () => {
+    expect(renderTimelineItem(comment(), paint, ctx)).toMatch(
+      /^#comment-757 · User commented /,
+    );
+  });
+
+  it("names the agent behind a comment", () => {
+    expect(
+      renderTimelineItem(
+        comment({ agent_context: { agent: "claude-code", session_id: "abc" } }),
+        paint,
+        ctx,
+      ),
+    ).toContain("User (claude-code, abc) commented");
+  });
+
+  it("spells an answered event's target as a pastable comment ref", () => {
+    expect(
+      renderTimelineItem(
+        event({
+          event_type: "question_answered",
+          payload: {
+            comment_id: 757,
+            answers: [
+              { key: "q1", selected: [], other: "yes", declined: false },
+            ],
+          },
+        }),
+        paint,
+        ctx,
+      ),
+    ).toContain("answered #comment-757");
   });
 });

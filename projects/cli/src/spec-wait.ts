@@ -29,9 +29,6 @@ import {
  * called, or what the output looks like.
  */
 
-/** Body characters an entry line shows, matching `issue watch`'s default. */
-const SUMMARY_CHARS = 120;
-
 export type SpecOutcomeName = "approved" | "changes_requested" | "feedback";
 
 export type SpecOutcome = {
@@ -175,8 +172,11 @@ export async function waitForSpecReview(args: {
             renderActivityLine(item, args.paint, {
               refLabel: formatRef(refPrefix, number),
               issueNumber: number,
+              // No flag reaches here, and this path exists for exactly the
+              // case a truncated body ruins: somebody amended the
+              // requirement in a plain comment instead of a verdict.
+              summaryChars: 0,
               refPrefix,
-              summaryChars: SUMMARY_CHARS,
             }),
           ),
           ...(cursor === undefined

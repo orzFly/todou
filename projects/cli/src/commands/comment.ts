@@ -11,7 +11,7 @@ import {
   plural,
   summarize,
 } from "../format.ts";
-import { parseIssueRef, parsePositiveInt } from "../parse.ts";
+import { parseCommentId, parseIssueRef, parsePositiveInt } from "../parse.ts";
 import { confirm } from "../prompt.ts";
 import { readQuestionsInput } from "../questions.ts";
 import { refFormat, withIssueRef } from "../refs.ts";
@@ -20,7 +20,7 @@ import {
   fetchRefSpelling,
   resolveAssignees,
 } from "../resolve.ts";
-import { drainTimeline, renderTimelineItem } from "../timeline.ts";
+import { commentRef, drainTimeline, renderTimelineItem } from "../timeline.ts";
 import {
   assertWriteCursorFlags,
   collectWriteCursor,
@@ -35,17 +35,6 @@ function bodyShape(body: string): string {
 
 function isTTY(stream: unknown): boolean {
   return Boolean((stream as { isTTY?: boolean })?.isTTY);
-}
-
-/** A comment id, bare or as the web spells it in a permalink fragment. */
-const COMMENT_ANCHOR = /^#?comment-(\d{1,9})$/;
-
-/**
- * `#comment-123` is what a reader copies out of the address bar, so it has
- * to paste back in wherever the bare number goes (T-183).
- */
-function parseCommentId(raw: string): number {
-  return parsePositiveInt(COMMENT_ANCHOR.exec(raw)?.[1] ?? raw, "comment id");
 }
 
 /**
@@ -195,7 +184,7 @@ export class CommentAddCommand extends ProjectCommand {
             // went wrong — a mistyped flag, an empty heredoc — otherwise has
             // no echo at all, and the writer is the one person who can still
             // tell (T-198).
-            `comment ${comment.id} on ${posted.issue_ref} (#comment-${comment.id})` +
+            `${commentRef(comment.id)} on ${posted.issue_ref}` +
             ` · ${bodyShape(body)}`
           : `asked ${component.questions.length} question(s) on ${posted.issue_ref} — ` +
             `wait for answers with \`todou question wait ${number} ${comment.id}\``,
@@ -211,9 +200,9 @@ export class CommentListCommand extends ProjectCommand {
       \`<number>\` also accepts \`<project>/<number>\` or a full issue URL.
 
       The comment half of the timeline, printed whole: **bodies are never
-      truncated**, and every block is headed \`comment <id> ·\` — the id
-      \`comment view/edit/delete\` takes and \`#comment-<id>\` links to.
-      The other half is \`issue events\`.
+      truncated**, and every block is headed \`#comment-<id> ·\` — the one
+      spelling \`comment view/edit/delete\` takes and the web links to, so
+      it pastes straight back. The other half is \`issue events\`.
 
       \`--author\`, \`-q\` and \`--last\` narrow the set after the timeline
       is drained, so they compose freely. Unlike \`issue view\`, this
@@ -289,7 +278,6 @@ export class CommentListCommand extends ProjectCommand {
             renderTimelineItem(comment, paint, {
               issueNumber: number,
               ...spelling,
-              showId: true,
             }),
           ),
           ...(cursor === undefined
@@ -358,7 +346,6 @@ export class CommentViewCommand extends ProjectCommand {
         renderTimelineItem(found.comment, paint, {
           issueNumber: found.number,
           ...spelling,
-          showId: true,
         }),
     );
   }
@@ -392,7 +379,7 @@ export class CommentViewCommand extends ProjectCommand {
       // and the id it was asked for belongs to the project it left.
       if (to.comment_id === undefined) {
         throw new CliError(
-          `comment ${commentId} is on ${project}/${number}, which moved to ${to.slug}/${to.number}`,
+          `${commentRef(commentId)} is on ${project}/${number}, which moved to ${to.slug}/${to.number}`,
           `the ids are the old project's; read it there: todou comment list ${to.slug}/${to.number}`,
         );
       }
@@ -467,7 +454,7 @@ export class CommentEditCommand extends ProjectCommand {
     );
     this.output(
       edited,
-      () => `edited comment ${commentId} on ${edited.issue_ref}`,
+      () => `edited ${commentRef(commentId)} on ${edited.issue_ref}`,
     );
   }
 }
@@ -514,7 +501,7 @@ export class CommentDeleteCommand extends ProjectCommand {
       const ok = await confirm(
         this.context.stdin,
         this.context.stderr,
-        `Delete comment ${commentId} by ${personName(comment.author)} on ` +
+        `Delete ${commentRef(commentId)} by ${personName(comment.author)} on ` +
           `${target.issue_ref}? "${summarize(comment.body, 80)}"`,
       );
       if (!ok) {
@@ -526,7 +513,7 @@ export class CommentDeleteCommand extends ProjectCommand {
     await client.deleteComment(project, number, commentId);
     this.output(
       { ...target, deleted: true },
-      () => `deleted comment ${commentId} on ${target.issue_ref}`,
+      () => `deleted ${commentRef(commentId)} on ${target.issue_ref}`,
     );
     return 0;
   }

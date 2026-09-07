@@ -1,12 +1,39 @@
 import { ProjectSlug, parseRefLocator } from "@todou/shared";
 import { CliError } from "./errors.ts";
 
-export function parsePositiveInt(value: string, what: string): number {
+/**
+ * A positive integer. `zero` admits 0 for the one flag where it names a
+ * real setting rather than an impossible one: `--summary=0` is "do not
+ * truncate", which is what off means (T-283).
+ */
+export function parsePositiveInt(
+  value: string,
+  what: string,
+  opts?: { zero?: boolean },
+): number {
   const n = Number(value);
-  if (!Number.isInteger(n) || n <= 0) {
-    throw new CliError(`${what} must be a positive integer, got "${value}"`);
+  const tooSmall = opts?.zero ? n < 0 : n <= 0;
+  if (!Number.isInteger(n) || tooSmall) {
+    throw new CliError(
+      `${what} must be a ${opts?.zero ? "non-negative" : "positive"} integer, got "${value}"`,
+    );
   }
   return n;
+}
+
+/** A comment id bare, hash-prefixed, or as the web spells a permalink. */
+const COMMENT_ANCHOR = /^#?(?:comment-)?(\d{1,9})$/;
+
+/**
+ * A comment id in any spelling a reader can end up holding.
+ * `#comment-<id>` is the only form the renderers print and the fragment the
+ * web puts in a permalink, so it has to paste back in wherever the bare
+ * number goes (T-183, T-283) — one parser for every command that takes an
+ * id, or the accepted spellings drift apart per command. `#<id>` stays in
+ * because `spec resolve` has always taken it.
+ */
+export function parseCommentId(value: string, what = "comment id"): number {
+  return parsePositiveInt(COMMENT_ANCHOR.exec(value)?.[1] ?? value, what);
 }
 
 /**

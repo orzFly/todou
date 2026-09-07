@@ -1,4 +1,9 @@
-import type { TimelineEvent, TimelineItem, TodouClient } from "@todou/shared";
+import type {
+  AgentContext,
+  TimelineEvent,
+  TimelineItem,
+  TodouClient,
+} from "@todou/shared";
 import { formatRef, SpecPushedPayload, SpecReviewPayload } from "@todou/shared";
 import { type Painter, personName, relativeTime, summarize } from "./format.ts";
 import { drainPaged } from "./paginate.ts";
@@ -52,14 +57,6 @@ export type TimelineRenderContext = {
   issueNumber: number;
   refPrefix: string | null;
   /**
-   * Head a comment block with `comment <id> ·`. Off everywhere the block
-   * sits inside a card the reader is looking at whole — there the id is
-   * noise. `comment list`/`view` turn it on because handing the id back is
-   * what they exist for: it is `comment edit/delete/view`'s argument and
-   * the `#comment-<id>` permalink (T-183).
-   */
-  showId?: boolean;
-  /**
    * Project id → slug, for the `by_project_id` a reference event carries
    * (T-266). Preferred over the slug in the payload, which has to be read as
    * of the event's own instant and goes wrong once a slug changes hands.
@@ -74,19 +71,83 @@ export type TimelineRenderContext = {
   projectId?: number;
 };
 
+/**
+ * The one spelling of a comment id in this CLI. It is `comment view`'s
+ * argument and the web's permalink fragment at once, so the string a reader
+ * takes off a line pastes back into a command unchanged (T-283).
+ */
+export function commentRef(id: number): string {
+  return `#comment-${id}`;
+}
+
+/**
+ * A body on an activity line. A positive `summaryChars` cuts it to one
+ * folded line — what `--summary` asks for; at 0 the whole body goes out,
+ * first line on the header and the rest indented two spaces so a reader
+ * (and a `^\S` split) can still tell one entry from the next. Two spaces,
+ * not four: at four a fenced code block inside the body would parse as an
+ * indented one.
+ */
+function bodyBlock(text: string, summaryChars: number): string {
+  if (summaryChars > 0) return summarize(text, summaryChars);
+  const [head, ...rest] = text.trim().split("\n");
+  return [
+    head,
+    ...rest.map((line) => (line.trim() === "" ? "" : `  ${line}`)),
+  ].join("\n");
+}
+
+/**
+ * ` (claude-code, <session>)` for a write an agent reported provenance
+ * for, empty for a human one — a stream several agent sessions write to is
+ * unreadable without it, and `watch` filters by exactly this session id.
+ *
+ * `undefined` is in the signature because responses are cast, not parsed: a
+ * server predating the field sends no such key, and reading `.agent` off
+ * that would take down the whole line.
+ */
+function agentSuffix(context: AgentContext | null | undefined): string {
+  if (context === undefined || context === null) return "";
+  const session =
+    context.session_id === undefined ? "" : `, ${context.session_id}`;
+  return ` (${context.agent}${session})`;
+}
+
+/**
+ * A person as a comment or answer line names them, provenance included.
+ * Shared by both renderers so they cannot come to spell one author two
+ * ways; the event lines paint themselves dim whole and inline the suffix
+ * instead.
+ */
+function personLabel(
+  user: { display_name?: string; login: string },
+  context: AgentContext | null | undefined,
+  paint: Painter,
+): string {
+  const suffix = agentSuffix(context);
+  // An empty suffix is kept out of `paint`, which would otherwise wrap it
+  // in a pair of escape sequences around nothing.
+  return `${paint("cyan", personName(user))}${suffix === "" ? "" : paint("dim", suffix)}`;
+}
+
 export function renderTimelineItem(
   item: TimelineItem,
   paint: Painter,
   ctx: TimelineRenderContext,
 ): string {
   const when = relativeTime(item.created_at);
+  const who = (user: { display_name?: string; login: string }): string =>
+    personLabel(user, item.agent_context, paint);
   if (item.type === "comment") {
     const body = item.body
       .trimEnd()
       .split("\n")
       .map((line) => `  ${line}`)
       .join("\n");
-    const id = ctx.showId ? `${paint("dim", `comment ${item.id} ·`)} ` : "";
+    // Unconditional since T-283: the id is what a reader hands back to
+    // `comment view/edit/delete` and what `#comment-<id>` links to, and the
+    // reasoning that called it noise inside a whole card was overruled.
+    const id = `${paint("dim", `${commentRef(item.id)} ·`)} `;
     const edited = item.edited_at ? " (edited)" : "";
     const questions =
       item.component?.type === "questions"
@@ -103,27 +164,27 @@ export function renderTimelineItem(
         .split("\n")
         .map((line) => paint("dim", `  > ${line}`))
         .join("\n");
-      return `${id}${paint("cyan", personName(item.author))} commented on ${anchor.path}:${lines} (v${anchor.version}, ${resolved})${edited} ${when}:\n${quote}\n${body}`;
+      return `${id}${who(item.author)} commented on ${anchor.path}:${lines} (v${anchor.version}, ${resolved})${edited} ${when}:\n${quote}\n${body}`;
     }
-    return `${id}${paint("cyan", personName(item.author))} commented${edited} ${when}:\n${body}${questions}`;
+    return `${id}${who(item.author)} commented${edited} ${when}:\n${body}${questions}`;
   }
   const answered = item.type === "event" ? decodeAnswerEvent(item) : null;
   if (answered !== null) {
     return [
-      `${paint("cyan", personName(item.actor))} answered comment ${answered.comment_id} ${when}:`,
+      `${who(item.actor)} answered ${commentRef(answered.comment_id)} ${when}:`,
       ...renderAnswerRecords(answered.answers, paint),
     ].join("\n");
   }
   if (item.event_type === "title_changed") {
     return paint(
       "dim",
-      `${personName(item.actor)} renamed "${String(item.payload.from)}" → "${String(item.payload.to)}" ${when}`,
+      `${personName(item.actor)}${agentSuffix(item.agent_context)} renamed "${String(item.payload.from)}" → "${String(item.payload.to)}" ${when}`,
     );
   }
   const detail = eventDetail(item, ctx);
   return paint(
     "dim",
-    `${personName(item.actor)} ${item.event_type}${detail ? ` (${detail})` : ""} ${when}`,
+    `${personName(item.actor)}${agentSuffix(item.agent_context)} ${item.event_type}${detail ? ` (${detail})` : ""} ${when}`,
   );
 }
 
@@ -138,21 +199,34 @@ function anchorLines(anchor: {
     : `L${anchor.line_start}-${anchor.line_end}`;
 }
 
+/**
+ * What a bare `--summary` means. Truncating at all is opt-in since T-283 —
+ * 83% of this tracker's comments are longer than this, and an agent handed
+ * the first fifth of an instruction has to fetch the rest — so the number
+ * only has to be the width someone asking for one line per entry wants.
+ */
+export const BARE_SUMMARY_CHARS = 120;
+
 /** Where a one-line entry is being shown, and how much body it may show. */
 export type ActivityLineContext = TimelineRenderContext & {
   /** The issue's ref as this stream spells it: "T-146", or "backend/7". */
   refLabel: string;
+  /** 0 = the whole body; a positive width = cut to it, one line per entry. */
   summaryChars: number;
 };
 
 /**
- * One entry, exactly one line — what a watch prints and a sentinel greps.
+ * One entry, one block — what a watch prints and a sentinel greps. The
+ * header line starts at column 0 and every continuation line is indented,
+ * so a `^\S` split still separates one entry from the next; `--summary`
+ * asks for the stricter shape of exactly one line per entry.
  *
- * A comment shows the start of its body, not just its type: a stream that
- * says "user commented" and stops there is one whose reader misses
- * instructions addressed to them, which is the failure T-175 was filed for.
- * Events reuse `eventDetail` verbatim so the two renderers cannot drift
- * apart in how they word a status change.
+ * A comment shows its body, not just its type: a stream that says "user
+ * commented" and stops there is one whose reader misses instructions
+ * addressed to them, which is the failure T-175 was filed for — and one
+ * that shows the first 120 characters leaves the reader fetching the rest
+ * by hand, which is T-283. Events reuse `eventDetail` verbatim so the two
+ * renderers cannot drift apart in how they word a status change.
  */
 export function renderActivityLine(
   item: TimelineItem,
@@ -161,6 +235,8 @@ export function renderActivityLine(
 ): string {
   const ref = paint("bold", ctx.refLabel);
   const when = relativeTime(item.created_at);
+  const who = (user: { display_name?: string; login: string }): string =>
+    personLabel(user, item.agent_context, paint);
   if (item.type === "comment") {
     const edited = item.edited_at ? " (edited)" : "";
     const where =
@@ -171,7 +247,15 @@ export function renderActivityLine(
       item.component?.type === "questions"
         ? ` [questions ×${item.component.questions.length}]`
         : "";
-    return `${ref} ${paint("cyan", personName(item.author))} commented${where}${edited} ${when}${questions}: ${summarize(item.body, ctx.summaryChars)}`;
+    // The badge is this block's count header, so it stays under `--summary`
+    // even though the block it heads does not: the options are what makes
+    // the entry multi-line, and the reader who asked for one line per entry
+    // still has to learn there are questions waiting.
+    const asked =
+      ctx.summaryChars === 0 && item.component?.type === "questions"
+        ? `\n${renderQuestions(item.component, paint, { descriptions: false }).join("\n")}`
+        : "";
+    return `${ref} ${paint("dim", commentRef(item.id))} ${who(item.author)} commented${where}${edited} ${when}${questions}: ${bodyBlock(item.body, ctx.summaryChars)}${asked}`;
   }
   const answered = decodeAnswerEvent(item);
   if (answered !== null) {
@@ -185,12 +269,12 @@ export function renderActivityLine(
         return `${a.key}=${parts.join(", ")}`;
       })
       .join("; ");
-    return `${ref} ${paint("cyan", personName(item.actor))} answered comment ${answered.comment_id} ${when}: ${summarize(answers, ctx.summaryChars)}`;
+    return `${ref} ${who(item.actor)} answered ${commentRef(answered.comment_id)} ${when}: ${bodyBlock(answers, ctx.summaryChars)}`;
   }
   const detail = eventDetail(item, ctx);
   return `${ref} ${paint(
     "dim",
-    `${personName(item.actor)} ${item.event_type}${detail ? ` (${detail})` : ""} ${when}`,
+    `${personName(item.actor)}${agentSuffix(item.agent_context)} ${item.event_type}${detail ? ` (${detail})` : ""} ${when}`,
   )}`;
 }
 

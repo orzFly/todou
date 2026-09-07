@@ -148,7 +148,7 @@ describe("question list", () => {
       env: loggedInEnv("todou"),
     });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("comment 42");
+    expect(result.stdout).toContain("#comment-42");
     expect(result.stdout).toContain("awaiting answer");
     expect(result.stdout).toContain("1) New entity");
     expect(result.stdout).toContain("· User ");
@@ -196,6 +196,39 @@ describe("question wait", () => {
     expect(result.exitCode).toBe(0);
     const out = JSON.parse(result.stdout);
     expect(out.answers[0].selected[0].label).toBe("Inline");
+  });
+
+  it("heads its text output with the pastable comment ref", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        TIMELINE_PATH,
+        { items: [], prev_cursor: null, next_cursor: "C" },
+      ],
+      ["GET", QUESTIONS_PATH, { items: [ANSWERED_ITEM], open: 0 }],
+    ]);
+    const result = await runCli(["question", "wait", "19", "42"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.stdout).toContain("answered #comment-42");
+  });
+
+  it("takes the id in the spelling the renderers print", async () => {
+    const { fetchImpl } = fakeFetch([
+      [
+        "GET",
+        TIMELINE_PATH,
+        { items: [], prev_cursor: null, next_cursor: "C" },
+      ],
+      ["GET", QUESTIONS_PATH, { items: [ANSWERED_ITEM], open: 0 }],
+    ]);
+    const result = await runCli(["question", "wait", "19", "#comment-42"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("answered #comment-42");
   });
 
   it("decodes the question_answered event when it arrives", async () => {
@@ -331,7 +364,7 @@ describe("question answer", () => {
       { fetchImpl, env: loggedInEnv("todou") },
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("answered comment 42");
+    expect(result.stdout).toContain("answered #comment-42");
   });
 
   it("names the options when a label does not match", async () => {

@@ -47,6 +47,7 @@ import {
   shellArg,
 } from "../resolve.ts";
 import {
+  BARE_SUMMARY_CHARS,
   drainTimeline,
   renderActivityLine,
   renderTimelineItem,
@@ -624,14 +625,13 @@ export class IssueEventsCommand extends ProjectCommand {
           // "event 3", not a bare "3": comment ids and event ids are
           // separate sequences that overlap, so an unqualified number reads
           // as whichever kind the reader happened to expect. A `--type
-          // comment` entry keeps the comment renderer's own head line, for
-          // the same reason and in the same spelling.
+          // comment` entry needs no such qualifier — the comment renderer
+          // heads it `#comment-<id>`, which says which sequence it is.
           ...events.map((item) =>
             item.type === "comment"
               ? renderTimelineItem(item, paint, {
                   issueNumber: number,
                   ...spelling,
-                  showId: true,
                 })
               : `${paint("dim", `event ${item.id} ·`)} ${renderTimelineItem(
                   item,
@@ -678,12 +678,28 @@ export class IssueWatchCommand extends ProjectCommand {
       up on a network outage (see below). Under \`--forever\` only 0 and 1
       remain.
 
-      Without \`--json\` every entry prints as exactly one line —
-      \`<ref> <who> <what> <when>: <summary>\` — and a comment shows the
-      start of its body, so a reader of the stream sees what was said and
-      not merely that something was said. \`--summary <chars>\` sets how
-      much body a line carries (default 120). The batch ends with its
+      Without \`--json\` an entry prints as one block: a header line —
+      \`<ref> #comment-<id> <who> <what> <when>:\` — and then the comment's
+      body **in full**, so a reader of the stream sees what was said rather
+      than its first fifth. Continuation lines are indented two spaces,
+      which keeps a \`^\\S\` split one-entry-per-piece and leaves a fenced
+      code block inside a body intact. An entry an agent wrote names its
+      harness and session after the author — \`(claude-code, <session>)\` —
+      which is how sibling sessions sharing a machine account are told
+      apart, and it is the same session id this command filters on. A
+      comment carrying questions has them appended: each question and its
+      option labels, descriptions left out. The batch ends with its
       \`cursor:\` line, as before.
+
+      \`--summary\` asks for the stricter shape instead: exactly one line
+      per entry, body folded onto it and cut. Bare it means
+      ${BARE_SUMMARY_CHARS} characters, \`--summary=<n>\` picks the width,
+      and \`--summary=0\` is the default again — the whole body. **Only the
+      \`=\` form is accepted**: a flag whose argument is optional cannot
+      also take a space-separated one, so \`--summary 10\` fails with an
+      extraneous-argument error instead of quietly cutting at 10.
+      \`--json\` has always emitted whole bodies and is untouched, so the
+      two modes now agree on their default.
 
       \`--poll --print-cursor\` writes the next cursor alone to stdout and
       exits 0 whether or not anything was new — the cursor is the product,
@@ -791,6 +807,10 @@ export class IssueWatchCommand extends ProjectCommand {
         'todou issue watch 33 --poll --since "$CURSOR" --type comment',
       ],
       [
+        "One line per entry instead of whole bodies (note the `=`)",
+        "todou issue watch 33 --poll --summary=120",
+      ],
+      [
         "Bootstrap a cursor at now",
         "cursor=$(todou issue watch 33 --poll --print-cursor)",
       ],
@@ -845,7 +865,8 @@ export class IssueWatchCommand extends ProjectCommand {
     description: "Include one's own entries too",
   });
   summary = Option.String("--summary", {
-    description: "Body characters per line in text mode (default 120)",
+    tolerateBoolean: true,
+    description: `Truncate bodies to this many chars, one line per entry (bare --summary = ${BARE_SUMMARY_CHARS}; default 0 = the whole body; --summary=<n> only, not --summary <n>)`,
   });
   printCursor = Option.Boolean("--print-cursor", false, {
     description: "With --poll: print the next cursor alone and exit 0",
@@ -891,9 +912,11 @@ export class IssueWatchCommand extends ProjectCommand {
           ? undefined
           : FOLLOW_DEBOUNCE_SEC;
     const summaryChars =
-      this.summary === undefined
-        ? 120
-        : parsePositiveInt(this.summary, "--summary");
+      this.summary === undefined || this.summary === false
+        ? 0
+        : this.summary === true
+          ? BARE_SUMMARY_CHARS
+          : parsePositiveInt(this.summary, "--summary", { zero: true });
 
     // Baseline before the loop: the newest entry regardless of filter, so
     // "from now" never replays history. Also 404s early on a bad number.

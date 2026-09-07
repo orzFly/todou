@@ -21,10 +21,11 @@ import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
 import { makePainter, personName, plural, table } from "../format.ts";
 import { drainPaged } from "../paginate.ts";
-import { parseChoice, parseSeconds } from "../parse.ts";
+import { parseChoice, parseCommentId, parseSeconds } from "../parse.ts";
 import { refFormat, withRef } from "../refs.ts";
 import { fetchRefPrefix } from "../resolve.ts";
 import { waitForSpecReview } from "../spec-wait.ts";
+import { commentRef } from "../timeline.ts";
 import { watchTimeoutSec } from "../watch-loop.ts";
 import {
   assertWriteCursorFlags,
@@ -466,7 +467,7 @@ export class SpecCommentsCommand extends ProjectCommand {
           ...(item.outdated ? ["outdated"] : []),
         ].join(", ");
         lines.push(
-          `#${item.comment_id} ${anchor} (v${item.anchor.version}) by ${personName(item.author)} · ${flags}`,
+          `${commentRef(item.comment_id)} ${anchor} (v${item.anchor.version}) by ${personName(item.author)} · ${flags}`,
         );
         for (const quoted of item.anchor.quote.split("\n")) {
           lines.push(`  > ${quoted}`);
@@ -497,13 +498,7 @@ export class SpecResolveCommand extends ProjectCommand {
 
   protected async run(client: TodouClient): Promise<void> {
     const { project, number } = await this.resolveIssueRef(client, this.number);
-    const ids = this.commentIds.map((raw) => {
-      const id = Number(raw.replace(/^#/, ""));
-      if (!Number.isInteger(id) || id <= 0) {
-        throw new CliError(`"${raw}" is not a comment id`);
-      }
-      return id;
-    });
+    const ids = this.commentIds.map((raw) => parseCommentId(raw));
     const result = await client.resolveSpecComments(project, number, ids);
     this.output(result, () => `resolved ${result.resolved.length} comment(s)`);
   }
