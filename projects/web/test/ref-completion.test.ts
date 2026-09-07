@@ -22,6 +22,7 @@ import {
 } from "../src/api/references.ts";
 import {
   inCodeContext,
+  projectTriggerAt,
   type RefTriggerContext,
   rankCandidates,
   refCompletionSource,
@@ -34,6 +35,14 @@ const DIRECTORY: PrefixDirectory = {
     { prefix: "X", slug: "hidden", from: "2020-01-01T00:00:00.000Z", to: null },
     { prefix: "C", slug: "one", from: "2020-01-01T00:00:00.000Z", to: null },
     { prefix: "C", slug: "two", from: "2020-01-01T00:00:00.000Z", to: null },
+    // A prefix long enough to still be a prefix at three characters, which
+    // is where the project panel starts offering.
+    {
+      prefix: "ACC",
+      slug: "accel",
+      from: "2020-01-01T00:00:00.000Z",
+      to: null,
+    },
   ],
   contested: [{ prefix: "C", from: "2020-01-01T00:00:00.000Z", to: null }],
 };
@@ -123,12 +132,59 @@ describe("refTriggerAt (when the panel opens, and on what)", () => {
     expect(refTriggerAt("#1", closed)?.slug).toBe("todou");
   });
 
+  it("does not care which case any of it was typed in", () => {
+    expect(refTriggerAt("see Mirror#1", base)).toEqual({
+      slug: "mirror",
+      anchor: "mirror#",
+      at: 4,
+      query: "1",
+    });
+    expect(refTriggerAt("see MIRROR/", base)?.anchor).toBe("mirror/");
+    expect(refTriggerAt("also m-3", base)).toEqual({
+      slug: "mirror",
+      anchor: "M-",
+      at: 5,
+      query: "3",
+    });
+    expect(refTriggerAt("fixed by t-1", { ...base, prefix: "T" })?.anchor).toBe(
+      "T-",
+    );
+  });
+
+  it("keeps every other rule exactly as strict, whatever the case", () => {
+    expect(refTriggerAt("Hidden#1", base)).toBeNull();
+    expect(refTriggerAt("SOME-t-7", { ...base, prefix: "T" })).toBeNull();
+    expect(refTriggerAt("also c-3", base)).toBeNull();
+  });
+
   it("yields to an autolink rule holding the prefix", () => {
     const linked = {
       ...base,
       autolinks: [{ prefix: "M-", url_template: "https://x/<num>" }],
     };
     expect(refTriggerAt("M-3", linked)).toBeNull();
+  });
+});
+
+describe("projectTriggerAt (the bare word a project name grows out of)", () => {
+  it("takes the word the cursor sits at the end of", () => {
+    expect(projectTriggerAt("see mir")).toEqual({ at: 4, typed: "mir" });
+  });
+
+  it("counts the start of the line as a boundary", () => {
+    expect(projectTriggerAt("channel")).toEqual({ at: 0, typed: "channel" });
+  });
+
+  it("reads a hyphenated run as one word", () => {
+    // `my-pro` has to be able to reach `my-project/`, so the run cannot stop
+    // at the hyphen — and the `mir` in `x-mir` is therefore never a word of
+    // its own to offer against.
+    expect(projectTriggerAt("x-mir")).toEqual({ at: 0, typed: "x-mir" });
+  });
+
+  it("has nothing to offer once the word is finished", () => {
+    expect(projectTriggerAt("see mir ")).toBeNull();
+    expect(projectTriggerAt("写一句中文")).toBeNull();
   });
 });
 
@@ -235,17 +291,18 @@ function seededClient(options?: {
     entries: [...DIRECTORY.entries],
     contested: [...DIRECTORY.contested],
   };
-  for (const slug of options?.projects ?? ["todou", "mirror"]) {
+  const readable = options?.projects ?? ["todou", "mirror", "accel"];
+  for (const slug of readable) {
     client.setQueryData(referenceConfigQuery(slug).queryKey, config);
   }
   client.setQueryData(referenceDirectoryQuery.queryKey, directory);
   client.setQueryData(
     projectsQuery.queryKey,
-    (options?.projects ?? ["todou", "mirror"]).map(
+    readable.map(
       (slug): Project => ({
         id: 1,
         slug,
-        name: slug,
+        name: `The ${slug} project`,
         description: "",
         created_at: "2026-01-01T00:00:00.000Z",
       }),
@@ -289,6 +346,12 @@ describe("refCompletionSource", () => {
     expect(qualified?.options[0]?.apply).toBe("mirror#7");
     const bare = await completeAt(client, "todou", "see M-7");
     expect(bare?.options[0]?.apply).toBe("M-7");
+  });
+
+  it("inserts the canonical spelling however the anchor was typed", async () => {
+    const client = seededClient({ pages: { mirror: [item(7, "Theirs")] } });
+    const result = await completeAt(client, "todou", "see Mirror#7");
+    expect(result?.options[0]?.apply).toBe("mirror#7");
   });
 
   it("spells this project's own refs in its current format", async () => {
@@ -365,5 +428,53 @@ describe("refCompletionSource", () => {
   it("yields nothing rather than an empty panel", async () => {
     const client = seededClient({ pages: { todou: [item(1, "One")] } });
     expect(await completeAt(client, "todou", "#87")).toBeNull();
+  });
+
+  const labelsAt = async (client: QueryClient, doc: string) =>
+    (await completeAt(client, "todou", doc))?.options.map((o) => o.label);
+
+  describe("the project level", () => {
+    it("offers a project against a word that names no shape yet", async () => {
+      const client = seededClient();
+      const result = await completeAt(client, "todou", "see mir");
+      expect(result?.from).toBe("see ".length);
+      // `M-` is not a prefix of `mir`, so it is the slug form's turn.
+      expect(result?.options.map((o) => o.label)).toEqual(["mirror/"]);
+      expect(result?.options[0]?.detail).toBe("The mirror project");
+    });
+
+    it("offers the prefix form until it stops being a prefix", async () => {
+      const client = seededClient();
+      expect(await labelsAt(client, "see acc")).toEqual(["ACC-"]);
+      expect(await labelsAt(client, "see acce")).toEqual(["accel/"]);
+    });
+
+    it("does not care which case the word was typed in", async () => {
+      const client = seededClient();
+      expect(await labelsAt(client, "see ACC")).toEqual(["ACC-"]);
+      expect(await labelsAt(client, "see MIR")).toEqual(["mirror/"]);
+    });
+
+    it("stays shut below three characters", async () => {
+      const client = seededClient();
+      expect(await completeAt(client, "todou", "see m")).toBeNull();
+      expect(await completeAt(client, "todou", "see mi")).toBeNull();
+    });
+
+    it("leaves the field to the cards once a shape has matched", async () => {
+      const client = seededClient({ pages: { mirror: [item(7, "Theirs")] } });
+      expect(await labelsAt(client, "see mirror/")).toEqual(["mirror/7"]);
+    });
+
+    it("never offers a project the viewer cannot read", async () => {
+      const client = seededClient({ projects: ["todou"] });
+      expect(await completeAt(client, "todou", "see mir")).toBeNull();
+      expect(await completeAt(client, "todou", "see acc")).toBeNull();
+    });
+
+    it("offers nothing against a word after a hyphen", async () => {
+      const client = seededClient();
+      expect(await completeAt(client, "todou", "see about-mir")).toBeNull();
+    });
   });
 });

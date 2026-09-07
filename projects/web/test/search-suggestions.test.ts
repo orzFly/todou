@@ -1,16 +1,20 @@
+import type { Project, ReferenceDirectory } from "@todou/shared";
 import { parseSearchQuery } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import {
   type CompletionRow,
   hasQualifier,
   orderRows,
-  type ProjectRefOption,
   projectRefSource,
   qualifierKeySource,
   qualifierValueSource,
   type SuggestionContext,
   type ValuePools,
 } from "../src/components/search/suggestions.ts";
+import {
+  type ProjectRefOption,
+  projectSpellings,
+} from "../src/lib/project-spellings.ts";
 
 const POOLS: ValuePools = {
   label: [{ value: "area:web" }, { value: "kind:bug" }],
@@ -145,6 +149,70 @@ describe("the qualifier value source", () => {
   it("offers nothing where no value goes", () => {
     expect(values("部署|")).toEqual({ matched: false, rows: [] });
     expect(values("label:a |")).toEqual({ matched: false, rows: [] });
+  });
+});
+
+const project = (slug: string, name: string): Project => ({
+  id: 1,
+  slug,
+  name,
+  description: "",
+  created_at: "2026-01-01T00:00:00.000Z",
+});
+
+const SINCE = "2020-01-01T00:00:00.000Z";
+/** A `to` already in the past, which is what makes a claim retired. */
+const UNTIL = "2021-01-01T00:00:00.000Z";
+
+describe("the shared pool of project spellings", () => {
+  const spellingsOf = (
+    projects: Project[],
+    directory: ReferenceDirectory | null,
+  ) => projectSpellings(projects, directory).map((o) => o.spellings);
+
+  it("puts the prefix form before the slug form", () => {
+    expect(
+      spellingsOf([project("accel", "Accel")], {
+        entries: [{ prefix: "ACC", slug: "accel", from: SINCE, to: null }],
+        contested: [],
+      }),
+    ).toEqual([["ACC-", "accel/"]]);
+  });
+
+  it("has only the slug form for a contested prefix", () => {
+    expect(
+      spellingsOf([project("accel", "Accel")], {
+        entries: [{ prefix: "ACC", slug: "accel", from: SINCE, to: null }],
+        contested: [{ prefix: "ACC", from: SINCE, to: null }],
+      }),
+    ).toEqual([["accel/"]]);
+  });
+
+  it("has only the slug form once the claim is retired", () => {
+    expect(
+      spellingsOf([project("accel", "Accel")], {
+        entries: [{ prefix: "ACC", slug: "accel", from: SINCE, to: UNTIL }],
+        contested: [],
+      }),
+    ).toEqual([["accel/"]]);
+  });
+
+  it("has only the slug form where there is no directory at all", () => {
+    expect(spellingsOf([project("accel", "Accel")], null)).toEqual([
+      ["accel/"],
+    ]);
+  });
+
+  it("orders the projects by slug", () => {
+    const pool = projectSpellings(
+      [
+        project("todou", "Todou"),
+        project("accel", "Accel"),
+        project("homelab", "Homelab"),
+      ],
+      { entries: [], contested: [] },
+    );
+    expect(pool.map((o) => o.slug)).toEqual(["accel", "homelab", "todou"]);
   });
 });
 

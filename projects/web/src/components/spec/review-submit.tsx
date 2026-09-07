@@ -100,7 +100,18 @@ export function ReviewSubmitDialog({
         if (!isOpen) onClose();
       }}
     >
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent
+        className="sm:max-w-lg"
+        // The first Escape belongs to the completion panel; without this the
+        // dialog closes underneath it and takes the summary draft along.
+        // Radix reads this key on the document in the capture phase, so the
+        // editor never gets a chance at it and the closing happens here.
+        onEscapeKeyDown={(event) => {
+          if (editor.current?.dismissCompletion() === true) {
+            event.preventDefault();
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="text-sm font-medium">
             Finish review — spec v{currentVersion}

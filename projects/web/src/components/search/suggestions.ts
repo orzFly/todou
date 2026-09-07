@@ -1,5 +1,6 @@
 import type { SearchPart, SearchQualifier } from "@todou/shared";
 import { SEARCH_QUALIFIERS } from "@todou/shared";
+import type { ProjectRefOption } from "@/lib/project-spellings.ts";
 
 export type SuggestionContext = {
   slug: string;
@@ -246,18 +247,6 @@ export function qualifierValueSource(pools: ValuePools): SuggestionSource {
     return EMPTY;
   };
 }
-
-/** A project in the completion pool, with its equivalent spellings ranked. */
-export type ProjectRefOption = {
-  slug: string;
-  /** The project's name, the short grey note at the end of the line. */
-  name: string;
-  /**
-   * Insertable spellings, best first: `["ACC-", "accel/"]` where there is a
-   * prefix, `["homelab/"]` where there is not.
-   */
-  spellings: string[];
-};
 
 /**
  * Projects, offered against the bare word the caret is in and matched

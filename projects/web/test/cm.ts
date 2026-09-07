@@ -39,21 +39,44 @@ export function cmSetValue(root: ParentNode, value: string, index = 0): void {
   });
 }
 
-/** Fire a key on the editor's contenteditable, where CodeMirror listens. */
+/**
+ * Replace the document and leave the cursor at the end of what was inserted,
+ * where a completion source looks for the reference being typed.
+ */
+export function cmType(root: ParentNode, value: string, index = 0): void {
+  const view = cmView(root, index);
+  view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: value },
+    selection: { anchor: value.length },
+    userEvent: "input.type",
+  });
+}
+
+/**
+ * Fire a key on the editor's contenteditable, where CodeMirror listens. The
+ * event is returned so a caller can read `defaultPrevented`, which is what
+ * separates a key the editor handled from one it left to the browser — Tab
+ * moving focus, for instance.
+ */
 export function cmPressKey(
   root: ParentNode,
   key: string,
-  modifiers: { ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean } = {},
+  modifiers: {
+    ctrlKey?: boolean;
+    metaKey?: boolean;
+    altKey?: boolean;
+    shiftKey?: boolean;
+  } = {},
   index = 0,
-): void {
-  cmView(root, index).contentDOM.dispatchEvent(
-    new KeyboardEvent("keydown", {
-      key,
-      bubbles: true,
-      cancelable: true,
-      ...modifiers,
-    }),
-  );
+): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", {
+    key,
+    bubbles: true,
+    cancelable: true,
+    ...modifiers,
+  });
+  cmView(root, index).contentDOM.dispatchEvent(event);
+  return event;
 }
 
 export function cmPlaceholder(root: ParentNode, index = 0): string {

@@ -1,3 +1,4 @@
+import { closeCompletion, completionStatus } from "@codemirror/autocomplete";
 import {
   copyLineDown,
   defaultKeymap,
@@ -49,6 +50,14 @@ export type MarkdownEditorHandle = {
   getValue: () => string;
   setValue: (value: string) => void;
   focus: () => void;
+  /**
+   * Close an open completion panel, reporting whether there was one. An
+   * editor inside a dismissable layer needs this because that layer listens
+   * for Escape on the document in the capture phase and calls
+   * `preventDefault` — after which CodeMirror's own handlers decline the
+   * event, so the layer's owner has to do the closing.
+   */
+  dismissCompletion: () => boolean;
 };
 
 /**
@@ -246,6 +255,16 @@ export function MarkdownEditor({
       });
     },
     focus: () => view.current?.focus(),
+    dismissCompletion: () => {
+      const current = view.current;
+      // "pending" is a query in flight with nothing on screen yet, which is
+      // not something the reader can have meant to dismiss.
+      if (current === null || completionStatus(current.state) !== "active") {
+        return false;
+      }
+      closeCompletion(current);
+      return true;
+    },
   }));
 
   // Mount once. initialValue/ariaLabel changes do not rebuild the view —

@@ -1,10 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import {
-  type Project,
-  parseSearchQuery,
-  type ReferenceDirectory,
-} from "@todou/shared";
+import { parseSearchQuery } from "@todou/shared";
 import {
   ArrowRightIcon,
   ClockIcon,
@@ -47,13 +43,13 @@ import {
   type CompletionRow,
   hasQualifier,
   orderRows,
-  type ProjectRefOption,
   projectRefSource,
   qualifierKeySource,
   qualifierValueSource,
   type ValuePools,
 } from "@/components/search/suggestions.ts";
 import { Skeleton } from "@/components/ui/skeleton";
+import { projectSpellings } from "@/lib/project-spellings.ts";
 import { matchHistory, type SearchHistoryEntry } from "@/lib/search-history.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import { useSlashShortcut } from "@/lib/use-slash-shortcut.ts";
@@ -89,45 +85,6 @@ function pointsElsewhere(row: JumpRow, slug: string): boolean {
   if (row.kind === "external") return true;
   if (row.kind === "project") return row.slug !== slug;
   return row.state === "ready" ? row.crossProject : row.candidate.slug !== slug;
-}
-
-/**
- * How each project can be named, best spelling first (T-263). The prefix
- * form comes first because it is the shorter of two synonyms and the one a
- * card number attaches to directly.
- *
- * Retired claims are left out on purpose. They still *resolve* — someone
- * typing a project's old name from memory is exactly who `resolveSlugAt`
- * exists for — but a completion teaches a spelling, and there is no reason
- * to teach one that is on its way out. A contested prefix is left out for a
- * stronger reason: it resolves to nothing at all.
- */
-function projectPool(
-  projects: readonly Project[] | undefined,
-  directory: ReferenceDirectory | null | undefined,
-): ProjectRefOption[] {
-  if (projects === undefined) return [];
-  const now = Date.now();
-  const covers = (from: string, to: string | null) =>
-    Date.parse(from) <= now && (to === null || now < Date.parse(to));
-  return projects.map((project) => {
-    const claim = directory?.entries.find(
-      (entry) => entry.slug === project.slug && covers(entry.from, entry.to),
-    );
-    const usable =
-      claim !== undefined &&
-      !(directory?.contested ?? []).some(
-        (fight) =>
-          fight.prefix === claim.prefix && covers(fight.from, fight.to),
-      );
-    return {
-      slug: project.slug,
-      name: project.name,
-      spellings: usable
-        ? [`${(claim as { prefix: string }).prefix}-`, `${project.slug}/`]
-        : [`${project.slug}/`],
-    };
-  });
 }
 
 /**
@@ -263,7 +220,7 @@ export function SearchBox({
   // may well be on their way to one whose number they do not remember.
   const peek = useProjectPeek(named?.kind === "project" ? named : null);
   const projectRefs = useMemo(
-    () => projectPool(projects.data, directory.data),
+    () => projectSpellings(projects.data, directory.data),
     [projects.data, directory.data],
   );
   const completions = useMemo(() => {
