@@ -76,9 +76,15 @@ const userEventsRoute = createRoute({
   summary:
     "SSE change feed across every project the caller can read (T-122). " +
     "Events carry pointers plus their origin ({entity, id, action, " +
-    "issue_number?, project}); clients refetch via REST. The subscription " +
-    "follows membership changes live: being added to a project starts its " +
-    "events mid-stream, being removed silences them.",
+    "issue_number?, project}); clients refetch via REST. An issue event " +
+    "additionally carries `list_row` (T-279): `{kind:'activity'}` when only " +
+    "`updated_at` or a badge moved, `{kind:'fields', status_id, label_ids?, " +
+    "assignee_ids?}` for where the row now sits (an omitted set did not " +
+    "change), `{kind:'gone'}` when it left every readable list. The key is " +
+    "absent where the write path gave no answer, and a client must then " +
+    "refetch the lists unconditionally. The subscription follows membership " +
+    "changes live: being added to a project starts its events mid-stream, " +
+    "being removed silences them.",
   request: { query: z.object({ inbox: inboxParam }) },
   responses: { 200: { description: "text/event-stream" } },
 });
@@ -88,9 +94,9 @@ const projectEventsRoute = createRoute({
   path: "/projects/{slug}/events",
   summary:
     "SSE change feed for one project — a filtered view of /events. Events " +
-    "carry pointers only ({entity, id, action, issue_number?, project}); " +
-    "clients refetch via REST. The stream closes when the caller loses " +
-    "access to the project.",
+    "carry pointers ({entity, id, action, issue_number?, project}) plus " +
+    "`list_row` on an issue event (T-279, see /events); clients refetch via " +
+    "REST. The stream closes when the caller loses access to the project.",
   request: {
     params: z.object({ slug: ProjectRef }),
     query: z.object({ inbox: inboxParam }),

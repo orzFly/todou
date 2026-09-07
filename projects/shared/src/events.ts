@@ -39,15 +39,61 @@ export const ChangeAction = z.enum(["created", "updated", "deleted"]);
 export type ChangeAction = z.infer<typeof ChangeAction>;
 
 /**
- * Pointer-only change notification: carries no entity data so the feed can
- * never leak fields the subscriber is not allowed to read — clients refetch
- * through the authorized REST API instead.
+ * Where this change puts the card in the project's lists, straight from the
+ * write path (T-279). Only ever present on an `issue` event.
+ *
+ *   absent            — the publisher gave no answer (an older server, or a
+ *                       path nobody annotated). The client refetches
+ *                       unconditionally, which is what it did before this
+ *                       field existed.
+ *   {kind:"activity"} — `updated_at` or some badge count moved; nothing that
+ *                       decides list membership did.
+ *   {kind:"fields"}   — this is where the row sits now. Omitting `label_ids`
+ *                       or `assignee_ids` says that set did not change, and
+ *                       that is exactly why the field costs no extra query:
+ *                       the write path owns only the sets its caller handed
+ *                       it.
+ *   {kind:"gone"}     — the card is in no list any reader can see. Nothing
+ *                       else travels with it, so a reader without access to
+ *                       the trash learns only that it left.
+ *
+ * Project-level facts rather than per-receiver ones, so this is computed once
+ * at publish time and every subscriber gets the same copy — unlike
+ * `inbox_row`.
+ */
+export const IssueListRow = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("activity") }),
+  z.object({
+    kind: z.literal("fields"),
+    status_id: Id,
+    label_ids: z.array(Id).optional(),
+    assignee_ids: z.array(Id).optional(),
+  }),
+  z.object({ kind: z.literal("gone") }),
+]);
+export type IssueListRow = z.infer<typeof IssueListRow>;
+
+/**
+ * Change notification: a pointer, plus `list_row` where the publisher could
+ * say where the card landed. Clients refetch through the authorized REST API
+ * rather than reading entity data off the feed.
+ *
+ * `list_row` is the one exception to that, and it holds because of what it
+ * carries rather than because it carries nothing (T-279):
+ *
+ * - An event only reaches subscribers who can read the project, and every
+ *   reader of a project can read every card's status, labels and assignees.
+ * - A card on its way to the trash is readable to fewer people, so that path
+ *   sends `{kind:"gone"}` alone — no status, no labels, no assignees.
+ * - Never the title or the body. The judgement does not need them, and a page
+ *   filtering on `q=` refetches broadly regardless.
  */
 export const ChangeEvent = z.object({
   entity: ChangeEntity,
   id: Id,
   action: ChangeAction,
   issue_number: Id.optional(),
+  list_row: IssueListRow.optional(),
 });
 export type ChangeEvent = z.infer<typeof ChangeEvent>;
 

@@ -1,3 +1,4 @@
+import type { ChangeEvent } from "@todou/shared";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readFrontiers } from "../src/db/project-schema.ts";
@@ -1016,5 +1017,488 @@ describe("user-level SSE stream (T-122)", () => {
       expect(await frontiers()).toHaveLength(1);
       stream.abort();
     });
+  });
+});
+
+/**
+ * Every path that publishes an `issue` event says where the card landed
+ * (T-279). Driven through the HTTP API and captured off the bus, which is
+ * where the field is set; the last case follows it out to the wire, where the
+ * SSE route only spreads it into the payload.
+ */
+describe("issue events carry list_row (T-279)", () => {
+  let t: TestApp;
+  let cookie: string;
+  const slug = "rowed";
+  const target = "rowed-target";
+  const headers = () => ({ "content-type": "application/json", cookie });
+
+  let statusIds: number[] = [];
+  let labelId = 0;
+  let otherUserId = 0;
+  let pusher: Awaited<ReturnType<typeof addUserWithToken>>;
+
+  /**
+   * Accumulated across every case below, so the closing test can say "not one
+   * of them was missing the field" about the whole set rather than about
+   * whichever path happened to be written last.
+   */
+  const allEvents: ChangeEvent[] = [];
+
+  const createProject = async (name: string) => {
+    const res = await t.app.request("/api/projects", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ slug: name, name }),
+    });
+    expect(res.status).toBe(201);
+  };
+
+  const addWriter = async (project: string, userId: number) => {
+    const res = await t.app.request(
+      `/api/projects/${project}/members/${userId}`,
+      {
+        method: "PUT",
+        headers: headers(),
+        body: JSON.stringify({ role: "writer" }),
+      },
+    );
+    expect(res.status).toBe(204);
+  };
+
+  beforeAll(async () => {
+    t = await makeTestApp();
+    cookie = await t.login();
+    await createProject(slug);
+    await createProject(target);
+    const statuses = await json(
+      await t.app.request(`/api/projects/${slug}/statuses`, {
+        headers: headers(),
+      }),
+    );
+    statusIds = statuses.map((s: { id: number }) => s.id);
+    expect(statusIds.length).toBeGreaterThanOrEqual(3);
+    const label = await json(
+      await t.app.request(`/api/projects/${slug}/labels`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ name: "flood", color: "#ff0000" }),
+      }),
+    );
+    labelId = label.id;
+    const other = await addUserWithToken(t.ctx, "rowed-other");
+    otherUserId = other.user.id;
+    await addWriter(slug, otherUserId);
+    // A spec version may not be reviewed by the account that pushed it, so
+    // the push below needs an identity of its own.
+    pusher = await addUserWithToken(t.ctx, "rowed-pusher");
+    await addWriter(slug, pusher.user.id);
+  });
+
+  afterAll(async () => {
+    await t.cleanup();
+  });
+
+  /** The `issue` events one action published, with the project each came from. */
+  const captureAll = async (
+    action: () => Promise<void>,
+  ): Promise<Array<{ projectId: number; event: ChangeEvent }>> => {
+    const seen: Array<{ projectId: number; event: ChangeEvent }> = [];
+    const off = t.ctx.bus.subscribe((projectId, event) => {
+      if (event.entity === "issue") seen.push({ projectId, event });
+    });
+    try {
+      await action();
+    } finally {
+      off();
+    }
+    allEvents.push(...seen.map((s) => s.event));
+    return seen;
+  };
+
+  /** The same, for the single-project paths: just the events. */
+  const capture = async (action: () => Promise<void>): Promise<ChangeEvent[]> =>
+    (await captureAll(action)).map((s) => s.event);
+
+  /** Every `list_row` one action published, which is what the table names. */
+  const rows = async (action: () => Promise<void>) =>
+    (await capture(action)).map((e) => e.list_row);
+
+  const create = async (body: unknown): Promise<number> => {
+    const res = await t.app.request(`/api/projects/${slug}/issues`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(201);
+    return (await json(res)).number;
+  };
+
+  const patch = async (number: number, body: unknown): Promise<void> => {
+    const res = await t.app.request(`/api/projects/${slug}/issues/${number}`, {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(200);
+  };
+
+  it("names all three sets when a card is created", async () => {
+    let number = 0;
+    const published = await rows(async () => {
+      number = await create({
+        title: "born filed",
+        status_id: statusIds[1],
+        label_ids: [labelId],
+        assignee_ids: [otherUserId],
+      });
+    });
+    expect(number).toBeGreaterThan(0);
+    expect(published).toEqual([
+      {
+        kind: "fields",
+        status_id: statusIds[1],
+        label_ids: [labelId],
+        assignee_ids: [otherUserId],
+      },
+    ]);
+  });
+
+  it("calls a title-only edit activity", async () => {
+    const number = await create({ title: "before" });
+    // Membership cannot have moved, so every page not holding this row has
+    // nothing to reconsider — which is the whole saving on a board.
+    expect(await rows(() => patch(number, { title: "after" }))).toEqual([
+      { kind: "activity" },
+    ]);
+  });
+
+  it("carries the new status on a status change, not the old one", async () => {
+    const number = await create({ title: "moving", status_id: statusIds[0] });
+    expect(
+      await rows(() => patch(number, { status_id: statusIds[2] })),
+    ).toEqual([{ kind: "fields", status_id: statusIds[2] }]);
+  });
+
+  it("omits the sets the caller did not touch", async () => {
+    const number = await create({ title: "labelled", status_id: statusIds[0] });
+    const labelled = await capture(() =>
+      patch(number, { label_ids: [labelId] }),
+    );
+    expect(labelled[0]?.list_row).toEqual({
+      kind: "fields",
+      status_id: statusIds[0],
+      label_ids: [labelId],
+    });
+    // An omitted key is the client's licence to keep the value it has, so
+    // "absent" must not degrade into "empty".
+    expect(labelled[0]?.list_row).not.toHaveProperty("assignee_ids");
+
+    const assigned = await capture(() =>
+      patch(number, { assignee_ids: [otherUserId] }),
+    );
+    expect(assigned[0]?.list_row).toEqual({
+      kind: "fields",
+      status_id: statusIds[0],
+      assignee_ids: [otherUserId],
+    });
+    expect(assigned[0]?.list_row).not.toHaveProperty("label_ids");
+  });
+
+  it("says gone on the way into the trash and fields on the way out", async () => {
+    const number = await create({
+      title: "throwaway",
+      status_id: statusIds[1],
+    });
+    const deleted = await rows(async () => {
+      const res = await t.app.request(
+        `/api/projects/${slug}/issues/${number}`,
+        { method: "DELETE", headers: headers() },
+      );
+      expect(res.status).toBe(204);
+    });
+    // The kind alone: a reader who cannot see the trash must not learn this
+    // card's status and labels from the event announcing its removal.
+    expect(deleted).toEqual([{ kind: "gone" }]);
+
+    const restored = await rows(async () => {
+      const res = await t.app.request(
+        `/api/projects/${slug}/issues/${number}/restore`,
+        { method: "POST", headers: headers() },
+      );
+      expect(res.status).toBe(200);
+    });
+    expect(restored).toEqual([{ kind: "fields", status_id: statusIds[1] }]);
+  });
+
+  it("reports the sets a command submission ends with", async () => {
+    const number = await create({
+      title: "commanded",
+      status_id: statusIds[0],
+    });
+    const published = await rows(async () => {
+      const res = await t.app.request(
+        `/api/projects/${slug}/issues/${number}/commands`,
+        {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({
+            body: "moving this along",
+            commands: [
+              { type: "status", status_id: statusIds[2] },
+              { type: "label_add", label_id: labelId },
+              { type: "assign", user_id: otherUserId },
+            ],
+          }),
+        },
+      );
+      expect(res.status).toBe(200);
+    });
+    expect(published).toEqual([
+      {
+        kind: "fields",
+        status_id: statusIds[2],
+        label_ids: [labelId],
+        assignee_ids: [otherUserId],
+      },
+    ]);
+  });
+
+  it("calls a comment, a question, an answer and an upload activity", async () => {
+    const number = await create({ title: "busy card" });
+    const post = (body: unknown) =>
+      t.app.request(`/api/projects/${slug}/issues/${number}/comments`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify(body),
+      });
+
+    expect(
+      await rows(async () => {
+        expect((await post({ body: "a comment" })).status).toBe(201);
+      }),
+    ).toEqual([{ kind: "activity" }]);
+
+    let questionId = 0;
+    expect(
+      await rows(async () => {
+        const res = await post({
+          body: "one question",
+          component: {
+            type: "questions",
+            questions: [
+              {
+                key: "way",
+                question: "Which way?",
+                options: [{ label: "left" }, { label: "right" }],
+              },
+            ],
+          },
+        });
+        expect(res.status).toBe(201);
+        questionId = (await json(res)).id;
+      }),
+    ).toEqual([{ kind: "activity" }]);
+
+    expect(
+      await rows(async () => {
+        const res = await t.app.request(
+          `/api/projects/${slug}/issues/${number}/comments/${questionId}/answers`,
+          {
+            method: "POST",
+            headers: headers(),
+            body: JSON.stringify({ answers: [{ key: "way", selected: [0] }] }),
+          },
+        );
+        expect(res.status).toBe(201);
+      }),
+    ).toEqual([{ kind: "activity" }]);
+
+    expect(
+      await rows(async () => {
+        const form = new FormData();
+        form.set("file", new File(["potato"], "n.txt", { type: "text/plain" }));
+        form.set("issue_number", String(number));
+        const res = await t.app.request(`/api/projects/${slug}/attachments`, {
+          method: "POST",
+          headers: { cookie },
+          body: form,
+        });
+        expect(res.status).toBe(201);
+      }),
+    ).toEqual([{ kind: "activity" }]);
+  });
+
+  it("calls a spec push, its review and a resolve activity", async () => {
+    const number = await create({ title: "spec host" });
+    const asPusher = () => ({
+      "content-type": "application/json",
+      ...pusher.headers,
+    });
+
+    expect(
+      await rows(async () => {
+        const res = await t.app.request(
+          `/api/projects/${slug}/issues/${number}/spec/push`,
+          {
+            method: "POST",
+            headers: asPusher(),
+            body: JSON.stringify({
+              files: [{ path: "design.md", body: "# Design\n\nline two\n" }],
+            }),
+          },
+        );
+        expect(res.status).toBe(200);
+      }),
+    ).toEqual([{ kind: "activity" }]);
+
+    let commentIds: number[] = [];
+    expect(
+      await rows(async () => {
+        const res = await t.app.request(
+          `/api/projects/${slug}/issues/${number}/spec/reviews`,
+          {
+            method: "POST",
+            headers: headers(),
+            body: JSON.stringify({
+              version: 1,
+              verdict: "request_changes",
+              body: "one nit",
+              comments: [
+                {
+                  anchor: {
+                    path: "design.md",
+                    version: 1,
+                    line_start: 1,
+                    line_end: 1,
+                  },
+                  body: "say more",
+                },
+              ],
+            }),
+          },
+        );
+        expect(res.status).toBe(201);
+        commentIds = (await json(res)).comment_ids;
+      }),
+    ).toEqual([{ kind: "activity" }]);
+
+    expect(
+      await rows(async () => {
+        const res = await t.app.request(
+          `/api/projects/${slug}/issues/${number}/spec/comments/resolve`,
+          {
+            method: "POST",
+            headers: asPusher(),
+            body: JSON.stringify({ comment_ids: commentIds }),
+          },
+        );
+        expect(res.status).toBe(200);
+      }),
+    ).toEqual([{ kind: "activity" }]);
+  });
+
+  it("tells the source it is gone and the target where it landed", async () => {
+    const number = await create({
+      title: "emigrant",
+      status_id: statusIds[1],
+      label_ids: [labelId],
+      assignee_ids: [otherUserId],
+    });
+
+    let landed: { slug: string; number: number } | undefined;
+    const seen = await captureAll(async () => {
+      const res = await t.app.request(
+        `/api/projects/${slug}/issues/${number}/move`,
+        {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({ to_project: target, dry_run: false }),
+        },
+      );
+      expect(res.status).toBe(200);
+      landed = (await json(res)).moved_to;
+    });
+    if (landed === undefined) throw new Error("move returned no destination");
+
+    const sourceId = seen[0]?.projectId;
+    expect(seen.find((s) => s.projectId === sourceId)?.event.list_row).toEqual({
+      kind: "gone",
+    });
+
+    // Checked against the card as the target project now serves it, rather
+    // than against a restatement of the mapping rules: the whole point of
+    // the field is that it agrees with what a refetch would return.
+    const arrived = await json(
+      await t.app.request(
+        `/api/projects/${landed.slug}/issues/${landed.number}`,
+        { headers: headers() },
+      ),
+    );
+    const targetEvent = seen.find((s) => s.projectId !== sourceId)?.event;
+    expect(targetEvent?.action).toBe("created");
+    expect(targetEvent?.list_row).toEqual({
+      kind: "fields",
+      status_id: arrived.status.id,
+      label_ids: arrived.labels.map((l: { id: number }) => l.id),
+      assignee_ids: arrived.assignees.map((a: { id: number }) => a.id),
+    });
+  });
+
+  it("puts the field on the wire, not just on the bus", async () => {
+    const number = await create({ title: "streamed", status_id: statusIds[0] });
+    const controller = new AbortController();
+    const res = await t.app.request(`/api/projects/${slug}/events`, {
+      headers: { cookie },
+      signal: controller.signal,
+    });
+    expect(res.status).toBe(200);
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const pump = async () => {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("stream ended early");
+      buffer += decoder.decode(value, { stream: true });
+    };
+    while (!buffer.includes("event: hello")) await pump();
+
+    /** The `issue` change frame, once the stream has produced one. */
+    const issueFrame = async () => {
+      for (;;) {
+        const found = buffer
+          .split("\n")
+          .filter(
+            (l, i, all) =>
+              l.startsWith("data:") && all[i - 1] === "event: change",
+          )
+          .map((l) => JSON.parse(l.slice(5).trim()))
+          .find((f) => f.entity === "issue");
+        if (found !== undefined) return found;
+        await pump();
+      }
+    };
+
+    // A status change emits a timeline frame too, so the issue one is not
+    // necessarily the first to arrive.
+    await patch(number, { status_id: statusIds[2] });
+    expect((await issueFrame()).list_row).toEqual({
+      kind: "fields",
+      status_id: statusIds[2],
+    });
+
+    controller.abort();
+  });
+
+  it("leaves no issue event without a list_row", async () => {
+    // Non-vacuous: the cases above drive every publish point in the design's
+    // table, so a path added later that forgets the field fails here rather
+    // than silently costing every reader a broad refetch.
+    expect(allEvents.length).toBeGreaterThanOrEqual(16);
+    expect(
+      allEvents
+        .filter((e) => e.list_row === undefined)
+        .map((e) => `${e.entity}/${e.action}#${e.id}`),
+    ).toEqual([]);
   });
 });

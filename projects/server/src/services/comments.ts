@@ -212,6 +212,7 @@ export async function createComment(
       id: issue.id,
       action: "updated",
       issue_number: issueNumber,
+      list_row: { kind: "activity" },
     });
     // Read back at µs precision rather than reusing the row's Date, which
     // holds milliseconds: a cursor that cannot separate two entries of the
@@ -505,6 +506,7 @@ export async function deleteComment(
       id: row.issueId,
       action: "updated",
       issue_number: issueNumber,
+      list_row: { kind: "activity" },
     });
   }
 }

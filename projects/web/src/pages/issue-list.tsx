@@ -23,15 +23,18 @@ import {
   effectiveCategory,
   effectiveGroup,
   effectiveSort,
+  groupFilter,
   type IssueSearch,
   issueCountsQuery,
   issueGroupQuery,
   issuesQuery,
+  listFilter,
   listParams,
   useIssueLabelsMutation,
   useIssueStatusMutation,
   useRestoreIssueMutation,
 } from "@/api/issues.ts";
+import { issuesEntry } from "@/api/issues-cache.ts";
 import {
   api,
   labelsQuery,
@@ -433,7 +436,10 @@ function IssueGroup({
     if (!lastCursor) return;
     const base = issueGroupQuery(slug, status.id, search);
     const next = await queryClient.fetchQuery({
-      queryKey: [...base.queryKey, lastCursor],
+      ...issuesEntry([...base.queryKey, lastCursor], {
+        kind: "page",
+        filter: groupFilter(search, status.id, lastCursor),
+      }),
       queryFn: () =>
         api.listIssues(slug, {
           status: [status.id],
@@ -551,7 +557,10 @@ export function IssueList({
   async function loadMore() {
     if (!lastCursor) return;
     const next = await queryClient.fetchQuery({
-      queryKey: ["issues", slug, search, lastCursor],
+      ...issuesEntry(["issues", slug, search, lastCursor], {
+        kind: "page",
+        filter: listFilter(search, lastCursor),
+      }),
       queryFn: () =>
         api.listIssues(slug, { ...listParams(search), cursor: lastCursor }),
     });

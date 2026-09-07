@@ -733,6 +733,9 @@ async function afterCommit(
         id: landed.tombstoneId,
         action: "deleted",
         issue_number: plan.row.number,
+        // It left this project's lists; where it went is the target
+        // project's own event to announce (T-279).
+        list_row: { kind: "gone" },
       },
     ],
     [
@@ -742,6 +745,14 @@ async function afterCommit(
         id: landed.issueId,
         action: "created",
         issue_number: landed.number,
+        // The mapped fields the plan settled on, in the target's own id
+        // space — the same values the copy just wrote.
+        list_row: {
+          kind: "fields",
+          status_id: plan.status.to.id,
+          label_ids: plan.labelIds,
+          assignee_ids: plan.assigneeIds,
+        },
       },
     ],
   ];

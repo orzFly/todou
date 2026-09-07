@@ -5,12 +5,14 @@ import {
 } from "@tanstack/react-query";
 import type {
   IssueCounts,
+  IssueListFilter,
   IssueListItem,
   IssueListPage,
   Status,
 } from "@todou/shared";
 import { toast } from "sonner";
 import { z } from "zod";
+import { issuesEntry } from "@/api/issues-cache.ts";
 import { api } from "@/api/queries.ts";
 
 export const ID_CSV = /^\d+(,\d+)*$/;
@@ -94,6 +96,49 @@ export function listParams(search: IssueSearch): ListParams {
   };
 }
 
+/**
+ * What a flat list page under this search state actually filters on (T-279),
+ * for the declaration its cache entry carries. Derived from `listParams`
+ * rather than from the search state a second time, so the declaration cannot
+ * drift from the request that filled the entry; `sort` and `order` are
+ * dropped because reordering a set does not change who is in it.
+ */
+export function listFilter(
+  search: IssueSearch,
+  cursor?: string,
+): IssueListFilter {
+  const { q, category, status, label, assignee, deleted } = listParams(search);
+  return {
+    ...(q === undefined ? {} : { q }),
+    ...(category === undefined ? {} : { category }),
+    ...(status === undefined ? {} : { status }),
+    ...(label === undefined ? {} : { label }),
+    ...(assignee === undefined ? {} : { assignee }),
+    ...(deleted === undefined ? {} : { deleted }),
+    ...(cursor === undefined ? {} : { cursor }),
+  };
+}
+
+/**
+ * The same for one status group of the grouped view, whose query pins the
+ * status and ignores the URL's multi-status filter (see `issueGroupQuery`).
+ */
+export function groupFilter(
+  search: IssueSearch,
+  statusId: number,
+  cursor?: string,
+): IssueListFilter {
+  return {
+    status: [statusId],
+    ...(search.q === undefined ? {} : { q: search.q }),
+    ...(csvToIds(search.label) === undefined
+      ? {}
+      : { label: csvToIds(search.label) }),
+    ...(search.assignee === undefined ? {} : { assignee: search.assignee }),
+    ...(cursor === undefined ? {} : { cursor }),
+  };
+}
+
 export function csvToIds(csv?: string): number[] | undefined {
   if (!csv) return undefined;
   return csv.split(",").map(Number);
@@ -109,7 +154,10 @@ export function toggleId(ids: number[], id: number): number[] {
 
 export const issuesQuery = (slug: string, search: IssueSearch) =>
   queryOptions({
-    queryKey: ["issues", slug, search],
+    ...issuesEntry(["issues", slug, search], {
+      kind: "page",
+      filter: listFilter(search),
+    }),
     queryFn: () => api.listIssues(slug, listParams(search)),
   });
 
@@ -170,17 +218,20 @@ export const issueGroupQuery = (
     // The {group} marker keys the cache under the ["issues", slug] prefix
     // (existing SSE/mutation invalidations cover it) and lets the status
     // mutation recognize status-scoped pages.
-    queryKey: [
-      "issues",
-      slug,
-      { group: statusId },
-      {
-        q: search.q,
-        label: search.label,
-        assignee: search.assignee,
-        ...effectiveSort(search),
-      },
-    ],
+    ...issuesEntry(
+      [
+        "issues",
+        slug,
+        { group: statusId },
+        {
+          q: search.q,
+          label: search.label,
+          assignee: search.assignee,
+          ...effectiveSort(search),
+        },
+      ],
+      { kind: "page", filter: groupFilter(search, statusId) },
+    ),
     queryFn: () =>
       api.listIssues(slug, {
         status: [statusId],
@@ -211,17 +262,36 @@ export function statusScopeOf(queryKey: readonly unknown[]): number | null {
  */
 export const issueCountsQuery = (slug: string, search: IssueSearch) =>
   queryOptions({
-    queryKey: [
-      "issues",
-      slug,
-      "counts",
+    ...issuesEntry(
+      [
+        "issues",
+        slug,
+        "counts",
+        {
+          q: search.q,
+          status: search.status,
+          label: search.label,
+          assignee: search.assignee,
+        },
+      ],
       {
-        q: search.q,
-        status: search.status,
-        label: search.label,
-        assignee: search.assignee,
+        kind: "counts",
+        // Counts span both categories by design — the tabs are drawn from
+        // them — so the category the list is showing is deliberately absent.
+        filter: {
+          ...(search.q === undefined ? {} : { q: search.q }),
+          ...(csvToIds(search.status) === undefined
+            ? {}
+            : { status: csvToIds(search.status) }),
+          ...(csvToIds(search.label) === undefined
+            ? {}
+            : { label: csvToIds(search.label) }),
+          ...(search.assignee === undefined
+            ? {}
+            : { assignee: search.assignee }),
+        },
       },
-    ],
+    ),
     queryFn: () =>
       api.getIssueCounts(slug, {
         q: search.q,

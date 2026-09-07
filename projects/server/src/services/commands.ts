@@ -3,6 +3,7 @@ import type {
   ChangeEvent,
   CommandSubmitInput,
   CommandSubmitResult,
+  IssueListRow,
   TimelineComment,
 } from "@todou/shared";
 import { and, eq, inArray } from "drizzle-orm";
@@ -163,6 +164,14 @@ export async function executeCommands(
   const events: ChangeEvent[] = [];
   const commandEvents: ChangeEvent[] = [];
   let crossTargets: ReferenceTarget[] = [];
+  /**
+   * Where the card sits once the commands have applied (T-279). Filled in by
+   * the transaction, because the sets it is read from live there and are
+   * mutated as the commands run. Left unset only if the transaction never
+   * finished, and then nothing is published at all — but an absent field is
+   * the safe reading anyway, so this needs no other guard.
+   */
+  let listRow: IssueListRow | undefined;
 
   const commentRow: CommentRow | null = await db.transaction(async (tx) => {
     const addEvent = async (
@@ -315,6 +324,12 @@ export async function executeCommands(
       .update(issues)
       .set({ statusId, updatedAt: new Date() })
       .where(eq(issues.id, issue.id));
+    listRow = {
+      kind: "fields",
+      status_id: statusId,
+      label_ids: [...labeled],
+      assignee_ids: [...assigned],
+    };
     return comment;
   });
 
@@ -325,6 +340,7 @@ export async function executeCommands(
     id: issue.id,
     action: "updated",
     issue_number: issueNumber,
+    list_row: listRow,
   });
   for (const e of events) ctx.bus.publish(project.id, e);
   if (commentRow !== null) {

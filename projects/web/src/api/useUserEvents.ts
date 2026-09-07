@@ -1,11 +1,16 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { focusManager, useQueryClient } from "@tanstack/react-query";
 import {
+  admitsRow,
   type ChangeEvent,
   type CrossChangeEvent,
   CrossChangeEvent as CrossChangeEventSchema,
+  filterIsDecidable,
   type InboxItem,
   type InboxRowState,
+  type IssueListFilter,
+  type IssueListItem,
+  type IssueListRow,
   type MeEvent,
   MeEvent as MeEventSchema,
   SSE_CHANGE_EVENT,
@@ -13,6 +18,7 @@ import {
   SSE_PING_EVENT,
 } from "@todou/shared";
 import { useEffect } from "react";
+import { issueListDescriptorOf } from "@/api/issues-cache.ts";
 import { api, clientOrigin } from "@/api/queries.ts";
 import {
   electLeader,
@@ -25,41 +31,90 @@ import {
 type QueryKeyLike = ReadonlyArray<unknown>;
 
 /**
- * "refetch" re-fetches every active query under the key (the classic
- * broad invalidation). `contains` marks everything under the key stale but
- * only re-fetches pages that actually hold the issue.
- *
- * Narrowing timeline events this way is safe only because the server pairs
- * every activity that bumps `updated_at` — comment, attachment, answered
- * question, spec push, spec review (T-101) — with an `issue` event, and a
- * broad refetch subsumes a `contains` on the same key inside one coalescing
- * window. Timeline entries that arrive unpaired (`referenced`, a comment
- * edit or delete) deliberately do not bump, so they cannot move a row
- * between board columns or reorder an updated-sorted list, and pages
- * without the row have nothing visible to change.
+ * "refetch" re-fetches every active query under the key (the classic broad
+ * invalidation). The two row-carrying scopes describe individual rows instead
+ * and let each cache entry decide for itself whether it is affected.
  *
  * `inboxRows` compares the server's fingerprint of one inbox row against the
- * cached copy of that row (T-275); `stillUnread` narrows a list refetch to
- * the pages whose copy of a row still shows unread. Both carry a list rather
- * than a single row because `coalesceBatch` merges every one of them on a
- * key into one — see there for why.
+ * cached copy of that row (T-275). `issueRows` says what a change did to one
+ * row of the project's lists (T-279), and every entry under `["issues",
+ * slug]` answers it against the filter it declared in `meta.issueList`.
+ *
+ * What licenses skipping an entry is which properties of a row each kind of
+ * event can move:
+ *
+ * | event | membership | sort key | rendered fields | verdict |
+ * |---|---|---|---|---|
+ * | `issue` with `list_row` | as stated | may move | may move | that kind |
+ * | `issue` without it | unknown | unknown | unknown | broad refetch |
+ * | `comment`, `timeline` | no | no | unread + question badges | `contains` |
+ * | a read position (`me`) | no | no | unread badge | `read` |
+ * | `status`, `label` | no | no | every row's chips | broad refetch |
+ *
+ * `comment` and `timeline` can be narrowed to the pages holding the row
+ * because the entries that bump `updated_at` — comment, attachment, answered
+ * question, spec push, spec review (T-101) — are each paired with an `issue`
+ * event, whose own verdict covers the reordering; the unpaired ones
+ * (`referenced`, a comment edit or delete) deliberately do not bump, so they
+ * cannot reorder anything or move a row between columns.
+ *
+ * Both scopes carry a list rather than a single row because `coalesceBatch`
+ * merges every one of them on a key into one — see there for why.
  */
 export type InboxRowVerdict = {
   project: string;
   number: number;
   row: InboxRowState | null;
 };
+
+/** The `{kind:"fields"}` arm of `list_row`, which is the informative one. */
+export type IssueFieldsRow = Extract<IssueListRow, { kind: "fields" }>;
+
+/**
+ * What one change did to one row of a project's lists. `contains` and `read`
+ * are the two an event's pointer alone establishes; the other three are the
+ * server's own answer, off `list_row`.
+ */
+export type IssueListVerdict =
+  | { verdict: "contains"; number: number }
+  | { verdict: "read"; number: number }
+  | { verdict: "activity"; number: number }
+  | { verdict: "fields"; number: number; row: IssueFieldsRow }
+  | { verdict: "gone"; number: number };
+
 export type InvalidationScope =
   | "refetch"
-  | { contains: number }
   | { inboxRows: InboxRowVerdict[] }
-  | { stillUnread: number[] };
+  | { issueRows: IssueListVerdict[] };
 export type Invalidation = { key: QueryKeyLike; scope: InvalidationScope };
 
 const refetch = (key: QueryKeyLike): Invalidation => ({
   key,
   scope: "refetch",
 });
+
+/** One verdict about one row, on the project's list key. */
+const issueRow = (slug: string, verdict: IssueListVerdict): Invalidation => ({
+  key: ["issues", slug],
+  scope: { issueRows: [verdict] },
+});
+
+/**
+ * The list-side reading of an `issue` event's `list_row`. An absent field is
+ * a server that gave no answer, and the only safe reading of that is the
+ * pre-T-279 one: refetch every list of the project.
+ */
+function issueListInvalidation(
+  slug: string,
+  number: number,
+  row: IssueListRow | undefined,
+): Invalidation {
+  if (row === undefined) return refetch(["issues", slug]);
+  if (row.kind === "fields") {
+    return issueRow(slug, { verdict: "fields", number, row });
+  }
+  return issueRow(slug, { verdict: row.kind, number });
+}
 
 /**
  * Pointer event → invalidation descriptors. Exported pure for tests.
@@ -77,9 +132,9 @@ export function invalidationsFor(
       return event.issue_number === undefined
         ? [refetch(["issues", slug])]
         : [
-            // Status may have changed and the target board column is not
-            // derivable from the event — stay broad.
-            refetch(["issues", slug]),
+            // Where the row landed is the one thing the pointer cannot say,
+            // so the write path says it instead (T-279).
+            issueListInvalidation(slug, event.issue_number, event.list_row),
             refetch(["issue", slug, event.issue_number]),
             refetch(["timeline", slug, event.issue_number]),
           ];
@@ -94,7 +149,10 @@ export function invalidationsFor(
         : [
             refetch(["timeline", slug, event.issue_number]),
             refetch(["questions", slug, event.issue_number]),
-            { key: ["issues", slug], scope: { contains: event.issue_number } },
+            issueRow(slug, {
+              verdict: "contains",
+              number: event.issue_number,
+            }),
           ];
     case "attachment":
       return event.issue_number === undefined
@@ -106,14 +164,16 @@ export function invalidationsFor(
           ];
     case "spec":
       // A push moves the "current" file set and the denormalized issue
-      // columns (version / review status) that feed list badges.
+      // columns (version / review status) that feed list badges. The lists
+      // are deliberately absent: every spec write is paired with an `issue`
+      // event, whose `activity` verdict refreshes exactly the pages showing
+      // the badge (T-279).
       return event.issue_number === undefined
         ? []
         : [
             refetch(["spec", slug, event.issue_number]),
             refetch(["spec-files", slug, event.issue_number, "current"]),
             refetch(["issue", slug, event.issue_number]),
-            refetch(["issues", slug]),
           ];
     case "status":
       return [refetch(["statuses", slug]), refetch(["issues", slug])];
@@ -208,10 +268,10 @@ export function meInvalidations(event: MeEvent): Invalidation[] {
         // A mark-read always ends in "unread: false, unread_comments: 0" for
         // that row, so the event needs to carry neither: only the pages
         // still showing it lit have anything to refetch.
-        {
-          key: ["issues", event.project],
-          scope: { stillUnread: [event.issue_number] },
-        },
+        issueRow(event.project, {
+          verdict: "read",
+          number: event.issue_number,
+        }),
       ];
     case "reads_swept":
       return event.projects === undefined
@@ -309,8 +369,152 @@ export function inboxRowContentDiffers(
 }
 
 /**
- * Shape test for `stillUnread`: an issue-list-like page whose copy of the
- * row still shows unread. The counts cache shares the ["issues", slug]
+ * Is this cache entry the whole result set under its filter, rather than a
+ * window onto it? Only then does "the row is not in here" mean "the row does
+ * not match this filter".
+ */
+export function pageIsComplete(
+  filter: IssueListFilter,
+  data: unknown,
+): boolean {
+  if (filter.cursor !== undefined) return false;
+  if (typeof data !== "object" || data === null) return false;
+  return (data as { next_cursor?: unknown }).next_cursor === null;
+}
+
+/**
+ * One row's set-valued fields as some cache entry of this project already has
+ * them (T-279), for the dimensions a `fields` verdict left out. Any page under
+ * the key will do: they are project-level facts, not per-page ones.
+ *
+ * The entry found may itself be stale — a hidden tab's cache marked stale by
+ * an earlier event and not yet refetched. `admitsRow` can then judge on old
+ * labels and skip a page it should not have; that page is already in the
+ * invalidation queue from the event that marked it, so the reader still sees
+ * the update on the way back.
+ */
+export function cachedIssueRow(
+  queryClient: QueryClient,
+  key: QueryKeyLike,
+  issueNumber: number,
+): IssueListItem | undefined {
+  for (const [, data] of queryClient.getQueriesData({ queryKey: key })) {
+    if (typeof data !== "object" || data === null) continue;
+    const items = (data as { items?: unknown }).items;
+    if (!Array.isArray(items)) continue;
+    const found = items.find(
+      (item) =>
+        typeof item === "object" &&
+        item !== null &&
+        (item as { number?: unknown }).number === issueNumber,
+    );
+    if (found !== undefined) return found as IssueListItem;
+  }
+  return undefined;
+}
+
+/**
+ * The category of each status of one project, from the client's own
+ * `statuses` cache — which every page rendering a status chip already holds,
+ * so this costs no request. A status the cache does not know maps to
+ * `undefined`, which `admitsRow` reads as "no telling".
+ */
+export function statusCategories(
+  queryClient: QueryClient,
+  slug: string,
+): (statusId: number) => "open" | "closed" | undefined {
+  const statuses = queryClient.getQueryData(["statuses", slug]);
+  const byId = new Map<number, "open" | "closed">();
+  if (Array.isArray(statuses)) {
+    for (const status of statuses) {
+      if (typeof status !== "object" || status === null) continue;
+      const { id, category } = status as { id?: unknown; category?: unknown };
+      if (typeof id !== "number") continue;
+      if (category === "open" || category === "closed") byId.set(id, category);
+    }
+  }
+  return (statusId) => byId.get(statusId);
+}
+
+/**
+ * Does one verdict oblige this cache entry to refetch? The whole saving of
+ * T-279 is the `false` returns; every uncertainty resolves to `true`, which
+ * is the behaviour that existed before the verdicts did.
+ */
+export function entryWantsRefetch(
+  verdict: IssueListVerdict,
+  descriptor: ReturnType<typeof issueListDescriptorOf>,
+  data: unknown,
+  context: {
+    cached: (issueNumber: number) => IssueListItem | undefined;
+    categoryOf: (statusId: number) => "open" | "closed" | undefined;
+  },
+): boolean {
+  // No declaration: a producer this build does not know about, so there is
+  // nothing to judge against.
+  if (descriptor === undefined) return true;
+  const { filter } = descriptor;
+  // `q` matches bodies and the trash sorts by deletion time; neither follows
+  // from a row's fields.
+  if (!filterIsDecidable(filter)) return true;
+  const holds = pageContainsIssue(data, verdict.number);
+
+  if (descriptor.kind === "counts") {
+    switch (verdict.verdict) {
+      // A count is drawn from membership alone: unread markers, question
+      // badges and `updated_at` are not in it.
+      case "contains":
+      case "read":
+      case "activity":
+        return false;
+      case "gone":
+        return true;
+      case "fields": {
+        if (verdict.row.label_ids !== undefined) return true;
+        if (verdict.row.assignee_ids !== undefined) return true;
+        const before = context.cached(verdict.number);
+        if (before === undefined) return true;
+        return before.status.id !== verdict.row.status_id;
+      }
+    }
+  }
+
+  switch (verdict.verdict) {
+    case "contains":
+      return holds;
+    case "read":
+      return pageHasUnreadRow(data, verdict.number);
+    case "gone":
+      return holds;
+    case "activity":
+      // Membership is guaranteed unchanged, so a complete page that does not
+      // hold the row proves the row does not match its filter. An incomplete
+      // one has to ask: the row may have sat beyond the window and moved in
+      // when `updated_at` bumped.
+      return holds || !pageIsComplete(filter, data);
+    case "fields": {
+      if (holds) return true;
+      const before = context.cached(verdict.number);
+      return (
+        admitsRow(
+          filter,
+          verdict.row,
+          before === undefined
+            ? undefined
+            : {
+                label_ids: before.labels.map((l) => l.id),
+                assignee_ids: before.assignees.map((a) => a.id),
+              },
+          context.categoryOf,
+        ) !== false
+      );
+    }
+  }
+}
+
+/**
+ * Shape test for the `read` verdict: an issue-list-like page whose copy of
+ * the row still shows unread. The counts cache shares the ["issues", slug]
  * prefix but has no items, so it reads false.
  */
 export function pageHasUnreadRow(data: unknown, issueNumber: number): boolean {
@@ -381,25 +585,27 @@ export function applyInvalidation(
     });
     return;
   }
-  if ("stillUnread" in scope) {
-    // No stale-marking pass: the server has already established that these
-    // rows' unread state is cleared, so a page that agrees has nothing to
-    // reconsider.
-    queryClient.invalidateQueries({
-      queryKey: key,
-      refetchType: maxRefetch,
-      predicate: (query) =>
-        scope.stillUnread.some((number) =>
-          pageHasUnreadRow(query.state.data, number),
-        ),
-    });
-    return;
-  }
-  queryClient.invalidateQueries({ queryKey: key, refetchType: "none" });
+  // One pass, and no broad stale-marking one beside it. The pass that used
+  // to precede `contains` marked every page under the key stale on the
+  // grounds that a row may have moved — but a `contains` verdict comes from
+  // an event that cannot move one, and on a nine-column board that pass cost
+  // nine refetches the moment the reader came back to the tab (T-279).
+  const verdicts = scope.issueRows;
+  const slug = typeof key[1] === "string" ? key[1] : "";
+  const context = {
+    cached: (issueNumber: number) =>
+      cachedIssueRow(queryClient, key, issueNumber),
+    categoryOf: statusCategories(queryClient, slug),
+  };
   queryClient.invalidateQueries({
     queryKey: key,
     refetchType: maxRefetch,
-    predicate: (query) => pageContainsIssue(query.state.data, scope.contains),
+    predicate: (query) => {
+      const descriptor = issueListDescriptorOf(query.meta);
+      return verdicts.some((verdict) =>
+        entryWantsRefetch(verdict, descriptor, query.state.data, context),
+      );
+    },
   });
 }
 
@@ -422,9 +628,9 @@ export function applyInvalidation(
  * them. Measured on a 50-event burst in another project: 14 inbox requests
  * before merging, 1 after.
  *
- * `contains` is deliberately not merged: it predates this and its own
- * safety argument (see InvalidationScope) rests on the broad refetch that
- * T-101 pairs with it, which rule 1 already applies.
+ * That argument applies to the list key exactly as it does to the inbox, so
+ * `issueRows` merges too (T-279): a flood over a nine-column board asks each
+ * column once, whatever the burst's length.
  */
 export function coalesceBatch(batch: Invalidation[]): Invalidation[] {
   const idOf = (key: QueryKeyLike) => JSON.stringify(key);
@@ -442,11 +648,11 @@ export function coalesceBatch(batch: Invalidation[]): Invalidation[] {
     seen.add(id);
 
     const scope = inv.scope;
-    if (scope === "refetch" || "contains" in scope) {
+    if (scope === "refetch") {
       out.push(inv);
       continue;
     }
-    const kind = "inboxRows" in scope ? "inboxRows" : "stillUnread";
+    const kind = "inboxRows" in scope ? "inboxRows" : "issueRows";
     const mergeId = `${kind}:${idOf(inv.key)}`;
     const into = merged.get(mergeId);
     if (into === undefined) {
@@ -456,7 +662,7 @@ export function coalesceBatch(batch: Invalidation[]): Invalidation[] {
         scope:
           "inboxRows" in scope
             ? { inboxRows: [...scope.inboxRows] }
-            : { stillUnread: [...scope.stillUnread] },
+            : { issueRows: [...scope.issueRows] },
       });
       out.push(merged.get(mergeId) as Invalidation);
       continue;
@@ -469,11 +675,11 @@ export function coalesceBatch(batch: Invalidation[]): Invalidation[] {
     ) {
       target.inboxRows.push(...scope.inboxRows);
     } else if (
-      "stillUnread" in scope &&
+      "issueRows" in scope &&
       typeof target === "object" &&
-      "stillUnread" in target
+      "issueRows" in target
     ) {
-      target.stillUnread.push(...scope.stillUnread);
+      target.issueRows.push(...scope.issueRows);
     }
   }
   return out;

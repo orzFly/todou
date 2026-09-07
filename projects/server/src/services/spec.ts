@@ -271,6 +271,9 @@ export async function pushSpec(
         id: issue.id,
         action: "updated",
         issue_number: issueNumber,
+        // The spec badge and `updated_at` moved; which list the card belongs
+        // to did not (T-279).
+        list_row: { kind: "activity" },
       },
       {
         entity: "timeline",
@@ -763,6 +766,9 @@ export async function submitSpecReview(
         id: issue.id,
         action: "updated",
         issue_number: issueNumber,
+        // The spec badge and `updated_at` moved; which list the card belongs
+        // to did not (T-279).
+        list_row: { kind: "activity" },
       },
     );
 
@@ -876,6 +882,9 @@ export async function resolveSpecComments(
         id: issue.id,
         action: "updated",
         issue_number: issueNumber,
+        // The spec badge and `updated_at` moved; which list the card belongs
+        // to did not (T-279).
+        list_row: { kind: "activity" },
       },
     );
     return input.comment_ids;

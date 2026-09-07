@@ -238,6 +238,7 @@ function publishAttachmentEvents(
     id: issueId,
     action: "updated",
     issue_number: issueNumber,
+    list_row: { kind: "activity" },
   });
 }
 

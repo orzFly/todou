@@ -6,11 +6,15 @@ import {
 import type { IssueListPage, Status } from "@todou/shared";
 import { toast } from "sonner";
 import { prependIssue, removeIssue } from "@/api/issues.ts";
+import { issuesEntry } from "@/api/issues-cache.ts";
 import { api } from "@/api/queries.ts";
 
 export const boardColumnQuery = (slug: string, statusId: number) =>
   queryOptions({
-    queryKey: ["issues", slug, { board: statusId }],
+    ...issuesEntry(["issues", slug, { board: statusId }], {
+      kind: "page",
+      filter: { status: [statusId] },
+    }),
     queryFn: () =>
       api.listIssues(slug, {
         status: [statusId],

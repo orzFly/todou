@@ -486,6 +486,14 @@ export async function createIssue(
       id: issue.id,
       action: "created",
       issue_number: number,
+      // A brand-new card: every set is exactly what the caller passed, so
+      // all three travel and no reader has to guess at an omission (T-279).
+      list_row: {
+        kind: "fields",
+        status_id: statusId as number,
+        label_ids: input.label_ids,
+        assignee_ids: input.assignee_ids,
+      },
     });
     const openedId = opened[0]?.id;
     if (openedId !== undefined) {
@@ -1051,11 +1059,35 @@ export async function updateIssue(
     }
   });
 
+  // Whether this save could move the row between lists, answered from the
+  // sets the caller handed us rather than from a read-back (T-279). A save
+  // that names none of the three moved `updated_at` and the badges only —
+  // and the sets it does not name are left out, which is what tells a client
+  // to keep the value it has.
+  const movesMembership =
+    input.status_id !== undefined ||
+    input.label_ids !== undefined ||
+    input.assignee_ids !== undefined;
   events.push({
     entity: "issue",
     id: before.id,
     action: "updated",
     issue_number: number,
+    list_row: movesMembership
+      ? {
+          kind: "fields",
+          status_id: input.status_id ?? before.statusId,
+          // Left out rather than set to undefined, so a subscriber reading
+          // the object off the bus sees the same shape as one reading the
+          // JSON off the wire.
+          ...(input.label_ids === undefined
+            ? {}
+            : { label_ids: input.label_ids }),
+          ...(input.assignee_ids === undefined
+            ? {}
+            : { assignee_ids: [...desiredAssignees] }),
+        }
+      : { kind: "activity" },
   });
   for (const e of events) ctx.bus.publish(project.id, e);
   if (resolved !== null) {
@@ -1162,6 +1194,13 @@ async function setTrashed(
     id: row.id,
     action: trashed ? "deleted" : "updated",
     issue_number: number,
+    // On the way in, `gone` and nothing else: a reader who cannot see the
+    // trash must not learn this card's status and labels from an event about
+    // its disappearance (T-279). On the way out, only the status — the
+    // labels and assignees never moved.
+    list_row: trashed
+      ? { kind: "gone" }
+      : { kind: "fields", status_id: row.statusId },
   });
   for (const e of events) ctx.bus.publish(project.id, e);
   return { project, db, row: after };

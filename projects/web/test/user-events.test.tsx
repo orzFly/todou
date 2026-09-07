@@ -5,12 +5,20 @@ import {
   useQuery,
 } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
-import type { CrossChangeEvent, InboxRowState, MeEvent } from "@todou/shared";
+import type {
+  CrossChangeEvent,
+  InboxRowState,
+  IssueListFilter,
+  IssueListRow,
+  MeEvent,
+} from "@todou/shared";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { issuesEntry } from "../src/api/issues-cache.ts";
 import { clientOrigin } from "../src/api/queries.ts";
 import { openTabChannel, type TabMessage } from "../src/api/tab-sync.ts";
 import {
+  cachedIssueRow,
   coalesceBatch,
   INVALIDATE_COALESCE_MS,
   inboxAttentionDiffers,
@@ -61,7 +69,10 @@ const cachedInbox = (...items: Record<string, unknown>[]) => ({
 });
 
 describe("invalidationsFor (SSE → invalidation descriptors)", () => {
-  it("maps issue events to broad refetches (status may move columns)", () => {
+  it("falls back to a broad refetch for an unjudged issue event", () => {
+    // No `list_row`: a server predating T-279, or a publish path nobody
+    // annotated. The only safe reading is the one that existed before the
+    // field did.
     expect(
       invalidationsFor(
         { entity: "issue", id: 1, action: "updated", issue_number: 42 },
@@ -71,6 +82,54 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       { key: ["issues", "todou"], scope: "refetch" },
       { key: ["issue", "todou", 42], scope: "refetch" },
       { key: ["timeline", "todou", 42], scope: "refetch" },
+    ]);
+  });
+
+  it("turns each list_row kind into its verdict (T-279)", () => {
+    const listScope = (row: IssueListRow) =>
+      invalidationsFor(
+        {
+          entity: "issue",
+          id: 1,
+          action: "updated",
+          issue_number: 42,
+          list_row: row,
+        },
+        "todou",
+      ).find(
+        (inv) =>
+          JSON.stringify(inv.key) === JSON.stringify(["issues", "todou"]),
+      )?.scope;
+
+    expect(listScope({ kind: "activity" })).toEqual({
+      issueRows: [{ verdict: "activity", number: 42 }],
+    });
+    expect(listScope({ kind: "gone" })).toEqual({
+      issueRows: [{ verdict: "gone", number: 42 }],
+    });
+    const fields: IssueListRow = {
+      kind: "fields",
+      status_id: 3,
+      label_ids: [7],
+    };
+    expect(listScope(fields)).toEqual({
+      issueRows: [{ verdict: "fields", number: 42, row: fields }],
+    });
+  });
+
+  it("leaves the lists to the paired issue event on a spec change", () => {
+    // Every spec write emits an `issue` event too, and its `activity`
+    // verdict refreshes exactly the pages showing the badge — so a second,
+    // broad pass on the same key would only undo that narrowing.
+    expect(
+      invalidationsFor(
+        { entity: "spec", id: 1, action: "updated", issue_number: 42 },
+        "todou",
+      ).map((inv) => inv.key),
+    ).toEqual([
+      ["spec", "todou", 42],
+      ["spec-files", "todou", 42, "current"],
+      ["issue", "todou", 42],
     ]);
   });
 
@@ -86,7 +145,10 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       // Unread markers (T-46) ride the list payload. An unpaired timeline
       // entry (`referenced`, a comment edit) does not bump updated_at
       // (T-101), so it cannot move a row between pages.
-      { key: ["issues", "todou"], scope: { contains: 7 } },
+      {
+        key: ["issues", "todou"],
+        scope: { issueRows: [{ verdict: "contains", number: 7 }] },
+      },
     ]);
   });
 
@@ -190,7 +252,10 @@ describe("meInvalidations (T-275)", () => {
         key: ["inbox"],
         scope: { inboxRows: [{ project: "todou", number: 7, row }] },
       },
-      { key: ["issues", "todou"], scope: { stillUnread: [7] } },
+      {
+        key: ["issues", "todou"],
+        scope: { issueRows: [{ verdict: "read", number: 7 }] },
+      },
     ]);
   });
 
@@ -222,6 +287,8 @@ describe("coalesceBatch (T-275)", () => {
     number,
     row: fingerprint(),
   });
+  const listVerdict = (number: number) =>
+    ({ verdict: "contains", number }) as const;
 
   it("merges every inbox verdict on the key into one descriptor", () => {
     // The measured problem: invalidateQueries cancels and restarts an
@@ -240,16 +307,42 @@ describe("coalesceBatch (T-275)", () => {
     ]);
   });
 
-  it("merges stillUnread the same way", () => {
+  it("merges list verdicts on one key, per project (T-279)", () => {
+    // The board case: nine columns, one merged descriptor, so a burst asks
+    // each column at most once however long it runs.
     expect(
       coalesceBatch([
-        { key: ["issues", "todou"], scope: { stillUnread: [1] } },
-        { key: ["issues", "todou"], scope: { stillUnread: [2] } },
-        { key: ["issues", "other"], scope: { stillUnread: [3] } },
+        { key: ["issues", "todou"], scope: { issueRows: [listVerdict(1)] } },
+        { key: ["issues", "todou"], scope: { issueRows: [listVerdict(2)] } },
+        { key: ["issues", "other"], scope: { issueRows: [listVerdict(3)] } },
       ]),
     ).toEqual([
-      { key: ["issues", "todou"], scope: { stillUnread: [1, 2] } },
-      { key: ["issues", "other"], scope: { stillUnread: [3] } },
+      {
+        key: ["issues", "todou"],
+        scope: { issueRows: [listVerdict(1), listVerdict(2)] },
+      },
+      { key: ["issues", "other"], scope: { issueRows: [listVerdict(3)] } },
+    ]);
+  });
+
+  it("merges verdicts of different kinds into the same descriptor", () => {
+    // A comment and its paired issue event land in one window, and the merged
+    // predicate ORs them — which is why they may share a descriptor.
+    expect(
+      coalesceBatch([
+        { key: ["issues", "todou"], scope: { issueRows: [listVerdict(1)] } },
+        {
+          key: ["issues", "todou"],
+          scope: { issueRows: [{ verdict: "activity", number: 1 }] },
+        },
+      ]),
+    ).toEqual([
+      {
+        key: ["issues", "todou"],
+        scope: {
+          issueRows: [listVerdict(1), { verdict: "activity", number: 1 }],
+        },
+      },
     ]);
   });
 
@@ -258,26 +351,25 @@ describe("coalesceBatch (T-275)", () => {
       coalesceBatch([
         { key: ["inbox"], scope: { inboxRows: [verdict(1)] } },
         { key: ["inbox"], scope: "refetch" },
-        { key: ["issues", "todou"], scope: { contains: 4 } },
+        { key: ["issues", "todou"], scope: { issueRows: [listVerdict(4)] } },
       ]),
     ).toEqual([
       { key: ["inbox"], scope: "refetch" },
-      { key: ["issues", "todou"], scope: { contains: 4 } },
+      { key: ["issues", "todou"], scope: { issueRows: [listVerdict(4)] } },
     ]);
   });
 
-  it("collapses identical descriptors and keeps distinct contains apart", () => {
+  it("collapses identical descriptors", () => {
     expect(
       coalesceBatch([
         { key: ["timeline", "todou", 3], scope: "refetch" },
         { key: ["timeline", "todou", 3], scope: "refetch" },
-        { key: ["issues", "todou"], scope: { contains: 3 } },
-        { key: ["issues", "todou"], scope: { contains: 4 } },
+        { key: ["issues", "todou"], scope: { issueRows: [listVerdict(3)] } },
+        { key: ["issues", "todou"], scope: { issueRows: [listVerdict(3)] } },
       ]),
     ).toEqual([
       { key: ["timeline", "todou", 3], scope: "refetch" },
-      { key: ["issues", "todou"], scope: { contains: 3 } },
-      { key: ["issues", "todou"], scope: { contains: 4 } },
+      { key: ["issues", "todou"], scope: { issueRows: [listVerdict(3)] } },
     ]);
   });
 
@@ -496,16 +588,28 @@ describe("useUserEvents", () => {
     spy: ReturnType<typeof setup>["spy"],
     key: unknown[],
     data: unknown,
+    meta?: Record<string, unknown>,
   ) =>
     callsFor(spy, key)
       .filter((call) => {
         const predicate = call[0]?.predicate;
         if (predicate === undefined) return true;
-        // Only `state.data` is read, so a whole Query is not needed here.
+        // Only `state.data` and `meta` are read, so a whole Query is not
+        // needed here.
         type Query = Parameters<typeof predicate>[0];
-        return predicate({ state: { data } } as Query);
+        return predicate({ state: { data }, meta } as Query);
       })
       .map((call) => call[0]?.refetchType ?? "default");
+
+  /**
+   * The `meta` a real list cache entry carries (T-279). An entry without one
+   * is refetched unconditionally, so a test that omits it where the code
+   * reads it would pass for the wrong reason.
+   */
+  const listMeta = (
+    filter: IssueListFilter = {},
+    kind: "page" | "counts" = "page",
+  ) => ({ issueList: { kind, filter } });
 
   it("subscribes to the user feed and invalidates on change events", async () => {
     const { spy } = setup();
@@ -791,13 +895,36 @@ describe("useUserEvents", () => {
     const { spy } = setup();
     emitIssueRead(null);
 
-    const lit = { items: [{ number: 7, unread: true, unread_comments: 1 }] };
-    const clear = { items: [{ number: 7, unread: false, unread_comments: 0 }] };
-    const elsewhere = { items: [{ number: 8, unread: true }] };
-    expect(matchedPasses(spy, ["issues", "todou"], lit)).toEqual(["active"]);
+    const lit = {
+      items: [{ number: 7, unread: true, unread_comments: 1 }],
+      next_cursor: null,
+    };
+    const clear = {
+      items: [{ number: 7, unread: false, unread_comments: 0 }],
+      next_cursor: null,
+    };
+    const elsewhere = {
+      items: [{ number: 8, unread: true }],
+      next_cursor: null,
+    };
+    const meta = listMeta();
+    expect(matchedPasses(spy, ["issues", "todou"], lit, meta)).toEqual([
+      "active",
+    ]);
     // No stale mark either: the server has established this row is clear.
-    expect(matchedPasses(spy, ["issues", "todou"], clear)).toEqual([]);
-    expect(matchedPasses(spy, ["issues", "todou"], elsewhere)).toEqual([]);
+    expect(matchedPasses(spy, ["issues", "todou"], clear, meta)).toEqual([]);
+    expect(matchedPasses(spy, ["issues", "todou"], elsewhere, meta)).toEqual(
+      [],
+    );
+    // The counts entry has no unread state in it at all.
+    expect(
+      matchedPasses(
+        spy,
+        ["issues", "todou"],
+        { open: 1 },
+        listMeta({}, "counts"),
+      ),
+    ).toEqual([]);
   });
 
   it("ignores a malformed me event", () => {
@@ -930,7 +1057,12 @@ describe("useUserEvents", () => {
       project: "todou",
     });
     vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
-    expect(listScopes(referenced.spy)).toEqual(["none", "active"]);
+    // One pass, where this used to be a `"none"` stale-marking sweep of every
+    // page followed by a predicated refetch. The sweep is gone (T-279): an
+    // event that produces a `contains` verdict cannot move a row's
+    // membership, so marking the pages that do not hold it stale only bought
+    // the reader a refetch per page on the next focus.
+    expect(listScopes(referenced.spy)).toEqual(["active"]);
   });
 
   it("compensates with broad invalidation after a reconnect", async () => {
@@ -1590,5 +1722,322 @@ describe("useUserEvents tab sharing (T-276)", () => {
         false,
       );
     }
+  });
+});
+
+/**
+ * The board case T-279 exists for: nine columns cached, a flood of status
+ * changes, and eight of the nine with nothing to do about each one. Asserted
+ * on the cache rather than on replayed predicates — with no component
+ * observing, `refetchType: "active"` leaves a matched query marked
+ * invalidated and an unmatched one untouched, so `isInvalidated` is exactly
+ * "would this entry have refetched".
+ */
+describe("issue list judgement (T-279)", () => {
+  const SLUG = "todou";
+  /** A nine-column board, ids 1–9, the last two closed. */
+  const STATUSES = Array.from({ length: 9 }, (_, i) => ({
+    id: i + 1,
+    name: `s${i + 1}`,
+    category: i + 1 >= 8 ? "closed" : "open",
+    color: "#123456",
+    position: i,
+    is_default: i === 0,
+  }));
+
+  const row = (
+    number: number,
+    statusId: number,
+    over: { labels?: number[]; assignees?: number[]; unread?: boolean } = {},
+  ) => ({
+    id: number,
+    number,
+    title: `card ${number}`,
+    status: STATUSES.find((s) => s.id === statusId),
+    labels: (over.labels ?? []).map((id) => ({ id, name: `l${id}` })),
+    assignees: (over.assignees ?? []).map((id) => ({ id, login: `u${id}` })),
+    unread: over.unread ?? false,
+    unread_comments: 0,
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    MockEventSource.instances = [];
+  });
+
+  function setup() {
+    vi.stubGlobal("EventSource", MockEventSource);
+    focusManager.setFocused(true);
+    const queryClient = new QueryClient();
+    // The category dimension is judged through this, which every page
+    // rendering a status chip already holds.
+    queryClient.setQueryData(["statuses", SLUG], STATUSES);
+    const spy = vi.spyOn(queryClient, "invalidateQueries");
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    renderHook(() => useUserEvents(USER_ID), { wrapper });
+    return { spy, queryClient };
+  }
+
+  /** Seeds one cache entry through the production `issuesEntry` helper. */
+  const seed = (
+    queryClient: QueryClient,
+    key: readonly unknown[],
+    descriptor: Parameters<typeof issuesEntry>[1],
+    data: unknown,
+  ) =>
+    queryClient.fetchQuery({
+      ...issuesEntry(key, descriptor),
+      queryFn: async () => data,
+    });
+
+  const seedColumn = (
+    queryClient: QueryClient,
+    statusId: number,
+    items: unknown[],
+  ) =>
+    seed(
+      queryClient,
+      ["issues", SLUG, { board: statusId }],
+      { kind: "page", filter: { status: [statusId] } },
+      { items, next_cursor: null },
+    );
+
+  const invalidated = (queryClient: QueryClient, key: readonly unknown[]) =>
+    queryClient.getQueryState(key)?.isInvalidated === true;
+
+  const columnsInvalidated = (queryClient: QueryClient) =>
+    STATUSES.filter((s) =>
+      invalidated(queryClient, ["issues", SLUG, { board: s.id }]),
+    ).map((s) => s.id);
+
+  const emit = (list_row: unknown, number = 7, id = 7) => {
+    MockEventSource.instances[0]?.emit("change", {
+      entity: "issue",
+      id,
+      action: "updated",
+      issue_number: number,
+      project: SLUG,
+      ...(list_row === undefined ? {} : { list_row }),
+    });
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+  };
+
+  /** Calls the spy recorded against exactly the project's list key. */
+  const listCalls = (spy: ReturnType<typeof setup>["spy"]) =>
+    spy.mock.calls.filter(
+      (call) =>
+        JSON.stringify(call[0]?.queryKey) === JSON.stringify(["issues", SLUG]),
+    );
+
+  it("touches only the source and target columns of a status change", async () => {
+    vi.useFakeTimers();
+    const { spy, queryClient } = setup();
+    for (const status of STATUSES) {
+      await seedColumn(
+        queryClient,
+        status.id,
+        status.id === 3 ? [row(7, 3)] : [],
+      );
+    }
+
+    emit({ kind: "fields", status_id: 5 });
+
+    // 3 holds the row, 5 is where it now belongs. The other seven neither
+    // refetch nor go stale — the whole point of the card.
+    expect(columnsInvalidated(queryClient)).toEqual([3, 5]);
+    // And one call for the lot: `invalidateQueries` cancels in-flight
+    // refetches, so a per-verdict call would abort and restart each column.
+    expect(listCalls(spy)).toHaveLength(1);
+  });
+
+  it("asks each column at most once for a whole flood", async () => {
+    vi.useFakeTimers();
+    const { spy, queryClient } = setup();
+    for (const status of STATUSES) {
+      await seedColumn(queryClient, status.id, []);
+    }
+
+    const source = MockEventSource.instances[0];
+    for (let i = 1; i <= 30; i++) {
+      source?.emit("change", {
+        entity: "issue",
+        id: i,
+        action: "updated",
+        issue_number: i,
+        project: SLUG,
+        list_row: { kind: "fields", status_id: 5 },
+      });
+    }
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+
+    expect(listCalls(spy)).toHaveLength(1);
+    expect(columnsInvalidated(queryClient)).toEqual([5]);
+  });
+
+  it("skips a complete page an activity event cannot have entered", async () => {
+    vi.useFakeTimers();
+    const { queryClient } = setup();
+    const COMPLETE = ["issues", SLUG, { board: 1 }];
+    const PARTIAL = ["issues", SLUG, { board: 2 }];
+    const HOLDING = ["issues", SLUG, { board: 3 }];
+    await seedColumn(queryClient, 1, []);
+    await seed(
+      queryClient,
+      PARTIAL,
+      { kind: "page", filter: { status: [2] } },
+      { items: [], next_cursor: "c1" },
+    );
+    await seedColumn(queryClient, 3, [row(7, 3)]);
+
+    emit({ kind: "activity" });
+
+    expect(invalidated(queryClient, COMPLETE)).toBe(false);
+    // An incomplete window has to ask: the row may have sat past its edge and
+    // moved in when `updated_at` bumped.
+    expect(invalidated(queryClient, PARTIAL)).toBe(true);
+    expect(invalidated(queryClient, HOLDING)).toBe(true);
+  });
+
+  it("refetches only the pages holding a card that went to the trash", async () => {
+    vi.useFakeTimers();
+    const { queryClient } = setup();
+    const COUNTS = ["issues", SLUG, "counts", {}];
+    await seedColumn(queryClient, 1, []);
+    await seedColumn(queryClient, 3, [row(7, 3)]);
+    await seed(
+      queryClient,
+      COUNTS,
+      { kind: "counts", filter: {} },
+      { open: 1, closed: 0, by_status: { "3": 1 } },
+    );
+
+    emit({ kind: "gone" });
+
+    expect(columnsInvalidated(queryClient)).toEqual([3]);
+    // A card leaving takes a count with it, wherever it was.
+    expect(invalidated(queryClient, COUNTS)).toBe(true);
+  });
+
+  it("judges a label filter from the cached row when the verdict omits it", async () => {
+    vi.useFakeTimers();
+    const { queryClient } = setup();
+    // The row lives in a column, labelled 20; the two filtered lists differ
+    // only in which label they ask for.
+    const MATCHING = ["issues", SLUG, { label: "20" }];
+    const OTHER = ["issues", SLUG, { label: "21" }];
+    await seedColumn(queryClient, 3, [row(7, 3, { labels: [20] })]);
+    await seed(
+      queryClient,
+      MATCHING,
+      { kind: "page", filter: { label: [20] } },
+      { items: [], next_cursor: null },
+    );
+    await seed(
+      queryClient,
+      OTHER,
+      { kind: "page", filter: { label: [21] } },
+      { items: [], next_cursor: null },
+    );
+
+    // Only the status moved, so the verdict says nothing about labels and the
+    // client's own copy of the row supplies them.
+    emit({ kind: "fields", status_id: 5 });
+
+    expect(invalidated(queryClient, MATCHING)).toBe(true);
+    expect(invalidated(queryClient, OTHER)).toBe(false);
+  });
+
+  it("refetches everything for a text search or the trash", async () => {
+    vi.useFakeTimers();
+    const { queryClient } = setup();
+    const SEARCHED = ["issues", SLUG, { q: "flood" }];
+    const TRASH = ["issues", SLUG, { deleted: true }];
+    await seed(
+      queryClient,
+      SEARCHED,
+      { kind: "page", filter: { q: "flood" } },
+      { items: [], next_cursor: null },
+    );
+    await seed(
+      queryClient,
+      TRASH,
+      { kind: "page", filter: { deleted: true } },
+      { items: [], next_cursor: null },
+    );
+
+    // A verdict any other page would judge "no": `q` matches bodies, which no
+    // list row carries, and the trash orders by deletion time.
+    emit({ kind: "fields", status_id: 5, label_ids: [], assignee_ids: [] });
+
+    expect(invalidated(queryClient, SEARCHED)).toBe(true);
+    expect(invalidated(queryClient, TRASH)).toBe(true);
+  });
+
+  it("refetches an entry that declares nothing", async () => {
+    vi.useFakeTimers();
+    const { queryClient } = setup();
+    const UNDECLARED = ["issues", SLUG, { future: true }];
+    await queryClient.fetchQuery({
+      queryKey: UNDECLARED,
+      queryFn: async () => ({ items: [], next_cursor: null }),
+    });
+
+    emit({ kind: "fields", status_id: 5, label_ids: [], assignee_ids: [] });
+
+    // A producer added later without a declaration loses the optimization,
+    // never correctness.
+    expect(invalidated(queryClient, UNDECLARED)).toBe(true);
+  });
+
+  it("refetches every entry when the event carries no verdict", async () => {
+    vi.useFakeTimers();
+    const { queryClient } = setup();
+    for (const status of STATUSES) {
+      await seedColumn(queryClient, status.id, []);
+    }
+
+    emit(undefined);
+
+    expect(columnsInvalidated(queryClient)).toEqual(STATUSES.map((s) => s.id));
+  });
+
+  it("leaves the counts alone unless membership could have moved", async () => {
+    vi.useFakeTimers();
+    const { queryClient } = setup();
+    const COUNTS = ["issues", SLUG, "counts", {}];
+    await seedColumn(queryClient, 3, [row(7, 3)]);
+    await seed(
+      queryClient,
+      COUNTS,
+      { kind: "counts", filter: {} },
+      { open: 1, closed: 0, by_status: { "3": 1 } },
+    );
+
+    // `updated_at` and the badges are not in a count.
+    emit({ kind: "activity" });
+    expect(invalidated(queryClient, COUNTS)).toBe(false);
+
+    // A save that named the status but did not change it: the cached row says
+    // so, and no count moved either.
+    emit({ kind: "fields", status_id: 3 });
+    expect(invalidated(queryClient, COUNTS)).toBe(false);
+
+    emit({ kind: "fields", status_id: 5 });
+    expect(invalidated(queryClient, COUNTS)).toBe(true);
+  });
+
+  it("finds a cached row through any page of the project", async () => {
+    vi.useFakeTimers();
+    const { queryClient } = setup();
+    await seedColumn(queryClient, 1, []);
+    await seedColumn(queryClient, 3, [row(7, 3, { labels: [20] })]);
+
+    expect(
+      cachedIssueRow(queryClient, ["issues", SLUG], 7)?.labels.map((l) => l.id),
+    ).toEqual([20]);
+    expect(cachedIssueRow(queryClient, ["issues", SLUG], 99)).toBeUndefined();
   });
 });

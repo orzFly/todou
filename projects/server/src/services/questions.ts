@@ -257,6 +257,7 @@ export async function submitAnswers(
     id: issue.id,
     action: "updated",
     issue_number: issueNumber,
+    list_row: { kind: "activity" },
   });
 
   const refs = await getUserRefs(ctx.router.system(), [row.actorId]);
