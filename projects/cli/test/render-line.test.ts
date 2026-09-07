@@ -290,6 +290,177 @@ describe("renderActivityLine", () => {
     expect(line).not.toContain("cheaper, but couples them");
   });
 
+  /**
+   * T-286: the two lines that are about another card. Both read their titles
+   * off `cardOf`, which the batch resolver fills in beside the drain — so
+   * every case here is a pure rendering question, network kept out of it.
+   */
+  describe("cards the entry is about", () => {
+    /** The card being read is `todou` (id 2); `dogfood` (id 7) is elsewhere. */
+    const known: ActivityLineContext = {
+      ...ctx,
+      project: "todou",
+      projectId: 2,
+      slugOfProject: (id) => (id === 2 ? "todou" : id === 7 ? "dogfood" : null),
+      cardOf: (slug, number) =>
+        slug === "todou" && number === 281
+          ? { title: "评论 collapse：把中间的探索讨论折叠掉", body: null }
+          : slug === "dogfood" && number === 31
+            ? { title: "T-286 probe: watch line shapes", body: null }
+            : slug === "todou" && number === 146
+              ? {
+                  title: "读不到项目时给一条无差别提示",
+                  body: "第一行\n第二行",
+                }
+              : undefined,
+    };
+    const referenced = (payload: Record<string, unknown>) =>
+      event({ event_type: "referenced", payload });
+
+    it("spells a reference from this project its own way, and names the card", () => {
+      expect(
+        renderActivityLine(
+          referenced({ by_project_id: 2, by_issue: 281 }),
+          paint,
+          known,
+        ),
+      ).toContain(
+        'referenced (by T-281 "评论 collapse：把中间的探索讨论折叠掉")',
+      );
+    });
+
+    it("carries the project name on a reference from elsewhere", () => {
+      expect(
+        renderActivityLine(
+          referenced({ by_project_id: 7, by_issue: 31 }),
+          paint,
+          known,
+        ),
+      ).toContain(
+        'referenced (by dogfood#31 "T-286 probe: watch line shapes")',
+      );
+    });
+
+    it("reads a pre-T-266 payload's slug, and still names the card", () => {
+      expect(
+        renderActivityLine(
+          referenced({ by_project: "dogfood", by_issue: 31 }),
+          paint,
+          known,
+        ),
+      ).toContain('by dogfood#31 "T-286 probe: watch line shapes"');
+    });
+
+    it("appends the comment the mention was written in", () => {
+      expect(
+        renderActivityLine(
+          referenced({ by_project_id: 7, by_issue: 31, by_comment: 4242 }),
+          paint,
+          known,
+        ),
+      ).toContain(
+        'by dogfood#31 "T-286 probe: watch line shapes" #comment-4242',
+      );
+    });
+
+    /**
+     * A project id nobody can name is the one shape that never gets a title:
+     * there is no slug to ask for the card under. The ref still pastes back —
+     * the server reads an id wherever it reads a slug.
+     */
+    it("keeps the bare id spelling when no project here can name it", () => {
+      expect(
+        renderActivityLine(
+          referenced({ by_project_id: 99, by_issue: 7 }),
+          paint,
+          known,
+        ),
+      ).toContain("referenced (by 99/7)");
+    });
+
+    it("loses only the title when the card could not be read", () => {
+      expect(
+        renderActivityLine(
+          referenced({ by_project_id: 2, by_issue: 999 }),
+          paint,
+          known,
+        ),
+      ).toContain("referenced (by T-999)");
+    });
+
+    it("gives a title in full under --summary, header being no body", () => {
+      const title = "长".repeat(88);
+      const line = renderActivityLine(
+        referenced({ by_project_id: 2, by_issue: 281 }),
+        paint,
+        {
+          ...known,
+          summaryChars: BARE_SUMMARY_CHARS,
+          cardOf: () => ({ title, body: null }),
+        },
+      );
+      expect(line).toContain(`by T-281 "${title}"`);
+      expect(line.split("\n")).toHaveLength(1);
+    });
+
+    const opened = event({ event_type: "opened", payload: {} });
+
+    it("gives an opened card its title on the header and its body below", () => {
+      const lines = renderActivityLine(opened, paint, known).split("\n");
+      expect(lines[0]).toMatch(
+        /^T-146 User opened "读不到项目时给一条无差别提示" .+: 第一行$/,
+      );
+      expect(lines[1]).toBe("  第二行");
+    });
+
+    it("ends an empty-bodied card's line at the time, with no colon", () => {
+      const line = renderActivityLine(opened, paint, {
+        ...known,
+        cardOf: () => ({ title: "空正文", body: "" }),
+      });
+      expect(line).toMatch(/^T-146 User opened "空正文" .+ ago$/);
+      expect(line).not.toContain(":");
+    });
+
+    it("cuts the body under --summary and never the title", () => {
+      const title = "长".repeat(88);
+      const line = renderActivityLine(opened, paint, {
+        ...known,
+        summaryChars: BARE_SUMMARY_CHARS,
+        cardOf: () => ({ title, body: `开头\n\n${"很长的正文。".repeat(40)}` }),
+      });
+      expect(line.split("\n")).toHaveLength(1);
+      expect(line).toContain(`opened "${title}"`);
+      expect(line.endsWith("…")).toBe(true);
+    });
+
+    it("leaves today's line alone when the card could not be resolved", () => {
+      expect(
+        renderActivityLine(opened, paint, {
+          ...known,
+          cardOf: () => undefined,
+        }),
+      ).toMatch(/^T-146 User opened .+ ago$/);
+    });
+
+    /**
+     * Every caller that hands over no resolver at all — `issue view`'s
+     * timeline among them — keeps the output it had.
+     */
+    it("leaves today's line alone when nobody passes a resolver", () => {
+      expect(renderActivityLine(opened, paint, ctx)).toMatch(
+        /^T-146 User opened .+ ago$/,
+      );
+      expect(
+        renderActivityLine(
+          referenced({ by_project_id: 2, by_issue: 281 }),
+          paint,
+          { ...ctx, projectId: 2 },
+        ),
+      ).toContain("referenced (by T-281)");
+    });
+  });
+
   describe("--summary", () => {
     const capped: ActivityLineContext = {
       ...ctx,

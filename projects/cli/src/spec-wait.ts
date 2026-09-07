@@ -6,13 +6,19 @@ import type {
   TodouClient,
 } from "@todou/shared";
 import { formatRef } from "@todou/shared";
+import { NO_CARDS, resolveActivityCards } from "./activity-cards.ts";
 import { cursorRecord } from "./api-command.ts";
 import { openChangeNudges } from "./change-nudges.ts";
 import type { Clock } from "./clock.ts";
 import { type Painter, plural } from "./format.ts";
 import { refFormat } from "./refs.ts";
-import { fetchRefPrefix } from "./resolve.ts";
-import { drainTimeline, renderActivityLine, tailCursor } from "./timeline.ts";
+import { fetchRefSpelling } from "./resolve.ts";
+import {
+  type CardOf,
+  drainTimeline,
+  renderActivityLine,
+  tailCursor,
+} from "./timeline.ts";
 import {
   quietNote,
   resolveSelfFilter,
@@ -179,7 +185,8 @@ export async function waitForSpecReview(args: {
     info = await readSpec();
   }
 
-  const refPrefix = await fetchRefPrefix(client, project);
+  const spelling = await fetchRefSpelling(client, project);
+  const { refPrefix } = spelling;
   // The one cursor line of the whole gate — `spec push --wait` leaves its own
   // out — so it names the card. A prefix-less project spells refs `#23`,
   // which a shell reads as a comment: the bare number is what pastes back.
@@ -188,6 +195,7 @@ export async function waitForSpecReview(args: {
     items: TimelineItem[],
     cursor: string | undefined,
     outcome: SpecOutcome,
+    cards: CardOf,
   ): void =>
     args.emitBatch(
       [
@@ -199,13 +207,15 @@ export async function waitForSpecReview(args: {
         [
           ...items.map((item) =>
             renderActivityLine(item, args.paint, {
+              ...spelling,
               refLabel: formatRef(refPrefix, number),
               issueNumber: number,
               // No flag reaches here, and this path exists for exactly the
               // case a truncated body ruins: somebody amended the
               // requirement in a plain comment instead of a verdict.
               summaryChars: 0,
-              refPrefix,
+              project,
+              cardOf: cards,
             }),
           ),
           ...(cursor === undefined
@@ -219,7 +229,7 @@ export async function waitForSpecReview(args: {
   // be read before blocking rather than waited for.
   const settled = judgeSpec(info);
   if (settled !== null) {
-    emit([], baseline, settled);
+    emit([], baseline, settled, NO_CARDS);
     return 0;
   }
 
@@ -272,6 +282,13 @@ export async function waitForSpecReview(args: {
   }
 
   const fresh = await readSpec();
+  // After the drain, before the render: what woke this wait is usually a
+  // comment, but a reference to the card is exactly the entry whose point is
+  // the card it came from (T-286).
+  const cards = await resolveActivityCards(
+    client,
+    woke.map((item) => ({ ...spelling, item, project, number })),
+  );
   emit(
     woke,
     cursor,
@@ -282,6 +299,7 @@ export async function waitForSpecReview(args: {
       carried_comments: carriedComments(fresh),
       version: fresh.current_version,
     },
+    cards,
   );
   return 0;
 }

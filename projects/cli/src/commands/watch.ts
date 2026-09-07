@@ -5,6 +5,7 @@ import type {
 } from "@todou/shared";
 import { formatRef, TimelineFilterType, TodouError } from "@todou/shared";
 import { Command, Option } from "clipanion";
+import { activityCards, clearCardsAfterBatch } from "../activity-cards.ts";
 import { cursorRecord, ProjectCommand } from "../api-command.ts";
 import { openChangeNudges } from "../change-nudges.ts";
 import { CliError } from "../errors.ts";
@@ -12,7 +13,11 @@ import { makePainter } from "../format.ts";
 import { drainPaged } from "../paginate.ts";
 import { parsePositiveInt, parseSeconds } from "../parse.ts";
 import { type RefFormat, refFormat, withIssueRef } from "../refs.ts";
-import { fetchRefPrefix } from "../resolve.ts";
+import {
+  fetchRefSpelling,
+  NO_REF_SPELLING,
+  type RefSpelling,
+} from "../resolve.ts";
 import { BARE_SUMMARY_CHARS, renderActivityLine } from "../timeline.ts";
 import {
   cursorLines,
@@ -87,6 +92,15 @@ export class WatchCommand extends ProjectCommand {
       command filters on. A comment carrying questions has them appended:
       each question and its option labels, descriptions left out. The batch
       ends with its \`cursor:\` line, as before.
+
+      Two kinds of entry are about a card rather than about a change, and
+      both name it: an \`opened\` entry carries the card's title, quoted, and
+      then its body in the same block shape a comment uses; a reference
+      carries the title of the card it came from, spelled that project's way
+      (\`by dogfood#31 "…"\`) when it is not the one being read. **A title is
+      never cut** — not by \`--summary\`, which governs bodies. A card that
+      cannot be read — trashed, moved away, or a read that failed — leaves
+      the line exactly as it was, title and all absent.
 
       \`--summary\` asks for the stricter shape instead: exactly one line
       per entry, body folded onto it and cut. Bare it means
@@ -408,6 +422,13 @@ export class WatchCommand extends ProjectCommand {
     } = opts;
     const onQuiet = (_cursor: string | undefined, totalMs: number) =>
       this.note(quietNote("still watching", timeoutSec, totalMs));
+    // A batch nobody will read as prose pays for no card titles. `--json`
+    // item lines carry no title — putting fields on what a script parses is
+    // its own decision, the line T-283 drew — and `--print-cursor` writes a
+    // position and nothing else. A uds push body is prose either way, which
+    // is why the transport and not just `--json` decides this.
+    const wantsCards =
+      opts.transport === "uds" || (!this.json && !this.printCursor);
     // A push body is read by a model, never by a terminal: makePainter with
     // no stream sees no isTTY and hands back the identity function.
     const plain = makePainter(undefined, this.context.env);
@@ -428,8 +449,12 @@ export class WatchCommand extends ProjectCommand {
           )
         ).next_cursor ??
         undefined;
-      const refPrefix = await fetchRefPrefix(client, project);
+      const spelling = await fetchRefSpelling(client, project);
+      const { refPrefix } = spelling;
       const ref_format = refFormat(refPrefix);
+      // Filled in by the drain below, read at render time: the titles and
+      // bodies of the cards this batch is about (T-286).
+      const cards = activityCards(client);
 
       // One renderer behind all three consumers — the one-shot batch, a
       // standing batch on stdout, and a push body — so no reader ever has
@@ -443,10 +468,12 @@ export class WatchCommand extends ProjectCommand {
         [
           ...items.map((item) =>
             renderActivityLine(item, pen, {
+              ...spelling,
               refLabel: formatRef(refPrefix, item.issue_number),
               issueNumber: item.issue_number,
-              refPrefix,
               summaryChars,
+              project,
+              cardOf: cards.cardOf,
             }),
           ),
           ...cursorLines(since, cursor, pen),
@@ -494,14 +521,30 @@ export class WatchCommand extends ProjectCommand {
           retry,
           clock: this.clock,
           wait: follow.wait,
-          afterItems: follow.afterItems,
+          afterItems: clearCardsAfterBatch(cards, follow.afterItems),
           shouldStop: follow.shouldStop,
           onQuiet: (cursor, totalMs) => {
             follow.seen(cursor);
             onQuiet(cursor, totalMs);
           },
-          drain: (after) =>
-            drainActivity(client, project, { after, types, ...self }),
+          drain: async (after) => {
+            const page = await drainActivity(client, project, {
+              after,
+              types,
+              ...self,
+            });
+            if (wantsCards) {
+              await cards.add(
+                page.items.map((item) => ({
+                  ...spelling,
+                  item,
+                  project,
+                  number: item.issue_number,
+                })),
+              );
+            }
+            return page;
+          },
           onItems: (items, cursor) => {
             follow.seen(cursor);
             if (this.printCursor) return this.emitCursorOnly(cursor);
@@ -521,35 +564,40 @@ export class WatchCommand extends ProjectCommand {
     // fans out per project and owns the composite-cursor semantics, so
     // --since and next_cursor pass through opaquely.
     const projects = slugs?.join(",");
-    const prefixes = new Map<string, string | null>();
+    // Per project, not just its prefix: telling one of its own references
+    // from a foreign one takes the project's id as well (T-286).
+    const spellings = new Map<string, RefSpelling>();
     if (slugs !== null) {
       for (const slug of slugs) {
-        prefixes.set(slug, await fetchRefPrefix(client, slug));
+        spellings.set(slug, await fetchRefSpelling(client, slug));
       }
     }
     // Under --all-projects the watch set lives server-side, so ref
-    // prefixes are fetched as slugs first appear in the stream. This runs
-    // inside the drain (async context); fetchRefPrefix never throws, so
+    // spellings are fetched as slugs first appear in the stream. This runs
+    // inside the drain (async context); fetchRefSpelling never throws, so
     // it cannot eat into the retry budget.
-    const ensurePrefixes = async (items: CrossActivityItem[]) => {
+    const ensureSpellings = async (items: CrossActivityItem[]) => {
       for (const item of items) {
-        if (!prefixes.has(item.project)) {
-          prefixes.set(
+        if (!spellings.has(item.project)) {
+          spellings.set(
             item.project,
-            await fetchRefPrefix(client, item.project),
+            await fetchRefSpelling(client, item.project),
           );
         }
       }
     };
+    const spellingOf = (slug: string): RefSpelling =>
+      spellings.get(slug) ?? NO_REF_SPELLING;
     // A prefix-less project would spell its refs as an ambiguous "#N", so
     // the fallback spelling carries the slug; both forms resolve back as
     // issue refs on the command line.
     const spell = (item: CrossActivityItem): string => {
-      const prefix = prefixes.get(item.project) ?? null;
+      const prefix = spellingOf(item.project).refPrefix;
       return prefix === null
         ? `${item.project}/${item.issue_number}`
         : formatRef(prefix, item.issue_number);
     };
+    const cards = activityCards(client);
 
     const baseline =
       this.since ??
@@ -573,10 +621,12 @@ export class WatchCommand extends ProjectCommand {
       [
         ...items.map((item) =>
           renderActivityLine(item, pen, {
+            ...spellingOf(item.project),
             refLabel: spell(item),
             issueNumber: item.issue_number,
-            refPrefix: prefixes.get(item.project) ?? null,
             summaryChars,
+            project: item.project,
+            cardOf: cards.cardOf,
           }),
         ),
         ...cursorLines(since, cursor, pen),
@@ -591,7 +641,7 @@ export class WatchCommand extends ProjectCommand {
       this.outputBatch(
         [
           ...items.map((item) =>
-            withIssueRef(item, prefixes.get(item.project) ?? null),
+            withIssueRef(item, spellingOf(item.project).refPrefix),
           ),
           cursorRecord(cursor),
         ],
@@ -627,7 +677,7 @@ export class WatchCommand extends ProjectCommand {
         retry,
         clock: this.clock,
         wait: follow.wait,
-        afterItems: follow.afterItems,
+        afterItems: clearCardsAfterBatch(cards, follow.afterItems),
         shouldStop: follow.shouldStop,
         onQuiet: (cursor, totalMs) => {
           follow.seen(cursor);
@@ -639,7 +689,17 @@ export class WatchCommand extends ProjectCommand {
             types,
             ...self,
           });
-          await ensurePrefixes(page.items);
+          await ensureSpellings(page.items);
+          if (wantsCards) {
+            await cards.add(
+              page.items.map((item) => ({
+                ...spellingOf(item.project),
+                item,
+                project: item.project,
+                number: item.issue_number,
+              })),
+            );
+          }
           return page;
         },
         onItems: (items, cursor) => {

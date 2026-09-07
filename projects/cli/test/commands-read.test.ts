@@ -459,7 +459,13 @@ describe("issue view", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("label_added (bug)");
     expect(result.stdout).toContain("assigned (@claude)");
-    expect(result.stdout).toContain("referenced (by T-9)");
+    // The comment the mention was written in rides along wherever the
+    // payload recorded one (T-286), in both renderers: `eventDetail` is
+    // shared so that one event cannot be worded two ways, and this string is
+    // `comment view`'s argument. A title would need the card resolved, which
+    // this view does not do — so a reference here names the card and nothing
+    // more.
+    expect(result.stdout).toContain("referenced (by T-9 #comment-41)");
     // Self-contained: never spelled with this project's prefix, which
     // would point at an unrelated card here.
     expect(result.stdout).toContain("cross_referenced (by mirror#4)");

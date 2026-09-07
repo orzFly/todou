@@ -130,6 +130,13 @@ export type RefSpelling = {
   projectId: number | undefined;
 };
 
+/** What a command that never had to learn a spelling renders with. */
+export const NO_REF_SPELLING: RefSpelling = {
+  refPrefix: null,
+  slugOfProject: () => null,
+  projectId: undefined,
+};
+
 export async function fetchRefSpelling(
   client: TodouClient,
   project: string,

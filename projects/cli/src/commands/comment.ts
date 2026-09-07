@@ -169,7 +169,6 @@ export class CommentAddCommand extends ProjectCommand {
         json: this.json,
         printCursor: this.printCursor,
         paint: makePainter(this.context.stdout, this.context.env),
-        refPrefix,
         issueNumber: number,
         write: (text) => this.context.stdout.write(`${text}\n`),
         note: (line) => this.note(line),

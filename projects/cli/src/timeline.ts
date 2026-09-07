@@ -52,9 +52,8 @@ export async function drainTimeline(
   );
 }
 
-/** Where the item is being shown from, for refs and command hints. */
-export type TimelineRenderContext = {
-  issueNumber: number;
+/** What deciding how to spell a reference takes: this project, and the directory. */
+export type ReferenceOrigin = {
   refPrefix: string | null;
   /**
    * Project id → slug, for the `by_project_id` a reference event carries
@@ -69,6 +68,25 @@ export type TimelineRenderContext = {
    * wrong from then on.
    */
   projectId?: number;
+  /** That project's slug, which is what `cardOf` keys its cards under. */
+  project?: string;
+};
+
+/**
+ * A card this entry mentions, by the address the line spells. Undefined for
+ * every card the batch resolver did not get — a trashed one, one that moved
+ * away, a read that failed — and each caller degrades to the line it printed
+ * before rather than waiting for a second attempt (T-286).
+ */
+export type CardOf = (
+  slug: string,
+  number: number,
+) => { title: string; body: string | null } | undefined;
+
+/** Where the item is being shown from, for refs and command hints. */
+export type TimelineRenderContext = ReferenceOrigin & {
+  issueNumber: number;
+  cardOf?: CardOf;
 };
 
 /**
@@ -271,11 +289,40 @@ export function renderActivityLine(
       .join("; ");
     return `${ref} ${who(item.actor)} answered ${commentRef(answered.comment_id)} ${when}: ${bodyBlock(answers, ctx.summaryChars)}`;
   }
+  const opened = openedCard(item, ctx);
+  if (opened !== undefined) {
+    // The title rides on the header, quoted, the way `title_changed` spells a
+    // rename — so everything after the colon is still the body, and nothing
+    // after it is the title. It is not `--summary`'s business either (T-283):
+    // 88 characters is the longest one this tracker has.
+    const head = `${ref} ${paint(
+      "dim",
+      `${personName(item.actor)}${agentSuffix(item.agent_context)} opened "${opened.title}" ${when}`,
+    )}`;
+    const body = opened.body === null ? "" : opened.body.trim();
+    return body === "" ? head : `${head}: ${bodyBlock(body, ctx.summaryChars)}`;
+  }
   const detail = eventDetail(item, ctx);
   return `${ref} ${paint(
     "dim",
     `${personName(item.actor)}${agentSuffix(item.agent_context)} ${item.event_type}${detail ? ` (${detail})` : ""} ${when}`,
   )}`;
+}
+
+/**
+ * The card an `opened` entry announces, or undefined when this line has to
+ * stay as it was. The event's payload is `{}` — the title and body were never
+ * in this stream — so the whole shape depends on a resolver having run
+ * (T-286); one that could not name the card leaves the plain line, which is
+ * what every caller that passes no resolver at all gets.
+ */
+function openedCard(
+  item: TimelineItem,
+  ctx: TimelineRenderContext,
+): { title: string; body: string | null } | undefined {
+  if (item.type !== "event" || item.event_type !== "opened") return undefined;
+  if (ctx.project === undefined) return undefined;
+  return ctx.cardOf?.(ctx.project, ctx.issueNumber);
 }
 
 /**
@@ -313,27 +360,20 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
     // pastes straight back into any command that takes an issue.
     case "referenced":
     case "cross_referenced": {
-      if (typeof payload.by_issue !== "number") return scalarDetail(payload);
-      const id = payload.by_project_id;
-      const legacy =
-        typeof payload.by_project === "string" ? payload.by_project : null;
-      // Neither spelling: a local reference from before the merge, which is
-      // the only kind the old `referenced` type ever held.
-      if (typeof id !== "number" && legacy === null) {
-        return `by ${formatRef(ctx.refPrefix, payload.by_issue)}`;
-      }
-      if (typeof id === "number" && id === ctx.projectId) {
-        return `by ${formatRef(ctx.refPrefix, payload.by_issue)}`;
-      }
-      const slug = ctx.slugOfProject?.(id) ?? legacy;
-      // An id nobody could name still pastes back in: the server reads a
-      // project id wherever it reads a slug.
-      if (slug === null) {
-        return typeof id === "number"
-          ? `by ${id}/${payload.by_issue}`
-          : scalarDetail(payload);
-      }
-      return `by ${slug}#${payload.by_issue}`;
+      const target = referenceTarget(payload, ctx);
+      if (target === null) return scalarDetail(payload);
+      const card =
+        target.slug === null
+          ? undefined
+          : ctx.cardOf?.(target.slug, target.number);
+      const title = card === undefined ? "" : ` "${card.title}"`;
+      // The comment the mention was written in, where the payload recorded
+      // one: `comment view` takes this string as its argument (T-283).
+      const where =
+        typeof payload.by_comment === "number"
+          ? ` ${commentRef(payload.by_comment)}`
+          : "";
+      return `by ${target.ref}${title}${where}`;
     }
     case "moved_in": {
       const from =
@@ -414,6 +454,57 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
     default:
       return scalarDetail(payload);
   }
+}
+
+/** Which card a reference event points at, and how this reader spells it. */
+export type ReferenceTarget = {
+  /** What follows `by `, in the spelling this stream uses. */
+  ref: string;
+  /** `cardOf`'s key for that card; null = no project here can name it. */
+  slug: string | null;
+  number: number;
+};
+
+/**
+ * Where a reference came from, decided once for both readers of the answer:
+ * the line that spells it, and the batch resolver that fetches its title
+ * (activity-cards.ts). Two copies of this reasoning would eventually disagree
+ * about which card a title belongs to, and a line naming one card while
+ * quoting another's title is worse than a line with no title at all.
+ *
+ * `null` means the payload is a shape this code does not recognize, which is
+ * the caller's cue to dump its scalars rather than invent a ref.
+ */
+export function referenceTarget(
+  payload: Record<string, unknown>,
+  ctx: ReferenceOrigin,
+): ReferenceTarget | null {
+  const number = payload.by_issue;
+  if (typeof number !== "number") return null;
+  const id = payload.by_project_id;
+  const legacy =
+    typeof payload.by_project === "string" ? payload.by_project : null;
+  const local =
+    // Neither spelling: a local reference from before the merge, which is
+    // the only kind the old `referenced` type ever held.
+    (typeof id !== "number" && legacy === null) ||
+    (typeof id === "number" && id === ctx.projectId);
+  if (local) {
+    return {
+      ref: formatRef(ctx.refPrefix, number),
+      slug: ctx.project ?? null,
+      number,
+    };
+  }
+  const slug = ctx.slugOfProject?.(id) ?? legacy;
+  // An id nobody could name still pastes back in: the server reads a
+  // project id wherever it reads a slug.
+  if (slug === null) {
+    return typeof id === "number"
+      ? { ref: `${id}/${number}`, slug: null, number }
+      : null;
+  }
+  return { ref: `${slug}#${number}`, slug, number };
 }
 
 /**

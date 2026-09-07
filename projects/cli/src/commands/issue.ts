@@ -14,6 +14,7 @@ import {
   TodouError,
 } from "@todou/shared";
 import { Command, Option } from "clipanion";
+import { activityCards, clearCardsAfterBatch } from "../activity-cards.ts";
 import { cursorRecord, ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
 import { openChangeNudges } from "../change-nudges.ts";
@@ -691,6 +692,15 @@ export class IssueWatchCommand extends ProjectCommand {
       option labels, descriptions left out. The batch ends with its
       \`cursor:\` line, as before.
 
+      Two kinds of entry are about a card rather than about a change, and
+      both name it: an \`opened\` entry carries the card's title, quoted, and
+      then its body in the same block shape a comment uses; a reference
+      carries the title of the card it came from, spelled that project's way
+      (\`by dogfood#31 "…"\`) when it is not this one. **A title is never
+      cut** — not by \`--summary\`, which governs bodies. A card that cannot
+      be read — trashed, moved away, or a read that failed — leaves the line
+      exactly as it was, title and all absent.
+
       \`--summary\` asks for the stricter shape instead: exactly one line
       per entry, body folded onto it and cut. Bare it means
       ${BARE_SUMMARY_CHARS} characters, \`--summary=<n>\` picks the width,
@@ -962,10 +972,16 @@ export class IssueWatchCommand extends ProjectCommand {
       return 0;
     }
     const paint = makePainter(this.context.stdout, this.context.env);
-    const refPrefix = await fetchRefPrefix(client, project);
+    const spelling = await fetchRefSpelling(client, project);
+    const { refPrefix } = spelling;
     // Timeline entries carry no issue number of their own, so the envelope
     // is the only place a watcher can read the project's ref format off.
     const ref_format = refFormat(refPrefix);
+    // A batch nobody will read as prose pays for no card titles; see the
+    // same predicate in commands/watch.ts.
+    const wantsCards = transport === "uds" || (!this.json && !this.printCursor);
+    // Resolved by the drain below, read at render time (T-286).
+    const cards = activityCards(client);
     // A push body is read by a model, never by a terminal: makePainter with
     // no stream sees no isTTY and hands back the identity function.
     const plain = makePainter(undefined, this.context.env);
@@ -981,10 +997,12 @@ export class IssueWatchCommand extends ProjectCommand {
       [
         ...items.map((item) =>
           renderActivityLine(item, pen, {
+            ...spelling,
             refLabel: formatRef(refPrefix, number),
             issueNumber: number,
-            refPrefix,
             summaryChars,
+            project,
+            cardOf: cards.cardOf,
           }),
         ),
         ...cursorLines(since, cursor, pen),
@@ -1054,14 +1072,30 @@ export class IssueWatchCommand extends ProjectCommand {
           retry,
           clock: this.clock,
           wait: follow.wait,
-          afterItems: follow.afterItems,
+          afterItems: clearCardsAfterBatch(cards, follow.afterItems),
           shouldStop: follow.shouldStop,
           onQuiet: (cursor, totalMs) => {
             follow.seen(cursor);
             this.note(quietNote("still watching", timeoutSec, totalMs));
           },
-          drain: (after) =>
-            drainTimeline(client, project, number, { after, types, ...self }),
+          drain: async (after) => {
+            const page = await drainTimeline(client, project, number, {
+              after,
+              types,
+              ...self,
+            });
+            if (wantsCards) {
+              await cards.add(
+                page.items.map((item) => ({
+                  ...spelling,
+                  item,
+                  project,
+                  number,
+                })),
+              );
+            }
+            return page;
+          },
           onItems: (items, cursor) => {
             follow.seen(cursor);
             if (this.printCursor) return emitCursorOnly(cursor);

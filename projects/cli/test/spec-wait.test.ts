@@ -212,6 +212,56 @@ describe("spec wait: blocking", () => {
     expect(outcomeOf(run.stdout)).toBe("feedback · no verdict on spec v2 yet");
   });
 
+  /**
+   * A reference is the entry whose whole point is the card it came from, and
+   * this wait is read by an agent that cannot go and look it up (T-286).
+   */
+  it("names the card a reference came from", async () => {
+    let drains = 0;
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/me", ME],
+      ["GET", SPEC_PATH, () => specInfo()],
+      ["GET", "/api/projects", [{ id: 4, slug: "proj" }]],
+      ["GET", "/api/projects/proj/references/config", { format: {} }],
+      [
+        "GET",
+        "/api/projects/proj/issues",
+        { items: [{ number: 9, title: "把游标语义写进 usage" }] },
+      ],
+      [
+        "GET",
+        TIMELINE_PATH,
+        (_init: RequestInit, url: URL) => {
+          if (url.searchParams.get("last") === "1") return page([], "tail");
+          drains += 1;
+          return drains >= 2
+            ? page(
+                [
+                  {
+                    type: "event",
+                    id: 71,
+                    event_type: "referenced",
+                    actor: AUTHOR,
+                    payload: { by_project_id: 4, by_issue: 9, by_comment: 88 },
+                    created_at: "2026-08-11T12:00:00.000Z",
+                  },
+                ],
+                "c71",
+              )
+            : page([], null);
+        },
+      ],
+    ]);
+    const run = await runCli(
+      ["spec", "wait", "23", "--debounce", "0", "--interval", "2"],
+      { fetchImpl, env: loggedInEnv("proj"), clock: virtualClock() },
+    );
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toContain(
+      'referenced (by #9 "把游标语义写进 usage" #comment-88)',
+    );
+  });
+
   it("starts where the current version was pushed, not at now", async () => {
     const { routes } = wakesOnce();
     const { fetchImpl, calls } = fakeFetch(routes);

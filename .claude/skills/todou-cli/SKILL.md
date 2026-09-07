@@ -167,6 +167,11 @@ todou issue watch 16 -p <proj> --follow=uds                            # the sam
   `(claude-code, <session>)`; a question comment has its questions and option labels appended.
   Resume from the closing `cursor:` line; a newer cursor skips what arrived in between. `--debounce N`
   returns one batch N seconds after the first entry.
+- The two entries that are about a card name it: an `opened` entry gives the card's title in quotes
+  and then its body, in the same block shape; a reference gives the title of the card it came from
+  (`by T-281 "…"` locally, `by dogfood#31 "…"` from another project, plus `#comment-<id>` when the
+  mention has one). Titles are never truncated — `--summary` governs bodies. A card nobody can read
+  leaves the line without a title, which is all a reader loses.
 - `--summary` buys back one line per entry, body folded and cut: bare it means 120 characters,
   `--summary=<n>` picks the width, `--summary=0` is the default (no truncation). **Only the `=` form
   works** — `--summary 10` fails with an extraneous-argument error.

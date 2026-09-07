@@ -1,9 +1,15 @@
 import type { AgentContext, TimelineItem, TodouClient } from "@todou/shared";
 import { formatRef } from "@todou/shared";
+import { NO_CARDS, resolveActivityCards } from "./activity-cards.ts";
 import type { Clock } from "./clock.ts";
 import { CliError } from "./errors.ts";
 import type { Painter } from "./format.ts";
-import { drainTimeline, renderActivityLine } from "./timeline.ts";
+import {
+  fetchRefSpelling,
+  NO_REF_SPELLING,
+  type RefSpelling,
+} from "./resolve.ts";
+import { type CardOf, drainTimeline, renderActivityLine } from "./timeline.ts";
 import {
   describeError,
   resolveSelfFilter,
@@ -60,6 +66,20 @@ export type WriteCursorOutcome = {
   cursor: string | undefined;
   /** What landed in the caller's blind window; null without `--since`. */
   missed: TimelineItem[] | null;
+  /**
+   * Everything spelling those lines takes — the ref format, the project
+   * directory, the titles of the cards they mention — read beside the drain
+   * that produced them, because `noteMissed` is synchronous and holds no
+   * client. A write with nothing missed learns none of it and so spends no
+   * round trip on it.
+   */
+  spelling: MissedSpelling;
+};
+
+/** The render context the missed lines are printed with. */
+export type MissedSpelling = RefSpelling & {
+  project: string;
+  cardOf: CardOf;
 };
 
 export async function collectWriteCursor(args: {
@@ -78,7 +98,14 @@ export async function collectWriteCursor(args: {
   clock: Clock;
 }): Promise<WriteCursorOutcome> {
   const { since } = args;
-  if (since === undefined) return { cursor: args.served, missed: null };
+  const unspelled: MissedSpelling = {
+    ...NO_REF_SPELLING,
+    project: args.project,
+    cardOf: NO_CARDS,
+  };
+  if (since === undefined) {
+    return { cursor: args.served, missed: null, spelling: unspelled };
+  }
 
   // The caller's own cursor is echoed back rather than replaced by the
   // server's newer one: everything reported here is still ahead of it, so
@@ -95,7 +122,27 @@ export async function collectWriteCursor(args: {
         }),
       retry,
     );
-    return { cursor: since, missed: items };
+    if (items.length === 0) {
+      return { cursor: since, missed: items, spelling: unspelled };
+    }
+    const spelling = await fetchRefSpelling(args.client, args.project);
+    return {
+      cursor: since,
+      missed: items,
+      spelling: {
+        ...spelling,
+        project: args.project,
+        cardOf: await resolveActivityCards(
+          args.client,
+          items.map((item) => ({
+            ...spelling,
+            item,
+            project: args.project,
+            number: args.number,
+          })),
+        ),
+      },
+    };
   } catch (error) {
     // The write itself has already landed. Failing the command here would
     // take its id or version down with it and invite a retry of a write
@@ -103,7 +150,7 @@ export async function collectWriteCursor(args: {
     args.note(
       `could not read what landed since --since: ${describeError(error)}`,
     );
-    return { cursor: since, missed: null };
+    return { cursor: since, missed: null, spelling: unspelled };
   }
 }
 
@@ -111,8 +158,6 @@ export type WriteCursorEmit = {
   json: boolean;
   printCursor: boolean;
   paint: Painter;
-  /** How this project spells refs; only the missed lines need it. */
-  refPrefix: string | null;
   issueNumber: number;
   /** stdout, one write per call, newline added here. */
   write: (text: string) => void;
@@ -163,7 +208,7 @@ export function emitWriteResult(
   }
   if (emit.printCursor) {
     for (const line of human().split("\n")) emit.note(line);
-    noteMissed(emit, outcome.missed);
+    noteMissed(emit, outcome);
     emit.write(requireCursor(outcome.cursor));
     return;
   }
@@ -179,7 +224,7 @@ export function emitWriteResult(
         : [emit.paint("dim", `cursor: ${outcome.cursor} (${hint})`)]),
     ].join("\n"),
   );
-  noteMissed(emit, outcome.missed);
+  noteMissed(emit, outcome);
 }
 
 /**
@@ -196,10 +241,8 @@ function requireCursor(cursor: string | undefined): string {
   );
 }
 
-function noteMissed(
-  emit: WriteCursorEmit,
-  missed: TimelineItem[] | null,
-): void {
+function noteMissed(emit: WriteCursorEmit, outcome: WriteCursorOutcome): void {
+  const missed = outcome.missed;
   if (missed === null || missed.length === 0) return;
   emit.note(
     emit.paint(
@@ -210,13 +253,13 @@ function noteMissed(
   for (const item of missed) {
     emit.note(
       renderActivityLine(item, emit.paint, {
-        refLabel: formatRef(emit.refPrefix, emit.issueNumber),
+        ...outcome.spelling,
+        refLabel: formatRef(outcome.spelling.refPrefix, emit.issueNumber),
         issueNumber: emit.issueNumber,
         // No flag reaches here either, and this report says "you missed
         // these while you were writing" — cutting them is what would send
         // the reader back for the rest.
         summaryChars: 0,
-        refPrefix: emit.refPrefix,
       }),
     );
   }

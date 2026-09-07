@@ -260,11 +260,6 @@ export class SpecPushCommand extends ProjectCommand {
         json: this.json,
         printCursor: this.printCursor,
         paint,
-        // Only the missed lines spell a ref, so a push with nothing to
-        // report spends no round-trip learning how.
-        refPrefix: outcome.missed?.length
-          ? await fetchRefPrefix(client, project)
-          : null,
         issueNumber: number,
         write: (text) => this.context.stdout.write(`${text}\n`),
         note: (line) => this.note(line),
