@@ -3,6 +3,7 @@ import type {
   PrefixClaimEntry,
   ReferenceConfig,
   ReferenceDirectory,
+  ResolvedRef,
 } from "@todou/shared";
 import { formatRef, resolveClaim } from "@todou/shared";
 import { CliError } from "./errors.ts";
@@ -32,6 +33,11 @@ export type LadderInputs = {
    * and unreadable, which reads as an empty one.
    */
   directory: ReferenceDirectory | null | undefined;
+  /**
+   * The server's answer for this one ref: `undefined` = not asked, `null` =
+   * asked and it has none, which is every reason at once by design (T-288).
+   */
+  resolved?: ResolvedRef | null | undefined;
   /** Test seam; production leaves it unset and the decision is made now. */
   at?: string;
 };
@@ -52,6 +58,18 @@ export type LadderResult =
  * the caller having to know which rung needs what.
  */
 export type NeedsDirectory = { needsDirectory: true };
+
+/**
+ * The directory settled nothing either — call again with `resolved`, the
+ * server's answer for this one ref.
+ *
+ * Reached when no project the caller can see holds the prefix, which is not
+ * the same as no project holding it: the directory is trimmed to what the
+ * caller may read, while a prefix belongs to whoever holds it deployment-wide
+ * (T-288). Asking rather than fetching keeps this file pure and unaware of
+ * HTTP, which is what lets every rung be tested without a server.
+ */
+export type NeedsResolve = { needsResolve: true };
 
 /** `[from, to)`, the interval shape the directory hands out. */
 function covers(
@@ -113,22 +131,36 @@ function conflictMessage(prefix: string, raw: string): string {
   return `prefix "${prefix}" is used by more than one project (from "${raw}")`;
 }
 
-/** Supplying the directory — `null` included — always yields a decision. */
+/** Supplying both answers — `null` included — always yields a decision. */
 export function resolvePrefixedRef(
   prefix: string,
   raw: string,
-  inputs: LadderInputs & { directory: ReferenceDirectory | null },
+  inputs: LadderInputs & {
+    directory: ReferenceDirectory | null;
+    resolved: ResolvedRef | null;
+  },
 ): LadderResult;
 export function resolvePrefixedRef(
   prefix: string,
   raw: string,
-  inputs: LadderInputs,
+  inputs: LadderInputs & { directory: ReferenceDirectory | null },
+): LadderResult | NeedsResolve;
+/** Before the directory is in, the resolve rung is out of reach. */
+export function resolvePrefixedRef(
+  prefix: string,
+  raw: string,
+  inputs: LadderInputs & { directory: undefined },
 ): LadderResult | NeedsDirectory;
 export function resolvePrefixedRef(
   prefix: string,
   raw: string,
   inputs: LadderInputs,
-): LadderResult | NeedsDirectory {
+): LadderResult | NeedsDirectory | NeedsResolve;
+export function resolvePrefixedRef(
+  prefix: string,
+  raw: string,
+  inputs: LadderInputs,
+): LadderResult | NeedsDirectory | NeedsResolve {
   // The digits as written, not as parsed: every hint below pastes back into
   // a shell, and the renderer substitutes an autolink's <num> the same way.
   const digits = raw.slice(prefix.length + 1);
@@ -186,6 +218,17 @@ export function resolvePrefixedRef(
         ? `one of them is not readable to you; write it qualified, e.g. ${qualified[0]}`
         : `one of them is not readable to you; write it as <slug>/${digits} naming the project you mean`,
     );
+  }
+
+  // Nobody the caller can SEE holds it, which the caller cannot tell apart
+  // from nobody holding it — so the last rung is to have the server judge
+  // the same token against the whole deployment.
+  if (inputs.resolved === undefined) return { needsResolve: true };
+  if (inputs.resolved !== null) {
+    // Spelled as the holder's id, because the holder may be a project whose
+    // name this caller has no standing to learn. Every route reads an id
+    // where it reads a slug (T-266), so the request goes out unchanged.
+    return { project: inputs.resolved.names.project_ref };
   }
 
   // Nobody holds it. With no current project either, the missing project is

@@ -2,8 +2,10 @@ import { type QueryClient, useQuery } from "@tanstack/react-query";
 import {
   formatRef,
   type IssueListItem,
+  parseRefLocator,
   type ReferenceConfig,
   type ReferenceDirectory,
+  type ResolvedRef,
 } from "@todou/shared";
 import { useMemo } from "react";
 import {
@@ -16,6 +18,7 @@ import { projectsQuery } from "@/api/queries.ts";
 import {
   referenceConfigQuery,
   referenceDirectoryQuery,
+  resolveRefQuery,
 } from "@/api/references.ts";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import { qualifiedRefSpelling } from "@/lib/issue-refs.ts";
@@ -82,6 +85,29 @@ function writesPrefix(config: ReferenceConfig, prefix: string): boolean {
 const isCard = (candidate: JumpCandidate): candidate is JumpCardCandidate =>
   candidate.kind === "issue" || candidate.kind === "comment";
 
+/**
+ * The query as a bare `PREFIX-N`, which is the one shape the resolve
+ * endpoint takes — and the one shape `refJumpCandidates` can miss for a
+ * reason other than the card not being there (T-288): the directory it
+ * judges by is trimmed to the projects this viewer may read, while a prefix
+ * belongs to whoever holds it deployment-wide.
+ *
+ * Folded first, exactly as the candidates are: this rung is only reached
+ * when nothing resolved as written, which is where folding was always the
+ * fallback.
+ */
+function barePrefixedRef(q: string): string | null {
+  const text = foldRefSpelling(q.trim());
+  return parseRefLocator(text)?.kind === "prefixed" ? text : null;
+}
+
+/** The endpoint's answer as a candidate; `at` is readable by construction. */
+const candidateOf = (resolved: ResolvedRef): JumpCardCandidate => ({
+  kind: "issue",
+  slug: resolved.at.slug,
+  number: resolved.at.number,
+});
+
 function jumpContext(
   slug: string,
   config: ReferenceConfig,
@@ -123,7 +149,25 @@ export function useJumpRows(slug: string, q: string): JumpRow[] {
     );
   }, [q, slug, config.data, directory.data, projects.data]);
 
-  const card = candidates.find(isCard);
+  const direct = candidates.find(isCard);
+  // Asked only once the context has landed, and only when it settled
+  // nothing: otherwise every ref typed here — including this project's own
+  // — would spend a request before the directory got a chance to answer.
+  const settled =
+    config.data !== undefined &&
+    directory.data !== undefined &&
+    projects.data !== undefined;
+  const unresolved =
+    settled && direct === undefined ? barePrefixedRef(q) : null;
+  const resolved = useQuery({
+    ...resolveRefQuery(unresolved ?? ""),
+    enabled: unresolved !== null,
+  });
+  // No placeholder row while that is in flight: until it answers, whether
+  // there is a card at all is exactly what is unknown. Enter does not race
+  // it — `jumpDestinationPromise` runs the same rung from the query string.
+  const card: JumpCardCandidate | undefined =
+    direct ?? (resolved.data == null ? undefined : candidateOf(resolved.data));
   const writtenPrefix = card?.kind === "issue" ? card.writtenPrefix : undefined;
 
   // A bare `#comment-M` names no card, so which one carries it is the
@@ -324,6 +368,19 @@ export function useProjectPeek(
   }, [target, typed, items]);
 }
 
+/** `barePrefixedRef` resolved through the server, or nothing. */
+async function resolvedCard(
+  client: QueryClient,
+  q: string,
+): Promise<JumpCardCandidate | undefined> {
+  const ref = barePrefixedRef(q);
+  if (ref === null) return undefined;
+  const resolved = await client
+    .fetchQuery(resolveRefQuery(ref))
+    .catch(() => null);
+  return resolved === null ? undefined : candidateOf(resolved);
+}
+
 async function cardPromise(
   client: QueryClient,
   candidate: JumpCardCandidate,
@@ -411,7 +468,9 @@ export async function jumpDestinationPromise(
   if (project?.kind === "project")
     return { kind: "project", slug: project.slug };
 
-  const card = candidates.find(isCard);
+  // The same rung the rows take, run here too: Enter in the same beat as
+  // the paste has to reach where the row would have gone.
+  const card = candidates.find(isCard) ?? (await resolvedCard(client, q));
   if (card !== undefined) {
     const target = await cardPromise(client, card);
     if (target !== null) return { kind: "issue", target };

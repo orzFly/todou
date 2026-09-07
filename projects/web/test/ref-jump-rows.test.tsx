@@ -5,6 +5,7 @@ import type {
   Project,
   ReferenceConfig,
   ReferenceDirectory,
+  ResolvedRef,
   TimelineComment,
 } from "@todou/shared";
 import { describe, expect, it } from "vitest";
@@ -26,6 +27,7 @@ import {
 import {
   referenceConfigQuery,
   referenceDirectoryQuery,
+  resolveRefQuery,
 } from "../src/api/references.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
@@ -328,6 +330,71 @@ describe("useJumpRows", () => {
         spelled: "T-141",
         commentBy: "Alice",
       },
+    ]);
+  });
+
+  /**
+   * `CH` is held by a project this viewer cannot read, so it is absent from
+   * `DIRECTORY` — and the card it leads to sits in harbor, which they can
+   * (T-288). Without the server's answer the box offers nothing for a ref
+   * that resolves perfectly well in prose.
+   */
+  const inHarbor: ResolvedRef = {
+    names: { project_ref: "68", number: 158 },
+    at: { slug: "harbor", number: 30 },
+  };
+
+  function seedResolved(client: QueryClient, ref = "CH-158"): QueryClient {
+    client.setQueryData(referenceConfigQuery("harbor").queryKey, config("HB"));
+    client.setQueryData(resolveRefQuery(ref).queryKey, inHarbor);
+    client.setQueryData(
+      issueRefQuery("harbor", 30).queryKey,
+      item(30, "Landed in harbor"),
+    );
+    return client;
+  }
+
+  it("offers a card whose prefix belongs to a project it cannot name", async () => {
+    const client = seedResolved(seedContext(testQueryClient()));
+    expect(await rowsOf(client, "CH-158")).toMatchObject([
+      {
+        state: "ready",
+        // `at`, not the address the ref spells: the row is about the card,
+        // and where the card is is the only address readable here.
+        slug: "harbor",
+        number: 30,
+        spelled: "harbor/HB-30",
+        crossProject: true,
+      },
+    ]);
+  });
+
+  it("folds the spelling before asking, as every other rung does", async () => {
+    const client = seedResolved(seedContext(testQueryClient()));
+    expect(await rowsOf(client, "ch-158")).toMatchObject([
+      { state: "ready", slug: "harbor", number: 30 },
+    ]);
+  });
+
+  it("offers nothing when the server will not resolve it", async () => {
+    const client = seedContext(testQueryClient());
+    // What a 404 becomes: no holder, several holders, no such card, or none
+    // of this viewer's business — one answer for all four.
+    client.setQueryData(resolveRefQuery("ZZ-9").queryKey, null);
+    expect(await rowsOf(client, "ZZ-9")).toEqual([]);
+  });
+
+  it("never asks about a ref the directory already resolved", async () => {
+    const client = seedContext(testQueryClient());
+    client.setQueryData(
+      issueRefQuery("todou", 215).queryKey,
+      item(215, "Ours"),
+    );
+    // A deliberately wrong answer for a ref that needs no answer: if the
+    // rung ran anyway, the row would point at harbor instead.
+    client.setQueryData(resolveRefQuery("T-215").queryKey, inHarbor);
+    expect(await rowsOf(client, "T-215")).toMatchObject([
+      { state: "ready", slug: "todou", number: 215, spelled: "T-215" },
     ]);
   });
 

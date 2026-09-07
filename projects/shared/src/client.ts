@@ -52,6 +52,7 @@ import type {
   ReferenceConfig,
   ReferenceDirectory,
   RefFormatSetInput,
+  ResolvedRef,
   RevisionPage,
   SearchFacets,
   SearchPage,
@@ -564,6 +565,8 @@ export class TodouClient {
     this.request<ReferenceConfig>("GET", `/projects/${slug}/references/config`);
   getReferenceDirectory = () =>
     this.request<ReferenceDirectory>("GET", "/me/reference-directory");
+  resolveRef = (ref: string) =>
+    this.request<ResolvedRef>("GET", "/me/refs/resolve", { query: { ref } });
   setReferenceFormat = (slug: string, input: RefFormatSetInput) =>
     this.request<ReferenceConfig>(
       "PUT",

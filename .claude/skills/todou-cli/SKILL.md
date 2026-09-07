@@ -69,11 +69,14 @@ address a stored reference is written with (`/projects/7/issues/16`). A project 
 id anywhere its slug goes, `-p` included.
 
 **A prefix is resolved, not ignored.** `T-16` means the project that holds `T` — the current one if
-that is its prefix, otherwise whichever readable project claims it deployment-wide. A prefix nobody
-holds, one several projects hold, and one that disagrees with `-p/--project` are all refused (exit 1)
-before anything is read, so a ref pasted from another project cannot hand you a different card. `-p`
-therefore stays a fence: to reach another project either drop it or write `alpha/16`. `<proj>/T-16`
-is checked against that project's own prefixes, current and retired.
+that is its prefix, otherwise whichever project holds it deployment-wide. A prefix nobody holds and
+one several projects hold are both refused (exit 1) before any card is read, so a ref pasted from
+another project cannot hand you a different card. A holder you cannot read is resolved by the server
+on your behalf, and only ever to a card that is yours to read; when it will not answer you get the
+same refusal as a prefix nobody holds. `-p` therefore stays a fence, judged by where the card **is
+now**: `CH-158 -p roise` is right for a card that has moved into roise and refused, naming the card's
+real address, when it has not. `<proj>/T-16` is checked against that project's own prefixes, current
+and retired.
 
 ## Several cards at once
 
@@ -206,6 +209,10 @@ and poll cadence, cursor recipes, unread state, exit codes, NDJSON and stdout/st
 - **An address in stored text pastes straight back in.** `todou issue view /projects/7/issues/12`,
   `todou comment view /projects/7/issues/12#comment-34`, and `-p 7` all work — a project id is a
   spelling every command takes.
+- **An old ref still finds its card.** A retired slug routes, and a card that moved answers at its
+  former address: reads follow the move and print `moved from <the ref you wrote>`, so a ref out of an
+  old comment is worth pasting as it stands rather than hunting for the current address first. Writes
+  refuse rather than follow — aim one at the address the read printed.
 - Do not guess how a project spells its refs: `#12` or `T-12` is a per-project setting, and every
   command that knows an issue prints it spelled. A ref notifies the card it points at, so write one
   only when the link carries meaning; do not enumerate incidental cards, and write "this card"

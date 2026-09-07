@@ -1,6 +1,7 @@
 import {
   AGENT_CONTEXT_HEADER,
   type AgentContext,
+  type MovedTo,
   TodouClient,
 } from "@todou/shared";
 import { type BaseContext, Command, Option } from "clipanion";
@@ -14,11 +15,19 @@ import {
 import { discoverDirConfig } from "./dir-config.ts";
 import { CliError, reportError } from "./errors.ts";
 import { detectAgentContext } from "./harness/index.ts";
-import { checkQualifiedPrefix, resolvePrefixedRef } from "./locator.ts";
+import {
+  checkQualifiedPrefix,
+  type LadderResult,
+  resolvePrefixedRef,
+} from "./locator.ts";
 import { parseIssueRef } from "./parse.ts";
 import type { openPeerPush } from "./peer-push.ts";
 import type { RefFormat } from "./refs.ts";
-import { fetchReferenceConfig, fetchReferenceDirectory } from "./resolve.ts";
+import {
+  fetchReferenceConfig,
+  fetchReferenceDirectory,
+  fetchResolvedRef,
+} from "./resolve.ts";
 
 export type CursorRecord = {
   type: "cursor";
@@ -218,7 +227,18 @@ export abstract class ProjectCommand extends ApiCommand {
   protected async resolveIssueRef(
     client: TodouClient,
     raw: string,
-  ): Promise<{ project: string; number: number }> {
+  ): Promise<{
+    project: string;
+    number: number;
+    /**
+     * Where the card is now, set only where the server resolved the prefix.
+     * `project`/`number` above stay the address the ref spells, so the
+     * request meets the same 301 or 409 the id form of it would.
+     */
+    at?: MovedTo;
+    /** The ref as typed, for the `moved from` line `at` cannot spell. */
+    asTyped?: string;
+  }> {
     const ref = parseIssueRef(raw, "issue number");
     if (ref.origin !== undefined && this.ctx.server !== undefined) {
       const active = new URL(this.ctx.server).origin;
@@ -254,35 +274,64 @@ export abstract class ProjectCommand extends ApiCommand {
       project === undefined
         ? null
         : await fetchReferenceConfig(client, project);
-    const local = resolvePrefixedRef(ref.prefix, raw, {
+    let resolved: LadderResult;
+    /** Set only where the server resolved the ref; see the fence below. */
+    let at: MovedTo | undefined;
+    const own = resolvePrefixedRef(ref.prefix, raw, {
       project,
       config,
       directory: undefined,
     });
-    const resolved =
-      "needsDirectory" in local
-        ? resolvePrefixedRef(ref.prefix, raw, {
-            project,
-            config,
-            directory: await fetchReferenceDirectory(client),
-          })
-        : local;
+    if ("needsDirectory" in own) {
+      const directory = await fetchReferenceDirectory(client);
+      const listed = resolvePrefixedRef(ref.prefix, raw, {
+        project,
+        config,
+        directory,
+      });
+      if ("needsResolve" in listed) {
+        // The directory is trimmed to what this account may read, so "no
+        // project uses this prefix" was only ever "none that I can see".
+        // The server judges the same token against every project, and
+        // answers only where the card it leads to is readable anyway (T-288).
+        const answer = await fetchResolvedRef(client, raw);
+        resolved = resolvePrefixedRef(ref.prefix, raw, {
+          project,
+          config,
+          directory,
+          resolved: answer,
+        });
+        at = answer?.at;
+      } else resolved = listed;
+    } else resolved = own;
     // What keeps `-p dogfood` a sandbox fence: a prefix that resolves
     // elsewhere refuses rather than overriding the flag, so a ref pasted
     // from another project cannot silently redirect a command at it.
     // Neither a first-rung hit nor the loose fallback can trip this — both
     // land on the current project, which the flag itself decided.
-    if (this.project !== undefined && this.project !== resolved.project) {
+    //
+    // Judged by where the card IS, not by which project the prefix names:
+    // the two part company as soon as a card moves, and judging by the
+    // prefix refused `CH-158 -p roise` for a card sitting in roise, with a
+    // hint naming `roise/158` — a different card that really existed.
+    const landed = at?.slug ?? resolved.project;
+    if (this.project !== undefined && this.project !== landed) {
       // The project has to be spelled out: unlike `todou/16`, the one a
       // prefix names is not visible in what was typed, so without it the
       // reader cannot tell which side to change.
       throw new CliError(
-        `"${raw}" resolves to project "${resolved.project}" (prefix ${ref.prefix}), ` +
+        `"${raw}" resolves to project "${landed}" (prefix ${ref.prefix}), ` +
           `but -p/--project says "${this.project}"`,
-        `write "${this.project}/${ref.number}" for this project, or drop -p/--project`,
+        at === undefined
+          ? `write "${this.project}/${ref.number}" for this project, or drop -p/--project`
+          : `write "${at.slug}/${at.number}" for that card, or drop -p/--project`,
       );
     }
-    return { project: resolved.project, number: ref.number };
+    return {
+      project: resolved.project,
+      number: ref.number,
+      ...(at === undefined ? {} : { at, asTyped: raw }),
+    };
   }
 
   /**
@@ -305,20 +354,34 @@ export abstract class ProjectCommand extends ApiCommand {
     numbers: number[];
     /** How the caller wrote each kept number, for hints that paste back. */
     spellings: string[];
+    /**
+     * Parallel to `numbers`, and `undefined` for every ref whose own
+     * spelling names its project. Not the same question as `spellings`:
+     * this is the subset that has no address to fall back on, because a
+     * prefix the server resolved names its holder by id.
+     */
+    asTyped: Array<string | undefined>;
   }> {
     let project: string | undefined;
     let owner: string | undefined;
     const numbers: number[] = [];
     const spellings: string[] = [];
+    const asTyped: Array<string | undefined> = [];
     for (const raw of raws) {
       const ref = await this.resolveIssueRef(client, raw);
       if (project === undefined) {
         project = ref.project;
         owner = raw;
       } else if (ref.project !== project) {
+        // The address each ref is ASKED FOR, not the one it lands at: this
+        // one project is what the requests, the status vocabulary and the
+        // `ref_format` are all read against. Two refs that land in the same
+        // project by different routes still cannot share one of those.
         throw new CliError(
           `"${owner}" says project "${project}" but "${raw}" says "${ref.project}"`,
-          "one call reads one project — split them into two",
+          ref.at === undefined
+            ? "one call reads one project — split them into two"
+            : `one call reads one project — write "${ref.at.slug}/${ref.at.number}", or split them into two`,
         );
       }
       if (numbers.includes(ref.number)) {
@@ -327,8 +390,9 @@ export abstract class ProjectCommand extends ApiCommand {
       }
       numbers.push(ref.number);
       spellings.push(raw);
+      asTyped.push(ref.asTyped);
     }
     if (project === undefined) throw new CliError("no issue number given");
-    return { project, numbers, spellings };
+    return { project, numbers, spellings, asTyped };
   }
 }

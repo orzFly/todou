@@ -4,6 +4,7 @@ import { CliError } from "../src/errors.ts";
 import {
   fetchReferenceDirectory,
   fetchRefPrefix,
+  fetchResolvedRef,
   resolveAssignees,
   resolveClosedStatus,
   resolveLabels,
@@ -113,6 +114,29 @@ describe("reference reads, memoized per client (T-214)", () => {
     expect(await fetchRefPrefix(client, "todou")).toBeNull();
     expect(await fetchReferenceDirectory(client)).toBeNull();
     expect(await fetchReferenceDirectory(client)).toBeNull();
+    expect(calls).toHaveLength(2);
+  });
+
+  it("resolves one ref per client per ref, misses included", async () => {
+    const answer = {
+      names: { project_ref: "68", number: 158 },
+      at: { slug: "roise", number: 94 },
+    };
+    const { fetchImpl, calls } = fakeFetch([
+      [
+        "GET",
+        "/api/me/refs/resolve",
+        (_init: RequestInit, url: URL) =>
+          url.searchParams.get("ref") === "CH-158" ? answer : { __status: 404 },
+      ],
+    ]);
+    const client = new TodouClient({ fetch: fetchImpl });
+    expect(await fetchResolvedRef(client, "CH-158")).toEqual(answer);
+    expect(await fetchResolvedRef(client, "CH-158")).toEqual(answer);
+    // The miss is the common answer — a mistyped prefix repeated across
+    // positionals must not cost a request each.
+    expect(await fetchResolvedRef(client, "FOO-1")).toBeNull();
+    expect(await fetchResolvedRef(client, "FOO-1")).toBeNull();
     expect(calls).toHaveLength(2);
   });
 });

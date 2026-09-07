@@ -2,6 +2,7 @@ import type {
   Label,
   ReferenceConfig,
   ReferenceDirectory,
+  ResolvedRef,
   Status,
   TodouClient,
 } from "@todou/shared";
@@ -57,6 +58,40 @@ export async function fetchReferenceDirectory(
   if (cached !== undefined) return cached;
   const pending = client.getReferenceDirectory().catch(() => null);
   DIRECTORIES.set(client, pending);
+  return pending;
+}
+
+const RESOLVED = new WeakMap<
+  TodouClient,
+  Map<string, Promise<ResolvedRef | null>>
+>();
+
+/**
+ * Where the deployment says one `PREFIX-N` points (T-288); null = it will not
+ * say, which the ladder then reports as the prefix resolving to nothing.
+ *
+ * Best-effort like the two above, and for one more reason besides an old
+ * server or a blip: the endpoint answers 404 for a prefix nobody holds and
+ * for a card that is none of this caller's business alike, and both of those
+ * are already the failure the ladder was about to report anyway.
+ *
+ * Memoized per ref as well as per client, because the 404 is the common
+ * answer — a mistyped prefix must cost one request however many positionals
+ * repeat it.
+ */
+export async function fetchResolvedRef(
+  client: TodouClient,
+  ref: string,
+): Promise<ResolvedRef | null> {
+  let byRef = RESOLVED.get(client);
+  if (byRef === undefined) {
+    byRef = new Map();
+    RESOLVED.set(client, byRef);
+  }
+  const cached = byRef.get(ref);
+  if (cached !== undefined) return cached;
+  const pending = client.resolveRef(ref).catch(() => null);
+  byRef.set(ref, pending);
   return pending;
 }
 

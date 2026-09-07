@@ -244,6 +244,27 @@ describe("reading a card that moved", () => {
     expect(run.stdout).toContain("other/#45 Fix the potato");
   });
 
+  it("keeps the address that was typed when it was an id (T-288)", async () => {
+    // The contrast to `moved from CH-158`: an id in the argument is an
+    // address the reader chose, so the line goes on quoting it back.
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/68/issues/3", { __status: 301, body: movedBody }],
+      ["GET", "/api/projects/68/references/config", { __status: 404 }],
+      ["GET", "/api/projects/other/issues/45", { ...issue, number: 45 }],
+      ["GET", "/api/projects/other/issues/45/timeline", emptyPage],
+      ["PUT", "/api/projects/other/issues/45/read", { __status: 204 }],
+      ["GET", "/api/projects/other/references/config", refConfig("RN")],
+    ]);
+    const run = await runCli(["issue", "view", "68/3", "--json"], {
+      fetchImpl,
+      env: loggedInEnv(),
+    });
+    expect(run.exitCode).toBe(0);
+    expect(
+      (JSON.parse(run.stdout) as { moved_from: unknown }).moved_from,
+    ).toEqual({ slug: "68", number: 3 });
+  });
+
   it("reports a 410 without naming the destination", async () => {
     const { fetchImpl } = fakeFetch([
       [

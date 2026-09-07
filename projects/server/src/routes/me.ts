@@ -10,6 +10,7 @@ import {
   ORIGIN_HEADER,
   ProjectRef,
   ReferenceDirectory,
+  ResolvedRef,
   TokenCreated,
   TokenCreateInput,
   TokenListItem,
@@ -27,6 +28,7 @@ import { readPrefs, updatePrefs } from "../services/prefs.ts";
 import { deleteAvatar, setAvatar, updateProfile } from "../services/profile.ts";
 import { bulkMarkRead, markIssueRead } from "../services/reads.ts";
 import { referenceDirectory } from "../services/reference-directory.ts";
+import { resolveRefLocator } from "../services/reference-resolve.ts";
 import { issueToken, listTokens, revokeToken } from "../services/tokens.ts";
 import { ownerRefOf, toMe } from "../services/users.ts";
 
@@ -199,6 +201,22 @@ const referenceDirectoryRoute = createRoute({
   },
 });
 
+const resolveRefRoute = createRoute({
+  method: "get",
+  path: "/me/refs/resolve",
+  summary:
+    "Resolve a bare PREFIX-N to the address it spells and the address the " +
+    "card lives at now. 404 whenever that card is not mine to read, which " +
+    "is what the same token resolving in prose already tells me.",
+  request: { query: z.object({ ref: z.string().min(1).max(128) }) },
+  responses: {
+    200: {
+      description: "The address to ask for, and where the card is now",
+      content: { "application/json": { schema: ResolvedRef } },
+    },
+  },
+});
+
 // Under /me rather than /agents/memberships: agentRoutes() already owns
 // `/{id}`, so a sibling static segment would only avoid a 400 from
 // `z.coerce.number()` by relying on Hono matching static before parameter.
@@ -328,6 +346,12 @@ export function meRoutes() {
   app.openapi(referenceDirectoryRoute, async (c) => {
     const ctx = c.get("appCtx");
     return c.json(await referenceDirectory(ctx, c.get("user")), 200);
+  });
+
+  app.openapi(resolveRefRoute, async (c) => {
+    const ctx = c.get("appCtx");
+    const { ref } = c.req.valid("query");
+    return c.json(await resolveRefLocator(ctx, c.get("user"), ref), 200);
   });
 
   app.openapi(agentMembershipsRoute, async (c) => {

@@ -2356,6 +2356,174 @@ describe("positional prefix resolution (T-214)", () => {
     expect(hit(calls, "/projects/dogfood/issues/1")).toBe(0);
   });
 
+  /**
+   * The rung below all of the above (T-288): a prefix no project in this
+   * account's directory holds may still be held deployment-wide, and only
+   * the server can say — so the refusals above are all conditional on it
+   * having been asked first.
+   */
+  describe("the server's own answer", () => {
+    /** No CH: the account cannot read whoever holds it. */
+    const OWN_ONLY = directory([claim("T", "todou")]);
+    const ANSWER = {
+      names: { project_ref: "68", number: 158 },
+      at: { slug: "roise", number: 94 },
+    };
+    const moved = {
+      __status: 301,
+      body: { moved_to: { slug: "roise", number: 94 } },
+    };
+
+    it("follows the id it hands back, and names the ref that was typed", async () => {
+      const { fetchImpl, calls } = fakeFetch([
+        ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+        ["GET", "/api/me/reference-directory", OWN_ONLY],
+        ["GET", "/api/me/refs/resolve", ANSWER],
+        // The request goes to the address the ref SPELLS, so it meets the
+        // same 301 `68/158` would have — one downstream, not two.
+        ["GET", "/api/projects/68/issues/158", moved],
+        ["GET", "/api/projects/68/references/config", { __status: 404 }],
+        ...viewRoutes("roise", 94),
+        ["GET", "/api/projects/roise/references/config", prefixed("RN")],
+      ]);
+      const result = await runCli(["issue", "view", "CH-158"], {
+        fetchImpl,
+        env: loggedInEnv("dogfood"),
+      });
+      expect(result.exitCode).toBe(0);
+      expect(hit(calls, "/me/refs/resolve")).toBe(1);
+      expect(hit(calls, "/projects/68/issues/158")).toBe(1);
+      expect(result.stdout).toContain("moved from CH-158");
+      expect(result.stdout).toContain("roise/RN-94 Fix the potato");
+      // The holder is spelled as an id, which is noise where the reader
+      // typed a prefix — and `roise/158` would name a different card.
+      expect(result.stdout).not.toContain("moved from 68/");
+      expect(result.stdout).not.toContain("roise/RN-158");
+    });
+
+    it("carries the typed ref into --json beside the real address", async () => {
+      const { fetchImpl } = fakeFetch([
+        ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+        ["GET", "/api/me/reference-directory", OWN_ONLY],
+        ["GET", "/api/me/refs/resolve", ANSWER],
+        ["GET", "/api/projects/68/issues/158", moved],
+        ["GET", "/api/projects/68/references/config", { __status: 404 }],
+        ...viewRoutes("roise", 94),
+        ["GET", "/api/projects/roise/references/config", prefixed("RN")],
+      ]);
+      const result = await runCli(["issue", "view", "CH-158", "--json"], {
+        fetchImpl,
+        env: loggedInEnv("dogfood"),
+      });
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout) as { moved_from: unknown };
+      // `slug`/`number` unchanged, so a script reading them is unaffected.
+      expect(parsed.moved_from).toEqual({
+        slug: "68",
+        number: 158,
+        as_typed: "CH-158",
+      });
+    });
+
+    it("reports today's refusal, word for word, when it has no answer", async () => {
+      const { fetchImpl, calls } = fakeFetch([
+        ...viewRoutes("dogfood", 1),
+        ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+        ["GET", "/api/me/reference-directory", DIRECTORY],
+        ["GET", "/api/me/refs/resolve", { __status: 404 }],
+      ]);
+      const result = await runCli(["issue", "view", "FOO-1", "-p", "dogfood"], {
+        fetchImpl,
+        env: loggedInEnv(),
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe(
+        'error: no project uses the prefix "FOO" (from "FOO-1")\n' +
+          'write this project\'s own card as "#1" or "dogfood/1"; ' +
+          "prefixes in reach: CH- (homelab), T- (todou)\n",
+      );
+      // The read is best-effort, so stdout alone cannot tell "asked and
+      // was told no" from "never asked".
+      expect(hit(calls, "/me/refs/resolve")).toBe(1);
+      expect(hit(calls, "/projects/dogfood/issues/1")).toBe(0);
+    });
+
+    it("reports the same on a server that has no such endpoint", async () => {
+      // The route is absent entirely, which is what an old server is.
+      const { fetchImpl } = fakeFetch([
+        ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+        ["GET", "/api/me/reference-directory", DIRECTORY],
+      ]);
+      const result = await runCli(["issue", "view", "FOO-1", "-p", "dogfood"], {
+        fetchImpl,
+        env: loggedInEnv(),
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe(
+        'error: no project uses the prefix "FOO" (from "FOO-1")\n' +
+          'write this project\'s own card as "#1" or "dogfood/1"; ' +
+          "prefixes in reach: CH- (homelab), T- (todou)\n",
+      );
+    });
+
+    it("lets -p through when that is where the card now is", async () => {
+      // The report this card came from: `-p roise` with a ref whose prefix
+      // names the project the card LEFT. Judging by the prefix refused it.
+      const { fetchImpl } = fakeFetch([
+        ["GET", "/api/projects/roise/references/config", prefixed("RN")],
+        ["GET", "/api/me/reference-directory", OWN_ONLY],
+        ["GET", "/api/me/refs/resolve", ANSWER],
+        ["GET", "/api/projects/68/issues/158", moved],
+        ["GET", "/api/projects/68/references/config", { __status: 404 }],
+        ...viewRoutes("roise", 94),
+      ]);
+      const result = await runCli(["issue", "view", "CH-158", "-p", "roise"], {
+        fetchImpl,
+        env: loggedInEnv(),
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("roise/RN-94 Fix the potato");
+    });
+
+    it("refuses -p naming a project the card is not in, by its real address", async () => {
+      const { fetchImpl, calls } = fakeFetch([
+        ["GET", "/api/projects/todou/references/config", prefixed("T")],
+        ["GET", "/api/me/reference-directory", OWN_ONLY],
+        ["GET", "/api/me/refs/resolve", ANSWER],
+      ]);
+      const result = await runCli(["issue", "view", "CH-158", "-p", "todou"], {
+        fetchImpl,
+        env: loggedInEnv(),
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe(
+        'error: "CH-158" resolves to project "roise" (prefix CH), ' +
+          'but -p/--project says "todou"\n' +
+          'write "roise/94" for that card, or drop -p/--project\n',
+      );
+      // The old hint invented `todou/158` — a card number that in the
+      // deployment this was found on named a real, unrelated card.
+      expect(result.stderr).not.toContain("todou/158");
+      expect(hit(calls, "/issues/")).toBe(0);
+    });
+
+    it("asks once per ref across a batch", async () => {
+      const { fetchImpl, calls } = fakeFetch([
+        ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+        ["GET", "/api/me/reference-directory", OWN_ONLY],
+        ["GET", "/api/me/refs/resolve", { __status: 404 }],
+      ]);
+      const result = await runCli(
+        ["issue", "view", "FOO-1", "FOO-1", "FOO-2", "-p", "dogfood"],
+        { fetchImpl, env: loggedInEnv() },
+      );
+      expect(result.exitCode).toBe(1);
+      // One request for `FOO-1` however many positionals repeat it, and the
+      // batch stops at the first refusal — so `FOO-2` is never asked about.
+      expect(hit(calls, "/me/refs/resolve")).toBe(1);
+    });
+  });
+
   it("keeps the loose reading when the config cannot be read", async () => {
     // An old server has no config route at all; the T-80 behaviour — take
     // the number, ignore the prefix — has to survive there.

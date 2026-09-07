@@ -46,7 +46,7 @@ import { projects } from "../db/system-schema.ts";
 import { type ProjectRow, projectRoleOf, routeInfoOf } from "./access.ts";
 import type { ReferenceInputs } from "./cross-references.ts";
 import { refPrefixAt } from "./references.ts";
-import { aliasOf, currentAddressOf } from "./relocation.ts";
+import { type Address, aliasOf, currentAddressOf } from "./relocation.ts";
 import { live, referenceable } from "./trash.ts";
 
 /** The content being saved, so a card never records a reference to itself. */
@@ -343,6 +343,51 @@ type Resolution = {
 };
 
 /**
+ * The three lookups following a move needs, handed in rather than done here,
+ * so a caller that repeats them decides what they cost: `Resolver` wires its
+ * own caches in, a one-off caller passes plain queries.
+ */
+export type AddressWorld = {
+  system: Db;
+  projectById: (id: number) => Promise<ProjectRow | null>;
+  mayRead: (project: ProjectRow) => Promise<boolean>;
+  cardLive: (project: ProjectRow, number: number) => Promise<boolean>;
+};
+
+export type CardAddress = {
+  /** The project the card lives in now — the one the gate was asked about. */
+  target: ProjectRow;
+  address: Address;
+  /** The address book redirected this, so a comment anchor needs translating. */
+  moved: boolean;
+};
+
+/**
+ * Where the card named as `named/number` is today, or null when the caller
+ * may not be told. Two paths ask this — text being saved and a client
+ * resolving a ref it typed — and they have to answer alike, so the gate
+ * order is the invariant here rather than each caller's business: the
+ * address book first, then read access to wherever it points, and never to
+ * the project the ref named.
+ */
+export async function cardAddressFor(
+  world: AddressWorld,
+  named: ProjectRow,
+  number: number,
+): Promise<CardAddress | null> {
+  const moved = await currentAddressOf(world.system, named.id, number);
+  const address = moved ?? { projectId: named.id, number };
+  const target =
+    address.projectId === named.id
+      ? named
+      : await world.projectById(address.projectId);
+  if (target === null) return null;
+  if (!(await world.mayRead(target))) return null;
+  if (!(await world.cardLive(target, address.number))) return null;
+  return { target, address, moved: moved !== null };
+}
+
+/**
  * One resolve pass's view of the world, with the lookups it repeats cached.
  *
  * A body naming five cards in the same project would otherwise open that
@@ -358,6 +403,8 @@ class Resolver {
   private readonly project: ProjectRow;
   private readonly world: ResolveWorld;
   private readonly config: ScanConfig;
+  /** `cardAddressFor`'s lookups, wired to the caches above. */
+  private readonly addressWorld: AddressWorld;
 
   constructor(world: ResolveWorld, config: ScanConfig) {
     this.world = world;
@@ -365,6 +412,12 @@ class Resolver {
     this.db = world.hereDb;
     this.project = world.here;
     this.config = config;
+    this.addressWorld = {
+      system: world.ctx.router.system(),
+      projectById: (id) => this.projectById(id),
+      mayRead: (project) => this.mayRead(project),
+      cardLive: (project, number) => this.cardLive(project, number),
+    };
   }
 
   /**
@@ -471,18 +524,12 @@ class Resolver {
     commentId: number | undefined,
   ): Promise<Resolution | null> {
     const system = this.ctx.router.system();
-    const moved = await currentAddressOf(system, named.id, number);
-    const address = moved ?? { projectId: named.id, number };
-    const target =
-      address.projectId === named.id
-        ? named
-        : await this.projectById(address.projectId);
-    if (target === null) return null;
-    if (!(await this.mayRead(target))) return null;
-    if (!(await this.cardLive(target, address.number))) return null;
+    const found = await cardAddressFor(this.addressWorld, named, number);
+    if (found === null) return null;
+    const { target, address } = found;
 
     let anchor = commentId;
-    if (commentId !== undefined && moved !== null) {
+    if (commentId !== undefined && found.moved) {
       // The card carried its comments to a database that numbers them from
       // its own sequence. Writing the id as typed would point the anchor at
       // a real, unrelated comment, so an anchor that cannot be translated

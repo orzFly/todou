@@ -3,6 +3,7 @@ import {
   DEFAULT_REFERENCE_CONFIG,
   type ReferenceConfig,
   type ReferenceDirectory,
+  type ResolvedRef,
 } from "@todou/shared";
 import { api } from "@/api/queries.ts";
 import type { RefConfig } from "@/lib/issue-refs.ts";
@@ -22,6 +23,30 @@ export const referenceConfigQuery = (slug: string) =>
       }
     },
     // Refs are decoration; trade freshness for fewer refetch bursts.
+    staleTime: 60_000,
+  });
+
+/**
+ * Where the deployment says one `PREFIX-N` points (T-288); null = it will
+ * not say, which is the same as there being no such card.
+ *
+ * 404 covers every reason at once by design — nobody holds the prefix, it
+ * has several holders, no card sits at that number, or the card is not this
+ * viewer's to read — so there is nothing to tell apart here either.
+ */
+export const resolveRefQuery = (ref: string) =>
+  queryOptions({
+    queryKey: ["resolve-ref", ref],
+    queryFn: async (): Promise<ResolvedRef | null> => {
+      try {
+        return await api.resolveRef(ref);
+      } catch (error) {
+        // A server predating T-288 has no such route, which reads the same:
+        // no answer, so no row.
+        if ((error as { status?: number }).status === 404) return null;
+        throw error;
+      }
+    },
     staleTime: 60_000,
   });
 

@@ -56,11 +56,18 @@ const DIRECTORY = held([
   ["M", "mirror"],
 ]);
 
+/**
+ * `resolved: null` by default — the server was asked and had nothing. That
+ * is the rung below every case in this file except the ones about the rung
+ * itself, and it is what makes each of them a decision rather than a
+ * request for one more document.
+ */
 function inputs(over: Partial<LadderInputs> = {}): LadderInputs {
   return {
     project: "main",
     config: mainConfig(),
     directory: DIRECTORY,
+    resolved: null,
     at: NOW,
     ...over,
   };
@@ -189,7 +196,7 @@ describe("resolvePrefixedRef, rung 3: the cross-project directory", () => {
   });
 });
 
-describe("resolvePrefixedRef, rung 4: nobody holds it", () => {
+describe("resolvePrefixedRef, rung 5: nobody holds it", () => {
   it("suggests a near miss, and nothing else", () => {
     const withFoobar = held([
       ["T", "main"],
@@ -249,6 +256,84 @@ describe("resolvePrefixedRef, rung 4: nobody holds it", () => {
     expect(fails("FOO", "FOO-1", { directory: null }).message).toBe(
       'no project uses the prefix "FOO" (from "FOO-1")',
     );
+  });
+});
+
+describe("resolvePrefixedRef, rung 4: the server resolves what we cannot", () => {
+  it("asks for the server's answer before reporting a miss", () => {
+    // The directory is trimmed to this account's projects, so "nobody holds
+    // it" is a conclusion this side is not entitled to draw on its own.
+    expect(
+      resolvePrefixedRef("CH", "CH-158", inputs({ resolved: undefined })),
+    ).toEqual({ needsResolve: true });
+  });
+
+  it("takes the holder's id as the project, the number unchanged", () => {
+    expect(
+      resolvePrefixedRef(
+        "CH",
+        "CH-158",
+        inputs({
+          resolved: {
+            names: { project_ref: "68", number: 158 },
+            at: { slug: "roise", number: 94 },
+          },
+        }),
+      ),
+    ).toEqual({ project: "68" });
+  });
+
+  it("throws today's error when the server has no answer either", () => {
+    // The one case the endpoint cannot improve on: a mistyped prefix. It
+    // has confirmed there is nothing to say, so the wording does not change.
+    const error = fails("FOO", "FOO-76", { resolved: null });
+    expect(error.message).toBe(
+      'no project uses the prefix "FOO" (from "FOO-76")',
+    );
+    expect(error.hint).toBe(
+      'write this project\'s own card as "T-76" or "main/76"; ' +
+        "prefixes in reach: M- (mirror), MU- (muon), T- (main)",
+    );
+  });
+
+  it("reports the missing project rather than asking, with none selected", () => {
+    // Reversed against `noProjectSelected`: a prefixed ref names its own
+    // project, so there is a real question to put to the server first.
+    expect(
+      resolvePrefixedRef(
+        "FOO",
+        "FOO-1",
+        inputs({ project: undefined, config: null, resolved: undefined }),
+      ),
+    ).toEqual({ needsResolve: true });
+    expect(
+      fails("FOO", "FOO-1", {
+        project: undefined,
+        config: null,
+        resolved: null,
+      }).message,
+    ).toBe("no project selected");
+  });
+
+  it("never asks about a prefix it has already refused", () => {
+    // A conflict and an autolink are answers, not gaps: sending them to the
+    // server would trade a precise refusal for a round trip.
+    const both = held([
+      ["M", "mirror"],
+      ["M", "muon"],
+    ]);
+    expect(
+      fails("M", "M-3", { directory: both, resolved: undefined }).message,
+    ).toBe('prefix "M" is used by more than one project (from "M-3")');
+    expect(fails("GH", "GH-12", { resolved: undefined }).message).toContain(
+      "points outside todou",
+    );
+    expect(
+      resolvePrefixedRef("T", "T-3", inputs({ resolved: undefined })),
+    ).toEqual({ project: "main" });
+    expect(
+      resolvePrefixedRef("MU", "MU-7", inputs({ resolved: undefined })),
+    ).toEqual({ project: "muon" });
   });
 });
 

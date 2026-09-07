@@ -247,9 +247,23 @@ type ViewedIssue = {
   /** Where a watch on this card would resume; never set under `--brief`. */
   cursor?: string;
   /** The address that was asked for, when it redirected here (T-231). */
-  movedFrom?: { slug: string; number: number };
+  movedFrom?: { slug: string; number: number; asTyped?: string };
   error?: TodouError;
 };
+
+/**
+ * How to name the address a card was asked for. `slug/number` normally, but
+ * a ref that named its project only through a prefix has no slug to spell:
+ * the holder may be a project this account cannot name, so it was asked for
+ * by id, and `moved from 68/158` says less than the `CH-158` that was typed.
+ */
+function movedFromRef(from: {
+  slug: string;
+  number: number;
+  asTyped?: string;
+}): string {
+  return from.asTyped ?? `${from.slug}/${from.number}`;
+}
 
 /** How this command spells one card's number; see `spellRef`. */
 type CardRef = {
@@ -343,7 +357,7 @@ export class IssueViewCommand extends ProjectCommand {
       this.last === undefined
         ? undefined
         : parsePositiveInt(this.last, "--last");
-    const { project, numbers } = await this.resolveIssueRefs(
+    const { project, numbers, asTyped } = await this.resolveIssueRefs(
       client,
       this.numbers,
     );
@@ -354,7 +368,11 @@ export class IssueViewCommand extends ProjectCommand {
     const [requestPrefix, directory, cards] = await Promise.all([
       fetchRefPrefix(client, project),
       fetchProjectDirectory(client),
-      Promise.all(numbers.map((n) => this.fetchCard(client, project, n, last))),
+      Promise.all(
+        numbers.map((n, i) =>
+          this.fetchCard(client, project, n, last, asTyped[i]),
+        ),
+      ),
     ]);
 
     // A card that followed a move spells its number in the format of the
@@ -430,6 +448,7 @@ export class IssueViewCommand extends ProjectCommand {
     project: string,
     number: number,
     last: number | undefined,
+    asTyped?: string,
   ): Promise<ViewedIssue> {
     try {
       const issue = await client.getIssue(project, number);
@@ -455,10 +474,17 @@ export class IssueViewCommand extends ProjectCommand {
       // keep working; the note says where it went.
       if (error instanceof MovedError) {
         const { slug, number: landed } = error.movedTo;
-        const card = await this.fetchCard(client, slug, landed, last);
+        const card = await this.fetchCard(client, slug, landed, last, asTyped);
         // Overwriting on the way out of a chain of moves is deliberate: the
         // note names the address that was asked for, not the middle hops.
-        return { ...card, movedFrom: { slug: project, number } };
+        return {
+          ...card,
+          movedFrom: {
+            slug: project,
+            number,
+            ...(asTyped === undefined ? {} : { asTyped }),
+          },
+        };
       }
       if (!(error instanceof TodouError)) throw error;
       return { number, slug: project, timeline: [], omitted: 0, error };
@@ -474,7 +500,7 @@ export class IssueViewCommand extends ProjectCommand {
     const moved =
       card.movedFrom === undefined
         ? ""
-        : `${paint("dim", `moved from ${card.movedFrom.slug}/${card.movedFrom.number}`)}\n`;
+        : `${paint("dim", `moved from ${movedFromRef(card.movedFrom)}`)}\n`;
     return (
       moved +
       renderIssue(
@@ -514,7 +540,19 @@ export class IssueViewCommand extends ProjectCommand {
       issue: { ...card.issue, ref: ref.spelled },
       // The human output says `moved from …`; without this a script could
       // not tell it had been handed a card of another project at all.
-      ...(card.movedFrom === undefined ? {} : { moved_from: card.movedFrom }),
+      // `slug`/`number` stay the address that was asked for whatever the
+      // caller typed, so a script reading them is unaffected by `as_typed`.
+      ...(card.movedFrom === undefined
+        ? {}
+        : {
+            moved_from: {
+              slug: card.movedFrom.slug,
+              number: card.movedFrom.number,
+              ...(card.movedFrom.asTyped === undefined
+                ? {}
+                : { as_typed: card.movedFrom.asTyped }),
+            },
+          }),
       // `--brief` fetched no timeline, so it reports none — the same
       // omission the human output makes.
       ...(this.brief

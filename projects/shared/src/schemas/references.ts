@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Id, Timestamp } from "./common.ts";
+import { MovedTo } from "./move.ts";
 import { InternalRefPrefix, ProjectSlug } from "./project.ts";
 
 // A trailing digit would make the prefix/number boundary ambiguous
@@ -81,6 +82,28 @@ export const ReferenceDirectory = z.object({
   slug_entries: z.array(SlugClaimEntry).optional(),
 });
 export type ReferenceDirectory = z.infer<typeof ReferenceDirectory>;
+
+/**
+ * One `PREFIX-N` resolved the way the resolve pass resolves the same token
+ * (T-288), for a client that cannot: the prefix directory it is given is
+ * trimmed to what it may read, and a prefix belongs to whoever holds it
+ * deployment-wide.
+ */
+export const ResolvedRef = z.object({
+  /**
+   * The address the ref spells, and the one to send requests to — so a
+   * prefixed ref meets the same 301 on a read and the same 409 on a write
+   * as the id form of the very same address would.
+   *
+   * The project is its id, never its slug: the holder may be a project the
+   * caller cannot read, whose name is therefore not theirs to learn, while
+   * the id is what stored links have carried in the clear since T-266.
+   */
+  names: z.object({ project_ref: z.string().regex(/^\d+$/), number: Id }),
+  /** Where the card is now; readable to the caller by construction. */
+  at: MovedTo,
+});
+export type ResolvedRef = z.infer<typeof ResolvedRef>;
 
 export const RefFormatSetInput = z.strictObject({
   prefix: InternalRefPrefix,
