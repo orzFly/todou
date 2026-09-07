@@ -310,6 +310,19 @@ export async function openFollow<T>(opts: {
         // already carries our hint and the receipt's verbatim reason.
         if (SESSION_LEVEL_REFUSALS.has(why.status)) opts.note(ESCALATION);
       }
+      // Unlike the note above this one is not conditional on the watch
+      // stopping badly: a watch that ran twelve hours and exited cleanly is
+      // exactly the case where nobody would otherwise learn that a peer had
+      // been talking into a void.
+      const { discarded, unbounced } = push.replies();
+      if (discarded > 0) {
+        opts.note(
+          `--follow=uds discarded ${discarded} ` +
+            `${discarded === 1 ? "reply" : "replies"} sent to its reply ` +
+            "address" +
+            (unbounced === 0 ? "" : ` (${unbounced} could not be bounced)`),
+        );
+      }
       push.close();
     },
   };

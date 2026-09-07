@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { connect, createServer, type Socket } from "node:net";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { type Clock, systemClock } from "./clock.ts";
 import { describeError } from "./watch-loop.ts";
 
@@ -39,6 +39,44 @@ function authFrame(token: string): string {
 /** Why the push channel is unusable: a receipt status, or `unreachable`. */
 export type Rejection = { status: string; reason?: string };
 
+/** Every frame that arrives on the listener, as far as this reads them. */
+type Inbound = {
+  type?: unknown;
+  action?: unknown;
+  status?: unknown;
+  status_detail?: unknown;
+  reason?: unknown;
+  msg_id?: unknown;
+  orig_msg_id?: unknown;
+  dropped_msg_ids?: unknown;
+  from?: unknown;
+};
+
+/** What goes back to a replier, in place of the answer it was hoping for. */
+const BOUNCE_REASON =
+  "this address takes no replies — it is a todou watch's receipt listener";
+
+/**
+ * The address a bounce may be written to, or null. The rule is the mirror
+ * of the one the receiver applies to us — same directory, `.sock` suffix —
+ * which makes it the one rule here that needs no separate justification,
+ * and it bounds what this process will connect to to the socket namespace
+ * it already talks to. Decoding matches the receiver too, undecodable
+ * addresses included.
+ */
+function bounceTarget(from: unknown, self: string): string | null {
+  if (typeof from !== "string" || !from.startsWith("uds:")) return null;
+  const raw = from.slice("uds:".length);
+  let path: string;
+  try {
+    path = decodeURIComponent(raw);
+  } catch {
+    path = raw;
+  }
+  if (!isAbsolute(path) || !path.endsWith(".sock")) return null;
+  return dirname(path) === dirname(self) ? path : null;
+}
+
 /** One push's worth of entries and the cursor range they cover. */
 type Batch<T> = {
   items: T[];
@@ -64,6 +102,13 @@ export type PeerPush<T> = {
   readonly rejected: Rejection | null;
   /** Everything not known to have landed: unsent plus still-in-window. */
   unconfirmed(): Batch<T>;
+  /**
+   * What arrived at an address that takes no mail: how many replies were
+   * discarded, and how many of those could not be bounced back. Counted
+   * because a peer talking into a void is otherwise invisible on both
+   * sides, and the count does not depend on the bounce landing.
+   */
+  replies(): { discarded: number; unbounced: number };
   /** Resolves when `rejected` is set, so a quiet phase can be cut short. */
   whenRejected: Promise<void>;
   close(): void;
@@ -160,8 +205,18 @@ export async function openPeerPush<T>(
   const auth = opts.token === undefined ? "" : authFrame(opts.token);
   // Bound to the *target's* directory on purpose: a reply address in the
   // same directory only has to end in `.sock`, while any other permitted
-  // directory also constrains the file name to a pid-derived shape.
-  const self = join(dirname(opts.target), `todou-watch-${process.pid}.sock`);
+  // directory also constrains the file name to a pid-derived shape. The
+  // rest of the name is therefore free, which is what lets it carry the
+  // channel's contract the way a `no-reply@` mail address does: the
+  // receiving session hands this exact string to its Claude as the address
+  // to reply to, so the address is where the "do not" belongs. It enforces
+  // nothing — a reply sent anyway is bounced below — and the pid stays
+  // because it is what an incident is traced by, surviving a session id
+  // rotating underneath.
+  const self = join(
+    dirname(opts.target),
+    `no-reply-todou-watch-${process.pid}.sock`,
+  );
   const from = `uds:${self}`;
 
   const outstanding: Array<Batch<T> & { msgId: string; expiresAt: number }> =
@@ -170,6 +225,8 @@ export async function openPeerPush<T>(
   let awaiting: Batch<T> | null = null;
   let rejected: Rejection | null = null;
   let failures = 0;
+  let discarded = 0;
+  let unbounced = 0;
   let closed = false;
   let announce: () => void = () => {};
   const whenRejected = new Promise<void>((resolve) => {
@@ -191,25 +248,7 @@ export async function openPeerPush<T>(
     }
   };
 
-  const receipt = (line: string) => {
-    if (line.trim() === "") return;
-    let frame: {
-      type?: unknown;
-      action?: unknown;
-      status?: unknown;
-      status_detail?: unknown;
-      reason?: unknown;
-      orig_msg_id?: unknown;
-      dropped_msg_ids?: unknown;
-    };
-    try {
-      frame = JSON.parse(line);
-    } catch {
-      return; // A foreign or half-written frame is not our business.
-    }
-    if (frame.type !== "control" || frame.action !== "peer_message_status") {
-      return;
-    }
+  const receipt = (frame: Inbound) => {
     if (typeof frame.status !== "string") return;
     // A local `refused` verdict travels as an expired status carrying the
     // real cause in status_detail; reporting "aged out unread" would send
@@ -235,6 +274,61 @@ export async function openPeerPush<T>(
     });
   };
 
+  /**
+   * A reply to a no-reply address: counted, then answered the way a mail
+   * server answers one. The status is what communicates — both wordings
+   * the replying session shows come from a fixed table keyed on it, and
+   * the `reason` below is never read there — and `orig_msg_id` is what
+   * correlates it against that session's ring of outstanding sends, which
+   * bouncing on receipt is always well inside.
+   */
+  const bounce = (frame: Inbound) => {
+    discarded += 1;
+    const target = bounceTarget(frame.from, self);
+    if (target === null) return;
+    // No auth line: the token this process holds is a child token for its
+    // own parent session's inbox, and writing it to a peer would hand a
+    // credential to whoever replied.
+    const payload = `${JSON.stringify({
+      type: "control",
+      action: "peer_message_status",
+      status: "refused",
+      reason: BOUNCE_REASON,
+      from,
+      ...(typeof frame.msg_id === "string"
+        ? { orig_msg_id: frame.msg_id }
+        : {}),
+      msg_id: randomUUID(),
+    })}\n`;
+    // Fire and forget, and its failure stays here: `socket.on("data")` is
+    // synchronous, so a rejection settling later has nowhere left to be
+    // caught, and `failures` must not move — a peer's unreachable socket
+    // says nothing about whether our own session is still listening.
+    void (async () => {
+      try {
+        await dial(target, payload);
+      } catch {
+        unbounced += 1;
+      }
+    })();
+  };
+
+  /** A control frame is never replied to, so a bounce provokes no bounce. */
+  const inbound = (line: string) => {
+    if (line.trim() === "") return;
+    let frame: Inbound;
+    try {
+      frame = JSON.parse(line);
+    } catch {
+      return; // A foreign or half-written frame is not our business.
+    }
+    if (frame.type === "control" && frame.action === "peer_message_status") {
+      receipt(frame);
+    } else if (frame.type === "user") {
+      bounce(frame);
+    }
+  };
+
   const sockets = new Set<Socket>();
   const server = createServer((socket) => {
     sockets.add(socket);
@@ -247,14 +341,14 @@ export async function openPeerPush<T>(
         nl !== -1;
         nl = buffer.indexOf("\n")
       ) {
-        receipt(buffer.slice(0, nl));
+        inbound(buffer.slice(0, nl));
         buffer = buffer.slice(nl + 1);
       }
     });
     // A peer that writes its receipt and hangs up may never send the
     // newline, so the last buffered fragment is a whole line after `end`.
     socket.on("end", () => {
-      receipt(buffer);
+      inbound(buffer);
       buffer = "";
     });
     socket.on("error", () => {});
@@ -382,6 +476,7 @@ export async function openPeerPush<T>(
         cursor: batches.at(-1)?.cursor,
       };
     },
+    replies: () => ({ discarded, unbounced }),
     whenRejected,
     close: () => {
       if (closed) return;

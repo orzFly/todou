@@ -514,6 +514,53 @@ describe("watch --follow=uds escalation (T-259)", () => {
   });
 });
 
+describe("watch --follow=uds discarded replies (T-258)", () => {
+  const udsEnv = {
+    ...loggedInEnv(),
+    CLAUDE_CODE_MESSAGING_SOCKET: "/run/cc-socks/4242.sock",
+  };
+
+  /** One clean watch, and the stderr it accounts for its listener on. */
+  const stderrFor = async (replies?: {
+    discarded: number;
+    unbounced: number;
+  }) => {
+    const clock = virtualClock();
+    const push = fakePeerPush(replies === undefined ? {} : { replies });
+    const { fetchImpl } = activityRoutes([
+      ...batch([comment(9, 3, clock.iso())], "a1"),
+      quiet,
+    ]);
+    const result = await runCli(
+      ["watch", "-p", "todou", "--since", "a0", "--follow=uds"],
+      { fetchImpl, env: udsEnv, clock, openPeerPush: push.open },
+    );
+    return result.stderr;
+  };
+
+  it("reports what its reply address discarded", async () => {
+    // Nothing refused this watch, which is the point: a clean twelve-hour
+    // run is exactly where nobody would otherwise learn that a peer had
+    // been talking into a void.
+    expect(await stderrFor({ discarded: 2, unbounced: 0 })).toContain(
+      "--follow=uds discarded 2 replies sent to its reply address",
+    );
+  });
+
+  it("names the bounces that did not go out, and only those", async () => {
+    expect(await stderrFor({ discarded: 3, unbounced: 2 })).toContain(
+      "discarded 3 replies sent to its reply address (2 could not be bounced)",
+    );
+    expect(await stderrFor({ discarded: 2, unbounced: 0 })).not.toContain(
+      "could not be bounced",
+    );
+  });
+
+  it("says nothing when nobody replied", async () => {
+    expect(await stderrFor()).not.toContain("discarded");
+  });
+});
+
 describe("watch --follow=uds sender name (T-254)", () => {
   const udsEnv = {
     ...loggedInEnv(),

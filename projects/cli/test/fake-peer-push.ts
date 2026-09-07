@@ -27,6 +27,8 @@ export function fakePeerPush(
     rejectAfter?: { send: number; rejection: Rejection };
     /** Fail to open at all, the way a bind collision does. */
     failOpen?: Error;
+    /** Replies the listener discarded, seeded the way a rejection is. */
+    replies?: { discarded: number; unbounced: number };
   } = {},
 ): FakePush {
   const pushes: FakePush["pushes"] = [];
@@ -86,6 +88,7 @@ export function fakePeerPush(
           cursor: held.at(-1)?.cursor,
         };
       },
+      replies: () => opts.replies ?? { discarded: 0, unbounced: 0 },
       whenRejected,
       close: () => {
         closed = true;

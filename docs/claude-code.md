@@ -78,6 +78,16 @@ and each of them is silent when written wrong:
   correlated to it and a refusal goes unnoticed.
 - The sender's reply address must be a `uds:` URI over an absolute `.sock`
   path that the sender itself is listening on, or no receipt is sent at all.
+  The watch binds it in the receiving session's own socket directory, where
+  the `.sock` suffix is the only thing the receiver constrains — the rest of
+  the name is free, and it spends it on saying what the address is for:
+  `no-reply-todou-watch-<pid>.sock`. That prefix is a convention, as a mail
+  `no-reply@` address is, not a gate: the session hands the string to its
+  Claude as the address to reply to, and a `SendMessage` back to it is
+  delivered like any other. So a reply that arrives anyway is answered with a
+  `refused` receipt — which is what tells the replying session its message
+  went nowhere — and counted, with the total reported on stderr when the
+  watch exits, whether or not it exited badly.
 - The auth line has to be the *first* line on the connection. Only the
   first frame is read as an auth frame, so a connection that opens with a
   blank line or unparseable JSON is closed wherever the token is required.

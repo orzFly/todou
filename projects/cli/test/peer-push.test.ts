@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { connect, createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { openPeerPush, wrapEnvelope } from "../src/peer-push.ts";
 import { virtualClock } from "./harness.ts";
@@ -20,6 +20,13 @@ type Frame = {
 };
 
 type AuthFrame = { type: string; token: string };
+
+/**
+ * A non-UUID msg_id still delivers, but the receipt comes back with no
+ * orig_msg_id to correlate — which holds for a bounce we mint as much as
+ * for a push.
+ */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 type FakePeer = {
   target: string;
@@ -115,6 +122,81 @@ async function fakePeer(name: string): Promise<FakePeer> {
   };
 }
 
+type Replier = {
+  /** The address its frames claim to come from, `uds:`-prefixed. */
+  from: string;
+  /** Every frame that came back to it, oldest first. */
+  frames: Array<Record<string, unknown>>;
+  /** Wait until `n` frames have arrived. */
+  received: (n: number) => Promise<void>;
+  close: () => Promise<void>;
+};
+
+/**
+ * The session that replied: a socket of its own, bound where the caller
+ * says — inside the push's directory, which is where a real session's
+ * socket sits, or outside it, which is what the vet has to turn away.
+ */
+async function fakeReplier(dir: string, name: string): Promise<Replier> {
+  const path = join(dir, name);
+  const frames: Array<Record<string, unknown>> = [];
+  let arrived: (() => void) | null = null;
+  const server: Server = createServer((socket) => {
+    let buffer = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      buffer += chunk;
+    });
+    socket.on("end", () => {
+      for (const line of buffer.split("\n")) {
+        if (line.trim() !== "") frames.push(JSON.parse(line));
+      }
+      arrived?.();
+    });
+    socket.on("error", () => {});
+  });
+  await new Promise<void>((resolve) => server.listen(path, resolve));
+  return {
+    from: `uds:${path}`,
+    frames,
+    received: (n) =>
+      frames.length >= n
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+            arrived = () => {
+              if (frames.length >= n) resolve();
+            };
+          }),
+    close: () => new Promise((resolve) => server.close(() => resolve())),
+  };
+}
+
+/** One frame written to a push's reply address, as a replier sends it. */
+function replyTo(address: string, frame: unknown): Promise<void> {
+  return dialLine(address.replace(/^uds:/, ""), `${JSON.stringify(frame)}\n`);
+}
+
+/** A reply, in the shape the receiving session actually writes one. */
+const userReply = (replier: Replier, msgId: string) => ({
+  msgV: 1,
+  msg_id: msgId,
+  type: "user",
+  priority: "next",
+  from: replier.from,
+  message: {
+    role: "user",
+    content: `<cross-session-message from="${replier.from}">\nnoted\n</cross-session-message>`,
+  },
+});
+
+/** Waits out a counter the listener bumps off a socket event of its own. */
+async function eventually(check: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !check(); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  expect(check()).toBe(true);
+}
+
 /** The batch shape the watch loop pushes: entries plus a cursor range. */
 const render = (
   items: string[],
@@ -148,11 +230,11 @@ describe("openPeerPush wire format (T-252)", () => {
     // A `from` that is not a uds: URI over an absolute .sock path gets no
     // receipt at all, so there would be nothing to degrade on.
     expect(frame.from).toMatch(/^uds:\/.*\.sock$/);
-    // A non-UUID msg_id still delivers but comes back with no
-    // orig_msg_id, which silently breaks correlation.
-    expect(frame.msg_id).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-    );
+    // The `no-reply-` prefix is the whole point of the address rather than
+    // cosmetics: it is the string the receiving side tells its Claude to
+    // reply to, which is where the channel states that it takes no mail.
+    expect(basename(frame.from)).toMatch(/^no-reply-todou-watch-\d+\.sock$/);
+    expect(frame.msg_id).toMatch(UUID);
     // Byte for byte: the receiver re-serializes what it parsed and drops
     // the envelope on any difference.
     expect(frame.message.content).toBe(
@@ -534,6 +616,132 @@ describe("openPeerPush receipt correlation (T-255)", () => {
     expect(push.rejected?.reason).toContain("sandbox.network.allowUnixSockets");
 
     push.close();
+    await peer.close();
+  });
+});
+
+describe("openPeerPush replies to a no-reply address (T-258)", () => {
+  const MSG_A = "11111111-1111-1111-1111-111111111111";
+  const MSG_B = "22222222-2222-2222-2222-222222222222";
+
+  /** A channel with one push out, and the frame it can be answered from. */
+  const pushed = async (name: string) => {
+    const peer = await fakePeer(name);
+    const push = await openPeerPush<string>({
+      target: peer.target,
+      render,
+      fromName: "todou-watch",
+      clock: virtualClock(),
+    });
+    await push.send(["entry one"], "c0", "c1");
+    await peer.received(1);
+    return { peer, push, frame: peer.frames[0] as Frame };
+  };
+
+  it("bounces a reply back to the address it came from", async () => {
+    const { peer, push, frame } = await pushed("reply");
+    const replier = await fakeReplier(dirname(peer.target), "417584.sock");
+
+    await replyTo(frame.from, userReply(replier, MSG_A));
+    await replier.received(1);
+
+    // A status, not prose: both wordings the replying session shows come
+    // from a fixed table keyed on it, and `reason` is never read there.
+    expect(replier.frames[0]).toMatchObject({
+      type: "control",
+      action: "peer_message_status",
+      status: "refused",
+      orig_msg_id: MSG_A,
+      from: frame.from,
+    });
+    expect(replier.frames[0]?.msg_id).toMatch(UUID);
+    // No auth line: the token here is a child token for our own parent
+    // session's inbox, and a peer has no business holding it.
+    expect(replier.frames).toHaveLength(1);
+    expect(push.replies()).toEqual({ discarded: 1, unbounced: 0 });
+
+    push.close();
+    await replier.close();
+    await peer.close();
+  });
+
+  it("counts a reply from another directory without dialling it", async () => {
+    const { peer, push, frame } = await pushed("reply-outside");
+    const inside = await fakeReplier(dirname(peer.target), "417584.sock");
+    const outside = await fakeReplier(
+      mkdtempSync(join(root, "outside-")),
+      "417585.sock",
+    );
+
+    await replyTo(frame.from, userReply(outside, MSG_A));
+    // The next bounce proves the first frame was handled: connections are
+    // accepted in the order they were opened.
+    await replyTo(frame.from, userReply(inside, MSG_B));
+    await inside.received(1);
+
+    // Bound and listening, so a dial would have landed — it was never made.
+    expect(outside.frames).toEqual([]);
+    expect(push.replies()).toEqual({ discarded: 2, unbounced: 0 });
+
+    push.close();
+    await inside.close();
+    await outside.close();
+    await peer.close();
+  });
+
+  it("stays as invisible as ever about any other frame", async () => {
+    const { peer, push, frame } = await pushed("reply-other");
+    const replier = await fakeReplier(dirname(peer.target), "417584.sock");
+
+    await replyTo(frame.from, {
+      type: "control",
+      action: "peer_idle_notice",
+      from: replier.from,
+    });
+    await replyTo(frame.from, userReply(replier, MSG_A));
+    await replier.received(1);
+
+    // Neither counted nor answered: a frame this listener is not addressed
+    // by is not a reply, and a bounce for it would be noise.
+    expect(replier.frames).toHaveLength(1);
+    expect(push.replies()).toEqual({ discarded: 1, unbounced: 0 });
+
+    push.close();
+    await replier.close();
+    await peer.close();
+  });
+
+  it("keeps the channel usable when a bounce cannot be written", async () => {
+    const peer = await fakePeer("bounce-fails");
+    const push = await openPeerPush<string>({
+      target: peer.target,
+      render,
+      fromName: "todou-watch",
+      clock: virtualClock(),
+      // Only the bounce fails. A peer's unreachable socket says nothing
+      // about whether our own session is still listening, so `failures`
+      // must not move and the channel must stay open.
+      dial: async (to, payload) => {
+        if (to !== peer.target) throw new Error("bounce blocked");
+        await dialLine(to, payload);
+      },
+    });
+    await push.send(["entry one"], "c0", "c1");
+    await peer.received(1);
+    const frame = peer.frames[0] as Frame;
+    const replier = await fakeReplier(dirname(peer.target), "417584.sock");
+
+    await replyTo(frame.from, userReply(replier, MSG_A));
+    await eventually(() => push.replies().unbounced === 1);
+
+    expect(push.rejected).toBeNull();
+    await push.send(["entry two"], "c1", "c2");
+    await peer.received(2);
+    expect(push.replies()).toEqual({ discarded: 1, unbounced: 1 });
+    expect(replier.frames).toEqual([]);
+
+    push.close();
+    await replier.close();
     await peer.close();
   });
 });
