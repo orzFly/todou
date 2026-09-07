@@ -16,6 +16,7 @@ import {
 } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { z } from "zod";
+import { readAnnotationsInput, resolveAnnotations } from "../annotations.ts";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
 import { CliError } from "../errors.ts";
@@ -292,6 +293,7 @@ export class SpecPushCommand extends ProjectCommand {
       project,
       number,
       from: outcome.cursor,
+      agentContext: this.agentContext,
       ...waitFlags,
       paint,
       clock: this.clock,
@@ -507,18 +509,51 @@ export class SpecResolveCommand extends ProjectCommand {
 export class SpecReviewCommand extends ProjectCommand {
   static paths = [["spec", "review"]];
   static usage = Command.Usage({
-    description: "Submit a review verdict from the command line",
-    details:
-      "Exactly one of `--approve` / `--request-changes` is required; the " +
-      "optional body becomes a summary comment. Inline comments are a web " +
-      "affordance — the CLI submits verdict and summary only. `--version` " +
-      "defaults to the current version; either way the server rejects a " +
-      "verdict on anything but the latest (and the pusher of that version " +
-      "reviewing it).",
+    description: "Submit a review from the command line",
+    details: `
+      Exactly one of \`--approve\` / \`--request-changes\` / \`--comment\`
+      is required, and \`--body\`/\`--body-file\` becomes a summary
+      comment. \`--version\` defaults to the current version; either way
+      the server rejects a review of anything but the latest.
+
+      \`--comment\` is a review that **judges nothing**: it records the
+      summary and the annotations and leaves the version awaiting a
+      verdict. It is also the one form the account that pushed the version
+      may submit — \`--approve\` and \`--request-changes\` from that
+      account are refused, so agents cannot sign off their own spec. A
+      \`--comment\` with neither a summary nor an annotation is refused
+      too, having said nothing.
+
+      \`--annotations <file|->\` stages inline comments, and works with any
+      of the three verdicts — refusing a spec while pointing at the lines
+      is the normal case. The file is a JSON array; each entry needs
+      \`path\` and \`body\`, and points with exactly one of:
+
+      - \`quote\` — the text being annotated, verbatim. It is located
+        locally and must match the file exactly once, which also derives
+        the columns, so the web highlights the sentence rather than the
+        whole line. Two matches or none is an error before anything is
+        written; a line number that slipped a paragraph would not be.
+      - \`line_start\` + \`line_end\`, 1-based and inclusive, optionally
+        with \`col_start\` + \`col_end\`.
+      - neither, which anchors the whole file.
+
+      Annotations always anchor to the version being reviewed. At most one
+      of \`--body-file\`/\`--annotations\` may be \`-\`: stdin is a single
+      stream.
+    `,
     examples: [
       [
         "Request changes with a note",
         '$0 spec review 23 --request-changes --body "rework §2"',
+      ],
+      [
+        "Read the spec, then annotate it without judging",
+        '$0 spec pull 23 ./spec && $0 spec review 23 --comment --annotations ann.json --body "three spots"',
+      ],
+      [
+        "One annotation, anchored by the text it quotes",
+        `printf '%s' '[{"path":"design.md","quote":"one read-time count","body":"why not a column?"}]' | $0 spec review 23 --comment --annotations -`,
       ],
     ],
   });
@@ -530,11 +565,17 @@ export class SpecReviewCommand extends ProjectCommand {
   requestChanges = Option.Boolean("--request-changes", false, {
     description: "Verdict: request changes",
   });
+  comment = Option.Boolean("--comment", false, {
+    description: "No verdict: annotate and comment, still awaiting review",
+  });
   body = Option.String("--body", {
     description: "Summary comment (markdown)",
   });
   bodyFile = Option.String("--body-file", {
     description: "Summary from a file, or - for stdin",
+  });
+  annotations = Option.String("--annotations", {
+    description: "Inline comments as a JSON array from a file, or - for stdin",
   });
   allowBodyPath = Option.Boolean("--allow-body-path", false, {
     description: "Post a --body that is a path as literal text",
@@ -545,10 +586,23 @@ export class SpecReviewCommand extends ProjectCommand {
 
   protected async run(client: TodouClient): Promise<void> {
     const { project, number } = await this.resolveIssueRef(client, this.number);
-    if (this.approve === this.requestChanges) {
+    const picked = (
+      [
+        ["approve", this.approve],
+        ["request_changes", this.requestChanges],
+        ["comment", this.comment],
+      ] as const
+    ).filter(([, on]) => on);
+    if (picked.length !== 1) {
       throw new CliError(
         "pick exactly one verdict",
-        "pass --approve or --request-changes",
+        "pass --approve, --request-changes or --comment",
+      );
+    }
+    const verdict = picked[0]?.[0] ?? "comment";
+    if (this.bodyFile === "-" && this.annotations === "-") {
+      throw new CliError(
+        "--body-file and --annotations cannot both read stdin",
       );
     }
     let body: string | undefined;
@@ -564,21 +618,46 @@ export class SpecReviewCommand extends ProjectCommand {
         note: (line) => this.note(line),
       });
     }
+    // Read and validate before resolving the version, so a malformed file
+    // costs no round trip — and before the POST, so it cannot half-submit.
+    const staged =
+      this.annotations === undefined
+        ? []
+        : await readAnnotationsInput(this.annotations, this.context.stdin);
+    if (verdict === "comment" && body === undefined && staged.length === 0) {
+      throw new CliError(
+        "--comment says nothing without a summary or an annotation",
+        "add --body/--body-file, --annotations, or a verdict",
+      );
+    }
     const version =
       this.version === undefined
         ? (await client.getSpec(project, number)).current_version
         : Number(this.version);
+    const comments =
+      staged.length === 0
+        ? []
+        : resolveAnnotations(
+            staged,
+            (await client.getSpecFiles(project, number, version)).files,
+            version,
+          );
     const result = await client.submitSpecReview(project, number, {
       version,
-      verdict: this.approve ? "approve" : "request_changes",
+      verdict,
       ...(body === undefined ? {} : { body }),
-      comments: [],
+      comments,
     });
-    this.output(
-      result,
-      () =>
-        `${result.verdict === "approve" ? "approved" : "requested changes on"} spec v${result.version}`,
-    );
+    this.output(result, () => {
+      const what = {
+        approve: "approved",
+        request_changes: "requested changes on",
+        comment: "commented on",
+      }[result.verdict];
+      const n = comments.length;
+      const annotated = n === 0 ? "" : ` (${n} ${plural(n, "annotation")})`;
+      return `${what} spec v${result.version}${annotated}`;
+    });
   }
 }
 
@@ -697,7 +776,10 @@ export class SpecWaitCommand extends ProjectCommand {
         them, push again.
       - \`feedback\` — somebody else wrote on the card without judging it.
         Their entries print above the outcome, in \`issue watch\`'s format;
-        fold them into the documents and resume the wait.
+        fold them into the documents and resume the wait. A
+        \`--comment\` review lands here too, and the annotations it left are
+        not read-once: \`spec comments <n> --unresolved\` lists them and
+        \`spec resolve\` closes them, exactly as after a verdict.
 
       Only a fatal error exits 1. Timeouts and outages are absorbed the way
       \`--forever\` absorbs them, and the wait reacts to the server's change
@@ -713,10 +795,14 @@ export class SpecWaitCommand extends ProjectCommand {
       from a cursor you already hold — the one the last wake-up printed, or
       the push's own — and nothing is replayed twice that matters.
 
-      Own-account activity never returns this command: a fleet of agents
-      sharing one machine account would otherwise wake each other. It cannot
-      hide a verdict, since the account that pushed a version is barred from
-      reviewing it.
+      This agent session's own activity never returns the command; the rest
+      of the account's does. The filter used to be the whole account, which
+      was safe while every review carried a verdict the pusher's account was
+      barred from giving — a \`--comment\` review is not barred, and a
+      sibling agent sharing the machine account is exactly who writes one.
+      So a plain comment from another session of the same account (an
+      orchestrator's note included) now wakes this wait, at the cost of one
+      turn.
     `,
     examples: [
       ["Wait for the verdict on a card's spec", "$0 spec wait 23"],
@@ -754,6 +840,7 @@ export class SpecWaitCommand extends ProjectCommand {
       project,
       number,
       from: this.since,
+      agentContext: this.agentContext,
       ...specWaitFlags(this, true),
       paint: makePainter(this.context.stdout, this.context.env),
       clock: this.clock,

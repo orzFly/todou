@@ -73,6 +73,7 @@ function mockSpec() {
     current_version_cursor: "c2",
     review_status: "unreviewed",
     unresolved_comments: 0,
+    unresolved_carried_comments: 0,
     files: bodies(2).map((f) => ({ path: f.path, size: f.body.length })),
     versions: [1, 2].map((number) => ({
       number,

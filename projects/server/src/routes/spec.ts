@@ -77,8 +77,15 @@ const specReviewRoute = createRoute({
   path: "/{slug}/issues/{number}/spec/reviews",
   summary:
     "Submit one atomic review: verdict + optional summary + staged inline " +
-    `comments (${minRoleOf("spec.review")}; the pusher of the reviewed ` +
-    "version is rejected)",
+    `comments (${minRoleOf("spec.review")})`,
+  description:
+    "`approve` and `request_changes` are refused for the account that " +
+    "pushed the reviewed version — a verdict has to come from someone " +
+    "else. `comment` is accepted from anyone, including that account: it " +
+    "records a summary and annotations without judging, and leaves the " +
+    "review status untouched, so the version still owes a verdict " +
+    "afterwards. A `comment` carrying neither a summary nor an annotation " +
+    "is rejected.",
   request: { params: issueParams, body: jsonBody(SpecReviewSubmitInput) },
   responses: {
     201: { description: "Review", ...jsonBody(SpecReviewResult) },

@@ -111,6 +111,15 @@ export const SpecInfo = z.object({
   current_version_cursor: Cursor,
   review_status: SpecReviewStatus,
   unresolved_comments: z.number().int().nonnegative(),
+  /**
+   * Of those, the ones anchored to an *older* version. The review gate uses
+   * it to tell "a revision was pushed without resolving last round's
+   * annotations" from "somebody annotated the current version without
+   * judging it" (T-277) — the latter can only come from a `comment` review,
+   * because any verdict moves `review_status` off `unreviewed` and the
+   * gate never reaches this count.
+   */
+  unresolved_carried_comments: z.number().int().nonnegative(),
   /** Files of the current version. */
   files: z.array(SpecFileEntry),
   /** All versions, oldest first. */
@@ -146,8 +155,17 @@ export const SpecPushedPayload = z.strictObject({
 });
 export type SpecPushedPayload = z.infer<typeof SpecPushedPayload>;
 
-/** Payload of the `spec_review` timeline event. */
-export const SpecReviewVerdict = z.enum(["approve", "request_changes"]);
+/**
+ * What one review round did. `comment` (T-277) is a round that says its
+ * piece — a summary, annotations, or both — without judging: it leaves
+ * `SpecReviewStatus` exactly where it was, so the card still owes a verdict
+ * and the pusher of the version may submit one.
+ */
+export const SpecReviewVerdict = z.enum([
+  "approve",
+  "request_changes",
+  "comment",
+]);
 export type SpecReviewVerdict = z.infer<typeof SpecReviewVerdict>;
 
 export const SpecReviewPayload = z.strictObject({
@@ -289,13 +307,27 @@ export type SpecReviewCommentInput = z.infer<typeof SpecReviewCommentInput>;
  * comment. `version` must equal the current version — reviewing yesterday's
  * spec conflicts instead of silently signing off the wrong thing.
  */
-export const SpecReviewSubmitInput = z.strictObject({
-  version: z.number().int().positive(),
-  verdict: SpecReviewVerdict,
-  /** Markdown; becomes a regular summary comment when non-empty. */
-  body: z.string().min(1).max(65536).optional(),
-  comments: z.array(SpecReviewCommentInput).max(100).default([]),
-});
+export const SpecReviewSubmitInput = z
+  .strictObject({
+    version: z.number().int().positive(),
+    verdict: SpecReviewVerdict,
+    /** Markdown; becomes a regular summary comment when non-empty. */
+    body: z.string().min(1).max(65536).optional(),
+    comments: z.array(SpecReviewCommentInput).max(100).default([]),
+  })
+  // A bare `approve` is a statement. A bare `comment` states nothing at all
+  // and would only leave an empty event in the timeline.
+  .refine(
+    (input) =>
+      input.verdict !== "comment" ||
+      input.body !== undefined ||
+      input.comments.length > 0,
+    {
+      error:
+        "a comment-only review must carry a summary or at least one annotation",
+      path: ["comments"],
+    },
+  );
 export type SpecReviewSubmitInput = z.infer<typeof SpecReviewSubmitInput>;
 
 export const SpecReviewResult = z.object({
@@ -306,6 +338,62 @@ export const SpecReviewResult = z.object({
   comment_ids: z.array(Id),
 });
 export type SpecReviewResult = z.infer<typeof SpecReviewResult>;
+
+// — annotation input for `spec review --annotations` (T-277) —
+
+/**
+ * What a person hands the CLI, not what goes over HTTP: the CLI resolves
+ * each entry into a `SpecReviewCommentInput` before sending. It lives here
+ * beside the wire schema for the same reason `QuestionsInput` does — one
+ * validation shared by the client and by whatever calls it next.
+ *
+ * Three ways to point, exactly one of them: `quote` (the CLI locates it in
+ * the file and derives lines *and* columns), `line_start` + `line_end`
+ * (optionally with columns), or neither, which anchors the whole file. There
+ * is no `version` key: an annotation written from the command line always
+ * anchors to the version being reviewed, because the command line has no
+ * way to be looking at an older one.
+ */
+export const SpecAnnotationInput = z
+  .strictObject({
+    path: SpecFilePath,
+    /** Markdown. */
+    body: z.string().min(1).max(65536),
+    /** Verbatim source being annotated; must match the file exactly once. */
+    quote: z.string().min(1).optional(),
+    line_start: z.number().int().positive().optional(),
+    line_end: z.number().int().positive().optional(),
+    col_start: z.number().int().positive().optional(),
+    col_end: z.number().int().positive().optional(),
+  })
+  .refine((a) => a.quote === undefined || a.line_start === undefined, {
+    error: "pick one: quote, or line_start/line_end",
+    path: ["quote"],
+  })
+  .refine((a) => (a.line_start === undefined) === (a.line_end === undefined), {
+    error:
+      "line_start and line_end come together (omit both for a file-level annotation)",
+    path: ["line_end"],
+  })
+  .refine((a) => (a.col_start === undefined) === (a.col_end === undefined), {
+    error: "col_start and col_end come together",
+    path: ["col_end"],
+  })
+  .refine((a) => a.col_start === undefined || a.line_start !== undefined, {
+    error: "columns need lines",
+    path: ["col_start"],
+  })
+  .refine((a) => a.quote === undefined || a.col_start === undefined, {
+    error: "a quote already picks the columns",
+    path: ["col_start"],
+  });
+export type SpecAnnotationInput = z.infer<typeof SpecAnnotationInput>;
+
+export const SpecAnnotationsInput = z
+  .array(SpecAnnotationInput)
+  .min(1)
+  .max(100);
+export type SpecAnnotationsInput = z.infer<typeof SpecAnnotationsInput>;
 
 // — resolve —
 

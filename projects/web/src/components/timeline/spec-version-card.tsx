@@ -9,11 +9,11 @@ import {
   UnfoldHorizontalIcon,
 } from "lucide-react";
 import { useState } from "react";
-import { meQuery } from "@/api/queries.ts";
 import {
   specCommentsQuery,
   specQuery,
   specVersionStatsQuery,
+  useIsVersionPusher,
 } from "@/api/spec.ts";
 import { Button } from "@/components/ui/button";
 import { diffstatCells, type SpecFileStat } from "@/lib/spec-version-stats.ts";
@@ -85,11 +85,9 @@ function SpecVersionCardBody({
   // Review call to action (T-103). The card exists because a push happened,
   // so the spec provably exists — no 404 probe to gate here.
   const info = useQuery(specQuery(slug, issueNumber)).data;
-  const me = useQuery(meQuery).data;
-  const pushedBy = info?.versions.find((v) => v.number === version)?.author.id;
   // The account that pushed a version can never sign it off (the server
   // answers 403), so its own view gets the state without the button.
-  const isPusher = me !== undefined && pushedBy === me.id;
+  const isPusher = useIsVersionPusher(slug, issueNumber, version);
   const awaitingReview =
     info?.current_version === version &&
     info.review_status === "unreviewed" &&

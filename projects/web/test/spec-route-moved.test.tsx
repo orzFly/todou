@@ -49,6 +49,7 @@ const SPEC: SpecInfo = {
   current_version_cursor: "c1",
   review_status: "unreviewed",
   unresolved_comments: 0,
+  unresolved_carried_comments: 0,
   files: [{ path: "design.md", size: 7 }],
   versions: [
     {

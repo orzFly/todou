@@ -1,7 +1,7 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { SpecPushedPayload, TodouError } from "@todou/shared";
 import { issueQuery } from "@/api/issues.ts";
-import { api } from "@/api/queries.ts";
+import { api, meQuery } from "@/api/queries.ts";
 import {
   computeVersionStats,
   type SpecFileStat,
@@ -60,6 +60,24 @@ export function useIssueSpec(slug: string, issueNumber: number) {
     enabled: hasSpec,
   });
   return { spec, latest };
+}
+
+/**
+ * Whether the reader is the account that pushed `version`. Two surfaces
+ * turn on it and must agree: the version card hides its review CTA, and the
+ * submit dialog disables the two verdicts — the server refuses a verdict
+ * from this account (`comment` excepted, T-277), and a button that only
+ * produces a 403 toast should say so before the click.
+ */
+export function useIsVersionPusher(
+  slug: string,
+  issueNumber: number,
+  version: number,
+): boolean {
+  const info = useQuery(specQuery(slug, issueNumber)).data;
+  const me = useQuery(meQuery).data;
+  const pushedBy = info?.versions.find((v) => v.number === version)?.author.id;
+  return me !== undefined && pushedBy === me.id;
 }
 
 /** Newest spec_pushed timeline event — the anchor target of the issue-page

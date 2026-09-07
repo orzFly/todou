@@ -618,14 +618,21 @@ describe("spec resolve", () => {
 
 describe("spec review", () => {
   it("requires exactly one verdict", async () => {
-    const both = await runCli(
-      ["spec", "review", "23", "--approve", "--request-changes"],
-      { env: ENV },
-    );
-    expect(both.exitCode).toBe(1);
-    expect(both.stderr).toContain("exactly one verdict");
+    for (const flags of [
+      ["--approve", "--request-changes"],
+      ["--approve", "--comment"],
+      ["--request-changes", "--comment"],
+      ["--approve", "--request-changes", "--comment"],
+    ]) {
+      const run = await runCli(["spec", "review", "23", ...flags], {
+        env: ENV,
+      });
+      expect(run.exitCode).toBe(1);
+      expect(run.stderr).toContain("exactly one verdict");
+    }
     const neither = await runCli(["spec", "review", "23"], { env: ENV });
     expect(neither.exitCode).toBe(1);
+    expect(neither.stderr).toContain("--comment");
   });
 
   it("fetches the current version and submits the verdict", async () => {
@@ -665,6 +672,234 @@ describe("spec review", () => {
       verdict: "request_changes",
       body: "rework §2",
       comments: [],
+    });
+  });
+});
+
+// T-277: the CLI half of inline review. Everything a local check can catch
+// has to fail before the POST, so each failing case asserts on `calls` and
+// not merely on the exit code.
+describe("spec review --annotations", () => {
+  const DESIGN =
+    "# Design\n\nThe counter has three writers.\nResolve is one-way.\nThe counter has three writers, restated.\n";
+
+  const reviewRoutes = (version = 2, verdict = "comment"): Route[] => [
+    [
+      "GET",
+      "/api/projects/proj/issues/23/spec",
+      {
+        current_version: version,
+        review_status: "unreviewed",
+        unresolved_comments: 0,
+        unresolved_carried_comments: 0,
+        files: [{ path: "design.md", size: DESIGN.length }],
+        versions: [],
+      },
+    ],
+    [
+      "GET",
+      "/api/projects/proj/issues/23/spec/files",
+      { version, files: [{ path: "design.md", body: DESIGN, size: 1 }] },
+    ],
+    [
+      "POST",
+      "/api/projects/proj/issues/23/spec/reviews",
+      {
+        event_id: 99,
+        version,
+        verdict,
+        summary_comment_id: null,
+        comment_ids: [412],
+      },
+    ],
+  ];
+
+  const reviewed = (calls: { url: string; init: RequestInit }[]) =>
+    calls.filter((c) => c.url.includes("/spec/reviews"));
+
+  /** The review POST's body, or a failure if it never went out. */
+  const posted = (calls: { url: string; init: RequestInit }[]) => {
+    const call = reviewed(calls)[0];
+    if (call === undefined) throw new Error("no review was posted");
+    // biome-ignore lint/suspicious/noExplicitAny: test-side body poking
+    return JSON.parse(String(call.init.body)) as any;
+  };
+
+  const review = async (annotations: unknown, extra: string[] = []) => {
+    const { fetchImpl, calls } = fakeFetch(reviewRoutes());
+    const run = await runCli(
+      ["spec", "review", "23", "--comment", "--annotations", "-", ...extra],
+      { fetchImpl, env: ENV, stdinText: JSON.stringify(annotations) },
+    );
+    return { run, calls };
+  };
+
+  it("derives inclusive line and column anchors from a quote", async () => {
+    const { run, calls } = await review([
+      { path: "design.md", quote: "three writers.\nResolve", body: "why?" },
+    ]);
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toContain("commented on spec v2 (1 annotation)");
+    expect(posted(calls)).toMatchObject({
+      version: 2,
+      verdict: "comment",
+      comments: [
+        {
+          anchor: {
+            path: "design.md",
+            version: 2,
+            line_start: 3,
+            line_end: 4,
+            // "The counter has " is 16 characters, so the quote opens at 17;
+            // "Resolve" ends on the 7th character of line 4.
+            col_start: 17,
+            col_end: 7,
+          },
+          body: "why?",
+        },
+      ],
+    });
+  });
+
+  it("sends no columns when the quote covers whole lines", async () => {
+    const { run, calls } = await review([
+      { path: "design.md", quote: "Resolve is one-way.", body: "louder" },
+    ]);
+    expect(run.exitCode).toBe(0);
+    const anchor = posted(calls).comments[0].anchor;
+    expect(anchor).toMatchObject({ line_start: 4, line_end: 4 });
+    expect(anchor).not.toHaveProperty("col_start");
+    expect(anchor).not.toHaveProperty("col_end");
+  });
+
+  it("refuses a quote that matches nowhere, before posting", async () => {
+    const { run, calls } = await review([
+      { path: "design.md", quote: "four writers", body: "?" },
+    ]);
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr).toContain("quote not found in design.md at v2");
+    expect(reviewed(calls)).toHaveLength(0);
+  });
+
+  it("refuses an ambiguous quote, naming the hit count", async () => {
+    const { run, calls } = await review([
+      { path: "design.md", quote: "The counter has three writers", body: "?" },
+    ]);
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr).toContain("matches 2 times in design.md at v2");
+    expect(reviewed(calls)).toHaveLength(0);
+  });
+
+  it("refuses a path the reviewed version does not hold", async () => {
+    const { run, calls } = await review([
+      { path: "ghost.md", body: "whole-file remark" },
+    ]);
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr).toContain("ghost.md is not part of spec v2");
+    expect(run.stderr).toContain("design.md");
+    expect(reviewed(calls)).toHaveLength(0);
+  });
+
+  it("anchors by line number, and by neither key for the whole file", async () => {
+    const { run, calls } = await review([
+      { path: "design.md", line_start: 3, line_end: 4, body: "lines" },
+      { path: "design.md", body: "file" },
+    ]);
+    expect(run.exitCode).toBe(0);
+    const anchors = posted(calls).comments.map(
+      (c: { anchor: unknown }) => c.anchor,
+    );
+    expect(anchors[0]).toMatchObject({ line_start: 3, line_end: 4 });
+    expect(anchors[1]).toEqual({ path: "design.md", version: 2 });
+  });
+
+  it("rejects malformed entries locally, naming the path", async () => {
+    for (const [annotations, expected] of [
+      [[{ path: "design.md", body: "x", nope: 1 }], "nope"],
+      [
+        [{ path: "design.md", body: "x", quote: "Resolve", line_start: 1 }],
+        "quote",
+      ],
+      [[{ path: "design.md", body: "x", line_start: 1 }], "line_end"],
+      [[{ path: "design.md", body: "x", col_start: 1, col_end: 2 }], "columns"],
+      [[], "invalid annotations"],
+      [[{ path: "design.md" }], "body"],
+    ] as const) {
+      const { run, calls } = await review(annotations);
+      expect(run.exitCode).toBe(1);
+      expect(run.stderr).toContain(expected);
+      expect(reviewed(calls)).toHaveLength(0);
+    }
+  });
+
+  it("reports malformed JSON as such", async () => {
+    const { fetchImpl, calls } = fakeFetch(reviewRoutes());
+    const run = await runCli(
+      ["spec", "review", "23", "--comment", "--annotations", "-"],
+      { fetchImpl, env: ENV, stdinText: "{not json" },
+    );
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr).toContain("--annotations is not valid JSON");
+    expect(reviewed(calls)).toHaveLength(0);
+  });
+
+  it("refuses a --comment that carries neither summary nor annotation", async () => {
+    const { fetchImpl, calls } = fakeFetch(reviewRoutes());
+    const run = await runCli(["spec", "review", "23", "--comment"], {
+      fetchImpl,
+      env: ENV,
+    });
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr).toContain("--comment says nothing");
+    expect(reviewed(calls)).toHaveLength(0);
+  });
+
+  it("refuses to read stdin twice", async () => {
+    const { fetchImpl, calls } = fakeFetch(reviewRoutes());
+    const run = await runCli(
+      [
+        "spec",
+        "review",
+        "23",
+        "--comment",
+        "--annotations",
+        "-",
+        "--body-file",
+        "-",
+      ],
+      { fetchImpl, env: ENV, stdinText: "[]" },
+    );
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr).toContain("cannot both read stdin");
+    expect(reviewed(calls)).toHaveLength(0);
+  });
+
+  it("stages annotations with a verdict too", async () => {
+    const { fetchImpl, calls } = fakeFetch(reviewRoutes(2, "request_changes"));
+    const run = await runCli(
+      [
+        "spec",
+        "review",
+        "23",
+        "--request-changes",
+        "--annotations",
+        "-",
+        "--body",
+        "two nits",
+      ],
+      {
+        fetchImpl,
+        env: ENV,
+        stdinText: JSON.stringify([
+          { path: "design.md", quote: "Resolve is one-way.", body: "louder" },
+        ]),
+      },
+    );
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toContain("requested changes on spec v2 (1 annotation)");
+    expect(posted(calls)).toMatchObject({
+      verdict: "request_changes",
+      body: "two nits",
     });
   });
 });

@@ -1,4 +1,5 @@
 import type {
+  AgentContext,
   SpecInfo,
   SpecReviewStatus,
   TimelineItem,
@@ -14,6 +15,7 @@ import { fetchRefPrefix } from "./resolve.ts";
 import { drainTimeline, renderActivityLine, tailCursor } from "./timeline.ts";
 import {
   quietNote,
+  resolveSelfFilter,
   retryTransient,
   runWatchLoop,
   watchRetryOptions,
@@ -35,6 +37,8 @@ export type SpecOutcome = {
   outcome: SpecOutcomeName;
   review_status: SpecReviewStatus;
   unresolved_comments: number;
+  /** Of those, the ones anchored to an older version — see `judgeSpec`. */
+  carried_comments: number;
   version: number;
 };
 
@@ -47,6 +51,7 @@ export function judgeSpec(info: SpecInfo): SpecOutcome | null {
   const state = {
     review_status: info.review_status,
     unresolved_comments: info.unresolved_comments,
+    carried_comments: carriedComments(info),
     version: info.current_version,
   };
   // Approved beats outstanding annotations on purpose. "Approved, and fix
@@ -59,12 +64,29 @@ export function judgeSpec(info: SpecInfo): SpecOutcome | null {
     return { outcome: "changes_requested", ...state };
   }
   // A push resets the verdict but never the annotation count, so an
-  // unreviewed version with annotations outstanding is the pusher's own
-  // doing: it addressed a review and forgot to resolve what it addressed.
-  if (info.unresolved_comments > 0) {
+  // unreviewed version still carrying *older* annotations is the pusher's
+  // own doing: it addressed a review and forgot to resolve what it
+  // addressed. Annotations anchored to the current version are the other
+  // case entirely — only a `comment` review can have left them there
+  // (T-277), and that round judged nothing, so it belongs in `feedback`.
+  if (state.carried_comments > 0) {
     return { outcome: "changes_requested", ...state };
   }
   return null;
+}
+
+/**
+ * Widened against the response type for the same reason
+ * `servedVersionCursor` is: the CLI ships ahead of every deployment at
+ * least once, and a server predating T-277 sends no such key. Falling back
+ * to the whole count reproduces that server's own behaviour, where an
+ * unreviewed version with anything outstanding meant a revision round.
+ */
+function carriedComments(info: SpecInfo): number {
+  return (
+    (info as { unresolved_carried_comments?: number })
+      .unresolved_carried_comments ?? info.unresolved_comments
+  );
 }
 
 function outcomeLine(outcome: SpecOutcome, paint: Painter): string {
@@ -84,10 +106,15 @@ function outcomeLine(outcome: SpecOutcome, paint: Painter): string {
       version,
       // Naming the state keeps the line honest where the routing is the
       // same but the cause is not: nobody requested changes here, the
-      // pusher left annotations unresolved.
-      outcome.review_status === "unreviewed"
-        ? `${annotations} carried over — no new verdict`
-        : annotations,
+      // pusher left annotations unresolved. Since T-277 the two counts can
+      // differ — a `comment` round adds annotations on the current version,
+      // which are not what made this a revision round — so the split is
+      // spelled out rather than letting the total claim to be carried.
+      outcome.review_status !== "unreviewed"
+        ? annotations
+        : outcome.carried_comments === n
+          ? `${annotations} carried over — no new verdict`
+          : `${annotations}, ${outcome.carried_comments} carried over — no new verdict`,
     ].join(" · ");
   }
   return `${paint("cyan", "feedback")} · no verdict on ${version} yet`;
@@ -114,6 +141,8 @@ export async function waitForSpecReview(args: {
    * version was pushed", which is what a cold re-entry wants.
    */
   from: string | undefined;
+  /** This session's harness identity, for the self-filter below. */
+  agentContext: AgentContext | null;
   debounceSec: number;
   timeoutSec: number;
   intervalSec: number;
@@ -194,12 +223,13 @@ export async function waitForSpecReview(args: {
     return 0;
   }
 
-  // The whole account, not just this agent session: sibling agents sharing a
-  // machine account would otherwise wake this wait with work that is none of
-  // its business. It cannot hide the verdict — the server forbids the
-  // account that pushed a version from reviewing it — so what survives this
-  // filter is exactly "somebody else wrote on the card".
-  const excludeActor = (await retryTransient(() => client.me(), retry)).id;
+  // This agent session, not the whole account — the same pair `issue watch`
+  // uses. Filtering by account was safe while every review carried a
+  // verdict, since the pusher's account was barred from reviewing at all;
+  // a `comment` review is not (T-277), and a sibling agent on the shared
+  // machine account is exactly who writes one. The price is that the
+  // account's other sessions now wake this wait with ordinary comments too.
+  const selfFilter = await resolveSelfFilter(client, args.agentContext, retry);
   const nudges = await openChangeNudges({
     client,
     projects: new Set([project]),
@@ -228,7 +258,7 @@ export async function waitForSpecReview(args: {
       // No `types` filter: a plain comment — an amended requirement, a
       // question back — has to wake the waiter as surely as a verdict does.
       drain: (after) =>
-        drainTimeline(client, project, number, { after, excludeActor }),
+        drainTimeline(client, project, number, { after, ...selfFilter }),
       onItems: (items, next) => {
         woke = items;
         cursor = next ?? cursor;
@@ -249,6 +279,7 @@ export async function waitForSpecReview(args: {
       outcome: "feedback",
       review_status: fresh.review_status,
       unresolved_comments: fresh.unresolved_comments,
+      carried_comments: carriedComments(fresh),
       version: fresh.current_version,
     },
   );

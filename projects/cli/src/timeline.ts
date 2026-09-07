@@ -386,11 +386,19 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
       const review = SpecReviewPayload.safeParse(payload);
       if (!review.success) return scalarDetail(payload);
       const { version, verdict, annotation_count } = review.data;
-      const outcome = verdict === "approve" ? "approved" : "changes requested";
+      const outcome = {
+        approve: "approved",
+        request_changes: "changes requested",
+        comment: "commented",
+      }[verdict];
       const notes =
         annotation_count > 0 ? `, ${annotation_count} annotation(s)` : "";
+      // A `comment` round that left no annotations has nothing to list, so
+      // it points at the documents; every other combination keeps the hint
+      // it already had.
       const hint =
-        verdict === "approve"
+        verdict === "approve" ||
+        (verdict === "comment" && annotation_count === 0)
           ? specPullHint(ctx, version)
           : `use \`todou spec comments ${ctx.issueNumber} --unresolved\` to view`;
       return `v${version} ${outcome}${notes} · ${hint}`;

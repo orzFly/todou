@@ -165,6 +165,21 @@ describe("renderEvent text mirror", () => {
         annotation_count: 2,
       }),
     ).toBe("requested changes on spec v3 with 2 comments");
+    // A round that judged nothing (T-277) reads as neither of the two.
+    expect(
+      textOf("spec_review", {
+        version: 3,
+        verdict: "comment",
+        annotation_count: 3,
+      }),
+    ).toBe("commented on spec v3 with 3 comments");
+    expect(
+      textOf("spec_review", {
+        version: 3,
+        verdict: "comment",
+        annotation_count: 0,
+      }),
+    ).toBe("commented on spec v3");
     expect(textOf("spec_comments_resolved", { comment_ids: [4, 5] })).toBe(
       "resolved 2 spec comments",
     );

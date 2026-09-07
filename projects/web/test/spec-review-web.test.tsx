@@ -475,6 +475,163 @@ describe("ReviewSubmitDialog", () => {
   });
 });
 
+// T-277: the third button. These stubs route by URL because the dialog now
+// reads who pushed the version — a catch-all stub would answer the spec and
+// /me reads with a review result and leave `isPusher` false by accident.
+describe("ReviewSubmitDialog: the comment verdict", () => {
+  const READER = { id: 5, login: "user", display_name: "User", kind: "human" };
+  const PUSHER = {
+    id: 7,
+    login: "claude-agent",
+    display_name: "Claude Agent",
+    kind: "machine",
+  };
+
+  const DRAFT = {
+    id: "d1",
+    anchor: {
+      path: "design.md",
+      version: 3,
+      line_start: 3,
+      line_end: 4,
+      col_start: null,
+      col_end: null,
+    },
+    quote: "…",
+    body: "Which diff library?",
+  };
+
+  /** Routed stub; `pushedBy` is the author of v3, i.e. who may not judge. */
+  function stubFetch(pushedBy: typeof READER) {
+    const posts: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/me")) return Response.json(READER);
+      if (url.endsWith("/spec")) {
+        return Response.json({
+          current_version: 3,
+          current_version_cursor: "cv3",
+          review_status: "unreviewed",
+          unresolved_comments: 0,
+          unresolved_carried_comments: 0,
+          files: [{ path: "design.md", size: 10 }],
+          versions: [
+            {
+              number: 3,
+              author: pushedBy,
+              message: null,
+              created_at: "2026-09-07T00:00:00.000Z",
+            },
+          ],
+        });
+      }
+      if (url.includes("/spec/reviews")) {
+        posts.push({ url, body: JSON.parse(String(init?.body)) });
+        return Response.json(
+          {
+            event_id: 9,
+            version: 3,
+            verdict: "comment",
+            summary_comment_id: 88,
+            comment_ids: [412],
+          },
+          { status: 201 },
+        );
+      }
+      throw new Error(`unstubbed request: ${url}`);
+    });
+    return posts;
+  }
+
+  const mount = (drafts: Array<typeof DRAFT>, onSubmitted = vi.fn()) => ({
+    onSubmitted,
+    view: renderWithProviders(
+      <ReviewSubmitDialog
+        slug="p"
+        issueNumber={23}
+        currentVersion={3}
+        drafts={drafts}
+        open
+        onClose={() => {}}
+        onSubmitted={onSubmitted}
+      />,
+    ),
+  });
+
+  it("posts verdict comment with the summary and every staged draft", async () => {
+    const posts = stubFetch(PUSHER);
+    const { view, onSubmitted } = mount([DRAFT]);
+
+    // All three, in the order a reader scans them.
+    const comment = await view.findByText("Comment");
+    expect(view.getByText("Request changes")).toBeTruthy();
+    expect(view.getByText("Approve")).toBeTruthy();
+
+    cmSetValue(view.baseElement, "three spots I am unsure of");
+    await waitFor(() =>
+      expect(comment.closest("button")?.disabled).toBe(false),
+    );
+    fireEvent.click(comment);
+
+    await waitFor(() => expect(onSubmitted).toHaveBeenCalled());
+    expect(posts[0]?.body).toEqual({
+      version: 3,
+      verdict: "comment",
+      body: "three spots I am unsure of",
+      comments: [
+        {
+          anchor: { path: "design.md", version: 3, line_start: 3, line_end: 4 },
+          body: "Which diff library?",
+        },
+      ],
+    });
+  });
+
+  it("disables the two verdicts for the account that pushed the version", async () => {
+    stubFetch(READER);
+    const { view } = mount([DRAFT]);
+
+    const approve = await view.findByText("Approve");
+    await waitFor(() => expect(approve.closest("button")?.disabled).toBe(true));
+    const requestChanges = view.getByText("Request changes").closest("button");
+    expect(requestChanges?.disabled).toBe(true);
+    expect(approve.closest("button")?.title).toContain(
+      "verdict has to come from someone else",
+    );
+    // The one form that account may submit stays open to it.
+    expect(view.getByText("Comment").closest("button")?.disabled).toBe(false);
+  });
+
+  it("leaves the two verdicts enabled for anyone else", async () => {
+    stubFetch(PUSHER);
+    const { view } = mount([DRAFT]);
+
+    const approve = await view.findByText("Approve");
+    // The disable is driven by an async read, so a passing assertion has to
+    // outlast it rather than beat it.
+    await waitFor(() =>
+      expect(
+        view.getByText("Request changes").closest("button")?.disabled,
+      ).toBe(false),
+    );
+    expect(approve.closest("button")?.disabled).toBe(false);
+    expect(approve.closest("button")?.title).toBeFalsy();
+  });
+
+  it("disables Comment while it would say nothing", async () => {
+    stubFetch(PUSHER);
+    const { view } = mount([]);
+
+    const comment = await view.findByText("Comment");
+    const button = comment.closest("button");
+    expect(button?.disabled).toBe(true);
+    expect(button?.title).toContain("Write a summary or stage a comment");
+
+    cmSetValue(view.baseElement, "something");
+    await waitFor(() => expect(button?.disabled).toBe(false));
+  });
+});
+
 describe("changedLineRanges", () => {
   it("marks insertions and rewrites in new-version coordinates", async () => {
     const { changedLineRanges } = await import("../src/lib/spec-changes.ts");

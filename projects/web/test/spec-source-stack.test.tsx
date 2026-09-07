@@ -121,6 +121,7 @@ function mockSpec(items: SpecComments["items"] = []) {
     current_version_cursor: "c5",
     review_status: "unreviewed",
     unresolved_comments: 0,
+    unresolved_carried_comments: 0,
     files: Object.entries(BODIES[5] ?? {}).map(([path, body]) => ({
       path,
       size: body.length,

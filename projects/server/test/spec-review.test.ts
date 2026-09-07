@@ -223,15 +223,150 @@ describe("spec review loop T-23", () => {
     ).toContain("spec_review");
   });
 
-  it("rejects the pusher reviewing their own version", async () => {
+  it("rejects the pusher's verdict on their own version, either way", async () => {
     const number = await createIssueWithSpec();
-    const res = await review(
-      number,
-      { version: 1, verdict: "approve" },
-      asAgent(),
-    );
-    expect(res.status).toBe(403);
-    expect((await json(res)).error.message).toContain("pushed by this account");
+    for (const verdict of ["approve", "request_changes"] as const) {
+      const res = await review(number, { version: 1, verdict }, asAgent());
+      expect(res.status).toBe(403);
+      expect((await json(res)).error.message).toContain(
+        "pushed by this account",
+      );
+    }
+  });
+
+  // T-277. The fleet shares one machine account, so "another agent pushed
+  // this" and "I pushed this" are the same account server-side: a verdict
+  // must stay barred (above) while a no-verdict round must get through.
+  describe("a comment review judges nothing", () => {
+    const specInfo = async (number: number) =>
+      json(
+        await t.app.request(`/api/projects/${slug}/issues/${number}/spec`, {
+          headers: headers(),
+        }),
+      );
+
+    it("lets the pusher comment on their own version without a verdict", async () => {
+      const number = await createIssueWithSpec();
+      const res = await review(
+        number,
+        { version: 1, verdict: "comment", body: "Three spots I am unsure of." },
+        asAgent(),
+      );
+      expect(res.status).toBe(201);
+      expect((await json(res)).verdict).toBe("comment");
+
+      expect(await specInfo(number)).toMatchObject({
+        review_status: "unreviewed",
+        unresolved_comments: 0,
+      });
+
+      const timeline = await json(
+        await t.app.request(
+          `/api/projects/${slug}/issues/${number}/timeline?types=spec_review`,
+          { headers: headers() },
+        ),
+      );
+      expect(timeline.items).toHaveLength(1);
+      expect(timeline.items[0].payload).toMatchObject({
+        version: 1,
+        verdict: "comment",
+        annotation_count: 0,
+      });
+    });
+
+    it("refuses one that says nothing at all", async () => {
+      const number = await createIssueWithSpec();
+      const res = await review(number, { version: 1, verdict: "comment" });
+      expect(res.status).toBe(422);
+      expect((await json(res)).error.message).toContain(
+        "must carry a summary or at least one annotation",
+      );
+    });
+
+    it("counts its annotations, and they carry only across a push", async () => {
+      const number = await createIssueWithSpec();
+      const submitted = await json(
+        await review(
+          number,
+          {
+            version: 1,
+            verdict: "comment",
+            comments: [3, 4, 5].map((line) => ({
+              anchor: {
+                path: "design.md",
+                version: 1,
+                line_start: line,
+                line_end: line,
+              },
+              body: `unsure about line ${line}`,
+            })),
+          },
+          asAgent(),
+        ),
+      );
+      expect(submitted.comment_ids).toHaveLength(3);
+
+      // Anchored at the current version, so nothing is carried yet: the
+      // review gate reads exactly this to stay out of the way.
+      expect(await specInfo(number)).toMatchObject({
+        review_status: "unreviewed",
+        unresolved_comments: 3,
+        unresolved_carried_comments: 0,
+      });
+
+      const push = await t.app.request(
+        `/api/projects/${slug}/issues/${number}/spec/push`,
+        {
+          method: "POST",
+          headers: asAgent(),
+          body: JSON.stringify({
+            files: [{ path: "design.md", body: `${DESIGN_V1}\nAddendum.\n` }],
+          }),
+        },
+      );
+      expect(push.status).toBe(200);
+      expect(await specInfo(number)).toMatchObject({
+        current_version: 2,
+        unresolved_comments: 3,
+        unresolved_carried_comments: 3,
+      });
+
+      const resolve = await t.app.request(
+        `/api/projects/${slug}/issues/${number}/spec/comments/resolve`,
+        {
+          method: "POST",
+          headers: asAgent(),
+          body: JSON.stringify({ comment_ids: [submitted.comment_ids[0]] }),
+        },
+      );
+      expect(resolve.status).toBe(200);
+      expect(await specInfo(number)).toMatchObject({
+        unresolved_comments: 2,
+        unresolved_carried_comments: 2,
+      });
+    });
+
+    it("leaves the card pending review in everyone else's inbox", async () => {
+      const number = await createIssueWithSpec();
+      expect(
+        (
+          await review(
+            number,
+            { version: 1, verdict: "comment", body: "notes, no verdict" },
+            asAgent(),
+          )
+        ).status,
+      ).toBe(201);
+
+      const page = await json(
+        await t.app.request("/api/me/inbox", { headers: headers() }),
+      );
+      const row = page.items.find(
+        (i: { project: { slug: string }; number: number }) =>
+          i.project.slug === slug && i.number === number,
+      );
+      expect(row).toMatchObject({ pending_spec_review: true });
+    });
   });
 
   it("conflicts when the spec moved under the review", async () => {

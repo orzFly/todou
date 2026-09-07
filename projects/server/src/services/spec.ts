@@ -15,7 +15,16 @@ import type {
   SpecReviewSubmitInput,
 } from "@todou/shared";
 import { diffLines } from "diff";
-import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  sql,
+} from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
@@ -338,6 +347,23 @@ export async function getSpecInfo(
   );
   const files = await filesOfVersion(db, current.id);
 
+  // Read-time count rather than a fourth writer of a denormalized column:
+  // one more counter is one more thing that can drift, and this number has
+  // exactly one reader (T-277). The issue index carries the row scan; the
+  // JSONB predicates only filter what it returns, over a card's few dozen
+  // comments.
+  const [carried] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(comments)
+    .where(
+      and(
+        eq(comments.issueId, issue.id),
+        isNull(comments.resolvedAt),
+        sql`${comments.component} ->> 'type' = 'spec_comment'`,
+        sql`(${comments.component} -> 'anchor' ->> 'version')::int < ${current.number}`,
+      ),
+    );
+
   return {
     current_version: current.number,
     // (t, 0, 0) is the lower bound of the version's own instant, so a wait
@@ -350,6 +376,7 @@ export async function getSpecInfo(
     }),
     review_status: issue.specReviewStatus ?? "unreviewed",
     unresolved_comments: issue.specUnresolvedComments,
+    unresolved_carried_comments: carried?.n ?? 0,
     files: files.map((f) => ({ path: f.path, size: f.size })),
     versions: versionRows.map((v) => {
       const author = refs.get(v.authorId);
@@ -540,10 +567,12 @@ export async function submitSpecReview(
       );
     }
     // The account that pushed the version under review must not sign it
-    // off: agents can never approve their own spec.
-    if (current.authorId === actor.id) {
+    // off: agents can never approve their own spec. `comment` is exempt
+    // because it produces no verdict at all (T-277) — it leaves
+    // `specReviewStatus` alone below, so nothing this rule protects moves.
+    if (input.verdict !== "comment" && current.authorId === actor.id) {
       throw new ForbiddenError(
-        `v${current.number} was pushed by this account — its review must come from someone else`,
+        `v${current.number} was pushed by this account — its verdict must come from someone else`,
       );
     }
 
@@ -701,8 +730,16 @@ export async function submitSpecReview(
     await tx
       .update(issues)
       .set({
-        specReviewStatus:
-          input.verdict === "approve" ? "approved" : "changes_requested",
+        // A `comment` round leaves the status untouched: the card still owes
+        // a verdict, so the badge stays "awaiting review" and the inbox keeps
+        // listing it as pending. Annotations still count — where they came
+        // from does not change that they are unhandled.
+        ...(input.verdict === "comment"
+          ? {}
+          : {
+              specReviewStatus:
+                input.verdict === "approve" ? "approved" : "changes_requested",
+            }),
         specUnresolvedComments: sql`${issues.specUnresolvedComments} + ${anchored.length}`,
         updatedAt: new Date(),
       })

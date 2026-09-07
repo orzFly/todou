@@ -46,6 +46,7 @@ function mockSpec() {
     current_version_cursor: "c2",
     review_status: "unreviewed",
     unresolved_comments: 0,
+    unresolved_carried_comments: 0,
     files: [{ path: "design.md", size: V2.length }],
     versions: [
       {

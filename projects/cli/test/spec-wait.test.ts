@@ -34,6 +34,7 @@ const specInfo = (over: Record<string, unknown> = {}) => ({
   current_version_cursor: "cv2",
   review_status: "unreviewed",
   unresolved_comments: 0,
+  unresolved_carried_comments: 0,
   files: [{ path: "plan.md", size: 12 }],
   versions: [
     {
@@ -119,10 +120,38 @@ describe("spec wait: the verdict that is already in", () => {
     );
   });
 
-  it("treats annotations outstanding on an unreviewed version as changes requested", async () => {
+  it("treats annotations carried onto an unreviewed version as changes requested", async () => {
     const { run } = await settled(
-      specInfo({ current_version: 3, unresolved_comments: 2 }),
+      specInfo({
+        current_version: 3,
+        unresolved_comments: 2,
+        unresolved_carried_comments: 2,
+      }),
     );
+    expect(outcomeOf(run.stdout)).toBe(
+      "changes requested · spec v3 · 2 unresolved annotations carried over — no new verdict",
+    );
+  });
+
+  it("names both counts when only some annotations were carried", async () => {
+    const { run } = await settled(
+      specInfo({
+        current_version: 3,
+        unresolved_comments: 3,
+        unresolved_carried_comments: 2,
+      }),
+    );
+    expect(outcomeOf(run.stdout)).toBe(
+      "changes requested · spec v3 · 3 unresolved annotations, 2 carried over — no new verdict",
+    );
+  });
+
+  it("falls back to the whole count on a server that reports no carry", async () => {
+    const { unresolved_carried_comments: _unreported, ...legacy } = specInfo({
+      current_version: 3,
+      unresolved_comments: 2,
+    });
+    const { run } = await settled(legacy);
     expect(outcomeOf(run.stdout)).toBe(
       "changes requested · spec v3 · 2 unresolved annotations carried over — no new verdict",
     );
@@ -236,23 +265,97 @@ describe("spec wait: blocking", () => {
     expect(specReads.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("drains without its own account, and without narrowing by type", async () => {
+  it("drains without its own session, and without narrowing by type", async () => {
     const { routes } = wakesOnce();
     const { fetchImpl, calls } = fakeFetch(routes);
     await runCli(["spec", "wait", "23", "--debounce", "0"], {
       fetchImpl,
-      env: loggedInEnv("proj"),
+      env: {
+        ...loggedInEnv("proj"),
+        CLAUDECODE: "1",
+        CLAUDE_CODE_SESSION_ID: "session-sentinel",
+      },
       clock: virtualClock(),
     });
     const drains = timelineDrains(calls);
     expect(drains.length).toBeGreaterThan(0);
     for (const url of drains) {
-      // The whole account, so a sibling agent's entry never returns this
-      // wait; per-session filtering would let it through.
+      // Both axes, the pair `issue watch` uses: the session names this
+      // waiter, the account catches entries claiming no session at all.
+      // Filtering the whole account would hide a sibling agent's
+      // no-verdict review, which is the one this wait exists to hear
+      // (T-277).
       expect(url.searchParams.get("exclude_actor")).toBe("2");
-      expect(url.searchParams.get("exclude_agent_session")).toBeNull();
+      expect(url.searchParams.get("exclude_agent_session")).toBe(
+        "session-sentinel",
+      );
       expect(url.searchParams.get("types")).toBeNull();
     }
+  });
+
+  // T-277. Annotations anchored to the current version can only come from a
+  // review that judged nothing, so they must not settle the wait as a
+  // revision round — the pusher would then never reach the user's verdict.
+  it("keeps blocking with annotations on the current version, then says feedback", async () => {
+    const { routes, drains } = wakesOnce(
+      specInfo({ unresolved_comments: 3, unresolved_carried_comments: 0 }),
+    );
+    const { fetchImpl } = fakeFetch(routes);
+    const run = await runCli(["spec", "wait", "23", "--debounce", "0"], {
+      fetchImpl,
+      env: loggedInEnv("proj"),
+      clock: virtualClock(),
+    });
+    expect(run.exitCode).toBe(0);
+    // It blocked rather than judging off the count: the second drain is
+    // what returned it.
+    expect(drains()).toBeGreaterThan(1);
+    expect(outcomeOf(run.stdout)).toBe("feedback · no verdict on spec v2 yet");
+  });
+
+  it("wakes on a sibling session's no-verdict review of the same account", async () => {
+    // The fleet shares one machine account, so this entry's author is the
+    // waiting account itself — only the session tells them apart.
+    const siblingReview = {
+      type: "event",
+      id: 77,
+      event_type: "spec_review",
+      actor: ME,
+      created_at: "2026-08-11T12:05:00.000Z",
+      payload: {
+        version: 2,
+        verdict: "comment",
+        comment_id: null,
+        annotation_count: 2,
+      },
+    };
+    let drains = 0;
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/me", ME],
+      ["GET", SPEC_PATH, () => specInfo({ unresolved_comments: 2 })],
+      [
+        "GET",
+        TIMELINE_PATH,
+        (_init: RequestInit, url: URL) => {
+          if (url.searchParams.get("last") === "1") return page([], "tail");
+          drains += 1;
+          return drains >= 2 ? page([siblingReview], "e77") : page([], null);
+        },
+      ],
+    ]);
+    const run = await runCli(["spec", "wait", "23", "--debounce", "0"], {
+      fetchImpl,
+      env: {
+        ...loggedInEnv("proj"),
+        CLAUDECODE: "1",
+        CLAUDE_CODE_SESSION_ID: "mine",
+      },
+      clock: virtualClock(),
+    });
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toContain("commented");
+    expect(run.stdout).toContain("2 annotation(s)");
+    expect(outcomeOf(run.stdout)).toBe("feedback · no verdict on spec v2 yet");
   });
 
   it("heartbeats through a quiet phase instead of giving up", async () => {

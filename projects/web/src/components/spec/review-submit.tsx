@@ -3,6 +3,7 @@ import { formatAnchorRange, type SpecReviewVerdict } from "@todou/shared";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
+import { useIsVersionPusher } from "@/api/spec.ts";
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
@@ -17,11 +18,17 @@ import {
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 import type { SpecReviewDraft } from "@/lib/spec-drafts.ts";
 
+const PUSHER_TITLE =
+  "You pushed this version — its verdict has to come from someone else";
+
 /**
  * The atomic submit at the end of a review: verdict (mandatory), optional
  * summary, and every staged draft, in one POST. On success the drafts are
  * cleared by the caller — nothing of the review lives on the server before
  * this call.
+ *
+ * Three buttons rather than two (T-277): `comment` says its piece without
+ * judging, and is the only one the pusher of this version may submit.
  */
 export function ReviewSubmitDialog({
   slug,
@@ -45,6 +52,10 @@ export function ReviewSubmitDialog({
   const editor = useRef<MarkdownEditorHandle>(null);
   const refCompletion = useRefCompletion(slug);
   const queryClient = useQueryClient();
+  const isPusher = useIsVersionPusher(slug, issueNumber, currentVersion);
+  // The same rule the server enforces: a round that judges nothing has to
+  // say something instead.
+  const saysNothing = summary.trim() === "" && drafts.length === 0;
   const submit = useMutation({
     mutationFn: (picked: SpecReviewVerdict) =>
       api.submitSpecReview(slug, issueNumber, {
@@ -73,9 +84,13 @@ export function ReviewSubmitDialog({
       }),
     onSuccess: (result) => {
       toast.success(
-        result.verdict === "approve"
-          ? `Approved spec v${result.version}`
-          : `Requested changes on spec v${result.version}`,
+        `${
+          {
+            approve: "Approved",
+            request_changes: "Requested changes on",
+            comment: "Commented on",
+          }[result.verdict]
+        } spec v${result.version}`,
       );
       for (const key of [
         ["spec", slug, issueNumber],
@@ -138,8 +153,8 @@ export function ReviewSubmitDialog({
         )}
         <p className="text-xs text-muted-foreground">
           {drafts.length === 0
-            ? "No staged comments — submitting a verdict only."
-            : `${drafts.length} staged comment(s) will be posted with the verdict.`}
+            ? "No staged comments — this review carries the summary only."
+            : `${drafts.length} staged comment(s) will be posted with this review.`}
         </p>
 
         <MarkdownEditor
@@ -155,11 +170,32 @@ export function ReviewSubmitDialog({
           <Button variant="ghost" size="sm" onClick={onClose}>
             Cancel
           </Button>
+          {/* Neutral, no red or green: visually it has to read as "no
+              stance taken", which is exactly what it submits. */}
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={submit.isPending || saysNothing}
+            title={
+              saysNothing
+                ? "Write a summary or stage a comment first"
+                : undefined
+            }
+            onClick={() => {
+              setVerdict("comment");
+              submit.mutate("comment");
+            }}
+          >
+            {submit.isPending && verdict === "comment"
+              ? "Submitting…"
+              : "Comment"}
+          </Button>
           <Button
             size="sm"
             variant="outline"
             className="border-red-500/60 text-red-700 dark:text-red-400"
-            disabled={submit.isPending}
+            disabled={submit.isPending || isPusher}
+            title={isPusher ? PUSHER_TITLE : undefined}
             onClick={() => {
               setVerdict("request_changes");
               submit.mutate("request_changes");
@@ -172,7 +208,8 @@ export function ReviewSubmitDialog({
           <Button
             size="sm"
             className="bg-green-700 text-white hover:bg-green-800"
-            disabled={submit.isPending}
+            disabled={submit.isPending || isPusher}
+            title={isPusher ? PUSHER_TITLE : undefined}
             onClick={() => {
               setVerdict("approve");
               submit.mutate("approve");

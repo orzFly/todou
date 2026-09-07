@@ -170,10 +170,12 @@ todou issue watch 16 -p <proj> --follow=uds                            # the sam
 - `--summary` buys back one line per entry, body folded and cut: bare it means 120 characters,
   `--summary=<n>` picks the width, `--summary=0` is the default (no truncation). **Only the `=` form
   works** — `--summary 10` fails with an extraneous-argument error.
-- `issue watch` and `todou watch` skip entries from your own agent session, not from your whole
-  account, so a sibling agent on the same machine account does wake them; `spec wait` skips the whole
-  account. Entries without an agent session (the web UI) count as the account. `--any-actor` turns
-  the filter off; `issue watch --exclude-actor <login>` filters one account instead.
+- `issue watch`, `todou watch` and `spec wait` all skip entries from your own agent session, not from
+  your whole account, so a sibling agent on the same machine account does wake them — including with
+  a `spec review --comment`, which is the point. The price on `spec wait` is that any other session
+  of your account, an orchestrator's plain comment included, now wakes it too. Entries without an
+  agent session (the web UI) count as the account. `--any-actor` turns the filter off;
+  `issue watch --exclude-actor <login>` filters one account instead.
 
 A single-issue cursor does not cross a move: it is a row position in the project the card has left.
 `issue watch` on a moved card prints `moved to …` and a cursor for its new home; reopen the watch
@@ -279,7 +281,25 @@ todou spec list -p <proj> [--state open|closed|all]        # which cards have sp
 todou spec status <n> -p <proj>                            # versions, verdict, unresolved count
 todou spec comments <n> --unresolved                       # inline annotations (file + anchor)
 todou spec resolve <n> <commentIds…>
-todou spec review <n> --approve | --request-changes [--body …]
+todou spec review <n> --approve | --request-changes | --comment [--body …] [--annotations <file|->]
+```
+
+`--comment` is a review that judges nothing: it records the summary and the annotations and leaves
+the version awaiting a verdict. It is the only form the account that pushed the version may submit —
+`--approve` and `--request-changes` from that account are refused, which is what stops a fleet of
+agents sharing one machine account from signing off its own specs. A `--comment` with neither a
+summary nor an annotation is refused too.
+
+`--annotations` stages inline comments with any of the three verdicts. The file is a JSON array;
+each entry needs `path` and `body` and points with exactly one of `quote` (verbatim text, located
+locally, must match the file exactly once — this also derives the columns), `line_start` +
+`line_end` (optionally `col_start` + `col_end`), or neither key, which anchors the whole file. The
+anchor is always the version being reviewed. Write them against a `spec pull` of that version:
+
+```bash
+todou spec pull 23 ./spec -p <proj>
+printf '%s' '[{"path":"design.md","quote":"one read-time count","body":"why not a column?"}]' \
+  | todou spec review 23 -p <proj> --comment --annotations - --body "three spots"
 ```
 
 A spec document states the design as it stands, not how it got there. No "v3 said X, v4 changed it to
@@ -298,7 +318,12 @@ line is the outcome; all three exit 0, only a fatal error exits 1.
 |---|---|---|
 | `approved · spec v2` (with `· N unresolved annotations` when any remain) | approve verdict on the current version; remaining annotations are nits to fix while implementing | proceed |
 | `changes requested · spec v3 · N unresolved annotations` | request-changes verdict, or annotations left unresolved on an unreviewed version (a revision pushed without `spec resolve`) | revision loop |
-| `feedback · no verdict on spec v2 yet` | someone else wrote on the card; their entries print above | fold them into the documents, reply if a reply is owed, point the user at the review controls, then push if the documents changed and `spec wait` again if they did not |
+| `feedback · no verdict on spec v2 yet` | someone else wrote on the card, or reviewed it with `--comment`; their entries print above | fold them into the documents, reply if a reply is owed, point the user at the review controls, then push if the documents changed and `spec wait` again if they did not |
+
+A `--comment` review lands on `feedback`, and the annotations it brought are not read-once: they
+count in `spec status`, they list under `spec comments --unresolved`, and they need `spec resolve`
+exactly as a verdict's do. Leave one unresolved across a push and the gate reads it as a revision
+round on the next wait.
 
 Revision loop:
 
@@ -312,5 +337,6 @@ Revision loop:
 Re-entry after a killed wait: `todou spec wait <n> --since <cursor>` with the cursor from the
 `cursor:` line; without `--since` the wait starts where the current version was pushed and replays
 what was said since. The server enforces two rules: a verdict counts only against the latest version,
-and the account that pushed a version cannot review it. Do not poll `spec status` instead of waiting,
+and the account that pushed a version cannot give it one (`--comment` excepted, as above). Do not
+poll `spec status` instead of waiting,
 and do not read a verdict off the event stream; `spec wait` reads the spec's state for you.

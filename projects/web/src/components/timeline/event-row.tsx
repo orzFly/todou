@@ -288,7 +288,11 @@ export function renderEvent(
     }
     case "spec_review": {
       const verdict =
-        payload.verdict === "approve" ? "approved" : "requested changes on";
+        {
+          approve: "approved",
+          request_changes: "requested changes on",
+          comment: "commented on",
+        }[String(payload.verdict)] ?? "reviewed";
       const count = Number(payload.annotation_count ?? 0);
       const suffix =
         count > 0 ? ` with ${count} comment${count === 1 ? "" : "s"}` : "";
