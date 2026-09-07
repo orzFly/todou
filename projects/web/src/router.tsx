@@ -192,7 +192,7 @@ const specViewRoute = createRoute({
   // Not lazy, unlike the component above: an error boundary that arrived in
   // the spec page's own chunk could not answer for a spec that is not here.
   errorComponent: SpecRouteError,
-  staticData: { pageSkeleton: "detail" },
+  staticData: { pageSkeleton: "spec" },
 });
 
 const projectSettingsRoute = createRoute({

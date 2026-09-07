@@ -3,7 +3,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 /** Which shape the shell draws in `<main>` while a route's data is in flight. */
-export type PageSkeletonKind = "list" | "detail" | "board" | "sections";
+export type PageSkeletonKind =
+  | "list"
+  | "detail"
+  | "spec"
+  | "board"
+  | "sections";
 
 /**
  * What a route gets when it declares nothing: a title bar over bordered
@@ -18,6 +23,8 @@ export function PageSkeleton({ kind }: { kind: PageSkeletonKind }) {
       return <ListSkeleton />;
     case "detail":
       return <DetailSkeleton />;
+    case "spec":
+      return <SpecSkeleton />;
     case "board":
       return <BoardSkeleton />;
     case "sections":
@@ -171,6 +178,139 @@ function DetailSkeleton() {
             <Skeleton className={cn("h-4", field.width)} />
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+type SpecToolbarSlot = { id: string; className: string };
+
+/**
+ * The spec toolbar's two rows, each split at its one elastic gap, every
+ * placeholder as wide as the control it stands in for. The widths are here to
+ * put the wrap points where the real row puts them: a placeholder is not a
+ * control, so a pixel either way costs nothing, but a row that wraps one line
+ * sooner than the real bar moves the whole page down when it arrives.
+ */
+const SPEC_TOOLBAR_ROWS: {
+  id: string;
+  className: string;
+  left: SpecToolbarSlot[];
+  right: SpecToolbarSlot[];
+}[] = [
+  {
+    id: "a",
+    // Row A's own classes, copied rather than approximated: `lg:flex-nowrap`
+    // is what makes a long title truncate instead of pushing the actions onto
+    // a second line (T-206), so it is also what decides this row's height.
+    className: "flex flex-wrap items-center gap-2 lg:flex-nowrap",
+    left: [
+      { id: "back", className: "w-[62px]" },
+      // Elastic, and gone below lg, like the real title.
+      { id: "title", className: "hidden min-w-0 flex-1 lg:block" },
+      { id: "review-status", className: "w-[103px]" },
+    ],
+    right: [
+      // Where the file rail goes below lg, so it appears exactly where the
+      // rail does not.
+      { id: "files", className: "w-[87px] lg:hidden" },
+      { id: "comment-file", className: "w-[102px]" },
+      { id: "finish-review", className: "w-[100px]" },
+    ],
+  },
+  {
+    id: "b",
+    className: "flex flex-wrap items-center gap-2",
+    left: [
+      { id: "view-toggle", className: "w-[125px]" },
+      // shrink, like the real version and baseline triggers: line breaking
+      // measures a flex item unshrunk, so this narrows them on a tight row
+      // without moving the wrap point.
+      { id: "version", className: "w-[119px] min-w-0 shrink" },
+      { id: "compare", className: "w-7" },
+      // Drawn unconditionally because arriving without search parameters
+      // defaults the baseline to `version - 1`: the picker is present in
+      // every state except at v1.
+      { id: "baseline", className: "w-[78px] min-w-0 shrink" },
+    ],
+    right: [
+      { id: "display-toggle", className: "w-[61px]" },
+      { id: "prev", className: "w-7" },
+      { id: "count", className: "w-[21px]" },
+      { id: "next", className: "w-7" },
+    ],
+  },
+];
+
+/**
+ * A fixed four, for the reason `BOARD_COLUMNS` is a fixed four: the real count
+ * is in the data still loading. Four is also what a spec set usually holds —
+ * proposal, design, api, plan.
+ */
+const SPEC_RAIL_FILES = ["r1", "r2", "r3", "r4"];
+
+const SPEC_DOC_LINES: SkeletonLine[] = [
+  { id: "d1", width: "w-full" },
+  { id: "d2", width: "w-11/12" },
+  { id: "d3", width: "w-4/5" },
+  { id: "d4", width: "w-full" },
+  { id: "d5", width: "w-3/4" },
+  { id: "d6", width: "w-full" },
+  { id: "d7", width: "w-5/6" },
+  { id: "d8", width: "w-2/3" },
+];
+
+function SpecSkeleton() {
+  return (
+    <div className="space-y-4" data-testid="page-skeleton" data-kind="spec">
+      {/* Not sticky, unlike the real bar: a fallback has nothing to scroll
+          behind it, a sticky element occupies its in-flow space either way, and
+          the real bar's `top` is a measured header height that this display-only
+          component would otherwise have to go and measure. */}
+      <div
+        className="-mx-2 space-y-1.5 border-b px-2 py-2"
+        data-testid="spec-skeleton-toolbar"
+      >
+        {SPEC_TOOLBAR_ROWS.map((row) => (
+          <div
+            key={row.id}
+            className={row.className}
+            data-testid="spec-skeleton-toolbar-row"
+          >
+            {row.left.map((slot) => (
+              <Skeleton key={slot.id} className={cn("h-7", slot.className)} />
+            ))}
+            <span className="ml-auto" />
+            {row.right.map((slot) => (
+              <Skeleton key={slot.id} className={cn("h-7", slot.className)} />
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
+        <aside className="hidden space-y-1 lg:block">
+          {SPEC_RAIL_FILES.map((file) => (
+            <Skeleton
+              key={file}
+              className="h-7 w-full"
+              data-testid="spec-skeleton-rail-file"
+            />
+          ))}
+        </aside>
+        <div className="min-w-0 space-y-4">
+          <div
+            className="rounded-lg border px-5 py-4"
+            data-testid="spec-skeleton-doc"
+          >
+            <Skeleton className="h-7 w-1/2" />
+            <div className="my-4 h-px bg-border" />
+            <div className="space-y-2">
+              {SPEC_DOC_LINES.map((line) => (
+                <Skeleton key={line.id} className={cn("h-4", line.width)} />
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
