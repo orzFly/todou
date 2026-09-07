@@ -120,12 +120,39 @@ export async function fetchVersion(
  *
  * Shared with `todou login`, whose printed link has the same defect (T-295):
  * one function so the two cannot answer differently.
+ *
+ * Anything that is not a bare http(s) origin falls back too, even though the
+ * server validates and normalizes this very value when it loads its config:
+ * the two versions need not be in step, and what a bad value reaches is a
+ * terminal, as a link someone is being invited to click. The shape is all
+ * that is judged here — whether the host deserves trust was settled when the
+ * user named the server.
  */
 export async function fetchWebOrigin(
   client: TodouClient,
   apiBase: string,
 ): Promise<string> {
-  return (await fetchVersion(client))?.public_origin ?? apiBase;
+  const declared = (await fetchVersion(client))?.public_origin;
+  if (declared === undefined) return apiBase;
+  let parsed: URL;
+  try {
+    parsed = new URL(declared);
+  } catch {
+    return apiBase;
+  }
+  if (
+    !/^https?:$/.test(parsed.protocol) ||
+    parsed.pathname !== "/" ||
+    parsed.search !== "" ||
+    parsed.hash !== "" ||
+    parsed.username !== "" ||
+    parsed.password !== ""
+  ) {
+    return apiBase;
+  }
+  // `origin` rather than the string as given: a trailing slash and a default
+  // port normalize away, so `${webOrigin}/cli-auth` cannot double its slash.
+  return parsed.origin;
 }
 
 const ACCESS_HINTS = new WeakMap<

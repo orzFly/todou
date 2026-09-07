@@ -8,6 +8,7 @@ import {
 } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import type { CliContext } from "../api-command.ts";
+import { systemClock } from "../clock.ts";
 import { loadCliConfig, normalizeServer, saveCliConfig } from "../config.ts";
 import { CliError, reportError } from "../errors.ts";
 import { detectAgentContext } from "../harness/index.ts";
@@ -17,6 +18,7 @@ import {
   promptHidden,
   waitForCallback,
 } from "../login-flow.ts";
+import { fetchWebOrigin } from "../resolve.ts";
 
 export class LoginCommand extends Command<CliContext> {
   static paths = [["login"]];
@@ -63,11 +65,40 @@ export class LoginCommand extends Command<CliContext> {
         );
       }
 
+      const anon = new TodouClient({
+        baseUrl: origin,
+        fetch: this.context.fetchImpl,
+      });
+      /**
+       * The pages below are opened by a person, whose browser need not be
+       * able to reach the address the CLI talks to — that is the whole point
+       * of --no-browser (T-295). Started here rather than at each print site
+       * so the device flow's create call covers it, and after the checks
+       * above so a rejected argument leaves no request behind.
+       *
+       * Bounded, unlike the other caller of `fetchWebOrigin`, which runs
+       * after a request has already failed and so knows the server answers.
+       * Here it is the command's first contact, and on two of the three paths
+       * nothing was sent before it at all: a server that accepts the
+       * connection and then goes quiet would hold back the link, and the
+       * browser, with the flow's own 300s deadline not yet started. Five
+       * seconds is far above this hop's real RTT.
+       */
+      const clock = this.context.clock ?? systemClock;
+      const bound = new AbortController();
+      const webOrigin = Promise.race([
+        fetchWebOrigin(anon, origin),
+        clock.sleep(5000, bound.signal).then(() => origin),
+      ]);
+      // Whichever won: an uncancelled timer keeps the process alive for the
+      // rest of its five seconds after the command has printed its result.
+      void webOrigin.finally(() => bound.abort());
+
       const token = this.manual
-        ? await this.manualToken(origin)
+        ? await this.manualToken(webOrigin)
         : this.noBrowser
-          ? await this.deviceToken(origin)
-          : await this.browserToken(origin);
+          ? await this.deviceToken(anon, webOrigin)
+          : await this.browserToken(webOrigin);
 
       // Verify before persisting so a mis-paste fails loudly, not later.
       const agentContext = detectAgentContext(this.context.env);
@@ -113,13 +144,14 @@ export class LoginCommand extends Command<CliContext> {
     return Number(this.context.env.TODOU_LOGIN_TIMEOUT_MS ?? "") || 300_000;
   }
 
-  private browserToken(origin: string): Promise<string> {
+  private async browserToken(webOrigin: Promise<string>): Promise<string> {
     const state = randomBytes(16).toString("hex");
+    const base = await webOrigin;
     return waitForCallback({
       state,
       timeoutMs: this.timeoutMs(),
       onListening: (port) => {
-        const url = new URL(`${origin}/cli-auth`);
+        const url = new URL(`${base}/cli-auth`);
         url.searchParams.set("port", String(port));
         url.searchParams.set("state", state);
         url.searchParams.set("name", this.tokenName());
@@ -140,11 +172,10 @@ export class LoginCommand extends Command<CliContext> {
    * ties the page the user opens to this terminal — it is shown on both
    * ends precisely so they can be compared before authorizing.
    */
-  private async deviceToken(origin: string): Promise<string> {
-    const client = new TodouClient({
-      baseUrl: origin,
-      fetch: this.context.fetchImpl,
-    });
+  private async deviceToken(
+    client: TodouClient,
+    webOrigin: Promise<string>,
+  ): Promise<string> {
     let request: Awaited<ReturnType<typeof client.createCliAuthRequest>>;
     try {
       request = await client.createCliAuthRequest({ name: this.tokenName() });
@@ -162,7 +193,7 @@ export class LoginCommand extends Command<CliContext> {
     }
 
     const code = formatCliAuthCode(request.code);
-    const url = new URL(`${origin}/cli-auth`);
+    const url = new URL(`${await webOrigin}/cli-auth`);
     url.searchParams.set("code", code);
     this.context.stderr.write(
       `First, copy your one-time code: ${code}\n` +
@@ -180,9 +211,9 @@ export class LoginCommand extends Command<CliContext> {
     });
   }
 
-  private async manualToken(origin: string): Promise<string> {
+  private async manualToken(webOrigin: Promise<string>): Promise<string> {
     this.context.stderr.write(
-      `Create a token under ${origin}/settings/tokens, then paste it.\n`,
+      `Create a token under ${await webOrigin}/settings/tokens, then paste it.\n`,
     );
     const token = await promptHidden(
       this.context.stdin,

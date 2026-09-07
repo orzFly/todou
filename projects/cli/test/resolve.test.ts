@@ -5,6 +5,7 @@ import {
   fetchReferenceDirectory,
   fetchRefPrefix,
   fetchResolvedRef,
+  fetchWebOrigin,
   resolveAssignees,
   resolveClosedStatus,
   resolveLabels,
@@ -138,6 +139,53 @@ describe("reference reads, memoized per client (T-214)", () => {
     expect(await fetchResolvedRef(client, "FOO-1")).toBeNull();
     expect(await fetchResolvedRef(client, "FOO-1")).toBeNull();
     expect(calls).toHaveLength(2);
+  });
+});
+
+describe("fetchWebOrigin", () => {
+  const API = "http://gateway.test/todou";
+
+  /** One client per case: `fetchVersion` memoizes per client instance. */
+  const webOrigin = (version: unknown) => {
+    const { fetchImpl } = fakeFetch([["GET", "/api/version", version]]);
+    return fetchWebOrigin(new TodouClient({ fetch: fetchImpl }), API);
+  };
+
+  it("takes a bare http(s) origin, and normalizes a trailing slash", async () => {
+    expect(
+      await webOrigin({ version: "v0", public_origin: "https://public.test" }),
+    ).toBe("https://public.test");
+    expect(
+      await webOrigin({ version: "v0", public_origin: "https://public.test/" }),
+    ).toBe("https://public.test");
+  });
+
+  it.each([
+    ["the field is absent", undefined],
+    ["a path", "https://public.test/todou"],
+    ["a query", "https://public.test/?a=1"],
+    ["a fragment", "https://public.test/#x"],
+    ["credentials", "https://u:p@public.test"],
+    ["a non-http scheme", "ftp://public.test"],
+    ["a javascript: URL", "javascript:alert(1)"],
+    ["something that is not a URL", "not a url"],
+    ["an empty string", ""],
+  ])("falls back to the API base on %s", async (_why, value) => {
+    expect(
+      await webOrigin(
+        value === undefined
+          ? { version: "v0" }
+          : { version: "v0", public_origin: value },
+      ),
+    ).toBe(API);
+  });
+
+  it("falls back when the server will not answer at all", async () => {
+    // Unstubbed: fakeFetch throws, which is the old-server and the blip case.
+    const { fetchImpl } = fakeFetch([]);
+    expect(
+      await fetchWebOrigin(new TodouClient({ fetch: fetchImpl }), API),
+    ).toBe(API);
   });
 });
 
