@@ -1,18 +1,12 @@
-import {
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   detectAgentContext,
   detectHarnessId,
 } from "../../src/harness/index.ts";
 import type { ProcessTreeIo } from "../../src/harness/process-tree.ts";
+import { noTree, type Proc, procTree, scratchDir } from "./proc-fixture.ts";
 
 /* Only same-uid ancestors are attributable, so fixtures speak as us. */
 const UID = process.getuid?.() ?? 0;
@@ -21,55 +15,6 @@ const CLAUDE = { CLAUDECODE: "1" };
 const CODEX = { CODEX_THREAD_ID: "00000000-0000-7000-8000-000000000001" };
 const PI = { PI_CODING_AGENT: "true" };
 const HERMES = { HERMES_REAL_HOME: "/home/todou" };
-
-type Proc = {
-  pid: number;
-  ppid: number;
-  uid?: number;
-  env?: Record<string, string>;
-  argv?: string[];
-  cwd?: string;
-  comm?: string;
-};
-
-/* ------------------------------------------------------------- Linux */
-
-const roots: string[] = [];
-afterAll(() => {
-  for (const root of roots) rmSync(root, { recursive: true, force: true });
-});
-
-/** A fake /proc holding exactly the chain a test cares about. */
-function procTree(procs: Proc[]): Partial<ProcessTreeIo> {
-  const root = mkdtempSync(join(tmpdir(), "todou-proc-"));
-  roots.push(root);
-  for (const p of procs) {
-    const dir = join(root, String(p.pid));
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      join(dir, "stat"),
-      `${p.pid} (${p.comm ?? "proc"}) S ${p.ppid} 0 0 0 -1 0 0 0 0 0 0 0`,
-    );
-    writeFileSync(
-      join(dir, "environ"),
-      `${Object.entries(p.env ?? {})
-        .map(([k, v]) => `${k}=${v}`)
-        .join("\0")}\0`,
-    );
-    writeFileSync(join(dir, "cmdline"), `${(p.argv ?? ["proc"]).join("\0")}\0`);
-    if (p.cwd) symlinkSync(p.cwd, join(dir, "cwd"));
-  }
-  return {
-    platform: "linux",
-    procRoot: root,
-    startPid: procs[0]?.pid ?? 1,
-  };
-}
-
-/** A /proc with nothing in it: the "no process tree" degradation. */
-function noTree(): Partial<ProcessTreeIo> {
-  return procTree([]);
-}
 
 /* ------------------------------------------------------------- macOS */
 
@@ -287,12 +232,9 @@ describe("macOS ps parsing", () => {
   });
 
   it("carries the host argv through to a detector", () => {
-    const home = mkdtempSync(join(tmpdir(), "todou-pt-home-"));
-    roots.push(home);
-    const flat = mkdtempSync(join(tmpdir(), "todou-pt-flat-"));
-    roots.push(flat);
-    const project = mkdtempSync(join(tmpdir(), "todou-pt-project-"));
-    roots.push(project);
+    const home = scratchDir("todou-pt-home-");
+    const flat = scratchDir("todou-pt-flat-");
+    const project = scratchDir("todou-pt-project-");
     writeFileSync(
       join(flat, "session.jsonl"),
       `${JSON.stringify({

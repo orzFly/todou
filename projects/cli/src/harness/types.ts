@@ -34,6 +34,22 @@ export type HarnessContext = {
 };
 
 /**
+ * What a harness says about the session id it holds *now*, as opposed to the
+ * one it exported when this process was spawned (T-289).
+ *
+ * The two ways of having no id are kept apart because they call for opposite
+ * responses: with no id to expect there is nothing to report, while a lookup
+ * that got as far as a pid and then failed is a silent fall back to the very
+ * snapshot the re-read exists to replace.
+ */
+export type LiveSession = {
+  /** The id this process holds now, when one could be read. */
+  id?: string;
+  /** A pid resolved but its record did not read: the path tried. */
+  unreadable?: string;
+};
+
+/**
  * One detectable agent harness. `matches` must stay a pure environment
  * predicate — token auto-selection consults it on every command, before any
  * client exists. `context` is called only when `matches` returned true and
@@ -48,4 +64,11 @@ export type Harness = {
   id: HarnessId;
   matches(env: Env): boolean;
   context(ctx: HarnessContext): AgentContext;
+  /**
+   * Optional because only Claude Code has a measured answer: the others
+   * publish nothing a long-lived process could re-read, and keep filtering
+   * on the id they started with. This member is where an answer lands when
+   * somebody measures one.
+   */
+  liveSessionId?(ctx: HarnessContext): LiveSession;
 };

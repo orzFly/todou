@@ -14,7 +14,9 @@ import {
 } from "./context.ts";
 import { discoverDirConfig } from "./dir-config.ts";
 import { CliError, reportError } from "./errors.ts";
-import { detectAgentContext } from "./harness/index.ts";
+import { detectAgentContext, liveSessionIdReader } from "./harness/index.ts";
+import type { ProcessTreeIo } from "./harness/process-tree.ts";
+import type { LiveSession } from "./harness/types.ts";
 import {
   checkQualifiedPrefix,
   type LadderResult,
@@ -28,6 +30,7 @@ import {
   fetchReferenceDirectory,
   fetchResolvedRef,
 } from "./resolve.ts";
+import type { SessionSource } from "./watch-loop.ts";
 
 export type CursorRecord = {
   type: "cursor";
@@ -62,6 +65,10 @@ export type CliContext = BaseContext & {
   openBrowser?: (url: string) => void;
   /** Test seam; production leaves it unset and a real Unix socket is used. */
   openPeerPush?: typeof openPeerPush;
+  /** Test seam; production leaves it unset and the real home is read. */
+  home?: string;
+  /** Test seam; production leaves it unset and the real /proc is walked. */
+  processTree?: Partial<ProcessTreeIo>;
 };
 
 /** Base for every command that talks to a server: context, client, --json. */
@@ -79,6 +86,21 @@ export abstract class ApiCommand extends Command<CliContext> {
   protected config!: CliConfig;
   protected ctx!: ResolvedContext;
   protected agentContext: AgentContext | null = null;
+  /** Replaced in `execute` once the environment is known (T-289). */
+  protected liveSession: () => LiveSession = () => ({});
+
+  /** Who this process is now: the id it holds live, else the one it began with. */
+  protected ownSession(): string | undefined {
+    return this.liveSession().id ?? this.agentContext?.session_id;
+  }
+
+  /** Both halves of that, for a holder long-lived enough to have to re-ask. */
+  protected sessionSource(): SessionSource {
+    return {
+      live: this.liveSession,
+      startup: this.agentContext?.session_id,
+    };
+  }
 
   /** May return a non-zero exit code for "no error, but nothing happened". */
   // biome-ignore lint/suspicious/noConfusingVoidType: `undefined` would force every void-returning command to change its signature
@@ -124,7 +146,17 @@ export abstract class ApiCommand extends Command<CliContext> {
             "run `todou config show` to see what is configured",
         );
       }
-      this.agentContext = detectAgentContext(this.context.env);
+      this.agentContext = detectAgentContext(
+        this.context.env,
+        this.context.home,
+        undefined,
+        this.context.processTree,
+      );
+      this.liveSession = liveSessionIdReader({
+        env: this.context.env,
+        home: this.context.home,
+        io: this.context.processTree,
+      });
       const announced = new Set<string>();
       const code = await this.run(
         new TodouClient({

@@ -1,5 +1,4 @@
 import type {
-  AgentContext,
   SpecInfo,
   SpecReviewStatus,
   TimelineItem,
@@ -24,6 +23,7 @@ import {
   resolveSelfFilter,
   retryTransient,
   runWatchLoop,
+  type SessionSource,
   watchRetryOptions,
 } from "./watch-loop.ts";
 
@@ -147,8 +147,8 @@ export async function waitForSpecReview(args: {
    * version was pushed", which is what a cold re-entry wants.
    */
   from: string | undefined;
-  /** This session's harness identity, for the self-filter below. */
-  agentContext: AgentContext | null;
+  /** This session's identity, re-read per drain by the self-filter below. */
+  session: SessionSource;
   debounceSec: number;
   timeoutSec: number;
   intervalSec: number;
@@ -239,7 +239,16 @@ export async function waitForSpecReview(args: {
   // a `comment` review is not (T-277), and a sibling agent on the shared
   // machine account is exactly who writes one. The price is that the
   // account's other sessions now wake this wait with ordinary comments too.
-  const selfFilter = await resolveSelfFilter(client, args.agentContext, retry);
+  //
+  // Filtering on a session makes this the second holder that outlives one:
+  // a `spec wait --forever` that spans a `/clear` would start waking on the
+  // waiter's own comments (T-289), so it takes the note as well.
+  const selfFilter = await resolveSelfFilter(
+    client,
+    args.session,
+    retry,
+    args.note,
+  );
   const nudges = await openChangeNudges({
     client,
     projects: new Set([project]),
@@ -268,7 +277,10 @@ export async function waitForSpecReview(args: {
       // No `types` filter: a plain comment — an amended requirement, a
       // question back — has to wake the waiter as surely as a verdict does.
       drain: (after) =>
-        drainTimeline(client, project, number, { after, ...selfFilter }),
+        drainTimeline(client, project, number, {
+          after,
+          ...selfFilter.params(),
+        }),
       onItems: (items, next) => {
         woke = items;
         cursor = next ?? cursor;

@@ -1,8 +1,9 @@
-import type { AgentContext, TodouClient } from "@todou/shared";
+import type { TodouClient } from "@todou/shared";
 import { TimelineFilterType, TodouError } from "@todou/shared";
 import { type Clock, systemClock } from "./clock.ts";
 import { CliError, RetriesExhaustedError } from "./errors.ts";
 import { formatDuration } from "./format.ts";
+import type { LiveSession } from "./harness/types.ts";
 import { parseSeconds } from "./parse.ts";
 
 /** Validates a comma-separated --type list, returning it normalized. */
@@ -230,21 +231,72 @@ export type SelfFilter = {
 };
 
 /**
+ * The same thing asked per drain rather than answered once. A watch outlives
+ * the session id it was born with — `/clear` rotates it under a live process
+ * — so a filter captured at startup goes on naming a session that no longer
+ * exists, and the watch's own session's writes come back to it as news
+ * (T-289).
+ */
+export type SelfFilterSource = { params(): SelfFilter };
+
+/** A filter with nothing to re-read: `--any-actor`, `--exclude-actor`. */
+export function fixedSelfFilter(params: SelfFilter): SelfFilterSource {
+  return { params: () => params };
+}
+
+/** Who this process is, both as the harness reports it now and as it began. */
+export type SessionSource = {
+  live(): LiveSession;
+  /** What the environment said when this process was spawned. */
+  startup: string | undefined;
+};
+
+/**
  * The default self-filter of every watch: this agent session's own writes,
  * falling back to this account for entries no session claims (T-121). Both
  * axes travel together — see the `exclude_agent_session` schema for how the
  * server composes them.
+ *
+ * The account is resolved once, being a network round trip and unable to
+ * rotate; the session is read again on every `params()`. `note` is the
+ * caller's stderr, and a caller with nothing long-lived to say passes none.
  */
 export async function resolveSelfFilter(
   client: TodouClient,
-  agentContext: AgentContext | null,
+  session: SessionSource,
   retry: RetryOptions,
-): Promise<SelfFilter> {
+  note?: (line: string) => void,
+): Promise<SelfFilterSource> {
+  const excludeActor = (await retryTransient(() => client.me(), retry)).id;
+  let seen: string | undefined;
+  let asked = false;
+  let saidUnreadable = false;
   return {
-    excludeActor: (await retryTransient(() => client.me(), retry)).id,
-    // `||`, not `??`: a harness may report an empty session id, which names
-    // nothing to filter on — and the server rejects it as a query param.
-    excludeAgentSession: agentContext?.session_id || undefined,
+    params() {
+      const live = session.live();
+      if (live.unreadable !== undefined && !saidUnreadable) {
+        saidUnreadable = true;
+        // Stated as its consequence, not as its cause: falling back to the
+        // startup value *is* the bug T-289 fixed, so a lookup that never
+        // succeeds would otherwise leave the old behaviour in place while
+        // the card read as closed.
+        note?.(
+          `could not read ${live.unreadable}: the self-filter stays on the ` +
+            "session id this process started with, and will not follow a /clear",
+        );
+      }
+      // `||`, not `??`: a harness may report an empty session id, which names
+      // nothing to filter on — and the server rejects it as a query param.
+      const id = live.id || session.startup || undefined;
+      // Nothing at startup, where the live value and the environment agree;
+      // and nothing for an id that went away, which the line above covers.
+      if (asked && id !== seen && id !== undefined && seen !== undefined) {
+        note?.(`session id rotated ${seen} → ${id}; self-filter follows`);
+      }
+      asked = true;
+      seen = id;
+      return { excludeActor, excludeAgentSession: id };
+    },
   };
 }
 

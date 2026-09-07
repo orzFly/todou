@@ -129,7 +129,16 @@ exported into it looks like.
 ## Where the metadata comes from
 
 - `session_id` — `CLAUDE_CODE_SESSION_ID`, documented and set by Claude
-  Code for Bash subprocesses.
+  Code for Bash subprocesses. Being set per subprocess is also what makes
+  it a snapshot: `/clear` gives a *live* claude process a new session id,
+  while its pid — and so its messaging socket — stay as they were. A
+  command that runs and exits is therefore always right, and a resident one
+  goes stale. Anything long-lived (`todou watch`, `spec wait`) re-reads the
+  id from `~/.claude/sessions/<pid>.json`, which Claude Code rewrites at
+  the moment of rotation; the format is *unofficial*, the same disclaimer
+  the transcript tail below carries, and a lookup that fails just keeps the
+  id the process started with. A rotation that is picked up prints one line
+  on stderr: `session id rotated <old> → <new>; self-filter follows`.
 - `model` — Claude Code exposes no environment variable for the live
   model, so the CLI reads the tail of the session transcript
   (`~/.claude/projects/*/<session-id>.jsonl`, an *unofficial* format) and

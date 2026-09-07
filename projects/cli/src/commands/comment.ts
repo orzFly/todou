@@ -160,7 +160,7 @@ export class CommentAddCommand extends ProjectCommand {
       number,
       served: comment.cursor,
       since: this.since,
-      agentContext: this.agentContext,
+      session: this.sessionSource(),
       note: (line) => this.note(line),
       clock: this.clock,
     });

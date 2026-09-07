@@ -63,6 +63,7 @@ import {
 } from "../watch-follow.ts";
 import {
   checkPrintCursor,
+  fixedSelfFilter,
   normalizeTypes,
   printableCursor,
   quietNote,
@@ -70,7 +71,7 @@ import {
   resolveSelfFilter,
   retryTransient,
   runWatchLoop,
-  type SelfFilter,
+  type SelfFilterSource,
   watchMode,
   watchRetryOptions,
   watchTimeoutSec,
@@ -1120,7 +1121,7 @@ export class IssueWatchCommand extends ProjectCommand {
             const page = await drainTimeline(client, project, number, {
               after,
               types,
-              ...self,
+              ...self.params(),
             });
             if (wantsCards) {
               await cards.add(
@@ -1172,7 +1173,7 @@ export class IssueWatchCommand extends ProjectCommand {
     client: TodouClient,
     project: string,
     retry: RetryOptions,
-  ): Promise<SelfFilter> {
+  ): Promise<SelfFilterSource> {
     const named = this.excludeActor;
     if (named !== undefined) {
       if (this.anyActor) {
@@ -1185,11 +1186,13 @@ export class IssueWatchCommand extends ProjectCommand {
         () => resolveAssignees(client, project, [named]),
         retry,
       );
-      return { excludeActor };
+      return fixedSelfFilter({ excludeActor });
     }
     return this.anyActor
-      ? {}
-      : resolveSelfFilter(client, this.agentContext, retry);
+      ? fixedSelfFilter({})
+      : resolveSelfFilter(client, this.sessionSource(), retry, (line) =>
+          this.note(line),
+        );
   }
 }
 

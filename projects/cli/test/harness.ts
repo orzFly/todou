@@ -3,7 +3,18 @@ import { Builtins, Cli } from "clipanion";
 import type { CliContext } from "../src/api-command.ts";
 import type { Clock } from "../src/clock.ts";
 import { commands } from "../src/commands/index.ts";
+import type { ProcessTreeIo } from "../src/harness/process-tree.ts";
 import type { openPeerPush } from "../src/peer-push.ts";
+
+/**
+ * A /proc that is not there: the chain walk ends at once, on every platform,
+ * whatever process actually launched the suite.
+ */
+const NO_ANCESTORS: Partial<ProcessTreeIo> = {
+  platform: "linux",
+  procRoot: "/nonexistent-todou-proc",
+  startPid: 1,
+};
 
 export type Captured = { url: string; init: RequestInit };
 
@@ -116,6 +127,10 @@ export async function runCli(
     clock?: Clock;
     openBrowser?: (url: string) => void;
     openPeerPush?: typeof openPeerPush;
+    /** Where the harness probes look; unset means a home that does not exist. */
+    home?: string;
+    /** Ancestors the harness may attribute itself to; unset means none. */
+    processTree?: Partial<ProcessTreeIo>;
   } = {},
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const cli = new Cli<CliContext>({
@@ -153,6 +168,13 @@ export async function runCli(
       ...options.env,
     },
     cwd: options.cwd ?? "/",
+    // The same rule as XDG above, and for a sharper reason: the live-session
+    // probe reads `~/.claude/sessions/<pid>.json` and the pid comes from the
+    // process tree, so a suite run under Claude Code used to filter on
+    // whoever ran it — the fake session ids in these tests passed only
+    // because nothing had looked the real ones up yet (T-289).
+    home: options.home ?? "/nonexistent-todou-home",
+    processTree: options.processTree ?? NO_ANCESTORS,
     fetchImpl: options.fetchImpl,
     clock: options.clock,
     // Unset would spawn a real browser on whoever runs the suite.

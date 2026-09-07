@@ -11,7 +11,12 @@ import {
   type ProcessTreeIo,
   readAncestors,
 } from "./process-tree.ts";
-import type { Harness, HostProcess } from "./types.ts";
+import type {
+  Harness,
+  HarnessContext,
+  HostProcess,
+  LiveSession,
+} from "./types.ts";
 
 /**
  * Every harness marks its whole process tree — claude code, codex and pi all
@@ -107,6 +112,61 @@ export function detectAgentContext(
     });
   } catch {
     return null;
+  }
+}
+
+/**
+ * A reader for the session id the harness holds *now*, rather than the
+ * answer itself: the question is asked once per drain by anything resident
+ * long enough for the answer to change, while which harness is answering it
+ * cannot change at all (T-289).
+ *
+ * Selection and the process-tree walk therefore happen once, here; each
+ * later call is one read of a small file, or — for a harness that publishes
+ * no such thing — nothing at all.
+ */
+export function liveSessionIdReader(opts: {
+  env: Env;
+  home?: string;
+  cwd?: string;
+  io?: Partial<ProcessTreeIo>;
+}): () => LiveSession {
+  const nothing = () => ({});
+  try {
+    let chain: readonly Ancestor[] | undefined;
+    const ancestors = () => (chain ??= readAncestors(opts.io));
+    const harness = select(opts.env, ancestors);
+    const probe = harness?.liveSessionId;
+    if (harness === null || probe === undefined) return nothing;
+
+    let resolved = false;
+    let host: HostProcess | undefined;
+    const ctx: HarnessContext = {
+      env: opts.env,
+      home: opts.home ?? homedir(),
+      cwd: opts.cwd ?? process.cwd(),
+      host: () => {
+        if (!resolved) {
+          resolved = true;
+          const depth = hostIndex((e) => harness.matches(e), ancestors());
+          const found = depth === undefined ? undefined : ancestors()[depth];
+          if (found) {
+            host = { pid: found.pid, argv: found.argv, cwd: found.cwd };
+          }
+        }
+        return host;
+      },
+    };
+    return () => {
+      try {
+        return probe.call(harness, ctx);
+      } catch {
+        // Same contract as every other probe: less metadata, never an error.
+        return {};
+      }
+    };
+  } catch {
+    return nothing;
   }
 }
 

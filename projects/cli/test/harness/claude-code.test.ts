@@ -2,9 +2,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import type { Env } from "../../src/config.ts";
 import { detectPermissionMode } from "../../src/harness/claude-code.ts";
-import { detectAgentContext } from "../../src/harness/index.ts";
+import {
+  detectAgentContext,
+  liveSessionIdReader,
+} from "../../src/harness/index.ts";
+import type { ProcessTreeIo } from "../../src/harness/process-tree.ts";
 import { fakeFetch, loggedInEnv, runCli } from "../harness.ts";
+import { noTree, procTree, scratchDir } from "./proc-fixture.ts";
 
 const home = mkdtempSync(join(tmpdir(), "todou-agent-home-"));
 afterAll(() => rmSync(home, { recursive: true, force: true }));
@@ -325,5 +331,155 @@ describe("header injection", () => {
     await runCli(["whoami"], { fetchImpl, env: loggedInEnv() });
     const headers = calls[0]?.init.headers as Record<string, string>;
     expect(headers["x-todou-agent-context"]).toBeUndefined();
+  });
+});
+
+describe("liveSessionId (T-289)", () => {
+  /* A home of its own: half of these cases turn on which pid file is
+     absent, and the transcript fixtures above share theirs. */
+  const liveHome = scratchDir("todou-live-home-");
+  const socks = scratchDir("todou-cc-socks-");
+  const LIVE = "3856e246-aaaa-bbbb-cccc-000000000001";
+  const sock = (pid: number) => join(socks, `${pid}.sock`);
+  const sessionFile = (pid: number) =>
+    join(liveHome, ".claude", "sessions", `${pid}.json`);
+
+  function writeRecord(pid: number, body: unknown): void {
+    mkdirSync(join(liveHome, ".claude", "sessions"), { recursive: true });
+    writeFileSync(
+      sessionFile(pid),
+      typeof body === "string" ? body : JSON.stringify(body),
+    );
+  }
+
+  const record = (pid: number, sessionId: unknown) => ({
+    pid,
+    sessionId,
+    messagingSocketPath: sock(pid),
+  });
+
+  const read = (env: Env, io: Partial<ProcessTreeIo> = noTree()) =>
+    liveSessionIdReader({
+      env: { CLAUDECODE: "1", ...env },
+      home: liveHome,
+      io,
+    })();
+
+  it("reads the id from the record the socket's pid names", () => {
+    // The only record this home holds, so an implementation reaching for the
+    // reading process's own `process.pid` — the watch's, one fork below the
+    // claude process — finds nothing and fails here. This case is the card.
+    writeRecord(4046359, record(4046359, LIVE));
+    expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(4046359) })).toEqual({
+      id: LIVE,
+    });
+  });
+
+  it("says nothing with no socket and no process tree", () => {
+    expect(read({})).toEqual({});
+  });
+
+  it("says nothing when the socket's name is not a pid", () => {
+    expect(
+      read({ CLAUDE_CODE_MESSAGING_SOCKET: "/run/cc-socks/agent.sock" }),
+    ).toEqual({});
+  });
+
+  it("names the path it tried once a pid has resolved", () => {
+    expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(1234567) })).toEqual({
+      unreadable: sessionFile(1234567),
+    });
+  });
+
+  it("treats a malformed record as unreadable, never as an error", () => {
+    writeRecord(700001, '{"pid":700001,"sessionId":');
+    expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700001) })).toEqual({
+      unreadable: sessionFile(700001),
+    });
+  });
+
+  it("refuses a record whose pid disagrees with the one asked for", () => {
+    // Pids are reused and records outlive the processes they name: taking
+    // this one would start hiding a stranger's writes instead.
+    writeRecord(700002, { ...record(700002, LIVE), pid: 700099 });
+    expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700002) })).toEqual({
+      unreadable: sessionFile(700002),
+    });
+  });
+
+  it("refuses a record naming a different messaging socket", () => {
+    writeRecord(700003, {
+      ...record(700003, LIVE),
+      messagingSocketPath: sock(700004),
+    });
+    expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700003) })).toEqual({
+      unreadable: sessionFile(700003),
+    });
+  });
+
+  it("refuses a session id that is path-shaped, over-long or not a string", () => {
+    writeRecord(700005, record(700005, "../../etc/passwd"));
+    expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700005) })).toEqual({
+      unreadable: sessionFile(700005),
+    });
+
+    writeRecord(700006, record(700006, "a".repeat(201)));
+    expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700006) })).toEqual({
+      unreadable: sessionFile(700006),
+    });
+
+    writeRecord(700007, record(700007, 12345));
+    expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: sock(700007) })).toEqual({
+      unreadable: sessionFile(700007),
+    });
+  });
+
+  it("falls back to the process tree when the socket is unset", () => {
+    // The real shape: the marker is introduced *for* claude's children, so
+    // the ancestor carrying CLAUDECODE=1 is a child of claude, and it is
+    // claude's own pid that indexes the sessions directory.
+    writeRecord(800002, { pid: 800002, sessionId: LIVE });
+    const tree = procTree([
+      { pid: 800001, ppid: 800002, env: { CLAUDECODE: "1" } },
+      { pid: 800002, ppid: 1, env: {} },
+    ]);
+    expect(read({}, tree)).toEqual({ id: LIVE });
+  });
+
+  it("answers afresh on every call, which is the whole point", () => {
+    writeRecord(900001, record(900001, LIVE));
+    const reader = liveSessionIdReader({
+      env: {
+        CLAUDECODE: "1",
+        CLAUDE_CODE_MESSAGING_SOCKET: sock(900001),
+      },
+      home: liveHome,
+      io: noTree(),
+    });
+    expect(reader()).toEqual({ id: LIVE });
+    const rotated = "884c574a-aaaa-bbbb-cccc-000000000002";
+    writeRecord(900001, record(900001, rotated));
+    expect(reader()).toEqual({ id: rotated });
+  });
+
+  it("stays quiet for a harness with no answer of its own", () => {
+    // Pointed at a home that does hold a valid record, and at the socket
+    // naming it: a harness without the member must return nothing rather
+    // than fall through to Claude Code's file.
+    writeRecord(900002, record(900002, LIVE));
+    const env = { CLAUDE_CODE_MESSAGING_SOCKET: sock(900002) };
+    for (const marker of [
+      { CODEX_THREAD_ID: "00000000-0000-7000-8000-000000000001" },
+      { HERMES_REAL_HOME: "/home/todou" },
+      { PI_CODING_AGENT: "true" },
+    ]) {
+      expect(
+        liveSessionIdReader({
+          env: { ...env, ...marker },
+          home: liveHome,
+          io: noTree(),
+        })(),
+      ).toEqual({});
+    }
   });
 });

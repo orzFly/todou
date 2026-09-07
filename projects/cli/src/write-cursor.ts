@@ -1,4 +1,4 @@
-import type { AgentContext, TimelineItem, TodouClient } from "@todou/shared";
+import type { TimelineItem, TodouClient } from "@todou/shared";
 import { formatRef } from "@todou/shared";
 import { NO_CARDS, resolveActivityCards } from "./activity-cards.ts";
 import type { Clock } from "./clock.ts";
@@ -14,6 +14,7 @@ import {
   describeError,
   resolveSelfFilter,
   retryTransient,
+  type SessionSource,
   watchRetryOptions,
 } from "./watch-loop.ts";
 
@@ -93,7 +94,7 @@ export async function collectWriteCursor(args: {
    */
   served: string | undefined;
   since: string | undefined;
-  agentContext: AgentContext | null;
+  session: SessionSource;
   note: (line: string) => void;
   clock: Clock;
 }): Promise<WriteCursorOutcome> {
@@ -113,12 +114,14 @@ export async function collectWriteCursor(args: {
   // next watch. At-least-once beats a tidier cursor.
   const retry = watchRetryOptions({ poll: true }, args.note, args.clock);
   try {
-    const self = await resolveSelfFilter(args.client, args.agentContext, retry);
+    // No `note`: one drain, inside a command that exits straight after, so
+    // there is no window in which the session id could rotate under it.
+    const self = await resolveSelfFilter(args.client, args.session, retry);
     const { items } = await retryTransient(
       () =>
         drainTimeline(args.client, args.project, args.number, {
           after: since,
-          ...self,
+          ...self.params(),
         }),
       retry,
     );

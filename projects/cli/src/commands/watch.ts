@@ -29,6 +29,7 @@ import {
 } from "../watch-follow.ts";
 import {
   checkPrintCursor,
+  fixedSelfFilter,
   normalizeTypes,
   printableCursor,
   quietNote,
@@ -37,6 +38,7 @@ import {
   retryTransient,
   runWatchLoop,
   type SelfFilter,
+  type SelfFilterSource,
   type WatchMode,
   watchMode,
   watchRetryOptions,
@@ -349,8 +351,10 @@ export class WatchCommand extends ProjectCommand {
           ? BARE_SUMMARY_CHARS
           : parsePositiveInt(this.summary, "--summary", { zero: true });
     const self = this.anyActor
-      ? {}
-      : await resolveSelfFilter(client, this.agentContext, retry);
+      ? fixedSelfFilter({})
+      : await resolveSelfFilter(client, this.sessionSource(), retry, (line) =>
+          this.note(line),
+        );
     const paint = makePainter(this.context.stdout, this.context.env);
     // Transport, not truth (T-123). While the user-level change feed
     // (T-122) is up, the loop idles on it instead of on --interval; every
@@ -402,7 +406,7 @@ export class WatchCommand extends ProjectCommand {
       intervalSec: number;
       debounceSec: number | undefined;
       summaryChars: number;
-      self: SelfFilter;
+      self: SelfFilterSource;
       paint: ReturnType<typeof makePainter>;
       transport: Transport | null;
       wait: ((maxMs: number) => Promise<void>) | undefined;
@@ -531,7 +535,7 @@ export class WatchCommand extends ProjectCommand {
             const page = await drainActivity(client, project, {
               after,
               types,
-              ...self,
+              ...self.params(),
             });
             if (wantsCards) {
               await cards.add(
@@ -687,7 +691,7 @@ export class WatchCommand extends ProjectCommand {
           const page = await drainCrossActivity(client, projects, {
             after,
             types,
-            ...self,
+            ...self.params(),
           });
           await ensureSpellings(page.items);
           if (wantsCards) {

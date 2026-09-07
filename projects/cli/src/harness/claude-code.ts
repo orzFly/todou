@@ -1,10 +1,10 @@
-import { globSync } from "node:fs";
+import { globSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { AgentContext } from "@todou/shared";
 import type { Env } from "../config.ts";
 import { findInJsonlTail } from "./jsonl-tail.ts";
-import type { Harness } from "./types.ts";
+import type { Harness, LiveSession } from "./types.ts";
 
 export const claudeCode = {
   id: "claude-code",
@@ -17,7 +17,57 @@ export const claudeCode = {
     if (model) context.model = model;
     return context;
   },
+  liveSessionId({ env, home, host }): LiveSession {
+    const socket = env.CLAUDE_CODE_MESSAGING_SOCKET;
+    // The pid of the *claude* process, which is what the sessions directory
+    // is indexed by. Never `process.pid`: that is the reading process's own,
+    // one fork below, and its record never exists — so the lookup would fail
+    // every time, fall back to the startup value, and leave the staleness
+    // this probe exists to end looking as though it had been fixed (T-289).
+    const pid = socket ? pidFromSocket(socket) : host()?.pid;
+    if (pid === undefined) return {};
+    const file = join(home, ".claude", "sessions", `${pid}.json`);
+    try {
+      const record = JSON.parse(readFileSync(file, "utf8")) as {
+        pid?: unknown;
+        sessionId?: unknown;
+        messagingSocketPath?: unknown;
+      };
+      // Records outlive the processes they name, and pids are reused. Without
+      // this a stranger's record would hand the watch a session id belonging
+      // to somebody else, and it would start hiding a sibling agent's writes
+      // — quieter, and worse, than the staleness being fixed. On the process
+      // tree path there is no socket to compare, but the pid came from a live
+      // ancestor that wrote the file when it registered.
+      if (record.pid !== pid) return { unreadable: file };
+      if (socket && record.messagingSocketPath !== socket) {
+        return { unreadable: file };
+      }
+      const id = record.sessionId;
+      // The same guard `fromTranscript` applies below, for the same reason:
+      // the value comes from outside and ends up in a URL.
+      if (typeof id !== "string" || id.length > 200 || !SESSION_ID.test(id)) {
+        return { unreadable: file };
+      }
+      return { id };
+    } catch {
+      return { unreadable: file };
+    }
+  },
 } satisfies Harness;
+
+const SESSION_ID = /^[0-9a-zA-Z-]+$/;
+
+/**
+ * Claude Code names the messaging socket after its own pid, which is the one
+ * thing about a session that a `/clear` leaves alone — and `--follow=uds`,
+ * the mode that stays resident longest, refuses to start without it.
+ */
+function pidFromSocket(socket: string): number | undefined {
+  const name = basename(socket, ".sock");
+  if (!/^[0-9]+$/.test(name)) return undefined;
+  return Number(name);
+}
 
 /**
  * The transcript tail wins over CLAUDE_MODEL: a SessionStart-hook snapshot
