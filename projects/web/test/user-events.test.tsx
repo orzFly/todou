@@ -1,9 +1,15 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  focusManager,
+  QueryClient,
+  QueryClientProvider,
+  useQuery,
+} from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import type { CrossChangeEvent, InboxRowState, MeEvent } from "@todou/shared";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clientOrigin } from "../src/api/queries.ts";
+import { openTabChannel, type TabMessage } from "../src/api/tab-sync.ts";
 import {
   coalesceBatch,
   INVALIDATE_COALESCE_MS,
@@ -12,17 +18,24 @@ import {
   inboxRowContentDiffers,
   inboxRowIn,
   invalidationsFor,
+  isSharedKey,
   meInvalidations,
   pageContainsIssue,
   pageHasUnreadRow,
   RECONNECT_BASE_MS,
   reconnectInvalidations,
+  SHARED_QUERY_KEYS,
   STALL_TIMEOUT_MS,
+  shouldAdopt,
   useUserEvents,
 } from "../src/api/useUserEvents.ts";
+import { installTabSync } from "./tab-sync.ts";
 
 const AT = "2026-09-07T10:00:00.000Z";
 const LATER = "2026-09-07T11:00:00.000Z";
+
+/** The account whose stream every tab in here shares (T-276). */
+const USER_ID = 42;
 
 /** The server's fingerprint of one inbox row. */
 const fingerprint = (over: Partial<InboxRowState> = {}): InboxRowState => ({
@@ -457,7 +470,7 @@ describe("useUserEvents", () => {
     const wrapper = ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     );
-    const hook = renderHook(() => useUserEvents(), { wrapper });
+    const hook = renderHook(() => useUserEvents(USER_ID), { wrapper });
     return { spy, hook, queryClient };
   }
 
@@ -993,5 +1006,589 @@ describe("useUserEvents", () => {
     second.readyState = MockEventSource.OPEN;
     second.onopen?.();
     expect(spy).toHaveBeenCalledWith({ queryKey: ["issues"] });
+  });
+});
+
+describe("isSharedKey / shouldAdopt (T-276)", () => {
+  it("names the three user-level keys and nothing under them", () => {
+    expect(SHARED_QUERY_KEYS).toEqual([["inbox"], ["me-prefs"], ["projects"]]);
+    for (const key of SHARED_QUERY_KEYS) expect(isSharedKey(key)).toBe(true);
+    // Exact equality, not the prefix match invalidateQueries does: a page's
+    // own key must not travel between tabs under a shared prefix.
+    expect(isSharedKey(["issues", "todou"])).toBe(false);
+    expect(isSharedKey(["inbox", "todou"])).toBe(false);
+    expect(isSharedKey(["projects", 1])).toBe(false);
+    expect(isSharedKey("inbox")).toBe(false);
+  });
+
+  it("adopts anything when the key was never marked stale", () => {
+    expect(shouldAdopt(1_000, undefined)).toBe(true);
+  });
+
+  it("adopts a response no older than the stale mark, refuses an older one", () => {
+    expect(shouldAdopt(1_000, 1_000)).toBe(true);
+    expect(shouldAdopt(1_001, 1_000)).toBe(true);
+    expect(shouldAdopt(999, 1_000)).toBe(false);
+  });
+});
+
+/**
+ * Layer 2 of T-276: a tab the reader cannot see marks the same queries stale
+ * and leaves the request to react-query's focus refetch. Single-tab, because
+ * the gate does not depend on sharing — happy-dom's null `navigator.locks`
+ * puts these on the degrade path.
+ */
+describe("useUserEvents visibility gate (T-276)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    focusManager.setFocused(undefined);
+    MockEventSource.instances = [];
+  });
+
+  const TIMELINE = ["timeline", "todou", 7];
+
+  function setupTab(observed?: {
+    queryKey: unknown[];
+    queryFn: () => unknown;
+    staleTime?: number;
+  }) {
+    vi.stubGlobal("EventSource", MockEventSource);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const spy = vi.spyOn(queryClient, "invalidateQueries");
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    // Two callbacks rather than one with a conditional `useQuery`: the
+    // observed query exists because an idle QueryClient never fetches, so
+    // "did not refetch" would otherwise be true of every implementation.
+    const hook =
+      observed === undefined
+        ? renderHook(() => useUserEvents(USER_ID), { wrapper })
+        : renderHook(
+            () => {
+              useUserEvents(USER_ID);
+              return useQuery(observed);
+            },
+            { wrapper },
+          );
+    return { spy, hook, queryClient };
+  }
+
+  /** Every recorded pass on `key`, as its `refetchType`. */
+  const passes = (
+    spy: ReturnType<typeof setupTab>["spy"],
+    key: ReadonlyArray<unknown>,
+  ): (string | undefined)[] =>
+    spy.mock.calls
+      .filter(
+        (call) => JSON.stringify(call[0]?.queryKey) === JSON.stringify(key),
+      )
+      .map((call) => call[0]?.refetchType ?? "default");
+
+  const emitTimelineEvent = () => {
+    MockEventSource.instances[0]?.emit("change", {
+      entity: "timeline",
+      id: 9,
+      action: "created",
+      issue_number: 7,
+      project: "todou",
+    });
+  };
+
+  it("marks a hidden tab's queries stale instead of refetching them", () => {
+    vi.useFakeTimers();
+    focusManager.setFocused(false);
+    const { spy, queryClient } = setupTab();
+    queryClient.setQueryData(TIMELINE, []);
+    emitTimelineEvent();
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+
+    expect(passes(spy, TIMELINE)).toEqual(["none"]);
+    expect(queryClient.getQueryState(TIMELINE)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(TIMELINE)?.fetchStatus).toBe("idle");
+  });
+
+  it("lets the focus refetch collect what the hidden tab only marked", async () => {
+    // Without this the step above only proves "did not fetch"; the whole
+    // downgrade rests on the fetch happening on the way back.
+    focusManager.setFocused(false);
+    const queryFn = vi.fn(() => ["one"]);
+    const { queryClient } = setupTab({ queryKey: TIMELINE, queryFn });
+    await waitFor(() => expect(queryFn).toHaveBeenCalledTimes(1));
+
+    emitTimelineEvent();
+    await waitFor(() =>
+      expect(queryClient.getQueryState(TIMELINE)?.isInvalidated).toBe(true),
+    );
+    expect(queryFn).toHaveBeenCalledTimes(1);
+
+    focusManager.setFocused(true);
+    await waitFor(() => expect(queryFn).toHaveBeenCalledTimes(2));
+  });
+
+  it("takes a long staleTime with it: me-prefs refetches on focus too", async () => {
+    // isStaleByTime returns true for an invalidated query whatever its
+    // staleTime, so the 60s on ["me-prefs"] is not an exception.
+    focusManager.setFocused(false);
+    const queryFn = vi.fn(() => ({ show_weak_unread: false }));
+    const { queryClient } = setupTab({
+      queryKey: ["me-prefs"],
+      queryFn,
+      staleTime: 60_000,
+    });
+    await waitFor(() => expect(queryFn).toHaveBeenCalledTimes(1));
+
+    MockEventSource.instances[0]?.emit("me", {
+      kind: "prefs",
+      origin: "some-other-tab",
+    });
+    await waitFor(() =>
+      expect(queryClient.getQueryState(["me-prefs"])?.isInvalidated).toBe(true),
+    );
+    expect(queryFn).toHaveBeenCalledTimes(1);
+
+    focusManager.setFocused(true);
+    await waitFor(() => expect(queryFn).toHaveBeenCalledTimes(2));
+  });
+
+  it("still leaves a hidden tab's cache untouched when nothing concerns it", () => {
+    // Only the refetch strength drops; no predicate is skipped. Turning a
+    // hidden tab into "mark the whole key stale" would throw away what T-273
+    // and T-275 won and cost one /me/inbox on every switch back.
+    vi.useFakeTimers();
+    focusManager.setFocused(false);
+    const { spy, queryClient } = setupTab();
+    queryClient.setQueryData(["inbox"], cachedInbox(cachedRow({ number: 99 })));
+    queryClient.setQueryData(TIMELINE, []);
+    MockEventSource.instances[0]?.emit("change", {
+      entity: "timeline",
+      id: 9,
+      action: "created",
+      issue_number: 7,
+      project: "todou",
+      inbox_row: null,
+    });
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+
+    // The same burst did mark something, so this is not vacuous.
+    expect(queryClient.getQueryState(TIMELINE)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(["inbox"])?.isInvalidated).toBe(false);
+    expect(passes(spy, ["inbox"])).toEqual(["none", "none"]);
+  });
+
+  it("degrades the reconnect compensation through the same gate", () => {
+    // Left as bare invalidateQueries, one dropped connection would walk
+    // around the gate entirely.
+    focusManager.setFocused(false);
+    const { spy } = setupTab();
+    const source = MockEventSource.instances[0];
+    source?.onerror?.();
+    source?.onopen?.();
+
+    const keys = reconnectInvalidations();
+    expect(keys.map((key) => passes(spy, key))).toEqual(
+      keys.map(() => ["none"]),
+    );
+  });
+
+  it("changes nothing for a visible tab", () => {
+    // The rest of this file is the real proof — 60-odd cases asserting the
+    // exact former call shapes, all of them running focused. This one pins
+    // the one call that had to grow a conditional.
+    vi.useFakeTimers();
+    focusManager.setFocused(true);
+    const { spy } = setupTab();
+    emitTimelineEvent();
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+
+    expect(spy).toHaveBeenCalledWith({ queryKey: TIMELINE });
+    expect(passes(spy, TIMELINE)).toEqual(["default"]);
+  });
+});
+
+/**
+ * Layers 1 and 3 of T-276. Two "tabs" are two renderHooks with two
+ * QueryClients over one fake LockManager and one fake channel, which is
+ * enough to test election, handover, forwarding and adoption; the browser is
+ * left for the request counting at the end.
+ */
+describe("useUserEvents tab sharing (T-276)", () => {
+  let restoreTabSync: (() => void) | undefined;
+
+  afterEach(() => {
+    restoreTabSync?.();
+    restoreTabSync = undefined;
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    focusManager.setFocused(undefined);
+    MockEventSource.instances = [];
+  });
+
+  const withTabSync = () => {
+    const installed = installTabSync();
+    restoreTabSync = installed.restore;
+    return installed;
+  };
+
+  /** Lets the probe-then-block pair of lock requests inside electLeader run. */
+  const settle = async () => {
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+  };
+
+  const watchInvalidations = (client: QueryClient) =>
+    vi.spyOn(client, "invalidateQueries");
+
+  type Tab = {
+    spy: ReturnType<typeof watchInvalidations>;
+    queryClient: QueryClient;
+    hook: ReturnType<typeof renderHook>;
+    /** This tab's own document listeners, by event type. */
+    on: Map<string, EventListener[]>;
+  };
+
+  function mountTab(): Tab {
+    vi.stubGlobal("EventSource", MockEventSource);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const spy = watchInvalidations(queryClient);
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    // Both tabs share happy-dom's one document, so dispatching a
+    // page-lifecycle event on it would freeze every tab at once — which is
+    // the opposite of what the handover has to be tested against. Capture
+    // each tab's handlers as it mounts and call just that tab's.
+    const on = new Map<string, EventListener[]>();
+    const realAdd = document.addEventListener;
+    document.addEventListener = function capture(
+      this: Document,
+      type: string,
+      handler: EventListenerOrEventListenerObject | null,
+      ...rest: unknown[]
+    ) {
+      on.set(type, [...(on.get(type) ?? []), handler as EventListener]);
+      return (realAdd as (...args: unknown[]) => void).call(
+        this,
+        type,
+        handler,
+        ...rest,
+      );
+    } as typeof document.addEventListener;
+    try {
+      const hook = renderHook(() => useUserEvents(USER_ID), { wrapper });
+      return { spy, queryClient, hook, on };
+    } finally {
+      document.addEventListener = realAdd;
+    }
+  }
+
+  /** Two tabs of one account, the first of which holds the lock. */
+  async function twoTabs() {
+    withTabSync();
+    const leader = mountTab();
+    await settle();
+    const follower = mountTab();
+    await settle();
+    return { leader, follower };
+  }
+
+  /**
+   * The one stream the elected leader opened. Asserted rather than reached
+   * for with `?.`, which would turn "nobody was elected" into a test that
+   * emits nothing and passes.
+   */
+  const leaderStream = () => {
+    expect(MockEventSource.instances).toHaveLength(1);
+    return MockEventSource.instances[0] as MockEventSource;
+  };
+
+  /** A channel of this account's, standing in for what a sibling sees. */
+  const observeChannel = () => {
+    const seen: TabMessage[] = [];
+    const channel = openTabChannel(`todou:events:${USER_ID}:ch`, (msg) =>
+      seen.push(msg),
+    );
+    return { seen, channel };
+  };
+
+  const TIMELINE_EVENT = {
+    entity: "timeline",
+    id: 9,
+    action: "created",
+    issue_number: 3,
+    project: "todou",
+  };
+
+  it("opens one connection for two tabs of the same account", async () => {
+    await twoTabs();
+    expect(MockEventSource.instances).toHaveLength(1);
+    // Still opted in, so the server still judges each event per receiver.
+    expect(MockEventSource.instances[0]?.url).toBe("/api/events?inbox=1");
+  });
+
+  it("invalidates in both tabs from the leader's single stream", async () => {
+    vi.useFakeTimers();
+    const { leader, follower } = await twoTabs();
+    leaderStream().emit("change", TIMELINE_EVENT);
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+
+    for (const tab of [leader, follower]) {
+      expect(tab.spy).toHaveBeenCalledWith({
+        queryKey: ["timeline", "todou", 3],
+      });
+    }
+  });
+
+  it("promotes a follower when the leader goes away, and compensates", async () => {
+    const { leader, follower } = await twoTabs();
+    leader.hook.unmount();
+    await settle();
+
+    expect(MockEventSource.instances).toHaveLength(2);
+    MockEventSource.instances[1]?.onopen?.();
+    // A promoted tab's cache is warm and missed whatever arrived while
+    // nobody held the lock, so it has to compensate — unlike a tab whose
+    // probe won the lock outright.
+    expect(follower.spy).toHaveBeenCalledWith({ queryKey: ["issues"] });
+  });
+
+  it("does not compensate a tab whose probe won the lock outright", async () => {
+    // The other half of that split: a cold cache pays no extra round of
+    // invalidations on every page load.
+    withTabSync();
+    const first = mountTab();
+    await settle();
+    MockEventSource.instances[0]?.onopen?.();
+    expect(first.spy).not.toHaveBeenCalled();
+  });
+
+  it("makes every tab compensate after the leader's stream drops", async () => {
+    const { leader, follower } = await twoTabs();
+    const stream = leaderStream();
+    stream.onerror?.();
+    stream.onopen?.();
+
+    expect(leader.spy).toHaveBeenCalledWith({ queryKey: ["issues"] });
+    // The followers missed the same events; the `gap` frame is how they hear
+    // about it, since an SSE frame carries no id to replay from.
+    expect(follower.spy).toHaveBeenCalledWith({ queryKey: ["issues"] });
+  });
+
+  it("broadcasts a me frame before filtering this tab's own echo", async () => {
+    vi.useFakeTimers();
+    const { leader, follower } = await twoTabs();
+    const { seen, channel } = observeChannel();
+
+    const echo = { kind: "prefs", origin: clientOrigin };
+    leaderStream().emit("me", echo);
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+
+    // The hard constraint of this card: were the origin test applied before
+    // the broadcast, the leader's own mark-read would never reach a sibling,
+    // reopening the hole T-275 closed. Both renderHooks share one module
+    // scope and therefore one `clientOrigin`, so which tab an echo belongs
+    // to is not observable in-process — that the frame left at all is.
+    expect(seen).toEqual([{ v: 1, frame: "me", data: JSON.stringify(echo) }]);
+    for (const tab of [leader, follower]) {
+      expect(
+        tab.spy.mock.calls.filter(
+          (call) =>
+            JSON.stringify(call[0]?.queryKey) === JSON.stringify(["me-prefs"]),
+        ),
+      ).toHaveLength(0);
+    }
+    channel.close();
+  });
+
+  it("acts in both tabs on a me frame from somewhere else", async () => {
+    vi.useFakeTimers();
+    const { leader, follower } = await twoTabs();
+    leaderStream().emit("me", {
+      kind: "prefs",
+      origin: "some-other-tab",
+    });
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+
+    for (const tab of [leader, follower]) {
+      expect(tab.spy).toHaveBeenCalledWith({ queryKey: ["me-prefs"] });
+      expect(tab.spy).toHaveBeenCalledWith({ queryKey: ["inbox"] });
+    }
+  });
+
+  it("falls back to a connection per tab where the platform cannot share", async () => {
+    // No installTabSync, so `navigator.locks` is happy-dom's null. This is
+    // the path every test file that mounts the real shell runs on, and it is
+    // byte-for-byte today's behaviour.
+    mountTab();
+    await settle();
+    mountTab();
+    await settle();
+    expect(MockEventSource.instances).toHaveLength(2);
+  });
+
+  it("hands the role over when the browser freezes the leader", async () => {
+    const { leader, follower } = await twoTabs();
+    for (const handler of leader.on.get("freeze") ?? []) {
+      handler(new Event("freeze"));
+    }
+    await settle();
+
+    expect(MockEventSource.instances[0]?.closed).toBe(true);
+    expect(MockEventSource.instances).toHaveLength(2);
+    MockEventSource.instances[1]?.onopen?.();
+    expect(follower.spy).toHaveBeenCalledWith({ queryKey: ["issues"] });
+
+    for (const handler of leader.on.get("resume") ?? []) {
+      handler(new Event("resume"));
+    }
+    await settle();
+    // Back in the queue behind the tab that took over, not a third stream.
+    expect(MockEventSource.instances).toHaveLength(2);
+  });
+
+  it("hands a fetched user-level response to the other tab", async () => {
+    const { leader, follower } = await twoTabs();
+    const inbox = cachedInbox(cachedRow());
+    // A real fetch, because only that reaches the reducer without `manual`.
+    await leader.queryClient.fetchQuery({
+      queryKey: ["inbox"],
+      queryFn: () => inbox,
+    });
+
+    expect(follower.queryClient.getQueryData(["inbox"])).toEqual(inbox);
+    const state = follower.queryClient.getQueryState(["inbox"]);
+    expect(state?.isInvalidated).toBe(false);
+    // Adopted, not fetched: this QueryClient has no queryFn for the key.
+    expect(state?.fetchStatus).toBe("idle");
+    expect(state?.dataUpdatedAt).toBe(
+      leader.queryClient.getQueryState(["inbox"])?.dataUpdatedAt,
+    );
+  });
+
+  it("does not echo an adopted response back at the tab that sent it", async () => {
+    const { leader, follower } = await twoTabs();
+    await leader.queryClient.fetchQuery({
+      queryKey: ["inbox"],
+      queryFn: () => cachedInbox(cachedRow()),
+    });
+
+    // Without the `manual` guard the adoption would look like a fetch and
+    // the two tabs would write at each other without stopping.
+    expect(leader.queryClient.getQueryState(["inbox"])?.dataUpdateCount).toBe(
+      1,
+    );
+    expect(follower.queryClient.getQueryState(["inbox"])?.dataUpdateCount).toBe(
+      1,
+    );
+  });
+
+  it("refuses a response older than the moment it learned the key was stale", async () => {
+    vi.useFakeTimers();
+    const { follower } = await twoTabs();
+    const held = cachedInbox(cachedRow());
+    follower.queryClient.setQueryData(["inbox"], held);
+
+    // An event moves an attention field, so this tab now knows ["inbox"].
+    leaderStream().emit("change", {
+      entity: "comment",
+      id: 9,
+      action: "created",
+      issue_number: 7,
+      project: "todou",
+      inbox_row: fingerprint({ unread_comments: 9 }),
+    });
+    vi.advanceTimersByTime(INVALIDATE_COALESCE_MS);
+    expect(follower.queryClient.getQueryState(["inbox"])?.isInvalidated).toBe(
+      true,
+    );
+
+    const { channel } = observeChannel();
+    const fresher = cachedInbox(cachedRow({ unread_comments: 9 }));
+    // A sibling's refetch that went out before that moment cannot reflect
+    // the event, so adopting it would make stale data look current.
+    channel.post({
+      v: 1,
+      frame: "data",
+      key: ["inbox"],
+      data: fresher,
+      at: Date.now() - 1,
+    });
+    expect(follower.queryClient.getQueryState(["inbox"])?.isInvalidated).toBe(
+      true,
+    );
+    expect(follower.queryClient.getQueryData(["inbox"])).toEqual(held);
+
+    channel.post({
+      v: 1,
+      frame: "data",
+      key: ["inbox"],
+      data: fresher,
+      at: Date.now(),
+    });
+    expect(follower.queryClient.getQueryState(["inbox"])?.isInvalidated).toBe(
+      false,
+    );
+    expect(follower.queryClient.getQueryData(["inbox"])).toEqual(fresher);
+    channel.close();
+  });
+
+  it("keeps a page's own response off the channel", async () => {
+    const { leader } = await twoTabs();
+    const { seen, channel } = observeChannel();
+    await leader.queryClient.fetchQuery({
+      queryKey: ["issues", "todou"],
+      queryFn: () => ({ items: [] }),
+    });
+    await leader.queryClient.fetchQuery({
+      queryKey: ["timeline", "todou", 7],
+      queryFn: () => [],
+    });
+
+    expect(seen).toEqual([]);
+    channel.close();
+  });
+
+  it("refuses to write a key the whitelist does not name", async () => {
+    // What arrives on the channel must not be able to write anywhere.
+    const { follower } = await twoTabs();
+    const { channel } = observeChannel();
+    channel.post({
+      v: 1,
+      frame: "data",
+      key: ["issues", "todou"],
+      data: { items: [{ number: 1 }] },
+      at: Date.now(),
+    });
+
+    expect(
+      follower.queryClient.getQueryData(["issues", "todou"]),
+    ).toBeUndefined();
+    channel.close();
+  });
+
+  it("shares each of the three user-level keys", async () => {
+    const { leader, follower } = await twoTabs();
+    const bodies = new Map<string, unknown>([
+      ['["inbox"]', cachedInbox(cachedRow())],
+      ['["me-prefs"]', { show_weak_unread: true }],
+      ['["projects"]', [{ slug: "todou", name: "Todou" }]],
+    ]);
+    for (const key of SHARED_QUERY_KEYS) {
+      const body = bodies.get(JSON.stringify(key));
+      await leader.queryClient.fetchQuery({
+        queryKey: [...key],
+        queryFn: () => body,
+      });
+      expect(follower.queryClient.getQueryData([...key])).toEqual(body);
+      // ["me-prefs"] carries a 60s staleTime, so a cleared invalidation flag
+      // is the difference between "fresh now" and "fresh in a minute".
+      expect(follower.queryClient.getQueryState([...key])?.isInvalidated).toBe(
+        false,
+      );
+    }
   });
 });

@@ -42,11 +42,13 @@ export function AppShell({
   me?: Me;
   children: ReactNode;
 }) {
-  // One user-level stream for every page and every readable project (T-122).
-  // Held shut until the account is known: with no session there is none to
-  // subscribe to, and an unauthenticated visitor would collect a run of 401s
-  // on the way to /login.
-  useUserEvents(me !== undefined);
+  // One user-level stream for every page and every readable project (T-122),
+  // and since T-276 one for every tab of the account: the lock and the
+  // channel are named after this id, so signing in as somebody else does not
+  // inherit the previous identity's stream. Held shut until the account is
+  // known: with no session there is none to subscribe to, and an
+  // unauthenticated visitor would collect a run of 401s on the way to /login.
+  useUserEvents(me?.id);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const logout = useMutation({
