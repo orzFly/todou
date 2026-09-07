@@ -104,7 +104,12 @@ export function renderMetadata(entries: IssueMetadataEntry[]): string {
       lines.push(
         `  ${entry.key}  ${personName(entry.updated_by)} · ${relativeTime(entry.updated_at)}`,
       );
-      for (const line of entry.value.split("\n")) lines.push(`    ${line}`);
+      // Trailing newlines are not printed, the way the issue body is not:
+      // a blank indented line at the end of a block reads as a rendering
+      // fault. `--json` still carries the value byte for byte.
+      for (const line of entry.value.trimEnd().split("\n")) {
+        lines.push(`    ${line}`);
+      }
     }
   }
   return lines.length === 0 ? "no metadata" : lines.join("\n");

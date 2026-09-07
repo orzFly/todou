@@ -333,7 +333,11 @@ describe("issue view/list --metadata", () => {
   });
 
   const viewRoutes = (reply: (url: URL) => unknown): Route[] => [
-    ["GET", "/api/projects/todou/issues/282", (_init, url) => reply(url)],
+    [
+      "GET",
+      "/api/projects/todou/issues/282",
+      (_init: RequestInit, url: URL) => reply(url),
+    ],
     [
       "GET",
       "/api/projects/todou/issues/282/timeline",

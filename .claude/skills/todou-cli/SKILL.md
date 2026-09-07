@@ -51,6 +51,10 @@ todou comment delete 16 123 -y                # take back a misfire; not reversi
 todou attach -p <proj> 16 file.png ...        # prints `#id name → url`
 todou attach list -p <proj> 16                # id / filename / size / url
 todou attach download -p <proj> 16 <id|name> [-o <path>|-o -]
+todou metadata get 16 [--namespace orch,ci]   # machine state on a card; no flag = every namespace
+todou metadata namespaces 16                  # names, key counts, newest write — no values
+todou metadata set 16 --namespace orch k=v …  # [--if-match k=v] [--if-absent k] for compare-and-set
+todou metadata unset 16 --namespace orch k …  # delete keys; `k=` writes an empty value instead
 todou config show [--json]                    # resolved config and where each part came from; no token values
 todou project members -p <proj>               # logins for -a/--assignee and --exclude-actor
 todou status list -p <proj>
@@ -124,6 +128,13 @@ A request to file a card asks for the card, not for a report.
   `label create` is for recoloring and bulk setup.
 - `--add-label` and `--remove-label` edit the set; `--label` replaces the whole set. Use `--add-label`
   unless you mean to replace. Both accept several names. Details: `references/labels.md`.
+
+## Metadata
+
+Namespaced key/value pairs on a card, for state a tool keeps rather than something a person reads:
+which phase an orchestrator has a card in, which run last touched it. Writing one is silent — no
+timeline entry, no unread marker, nothing moved to the top of a list — and nothing returns it unless
+it was asked for by name. Details: `references/metadata.md`.
 
 ## Waiting: watch, question wait, spec wait
 

@@ -1,5 +1,5 @@
 import type { Project, ReferenceDirectory } from "@todou/shared";
-import { parseSearchQuery } from "@todou/shared";
+import { parseSearchQuery, SEARCH_QUALIFIERS } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import {
   type CompletionRow,
@@ -47,7 +47,9 @@ describe("the qualifier key source", () => {
     // the search row so Enter cannot trip over it.
     const { matched, rows } = keys("部署 |");
     expect(matched).toBe(false);
-    expect(rows).toHaveLength(7);
+    // Counted off the registry rather than written down, so adding a
+    // qualifier does not fail a test about something else.
+    expect(rows).toHaveLength(Object.keys(SEARCH_QUALIFIERS).length);
   });
 
   it("offers nothing for a word that prefixes no key", () => {

@@ -31,6 +31,7 @@ import {
   useCreateLabel,
 } from "@/components/issue/label-picker.tsx";
 import { MarkReadOnView } from "@/components/issue/mark-read-on-view.tsx";
+import { MetadataSection } from "@/components/issue/metadata-section.tsx";
 import { IssueMoreActions } from "@/components/issue/more-actions-menu.tsx";
 import {
   SpecEntryRow,
@@ -580,6 +581,8 @@ function Sidebar({
 
       {/* Placement per the T-63 verdict: after Assignees, verdict-free. */}
       <SpecSidebarSection slug={slug} issueNumber={issue.number} />
+
+      <MetadataSection slug={slug} issueNumber={issue.number} />
 
       {canDelete && !trashed && <IssueMoreActions slug={slug} issue={issue} />}
     </aside>
