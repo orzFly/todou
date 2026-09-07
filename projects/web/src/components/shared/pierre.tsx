@@ -217,6 +217,13 @@ export function fenceFilename(tag: string | undefined): string {
  * from the filename, dark/light theme in step with the revision diffs.
  * Until the pierre chunk arrives a plain <pre> shows the same text, so
  * content is readable immediately.
+ *
+ * pierre's virtualization scaffold declares `contain: inline-size`, so this
+ * block contributes 0px to an ancestor's intrinsic width: in a content-sized
+ * column (horizontal flex item, table cell, `max-content`) the code wraps at
+ * the width of the prose beside it — 30 lines came out 5416px tall in a 109px
+ * column, and a fence with no prose left the column 0px wide (T-287). Any such
+ * column has to be made to fill its row.
  */
 export function CodeBlock({
   filename,

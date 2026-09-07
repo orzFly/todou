@@ -52,7 +52,11 @@ function selectingInside(row: HTMLElement): boolean {
   );
 }
 
-/** Markdown that sits inside an option row: kill the paragraph margins. */
+/**
+ * Markdown that sits inside an option row: kill the paragraph margins.
+ * Those rows are horizontal flex, so whichever item holds markdown carries
+ * `flex-1` — a code fence has no intrinsic width of its own, see `CodeBlock`.
+ */
 function InlineMarkdown({
   slug,
   issueNumber,
@@ -331,7 +335,7 @@ function QuestionForm({
                   <OffIcon className="size-4" />
                 )}
               </span>
-              <span className="min-w-0 space-y-0.5">
+              <span className="min-w-0 flex-1 space-y-0.5">
                 <InlineMarkdown slug={slug} issueNumber={issueNumber}>
                   {option.label}
                 </InlineMarkdown>
@@ -432,7 +436,7 @@ function AnsweredQuestion({
               <span className="mt-0.5 w-4 shrink-0">
                 {active && <CheckIcon className="size-4 text-primary" />}
               </span>
-              <div className="min-w-0 space-y-0.5">
+              <div className="min-w-0 flex-1 space-y-0.5">
                 <InlineMarkdown slug={slug} issueNumber={issueNumber}>
                   {option.label}
                 </InlineMarkdown>
@@ -462,7 +466,11 @@ function AnsweredQuestion({
             <span className="mt-0.5 shrink-0 text-xs text-muted-foreground">
               other:
             </span>
-            <InlineMarkdown slug={slug} issueNumber={issueNumber}>
+            <InlineMarkdown
+              slug={slug}
+              issueNumber={issueNumber}
+              className="flex-1"
+            >
               {record.other}
             </InlineMarkdown>
           </div>

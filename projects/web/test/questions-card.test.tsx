@@ -5,6 +5,17 @@ import { QuestionsCard } from "../src/components/timeline/questions-card.tsx";
 import { cmSetValue } from "./cm.ts";
 import { renderWithProviders } from "./render.tsx";
 
+// A fence in an answer reaches the real pierre CodeView through MarkdownView,
+// and the highlighter has no business starting under happy-dom.
+vi.mock("@pierre/diffs/react", () => ({
+  MultiFileDiff: () => null,
+  CodeView: ({ items }: { items: Array<{ file: { contents: string } }> }) => (
+    <div data-testid="code-view">
+      {items.map((i) => i.file.contents).join("\n")}
+    </div>
+  ),
+}));
+
 const user = {
   id: 1,
   login: "user",
@@ -72,6 +83,44 @@ const answered = {
     },
     { key: "scope", selected: [], other: null, declined: true },
   ],
+};
+
+/** Same answers, with the fence in `other` that used to collapse the column. */
+const answeredWithFence = {
+  ...answered,
+  answers: [
+    {
+      key: "schema",
+      selected: [{ index: 1, label: "Inline" }],
+      other: "prose, then a fence.\n\n```ts\nconst x = 1;\n```\n",
+      declined: false,
+    },
+    { key: "scope", selected: [], other: null, declined: true },
+  ],
+};
+
+/**
+ * The flex item carrying this markdown — the ancestor whose own parent is the
+ * flex row. Widths and heights are measured in a real browser (happy-dom has
+ * no layout engine); the numbers live on T-287's spec.
+ */
+function flexItem(md: Element): HTMLElement {
+  let node = md;
+  while (node.parentElement !== null) {
+    if (node.parentElement.classList.contains("flex"))
+      return node as HTMLElement;
+    node = node.parentElement;
+  }
+  throw new Error("no flex row above this .markdown-body");
+}
+
+const markdownBodyOf = (
+  view: { getByText: (t: string) => HTMLElement },
+  text: string,
+): Element => {
+  const body = view.getByText(text).closest(".markdown-body");
+  expect(body).not.toBeNull();
+  return body as Element;
 };
 
 const item = (answer: unknown, comp: QuestionsComponent) => ({
@@ -297,6 +346,18 @@ describe("QuestionsCard (unanswered)", () => {
     );
   });
 
+  it("gives the option row's markdown the whole row width", async () => {
+    stubFetch();
+    const view = renderCard();
+    await view.findByText("awaiting answer");
+
+    // The flex item is the box around label and description, not the
+    // InlineMarkdown wrapper inside it.
+    expect([...flexItem(markdownBodyOf(view, "New entity")).classList]).toEqual(
+      expect.arrayContaining(["min-w-0", "flex-1"]),
+    );
+  });
+
   it("double-clicking a word toggles exactly once", async () => {
     stubFetch();
     const view = renderCard();
@@ -372,6 +433,21 @@ describe("QuestionsCard (answered)", () => {
     expect(
       view.queryByText("No migration; queries can never filter on it."),
     ).toBeNull();
+  });
+
+  it("gives a fenced answer the whole row width", async () => {
+    stubFetch(answeredWithFence);
+    const view = renderCard();
+
+    await view.findByText("answered by");
+    // `other:` row: the flex item is InlineMarkdown's own wrapper…
+    expect([
+      ...flexItem(markdownBodyOf(view, "prose, then a fence.")).classList,
+    ]).toEqual(expect.arrayContaining(["min-w-0", "flex-1"]));
+    // …while the option row's is the box around label and description.
+    expect([...flexItem(markdownBodyOf(view, "Inline")).classList]).toEqual(
+      expect.arrayContaining(["min-w-0", "flex-1"]),
+    );
   });
 
   it("omits the toggle when no option carries a description", async () => {
