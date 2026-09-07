@@ -204,6 +204,15 @@ export function Composer({
   const [uploading, setUploading] = useState(false);
   const [running, setRunning] = useState(false);
   const [draft, setDraft] = useState("");
+  const [touched, setTouched] = useState(false);
+  // `/issues/7 → /issues/8` is one route with a changed param, so the router
+  // keeps this instance and nothing remounts. Without this the buttons would
+  // arrive on the next card already open, and "for this visit" would be a lie.
+  const [touchedFor, setTouchedFor] = useState(issueNumber);
+  if (touchedFor !== issueNumber) {
+    setTouchedFor(issueNumber);
+    setTouched(false);
+  }
   const staging = useStagedFiles();
   const queryClient = useQueryClient();
   const registry = useCommandRegistry(slug);
@@ -234,6 +243,11 @@ export function Composer({
     (parsed?.body ?? draft).trim() === "" &&
     staging.staged.length === 0 &&
     commands.length === 0;
+  // A broken command line counts as content even though `empty` cannot see it:
+  // it yields neither a body nor a command, so a draft that is nothing else
+  // reads as empty while still rendering its error block. Reachable by walking
+  // to the next card, which resets `touched` and keeps the draft.
+  const expanded = touched || !empty || broken.length > 0;
   const label = submitLabel({
     uploading,
     running,
@@ -293,6 +307,7 @@ export function Composer({
     editor.current?.setValue("");
     setDraft("");
     staging.clear();
+    setTouched(false);
   }
 
   return (
@@ -327,11 +342,16 @@ export function Composer({
         </p>
       ))}
       <form
-        className="flex flex-col gap-2 sm:flex-row sm:items-end"
+        className="flex flex-col"
         onSubmit={(e) => {
           e.preventDefault();
           void submit();
         }}
+        // Focus rather than click, so tabbing in reaches the buttons too;
+        // pointerdown as well, because a submit resets this while the caret
+        // stays in the editor, and clicking back in then fires no focusin.
+        onFocus={() => setTouched(true)}
+        onPointerDown={() => setTouched(true)}
       >
         <MarkdownEditor
           ref={editor}
@@ -339,7 +359,7 @@ export function Composer({
           placeholder="Write a comment… (#N references other issues, / runs a command; paste or drop files)"
           // Sticky at the viewport bottom: an auto-growing draft must not
           // swallow the page, especially on small/mobile viewports.
-          className="max-h-[40dvh] min-h-16 sm:flex-1"
+          className="max-h-[40dvh] min-h-16"
           extensions={extensions}
           onChange={setDraft}
           onPaste={staging.onPaste}
@@ -347,23 +367,27 @@ export function Composer({
           onDragOver={staging.onDragOver}
           onSubmit={() => void submit()}
         />
-        {/* Phones: the textarea gets the whole row; the buttons drop to
-            their own row below (attach left, submit right — the same row
-            layout as the issue-body and new-issue editors). ≥sm the
-            wrapper dissolves and everything shares one row as before. */}
-        <div className="flex items-center justify-between gap-2 sm:contents">
-          <StagedFileUploadButton
-            onFiles={staging.stage}
-            disabled={uploading}
-          />
-          <Button
-            type="submit"
-            size="sm"
-            disabled={uploading || running || empty || broken.length > 0}
-          >
-            <SendIcon className="size-4" /> {label}
-          </Button>
-        </div>
+        {/* The buttons get a row of their own (attach left, submit right —
+            the same layout as the issue-body, edit-comment and new-issue
+            editors) because `submitLabel` grows with the commands it parsed:
+            "Comment, move to In Progress and label bug" beside the editor
+            takes its width from the editor. Not rendered rather than hidden,
+            so an invisible button cannot sit in the tab order. */}
+        {expanded && (
+          <div className="composer-actions-in mt-2 flex h-7 items-start justify-between gap-2">
+            <StagedFileUploadButton
+              onFiles={staging.stage}
+              disabled={uploading}
+            />
+            <Button
+              type="submit"
+              size="sm"
+              disabled={uploading || running || empty || broken.length > 0}
+            >
+              <SendIcon className="size-4" /> {label}
+            </Button>
+          </div>
+        )}
       </form>
     </div>
   );

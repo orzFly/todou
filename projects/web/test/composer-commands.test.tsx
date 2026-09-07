@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import type { CommandInput, Label, Me, Member, Status } from "@todou/shared";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -9,7 +9,7 @@ import {
   statusesQuery,
 } from "../src/api/queries.ts";
 import { Composer, submitLabel } from "../src/components/timeline/composer.tsx";
-import { cmGetValue, cmSetValue } from "./cm.ts";
+import { cmFocus, cmGetValue, cmSetValue, cmView } from "./cm.ts";
 
 describe("submitLabel", () => {
   const base = {
@@ -105,19 +105,20 @@ function mount(
   const onSend = handlers.onSend ?? vi.fn();
   const onSendWithCommands =
     handlers.onSendWithCommands ?? vi.fn(async () => undefined);
-  const view = render(
+  const tree = (issueNumber: number) => (
     <QueryClientProvider client={client}>
       <Composer
         slug="todou"
-        issueNumber={7}
+        issueNumber={issueNumber}
         onSend={onSend}
         onSendWithCommands={onSendWithCommands}
         failed={[]}
         onRetry={vi.fn()}
       />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
-  return { ...view, onSend, onSendWithCommands };
+  const view = render(tree(7));
+  return { ...view, onSend, onSendWithCommands, tree };
 }
 
 const submitButton = (view: { container: HTMLElement }) => {
@@ -129,6 +130,8 @@ const submitButton = (view: { container: HTMLElement }) => {
 describe("Composer with slash commands", () => {
   it("says what the submit is about to do", async () => {
     const view = mount();
+    // Nothing typed yet, so the buttons are only there once the box is entered.
+    cmFocus(view.container);
     await waitFor(() => expect(submitButton(view).disabled).toBe(true));
     expect(submitButton(view).textContent).toContain("Comment");
 
@@ -246,5 +249,122 @@ describe("Composer with slash commands", () => {
     expect(lines.filter((l) => l.broken).map((l) => l.text)).toEqual([
       "/label nope",
     ]);
+  });
+});
+
+const attachButton = (view: { container: HTMLElement }) =>
+  view.container.querySelector('button[aria-label="Attach files"]');
+const maybeSubmit = (view: { container: HTMLElement }) =>
+  view.container.querySelector('button[type="submit"]');
+const actionRow = (view: { container: HTMLElement }) =>
+  view.container.querySelector('form > div:not([data-slot="markdown-editor"])');
+
+/** A DataTransfer stand-in complete enough for CodeMirror's own drop handler. */
+const carrying = (...files: File[]) =>
+  ({
+    files,
+    types: [],
+    items: [],
+    getData: () => "",
+  }) as unknown as DataTransfer;
+
+describe("Composer buttons", () => {
+  it("shows neither button until the box is entered", () => {
+    const view = mount();
+    expect(maybeSubmit(view)).toBeNull();
+    expect(attachButton(view)).toBeNull();
+  });
+
+  it("shows both on focus, with the submit still disabled", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    await waitFor(() => expect(maybeSubmit(view)).not.toBeNull());
+    expect(attachButton(view)).not.toBeNull();
+    expect(submitButton(view).disabled).toBe(true);
+  });
+
+  it("keeps them once shown, even after the focus leaves", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    await waitFor(() => expect(maybeSubmit(view)).not.toBeNull());
+    fireEvent.focusOut(cmView(view.container).contentDOM);
+    expect(maybeSubmit(view)).not.toBeNull();
+    expect(attachButton(view)).not.toBeNull();
+  });
+
+  it("hides them again once a submission lands", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    cmSetValue(view.container, "hello");
+    await waitFor(() => expect(submitButton(view).disabled).toBe(false));
+    submitButton(view).click();
+    await waitFor(() => expect(maybeSubmit(view)).toBeNull());
+    expect(attachButton(view)).toBeNull();
+  });
+
+  it("keeps them when the submission is refused", async () => {
+    const view = mount({
+      onSendWithCommands: vi.fn(async () => {
+        throw new Error("no");
+      }),
+    });
+    cmFocus(view.container);
+    cmSetValue(view.container, "x\n/close");
+    await waitFor(() => expect(submitButton(view).disabled).toBe(false));
+    submitButton(view).click();
+    await waitFor(() => expect(view.onSendWithCommands).toHaveBeenCalled());
+    expect(maybeSubmit(view)).not.toBeNull();
+    expect(cmGetValue(view.container)).toBe("x\n/close");
+  });
+
+  it("shows them for a file dropped in, which never focuses anything", async () => {
+    const view = mount();
+    fireEvent.drop(cmView(view.container).contentDOM, {
+      dataTransfer: carrying(
+        new File(["bytes"], "shot.png", { type: "image/png" }),
+      ),
+    });
+    await waitFor(() => expect(maybeSubmit(view)).not.toBeNull());
+    expect(attachButton(view)).not.toBeNull();
+  });
+
+  it("hides them again on the next card, which reuses this instance", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    await waitFor(() => expect(maybeSubmit(view)).not.toBeNull());
+    view.rerender(view.tree(8));
+    expect(maybeSubmit(view)).toBeNull();
+    expect(attachButton(view)).toBeNull();
+  });
+
+  it("never leaves a command error standing on its own", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    cmSetValue(view.container, "/label nope");
+    await waitFor(() =>
+      expect(view.container.querySelector('[role="alert"]')).not.toBeNull(),
+    );
+    // The next card resets "entered this box" but keeps the draft, and a lone
+    // broken line parses to neither body nor command — the one way the error
+    // block can outlive the buttons that explain what to do about it.
+    view.rerender(view.tree(8));
+    expect(view.container.querySelector('[role="alert"]')).not.toBeNull();
+    expect(maybeSubmit(view)).not.toBeNull();
+  });
+
+  it("gives the buttons their own row at every width", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    await waitFor(() => expect(maybeSubmit(view)).not.toBeNull());
+    const form = view.container.querySelector("form");
+    expect(form?.className).not.toContain("sm:flex-row");
+    expect(actionRow(view)?.className).not.toContain("sm:contents");
+  });
+
+  it("grows the row in rather than snapping it open", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    await waitFor(() => expect(maybeSubmit(view)).not.toBeNull());
+    expect(actionRow(view)?.className).toContain("composer-actions-in");
   });
 });

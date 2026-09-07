@@ -1022,6 +1022,22 @@ diffs-container {
     animation: anchor-flash 2s ease-out both;
   }
 
+  /* The comment composer's button row (T-285): it mounts when you enter the
+     box, and those 36px grow in rather than appear, so a composer stuck to
+     the viewport bottom does not read as a jump. The row stays transparent
+     until it is nearly full height — half a button poking out of a short box
+     looks worse than the jump did, and that is also why nothing here clips:
+     at rest both buttons need to draw their focus ring outside the 28px row. */
+  .composer-actions-in {
+    animation: composer-actions-in 120ms ease-out;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .composer-actions-in {
+      animation: none;
+    }
+  }
+
   /* Spec review view (T-23): blocks carrying comments, and blocks changed
      since the compare baseline (the ↑/↓ nav jumps between the latter). */
   .spec-annotated {
@@ -1310,6 +1326,17 @@ diffs-container {
     padding: 0;
     border-radius: 0;
     background-color: transparent;
+  }
+}
+
+@keyframes composer-actions-in {
+  from {
+    height: 0;
+    margin-top: 0;
+    opacity: 0;
+  }
+  60% {
+    opacity: 0;
   }
 }
 

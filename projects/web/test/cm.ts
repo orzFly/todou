@@ -1,4 +1,5 @@
 import { EditorView } from "@codemirror/view";
+import { fireEvent } from "@testing-library/react";
 
 /**
  * Test-side reach into a MarkdownEditor. The document lives in the
@@ -50,6 +51,18 @@ export function cmType(root: ParentNode, value: string, index = 0): void {
     selection: { anchor: value.length },
     userEvent: "input.type",
   });
+}
+
+/**
+ * Focus the editor the way a click does, through the bubbling event React
+ * listens for. Neither `contentDOM.focus()` nor `EditorView.focus()` reaches
+ * an `onFocus` on an ancestor under happy-dom; only the dispatched `focusin`
+ * does. The `focus()` call keeps the editor's own focus state in step.
+ */
+export function cmFocus(root: ParentNode, index = 0): void {
+  const content = cmView(root, index).contentDOM;
+  content.focus();
+  fireEvent.focusIn(content);
 }
 
 /**
