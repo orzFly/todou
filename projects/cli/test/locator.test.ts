@@ -1,6 +1,6 @@
 import type { ReferenceConfig, ReferenceDirectory } from "@todou/shared";
 import { describe, expect, it } from "vitest";
-import { CliError } from "../src/errors.ts";
+import { CliError, NoAccessError } from "../src/errors.ts";
 import {
   checkQualifiedPrefix,
   type LadderInputs,
@@ -256,6 +256,46 @@ describe("resolvePrefixedRef, rung 5: nobody holds it", () => {
     expect(fails("FOO", "FOO-1", { directory: null }).message).toBe(
       'no project uses the prefix "FOO" (from "FOO-1")',
     );
+  });
+});
+
+describe("which failures carry a target to ask for access on (T-280)", () => {
+  it("marks the two the reporter may offer a link for", () => {
+    const contested: ReferenceDirectory = {
+      ...held([["M", "mirror"]]),
+      contested: [{ prefix: "M", from: SINCE, to: null }],
+    };
+    for (const [prefix, raw, over] of [
+      ["FOO", "FOO-76", {}],
+      ["M", "M-3", { directory: contested }],
+    ] as const) {
+      const error = fails(prefix, raw, over);
+      expect([raw, error instanceof NoAccessError]).toEqual([raw, true]);
+      // The ref as typed, so the link cannot carry a resolved slug.
+      expect((error as NoAccessError).target).toBe(raw);
+    }
+  });
+
+  it("leaves a near-miss and two visible holders as plain failures", () => {
+    const withFoobar = held([
+      ["T", "main"],
+      ["FOOBAR", "mica"],
+    ]);
+    const both = held([
+      ["M", "mirror"],
+      ["M", "muon"],
+    ]);
+    // A typo one keystroke from a prefix in reach, and a conflict the caller
+    // can already read both sides of: neither is a missing role.
+    for (const [prefix, raw, over] of [
+      ["FOO", "FOO-76", { directory: withFoobar }],
+      ["M", "M-3", { directory: both }],
+    ] as const) {
+      expect([raw, fails(prefix, raw, over) instanceof NoAccessError]).toEqual([
+        raw,
+        false,
+      ]);
+    }
   });
 });
 

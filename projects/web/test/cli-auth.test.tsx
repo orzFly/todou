@@ -4,12 +4,14 @@ import type { Agent, CliAuthRequestInfo, Me } from "@todou/shared";
 import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  defaultSelection,
+  readLastAgentId,
+} from "../src/components/shared/auth-target-picker.tsx";
+import {
   CliAuthCard,
   CliAuthCodeCard,
   callbackUrl,
-  defaultSelection,
   parseCliAuthSearch,
-  readLastAgentId,
 } from "../src/pages/cli-auth.tsx";
 import { safeRedirect } from "../src/pages/login.tsx";
 

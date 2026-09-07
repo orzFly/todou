@@ -53,6 +53,16 @@ export const CAPABILITIES = [
   { id: "member.set", minRole: "admin", enforce: "gate" },
   { id: "member.remove", minRole: "admin", enforce: "gate" },
 
+  // Denying an agent access is a reader's to do (T-280): the requirement is
+  // that anyone who can see the project can turn its access links off, and a
+  // denial grants nothing — an admin may still add that agent by hand.
+  // Removal sits at the same role deliberately: putting it higher would let
+  // one reader permanently lower the project's automation and leave nobody
+  // below admin able to undo it.
+  { id: "access_denial.list", minRole: "reader", enforce: "gate" },
+  { id: "access_denial.set", minRole: "reader", enforce: "gate" },
+  { id: "access_denial.remove", minRole: "reader", enforce: "gate" },
+
   { id: "issue.list", minRole: "reader", enforce: "gate" },
   { id: "issue.count", minRole: "reader", enforce: "gate" },
   { id: "issue.read", minRole: "reader", enforce: "addressed" },

@@ -4,6 +4,8 @@ import {
   SSE_CHANGE_EVENT,
 } from "./events.ts";
 import type {
+  AccessDenial,
+  AccessHint,
   ActivityPage,
   Agent,
   AgentCreateInput,
@@ -122,17 +124,27 @@ export class TodouError extends Error {
   readonly status: number;
   readonly code: string;
   readonly details?: unknown;
+  /**
+   * The path this request was sent to, relative to `/api` and without any
+   * reverse-proxy prefix — the same spelling the caller passed in (T-280).
+   * Carried because an error envelope names no subject: "project not found"
+   * with a path of `/projects/homelab/issues` is the only way a reporter
+   * downstream learns *which* project could not be read.
+   */
+  readonly path?: string;
 
   constructor(
     status: number,
     code: string,
     message: string,
     details?: unknown,
+    path?: string,
   ) {
     super(message);
     this.status = status;
     this.code = code;
     this.details = details;
+    this.path = path;
   }
 }
 
@@ -198,7 +210,11 @@ export class GoneError extends TodouError {
  * The redirect bodies are not the error envelope every other status uses,
  * so they are parsed before the envelope reading below would mangle them.
  */
-function errorFromBody(status: number, parsed: unknown): TodouError {
+function errorFromBody(
+  status: number,
+  parsed: unknown,
+  path?: string,
+): TodouError {
   if (status === 301) {
     const moved = (parsed as { moved_to?: unknown } | null)?.moved_to;
     const result = MovedTo.safeParse(moved);
@@ -216,6 +232,7 @@ function errorFromBody(status: number, parsed: unknown): TodouError {
     body?.error?.code ?? "unknown",
     body?.error?.message ?? `${status}`,
     body?.error?.details,
+    path,
   );
 }
 
@@ -348,7 +365,7 @@ export class TodouClient {
       } catch {
         // Non-JSON error body; errorFromBody keeps status as message.
       }
-      throw errorFromBody(res.status, parsed);
+      throw errorFromBody(res.status, parsed, path);
     }
     if (this.#onCanonicalSlug !== undefined) {
       const canonical = res.headers.get(CANONICAL_SLUG_HEADER);
@@ -442,7 +459,7 @@ export class TodouClient {
       } else if (result.status >= 200 && result.status < 300) {
         item.resolve(result.status === 204 ? undefined : result.body);
       } else {
-        item.reject(errorFromBody(result.status, result.body));
+        item.reject(errorFromBody(result.status, result.body, item.url));
       }
     });
   }
@@ -471,6 +488,13 @@ export class TodouClient {
     this.request<void>("PUT", "/me/read", { json: input });
   createMyToken = (input: TokenCreateInput) =>
     this.request<TokenCreated>("POST", "/me/tokens", { json: input });
+  /**
+   * Whether to print an access link for `target`, and whose name goes in it
+   * (T-280). Answers about the caller's own denial record only, so it says
+   * nothing about whether `target` names a project at all.
+   */
+  accessHint = (target: string) =>
+    this.request<AccessHint>("GET", "/me/access-hint", { query: { target } });
 
   // — CLI device authorization (T-140) —
   // The first two are the only calls a not-yet-logged-in CLI makes, so they
@@ -547,6 +571,13 @@ export class TodouClient {
     });
   removeMember = (slug: string, userId: number) =>
     this.request<void>("DELETE", `/projects/${slug}/members/${userId}`);
+
+  listAccessDenials = (slug: string) =>
+    this.request<AccessDenial[]>("GET", `/projects/${slug}/access-denials`);
+  denyAccess = (slug: string, userId: number) =>
+    this.request<void>("PUT", `/projects/${slug}/access-denials/${userId}`);
+  allowAccess = (slug: string, userId: number) =>
+    this.request<void>("DELETE", `/projects/${slug}/access-denials/${userId}`);
 
   listStatuses = (slug: string) =>
     this.request<Status[]>("GET", `/projects/${slug}/statuses`);
@@ -947,7 +978,7 @@ export class TodouClient {
       } catch {
         // Non-JSON error body; errorFromBody keeps status as message.
       }
-      throw errorFromBody(res.status, parsed);
+      throw errorFromBody(res.status, parsed, "/events");
     }
     const contentType = res.headers.get("content-type") ?? "";
     if (!res.body || !contentType.includes("text/event-stream")) {

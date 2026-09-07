@@ -1,5 +1,6 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
+  AccessHint,
   AgentMemberships,
   BulkReadInput,
   IssueReadInput,
@@ -17,6 +18,7 @@ import {
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
 import { ForbiddenError, ValidationFailedError } from "../errors.ts";
+import { accessHint } from "../services/access-denials.ts";
 import { listAgentMemberships } from "../services/agents.ts";
 import {
   notifyIssueRead,
@@ -217,6 +219,22 @@ const resolveRefRoute = createRoute({
   },
 });
 
+const accessHintRoute = createRoute({
+  method: "get",
+  path: "/me/access-hint",
+  summary:
+    "Whether to offer me a link asking for access to `target`, and the " +
+    "login and id to write into it. Always 200: it answers about my own " +
+    "denial record, never about whether `target` names a project.",
+  request: { query: z.object({ target: z.string().min(1).max(128) }) },
+  responses: {
+    200: {
+      description: "The same shape whatever the target turns out to be",
+      content: { "application/json": { schema: AccessHint } },
+    },
+  },
+});
+
 // Under /me rather than /agents/memberships: agentRoutes() already owns
 // `/{id}`, so a sibling static segment would only avoid a 400 from
 // `z.coerce.number()` by relying on Hono matching static before parameter.
@@ -352,6 +370,12 @@ export function meRoutes() {
     const ctx = c.get("appCtx");
     const { ref } = c.req.valid("query");
     return c.json(await resolveRefLocator(ctx, c.get("user"), ref), 200);
+  });
+
+  app.openapi(accessHintRoute, async (c) => {
+    const ctx = c.get("appCtx");
+    const { target } = c.req.valid("query");
+    return c.json(await accessHint(ctx, c.get("user"), target), 200);
   });
 
   app.openapi(agentMembershipsRoute, async (c) => {

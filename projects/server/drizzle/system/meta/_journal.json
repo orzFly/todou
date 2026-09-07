@@ -64,6 +64,13 @@
       "when": 1788490049333,
       "tag": "0008_issue_addresses",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788808332715,
+      "tag": "0009_access-denials",
+      "breakpoints": true
     }
   ]
 }

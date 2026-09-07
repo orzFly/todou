@@ -1,10 +1,12 @@
 import type {
+  AccessHint,
   Label,
   ReferenceConfig,
   ReferenceDirectory,
   ResolvedRef,
   Status,
   TodouClient,
+  VersionInfo,
 } from "@todou/shared";
 import { canonicalizeLabelName, minRoleOf, TodouError } from "@todou/shared";
 import { CliError } from "./errors.ts";
@@ -92,6 +94,67 @@ export async function fetchResolvedRef(
   if (cached !== undefined) return cached;
   const pending = client.resolveRef(ref).catch(() => null);
   byRef.set(ref, pending);
+  return pending;
+}
+
+const VERSIONS = new WeakMap<TodouClient, Promise<VersionInfo | null>>();
+
+export async function fetchVersion(
+  client: TodouClient,
+): Promise<VersionInfo | null> {
+  const cached = VERSIONS.get(client);
+  if (cached !== undefined) return cached;
+  const pending = client.version().catch(() => null);
+  VERSIONS.set(client, pending);
+  return pending;
+}
+
+/**
+ * Where a person opens this deployment in a browser (T-280).
+ *
+ * The API base is a fallback, not the answer: this one is reached through
+ * whatever address the machine running the CLI happens to use, which on this
+ * deployment is an internal forwarding address — fine for requests, useless
+ * in a link someone else has to open. A server that declares no public origin
+ * leaves nothing better to print.
+ *
+ * Shared with `todou login`, whose printed link has the same defect (T-295):
+ * one function so the two cannot answer differently.
+ */
+export async function fetchWebOrigin(
+  client: TodouClient,
+  apiBase: string,
+): Promise<string> {
+  return (await fetchVersion(client))?.public_origin ?? apiBase;
+}
+
+const ACCESS_HINTS = new WeakMap<
+  TodouClient,
+  Map<string, Promise<AccessHint | null>>
+>();
+
+/**
+ * Whether to offer an access link for one target, and whose name to write in
+ * it (T-280); null = the question could not be asked, and then nothing is
+ * offered — printing a link with a guessed login would name the wrong account
+ * on the page, and a server predating the endpoint has no page to link to.
+ *
+ * Memoized per target as well as per client, like `fetchResolvedRef`: several
+ * positionals naming the same unreachable project must cost one request.
+ */
+export async function fetchAccessHint(
+  client: TodouClient,
+  target: string,
+): Promise<AccessHint | null> {
+  let byTarget = ACCESS_HINTS.get(client);
+  if (byTarget === undefined) {
+    byTarget = new Map();
+    ACCESS_HINTS.set(client, byTarget);
+  }
+  const cached = byTarget.get(target);
+  if (cached !== undefined) return cached;
+  const pending = client.accessHint(target).catch(() => null);
+  byTarget.set(target, pending);
   return pending;
 }
 

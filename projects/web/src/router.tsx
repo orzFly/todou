@@ -21,6 +21,7 @@ import { parseSpecSearch } from "@/lib/spec-search.ts";
 import { AgentsSettingsPage } from "@/pages/agents-settings.tsx";
 import { BoardPage } from "@/pages/board.tsx";
 import { CliAuthPage } from "@/pages/cli-auth.tsx";
+import { GrantAccessPage } from "@/pages/grant-access.tsx";
 import { InboxPage } from "@/pages/inbox.tsx";
 import { IssueDetailPage } from "@/pages/issue-detail.tsx";
 import { IssueListPage } from "@/pages/issue-list.tsx";
@@ -239,6 +240,14 @@ const cliAuthRoute = createRoute({
   component: CliAuthPage,
 });
 
+// Under the authed layout, so a visitor without a session is sent to /login
+// and back (T-280) — the page's whole answer depends on who is asking.
+const grantAccessRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/grant-access",
+  component: GrantAccessPage,
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   authedRoute.addChildren([
@@ -258,6 +267,7 @@ const routeTree = rootRoute.addChildren([
     agentsSettingsRoute,
     tokensSettingsRoute,
     cliAuthRoute,
+    grantAccessRoute,
   ]),
 ]);
 

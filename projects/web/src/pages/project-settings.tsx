@@ -5,6 +5,7 @@ import {
 } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
+  type AccessDenial,
   formatRef,
   MEMBER_ROLES,
   type Member,
@@ -27,6 +28,7 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 import {
+  accessDenialsQuery,
   agentsQuery,
   api,
   labelsQuery,
@@ -87,6 +89,7 @@ export function ProjectSettingsPage() {
     <div className="space-y-10">
       <ProjectSection slug={slug} />
       <MembersSection slug={slug} />
+      <AccessDenialsSection slug={slug} />
       <StatusesSection slug={slug} />
       <LabelsSection slug={slug} />
       <ReferencesSection slug={slug} />
@@ -521,6 +524,74 @@ export function MembersSection({ slug }: { slug: string }) {
         busy={setRole.isPending}
         onAdd={(agent) => setRole.mutate({ userId: agent.id, role: "writer" })}
       />
+    </section>
+  );
+}
+
+/**
+ * Agents somebody told to stop asking for access here (T-280). Undone from
+ * this page rather than from the agent's own settings, because the person who
+ * clicked Decline may only be a reader — and this is where the people of a
+ * project manage who reaches it.
+ */
+export function AccessDenialsSection({ slug }: { slug: string }) {
+  const denials = useSuspenseQuery(accessDenialsQuery(slug));
+  const queryClient = useQueryClient();
+
+  const allow = useMutation({
+    mutationFn: (userId: number) => api.allowAccess(slug, userId),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["access-denials", slug] }),
+    onError: (error) => toast.error(error.message),
+  });
+
+  if (denials.data.length === 0) return null;
+
+  return (
+    <section className="space-y-3">
+      <h2 className="text-lg font-semibold">Declined access requests</h2>
+      <p className="max-w-xl text-sm text-muted-foreground">
+        These agents are no longer offered a link asking for access here. It
+        blocks nothing else — an admin can still add them above.
+      </p>
+      <div className="rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Agent</TableHead>
+              <TableHead>Declined by</TableHead>
+              <TableHead className="w-44">When</TableHead>
+              <TableHead className="w-24" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {denials.data.map((denial: AccessDenial) => (
+              <TableRow key={denial.user.id}>
+                <TableCell>
+                  <UserChip user={denial.user} showLogin />
+                </TableCell>
+                <TableCell>
+                  <UserChip user={denial.denied_by} />
+                </TableCell>
+                <TableCell className="text-sm text-muted-foreground">
+                  {new Date(denial.created_at).toLocaleString()}
+                </TableCell>
+                <TableCell>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={allow.isPending}
+                    aria-label={`allow ${displayNameOf(denial.user)} to ask again`}
+                    onClick={() => allow.mutate(denial.user.id)}
+                  >
+                    Allow again
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
     </section>
   );
 }

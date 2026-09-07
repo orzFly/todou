@@ -2,7 +2,9 @@ import {
   AGENT_CONTEXT_HEADER,
   type AgentContext,
   type MovedTo,
+  PROJECT_NOT_FOUND,
   TodouClient,
+  TodouError,
 } from "@todou/shared";
 import { type BaseContext, Command, Option } from "clipanion";
 import { type Clock, systemClock } from "./clock.ts";
@@ -13,7 +15,8 @@ import {
   resolveContext,
 } from "./context.ts";
 import { discoverDirConfig } from "./dir-config.ts";
-import { CliError, reportError } from "./errors.ts";
+import { CliError, NoAccessError, reportError } from "./errors.ts";
+import { type GrantAccessKind, grantAccessLines } from "./grant-access.ts";
 import { detectAgentContext, liveSessionIdReader } from "./harness/index.ts";
 import type { ProcessTreeIo } from "./harness/process-tree.ts";
 import type { LiveSession } from "./harness/types.ts";
@@ -26,9 +29,11 @@ import { parseIssueRef } from "./parse.ts";
 import type { openPeerPush } from "./peer-push.ts";
 import type { RefFormat } from "./refs.ts";
 import {
+  fetchAccessHint,
   fetchReferenceConfig,
   fetchReferenceDirectory,
   fetchResolvedRef,
+  fetchWebOrigin,
 } from "./resolve.ts";
 import type { SessionSource } from "./watch-loop.ts";
 
@@ -53,6 +58,38 @@ export function cursorRecord(
     next_cursor: cursor ?? null,
     ...(format === undefined ? {} : { ref_format: format }),
   };
+}
+
+/**
+ * Which project a failure says this account cannot reach, and in what way
+ * (T-280). Pure, and the only place the three trigger conditions are written
+ * down.
+ *
+ * The 404 takes all three of status, code and message, because
+ * `issue not found` is the same status and code one path segment deeper — the
+ * message is what tells them apart, which is why it is a shared constant.
+ */
+function accessTargetOf(
+  error: unknown,
+): { target: string; kind: GrantAccessKind } | undefined {
+  if (error instanceof NoAccessError) {
+    return { target: error.target, kind: "unreadable" };
+  }
+  if (!(error instanceof TodouError)) return undefined;
+  // Every project-scoped route is `/projects/{ref}/…`, so the ref the request
+  // actually named is in its path — the error envelope names no subject.
+  const target = /^\/projects\/([^/?#]+)/.exec(error.path ?? "")?.[1];
+  if (target === undefined) return undefined;
+  if (
+    error.status === 404 &&
+    error.code === "not_found" &&
+    error.message === PROJECT_NOT_FOUND
+  ) {
+    return { target, kind: "unreadable" };
+  }
+  // The project reads fine here, so the wording may name it outright.
+  if (error.status === 403) return { target, kind: "role" };
+  return undefined;
 }
 
 export type CliContext = BaseContext & {
@@ -101,6 +138,10 @@ export abstract class ApiCommand extends Command<CliContext> {
       startup: this.agentContext?.session_id,
     };
   }
+
+  /** Held for `report`, which asks the server two more things after a
+   * failure; unset when the failure came before there was a client. */
+  private client?: TodouClient;
 
   /** May return a non-zero exit code for "no error, but nothing happened". */
   // biome-ignore lint/suspicious/noConfusingVoidType: `undefined` would force every void-returning command to change its signature
@@ -158,41 +199,72 @@ export abstract class ApiCommand extends Command<CliContext> {
         io: this.context.processTree,
       });
       const announced = new Set<string>();
-      const code = await this.run(
-        new TodouClient({
-          baseUrl: this.ctx.server,
-          token: this.ctx.token,
-          headers: this.agentContext
-            ? { [AGENT_CONTEXT_HEADER]: JSON.stringify(this.agentContext) }
-            : undefined,
-          fetch: this.context.fetchImpl,
-          onCanonicalSlug: (canonical, requested) => {
-            // The header also fires for a project named by its id, which is
-            // a spelling every route takes rather than one that has been
-            // retired (T-266). Advising a re-link there would be telling
-            // somebody to fix something that is not broken.
-            if (requested !== null && /^\d+$/.test(requested)) return;
-            if (announced.has(canonical)) return;
-            announced.add(canonical);
-            // Deliberately not rewriting .todou.toml / config.toml: the
-            // binding may well be committed to the repository, and that is
-            // the user's file to change.
-            this.note(
-              `note: project "${requested ?? this.ctx.project ?? "?"}" is now ` +
-                `"${canonical}" — run \`todou project link ${canonical}\` ` +
-                "to update this machine",
-            );
-          },
-        }),
-      );
+      this.client = new TodouClient({
+        baseUrl: this.ctx.server,
+        token: this.ctx.token,
+        headers: this.agentContext
+          ? { [AGENT_CONTEXT_HEADER]: JSON.stringify(this.agentContext) }
+          : undefined,
+        fetch: this.context.fetchImpl,
+        onCanonicalSlug: (canonical, requested) => {
+          // The header also fires for a project named by its id, which is
+          // a spelling every route takes rather than one that has been
+          // retired (T-266). Advising a re-link there would be telling
+          // somebody to fix something that is not broken.
+          if (requested !== null && /^\d+$/.test(requested)) return;
+          if (announced.has(canonical)) return;
+          announced.add(canonical);
+          // Deliberately not rewriting .todou.toml / config.toml: the
+          // binding may well be committed to the repository, and that is
+          // the user's file to change.
+          this.note(
+            `note: project "${requested ?? this.ctx.project ?? "?"}" is now ` +
+              `"${canonical}" — run \`todou project link ${canonical}\` ` +
+              "to update this machine",
+          );
+        },
+      });
+      const code = await this.run(this.client);
       return typeof code === "number" ? code : 0;
     } catch (error) {
-      return this.report(error);
+      return await this.report(error);
     }
   }
 
-  protected report(error: unknown): number {
-    return reportError(error, this.context.stderr, this.ctx?.server);
+  protected async report(error: unknown): Promise<number> {
+    return reportError(
+      error,
+      this.context.stderr,
+      this.ctx?.server,
+      await this.#accessLines(error),
+    );
+  }
+
+  /**
+   * The access-link block, or nothing (T-280). Both reads happen only after
+   * the command has already failed, so no successful run pays for them.
+   *
+   * Nothing is printed when the hint cannot be had: a link naming the wrong
+   * account is worse than no link, and a server old enough to lack the
+   * endpoint has no page to open either.
+   */
+  async #accessLines(error: unknown): Promise<string[] | undefined> {
+    const client = this.client;
+    const server = this.ctx?.server;
+    if (client === undefined || server === undefined) return undefined;
+    const asked = accessTargetOf(error);
+    if (asked === undefined) return undefined;
+    const who = await fetchAccessHint(client, asked.target);
+    // Denied: this account was told once, by somebody who can see that
+    // project, to stop asking. Saying so would be a channel of its own, so
+    // the failure goes back to reading like any other (design.md §3).
+    if (who === null || who.suppressed) return undefined;
+    return grantAccessLines(
+      await fetchWebOrigin(client, server),
+      asked.target,
+      who,
+      asked.kind,
+    );
   }
 
   /** stdout carries data only: the raw JSON under --json, prose otherwise. */

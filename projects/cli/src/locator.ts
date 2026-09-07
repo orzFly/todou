@@ -6,7 +6,7 @@ import type {
   ResolvedRef,
 } from "@todou/shared";
 import { formatRef, resolveClaim } from "@todou/shared";
-import { CliError } from "./errors.ts";
+import { CliError, NoAccessError } from "./errors.ts";
 import { suggestVerbs } from "./suggest.ts";
 
 /**
@@ -212,7 +212,11 @@ export function resolvePrefixedRef(
     // The holder we cannot see is named nowhere — `contested` carries no
     // slug precisely so a viewer who can see only one holder learns of the
     // window without learning who else is in it.
-    throw new CliError(
+    //
+    // A `NoAccessError` because this line already says one holder is out of
+    // reach, so an access link adds a way to act, not a way to learn (T-280).
+    throw new NoAccessError(
+      raw,
       conflictMessage(prefix, raw),
       qualified.length === 1
         ? `one of them is not readable to you; write it qualified, e.g. ${qualified[0]}`
@@ -244,6 +248,10 @@ export function resolvePrefixedRef(
   // project holds it is neither known here nor worth implying.
   const head = `no project uses the prefix "${prefix}" (from "${raw}")`;
   if (near.length > 0) {
+    // A plain CliError, so no access link is offered: a prefix one keystroke
+    // away from one in reach is a typo, and this is the whole judgement of
+    // that (T-280). It reads only the local directory and what was typed, so
+    // dropping the link here breaks no invariant.
     throw new CliError(
       head,
       didYouMean(near.map((candidate) => `${candidate}-${digits}`)),
@@ -258,7 +266,7 @@ export function resolvePrefixedRef(
     `write this project's own card as "${own}" or "${project}/${digits}"`,
     ...(listed.length > 0 ? [`prefixes in reach: ${listed.join(", ")}`] : []),
   ];
-  throw new CliError(head, parts.join("; "));
+  throw new NoAccessError(raw, head, parts.join("; "));
 }
 
 /**

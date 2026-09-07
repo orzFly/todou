@@ -3,6 +3,15 @@ import { PREFIX_PATTERN, SLUG_PATTERN } from "../ref-shapes.ts";
 import { Id, Timestamp } from "./common.ts";
 import { UserRef } from "./user.ts";
 
+/**
+ * What both `getProjectByRef` and `requireProject` throw when the caller has
+ * no role here, whether or not the project exists (T-280). A constant because
+ * the CLI matches on it to tell "no such project, or none you can read" from
+ * `issue not found`, and a message reworded on one side only would silently
+ * stop that match from ever firing.
+ */
+export const PROJECT_NOT_FOUND = "project not found";
+
 export const ProjectSlug = z
   .string()
   .min(1)

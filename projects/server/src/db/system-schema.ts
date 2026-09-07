@@ -333,3 +333,36 @@ export const projectMembers = pgTable(
     index("project_members_user_id_idx").on(t.userId),
   ],
 );
+
+/**
+ * Agents told to stop asking for access to a project (T-280). Beside
+ * project_members because it is the same kind of fact — who stands in what
+ * relation to this project — and it inherits the same cascade: a deleted
+ * project has nothing left to be denied about.
+ *
+ * `deniedBy` is kept although nothing enforces anything with it: whoever
+ * clicked Deny may have been a mere reader, and the row is undone from the
+ * project's settings page by people who need to know who decided this.
+ */
+export const projectAccessDenials = pgTable(
+  "project_access_denials",
+  {
+    projectId: bigint("project_id", { mode: "number" })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    userId: bigint("user_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id),
+    deniedBy: bigint("denied_by", { mode: "number" })
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.projectId, t.userId] }),
+    // The CLI's hint asks "am I denied here", one caller against one
+    // project, which is the leading-column half of the primary key — this
+    // index is for the other direction: every denial one agent has.
+    index("project_access_denials_user_id_idx").on(t.userId),
+  ],
+);

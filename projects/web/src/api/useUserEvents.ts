@@ -183,8 +183,14 @@ export function invalidationsFor(
       // A membership change can grant or revoke a whole project — the
       // user-level stream delivers your own member events even for projects
       // outside the visible set, so the switcher updates live (T-122).
+      //
+      // Access denials (T-280) announce themselves under this entity rather
+      // than a name of their own: `ChangeEntity` is a zod enum, so a new
+      // value would make a page still open from before a deploy drop the
+      // frame it cannot parse.
       return [
         refetch(["members", slug]),
+        refetch(["access-denials", slug]),
         refetch(["projects"]),
         refetch(["agent-memberships"]),
       ];

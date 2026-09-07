@@ -1,5 +1,6 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
+  AccessDenial,
   Member,
   MemberSetInput,
   Project,
@@ -9,6 +10,11 @@ import {
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
 import { requireCapability } from "../services/access.ts";
+import {
+  listDenials,
+  removeDenial,
+  setDenial,
+} from "../services/access-denials.ts";
 import { listMembers, removeMember, setMember } from "../services/members.ts";
 import {
   createProject,
@@ -97,6 +103,38 @@ const removeMemberRoute = createRoute({
   responses: { 204: { description: "Member removed" } },
 });
 
+const listDenialsRoute = createRoute({
+  method: "get",
+  path: "/{slug}/access-denials",
+  summary: `Agents told to stop asking for access here ${roleTag(
+    "access_denial.list",
+  )}`,
+  request: { params: slugParam },
+  responses: {
+    200: { description: "Denials", ...jsonBody(z.array(AccessDenial)) },
+  },
+});
+
+const setDenialRoute = createRoute({
+  method: "put",
+  path: "/{slug}/access-denials/{userId}",
+  summary:
+    "Stop offering this agent a link asking for access here; grants and " +
+    `revokes nothing ${roleTag("access_denial.set")}`,
+  request: { params: memberParams },
+  responses: { 204: { description: "Denial recorded" } },
+});
+
+const removeDenialRoute = createRoute({
+  method: "delete",
+  path: "/{slug}/access-denials/{userId}",
+  summary: `Let this agent ask for access here again ${roleTag(
+    "access_denial.remove",
+  )}`,
+  request: { params: memberParams },
+  responses: { 204: { description: "Denial removed" } },
+});
+
 export function projectRoutes() {
   const app = new OpenAPIHono<AppEnv>();
 
@@ -175,6 +213,29 @@ export function projectRoutes() {
   app.openapi(removeMemberRoute, async (c) => {
     const { slug, userId } = c.req.valid("param");
     await removeMember(c.get("appCtx"), c.get("user"), slug, userId);
+    return c.body(null, 204);
+  });
+
+  app.openapi(listDenialsRoute, async (c) => {
+    return c.json(
+      await listDenials(
+        c.get("appCtx"),
+        c.get("user"),
+        c.req.valid("param").slug,
+      ),
+      200,
+    );
+  });
+
+  app.openapi(setDenialRoute, async (c) => {
+    const { slug, userId } = c.req.valid("param");
+    await setDenial(c.get("appCtx"), c.get("user"), slug, userId);
+    return c.body(null, 204);
+  });
+
+  app.openapi(removeDenialRoute, async (c) => {
+    const { slug, userId } = c.req.valid("param");
+    await removeDenial(c.get("appCtx"), c.get("user"), slug, userId);
     return c.body(null, 204);
   });
 

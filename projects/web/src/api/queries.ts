@@ -113,6 +113,16 @@ export const membersQuery = (slug: string) =>
     staleTime: METADATA_STALE_MS,
   });
 
+// Agents told to stop asking for access here (T-280). Invalidated by the
+// `member` branch of the change feed, which is the entity these writes
+// announce themselves as.
+export const accessDenialsQuery = (slug: string) =>
+  queryOptions({
+    queryKey: ["access-denials", slug],
+    queryFn: () => api.listAccessDenials(slug),
+    staleTime: METADATA_STALE_MS,
+  });
+
 /**
  * Whether the viewer holds a capability here, answered by the same catalog
  * the server gates on. Hiding is cosmetic — the server decides either way —

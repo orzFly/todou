@@ -2,6 +2,7 @@ import {
   type CapabilityId,
   type MemberRole,
   minRoleOf,
+  PROJECT_NOT_FOUND,
   ROLE_RANK,
 } from "@todou/shared";
 import { and, desc, eq, inArray } from "drizzle-orm";
@@ -75,7 +76,7 @@ export async function getProjectByRef(
   ref: string,
 ): Promise<ProjectRow> {
   const found = await findProjectByRef(ctx, ref);
-  if (!found) throw new NotFoundError("project not found");
+  if (!found) throw new NotFoundError(PROJECT_NOT_FOUND);
   return found.project;
 }
 
@@ -116,7 +117,7 @@ export async function requireProject(
 ): Promise<{ project: ProjectRow; role: MemberRole }> {
   const project = await getProjectByRef(ctx, slug);
   const role = await projectRoleOf(ctx, project, user);
-  if (role === null) throw new NotFoundError("project not found");
+  if (role === null) throw new NotFoundError(PROJECT_NOT_FOUND);
   if (ROLE_RANK[role] < ROLE_RANK[minRole]) {
     // Naming the capability turns the 403 into the one line of the catalog
     // to go read, rather than a role the reader must then hunt for.

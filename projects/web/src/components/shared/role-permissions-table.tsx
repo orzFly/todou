@@ -78,6 +78,15 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
     ],
   },
 
+  {
+    group: "Read",
+    // In the Read group because that is what it costs (T-280): anyone who can
+    // see the project may turn its access links off, and doing so grants
+    // nothing. Undoing sits at the same role on purpose — see the catalog.
+    label: "Decline an agent's requests for access here, and undo that",
+    caps: ["access_denial.list", "access_denial.set", "access_denial.remove"],
+  },
+
   { group: "Report", label: "Open a new issue", caps: ["issue.create"] },
   { group: "Report", label: "Post a comment", caps: ["comment.create"] },
   {

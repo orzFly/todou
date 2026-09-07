@@ -22,8 +22,45 @@ export class RetriesExhaustedError extends CliError {
   override readonly exitCode = 4;
 }
 
-/** One-line stderr rendering + exit code 1; unknown errors keep their stack. */
+/**
+ * A failure that names a project this account cannot reach (T-280), so the
+ * reporter can offer a link asking someone who can for a role there.
+ *
+ * Raised where the judgement is made — which for a bare prefix is
+ * `locator.ts`, a pure module that knows nothing of HTTP. It therefore
+ * carries the target and no link: constructing one takes two requests, and
+ * those belong to the reporter.
+ */
+export class NoAccessError extends CliError {
+  /** The project as the user spelled it; never a server-resolved form. */
+  readonly target: string;
+
+  constructor(target: string, message: string, hint?: string) {
+    super(message, hint);
+    this.target = target;
+  }
+}
+
+/**
+ * One-line stderr rendering + exit code 1; unknown errors keep their stack.
+ *
+ * `extra` is appended last, whatever branch answered: it is the access-link
+ * block (T-280), which the caller has to go and fetch — this stays a pure
+ * function so every command that cannot produce that failure keeps calling it
+ * unchanged.
+ */
 export function reportError(
+  error: unknown,
+  stderr: Writable,
+  serverHint?: string,
+  extra?: readonly string[],
+): number {
+  const code = renderError(error, stderr, serverHint);
+  for (const line of extra ?? []) stderr.write(`${line}\n`);
+  return code;
+}
+
+function renderError(
   error: unknown,
   stderr: Writable,
   serverHint?: string,
