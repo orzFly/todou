@@ -6,9 +6,9 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import type { Agent, Member } from "@todou/shared";
+import type { Agent, Me, Member } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { agentsQuery, membersQuery } from "../src/api/queries.ts";
+import { agentsQuery, membersQuery, meQuery } from "../src/api/queries.ts";
 import { AddAgentPicker } from "../src/components/shared/add-agent-picker.tsx";
 import { MembersSection } from "../src/pages/project-settings.tsx";
 
@@ -229,6 +229,18 @@ const MEMBERS: Member[] = [
   },
 ];
 
+const ME: Me = {
+  id: 1,
+  login: "user",
+  display_name: "User",
+  kind: "human",
+  avatar_url: null,
+  owner: null,
+  email: null,
+  is_instance_admin: false,
+  created_at: "2026-08-28T00:00:00Z",
+};
+
 function renderSection() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -237,6 +249,7 @@ function renderSection() {
   // boundary this bare render does not provide.
   client.setQueryData(membersQuery("todou").queryKey, MEMBERS);
   client.setQueryData(agentsQuery.queryKey, ALL);
+  client.setQueryData(meQuery.queryKey, ME);
   return render(
     <QueryClientProvider client={client}>
       <MembersSection slug="todou" />

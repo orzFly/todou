@@ -250,20 +250,90 @@ describe.each(PLACEMENTS)("projects domain (%s placement)", (placement) => {
 
   it("refuses to demote or remove the last admin", async () => {
     const s = slug();
-    const project = await createProject(s);
+    await createProject(s);
     const meRes = await json(
       await t.app.request("/api/me", { headers: { cookie } }),
     );
+    // The self-membership rule answers first, so this guard is only reachable
+    // when someone else acts on the last admin.
+    const root = await addUserWithToken(t.ctx, `root-${s}`, {
+      instanceAdmin: true,
+    });
     const demote = await t.app.request(
       `/api/projects/${s}/members/${meRes.id}`,
       {
         method: "PUT",
-        headers: { "content-type": "application/json", cookie },
+        headers: { "content-type": "application/json", ...root.headers },
         body: JSON.stringify({ role: "reader" }),
       },
     );
     expect(demote.status).toBe(409);
-    expect(project.id).toBeGreaterThan(0);
+    const removed = await t.app.request(
+      `/api/projects/${s}/members/${meRes.id}`,
+      { method: "DELETE", headers: root.headers },
+    );
+    expect(removed.status).toBe(409);
+  });
+
+  it("refuses to change your own membership, co-admin or not", async () => {
+    const s = slug();
+    await createProject(s);
+    const ann = await addUserWithToken(t.ctx, `ann-${s}`);
+    const bob = await addUserWithToken(t.ctx, `bob-${s}`);
+    for (const who of [ann, bob]) {
+      const promoted = await t.app.request(
+        `/api/projects/${s}/members/${who.user.id}`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json", cookie },
+          body: JSON.stringify({ role: "admin" }),
+        },
+      );
+      expect(promoted.status).toBe(204);
+    }
+
+    const selfDemote = await t.app.request(
+      `/api/projects/${s}/members/${ann.user.id}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...ann.headers },
+        body: JSON.stringify({ role: "reader" }),
+      },
+    );
+    expect(selfDemote.status).toBe(403);
+    // The role gate answers 403 as well, so the message is what tells the two
+    // refusals apart.
+    expect((await json(selfDemote)).error.message).toContain("your own");
+
+    const selfRemove = await t.app.request(
+      `/api/projects/${s}/members/${ann.user.id}`,
+      { method: "DELETE", headers: ann.headers },
+    );
+    expect(selfRemove.status).toBe(403);
+    expect((await json(selfRemove)).error.message).toContain("your own");
+
+    const byCoAdmin = await t.app.request(
+      `/api/projects/${s}/members/${ann.user.id}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...bob.headers },
+        body: JSON.stringify({ role: "reader" }),
+      },
+    );
+    expect(byCoAdmin.status).toBe(204);
+
+    const root = await addUserWithToken(t.ctx, `root-self-${s}`, {
+      instanceAdmin: true,
+    });
+    const rootSelf = await t.app.request(
+      `/api/projects/${s}/members/${root.user.id}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...root.headers },
+        body: JSON.stringify({ role: "reader" }),
+      },
+    );
+    expect(rootSelf.status).toBe(403);
   });
 
   it("manages statuses: append position, rename conflicts, reorder, delete guard", async () => {

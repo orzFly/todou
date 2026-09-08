@@ -33,6 +33,7 @@ import {
   api,
   labelsQuery,
   membersQuery,
+  meQuery,
   projectQuery,
   statusesQuery,
 } from "@/api/queries.ts";
@@ -437,9 +438,13 @@ export function ReferencesSection({ slug }: { slug: string }) {
   );
 }
 
+const SELF_NOTE =
+  "You can't change your own role or remove yourself — ask another admin.";
+
 export function MembersSection({ slug }: { slug: string }) {
   const members = useSuspenseQuery(membersQuery(slug));
   const agents = useSuspenseQuery(agentsQuery);
+  const me = useSuspenseQuery(meQuery);
   const queryClient = useQueryClient();
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["members", slug] });
@@ -476,48 +481,60 @@ export function MembersSection({ slug }: { slug: string }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {members.data.map((member: Member) => (
-              <TableRow key={member.user.id}>
-                <TableCell>
-                  <UserChip user={member.user} showLogin />
-                </TableCell>
-                <TableCell>
-                  <Select
-                    value={member.role}
-                    onValueChange={(role) =>
-                      setRole.mutate({
-                        userId: member.user.id,
-                        role: role as MemberRole,
-                      })
-                    }
-                  >
-                    <SelectTrigger size="sm">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ROLES.map((role) => (
-                        <SelectItem key={role} value={role}>
-                          {role}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </TableCell>
-                <TableCell>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={`remove ${displayNameOf(member.user)}`}
-                    onClick={() => remove.mutate(member.user.id)}
-                  >
-                    <Trash2Icon className="size-4" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
+            {members.data.map((member: Member) => {
+              const isSelf = member.user.id === me.data.id;
+              return (
+                <TableRow key={member.user.id}>
+                  <TableCell>
+                    <UserChip user={member.user} showLogin />
+                  </TableCell>
+                  <TableCell>
+                    <Select
+                      value={member.role}
+                      disabled={isSelf}
+                      onValueChange={(role) =>
+                        setRole.mutate({
+                          userId: member.user.id,
+                          role: role as MemberRole,
+                        })
+                      }
+                    >
+                      <SelectTrigger
+                        size="sm"
+                        title={isSelf ? SELF_NOTE : undefined}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ROLES.map((role) => (
+                          <SelectItem key={role} value={role}>
+                            {role}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`remove ${displayNameOf(member.user)}`}
+                      disabled={isSelf}
+                      title={isSelf ? SELF_NOTE : undefined}
+                      onClick={() => remove.mutate(member.user.id)}
+                    >
+                      <Trash2Icon className="size-4" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </div>
+      {members.data.some((m) => m.user.id === me.data.id) && (
+        <p className="text-sm text-muted-foreground">{SELF_NOTE}</p>
+      )}
       <AddAgentPicker
         agents={agents.data}
         memberIds={memberIds}

@@ -90,7 +90,7 @@ const listMembersRoute = createRoute({
 const setMemberRoute = createRoute({
   method: "put",
   path: "/{slug}/members/{userId}",
-  summary: `Add a member or change their role ${roleTag("member.set")}`,
+  summary: `Add a member or change their role, never your own ${roleTag("member.set")}`,
   request: { params: memberParams, body: jsonBody(MemberSetInput) },
   responses: { 204: { description: "Member set" } },
 });
@@ -98,7 +98,7 @@ const setMemberRoute = createRoute({
 const removeMemberRoute = createRoute({
   method: "delete",
   path: "/{slug}/members/{userId}",
-  summary: `Remove a member ${roleTag("member.remove")}`,
+  summary: `Remove a member, never yourself ${roleTag("member.remove")}`,
   request: { params: memberParams },
   responses: { 204: { description: "Member removed" } },
 });

@@ -163,7 +163,8 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
   },
   {
     group: "Administer",
-    label: "Add and remove members, and change their role",
+    label:
+      "Add and remove members, and change their role — anyone's but your own",
     caps: ["member.set", "member.remove"],
   },
   { group: "Administer", label: "Manage statuses", caps: ["status.manage"] },

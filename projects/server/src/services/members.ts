@@ -3,9 +3,17 @@ import { and, eq } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import { projectMembers, users } from "../db/system-schema.ts";
-import { ConflictError, NotFoundError } from "../errors.ts";
+import { ConflictError, ForbiddenError, NotFoundError } from "../errors.ts";
 import { requireCapability } from "./access.ts";
 import { getUserRefs } from "./users.ts";
+
+/**
+ * Checked before `ensureNotLastAdmin` so a sole admin hears the wall that stays
+ * once the project gains a second admin. Instance admins are not exempt: one
+ * exempt identity would leave no invariant at all.
+ */
+const SELF_MEMBERSHIP =
+  "you cannot change your own membership — ask another admin";
 
 export async function listMembers(
   ctx: AppContext,
@@ -38,6 +46,7 @@ export async function setMember(
   role: MemberRole,
 ): Promise<void> {
   const { project } = await requireCapability(ctx, actor, slug, "member.set");
+  if (userId === actor.id) throw new ForbiddenError(SELF_MEMBERSHIP);
   const system = ctx.router.system();
 
   const target = await system
@@ -75,6 +84,7 @@ export async function removeMember(
     slug,
     "member.remove",
   );
+  if (userId === actor.id) throw new ForbiddenError(SELF_MEMBERSHIP);
   await ensureNotLastAdmin(ctx, project.id, userId);
   const deleted = await ctx.router
     .system()
