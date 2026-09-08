@@ -273,6 +273,13 @@ export const comments = pgTable(
     // meaningful only for comments whose component is a spec anchor.
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     resolvedBy: bigint("resolved_by", { mode: "number" }),
+    // Hidden settled discussion (T-281). Same pair as `resolved_*` with one
+    // difference: this one clears again, because unhiding is an equal entry
+    // and not a repair. Unindexed like `resolved_by`, since no default read
+    // filters on it — the batch selector reads one card's comments, which is
+    // the issue_id scan it was doing anyway.
+    hiddenAt: timestamp("hidden_at", { withTimezone: true }),
+    hiddenBy: bigint("hidden_by", { mode: "number" }),
   },
   (t) => [
     index("comments_issue_created_idx").on(t.issueId, t.createdAt),

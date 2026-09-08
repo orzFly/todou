@@ -71,6 +71,7 @@ function comment(atMs: number): TimelineComment {
     created_at: new Date(EPOCH + atMs).toISOString(),
     edited_at: null,
     resolved_at: null,
+    hidden_at: null,
     agent_context: sessionA,
   };
 }

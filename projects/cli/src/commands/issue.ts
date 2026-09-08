@@ -50,9 +50,15 @@ import {
 import {
   BARE_SUMMARY_CHARS,
   drainTimeline,
+  groupHiddenRuns,
+  HIDDEN_HINT,
+  hasHiddenRun,
   renderActivityLine,
+  renderHiddenRun,
   renderTimelineItem,
+  type TimelineUnit,
   tailCursor,
+  unitItems,
 } from "../timeline.ts";
 import {
   cursorLines,
@@ -359,6 +365,9 @@ export class IssueViewCommand extends ProjectCommand {
   metadata = Option.Array("--metadata", [], {
     description: "Also show metadata in these namespaces (* = all)",
   });
+  includeHidden = Option.Boolean("--include-hidden", false, {
+    description: "Print hidden comments in full instead of a placeholder",
+  });
 
   protected async run(client: TodouClient): Promise<number> {
     if (this.brief && this.timelineOnly) {
@@ -424,7 +433,11 @@ export class IssueViewCommand extends ProjectCommand {
     if (only !== undefined) {
       if (only.error !== undefined) throw only.error;
       this.output(this.jsonCard(only, refOf(only), { envelope: true }), () =>
-        this.renderCard(only, paint, refOf(only)),
+        this.withHiddenHint(
+          this.renderCard(only, paint, refOf(only)),
+          cards,
+          paint,
+        ),
       );
       await this.markRead(client, only);
       return 0;
@@ -439,9 +452,13 @@ export class IssueViewCommand extends ProjectCommand {
         ref_format: refFormat(requestPrefix),
       },
       () =>
-        cards
-          .map((card) => this.renderCard(card, paint, refOf(card)))
-          .join(`\n\n${paint("dim", CARD_DIVIDER)}\n\n`),
+        this.withHiddenHint(
+          cards
+            .map((card) => this.renderCard(card, paint, refOf(card)))
+            .join(`\n\n${paint("dim", CARD_DIVIDER)}\n\n`),
+          cards,
+          paint,
+        ),
     );
     for (const card of cards) await this.markRead(client, card);
     return cards.some((card) => card.error !== undefined) ? 1 : 0;
@@ -484,14 +501,21 @@ export class IssueViewCommand extends ProjectCommand {
         client,
         project,
         number,
+        { includeHidden: this.includeHidden },
       );
-      const timeline = last === undefined ? drained : drained.slice(-last);
+      // `--last` counts placeholders, not the comments behind them: on a card
+      // whose tail is all hidden, slicing entries first would answer ten
+      // placeholders and not one body (T-281).
+      const units = this.includeHidden
+        ? drained.map((item) => item as TimelineUnit)
+        : groupHiddenRuns(drained);
+      const kept = last === undefined ? units : units.slice(-last);
       return {
         number,
         slug: project,
         issue,
-        timeline,
-        omitted: drained.length - timeline.length,
+        timeline: kept.flatMap(unitItems),
+        omitted: units.length - kept.length,
         ...(cursor === undefined ? {} : { cursor }),
       };
     } catch (error) {
@@ -517,6 +541,21 @@ export class IssueViewCommand extends ProjectCommand {
     }
   }
 
+  /**
+   * The hint goes on the whole output, once, however many cards collapsed
+   * something: it explains the gap, and a batch of eight cards needs that
+   * explained once.
+   */
+  private withHiddenHint(
+    text: string,
+    cards: ViewedIssue[],
+    paint: Painter,
+  ): string {
+    if (this.includeHidden) return text;
+    const collapsed = cards.some((card) => hasHiddenRun(card.timeline));
+    return collapsed ? `${text}\n\n${paint("dim", HIDDEN_HINT)}` : text;
+  }
+
   private renderCard(card: ViewedIssue, paint: Painter, ref: CardRef): string {
     if (card.issue === undefined) {
       const error = card.error as TodouError;
@@ -535,7 +574,13 @@ export class IssueViewCommand extends ProjectCommand {
         card.cursor,
         paint,
         ref,
-        this.brief ? {} : { body: !this.timelineOnly, omitted: card.omitted },
+        this.brief
+          ? {}
+          : {
+              body: !this.timelineOnly,
+              omitted: card.omitted,
+              collapseHidden: !this.includeHidden,
+            },
       )
     );
   }
@@ -1896,6 +1941,8 @@ type IssueSections = {
   body?: boolean;
   /** How many older entries `--last` cut, for the elision line. */
   omitted?: number;
+  /** False under `--include-hidden`, where the bodies are the point (T-281). */
+  collapseHidden?: boolean;
 };
 
 function renderIssue(
@@ -1953,16 +2000,23 @@ function renderIssue(
     if (omitted > 0) {
       lines.push(paint("dim", elision(omitted, "entry", "entries")));
     }
-    for (const item of timeline) {
+    const units = sections.collapseHidden
+      ? groupHiddenRuns(timeline)
+      : timeline.map((item) => item as TimelineUnit);
+    for (const unit of units) {
       lines.push(
-        renderTimelineItem(item, paint, {
-          issueNumber: issue.number,
-          refPrefix: ref.prefix,
-          ...(ref.slugOfProject === undefined
-            ? {}
-            : { slugOfProject: ref.slugOfProject }),
-          ...(ref.projectId === undefined ? {} : { projectId: ref.projectId }),
-        }),
+        unit.type === "hidden_run"
+          ? renderHiddenRun(unit, paint)
+          : renderTimelineItem(unit, paint, {
+              issueNumber: issue.number,
+              refPrefix: ref.prefix,
+              ...(ref.slugOfProject === undefined
+                ? {}
+                : { slugOfProject: ref.slugOfProject }),
+              ...(ref.projectId === undefined
+                ? {}
+                : { projectId: ref.projectId }),
+            }),
       );
     }
   }

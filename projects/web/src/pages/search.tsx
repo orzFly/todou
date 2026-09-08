@@ -341,6 +341,17 @@ function HitRow({ slug, hit }: { slug: string; hit: SearchItem }) {
       </span>
       <span className="min-w-0 text-sm break-words">
         <SearchHighlight snippet={hit.snippet} />
+        {/* Search sees across hidden comments while the timeline collapses
+            them, so the row says which kind of place the reader is about to
+            land in (T-281). */}
+        {hit.hidden && (
+          <span
+            className="ml-2 align-middle text-xs text-muted-foreground"
+            data-testid="hit-hidden-badge"
+          >
+            hidden
+          </span>
+        )}
       </span>
     </>
   );

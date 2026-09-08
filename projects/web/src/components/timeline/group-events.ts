@@ -1,8 +1,10 @@
 import type {
   IssueEventType,
+  TimelineComment,
   TimelineEvent,
   TimelineItem,
 } from "@todou/shared";
+import { isHidden } from "@todou/shared";
 
 /**
  * Merging (T-92) is a pure view over the raw timeline: the server keeps
@@ -71,7 +73,17 @@ export function groupKey(event: TimelineEvent): string {
 
 export type RenderUnit =
   | { kind: "item"; item: TimelineItem }
-  | { kind: "group"; family: MergeFamily; events: TimelineEvent[] };
+  | { kind: "group"; family: MergeFamily; events: TimelineEvent[] }
+  | { kind: "hidden"; comments: TimelineComment[] };
+
+/**
+ * The key a revealed run is remembered under: its first comment's id. Stable
+ * across re-renders and re-fetches, and stable across a reveal — the run it
+ * names keeps its first comment whatever else changes.
+ */
+export function hiddenRunKey(unit: { comments: TimelineComment[] }): string {
+  return `hidden-${unit.comments[0]?.id ?? 0}`;
+}
 
 /**
  * Fold consecutive same-family, same-key events within the window into
@@ -80,8 +92,20 @@ export type RenderUnit =
  * referenced, whose lone events still come out as groups so one reference
  * renders exactly like many (T-99). Order is never rearranged — any
  * comment or foreign-family item splits the run.
+ *
+ * Adjacent hidden comments fold the same way (T-281), under the same rule:
+ * an event between two of them ends the run, so hiding the comments around
+ * a status change never takes the status change off the page.
+ *
+ * `isRevealed` answers for the runs the reader has already opened, keyed by
+ * `hiddenRunKey`; those comments pass through as ordinary items. A predicate
+ * rather than a set, so "reveal all" is one flag on the caller's side and
+ * not a set that has to be kept in step with the runs that exist.
  */
-export function groupTimeline(items: TimelineItem[]): RenderUnit[] {
+export function groupTimeline(
+  items: TimelineItem[],
+  isRevealed?: (key: string) => boolean,
+): RenderUnit[] {
   const units: RenderUnit[] = [];
   let run: {
     family: MergeFamily;
@@ -101,10 +125,20 @@ export function groupTimeline(items: TimelineItem[]): RenderUnit[] {
     run = null;
   };
 
+  /** Extend the open hidden run or start one; false if this is not one. */
+  const asHidden = (item: TimelineItem): boolean => {
+    if (item.type !== "comment" || !isHidden(item)) return false;
+    const open = units.at(-1);
+    if (open?.kind === "hidden") open.comments.push(item);
+    else units.push({ kind: "hidden", comments: [item] });
+    return true;
+  };
+
   for (const item of items) {
     const family = item.type === "event" ? familyOf(item.event_type) : null;
     if (item.type !== "event" || family === null) {
       flush();
+      if (asHidden(item)) continue;
       units.push({ kind: "item", item });
       continue;
     }
@@ -124,7 +158,16 @@ export function groupTimeline(items: TimelineItem[]): RenderUnit[] {
     }
   }
   flush();
-  return units;
+  // Expanded afterwards rather than inside the loop: a revealed run whose
+  // comments went straight through as items would leave the next hidden
+  // comment starting a second run under a different key, and that key is
+  // the one the reveal is remembered by.
+  if (isRevealed === undefined) return units;
+  return units.flatMap((unit): RenderUnit[] =>
+    unit.kind === "hidden" && isRevealed(hiddenRunKey(unit))
+      ? unit.comments.map((item) => ({ kind: "item", item }))
+      : [unit],
+  );
 }
 
 /** Tolerant name extraction shared with describeEvent — bad payloads render "?". */

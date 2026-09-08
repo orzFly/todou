@@ -78,6 +78,7 @@ const commented = (project: string, number: number): ActivityCardRef => ({
     created_at: "2026-08-11T12:00:00.000Z",
     edited_at: null,
     resolved_at: null,
+    hidden_at: null,
     agent_context: null,
   },
 });

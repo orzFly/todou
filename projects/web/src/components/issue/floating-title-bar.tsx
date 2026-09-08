@@ -1,5 +1,5 @@
 import { formatRef, type Issue } from "@todou/shared";
-import { type RefObject, useEffect, useState } from "react";
+import { type ReactNode, type RefObject, useEffect, useState } from "react";
 import { useRefPlacement } from "@/api/prefs.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import { useHeaderHeight } from "@/lib/use-header-height.ts";
@@ -14,10 +14,17 @@ export function FloatingTitleBar({
   slug,
   issue,
   watchTarget,
+  mirror,
 }: {
   slug: string;
   issue: Issue;
   watchTarget: RefObject<HTMLElement | null>;
+  /**
+   * A control at the bar's right edge. Only ever a mirror of something the
+   * document still holds, because this bar is `aria-hidden` — a reader using
+   * assistive tech has to be able to reach it in the flow.
+   */
+  mirror?: ReactNode;
 }) {
   const refPrefix = useRefPrefix(slug);
   const refLeads = useRefPlacement("detail") === "before";
@@ -69,6 +76,7 @@ export function FloatingTitleBar({
             {formatRef(refPrefix, issue.number)}
           </span>
         )}
+        {mirror !== undefined && <span className="ml-auto">{mirror}</span>}
       </div>
     </div>
   );

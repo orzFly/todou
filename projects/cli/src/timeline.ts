@@ -1,11 +1,23 @@
 import type {
   AgentContext,
+  TimelineComment,
   TimelineEvent,
   TimelineItem,
   TodouClient,
 } from "@todou/shared";
-import { formatRef, SpecPushedPayload, SpecReviewPayload } from "@todou/shared";
-import { type Painter, personName, relativeTime, summarize } from "./format.ts";
+import {
+  formatRef,
+  isHidden,
+  SpecPushedPayload,
+  SpecReviewPayload,
+} from "@todou/shared";
+import {
+  type Painter,
+  personName,
+  plural,
+  relativeTime,
+  summarize,
+} from "./format.ts";
 import { drainPaged } from "./paginate.ts";
 import {
   decodeAnswerEvent,
@@ -39,7 +51,11 @@ export async function drainTimeline(
   client: TodouClient,
   project: string,
   number: number,
-  opts: { after?: string; types?: string } & SelfFilter = {},
+  opts: {
+    after?: string;
+    types?: string;
+    includeHidden?: boolean;
+  } & SelfFilter = {},
 ): Promise<{ items: TimelineItem[]; cursor: string | undefined }> {
   return drainPaged("timeline", opts.after, (after) =>
     client.getTimeline(project, number, {
@@ -47,6 +63,7 @@ export async function drainTimeline(
       types: opts.types,
       exclude_actor: opts.excludeActor,
       exclude_agent_session: opts.excludeAgentSession,
+      ...(opts.includeHidden === true ? { include_hidden: true } : {}),
       limit: 100,
     }),
   );
@@ -97,6 +114,75 @@ export type TimelineRenderContext = ReferenceOrigin & {
 export function commentRef(id: number): string {
   return `#comment-${id}`;
 }
+
+/** A run of adjacent hidden comments, collapsed into one line (T-281). */
+export type HiddenRun = { type: "hidden_run"; comments: TimelineComment[] };
+
+/** What a timeline read prints: an entry, or a placeholder standing for many. */
+export type TimelineUnit = TimelineItem | HiddenRun;
+
+/**
+ * Collapse adjacent hidden comments into one placeholder each.
+ *
+ * Only *adjacent* ones, and events break a run: hiding the comments around a
+ * status change must not take the status change off the page with them. This
+ * is the rule the web's `groupTimeline` already applies to its own folds —
+ * order is never rearranged, and any other kind of entry ends a group.
+ */
+export function groupHiddenRuns(items: TimelineItem[]): TimelineUnit[] {
+  const units: TimelineUnit[] = [];
+  for (const item of items) {
+    if (item.type !== "comment" || !isHidden(item)) {
+      units.push(item);
+      continue;
+    }
+    const open = units.at(-1);
+    if (open?.type === "hidden_run") open.comments.push(item);
+    else units.push({ type: "hidden_run", comments: [item] });
+  }
+  return units;
+}
+
+/** The entries one unit stands for, for slicing and for `--json`. */
+export function unitItems(unit: TimelineUnit): TimelineItem[] {
+  return unit.type === "hidden_run" ? unit.comments : [unit];
+}
+
+export function hasHiddenRun(items: TimelineItem[]): boolean {
+  return groupHiddenRuns(items).some((unit) => unit.type === "hidden_run");
+}
+
+/**
+ * `… 7 hidden comments (#comment-3401 … #comment-3419)`.
+ *
+ * The id range travels with the count so a reader can `comment view` one of
+ * them without expanding the whole run first.
+ */
+export function renderHiddenRun(run: HiddenRun, paint: Painter): string {
+  const n = run.comments.length;
+  const first = run.comments[0]?.id ?? 0;
+  const last = run.comments.at(-1)?.id ?? first;
+  const range =
+    first === last
+      ? commentRef(first)
+      : `${commentRef(first)} … ${commentRef(last)}`;
+  return paint("dim", `… ${n} hidden ${plural(n, "comment")} (${range})`);
+}
+
+/**
+ * Printed once per output that collapsed anything, never per placeholder: a
+ * card can carry eight runs, and repeating the flag eight times is noise
+ * where saying it once is enough.
+ *
+ * It says what the gap is for as well as how to open it, because a reader —
+ * an agent above all — who reads the gap as lost information goes and digs
+ * up a discussion that already reached its conclusion.
+ */
+export const HIDDEN_HINT = [
+  "hint: comments were hidden to keep settled discussion out of this read — what they",
+  "      concluded is in the remaining comments and the spec. Add --include-hidden to",
+  "      read them.",
+].join("\n");
 
 /**
  * A body on an activity line. A positive `summaryChars` cuts it to one
@@ -167,6 +253,10 @@ export function renderTimelineItem(
     // reasoning that called it noise inside a whole card was overruled.
     const id = `${paint("dim", `${commentRef(item.id)} ·`)} `;
     const edited = item.edited_at ? " (edited)" : "";
+    // Only ever seen where the body is being shown anyway — `--include-hidden`
+    // and `--only-hidden` — so it reads as "this one is put away", not as an
+    // apology for a missing body (T-281).
+    const away = isHidden(item) ? ` ${paint("dim", "(hidden)")}` : "";
     const questions =
       item.component?.type === "questions"
         ? `\n${renderQuestions(item.component, paint).join("\n")}\n  ${paint(
@@ -182,9 +272,9 @@ export function renderTimelineItem(
         .split("\n")
         .map((line) => paint("dim", `  > ${line}`))
         .join("\n");
-      return `${id}${who(item.author)} commented on ${anchor.path}:${lines} (v${anchor.version}, ${resolved})${edited} ${when}:\n${quote}\n${body}`;
+      return `${id}${who(item.author)} commented on ${anchor.path}:${lines} (v${anchor.version}, ${resolved})${edited}${away} ${when}:\n${quote}\n${body}`;
     }
-    return `${id}${who(item.author)} commented${edited} ${when}:\n${body}${questions}`;
+    return `${id}${who(item.author)} commented${edited}${away} ${when}:\n${body}${questions}`;
   }
   const answered = item.type === "event" ? decodeAnswerEvent(item) : null;
   if (answered !== null) {
@@ -273,7 +363,13 @@ export function renderActivityLine(
       ctx.summaryChars === 0 && item.component?.type === "questions"
         ? `\n${renderQuestions(item.component, paint, { descriptions: false }).join("\n")}`
         : "";
-    return `${ref} ${paint("dim", commentRef(item.id))} ${who(item.author)} commented${where}${edited} ${when}${questions}: ${bodyBlock(item.body, ctx.summaryChars)}${asked}`;
+    // One entry per line here, so collapsing a run would mean nothing; what
+    // the reader needs instead is an explained line rather than a blank body
+    // where the elided text used to be (T-281).
+    const said = isHidden(item)
+      ? paint("dim", "(hidden)")
+      : `${bodyBlock(item.body, ctx.summaryChars)}${asked}`;
+    return `${ref} ${paint("dim", commentRef(item.id))} ${who(item.author)} commented${where}${edited} ${when}${questions}: ${said}`;
   }
   const answered = decodeAnswerEvent(item);
   if (answered !== null) {

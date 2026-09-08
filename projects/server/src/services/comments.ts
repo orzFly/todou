@@ -4,12 +4,14 @@ import type {
   CommentComponent,
   CommentCreateInput,
   CommentCreateResult,
+  CommentHideInput,
+  CommentHideResult,
   CommentLocation,
   CommentUpdateInput,
   TimelineComment,
 } from "@todou/shared";
 import { formatRef, QuestionAnsweredPayload } from "@todou/shared";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
@@ -42,9 +44,16 @@ import { getUserRefs } from "./users.ts";
 
 export type CommentRow = typeof comments.$inferSelect;
 
+/**
+ * `opts.elideHidden` has no default on purpose (T-281). Whether a response
+ * carries a hidden comment's body is the whole of the feature, so every
+ * caller has to say which side of the rule it is on rather than inherit an
+ * answer — and asking for one comment by id is always the "not elided" side.
+ */
 export async function toTimelineComment(
   ctx: AppContext,
   row: CommentRow,
+  opts: { elideHidden: boolean },
 ): Promise<TimelineComment> {
   const refs = await getUserRefs(ctx.router.system(), [row.authorId]);
   const author = refs.get(row.authorId);
@@ -53,11 +62,12 @@ export async function toTimelineComment(
     type: "comment",
     id: row.id,
     author,
-    body: row.body,
+    body: opts.elideHidden && row.hiddenAt !== null ? "" : row.body,
     component: row.component ?? null,
     created_at: row.createdAt.toISOString(),
     edited_at: row.editedAt?.toISOString() ?? null,
     resolved_at: row.resolvedAt?.toISOString() ?? null,
+    hidden_at: row.hiddenAt?.toISOString() ?? null,
     agent_context: row.agentContext ?? null,
   };
 }
@@ -235,7 +245,7 @@ export async function createComment(
     agentContext,
   );
   return {
-    ...(await toTimelineComment(ctx, row)),
+    ...(await toTimelineComment(ctx, row, { elideHidden: false })),
     // The comment's own position: what follows it is the answer to it,
     // and the comment itself is already in the caller's hands (T-182).
     cursor: encodeTimelineCursor({ t: ts, k: 0, i: row.id }),
@@ -272,7 +282,7 @@ export async function getComment(
   if (!row)
     await throwIfCommentAliased(ctx, project.id, commentId, role !== null);
   if (!row) throw new NotFoundError("comment not found");
-  return toTimelineComment(ctx, row);
+  return toTimelineComment(ctx, row, { elideHidden: false });
 }
 
 /**
@@ -312,7 +322,9 @@ export async function locateComment(
   return {
     issue_number: row.number,
     issue_ref: formatRef(prefix, row.number),
-    comment: await toTimelineComment(ctx, row.comment),
+    comment: await toTimelineComment(ctx, row.comment, {
+      elideHidden: false,
+    }),
   };
 }
 
@@ -365,7 +377,8 @@ export async function updateComment(
   );
   // No-op saves succeed but record nothing: no revision, no edited_at
   // bump, no SSE, no reference re-scan.
-  if (input.body === row.body) return toTimelineComment(ctx, row);
+  if (input.body === row.body)
+    return toTimelineComment(ctx, row, { elideHidden: false });
 
   const projectId = project.id;
   const refInputs = await loadReferenceInputs(ctx, db, projectId);
@@ -380,7 +393,8 @@ export async function updateComment(
   });
   // Storing the resolved text is what makes this a no-op the second time
   // round: an unchanged body reaches the guard above and stops there.
-  if (resolved.storedText === row.body) return toTimelineComment(ctx, row);
+  if (resolved.storedText === row.body)
+    return toTimelineComment(ctx, row, { elideHidden: false });
 
   const { after, refs } = await db.transaction(async (tx) => {
     const updated = await tx
@@ -432,7 +446,7 @@ export async function updateComment(
     resolved.cross,
     agentContext,
   );
-  return toTimelineComment(ctx, after);
+  return toTimelineComment(ctx, after, { elideHidden: false });
 }
 
 export async function deleteComment(
@@ -509,4 +523,86 @@ export async function deleteComment(
       list_row: { kind: "activity" },
     });
   }
+}
+
+/**
+ * Hide or unhide comments in one transaction (T-281).
+ *
+ * No policy is enforced here. Which comments deserve hiding is
+ * `selectHidable`'s answer in the client, because hiding one answered
+ * question by hand is a legitimate operation while a batch selector should
+ * still skip it — a server-side exemption could not tell the two apart.
+ *
+ * The write is silent by design: no `issue_events` row, no `updated_at`
+ * bump, and unread state is computed from `created_at` so it cannot move.
+ * Only the timeline event is published, because hiding does change what a
+ * default timeline read hands back and the web page has to hear about it.
+ */
+export async function setCommentsHidden(
+  ctx: AppContext,
+  actor: UserRow,
+  slug: string,
+  issueNumber: number,
+  input: CommentHideInput,
+): Promise<CommentHideResult> {
+  const { project, role } = await requireCapability(
+    ctx,
+    actor,
+    slug,
+    "comment.hide",
+  );
+  const db = await ctx.router.forProject(routeInfoOf(project));
+  const issue = await loadIssue(db, project.id, issueNumber);
+  assertIssueWritable(issue, actor, role);
+
+  const written = await db.transaction(async (tx) => {
+    const rows = await tx
+      .select({ id: comments.id, hiddenAt: comments.hiddenAt })
+      .from(comments)
+      .where(
+        and(
+          eq(comments.issueId, issue.id),
+          inArray(comments.id, input.comment_ids),
+        ),
+      )
+      .for("update");
+    const byId = new Map(rows.map((r) => [r.id, r]));
+
+    const written: number[] = [];
+    for (const id of input.comment_ids) {
+      const row = byId.get(id);
+      // One foreign id fails the whole call: a client whose selection drifted
+      // onto another card must not get half of it applied.
+      if (!row) throw new NotFoundError(`comment ${id} not found`);
+      if ((row.hiddenAt !== null) !== input.hidden) written.push(id);
+    }
+    if (written.length > 0) {
+      await tx
+        .update(comments)
+        .set(
+          input.hidden
+            ? { hiddenAt: new Date(), hiddenBy: actor.id }
+            : { hiddenAt: null, hiddenBy: null },
+        )
+        .where(inArray(comments.id, written));
+    }
+    return written;
+  });
+
+  // One event for the call, not one per comment: hiding 55 comments would
+  // otherwise queue 55 inbox recomputations (T-275) that each conclude
+  // nothing changed. `spec resolve` publishes a batch the same way.
+  if (written.length > 0) {
+    ctx.bus.publish(project.id, {
+      entity: "timeline",
+      id: Math.max(...written),
+      action: "updated",
+      issue_number: issueNumber,
+    });
+  }
+  const moved = new Set(written);
+  return {
+    hidden: input.comment_ids,
+    unchanged: input.comment_ids.filter((id) => !moved.has(id)),
+  };
 }

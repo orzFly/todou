@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import type { TimelineComment } from "@todou/shared";
-import { PencilIcon } from "lucide-react";
+import type { MemberRole, TimelineComment } from "@todou/shared";
+import { can, isHidden } from "@todou/shared";
+import { EllipsisIcon, EyeOffIcon, PencilIcon, Trash2Icon } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
@@ -22,10 +23,27 @@ import { withAttachmentMarkers } from "@/components/timeline/composer.tsx";
 import { QuestionsCard } from "@/components/timeline/questions-card.tsx";
 import { SpecCommentAnchorCard } from "@/components/timeline/spec-comment-card.tsx";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 
-export type Viewer = { id: number; isAdmin: boolean };
+export type Viewer = {
+  id: number;
+  isAdmin: boolean;
+  /**
+   * This reader's role in the project, null for a non-member. Carried
+   * alongside `isAdmin` because hiding is a plain capability check against
+   * the shared catalog (T-281), where editing is the narrower
+   * author-or-admin rule below and cannot be expressed as one.
+   */
+  role?: MemberRole | null;
+};
 
 /** Mirror of the server rule: the author or a project admin may edit. */
 export function canEditComment(
@@ -34,6 +52,11 @@ export function canEditComment(
 ): boolean {
   if (!viewer) return false;
   return viewer.isAdmin || viewer.id === authorId;
+}
+
+/** Mirror of the `comment.hide` gate: a writer, whoever wrote the comment. */
+export function canHideComment(viewer: Viewer | null | undefined): boolean {
+  return can(viewer?.role ?? null, "comment.hide");
 }
 
 export function CommentItem({
@@ -50,6 +73,8 @@ export function CommentItem({
   pending?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const menuTrigger = useRef<HTMLButtonElement>(null);
   const editor = useRef<MarkdownEditorHandle>(null);
   const [uploading, setUploading] = useState(false);
   const staging = useStagedFiles();
@@ -64,6 +89,27 @@ export function CommentItem({
       });
       setEditing(false);
       staging.clear();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+  const invalidateTimeline = () =>
+    queryClient.invalidateQueries({
+      queryKey: ["timeline", slug, issueNumber],
+    });
+  const setHidden = useMutation({
+    mutationFn: (hidden: boolean) =>
+      api.setCommentsHidden(slug, issueNumber, {
+        hidden,
+        comment_ids: [comment.id],
+      }),
+    onSuccess: invalidateTimeline,
+    onError: (error) => toast.error(error.message),
+  });
+  const remove = useMutation({
+    mutationFn: () => api.deleteComment(slug, issueNumber, comment.id),
+    onSuccess: () => {
+      setConfirmingDelete(false);
+      return invalidateTimeline();
     },
     onError: (error) => toast.error(error.message),
   });
@@ -133,21 +179,74 @@ export function CommentItem({
             sending…
           </span>
         )}
-        {!pending && canEditComment(viewer, comment.author.id) && (
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            className="ml-auto"
-            aria-label="edit comment"
-            onClick={() => {
-              // The editor mounts fresh off comment.body each time edit mode
-              // opens, so an abandoned draft never survives into the next one.
-              staging.clear();
-              setEditing(!editing);
-            }}
-          >
-            <PencilIcon className="size-3.5" />
-          </Button>
+        {!pending && (
+          <div className="ml-auto flex shrink-0 items-center gap-0.5">
+            {/* Both a mark and the way back: a reader who got here through
+                a Reveal sees at once that this one is put away, and the
+                same button restores it for everybody. Unreadable without
+                the capability, but still shown — the mark is the point,
+                and it is not a secret. */}
+            {isHidden(comment) && (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label="unhide comment"
+                disabled={!canHideComment(viewer) || setHidden.isPending}
+                onClick={() => setHidden.mutate(false)}
+              >
+                <EyeOffIcon className="size-3.5" />
+              </Button>
+            )}
+            {canEditComment(viewer, comment.author.id) && (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label="edit comment"
+                onClick={() => {
+                  // The editor mounts fresh off comment.body each time edit
+                  // mode opens, so an abandoned draft never survives into
+                  // the next one.
+                  staging.clear();
+                  setEditing(!editing);
+                }}
+              >
+                <PencilIcon className="size-3.5" />
+              </Button>
+            )}
+            {(canHideComment(viewer) ||
+              canEditComment(viewer, comment.author.id)) && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    ref={menuTrigger}
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label="comment actions"
+                  >
+                    <EllipsisIcon className="size-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                {/* The entries need more room than the trigger's 28px. */}
+                <DropdownMenuContent className="w-auto" align="end">
+                  {canHideComment(viewer) && !isHidden(comment) && (
+                    <DropdownMenuItem onSelect={() => setHidden.mutate(true)}>
+                      <EyeOffIcon className="size-3.5" />
+                      Hide comment
+                    </DropdownMenuItem>
+                  )}
+                  {canEditComment(viewer, comment.author.id) && (
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onSelect={() => setConfirmingDelete(true)}
+                    >
+                      <Trash2Icon className="size-3.5" />
+                      Delete comment…
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
         )}
       </div>
       <div className="px-3 py-2">
@@ -229,6 +328,29 @@ export function CommentItem({
           />
         )}
       </div>
+      <ConfirmDialog
+        open={confirmingDelete}
+        onOpenChange={(next) => {
+          setConfirmingDelete(next);
+          // Radix hands focus back to the menu item that opened this, and
+          // that item is gone — so it lands on <body>. The frame puts this
+          // after radix's own restore; a synchronous focus loses to it.
+          if (!next) requestAnimationFrame(() => menuTrigger.current?.focus());
+        }}
+        title="Delete this comment?"
+        description={
+          <>
+            The comment is erased and cannot be brought back — comments have no
+            trash the way issues do, and the edit history goes with it. To take
+            it off the page while keeping it readable, use <strong>Hide</strong>{" "}
+            instead.
+          </>
+        }
+        confirmLabel="Delete"
+        destructive
+        pending={remove.isPending}
+        onConfirm={() => remove.mutate()}
+      />
     </div>
   );
 }

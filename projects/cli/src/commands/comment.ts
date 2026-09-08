@@ -1,5 +1,5 @@
-import type { TimelineComment, TodouClient } from "@todou/shared";
-import { MovedError } from "@todou/shared";
+import type { HidePolicy, TimelineComment, TodouClient } from "@todou/shared";
+import { formatRef, isHidden, MovedError } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { readBody } from "../body.ts";
@@ -11,6 +11,7 @@ import {
   plural,
   summarize,
 } from "../format.ts";
+import { applyHidePolicy, hideSummary } from "../hide.ts";
 import { parseCommentId, parseIssueRef, parsePositiveInt } from "../parse.ts";
 import { confirm } from "../prompt.ts";
 import { readQuestionsInput } from "../questions.ts";
@@ -20,7 +21,16 @@ import {
   fetchRefSpelling,
   resolveAssignees,
 } from "../resolve.ts";
-import { commentRef, drainTimeline, renderTimelineItem } from "../timeline.ts";
+import {
+  commentRef,
+  drainTimeline,
+  groupHiddenRuns,
+  HIDDEN_HINT,
+  renderHiddenRun,
+  renderTimelineItem,
+  type TimelineUnit,
+  unitItems,
+} from "../timeline.ts";
 import {
   assertWriteCursorFlags,
   collectWriteCursor,
@@ -208,6 +218,14 @@ export class CommentListCommand extends ProjectCommand {
       **does not advance the read marker**: a filtered slice is not the
       card.
 
+      Runs of hidden comments collapse into one dim placeholder line each,
+      carrying the count and the id range. \`--include-hidden\` prints them
+      in full instead; \`--only-hidden\` lists just those, also in full.
+      **\`-q\` cannot see into a hidden comment**: matching happens on the
+      body this client was given, and a hidden one arrives empty — pass
+      \`--include-hidden\` alongside it, or use \`todou search\`, which
+      searches across hidden comments and marks them.
+
       \`--json\` emits one document — \`{comments, next_cursor,
       ref_format}\` — and \`next_cursor\` is the cursor \`issue watch
       --since\` takes.
@@ -216,6 +234,7 @@ export class CommentListCommand extends ProjectCommand {
       ["Everything said on the card", "$0 comment list 16"],
       ["The last thing I said", "$0 comment list 16 --author @me --last 1"],
       ["Find where a decision was made", "$0 comment list 16 -q 'migration'"],
+      ["Read what was hidden", "$0 comment list 16 --only-hidden"],
     ],
   });
 
@@ -228,6 +247,12 @@ export class CommentListCommand extends ProjectCommand {
   });
   last = Option.String("--last", {
     description: "Keep only the newest N comments",
+  });
+  includeHidden = Option.Boolean("--include-hidden", false, {
+    description: "Print hidden comments in full instead of a placeholder",
+  });
+  onlyHidden = Option.Boolean("--only-hidden", false, {
+    description: "Only the hidden comments, in full",
   });
 
   protected async run(client: TodouClient): Promise<void> {
@@ -242,21 +267,32 @@ export class CommentListCommand extends ProjectCommand {
         : (await resolveAssignees(client, project, [this.author]))[0];
     const needle = this.query?.toLowerCase();
 
+    // `--only-hidden` is `--include-hidden` plus a filter, not a second
+    // code path: the bodies it exists to show have to be asked for.
+    const wantsBodies = this.includeHidden || this.onlyHidden;
     // One unfiltered drain, then filter here: the server's `types` filter
     // has no author or full-text axis, and the timeline is bounded anyway.
-    const { items, cursor } = await drainTimeline(client, project, number);
+    const { items, cursor } = await drainTimeline(client, project, number, {
+      includeHidden: wantsBodies,
+    });
     const matched = items.filter(
       (item): item is TimelineComment =>
         item.type === "comment" &&
+        (!this.onlyHidden || isHidden(item)) &&
         (author === undefined || item.author.id === author) &&
         (needle === undefined || item.body.toLowerCase().includes(needle)),
     );
-    const comments = last === undefined ? matched : matched.slice(-last);
-    const omitted = matched.length - comments.length;
+    const units = wantsBodies
+      ? matched.map((comment) => comment as TimelineUnit)
+      : groupHiddenRuns(matched);
+    const kept = last === undefined ? units : units.slice(-last);
+    const comments = kept.flatMap(unitItems) as TimelineComment[];
+    const omitted = units.length - kept.length;
 
     const spelling = await fetchRefSpelling(client, project);
     const refPrefix = spelling.refPrefix;
     const paint = makePainter(this.context.stdout, this.context.env);
+    const hinted = kept.some((unit) => unit.type === "hidden_run");
     this.output(
       {
         comments,
@@ -273,11 +309,13 @@ export class CommentListCommand extends ProjectCommand {
               ]
             : []),
           ...(omitted > 0 ? [paint("dim", elision(omitted, "comment"))] : []),
-          ...comments.map((comment) =>
-            renderTimelineItem(comment, paint, {
-              issueNumber: number,
-              ...spelling,
-            }),
+          ...kept.map((unit) =>
+            unit.type === "hidden_run"
+              ? renderHiddenRun(unit, paint)
+              : renderTimelineItem(unit, paint, {
+                  issueNumber: number,
+                  ...spelling,
+                }),
           ),
           ...(cursor === undefined
             ? []
@@ -287,6 +325,7 @@ export class CommentListCommand extends ProjectCommand {
                   `cursor: ${cursor} (issue watch --since <cursor>)`,
                 ),
               ]),
+          ...(hinted ? [paint("dim", HIDDEN_HINT)] : []),
         ].join("\n\n"),
     );
     // No markIssueRead: the same reasoning as `issue view --brief` — what
@@ -516,4 +555,181 @@ export class CommentDeleteCommand extends ProjectCommand {
     );
     return 0;
   }
+}
+
+/**
+ * The shared body of `comment hide` and `comment unhide`. One class rather
+ * than two, because the two directions differ in a single boolean and a
+ * selector that meant different things either way would be the bug (T-281).
+ */
+abstract class CommentHideBase extends ProjectCommand {
+  /** True for `hide`, false for `unhide`. */
+  protected abstract readonly hidden: boolean;
+
+  number = Option.String({ required: true });
+  ids = Option.Rest();
+  to = Option.String("--to", {
+    description: "Everything up to and including this comment id",
+  });
+  all = Option.Boolean("--all", false, {
+    description: "Every comment on the card",
+  });
+  keepLast = Option.String("--keep-last", {
+    description: "Leave the newest N comments alone (default 3)",
+  });
+  dryRun = Option.Boolean("--dry-run", false, {
+    description: "Print what would be written, send nothing",
+  });
+
+  protected async run(client: TodouClient): Promise<number> {
+    const { project, number } = await this.resolveIssueRef(client, this.number);
+    const policy = this.policy();
+
+    const outcome = await applyHidePolicy(client, project, number, policy, {
+      hidden: this.hidden,
+      dryRun: this.dryRun,
+    });
+    const issueRef = formatRef(await fetchRefPrefix(client, project), number);
+    const paint = makePainter(this.context.stdout, this.context.env);
+    const verb = this.hidden ? "hide" : "unhide";
+
+    this.output(
+      {
+        issue_number: number,
+        issue_ref: issueRef,
+        hidden: this.hidden,
+        dry_run: this.dryRun,
+        [this.dryRun ? "would_write" : "written"]: outcome.written,
+        skipped: outcome.skipped,
+      },
+      () =>
+        this.dryRun
+          ? [
+              ...outcome.preview,
+              paint("dim", "(dry run — nothing written)"),
+            ].join("\n")
+          : hideSummary(
+              outcome,
+              {
+                hidden: this.hidden,
+                issueRef,
+                dryRunCommand: `todou comment ${verb} ${this.number} ${this.selectorArgs()} --dry-run`,
+              },
+              paint,
+            ),
+    );
+    return 0;
+  }
+
+  /** Which selector was asked for; exactly one of the three. */
+  private policy(): HidePolicy {
+    const given = [
+      this.ids.length > 0 ? "<id>…" : null,
+      this.to === undefined ? null : "--to",
+      this.all ? "--all" : null,
+    ].filter((name): name is string => name !== null);
+    if (given.length === 0) {
+      throw new CliError(
+        "nothing selected",
+        "name the comment ids, or pass `--to <id>` or `--all`",
+      );
+    }
+    if (given.length > 1) {
+      throw new CliError(
+        `${given.join(" and ")} select different things`,
+        "pass one of them: ids name comments outright, `--to` takes " +
+          "everything up to a watermark, `--all` takes the card",
+      );
+    }
+    // Only meaningful while hiding: nothing needs holding back from being
+    // read again, so `unhide` ignores it (see `selectHidable`).
+    const keepLast =
+      this.keepLast === undefined
+        ? 3
+        : parsePositiveInt(this.keepLast, "--keep-last", { zero: true });
+    if (this.ids.length > 0) {
+      return { by: "ids", ids: this.ids.map((id) => parseCommentId(id)) };
+    }
+    if (this.to !== undefined) {
+      return {
+        by: "up_to",
+        comment_id: parseCommentId(this.to, "--to"),
+        keep_last: keepLast,
+      };
+    }
+    return { by: "all", keep_last: keepLast };
+  }
+
+  /** The selector as typed, so the `--dry-run` hint is copy-pasteable. */
+  private selectorArgs(): string {
+    if (this.ids.length > 0) return this.ids.join(" ");
+    if (this.to !== undefined) return `--to ${this.to}`;
+    return this.keepLast === undefined
+      ? "--all"
+      : `--all --keep-last ${this.keepLast}`;
+  }
+}
+
+export class CommentHideCommand extends CommentHideBase {
+  static paths = [["comment", "hide"]];
+  static usage = Command.Usage({
+    description: "Hide settled comments behind a counted placeholder",
+    details: `
+      For the card whose middle is exploration that has since reached a
+      conclusion. Hidden comments keep their row in the timeline — the
+      author, the timestamp and the id all stay — but a read that did not
+      ask for them gets a placeholder line instead of the bodies. Nothing
+      is deleted, and \`comment unhide\` puts any of it back.
+
+      Hiding is card-level and visible to everyone; it is not a per-reader
+      preference. It records no timeline event, does not move the card's
+      \`updated_at\`, and does not mark anything read for anybody.
+
+      Three selectors, one per invocation. Naming ids hides exactly those.
+      \`--to <id>\` hides everything up to and including that comment.
+      \`--all\` hides the card, less the newest \`--keep-last\` comments
+      (3 by default, counted in comments and not in events).
+
+      **The two selectors skip what is not settled yet**: a comment whose
+      questions are unanswered, a spec annotation still unresolved, and the
+      kept tail. Naming an id overrides all three — keeping one good
+      comment in the middle, or putting away one answered question, is a
+      decision the operator is allowed to make. \`--dry-run\` prints the
+      picks and every skip with its reason, and sends nothing.
+    `,
+    examples: [
+      ["Hide three comments by id", "$0 comment hide 16 3403 3405 3407"],
+      ["Hide up to a watermark", "$0 comment hide 16 --to 3441"],
+      [
+        "Tidy the card, keep the tail",
+        "$0 comment hide 16 --all --keep-last 3",
+      ],
+      ["See what that would do", "$0 comment hide 16 --all --dry-run"],
+    ],
+  });
+
+  protected readonly hidden = true;
+}
+
+export class CommentUnhideCommand extends CommentHideBase {
+  static paths = [["comment", "unhide"]];
+  static usage = Command.Usage({
+    description: "Put hidden comments back",
+    details: `
+      The other direction of \`comment hide\`, with the same selectors:
+      ids, \`--to <id>\`, \`--all\`, and \`--dry-run\`. This is a first
+      class entry rather than an undo — hiding the wrong run has to be
+      reversible in one command.
+
+      No exemptions apply here: \`--all\` picks exactly the comments that
+      are hidden right now. \`--keep-last\` is accepted and ignored, since
+      there is nothing to hold back from being readable again.
+    `,
+    examples: [
+      ["Put one back", "$0 comment unhide 16 3403"],
+      ["Put the whole card back", "$0 comment unhide 16 --all"],
+    ],
+  });
+
+  protected readonly hidden = false;
 }

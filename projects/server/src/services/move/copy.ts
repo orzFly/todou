@@ -379,9 +379,11 @@ async function copyComments(
     component: comments.component,
     agentContext: comments.agentContext,
     resolvedBy: comments.resolvedBy,
+    hiddenBy: comments.hiddenBy,
     createdAt: micro(comments.createdAt),
     editedAt: micro(comments.editedAt),
     resolvedAt: micro(comments.resolvedAt),
+    hiddenAt: micro(comments.hiddenAt),
   })) {
     for (const row of batch) {
       const inserted = await dst
@@ -394,9 +396,11 @@ async function copyComments(
           component: row.component,
           agentContext: row.agentContext,
           resolvedBy: row.resolvedBy,
+          hiddenBy: row.hiddenBy,
           createdAt: atMicro(row.createdAt),
           editedAt: atMicro(row.editedAt),
           resolvedAt: atMicro(row.resolvedAt),
+          hiddenAt: atMicro(row.hiddenAt),
           // biome-ignore lint/suspicious/noExplicitAny: SQL expressions for µs
         } as any)
         .returning({ id: comments.id });

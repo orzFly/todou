@@ -7,6 +7,8 @@ import {
   CommandSubmitResult,
   CommentCreateInput,
   CommentCreateResult,
+  CommentHideInput,
+  CommentHideResult,
   CommentLocation,
   CommentUpdateInput,
   Issue,
@@ -36,6 +38,7 @@ import {
   deleteComment,
   getComment,
   locateComment,
+  setCommentsHidden,
   updateComment,
 } from "../services/comments.ts";
 import {
@@ -326,6 +329,29 @@ const deleteCommentRoute = createRoute({
   responses: { 204: { description: "Deleted" } },
 });
 
+const hideCommentsRoute = createRoute({
+  method: "post",
+  path: "/{slug}/issues/{number}/comments/hide",
+  summary: `Hide or unhide comments ${roleTag("comment.hide")}`,
+  description:
+    "Takes an explicit id list and a target state; `hidden: false` unhides " +
+    "(T-281). A hidden comment keeps its row in the timeline — and with it " +
+    "`total_count`, the cursors and every other field — but a read that did " +
+    "not ask for `include_hidden` gets an empty `body`. Fetching one " +
+    "comment by id, `spec comments` and `question list` are unaffected: " +
+    "asking for a comment by name is an explicit request. Which comments " +
+    "deserve hiding is the caller's to compute; the only rules here are " +
+    "that every id must belong to this card (404, nothing written) and that " +
+    "an id already in the target state is reported under `unchanged` " +
+    "instead of being rewritten. The write records no timeline event and " +
+    "does not touch `updated_at` or anyone's unread count.",
+  request: { params: issueParams, body: jsonBody(CommentHideInput) },
+  responses: {
+    200: { description: "New state", ...jsonBody(CommentHideResult) },
+    ...movedResponses,
+  },
+});
+
 export function issueRoutes() {
   const app = new OpenAPIHono<AppEnv>();
 
@@ -591,6 +617,20 @@ export function issueRoutes() {
       commentId,
     );
     return c.body(null, 204);
+  });
+
+  app.openapi(hideCommentsRoute, async (c) => {
+    const { slug, number } = c.req.valid("param");
+    return c.json(
+      await setCommentsHidden(
+        c.get("appCtx"),
+        c.get("user"),
+        slug,
+        number,
+        c.req.valid("json"),
+      ),
+      200,
+    );
   });
 
   return app;

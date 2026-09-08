@@ -189,6 +189,49 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
     expect((await json(commentRedirect)).moved_to.slug).toBe(B);
   });
 
+  /**
+   * `copyComments` builds a `.values({…})` literal, so a column nobody listed
+   * is a missing optional field and not a type error: without this assertion
+   * the hide mark would disappear on every move with tsc, the move suite and
+   * the hide suite all still green (T-281).
+   */
+  it("carries the hide mark to the destination", async () => {
+    const source = await createIssue(A, "hidden travels", "body");
+    const ids: number[] = [];
+    for (const body of ["gets hidden", "stays visible"]) {
+      const res = await req(
+        `/projects/${A}/issues/${source.number}/comments`,
+        author,
+        { method: "POST", body: JSON.stringify({ body }) },
+      );
+      expect(res.status).toBe(201);
+      ids.push((await json(res)).id as number);
+    }
+    const db = await dbOf(idA, A);
+    await db
+      .update(comments)
+      .set({ hiddenAt: new Date(), hiddenBy: authorId })
+      .where(and(eq(comments.projectId, idA), eq(comments.id, ids[0] ?? 0)));
+
+    const result = await moved(A, source.number, B);
+    const timeline = await json(
+      await req(
+        `/projects/${B}/issues/${result.moved_to.number}/timeline?limit=100&include_hidden=1`,
+        author,
+      ),
+    );
+    const carried = timeline.items.filter(
+      (i: { type: string }) => i.type === "comment",
+    );
+    expect(carried.map((c: { body: string }) => c.body)).toEqual([
+      "gets hidden",
+      "stays visible",
+    ]);
+    // `toBeNull` alone would pass on a response that dropped the key.
+    expect(typeof carried[0].hidden_at).toBe("string");
+    expect(carried[1].hidden_at).toBeNull();
+  });
+
   it("leaves the source with a bare tombstone", async () => {
     const source = await createIssue(A, "leaves nothing behind", "body");
     await req(`/projects/${A}/issues/${source.number}/comments`, author, {

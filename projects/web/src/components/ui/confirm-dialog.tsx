@@ -16,9 +16,11 @@ import {
  * is no trigger element left to own the open state by the time the dialog
  * appears.
  *
- * No type-the-name confirmation: this guards reversible actions (T-145's
- * trash). An action that cannot be undone deserves a heavier gate than this
- * component gives it.
+ * No type-the-name confirmation. That was written when the trash (T-145) was
+ * the only caller and every action behind it was reversible; deleting a
+ * comment (T-281) is not, and takes this same gate because the reversible
+ * thing a reader almost always wants is `Hide`, which the wording points at.
+ * A destructive action with no such alternative would deserve more than this.
  */
 export function ConfirmDialog({
   open,

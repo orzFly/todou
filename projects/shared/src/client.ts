@@ -28,6 +28,7 @@ import type {
   CommandSubmitResult,
   CommentComponentInput,
   CommentCreateResult,
+  CommentHideResult,
   CommentLocation,
   CrossActivityPage,
   DirectUploadTicket,
@@ -717,6 +718,7 @@ export class TodouClient {
       types?: string;
       exclude_actor?: number;
       exclude_agent_session?: string;
+      include_hidden?: boolean;
     },
   ) =>
     this.request<TimelinePage>(
@@ -733,6 +735,7 @@ export class TodouClient {
       types?: string;
       exclude_actor?: number;
       exclude_agent_session?: string;
+      include_hidden?: boolean;
     },
   ) =>
     this.request<ActivityPage>("GET", `/projects/${slug}/activity`, {
@@ -746,6 +749,7 @@ export class TodouClient {
     types?: string;
     exclude_actor?: number;
     exclude_agent_session?: string;
+    include_hidden?: boolean;
   }) =>
     this.request<CrossActivityPage>("GET", "/activity", {
       query: query ? { ...query, last: query.last ? 1 : undefined } : {},
@@ -793,6 +797,17 @@ export class TodouClient {
     this.request<void>(
       "DELETE",
       `/projects/${slug}/issues/${number}/comments/${commentId}`,
+    );
+  /** Hide or unhide comments, one transaction per call (T-281). */
+  setCommentsHidden = (
+    slug: string,
+    number: number,
+    input: { hidden: boolean; comment_ids: number[] },
+  ) =>
+    this.request<CommentHideResult>(
+      "POST",
+      `/projects/${slug}/issues/${number}/comments/hide`,
+      { json: input },
     );
 
   // — questions (T-19) —

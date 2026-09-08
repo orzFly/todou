@@ -132,6 +132,11 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
   },
   {
     group: "Collaborate",
+    label: "Hide and unhide comments",
+    caps: ["comment.hide"],
+  },
+  {
+    group: "Collaborate",
     label: "Push, review and resolve specs",
     caps: ["spec.push", "spec.review", "spec.resolve"],
   },

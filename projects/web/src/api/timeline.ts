@@ -4,6 +4,17 @@ import { api } from "@/api/queries.ts";
 
 export const TIMELINE_PAGE_LIMIT = 50;
 
+/**
+ * Every page this app reads carries the hidden bodies (T-281). Revealing a
+ * run is a view toggle here, not a read: one person looking at one card is
+ * the whole budget, and the cost worth saving is the round trip, not the
+ * bytes. It also keeps `total_count` in the relation the fold arithmetic
+ * already assumes — rows and count stay exactly as they were.
+ *
+ * A constant, so it is not part of any query key.
+ */
+const READS = { include_hidden: true, limit: TIMELINE_PAGE_LIMIT } as const;
+
 export type TimelinePageParam =
   | { dir: "init" }
   | { dir: "init-head" }
@@ -34,21 +45,18 @@ export function useTimelineTail(slug: string, issueNumber: number) {
     queryFn: ({ pageParam }) => {
       if (pageParam.dir === "before") {
         return api.getTimeline(slug, issueNumber, {
+          ...READS,
           before: pageParam.cursor,
-          limit: TIMELINE_PAGE_LIMIT,
         });
       }
       if (pageParam.dir === "after") {
         return api.getTimeline(slug, issueNumber, {
+          ...READS,
           after: pageParam.cursor,
-          limit: TIMELINE_PAGE_LIMIT,
         });
       }
       // Chat-style initial position: land on the newest page.
-      return api.getTimeline(slug, issueNumber, {
-        last: true,
-        limit: TIMELINE_PAGE_LIMIT,
-      });
+      return api.getTimeline(slug, issueNumber, { ...READS, last: true });
     },
     getPreviousPageParam: (firstPage): TimelinePageParam | undefined =>
       firstPage.prev_cursor
@@ -79,14 +87,12 @@ export function useTimelineHead(
     queryFn: ({ pageParam }) => {
       if (pageParam.dir === "after") {
         return api.getTimeline(slug, issueNumber, {
+          ...READS,
           after: pageParam.cursor,
-          limit: TIMELINE_PAGE_LIMIT,
         });
       }
       // No cursor: forward from the very beginning.
-      return api.getTimeline(slug, issueNumber, {
-        limit: TIMELINE_PAGE_LIMIT,
-      });
+      return api.getTimeline(slug, issueNumber, { ...READS });
     },
     getNextPageParam: (_lastPage, allPages): TimelinePageParam | undefined => {
       const cursor = latestNextCursor(allPages);

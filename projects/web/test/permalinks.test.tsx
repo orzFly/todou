@@ -63,6 +63,7 @@ const commentOf = (id: number): TimelineComment => ({
   component: null,
   edited_at: null,
   resolved_at: null,
+  hidden_at: null,
   agent_context: null,
 });
 

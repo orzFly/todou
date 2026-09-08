@@ -102,6 +102,12 @@ export const TimelineComment = z.object({
   edited_at: Timestamp.nullable(),
   /** Spec-comment resolution stamp (T-23); null for everything else. */
   resolved_at: Timestamp.nullable().default(null),
+  /**
+   * Hide stamp (T-281); null while the comment shows its body. Defaulted
+   * like `resolved_at` because a server predating T-281 sends no such key,
+   * and a client reading it must land on "not hidden" rather than throw.
+   */
+  hidden_at: Timestamp.nullable().default(null),
   agent_context: AgentContext.nullable(),
 });
 export type TimelineComment = z.infer<typeof TimelineComment>;
@@ -212,6 +218,13 @@ export const TimelineQuery = z.object({
   // its own writes and (with T-35) powers "unread by others" semantics.
   exclude_actor: z.coerce.number().int().positive().optional(),
   exclude_agent_session: excludeAgentSession,
+  // Hand back hidden comments' bodies as stored (T-281). Off by default, and
+  // the blanking happens server-side, so "a read that did not ask for them
+  // does not carry them" holds for the CLI, `--json` and `todou api` alike.
+  include_hidden: z.preprocess(
+    (v) => (typeof v === "string" ? v === "1" || v === "true" : v),
+    z.boolean().default(false),
+  ),
 });
 export type TimelineQuery = z.infer<typeof TimelineQuery>;
 
@@ -241,6 +254,10 @@ export const ActivityQuery = z.object({
   types: z.string().optional(),
   exclude_actor: z.coerce.number().int().positive().optional(),
   exclude_agent_session: excludeAgentSession,
+  include_hidden: z.preprocess(
+    (v) => (typeof v === "string" ? v === "1" || v === "true" : v),
+    z.boolean().default(false),
+  ),
 });
 export type ActivityQuery = z.infer<typeof ActivityQuery>;
 
@@ -278,6 +295,10 @@ export const CrossActivityQuery = z.object({
   types: z.string().optional(),
   exclude_actor: z.coerce.number().int().positive().optional(),
   exclude_agent_session: excludeAgentSession,
+  include_hidden: z.preprocess(
+    (v) => (typeof v === "string" ? v === "1" || v === "true" : v),
+    z.boolean().default(false),
+  ),
 });
 export type CrossActivityQuery = z.infer<typeof CrossActivityQuery>;
 
@@ -295,3 +316,31 @@ export const CommentUpdateInput = z.strictObject({
   body: z.string().min(1).max(65536),
 });
 export type CommentUpdateInput = z.infer<typeof CommentUpdateInput>;
+
+/**
+ * Hide or unhide a list of comments in one transaction (T-281). The server
+ * takes an explicit id list and nothing else: which comments deserve hiding
+ * is a policy the caller computes (`selectHidable`), so changing the policy
+ * never needs a server release.
+ *
+ * The 500 cap sizes one transaction, not a card: a selector that picks more
+ * splits into several calls.
+ */
+export const CommentHideInput = z.strictObject({
+  hidden: z.boolean(),
+  comment_ids: z.array(Id).min(1).max(500),
+});
+export type CommentHideInput = z.infer<typeof CommentHideInput>;
+
+export const CommentHideResult = z.object({
+  /** The ids in the target state after this call, in request order. */
+  hidden: z.array(Id),
+  /**
+   * Ids that already were in the target state, so this call did not write
+   * them. Named separately because a client computes its selection before it
+   * calls: someone else's write may have landed in between, and knowing
+   * which ids this call actually moved is what makes a replay free.
+   */
+  unchanged: z.array(Id),
+});
+export type CommentHideResult = z.infer<typeof CommentHideResult>;

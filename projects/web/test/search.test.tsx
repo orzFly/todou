@@ -64,6 +64,7 @@ const hit = (over: Partial<SearchItem> = {}): SearchItem => ({
   spec_path: null,
   field: "title",
   snippet: { text: "增加项目内全文搜索功能", ranges: [[5, 9]] },
+  hidden: false,
   updated_at: "2026-08-30T08:00:00Z",
   ...over,
 });

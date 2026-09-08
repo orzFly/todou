@@ -105,17 +105,33 @@ const ghost = (id: number): UserRef => ({
   owner: null,
 });
 
-function toItem(m: Raw, refs: Map<number, UserRef>): TimelineItem {
+/**
+ * `elideHidden` decides whether a hidden comment hands back its body (T-281).
+ * The row itself always stays in the stream: dropping it would have to change
+ * `total_count`, the cursors and the page boundaries with it, and blanking a
+ * field cannot move a boundary.
+ *
+ * Every merged read passes `true` and only `include_hidden` turns it off, so
+ * the rule holds for `--json` and `todou api` exactly as it does for a
+ * rendered timeline. Asking for one comment by id goes through
+ * `toTimelineComment` instead, which never elides.
+ */
+function toItem(
+  m: Raw,
+  refs: Map<number, UserRef>,
+  elideHidden: boolean,
+): TimelineItem {
   return m.kind === KIND_COMMENT
     ? {
         type: "comment",
         id: m.row.id,
         author: refs.get(m.row.authorId) ?? ghost(m.row.authorId),
-        body: m.row.body,
+        body: elideHidden && m.row.hiddenAt !== null ? "" : m.row.body,
         component: m.row.component ?? null,
         created_at: m.row.createdAt.toISOString(),
         edited_at: m.row.editedAt?.toISOString() ?? null,
         resolved_at: m.row.resolvedAt?.toISOString() ?? null,
+        hidden_at: m.row.hiddenAt?.toISOString() ?? null,
         agent_context: m.row.agentContext ?? null,
       }
     : {
@@ -437,7 +453,7 @@ export async function getTimeline(
 
   const refs = await actorRefs(ctx, merged);
   const items: TimelineItem[] = redactMovePayloads(
-    merged.map((m) => toItem(m, refs)),
+    merged.map((m) => toItem(m, refs, !query.include_hidden)),
     visible.ids,
   );
 
@@ -610,7 +626,10 @@ export async function getProjectActivity(
 
   const refs = await actorRefs(ctx, page);
   const items = redactMovePayloads(
-    page.map((m) => ({ ...toItem(m, refs), issue_number: m.number })),
+    page.map((m) => ({
+      ...toItem(m, refs, !query.include_hidden),
+      issue_number: m.number,
+    })),
     visible.ids,
   );
 
@@ -793,7 +812,7 @@ export async function getCrossActivity(
   const refs = await actorRefs(ctx, page);
   const items = redactMovePayloads(
     page.map((m) => ({
-      ...toItem(m, refs),
+      ...toItem(m, refs, !query.include_hidden),
       issue_number: m.number,
       project: m.slug,
     })),

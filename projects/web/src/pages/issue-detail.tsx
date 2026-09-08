@@ -55,7 +55,10 @@ import {
   useCommentComposer,
   withAttachmentMarkers,
 } from "@/components/timeline/composer.tsx";
+import { RevealAllEye } from "@/components/timeline/reveal-all-eye.tsx";
+import { RevealedRunsProvider } from "@/components/timeline/revealed-runs.tsx";
 import { Timeline } from "@/components/timeline/timeline.tsx";
+import { TimelineDivider } from "@/components/timeline/timeline-divider.tsx";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -64,7 +67,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 
 export function IssueDetailPage() {
@@ -83,10 +85,13 @@ export function IssueDetailPage() {
   // Wraps TitleBlock rather than living inside it, so the floating bar's
   // trigger is unaffected by the block swapping itself for the rename form.
   const titleRef = useRef<HTMLDivElement>(null);
-  const isAdmin = members.data.some(
-    (m) => m.user.id === me.data.id && m.role === "admin",
-  );
-  const viewer = { id: me.data.id, isAdmin };
+  const membership = members.data.find((m) => m.user.id === me.data.id);
+  const isAdmin = membership?.role === "admin";
+  const viewer = {
+    id: me.data.id,
+    isAdmin,
+    role: membership?.role ?? null,
+  };
   // Only the author or an admin can even reach a deleted card, so anyone
   // seeing this banner may act on it (T-145).
   const trashed = issue.data.deleted_at !== null;
@@ -99,43 +104,48 @@ export function IssueDetailPage() {
       {/* Two layers on purpose: the floating bar's zero-height host has to
         stay out of the space-y flow, which would otherwise add a gap below
         it, and its sticky container has to span the whole column. */}
-      <div className="min-w-0">
-        <FloatingTitleBar
-          slug={slug}
-          issue={issue.data}
-          watchTarget={titleRef}
-        />
-        <div className="space-y-4">
-          {trashed && <TrashBanner slug={slug} issue={issue.data} />}
-          <div ref={titleRef}>
-            <TitleBlock slug={slug} issue={issue.data} readOnly={trashed} />
-          </div>
-          <BodyBlock slug={slug} issue={issue.data} readOnly={trashed} />
-          <SpecEntryRow slug={slug} issueNumber={issueNumber} />
-          <AttachmentList slug={slug} issueNumber={issueNumber} />
-          <Separator />
-          <Timeline
+      {/* Above both the bar and the timeline: the bar only mirrors the
+        reveal entry the timeline's own section line carries (T-281). */}
+      <RevealedRunsProvider>
+        <div className="min-w-0">
+          <FloatingTitleBar
             slug={slug}
-            issueNumber={issueNumber}
-            pendingComments={composer.pending.filter((p) => !p.failed)}
-            viewer={viewer}
+            issue={issue.data}
+            watchTarget={titleRef}
+            mirror={<RevealAllEye />}
           />
-          {/* Floats at the viewport bottom while the timeline scrolls by,
-            and settles into flow at the end of the page (GitHub-style). */}
-          {!trashed && (
-            <div className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4">
-              <Composer
-                slug={slug}
-                issueNumber={issueNumber}
-                onSend={composer.send}
-                onSendWithCommands={composer.sendWithCommands}
-                failed={composer.pending.filter((p) => p.failed)}
-                onRetry={composer.retry}
-              />
+          <div className="space-y-4">
+            {trashed && <TrashBanner slug={slug} issue={issue.data} />}
+            <div ref={titleRef}>
+              <TitleBlock slug={slug} issue={issue.data} readOnly={trashed} />
             </div>
-          )}
+            <BodyBlock slug={slug} issue={issue.data} readOnly={trashed} />
+            <SpecEntryRow slug={slug} issueNumber={issueNumber} />
+            <AttachmentList slug={slug} issueNumber={issueNumber} />
+            <TimelineDivider />
+            <Timeline
+              slug={slug}
+              issueNumber={issueNumber}
+              pendingComments={composer.pending.filter((p) => !p.failed)}
+              viewer={viewer}
+            />
+            {/* Floats at the viewport bottom while the timeline scrolls by,
+              and settles into flow at the end of the page (GitHub-style). */}
+            {!trashed && (
+              <div className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4">
+                <Composer
+                  slug={slug}
+                  issueNumber={issueNumber}
+                  onSend={composer.send}
+                  onSendWithCommands={composer.sendWithCommands}
+                  failed={composer.pending.filter((p) => p.failed)}
+                  onRetry={composer.retry}
+                />
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      </RevealedRunsProvider>
       <Sidebar
         slug={slug}
         issue={issue.data}

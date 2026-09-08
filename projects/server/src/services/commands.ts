@@ -361,6 +361,8 @@ export async function executeCommands(
   if (!bundle) throw new Error("bundle missing");
 
   let comment: TimelineComment | null = null;
-  if (commentRow !== null) comment = await toTimelineComment(ctx, commentRow);
+  if (commentRow !== null) {
+    comment = await toTimelineComment(ctx, commentRow, { elideHidden: false });
+  }
   return { comment, issue: toIssue(bundle) };
 }

@@ -11,6 +11,14 @@ export type GapExpansion = {
   remaining: number;
   isExpanding: boolean;
   expand: () => void;
+  /**
+   * The revealed-run key holding this comment id, if a loaded run does
+   * (T-281). Null when no run holds it — it may be visible already, or
+   * still behind the paging gap.
+   */
+  hiddenRunHolding?: (commentId: number) => string | null;
+  /** Open that run, so the target renders on the next pass. */
+  revealRun?: (key: string) => void;
 };
 
 /** One-shot highlight; restartable when the same anchor is re-targeted. */
@@ -32,6 +40,19 @@ function flash(el: HTMLElement) {
  * folded middle (T-30) one chunk at a time from the gap's head side until
  * the target's chunk is in. The anchor → element contract (anchorElementId)
  * and the scroll+flash step stay as they were.
+ *
+ * A hidden run is the second reason a target may not be rendered (T-281),
+ * and it is checked before the paging gap: the placeholder does not show
+ * the ids it stands for, so a permalink followed from elsewhere would land
+ * on a line that says nothing about where its target went.
+ *
+ * The two channels chain without any coordination between them. A comment
+ * that is both unloaded and hidden arrives through the gap expansion first,
+ * becomes a placeholder, and is opened by the run channel on a later pass —
+ * this effect has no dependency array and re-decides every render.
+ *
+ * Revealing needs no `stall` guard the way expanding does: a run that is
+ * open stays open, so the check cannot ask for the same thing twice.
  *
  * Returns whether an anchor is being targeted, so the caller can skip its
  * default scroll-to-bottom.
@@ -57,6 +78,14 @@ export function useTimelineAnchor(gap: GapExpansion): boolean {
       // covers the target.
       el.scrollIntoView({ block: "center" });
       flash(el);
+      return;
+    }
+    const run =
+      target.kind === "comment"
+        ? (gap.hiddenRunHolding?.(target.id) ?? null)
+        : null;
+    if (run !== null) {
+      gap.revealRun?.(run);
     } else if (gap.remaining > 0 && !gap.isExpanding) {
       // A dead anchor (deleted comment, foreign event id) expands at most
       // the whole gap — bounded, unlike the pre-T-30 load-everything walk.

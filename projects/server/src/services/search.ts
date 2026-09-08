@@ -749,6 +749,7 @@ export async function searchProject(
         spec_path: null,
         field,
         snippet: buildSnippet(inTitle ? row.title : row.body, terms),
+        hidden: false,
         updated_at: row.updatedAt.toISOString(),
         weight: inTitle ? WEIGHT["issue-title"] : WEIGHT.issue,
       });
@@ -762,6 +763,7 @@ export async function searchProject(
         body: comments.body,
         createdAt: comments.createdAt,
         editedAt: comments.editedAt,
+        hiddenAt: comments.hiddenAt,
         number: issues.number,
         title: issues.title,
         statusId: issues.statusId,
@@ -789,6 +791,9 @@ export async function searchProject(
         spec_path: null,
         field: "body",
         snippet: buildSnippet(row.body, terms),
+        // Reported, not filtered: search is the one read that reaches across
+        // hidden comments, and the row says so rather than dropping the hit.
+        hidden: row.hiddenAt !== null,
         updated_at: (row.editedAt ?? row.createdAt).toISOString(),
         weight: WEIGHT.comment,
       });
@@ -838,6 +843,7 @@ export async function searchProject(
         spec_path: row.path,
         field: inPath ? "path" : "body",
         snippet: buildSnippet(inPath ? row.path : row.body, terms),
+        hidden: false,
         updated_at: row.createdAt.toISOString(),
         weight: WEIGHT.spec,
       });

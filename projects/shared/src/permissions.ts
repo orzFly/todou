@@ -89,6 +89,11 @@ export const CAPABILITIES = [
     ownerOnly: true,
   },
   { id: "comment.commands", minRole: "writer", enforce: "gate" },
+  // Hiding settled discussion (T-281). Deliberately not `ownerOnly`: tidying
+  // up a card means hiding other people's exploration, which is the whole
+  // scenario — so `comment.modify`, a reporter's own-rows-only gate, could
+  // not be borrowed for it.
+  { id: "comment.hide", minRole: "writer", enforce: "gate" },
 
   { id: "question.read", minRole: "reader", enforce: "addressed" },
   { id: "question.answer", minRole: "writer", enforce: "gate" },

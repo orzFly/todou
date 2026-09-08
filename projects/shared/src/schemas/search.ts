@@ -46,6 +46,13 @@ export const SearchItem = z.object({
   spec_path: z.string().nullable(),
   field: SearchField,
   snippet: SearchSnippet,
+  /**
+   * kind=comment: the comment is hidden (T-281); false for every other kind.
+   * The snippet comes back whole regardless — a search is someone asking for
+   * this text by name, and the row says where it lives so the reader is not
+   * surprised to find a placeholder there.
+   */
+  hidden: z.boolean().default(false),
   updated_at: Timestamp,
 });
 export type SearchItem = z.infer<typeof SearchItem>;

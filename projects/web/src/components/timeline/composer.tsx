@@ -83,6 +83,7 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
           created_at: new Date().toISOString(),
           edited_at: null,
           resolved_at: null,
+          hidden_at: null,
           agent_context: null,
         },
       },

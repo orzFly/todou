@@ -30,6 +30,7 @@ function comment(agentContext: unknown) {
     component: null,
     edited_at: null,
     resolved_at: null,
+    hidden_at: null,
     // biome-ignore lint/suspicious/noExplicitAny: test fixture
     agent_context: agentContext as any,
   };

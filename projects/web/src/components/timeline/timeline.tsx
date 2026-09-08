@@ -25,8 +25,11 @@ import { EventRow } from "@/components/timeline/event-row.tsx";
 import { FoldBlock } from "@/components/timeline/fold-block.tsx";
 import {
   groupTimeline,
+  hiddenRunKey,
   type RenderUnit,
 } from "@/components/timeline/group-events.ts";
+import { HiddenBlock } from "@/components/timeline/hidden-block.tsx";
+import { useRevealedRuns } from "@/components/timeline/revealed-runs.tsx";
 import { SpecVersionCard } from "@/components/timeline/spec-version-card.tsx";
 import { useTimelineAnchor } from "@/components/timeline/use-timeline-anchor.ts";
 import { Button } from "@/components/ui/button";
@@ -73,6 +76,20 @@ export function Timeline({
   const items: TimelineItem[] = [...above, ...below];
   const renderedCount = items.length + pendingComments.length;
 
+  const { isRevealed, reveal, reportHidden } = useRevealedRuns();
+  const unitsAbove = groupTimeline(above, isRevealed);
+  const unitsBelow = groupTimeline(below, isRevealed);
+  // Reported upward rather than recomputed there: the section line and the
+  // floating bar sit above this component, and the merged item list they
+  // would have to count is this component's to own.
+  const stillHidden = [...unitsAbove, ...unitsBelow].reduce(
+    (n, unit) => (unit.kind === "hidden" ? n + unit.comments.length : n),
+    0,
+  );
+  useEffect(() => {
+    reportHidden(stillHidden);
+  }, [stillHidden, reportHidden]);
+
   // Bottom of the document, not of the list: the composer is sticky, and
   // the document end sits below its in-flow position — so this lands with
   // the last item fully visible above the composer.
@@ -92,6 +109,16 @@ export function Timeline({
     // anchored above the seam while chunks stream in, and the final
     // scrollIntoView owns the viewport once the target renders.
     expand: () => head.fetchNextPage({ cancelRefetch: false }),
+    hiddenRunHolding: (commentId) => {
+      for (const unit of [...unitsAbove, ...unitsBelow]) {
+        if (unit.kind !== "hidden") continue;
+        if (unit.comments.some((comment) => comment.id === commentId)) {
+          return hiddenRunKey(unit);
+        }
+      }
+      return null;
+    },
+    revealRun: reveal,
   });
 
   // Initial position: bottom of the newest page (chat-style), unless an
@@ -207,10 +234,20 @@ export function Timeline({
   const anchorTarget = parseTimelineAnchor(anchorHash ?? "");
   const anchorEventId =
     anchorTarget?.kind === "event" ? anchorTarget.id : undefined;
-  const renderUnit = (unit: RenderUnit) =>
-    unit.kind === "item" ? (
-      renderItem(unit.item)
-    ) : (
+  const renderUnit = (unit: RenderUnit) => {
+    if (unit.kind === "item") return renderItem(unit.item);
+    if (unit.kind === "hidden") {
+      const key = hiddenRunKey(unit);
+      return (
+        <div key={key} className="pb-2">
+          <HiddenBlock
+            count={unit.comments.length}
+            onReveal={() => reveal(key)}
+          />
+        </div>
+      );
+    }
+    return (
       <div key={`group-${unit.events[0]?.id}`} className="pb-2">
         <EventGroup
           family={unit.family}
@@ -221,6 +258,7 @@ export function Timeline({
         />
       </div>
     );
+  };
 
   if (tail.isPending) {
     return (
@@ -248,7 +286,7 @@ export function Timeline({
           <Skeleton className="h-16 w-full" />
         </div>
       )}
-      {groupTimeline(above).map(renderUnit)}
+      {unitsAbove.map(renderUnit)}
       {remaining > 0 && (
         <div ref={blockRef} className="pb-2">
           <FoldBlock
@@ -258,7 +296,7 @@ export function Timeline({
           />
         </div>
       )}
-      {groupTimeline(below).map(renderUnit)}
+      {unitsBelow.map(renderUnit)}
       {pendingComments.map((pending) => (
         <div key={`pending-${pending.key}`} className="pb-2">
           <CommentItem

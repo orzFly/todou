@@ -2,6 +2,7 @@ export const TODOU = "todou";
 
 export * from "./client.ts";
 export * from "./events.ts";
+export * from "./hide-policy.ts";
 export * from "./list-invalidation.ts";
 export * from "./ownership.ts";
 export * from "./permissions.ts";

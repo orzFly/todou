@@ -74,7 +74,12 @@ function locator(item: SearchItem): string {
   // exactly when kind is comment" — so the bare kind is the fallback rather
   // than a handle spelled around a null.
   if (item.kind === "comment") {
-    return item.comment_id === null ? "comment" : commentRef(item.comment_id);
+    if (item.comment_id === null) return "comment";
+    // Search reaches across hidden comments while a timeline read does not,
+    // so the row has to say where the reader will and will not find it
+    // again (T-281).
+    const away = item.hidden ? " (hidden)" : "";
+    return `${commentRef(item.comment_id)}${away}`;
   }
   if (item.kind === "spec") return `spec ${item.spec_path}`;
   return "issue";

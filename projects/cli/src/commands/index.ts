@@ -15,7 +15,9 @@ import {
   CommentAddCommand,
   CommentDeleteCommand,
   CommentEditCommand,
+  CommentHideCommand,
   CommentListCommand,
+  CommentUnhideCommand,
   CommentViewCommand,
 } from "./comment.ts";
 import { ConfigShowCommand } from "./config.ts";
@@ -108,6 +110,8 @@ export const commands: Array<CommandClass<CliContext>> = [
   CommentViewCommand,
   CommentEditCommand,
   CommentDeleteCommand,
+  CommentHideCommand,
+  CommentUnhideCommand,
   QuestionListCommand,
   QuestionWaitCommand,
   QuestionAnswerCommand,
