@@ -37,6 +37,13 @@ tracker. The prefixed form exists so GitHub never mistakes them for its
 own issue numbers; the full story is in
 [docs/external-trackers.md](docs/external-trackers.md).
 
+Cards also carry **metadata** — namespaced key/value pairs written
+and read through the API, where a system integrating with todou
+keeps its own bookkeeping on a card. It belongs to whichever
+system wrote it, not state anyone else should act on —
+[docs/metadata.md](docs/metadata.md) covers the API, the CLI
+and the limits.
+
 ## Layout
 
 pnpm workspace, packages under `projects/*`:

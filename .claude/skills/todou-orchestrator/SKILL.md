@@ -169,8 +169,10 @@ subagent and check the results.
 - You move cards to Shipped and retire their agents there; Done belongs to the user.
 - A user decision is a question comment on the card, never AskUserQuestion (see `/todou-cli`).
 - Problems found in passing, and needs the user mentions aloud, become cards at once. A request that
-  arrived outside the tracker (terminal, chat) is quoted verbatim in the card body; that quote is the
-  only trace the tracker will have. What arrives on a live worker's card is that worker's to file.
+  arrived outside the tracker (terminal, chat) goes into the card body word for word and nothing else
+  goes in there; that text is the only trace the tracker will have, and your reading of it is a
+  comment on the card (`/todou-cli`, "Filing a card"). What arrives on a live worker's card is that
+  worker's to file.
 - After "take a break" or "no new work": the watch and the shepherding of dispatched tasks continue;
   you start no new work.
 

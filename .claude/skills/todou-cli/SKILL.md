@@ -39,7 +39,7 @@ todou issue view 12 15 23 --brief   # several cards at once; a bad number errors
 todou issue view 16 --timeline --last 10   # drop the body, keep the newest 10 entries
 todou issue events 16 [--type referenced] [--last 5]   # timeline minus comments, event id first
 todou issue create -p <proj> --title T [--body-file -] [--status Next]
-#   ^ when filing on behalf of the user, quote their original words verbatim in the body
+#   ^ the body carries the report only; your reading of it is a comment (see "Filing a card")
 todou issue edit 16 --status "In Progress"    # status/title/labels/assignees
 todou issue edit 12 15 23 --status Next       # one set of flags, every card; checked before it writes
 todou issue transfer 16 --to <slug> [--dry-run] [-y]   # move to another project
@@ -51,10 +51,6 @@ todou comment delete 16 123 -y                # take back a misfire; not reversi
 todou attach -p <proj> 16 file.png ...        # prints `#id name → url`
 todou attach list -p <proj> 16                # id / filename / size / url
 todou attach download -p <proj> 16 <id|name> [-o <path>|-o -]
-todou metadata get 16 [--namespace orch,ci]   # machine state on a card; no flag = every namespace
-todou metadata namespaces 16                  # names, key counts, newest write — no values
-todou metadata set 16 --namespace orch k=v …  # [--if-match k=v] [--if-absent k] for compare-and-set
-todou metadata unset 16 --namespace orch k …  # delete keys; `k=` writes an empty value instead
 todou config show [--json]                    # resolved config and where each part came from; no token values
 todou project members -p <proj>               # logins for -a/--assignee and --exclude-actor
 todou status list -p <proj>
@@ -111,16 +107,34 @@ an existing file path still posts, with a warning (`--allow-body-path` silences 
 echoes the body's size and opening next to the new id; that line proves what was posted. Attach a
 value that starts with `--` to its flag: `--title=--body …`.
 
-## Filing what the user asked for
+## Filing a card
 
 A request to file a card asks for the card, not for a report.
 
 1. Create the card first; reading code, reproducing and scoping happen on the card afterwards. The
    one read to do first is `todou search`: an existing card on the same subject gets a comment
    instead of a duplicate.
-2. Quote the user's original words verbatim in the body. Your reading of them goes above the quote.
-3. Split what was said into units of work. Two unrelated complaints in one sentence are two cards;
+2. **The body holds only what a later measurement cannot overturn**: the user's own words, pasted as
+   they were written rather than wrapped in a blockquote, and whatever they handed over with them —
+   a log, a DOM fragment, a link, a screenshot. What you pasted in is theirs; what you ran is not.
+   Quoting would re-render their code fences and tables as prose, and with nothing else in the body
+   there is no second voice to set them apart from. The body's last line says where the report came
+   from — `— <who>, in the terminal, <date>` — which for a request that arrived outside the tracker
+   is the only provenance it will ever have.
+3. **Your reading of it is a comment, posted right after you create the card**: the cause you
+   suspect, what you measured, the fix you would pick, the neighbouring cards. A body is the premise
+   the next agent starts from and offers nothing to reply to; a comment can be answered and
+   overturned in place. The sentence that ends up rewritten is never the quote.
+4. The title names the reported symptom, never a cause you inferred. It is the one field that
+   `issue list`, every watch line and every resolved ref renders, so a guess there travels further
+   than one made anywhere else.
+5. Split what was said into units of work. Two unrelated complaints in one sentence are two cards;
    three bullets about the same surface are one card. Report back which card got which part.
+
+A problem you found yourself has nothing to quote, and that does not empty the body: it takes the
+observation and the evidence, each measurement carrying the command or the run that produced it, and
+it names the parts you have not measured as unmeasured. The cause you infer from that evidence and
+the fix you would pick are still a comment. What this keeps out of a body is inference, not analysis.
 
 ## Labels
 
@@ -128,13 +142,6 @@ A request to file a card asks for the card, not for a report.
   `label create` is for recoloring and bulk setup.
 - `--add-label` and `--remove-label` edit the set; `--label` replaces the whole set. Use `--add-label`
   unless you mean to replace. Both accept several names. Details: `references/labels.md`.
-
-## Metadata
-
-Namespaced key/value pairs on a card, for state a tool keeps rather than something a person reads:
-which phase an orchestrator has a card in, which run last touched it. Writing one is silent — no
-timeline entry, no unread marker, nothing moved to the top of a list — and nothing returns it unless
-it was asked for by name. Details: `references/metadata.md`.
 
 ## Waiting: watch, question wait, spec wait
 
@@ -329,9 +336,10 @@ A spec document states the design as it stands, not how it got there. No "v3 sai
 Y" passages, no "the review asked for Z", and no list of corrections to another document: a correction
 rewrites the sentence it corrects and folds its reason into the prose. Where a change came from is
 already recorded — in the card's comments and in the spec's own version history. `proposal.md` holds
-the user's requirements that have no tracker trace, quoted verbatim without commentary; the card body,
-comments and question answers are referenced, never copied; and what a review annotation established
-is recorded as the requirement it now is, not as a note about the annotation.
+the user's requirements that have no tracker trace, quoted verbatim without commentary —
+`Filing a card`'s split, applied to a document rather than a card body; the card body, comments and
+question answers are referenced, never copied; and what a review annotation established is recorded
+as the requirement it now is, not as a note about the annotation.
 
 **The review gate is one command**: `spec push … --wait`. It pushes, waits on the whole issue from the
 push's own position, and reads the verdict from the spec's state at every wake-up. The last stdout
