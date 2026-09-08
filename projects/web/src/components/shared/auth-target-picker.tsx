@@ -9,10 +9,14 @@ import { Input } from "@/components/ui/input";
  * "Which of my accounts is this for?" — asked by `todou login`'s two
  * authorization flows and by the access-request page (T-280).
  *
- * The candidates are only ever the viewer's own: themselves and the agents
- * they own. That is not a UI simplification but the whole security argument
- * of the access page — a link may suggest a login, and the account the write
- * lands on still comes from this list.
+ * The candidates are only ever accounts the viewer holds: the agents they
+ * own, plus themselves wherever the flow hands over `me`. That is not a UI
+ * simplification but the whole security argument of the access page — a link
+ * may suggest a login, and the account the write lands on still comes from
+ * this list. `todou login` offers the viewer themselves, because minting a
+ * token for your own machine is what that page is for; the access-request
+ * page passes no `me`, so a grant there never lands on whoever opened it
+ * (T-301).
  */
 
 /** Who the minted token, or the new membership, will belong to. */
@@ -108,13 +112,14 @@ const rowClass =
   "flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-muted/50 has-[:checked]:bg-muted";
 
 export function AuthTargetFieldset({
+  /** Left out where the viewer may not be the target at all (T-301). */
   me,
   picker,
   legend = "Authorize as",
   /** Left out where creating an account is not part of the flow (T-280). */
   allowNew = true,
 }: {
-  me: Me;
+  me?: Me;
   picker: TargetSelection;
   legend?: string;
   allowNew?: boolean;
@@ -170,18 +175,20 @@ export function AuthTargetFieldset({
             />
           </label>
         ) : null}
-        <label className={rowClass}>
-          <input
-            type="radio"
-            name="cli-auth-target"
-            className="accent-primary"
-            aria-label={`${displayNameOf(me)} (yourself)`}
-            checked={selection?.kind === "me"}
-            onChange={() => setSelection({ kind: "me" })}
-          />
-          <UserChip user={me} />
-          <span className="text-sm text-muted-foreground">yourself</span>
-        </label>
+        {me === undefined ? null : (
+          <label className={rowClass}>
+            <input
+              type="radio"
+              name="cli-auth-target"
+              className="accent-primary"
+              aria-label={`${displayNameOf(me)} (yourself)`}
+              checked={selection?.kind === "me"}
+              onChange={() => setSelection({ kind: "me" })}
+            />
+            <UserChip user={me} />
+            <span className="text-sm text-muted-foreground">yourself</span>
+          </label>
+        )}
       </div>
       {selection?.kind === "new" && newLogin !== "" && !picker.newLoginValid ? (
         <p className="mt-1.5 text-xs text-destructive">

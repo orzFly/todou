@@ -1,5 +1,5 @@
 import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
-import { useSearch } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import type {
   Agent,
   Me,
@@ -124,29 +124,28 @@ function PageShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Which of the opener's own accounts a grant would land on. */
-function subjectOf(
-  selection: Selection,
-  me: Me,
-  agents: Agent[],
-): number | null {
-  if (selection === null || selection.kind === "new") return null;
-  if (selection.kind === "me") return me.id;
+/**
+ * Which agent a grant would land on. Given no `me` on purpose (T-301): this
+ * is the only place the page turns a selection into a user id, and with the
+ * opener's id out of reach, a grant landing on them is not a case anyone has
+ * to remember to exclude.
+ */
+function subjectOf(selection: Selection, agents: Agent[]): number | null {
+  if (selection === null || selection.kind !== "agent") return null;
   return agents.some((a) => a.id === selection.id) ? selection.id : null;
 }
 
 /**
- * The account the link names, if the opener holds it. A preselection only:
+ * The agent the link names, if the opener owns it. A preselection only:
  * `login` is whatever the CLI wrote, and picking the wrong row here is the
- * same mistake as picking it by hand.
+ * same mistake as picking it by hand. A link naming the opener themselves
+ * therefore preselects nothing, exactly as one naming a stranger does.
  */
 function preselect(
   login: string | undefined,
-  me: Me,
   agents: Agent[],
 ): Selection | undefined {
   if (login === undefined) return undefined;
-  if (login === me.login) return { kind: "me" };
   const agent = agents.find((a) => a.login === login && a.disabled_at === null);
   return agent === undefined ? undefined : { kind: "agent", id: agent.id };
 }
@@ -189,15 +188,20 @@ export function GrantAccessCard({
   const membersOf = (slug: string): Member[] | undefined =>
     memberLists[slugs.indexOf(slug)]?.data;
 
+  // The same predicate `useTargetSelection` applies to build `candidates`,
+  // computed a second time because `initial` has to be ready before the hook
+  // runs and so cannot read the hook's own answer.
+  const enabled = agents.filter((a) => a.disabled_at === null);
   const picker = useTargetSelection(
     agents,
     readLastAgentId(),
-    preselect(search.login, me, agents) ??
-      // No create form here, so `defaultSelection`'s no-agents fallback has
-      // nowhere to land; the opener themselves is the remaining answer.
-      (agents.length === 0 ? { kind: "me" } : undefined),
+    preselect(search.login, agents) ??
+      // No create form here and no yourself row, so `defaultSelection`'s
+      // no-agents fallback would leave a selection no row on this page can
+      // render. Nothing is selected instead, and `NoTarget` says why.
+      (enabled.length === 0 ? null : undefined),
   );
-  const subject = subjectOf(picker.selection, me, agents);
+  const subject = subjectOf(picker.selection, agents);
 
   const rows: Row[] = found.map((entry) => {
     const slug =
@@ -320,14 +324,18 @@ export function GrantAccessCard({
 
       {grantable.length === 0 ? null : (
         <>
-          <AuthTargetFieldset
-            me={me}
-            picker={picker}
-            legend="Grant access to"
-            // Creating an account here would grant a role to something that
-            // is not the caller that failed.
-            allowNew={false}
-          />
+          {picker.candidates.length === 0 ? (
+            <NoTarget hasAgents={agents.length > 0} />
+          ) : (
+            <AuthTargetFieldset
+              // No `me`: a grant here never lands on the opener (T-301).
+              picker={picker}
+              legend="Grant access to"
+              // Creating an account here would grant a role to something that
+              // is not the caller that failed.
+              allowNew={false}
+            />
+          )}
           <div className="flex items-center justify-between gap-2">
             <RolePermissionsDialog />
             <Button
@@ -344,6 +352,44 @@ export function GrantAccessCard({
         </>
       )}
     </PageShell>
+  );
+}
+
+/**
+ * Stands where the fieldset would be when the opener owns no account a grant
+ * could land on. The two causes need different instructions, so they are told
+ * apart here rather than folded into one sentence (as on AddAgentPicker).
+ */
+function NoTarget({ hasAgents }: { hasAgents: boolean }) {
+  const linkClass = "font-medium text-foreground hover:underline";
+  return (
+    <div className="flex flex-col gap-1">
+      <p className="text-sm font-medium">Grant access to</p>
+      <p className="text-sm text-muted-foreground">
+        A grant here lands on an agent you own — never on your own account.{" "}
+        {hasAgents ? (
+          <>
+            Every agent you own is deactivated:{" "}
+            <Link
+              to="/settings/agents"
+              search={{ state: "deactivated" }}
+              className={linkClass}
+            >
+              reactivate one
+            </Link>
+            , then come back to this page.
+          </>
+        ) : (
+          <>
+            You own none yet:{" "}
+            <Link to="/settings/agents" className={linkClass}>
+              create an agent
+            </Link>
+            , then come back to this page.
+          </>
+        )}
+      </p>
+    </div>
   );
 }
 

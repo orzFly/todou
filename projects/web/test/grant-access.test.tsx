@@ -271,6 +271,64 @@ describe("the access page as an admin of the target", () => {
   });
 });
 
+describe("who the access page may grant to", () => {
+  it("never offers the opener themselves, not even when the link names them", async () => {
+    stubFetch();
+    // `alice` is the opener's own login, so this is the link that used to
+    // preselect the yourself row.
+    renderCard({ targets: ["mine"], login: "alice", uid: 1 });
+    expect(await screen.findByLabelText("Agent 5 @bot")).not.toBeNull();
+    expect(screen.queryByRole("radio", { name: /yourself/ })).toBeNull();
+    expect(screen.getAllByRole("radio")).toHaveLength(1);
+  });
+
+  it("writes to the agent, and to no account of the opener's own", async () => {
+    const calls = stubFetch();
+    renderCard({ targets: ["mine"], login: "alice", uid: 1 });
+    // The sole agent is preselected, so the grant is one click away.
+    const add = await screen.findByRole("button", { name: "Add to project" });
+    await waitFor(() => expect(add.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(add);
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === "PUT")).toBe(true),
+    );
+    expect(calls.find((c) => c.method === "PUT")?.url).toContain(
+      "/api/projects/mine/members/5",
+    );
+    // `me.id` is 1, and no request anywhere in the run is addressed to it.
+    expect(calls.some((c) => c.url.includes("/members/1"))).toBe(false);
+  });
+
+  it("says how to get an agent instead of showing an empty box", async () => {
+    stubFetch();
+    renderCard({ targets: ["mine"], login: "alice", uid: 1 }, { agents: [] });
+    const link = await screen.findByRole("link", { name: "create an agent" });
+    expect(link.getAttribute("href")).toContain("/settings/agents");
+    expect(screen.queryAllByRole("radio")).toHaveLength(0);
+    expect(
+      screen
+        .getByRole("button", { name: "Add to project" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
+  it("points at reactivation when every agent the opener owns is off", async () => {
+    stubFetch();
+    renderCard(
+      { targets: ["mine"], login: "alice", uid: 1 },
+      { agents: [{ ...agent(5, "bot"), disabled_at: SINCE }] },
+    );
+    const link = await screen.findByRole("link", { name: "reactivate one" });
+    expect(link.getAttribute("href")).toContain("state=deactivated");
+    expect(screen.queryAllByRole("radio")).toHaveLength(0);
+    expect(
+      screen
+        .getByRole("button", { name: "Add to project" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+  });
+});
+
 describe("the access page on an ambiguous target", () => {
   it("waits for the opener to say which project it means", async () => {
     stubFetch();
