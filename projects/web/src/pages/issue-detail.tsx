@@ -68,6 +68,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
+import { useScrollInsets } from "@/lib/scroll-insets.ts";
 
 export function IssueDetailPage() {
   const { slug, number: numberParam } = useParams({
@@ -85,6 +86,11 @@ export function IssueDetailPage() {
   // Wraps TitleBlock rather than living inside it, so the floating bar's
   // trigger is unaffected by the block swapping itself for the rename form.
   const titleRef = useRef<HTMLDivElement>(null);
+  // Both overlays cover the timeline, so every anchor landing on this page has
+  // to clear them (T-299).
+  const barRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  useScrollInsets({ top: [barRef], bottom: [composerRef] });
   const membership = members.data.find((m) => m.user.id === me.data.id);
   const isAdmin = membership?.role === "admin";
   const viewer = {
@@ -112,6 +118,7 @@ export function IssueDetailPage() {
             slug={slug}
             issue={issue.data}
             watchTarget={titleRef}
+            barRef={barRef}
             mirror={<RevealAllEye />}
           />
           <div className="space-y-4">
@@ -132,7 +139,10 @@ export function IssueDetailPage() {
             {/* Floats at the viewport bottom while the timeline scrolls by,
               and settles into flow at the end of the page (GitHub-style). */}
             {!trashed && (
-              <div className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4">
+              <div
+                ref={composerRef}
+                className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4"
+              >
                 <Composer
                   slug={slug}
                   issueNumber={issueNumber}

@@ -173,6 +173,24 @@ describe("spec compare focus anchoring (T-188)", () => {
     expect(scrolls.length).toBe(2);
   });
 
+  it("leaves the toolbar's clearance to scroll-padding alone (T-299)", async () => {
+    mockSpec();
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    Element.prototype.scrollIntoView = () => {};
+    const view = renderSpecView("?v=2&compare=1&file=b.md");
+    await view.findByRole("button", { name: /finish review/i });
+
+    // The two add up rather than override: 136 of padding against 144 of
+    // margin landed a path header 279.7px down instead of 144.
+    const main = view.container.querySelector("main");
+    const focused = view.container.querySelector('[data-file-diff="b.md"]');
+    expect(main).not.toBeNull();
+    expect(focused).not.toBeNull();
+    expect((main as HTMLElement).style.scrollMarginTop).toBe("");
+    expect((focused as HTMLElement).style.scrollMarginTop).toBe("");
+    expect(document.documentElement.style.scrollPaddingTop).not.toBe("");
+  });
+
   it("does not observe when no file is focused", async () => {
     mockSpec();
     vi.stubGlobal("ResizeObserver", FakeResizeObserver);

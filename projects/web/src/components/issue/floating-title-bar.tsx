@@ -14,11 +14,19 @@ export function FloatingTitleBar({
   slug,
   issue,
   watchTarget,
+  barRef,
   mirror,
 }: {
   slug: string;
   issue: Issue;
   watchTarget: RefObject<HTMLElement | null>;
+  /**
+   * The bar itself, for the page's scroll insets. It goes on the inner layer:
+   * the host is zero-height by design, and the bar keeps its height in the
+   * hidden state too — it fades and translates rather than unmounting, so it
+   * covers content either way.
+   */
+  barRef?: RefObject<HTMLDivElement | null>;
   /**
    * A control at the bar's right edge. Only ever a mirror of something the
    * document still holds, because this bar is `aria-hidden` — a reader using
@@ -47,6 +55,7 @@ export function FloatingTitleBar({
     // threshold shifts nothing the reader is looking at.
     <div className="sticky z-30 h-0" style={{ top: headerHeight }}>
       <div
+        ref={barRef}
         aria-hidden
         data-testid="floating-title-bar"
         data-state={shown ? "shown" : "hidden"}

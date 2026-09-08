@@ -403,6 +403,74 @@ describe("a #comment anchor landing in a hidden run", () => {
   });
 });
 
+describe("an anchor landing against the page's overlays (T-299)", () => {
+  // A 1280×800 card page: shell header 57 + floating bar 40 + 8 of breathing
+  // room above, collapsed composer 93 below.
+  const INSETS = { top: 105, bottom: 93 };
+  const stripHeight = () => window.innerHeight - INSETS.top - INSETS.bottom;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    document.documentElement.style.removeProperty("scroll-padding-top");
+    document.documentElement.style.removeProperty("scroll-padding-bottom");
+  });
+
+  /**
+   * How the anchor lands on a target of `height`. happy-dom has no layout
+   * engine, so the alignment `scrollIntoView` is asked for is the only part of
+   * the landing observable here — the geometry it produces is measured in a
+   * browser instead.
+   */
+  async function landOn(height: number): Promise<ScrollIntoViewOptions[]> {
+    document.documentElement.style.scrollPaddingTop = `${INSETS.top}px`;
+    document.documentElement.style.scrollPaddingBottom = `${INSETS.bottom}px`;
+    const landings: ScrollIntoViewOptions[] = [];
+    vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (
+      this: Element,
+      options?: boolean | ScrollIntoViewOptions,
+    ) {
+      if (this.id === "comment-102" && typeof options === "object") {
+        landings.push(options);
+      }
+    });
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element) {
+        const own = this.id === "comment-102" ? height : 0;
+        return {
+          x: 0,
+          y: 0,
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: own,
+          width: 0,
+          height: own,
+        } as DOMRect;
+      },
+    );
+
+    const view = renderPage(
+      [comment(101), comment(102), comment(103)],
+      "#comment-102",
+    );
+    await waitFor(() =>
+      expect(view.container.querySelector("#comment-102")).not.toBeNull(),
+    );
+    await waitFor(() => expect(landings.length).toBeGreaterThan(0));
+    return landings;
+  }
+
+  it("tops-aligns a comment taller than the strip", async () => {
+    const landings = await landOn(stripHeight() + 1);
+    expect(landings.at(-1)?.block).toBe("start");
+  });
+
+  it("centres a comment the strip has room for", async () => {
+    const landings = await landOn(80);
+    expect(landings.at(-1)?.block).toBe("center");
+  });
+});
+
 describe("a comment's own hide controls", () => {
   const render = (
     over: { hidden?: boolean },

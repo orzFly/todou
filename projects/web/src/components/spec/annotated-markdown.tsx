@@ -41,6 +41,7 @@ import {
   rehypeSourceLines,
   SOURCE_LINE_ATTR,
 } from "@/lib/rehype-source-lines.ts";
+import { revealBlock } from "@/lib/scroll-insets.ts";
 import { type LineRange, rangesIntersect } from "@/lib/spec-changes.ts";
 import {
   annotationDecorations,
@@ -595,11 +596,7 @@ export function AnnotatedMarkdown({
           `[${SOURCE_LINE_ATTR}="${blockKey}"]`,
         );
       if (target === null) return;
-      target.scrollIntoView({ block: "center", behavior: "smooth" });
-      // Same flash as timeline anchors (T-38): remove → reflow → re-add.
-      target.classList.remove("anchor-flash");
-      void target.offsetWidth;
-      target.classList.add("anchor-flash");
+      revealBlock(target, { behavior: "smooth" });
     },
     [],
   );

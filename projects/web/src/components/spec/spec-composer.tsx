@@ -1,6 +1,6 @@
 import { formatAnchorRange } from "@todou/shared";
 import { FileTextIcon, XIcon } from "lucide-react";
-import { useState } from "react";
+import { type RefObject, useState } from "react";
 import { MarkdownEditor } from "@/components/shared/markdown-editor.tsx";
 import { Button } from "@/components/ui/button";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
@@ -31,6 +31,7 @@ export function SpecComposer({
   staging,
   initialBody,
   editing = false,
+  hostRef,
   onCancel,
   onStage,
 }: {
@@ -40,6 +41,8 @@ export function SpecComposer({
   initialBody?: string;
   /** Rewriting a staged draft rather than staging a new one. */
   editing?: boolean;
+  /** The sticky strip, for the page's scroll insets (T-299). */
+  hostRef?: RefObject<HTMLDivElement | null>;
   onCancel: () => void;
   onStage: (body: string) => void;
 }) {
@@ -59,7 +62,7 @@ export function SpecComposer({
   const hidden = quoteLines.length - shown.length;
 
   return (
-    <div className="sticky bottom-0 z-10 bg-background pt-2 pb-3">
+    <div ref={hostRef} className="sticky bottom-0 z-10 bg-background pt-2 pb-3">
       <div className="rounded-lg border shadow-lg">
         <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
           <FileTextIcon className="size-3.5 shrink-0" />

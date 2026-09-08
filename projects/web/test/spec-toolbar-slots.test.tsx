@@ -29,7 +29,21 @@ vi.mock("@pierre/diffs/react", () => ({
 afterEach(() => {
   vi.restoreAllMocks();
   localStorage.clear();
+  // testing-library removes only the container it made, and the shell stub
+  // stands beside it.
+  for (const header of document.querySelectorAll("header")) header.remove();
 });
+
+/**
+ * The shell header the page really sits under. Its height is part of the strip
+ * the counter measures against, and happy-dom answers 0 from every
+ * `getBoundingClientRect()`, so it only reaches the page when stubbed.
+ */
+function shellHeader(height = 57): void {
+  const header = document.createElement("header");
+  header.getBoundingClientRect = () => ({ height }) as DOMRect;
+  document.body.append(header);
+}
 
 const AUTHOR = {
   id: 1,
@@ -99,6 +113,7 @@ function mockSpec() {
 }
 
 function renderSpecView(search: string) {
+  shellHeader();
   const rootRoute = createRootRoute();
   const authedRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -168,10 +183,11 @@ const FILE_DIFF_SELECTOR = "[data-file-diff]";
 
 /**
  * Place the stops and let the counter re-measure. happy-dom lays nothing out,
- * so every rect is zero until a test says otherwise. Rendered mode compares
- * block centers against the viewport's, at 384 in a 768-tall window with a
- * tolerance band of 376–392; source mode compares tops against `stickyTop + 8`,
- * at 64 while the header stands on its 56px fallback.
+ * so every rect is zero until a test says otherwise. Both modes now compare
+ * resting scroll positions against the current one, which is 0 here: a stop is
+ * behind the reader once it would come to rest at or above the page top. The
+ * strip it rests in is 65px down — the 57px shell header plus 8px of breathing
+ * room, with the toolbar itself measuring 0 (T-299).
  */
 function stubTops(
   view: { container: HTMLElement },

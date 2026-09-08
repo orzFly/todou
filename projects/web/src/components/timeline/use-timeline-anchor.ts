@@ -1,5 +1,6 @@
 import { useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
+import { revealBlock } from "@/lib/scroll-insets.ts";
 import {
   anchorElementId,
   parseTimelineAnchor,
@@ -21,25 +22,12 @@ export type GapExpansion = {
   revealRun?: (key: string) => void;
 };
 
-/** One-shot highlight; restartable when the same anchor is re-targeted. */
-function flash(el: HTMLElement) {
-  el.classList.remove("anchor-flash");
-  // Reflow so removing+adding the class restarts the animation.
-  void el.offsetWidth;
-  el.classList.add("anchor-flash");
-  el.addEventListener(
-    "animationend",
-    () => el.classList.remove("anchor-flash"),
-    { once: true },
-  );
-}
-
 /**
  * Drive `#comment-<id>` / `#event-<id>` anchors (T-38): once the target is
- * rendered, center it and flash a highlight; while it isn't, expand the
+ * rendered, reveal it and flash a highlight; while it isn't, expand the
  * folded middle (T-30) one chunk at a time from the gap's head side until
  * the target's chunk is in. The anchor → element contract (anchorElementId)
- * and the scroll+flash step stay as they were.
+ * stays as it was.
  *
  * A hidden run is the second reason a target may not be rendered (T-281),
  * and it is checked before the paging gap: the placeholder does not show
@@ -74,10 +62,11 @@ export function useTimelineAnchor(gap: GapExpansion): boolean {
     const el = document.getElementById(key);
     if (el) {
       doneFor.current = key;
-      // Center, so neither the sticky composer nor the viewport edge
-      // covers the target.
-      el.scrollIntoView({ block: "center" });
-      flash(el);
+      // Centred while it fits between the floating bar and the composer,
+      // top-aligned once it is taller than what they leave — a long comment
+      // centred puts its author line hundreds of pixels off screen (T-299).
+      // The strip itself comes from the page's `scroll-padding`.
+      revealBlock(el);
       return;
     }
     const run =

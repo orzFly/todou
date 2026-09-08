@@ -81,6 +81,13 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
+  type RevealMode,
+  restingScrollY,
+  revealBlock,
+  usableViewport,
+  useScrollInsets,
+} from "@/lib/scroll-insets.ts";
+import {
   acceptsShortcut,
   currentIndex,
   type Stops,
@@ -135,36 +142,27 @@ function stopsIn(root: HTMLElement, selector: string): HTMLElement[] {
 }
 
 /**
- * Where each mode measures from. The resting line has to be the one the mode
- * scrolls to, or the stop the reader is already on fails to exclude itself
- * from both directions and ↑↓ keep re-finding it — the jam T-61 was opened
- * about.
+ * Where each stop comes to rest, in page coordinates, so the pivot is simply
+ * the current scroll position. Asking `restingScrollY` — the same function the
+ * landing itself goes through — is what keeps the counter from naming a
+ * different stop than the arrow lands on: the stop the reader is on has to
+ * exclude itself from both directions, or ↑↓ keep re-finding it (T-61).
  *
- * `scrollIntoView({block:"center"})` parks a changed block on the viewport's
- * center, so that mode compares centers. A file diff is routinely taller than
- * the viewport and what the reader wants under the toolbar is its path
- * header, which is where `scrollMarginTop` parks it (T-190 §5), so that mode
- * compares tops.
+ * `sourceDiff` is the mode: whole file diffs are the one thing top-aligned
+ * whether they fit or not (T-190 §5).
  */
-function stopsFor(
-  els: HTMLElement[],
-  sourceDiff: boolean,
-  stickyTop: number,
-): Stops {
-  if (sourceDiff) {
-    return {
-      positions: els.map(
-        (el) => el.getBoundingClientRect().top + window.scrollY,
-      ),
-      pivot: window.scrollY + stickyTop + 8,
-    };
-  }
+function stopsFor(els: HTMLElement[], sourceDiff: boolean): Stops {
+  const usable = usableViewport();
   return {
     positions: els.map((el) => {
       const rect = el.getBoundingClientRect();
-      return rect.top + window.scrollY + rect.height / 2;
+      return restingScrollY(
+        { top: rect.top + window.scrollY, height: rect.height },
+        usable,
+        sourceDiff ? "start" : "auto",
+      );
     }),
-    pivot: window.scrollY + window.innerHeight / 2,
+    pivot: window.scrollY,
   };
 }
 
@@ -434,6 +432,10 @@ function SpecViewBody({
   const headerHeight = useHeaderHeight();
   const toolbarHeight = useElementHeight(toolbarRef, TOOLBAR_FALLBACK_HEIGHT);
   const stickyTop = headerHeight + toolbarHeight;
+  // Kept apart from `stickyTop`, which serves CSS offsets that want the
+  // toolbar's own edge rather than a strip to land things in (T-299).
+  const composerRef = useRef<HTMLDivElement>(null);
+  useScrollInsets({ top: [toolbarRef], bottom: [composerRef] });
 
   const issue = useQuery(issueQuery(slug, issueNumber));
   const navigate = useNavigate();
@@ -654,15 +656,8 @@ function SpecViewBody({
     return new Map(stats.map((s) => [s.path, s]));
   }, [baselineFiles, files.data.files]);
 
-  const flashTo = (
-    target: HTMLElement,
-    block: ScrollLogicalPosition = "center",
-  ) => {
-    target.scrollIntoView({ block, behavior: "smooth" });
-    // Same flash as timeline anchors (T-38): remove → reflow → re-add.
-    target.classList.remove("anchor-flash");
-    void target.offsetWidth;
-    target.classList.add("anchor-flash");
+  const flashTo = (target: HTMLElement, mode: RevealMode = "auto") => {
+    revealBlock(target, { mode, behavior: "smooth" });
   };
 
   /**
@@ -674,7 +669,7 @@ function SpecViewBody({
     if (!root) return false;
     const els = stopsIn(root, CHANGED_SELECTOR);
     if (els.length === 0) return false;
-    const target = els[stepIndex(stopsFor(els, false, stickyTop), direction)];
+    const target = els[stepIndex(stopsFor(els, false), direction)];
     if (!target) return false;
     flashTo(target);
     return true;
@@ -708,7 +703,7 @@ function SpecViewBody({
     if (!root) return;
     const els = stopsIn(root, FILE_DIFF_SELECTOR);
     if (els.length === 0) return;
-    const target = els[stepIndex(stopsFor(els, true, stickyTop), direction)];
+    const target = els[stepIndex(stopsFor(els, true), direction)];
     if (!target) return;
     flashTo(target, "start");
   };
@@ -809,6 +804,10 @@ function SpecViewBody({
    * `.spec-ins-block` never passes through ranges at all — so any count
    * derived from the ranges would drift from what the arrows actually stop on.
    */
+  // `stickyTop` is read back through `scroll-padding` rather than passed in,
+  // but it is still what moves the strip the count is taken against — and the
+  // sticky stack can grow a row with no window resize to notice it by.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: stickyTop above
   const measurePosition = useCallback((): ChangePosition | null => {
     if (changeNav.reason !== undefined) return null;
     // With no marked block of its own, this file's ↑↓ step over files, and
@@ -828,7 +827,7 @@ function SpecViewBody({
     );
     if (els.length === 0) return null;
     return {
-      index: currentIndex(stopsFor(els, sourceDiff, stickyTop)),
+      index: currentIndex(stopsFor(els, sourceDiff)),
       total: els.length,
     };
   }, [
@@ -851,7 +850,7 @@ function SpecViewBody({
     const target = direction === 1 ? els[0] : els[els.length - 1];
     if (target) flashTo(target);
     // A file with no highlighted blocks (e.g. brand new) starts at the top.
-    else root.scrollIntoView({ block: "start", behavior: "smooth" });
+    else revealBlock(root, { mode: "start", flash: false, behavior: "smooth" });
   }, [selectedPath, changedRanges]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: fold changes the blocks' heights, not measurePosition's inputs
@@ -1362,11 +1361,7 @@ function SpecViewBody({
             sidebarStats={sidebarStats}
           />
         </aside>
-        <main
-          className="min-w-0 space-y-4"
-          style={{ scrollMarginTop: stickyTop + 8 }}
-          ref={contentRef}
-        >
+        <main className="min-w-0 space-y-4" ref={contentRef}>
           {sourceDiff && baseline !== null ? (
             <SpecDiff
               slug={slug}
@@ -1523,6 +1518,7 @@ function SpecViewBody({
           key={staging.session}
           slug={slug}
           staging={staging}
+          hostRef={composerRef}
           initialBody={editingDraft?.body}
           editing={staging.draftId !== undefined}
           onCancel={() => setStaging(null)}
@@ -1786,10 +1782,9 @@ function SpecDiff({
     if (focusPath === undefined) return;
     const el = focusRef.current;
     if (!el) return;
-    el.scrollIntoView({ block: "start" });
-    el.classList.remove("anchor-flash");
-    void el.offsetWidth;
-    el.classList.add("anchor-flash");
+    // Top-aligned whether or not the diff would fit: what the reader came for
+    // is the path header under the toolbar (T-190 §5).
+    revealBlock(el, { mode: "start" });
     // The scroll just set is about to be pushed around: MultiFileDiff lays
     // out asynchronously, so at this point every diff above the target is
     // still ~0px tall and the viewport ends up back at the page top (T-188).
@@ -1800,7 +1795,7 @@ function SpecDiff({
     if (typeof ResizeObserver === "undefined") return; // happy-dom
     const container = el.parentElement ?? el;
     const observer = new ResizeObserver(() => {
-      el.scrollIntoView({ block: "start" });
+      revealBlock(el, { mode: "start", flash: false });
     });
     observer.observe(container);
     const controller = new AbortController();
@@ -1844,7 +1839,6 @@ function SpecDiff({
             ? { "data-file-unchanged": entry.path }
             : { "data-file-diff": entry.path })}
           ref={entry.path === focusPath ? focusRef : undefined}
-          style={{ scrollMarginTop: stickyTop + 8 }}
         >
           <SpecStackEntry
             entry={entry}
