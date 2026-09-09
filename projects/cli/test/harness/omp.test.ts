@@ -9,7 +9,10 @@ import {
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { detectAgentContext } from "../../src/harness/index.ts";
+import {
+  detectAgentContext,
+  liveSessionIdReader,
+} from "../../src/harness/index.ts";
 import { fakeFetch, loggedInEnv, runCli } from "../harness.ts";
 
 /*
@@ -655,6 +658,176 @@ describe("omp session recovery through the host process", () => {
         ompHost({ argv: ["omp", "-r", started], cwd: project }),
       ),
     ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/resumed-into" });
+  });
+});
+
+/*
+ * The extension's half of the contract, read from this side (T-308). Every
+ * case here also proves the fallback: a record this reader will not believe
+ * has to leave the scan above working exactly as it did without one, because
+ * "no extension installed" is the state most omp sessions are in.
+ */
+describe("the session omp publishes for itself", () => {
+  const runtime = scratchDir("todou-omp-runtime-");
+  /** The state file the extension writes, named after omp's own pid. */
+  const statePath = (pid: number) => join(runtime, `${pid}.json`);
+  /** No process has this pid: Linux caps at 4194304 by default. */
+  const DEAD = 2147483647;
+
+  function writeState(pid: number, body: unknown, at = statePath(pid)): string {
+    writeFileSync(at, typeof body === "string" ? body : JSON.stringify(body));
+    return at;
+  }
+
+  const state = (pid: number, sessionId: string, sessionFile?: string) => ({
+    v: 1,
+    pid,
+    agent: "omp",
+    session_id: sessionId,
+    ...(sessionFile === undefined ? {} : { session_file: sessionFile }),
+    updated_at: "2026-09-09T09:03:27.798Z",
+  });
+
+  /**
+   * Two omp instances open on one project, which is the case the scan cannot
+   * resolve even in principle: the newest write is the only signal it has, so
+   * whichever instance spoke last takes both instances' identity. The record
+   * decides it, and the assertion is that the *older* session wins — a
+   * detector still scanning would report the newer one and look correct.
+   */
+  it("beats the scan where the scan is guessing", () => {
+    const dir = agentDir();
+    writeSession({
+      sessionsRoot: sessionsIn(dir),
+      cwd: project,
+      id: SID,
+      lines: [modelChange("llm-gw/ours")],
+      mtime: 1000,
+    });
+    writeSession({
+      sessionsRoot: sessionsIn(dir),
+      cwd: project,
+      id: OTHER_SID,
+      lines: [modelChange("llm-gw/the-other-instance")],
+      mtime: 2000,
+    });
+    const ours = join(
+      sessionsIn(dir),
+      sessionDirName(project, { home, tmp: tmpdir() }),
+      `2026-01-01T00-00-00-000Z_${SID}.jsonl`,
+    );
+    const env = {
+      ...ENV,
+      PI_CODING_AGENT_DIR: dir,
+      TODOU_OMP_STATE: writeState(process.pid, state(process.pid, SID, ours)),
+    };
+    expect(detect(env, home, project)).toEqual({
+      agent: "omp",
+      session_id: SID,
+      model: "llm-gw/ours",
+    });
+    // And with the record gone the same environment falls back to the guess,
+    // so the case above is the record's doing and not the fixture's.
+    rmSync(env.TODOU_OMP_STATE);
+    expect(detect(env, home, project)).toEqual({
+      agent: "omp",
+      session_id: OTHER_SID,
+      model: "llm-gw/the-other-instance",
+    });
+  });
+
+  it("reports the id alone when the record names no session file", () => {
+    const path = writeState(process.pid, state(process.pid, SID));
+    expect(detect({ ...ENV, TODOU_OMP_STATE: path }, home, project)).toEqual({
+      agent: "omp",
+      session_id: SID,
+    });
+  });
+
+  describe("falls back to the scan rather than believe a bad record", () => {
+    /* A recorded session for the scan to find, so a fallback is visible as
+       an answer rather than as the agent-only degradation. */
+    const dir = agentDir();
+    writeSession({
+      sessionsRoot: sessionsIn(dir),
+      cwd: project,
+      id: OTHER_SID,
+      lines: [modelChange("llm-gw/scanned")],
+    });
+    const scanned = {
+      agent: "omp",
+      session_id: OTHER_SID,
+      model: "llm-gw/scanned",
+    };
+    const fallsBack = (path: string) => {
+      expect(
+        detect(
+          { ...ENV, PI_CODING_AGENT_DIR: dir, TODOU_OMP_STATE: path },
+          home,
+          project,
+        ),
+      ).toEqual(scanned);
+    };
+
+    it("when the file is not there", () => {
+      fallsBack(join(runtime, "never-written.json"));
+    });
+
+    it("when the JSON is half-written", () => {
+      fallsBack(writeState(process.pid, '{"v":1,"pid":'));
+    });
+
+    it("when the version is one this does not know", () => {
+      fallsBack(writeState(process.pid, { ...state(process.pid, SID), v: 2 }));
+    });
+
+    it("when the record names a pid other than the file it is in", () => {
+      // A copied or hand-edited record, which is what ties the answer to the
+      // path we were pointed at rather than to any file that parses.
+      fallsBack(writeState(process.pid, state(DEAD, SID)));
+    });
+
+    it("when the process that wrote it is gone", () => {
+      // A crash between the last write and `session_shutdown` leaves this
+      // behind, and its id belongs to a session nobody is in any more.
+      fallsBack(writeState(DEAD, state(DEAD, SID)));
+    });
+
+    it("when the id is not one that may go into a URL", () => {
+      fallsBack(writeState(process.pid, state(process.pid, "../../etc")));
+    });
+  });
+
+  describe("liveSessionId", () => {
+    const read = (env: Record<string, string>) =>
+      liveSessionIdReader({ env: { ...ENV, ...env }, home, io: NO_TREE })();
+
+    it("re-reads the record on every call", () => {
+      const path = statePath(process.pid);
+      writeState(process.pid, state(process.pid, SID));
+      const reader = liveSessionIdReader({
+        env: { ...ENV, TODOU_OMP_STATE: path },
+        home,
+        io: NO_TREE,
+      });
+      expect(reader()).toEqual({ id: SID });
+      // What a `/new` or a `/resume` does to it mid-watch: the session id
+      // rotates without the process changing, so a reader that captured the
+      // first answer would keep filtering on a session nobody is in.
+      writeState(process.pid, state(process.pid, OTHER_SID));
+      expect(reader()).toEqual({ id: OTHER_SID });
+    });
+
+    it("says nothing at all where the extension is not installed", () => {
+      expect(read({})).toEqual({});
+    });
+
+    it("names the file it could not believe", () => {
+      // Not `{}`: falling back silently here restores the startup snapshot
+      // this probe exists to replace, and does it looking like a success.
+      const path = writeState(DEAD, state(DEAD, SID));
+      expect(read({ TODOU_OMP_STATE: path })).toEqual({ unreadable: path });
+    });
   });
 });
 

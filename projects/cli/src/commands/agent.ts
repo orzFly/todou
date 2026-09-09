@@ -10,6 +10,7 @@ import {
 import { reportError } from "../errors.ts";
 import { followAdvice } from "../follow-advice.ts";
 import { detectHarnessId } from "../harness/index.ts";
+import { harnessMessaging } from "../harness/messaging.ts";
 
 /** Absent means advised, so only an explicit `false` opts out. */
 function optedOut(config: CliConfig): boolean {
@@ -50,7 +51,7 @@ export class AgentCanIFollowCommand extends Command<CliContext> {
       const env = this.context.env;
       const advice = followAdvice({
         harness: detectHarnessId(env),
-        socket: env.CLAUDE_CODE_MESSAGING_SOCKET,
+        socket: harnessMessaging(env).socket,
         optedOut: optedOut(loadCliConfig(env)),
       });
       this.context.stdout.write(`${advice.paragraphs.join("\n\n")}\n`);

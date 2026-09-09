@@ -78,6 +78,54 @@ describe("followAdvice", () => {
     });
   });
 
+  it("offers uds under omp once its extension is installed", () => {
+    expect(
+      followAdvice({ harness: "omp", socket: SOCKET, optedOut: false }),
+    ).toEqual({
+      situation: "uds",
+      harness: "omp",
+      paragraphs: [
+        "running under omp, and `--follow=uds` is available.",
+        "Use it with `todou watch` or `todou issue watch`, started as a background task (run in background = true). If you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.",
+        CLOSING,
+      ],
+    });
+  });
+
+  it("names the install command when omp has no extension", () => {
+    // The one situation whose way out belongs to the reader: installing a
+    // per-user extension changes nothing for anyone else, unlike the opt-out
+    // above, which is the user's standing decision about this machine.
+    expect(
+      followAdvice({ harness: "omp", socket: undefined, optedOut: false }),
+    ).toEqual({
+      situation: "omp-not-installed",
+      harness: "omp",
+      paragraphs: [
+        "running under omp, but the todou extension is not installed in it, so there is no session socket to push to.",
+        "Run `todou integration install omp` and restart omp — the extension also lets todou read which session omp is in, instead of inferring it from session-log timestamps.",
+        ...UNKNOWN_HARNESS,
+        CLOSING,
+      ],
+    });
+  });
+
+  it("does not tell an opted-out omp to install anything", () => {
+    // The extension would change nothing about the opt-out, so naming it here
+    // would send the reader to run a command with no effect on their problem.
+    expect(
+      followAdvice({ harness: "omp", socket: SOCKET, optedOut: true }),
+    ).toEqual({
+      situation: "uds-opted-out",
+      harness: "omp",
+      paragraphs: [
+        "running under omp, but `--follow=uds` is opted out on this machine.",
+        ...UNKNOWN_HARNESS,
+        CLOSING,
+      ],
+    });
+  });
+
   it("says what it does not know about another harness, by name", () => {
     expect(
       followAdvice({ harness: "codex", socket: undefined, optedOut: false }),

@@ -27,6 +27,7 @@ import {
   relativeTime,
   table,
 } from "../format.ts";
+import { harnessMessaging } from "../harness/messaging.ts";
 import {
   parseChoice,
   parsePositiveInt,
@@ -886,11 +887,13 @@ export class IssueWatchCommand extends ProjectCommand {
       \`--follow=stdout\` write each batch to stdout in the format above,
       which is what a supervisor that runs a command and reads its output
       wants. \`--follow=uds\` (alias \`--follow=claude-code-messaging\`)
-      instead pushes each batch as a message to the Claude Code session that
-      exported \`CLAUDE_CODE_MESSAGING_SOCKET\`, and refuses up front if that
-      variable is unset. Auto-detection would get the first case wrong: a
-      supervisor runs this command *from* the session, so that variable is
-      set there too.
+      instead pushes each batch as a message into the agent session that
+      started this command, and refuses up front where there is none to push
+      to — Claude Code offers that socket itself, omp once
+      \`todou integration install omp\` has been run in it, and
+      \`todou agent can-i-follow\` answers for the session you are in.
+      Auto-detection would get the first case wrong: a supervisor runs this
+      command *from* the session, so the socket is in its environment too.
 
       Under \`--follow=uds\` stdout stays empty while pushing works — a
       background task's stdout is delivered in full when the process exits,
@@ -997,11 +1000,18 @@ export class IssueWatchCommand extends ProjectCommand {
     // with no socket in the environment fails whatever the card turns out to
     // be, so there is nothing to look up first. Same "before any I/O" rule
     // `todou watch` keeps, and the same fact a test can assert — no calls.
+    //
+    // Read once and carried down to `openFollow`: the refusal here and the
+    // dial there have to be talking about the same endpoint.
+    const messaging = harnessMessaging(
+      this.context.env,
+      this.context.processTree,
+    );
     const transport = followTransport({
       raw: this.follow,
       poll: this.poll,
       printCursor: this.printCursor,
-      socket: this.context.env.CLAUDE_CODE_MESSAGING_SOCKET,
+      socket: messaging.socket,
     });
     checkPrintCursor(this.printCursor, { poll: this.poll, json: this.json });
     const { project, number } = await this.resolveIssueRef(client, this.number);
@@ -1164,8 +1174,8 @@ export class IssueWatchCommand extends ProjectCommand {
         render: (items, since, cursor) =>
           renderHuman(items, since, cursor, plain),
         emit,
-        socket: this.context.env.CLAUDE_CODE_MESSAGING_SOCKET,
-        token: this.context.env.CLAUDE_CODE_MESSAGING_TOKEN,
+        socket: messaging.socket,
+        token: messaging.token,
         session: () => this.ownSession(),
         home: this.context.home,
         clock: this.clock,

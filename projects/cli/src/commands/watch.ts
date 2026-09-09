@@ -10,6 +10,10 @@ import { cursorRecord, ProjectCommand } from "../api-command.ts";
 import { openChangeNudges } from "../change-nudges.ts";
 import { CliError } from "../errors.ts";
 import { makePainter } from "../format.ts";
+import {
+  type HarnessMessaging,
+  harnessMessaging,
+} from "../harness/messaging.ts";
 import { drainPaged } from "../paginate.ts";
 import { parsePositiveInt, parseSeconds } from "../parse.ts";
 import { type RefFormat, refFormat, withIssueRef } from "../refs.ts";
@@ -198,11 +202,13 @@ export class WatchCommand extends ProjectCommand {
       \`--follow=stdout\` write each batch to stdout in the format above,
       which is what a supervisor that runs a command and reads its output
       wants. \`--follow=uds\` (alias \`--follow=claude-code-messaging\`)
-      instead pushes each batch as a message to the Claude Code session that
-      exported \`CLAUDE_CODE_MESSAGING_SOCKET\`, and refuses up front if that
-      variable is unset. Auto-detection would get the first case wrong: a
-      supervisor runs this command *from* the session, so that variable is
-      set there too.
+      instead pushes each batch as a message into the agent session that
+      started this command, and refuses up front where there is none to push
+      to — Claude Code offers that socket itself, omp once
+      \`todou integration install omp\` has been run in it, and
+      \`todou agent can-i-follow\` answers for the session you are in.
+      Auto-detection would get the first case wrong: a supervisor runs this
+      command *from* the session, so the socket is in its environment too.
 
       Under \`--follow=uds\` stdout stays empty while pushing works — a
       background task's stdout is delivered in full when the process exits,
@@ -312,11 +318,19 @@ export class WatchCommand extends ProjectCommand {
     // Every one of these is decided before the first request: a watch that
     // cannot push has to say so up front, not after a batch is in hand with
     // nowhere to send it.
+    //
+    // Read once and carried: the refusal below and the dial further down have
+    // to be talking about the same endpoint, and resolving it twice makes a
+    // disagreement between them representable.
+    const messaging = harnessMessaging(
+      this.context.env,
+      this.context.processTree,
+    );
     const transport = followTransport({
       raw: this.follow,
       poll: this.poll,
       printCursor: this.printCursor,
-      socket: this.context.env.CLAUDE_CODE_MESSAGING_SOCKET,
+      socket: messaging.socket,
     });
     checkPrintCursor(this.printCursor, { poll: this.poll, json: this.json });
     const slugs = this.resolveSlugs();
@@ -384,6 +398,7 @@ export class WatchCommand extends ProjectCommand {
         self,
         paint,
         transport,
+        messaging,
         wait: nudges?.wait,
       });
       // Under --print-cursor the cursor is the product, and an empty poll
@@ -409,6 +424,7 @@ export class WatchCommand extends ProjectCommand {
       self: SelfFilterSource;
       paint: ReturnType<typeof makePainter>;
       transport: Transport | null;
+      messaging: HarnessMessaging;
       wait: ((maxMs: number) => Promise<void>) | undefined;
     },
   ): Promise<number> {
@@ -508,8 +524,8 @@ export class WatchCommand extends ProjectCommand {
         render: (items, since, cursor) =>
           renderHuman(items, since, cursor, plain),
         emit,
-        socket: this.context.env.CLAUDE_CODE_MESSAGING_SOCKET,
-        token: this.context.env.CLAUDE_CODE_MESSAGING_TOKEN,
+        socket: opts.messaging.socket,
+        token: opts.messaging.token,
         session: () => this.ownSession(),
         home: this.context.home,
         clock: this.clock,
@@ -665,8 +681,8 @@ export class WatchCommand extends ProjectCommand {
       render: (items, since, cursor) =>
         renderHuman(items, since, cursor, plain),
       emit,
-      socket: this.context.env.CLAUDE_CODE_MESSAGING_SOCKET,
-      token: this.context.env.CLAUDE_CODE_MESSAGING_TOKEN,
+      socket: opts.messaging.socket,
+      token: opts.messaging.token,
       session: () => this.ownSession(),
       home: this.context.home,
       clock: this.clock,

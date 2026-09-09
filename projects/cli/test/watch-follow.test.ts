@@ -632,9 +632,55 @@ describe("watch --follow argument handling (T-252)", () => {
       env: loggedInEnv(),
     });
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("CLAUDE_CODE_MESSAGING_SOCKET is not set");
+    // Named by what is missing rather than by one harness's variable: two
+    // harnesses publish this socket now, under different names (T-308).
+    expect(result.stderr).toContain("no agent session in this environment");
     expect(result.stderr).toContain("--follow=stdout");
     // Nothing was read, so there is no half-started watch to reason about.
+    expect(calls).toHaveLength(0);
+  });
+
+  /*
+   * Which variable names the socket is the harness's business, not this
+   * flag's (T-308). Both cases go through the command rather than through
+   * `followTransport` directly, because the endpoint is resolved on the way
+   * in and that resolution is the whole of what changed.
+   */
+  it("takes omp's socket when its extension published one", async () => {
+    const { fetchImpl, calls } = fakeFetch([["GET", "/api/me", me]]);
+    const result = await runCli(["watch", "-p", "todou", "--follow=uds"], {
+      fetchImpl,
+      env: {
+        ...loggedInEnv(),
+        OMPCODE: "1",
+        CLAUDECODE: "1",
+        TODOU_MESSAGING_SOCKET: "/run/omp-socks/7331.sock",
+      },
+    });
+    // The refusal is raised before any request, so requests having gone out
+    // is the assertion that it was not — the negative case below is the same
+    // fact read the other way, as no requests at all.
+    expect(`${result.stdout}${result.stderr}`).not.toContain(
+      "no agent session in this environment",
+    );
+    expect(calls.length).toBeGreaterThan(0);
+  });
+
+  it("refuses under an omp without the extension, socket or no socket", async () => {
+    // The inherited variable belongs to the Claude Code session outside this
+    // omp; treating it as an endpoint pushes the batch to the wrong reader.
+    const { fetchImpl, calls } = fakeFetch([["GET", "/api/me", me]]);
+    const result = await runCli(["watch", "-p", "todou", "--follow=uds"], {
+      fetchImpl,
+      env: {
+        ...loggedInEnv(),
+        OMPCODE: "1",
+        CLAUDECODE: "1",
+        CLAUDE_CODE_MESSAGING_SOCKET: "/run/cc-socks/4242.sock",
+      },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("no agent session in this environment");
     expect(calls).toHaveLength(0);
   });
 

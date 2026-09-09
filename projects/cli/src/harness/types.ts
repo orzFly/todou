@@ -67,10 +67,11 @@ export type Harness = {
   matches(env: Env): boolean;
   context(ctx: HarnessContext): AgentContext;
   /**
-   * Optional because only Claude Code has a measured answer: the others
-   * publish nothing a long-lived process could re-read, and keep filtering
-   * on the id they started with. This member is where an answer lands when
-   * somebody measures one.
+   * Optional because a harness has to publish something re-readable before
+   * there is an answer to read. Claude Code does so itself; omp's comes from
+   * the extension todou installs into it, so it is present there only while
+   * that extension is. The rest keep filtering on the id they started with,
+   * and this member is where an answer lands when somebody measures one.
    */
   liveSessionId?(ctx: HarnessContext): LiveSession;
 };

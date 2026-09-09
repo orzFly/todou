@@ -47,6 +47,17 @@
       }
     },
     {
+      "includes": ["**/*.generated.ts"],
+      "formatter": { "enabled": false },
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noTemplateCurlyInString": "off"
+          }
+        }
+      }
+    },
+    {
       "includes": [
         "projects/server/src/config.ts",
         "projects/server/test/config.test.ts",

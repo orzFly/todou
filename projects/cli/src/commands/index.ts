@@ -22,6 +22,13 @@ import {
 } from "./comment.ts";
 import { ConfigShowCommand } from "./config.ts";
 import {
+  IntegrationInstallAllCommand,
+  IntegrationInstallCommand,
+  IntegrationStatusCommand,
+  IntegrationUninstallAllCommand,
+  IntegrationUninstallCommand,
+} from "./integration.ts";
+import {
   IssueCloseCommand,
   IssueCreateCommand,
   IssueDeleteCommand,
@@ -88,6 +95,11 @@ export const commands: Array<CommandClass<CliContext>> = [
   AgentCanIFollowCommand,
   AgentOptOutUdsCommand,
   AgentOptInUdsCommand,
+  IntegrationStatusCommand,
+  IntegrationInstallCommand,
+  IntegrationUninstallCommand,
+  IntegrationInstallAllCommand,
+  IntegrationUninstallAllCommand,
   ProjectListCommand,
   ProjectMembersCommand,
   ProjectEditCommand,

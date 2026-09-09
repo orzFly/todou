@@ -24,8 +24,13 @@ const MAX_FAILURES = 3;
  * before it looks for a line break — so the budget covers the auth line,
  * the frame and the newline together, not each line on its own. Measured in
  * claude 2.1.258; the docs say "about a million characters".
+ *
+ * Exported because todou now writes a receiver of its own — the omp extension
+ * in `src/integrations/omp/` — which has to agree with this to the character.
+ * A receiver with a smaller cap silently drops the batches the sender's own
+ * check let through, and the sender reads a destroyed connection as delivery.
  */
-const MAX_PAYLOAD_CHARS = 1_048_576;
+export const MAX_PAYLOAD_CHARS = 1_048_576;
 
 /**
  * The first line of every connection, in the serialization Claude Code

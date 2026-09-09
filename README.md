@@ -165,7 +165,10 @@ todou login https://todou.example --profile harness
 
 `todou --help` lists every command; `todou api <method> </path>` reaches
 any endpoint the CLI doesn't wrap yet. See
-[docs/claude-code.md](docs/claude-code.md) for the Claude Code integration.
+[docs/claude-code.md](docs/claude-code.md) for the Claude Code integration
+and [docs/omp.md](docs/omp.md) for omp, whose session identification and
+activity pushes come from an extension `todou integration install omp`
+writes.
 
 #### Standalone builds
 

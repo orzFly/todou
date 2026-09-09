@@ -81,7 +81,7 @@ export function followOption(): string | boolean | undefined {
   return Option.String("--follow", {
     tolerateBoolean: true,
     description:
-      "Stay resident and deliver every batch: =stdout (the default) or =uds to push into the Claude Code session (conflicts with --poll)",
+      "Stay resident and deliver every batch: =stdout (the default) or =uds to push into the agent session running this (conflicts with --poll)",
   });
 }
 
@@ -95,8 +95,8 @@ export function followOption(): string | boolean | undefined {
  *
  * The transport is deliberately not inferred from the environment. A
  * supervisor that runs a command and reads its stdout is started *by* the
- * session, so CLAUDE_CODE_MESSAGING_SOCKET is set for it too — guessing by
- * that variable would send exactly the batches that belong on stdout down
+ * session, so the session's push socket is in its environment too — guessing
+ * by that variable would send exactly the batches that belong on stdout down
  * the push channel instead. A bare `--follow` means stdout because stdout is
  * the transport with no outside dependency.
  */
@@ -134,8 +134,10 @@ export function followTransport(opts: {
   }
   if (transport === "uds" && !opts.socket) {
     throw new CliError(
-      "CLAUDE_CODE_MESSAGING_SOCKET is not set in this environment",
-      "--follow=uds pushes to the Claude Code session that exports it — use --follow=stdout anywhere else",
+      "no agent session in this environment exports a push socket",
+      "--follow=uds pushes into the session that started this command; " +
+        "`todou agent can-i-follow` says whether this one can, and what to " +
+        "do instead — `--follow=stdout` works anywhere",
     );
   }
   return transport;

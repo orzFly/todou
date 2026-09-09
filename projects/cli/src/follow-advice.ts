@@ -1,11 +1,12 @@
 import type { HarnessId } from "@todou/shared";
 import { HARNESS_LABELS } from "./harness/index.ts";
 
-/** Which of the five answers this environment gets. */
+/** Which of the six answers this environment gets. */
 export type FollowSituation =
   | "uds"
   | "uds-opted-out"
   | "claude-code-no-peer"
+  | "omp-not-installed"
   | "known-harness"
   | "no-harness";
 
@@ -44,6 +45,19 @@ const UNKNOWN_HARNESS = streamOrPoll(
 
 const CLOSING =
   "Whichever mode you use, the watch carries spec and question activity too: a review verdict and a question answer each arrive on it as their own line, so you do not need a separate `spec wait` or `question wait` running beside it.";
+
+/**
+ * The answer when the push channel is there, said once for both harnesses
+ * that have one. Only the name differs, and two copies of this paragraph
+ * would eventually differ in more than the name.
+ */
+function udsParagraphs(label: string): string[] {
+  return [
+    `running under ${label}, and \`--follow=uds\` is available.`,
+    "Use it with `todou watch` or `todou issue watch`, started as a background task (run in background = true). If you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.",
+    CLOSING,
+  ];
+}
 
 /**
  * Which follow mode this environment supports, and the words that say so.
@@ -92,11 +106,30 @@ export function followAdvice(input: {
         CLOSING,
       ]);
     }
-    return advice("uds", [
-      "running under Claude Code, and `--follow=uds` is available.",
-      "Use it with `todou watch` or `todou issue watch`, started as a background task (run in background = true). If you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.",
-      CLOSING,
-    ]);
+    return advice("uds", udsParagraphs("Claude Code"));
+  }
+
+  if (harness === "omp") {
+    // The one situation with a way out that is an agent's own to take: the
+    // extension is per-user and installing it changes nothing about anyone
+    // else's session, unlike `opt-out-uds`, which is the user's standing
+    // decision about this machine. So this one names its command.
+    if (!socket) {
+      return advice("omp-not-installed", [
+        "running under omp, but the todou extension is not installed in it, so there is no session socket to push to.",
+        "Run `todou integration install omp` and restart omp — the extension also lets todou read which session omp is in, instead of inferring it from session-log timestamps.",
+        ...UNKNOWN_HARNESS,
+        CLOSING,
+      ]);
+    }
+    if (optedOut) {
+      return advice("uds-opted-out", [
+        "running under omp, but `--follow=uds` is opted out on this machine.",
+        ...UNKNOWN_HARNESS,
+        CLOSING,
+      ]);
+    }
+    return advice("uds", udsParagraphs("omp"));
   }
 
   if (harness !== null) {

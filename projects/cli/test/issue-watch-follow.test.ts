@@ -340,7 +340,9 @@ describe("issue watch --follow argument handling (T-254)", () => {
       env: loggedInEnv("todou"),
     });
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("CLAUDE_CODE_MESSAGING_SOCKET is not set");
+    // Named by what is missing rather than by one harness's variable: two
+    // harnesses publish this socket now, under different names (T-308).
+    expect(result.stderr).toContain("no agent session in this environment");
     expect(result.stderr).toContain("--follow=stdout");
     // Nothing was read, so there is no half-started watch to reason about.
     expect(calls).toHaveLength(0);

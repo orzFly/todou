@@ -2,8 +2,9 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { AgentContext } from "@todou/shared";
 import type { Env } from "../config.ts";
 import { findInJsonlTail } from "./jsonl-tail.ts";
+import { readOmpState } from "./omp-state.ts";
 import { currentSessionFile, flagValue } from "./session-log.ts";
-import type { Harness, HostProcess } from "./types.ts";
+import type { Harness, HostProcess, LiveSession } from "./types.ts";
 
 /**
  * omp, "Oh My Pi" (can1357/oh-my-pi), a fork of pi that kept pi's session
@@ -15,13 +16,32 @@ import type { Harness, HostProcess } from "./types.ts";
  * satisfies the claude-code predicate, and the two are told apart by the
  * process tree and by this harness's place in the registry (see HARNESSES).
  * There is no `PI_CODING_AGENT` and no session or model variable: both are
- * recovered from the session log omp appends to as the turn runs.
+ * recovered from the session log omp appends to as the turn runs — unless
+ * the todou extension is installed, in which case omp publishes the session
+ * itself and the scan becomes the fallback.
  */
 export const omp = {
   id: "omp",
   matches: (env) => env.OMPCODE === "1",
   context({ env, home, cwd, host }) {
     const context: AgentContext = { agent: "omp" };
+    // omp's own answer beats every heuristic below it, and costs one small
+    // read where the scan costs a directory listing and a header read per
+    // candidate. Anything wrong with the record falls through to the scan,
+    // which is what an omp without the extension does anyway.
+    const state = readOmpState(env);
+    if (state) {
+      context.session_id = state.sessionId;
+      // The extension deliberately publishes no model: it changes every turn,
+      // and the session log's tail already answers exactly — for the session
+      // we now know for certain rather than the one recency guessed at.
+      const live =
+        state.sessionFile === undefined
+          ? undefined
+          : findInJsonlTail(state.sessionFile, modelFromLine);
+      if (live) context.model = live;
+      return context;
+    }
     const here = resolve(cwd);
     const hostProcess = host();
     const hostCwd = hostProcess?.cwd ? resolve(hostProcess.cwd) : undefined;
@@ -36,6 +56,17 @@ export const omp = {
     const model = findInJsonlTail(file.path, modelFromLine);
     if (model) context.model = model;
     return context;
+  },
+  liveSessionId({ env }): LiveSession {
+    const path = env.TODOU_OMP_STATE;
+    // Nothing published: the extension is not installed, and there is no
+    // re-readable answer to have failed at. Silence is the whole report.
+    if (path === undefined) return {};
+    const state = readOmpState(env);
+    // Named a file and then could not believe it — the one case worth saying
+    // out loud, because falling back quietly restores exactly the startup
+    // snapshot this probe exists to replace (T-289).
+    return state ? { id: state.sessionId } : { unreadable: path };
   },
 } satisfies Harness;
 
@@ -98,12 +129,19 @@ function sessionDirs(
 }
 
 /**
- * The `sessions` directories omp may be writing to, in the order it prefers
- * them. Both are offered rather than resolved, because choosing between them
- * is an `existsSync` on omp's side and a `readdirSync` that finds nothing on
- * ours — the same answer for one syscall instead of two.
+ * Where omp keeps this user's agent directory — the one holding `sessions/`
+ * and `extensions/`, which is what `todou integration install omp` writes
+ * into (T-308).
+ *
+ * Four things can move it, and getting any of them wrong is an integration
+ * that installs successfully into a directory omp never reads. It is resolved
+ * once, here, rather than in both the detector and the installer: two copies
+ * would drift, and drift shows up as "installed, and nothing happened".
  */
-function sessionRoots(env: Env, home: string): string[] {
+export function ompAgentDir(
+  env: Env,
+  home: string,
+): { dir: string; configRoot: string; profile?: string; relocated: boolean } {
   const configRoot = join(home, env.PI_CONFIG_DIR || ".omp");
   const profile = env.OMP_PROFILE || env.PI_PROFILE;
   const fallback = profile
@@ -112,17 +150,33 @@ function sessionRoots(env: Env, home: string): string[] {
   // omp exports this itself whenever a profile is active, so the profile
   // branch above only has to cover a variable that did not survive the way
   // to us.
-  const agentDir = env.PI_CODING_AGENT_DIR || fallback;
+  const dir = env.PI_CODING_AGENT_DIR || fallback;
+  return {
+    dir,
+    configRoot,
+    ...(profile ? { profile } : {}),
+    relocated: dir !== fallback,
+  };
+}
+
+/**
+ * The `sessions` directories omp may be writing to, in the order it prefers
+ * them. Both are offered rather than resolved, because choosing between them
+ * is an `existsSync` on omp's side and a `readdirSync` that finds nothing on
+ * ours — the same answer for one syscall instead of two.
+ */
+function sessionRoots(env: Env, home: string): string[] {
+  const { dir, profile, relocated } = ompAgentDir(env, home);
   const roots: string[] = [];
   // The XDG split applies only while the agent directory sits where omp put
   // it: an explicitly relocated one takes its data with it.
-  if (agentDir === fallback && env.XDG_DATA_HOME) {
+  if (!relocated && env.XDG_DATA_HOME) {
     const xdg = join(env.XDG_DATA_HOME, "omp");
     roots.push(
       join(profile ? join(xdg, "profiles", profile) : xdg, "sessions"),
     );
   }
-  roots.push(join(agentDir, "sessions"));
+  roots.push(join(dir, "sessions"));
   return roots;
 }
 
