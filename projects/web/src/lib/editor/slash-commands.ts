@@ -93,7 +93,9 @@ export function commandCompletionSource(
         ? registry.labelNames
         : command.argument === "member"
           ? registry.memberLogins
-          : registry.statusNames;
+          : command.argument === "force"
+            ? ["force"]
+            : registry.statusNames;
     if (names.length === 0) return null;
     return {
       from: context.pos - typed.length,

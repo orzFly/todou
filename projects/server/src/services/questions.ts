@@ -153,7 +153,7 @@ async function loadIssue(db: Db, projectId: number, number: number) {
 }
 
 /** The one answer event for a comment, if any (payloads are append-only). */
-function answerEventFor(
+export function answerEventFor(
   rows: Array<typeof issueEvents.$inferSelect>,
   commentId: number,
 ) {

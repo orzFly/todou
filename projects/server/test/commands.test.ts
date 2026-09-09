@@ -378,6 +378,109 @@ describe.each(PLACEMENTS)("issue commands (%s placement)", (placement) => {
     ).toBe(404);
   });
 
+  /**
+   * `/hide-all` travels as a command so the comment and the hide land in one
+   * transaction (T-307), which matters more now that hiding can also decline
+   * somebody's question.
+   */
+  describe("comments_hide", () => {
+    const say = async (number: number, body: string): Promise<number> => {
+      const res = await t.app.request(
+        `/api/projects/${slug}/issues/${number}/comments`,
+        { method: "POST", headers: headers(), body: JSON.stringify({ body }) },
+      );
+      expect(res.status).toBe(201);
+      return (await json(res)).id as number;
+    };
+
+    const issueOf = async (number: number) =>
+      json(
+        await t.app.request(`/api/projects/${slug}/issues/${number}`, {
+          headers: { cookie },
+        }),
+      );
+
+    it("hides the old comments and posts the new one in one call", async () => {
+      const issue = await createIssue("hide everything before this");
+      const first = await say(issue.number, "the exploration");
+      const second = await say(issue.number, "more of it");
+
+      const res = await submit(issue.number, {
+        body: "the conclusion",
+        commands: [
+          { type: "comments_hide", hidden: true, comment_ids: [first, second] },
+        ],
+      });
+      expect(res.status).toBe(200);
+      const result = await json(res);
+      expect(result.hide).toEqual({ hidden: [first, second], unchanged: [] });
+
+      const timeline = await timelineOf(issue.number);
+      const bodies = Object.fromEntries(
+        timeline.items
+          .filter((i: { type: string }) => i.type === "comment")
+          .map((i: { id: number; body: string }) => [i.id, i.body]),
+      );
+      expect(bodies[first]).toBe("");
+      expect(bodies[second]).toBe("");
+      // The comment this submission created is never among the hidden: the
+      // selection was computed before it existed.
+      expect(bodies[result.comment.id]).toBe("the conclusion");
+    });
+
+    it("writes nothing at all when one id is from another card", async () => {
+      const issue = await createIssue("a stale id");
+      const elsewhere = await createIssue("another card");
+      const foreign = await say(elsewhere.number, "not yours");
+      const before = await timelineOf(issue.number);
+
+      const res = await submit(issue.number, {
+        body: "should not survive",
+        commands: [
+          { type: "comments_hide", hidden: true, comment_ids: [foreign] },
+        ],
+      });
+      expect(res.status).toBe(422);
+      expect((await timelineOf(issue.number)).items).toEqual(before.items);
+      expect((await timelineOf(elsewhere.number)).items[1].body).toBe(
+        "not yours",
+      );
+    });
+
+    it("leaves updated_at alone for a submission that only hides", async () => {
+      const issue = await createIssue("a quiet hide");
+      const id = await say(issue.number, "the exploration");
+      const before = (await issueOf(issue.number)).updated_at;
+
+      const res = await submit(issue.number, {
+        body: "",
+        commands: [{ type: "comments_hide", hidden: true, comment_ids: [id] }],
+      });
+      expect(res.status).toBe(200);
+      // Nothing was settled here, so nothing else claims the card as
+      // activity — a decline or a resolve would, and rightly.
+      expect((await json(res)).hide.settled).toBeUndefined();
+      expect((await issueOf(issue.number)).updated_at).toBe(before);
+    });
+
+    it("bumps updated_at when the same submission also moves the card", async () => {
+      const issue = await createIssue("a loud hide");
+      const id = await say(issue.number, "the exploration");
+      const before = (await issueOf(issue.number)).updated_at;
+      const done = statusNamed("Done");
+
+      const res = await submit(issue.number, {
+        body: "",
+        commands: [
+          { type: "comments_hide", hidden: true, comment_ids: [id] },
+          { type: "status", status_id: done.id },
+        ],
+      });
+      expect(res.status).toBe(200);
+      expect((await issueOf(issue.number)).updated_at).not.toBe(before);
+    });
+  });
+
   it("publishes the comment first, its events next, the issue last", async () => {
     const issue = await createIssue("SSE order");
     const done = statusNamed("Done");

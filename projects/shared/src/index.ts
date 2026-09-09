@@ -5,6 +5,7 @@ export * from "./events.ts";
 export * from "./hide-policy.ts";
 export * from "./list-invalidation.ts";
 export * from "./ownership.ts";
+export * from "./paginate.ts";
 export * from "./permissions.ts";
 export * from "./ref-shapes.ts";
 export * from "./references-grammar.ts";

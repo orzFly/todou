@@ -1,5 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { CommandInput, Me, TimelineComment } from "@todou/shared";
+import type {
+  CommandInput,
+  CommandSubmitResult,
+  Me,
+  TimelineComment,
+  TimelineItem,
+} from "@todou/shared";
+import { COMMENT_HIDE_MAX_IDS } from "@todou/shared";
 import { SendIcon } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -10,11 +17,13 @@ import {
   meQuery,
   statusesQuery,
 } from "@/api/queries.ts";
+import { allCommentsQuery } from "@/api/timeline.ts";
 import {
   StagedFileTray,
   StagedFileUploadButton,
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
+import { CommandErrors } from "@/components/shared/command-errors.tsx";
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
@@ -31,6 +40,10 @@ import {
 import {
   buildCommandRegistry,
   type CommandRegistry,
+  type DraftCommand,
+  type HideAllDraft,
+  hidePreview,
+  hideSelectionFor,
   parseCommandLines,
   summarizeCommands,
 } from "@/lib/slash-commands.ts";
@@ -167,7 +180,10 @@ export function submitLabel(state: {
 }
 
 /** The registry behind the `/` panel, from the three lists it names. */
-function useCommandRegistry(slug: string): CommandRegistry | null {
+export function useCommandRegistry(
+  slug: string,
+  surface: "comment" | "new-issue",
+): CommandRegistry | null {
   const statuses = useQuery(statusesQuery(slug));
   const labels = useQuery(labelsQuery(slug));
   const members = useQuery(membersQuery(slug));
@@ -179,8 +195,58 @@ function useCommandRegistry(slug: string): CommandRegistry | null {
       labels: labels.data ?? [],
       members: members.data ?? [],
       me: me.data,
+      surface,
     });
-  }, [statuses.data, labels.data, members.data, me.data]);
+  }, [statuses.data, labels.data, members.data, me.data, surface]);
+}
+
+/** The first `/hide-all` line of a draft; the preview describes that one. */
+function firstHideAll(commands: DraftCommand[]): HideAllDraft | undefined {
+  return commands.find(
+    (command): command is HideAllDraft => command.type === "hide_all",
+  );
+}
+
+/**
+ * Draft commands → what actually goes on the wire: each `/hide-all` becomes
+ * the id list it resolved to, and one whose selection came back empty is
+ * dropped rather than sent as a request to hide nothing.
+ */
+export function resolveDraftCommands(
+  commands: DraftCommand[],
+  items: TimelineItem[],
+): CommandInput[] {
+  const resolved: CommandInput[] = [];
+  for (const command of commands) {
+    if (command.type !== "hide_all") {
+      resolved.push(command);
+      continue;
+    }
+    const { pick } = hideSelectionFor(items, command);
+    for (let at = 0; at < pick.length; at += COMMENT_HIDE_MAX_IDS) {
+      resolved.push({
+        type: "comments_hide",
+        hidden: command.hidden,
+        comment_ids: pick.slice(at, at + COMMENT_HIDE_MAX_IDS),
+      });
+    }
+  }
+  return resolved;
+}
+
+/** What the toast says about the half `unhide` will not give back. */
+export function settledToast(result: CommandSubmitResult): string | null {
+  const settled = result.hide?.settled ?? null;
+  if (settled === null) return null;
+  const parts = [
+    settled.declined_questions.length === 0
+      ? null
+      : `declined ${settled.declined_questions.length} unanswered question(s)`,
+    settled.resolved_annotations.length === 0
+      ? null
+      : `resolved ${settled.resolved_annotations.length} annotation(s)`,
+  ].filter((part): part is string => part !== null);
+  return parts.length === 0 ? null : `Hiding also ${parts.join(" and ")}.`;
 }
 
 export function Composer({
@@ -216,7 +282,7 @@ export function Composer({
   }
   const staging = useStagedFiles();
   const queryClient = useQueryClient();
-  const registry = useCommandRegistry(slug);
+  const registry = useCommandRegistry(slug, "comment");
 
   // The extensions must keep one identity for the editor's lifetime: the
   // compartment reconfigures on a new one, which would close an open panel.
@@ -239,7 +305,38 @@ export function Composer({
     [draft, registry],
   );
   const commands = parsed?.commands ?? [];
-  const broken = parsed?.invalid ?? [];
+  const hideDraft = firstHideAll(commands);
+
+  // Never `useSuspenseQuery`: the composer is mounted bare in tests with
+  // seeded query data, and a suspending query there renders an empty div
+  // whose failure reads as "cannot find role" rather than as suspense.
+  const allComments = useQuery({
+    ...allCommentsQuery(slug, issueNumber),
+    enabled: hideDraft !== undefined,
+  });
+  const preview = useMemo(() => {
+    if (hideDraft === undefined || allComments.data === undefined) return null;
+    const selection = hideSelectionFor(allComments.data, hideDraft);
+    return { selection, ...hidePreview(selection, hideDraft) };
+  }, [hideDraft, allComments.data]);
+
+  const broken = [
+    ...(parsed?.invalid ?? []),
+    // Only once the drain has landed: while it is in flight the line is
+    // fine, and disabling the submit for "nothing to hide" would be a
+    // verdict on a card nobody has read yet.
+    ...(preview !== null && preview.selection.pick.length === 0
+      ? [
+          {
+            line: hideDraft?.hidden === false ? "/unhide-all" : "/hide-all",
+            reason:
+              hideDraft?.hidden === false
+                ? "nothing to unhide — no comment on this card is hidden"
+                : "nothing to hide — every comment here is already hidden or held back",
+          },
+        ]
+      : []),
+  ];
   const empty =
     (parsed?.body ?? draft).trim() === "" &&
     staging.staged.length === 0 &&
@@ -293,7 +390,20 @@ export function Composer({
     if (current.commands.length > 0) {
       setRunning(true);
       try {
-        await onSendWithCommands(full, current.commands);
+        // Fetched rather than read off the rendered query: the ids about to
+        // be written have to be the ones the card holds now, not the ones it
+        // held when the line was typed.
+        const items =
+          firstHideAll(current.commands) === undefined
+            ? []
+            : await queryClient.fetchQuery(allCommentsQuery(slug, issueNumber));
+        const resolved = resolveDraftCommands(current.commands, items);
+        if (resolved.length === 0) return;
+        const result = (await onSendWithCommands(full, resolved)) as
+          | CommandSubmitResult
+          | undefined;
+        const settled = result === undefined ? null : settledToast(result);
+        if (settled !== null) toast.success(settled);
       } catch (error) {
         // The whole submission was refused, comment included — the draft is
         // the only copy of it, so it stays exactly as typed.
@@ -333,15 +443,21 @@ export function Composer({
         onRemove={staging.remove}
         disabled={uploading}
       />
-      {broken.map((entry) => (
-        <p
-          key={entry.line}
-          role="alert"
-          className="rounded-md border border-destructive/40 px-3 py-1.5 text-sm text-destructive"
+      <CommandErrors broken={broken} />
+      {preview !== null && preview.selection.pick.length > 0 && (
+        <div
+          role="status"
+          className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground"
         >
-          <span className="font-mono">{entry.line}</span> — {entry.reason}
-        </p>
-      ))}
+          <p className="font-medium text-foreground">{preview.headline}</p>
+          {preview.kept.map((entry) => (
+            <p key={entry.id} className="mt-0.5">
+              <span className="font-mono">#comment-{entry.id}</span>{" "}
+              {entry.reason}
+            </p>
+          ))}
+        </div>
+      )}
       <form
         className="flex flex-col"
         onSubmit={(e) => {

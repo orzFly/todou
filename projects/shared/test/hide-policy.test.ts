@@ -89,13 +89,22 @@ const reasons = (skip: Array<{ id: number; reason: string }>) =>
  * they must account for every id the policy considered.
  */
 const accountsFor = (
-  result: { pick: number[]; skip: Array<{ id: number; reason: string }> },
+  result: {
+    pick: number[];
+    skip: Array<{ id: number; reason: string }>;
+    crossed: Array<{ id: number; reason: string }>;
+  },
   candidates: number[],
 ) => {
   const skipped = result.skip.map((entry) => entry.id);
   expect(result.pick.filter((id) => skipped.includes(id))).toEqual([]);
   expect([...result.pick, ...skipped].sort()).toEqual([...candidates].sort());
   for (const entry of result.skip) expect(entry.reason).toBeTruthy();
+  // `crossed` annotates picks; an id reported there and not written would
+  // read as "this got settled" about a comment nothing happened to.
+  for (const entry of result.crossed) {
+    expect(result.pick).toContain(entry.id);
+  }
 };
 
 describe("selectHidable by ids", () => {
@@ -221,6 +230,62 @@ describe("selectHidable exemptions", () => {
     const items = [comment(1, { component: questions })];
     const result = selectHidable(items, { by: "all", keep_last: 3 }, hide);
     expect(reasons(result.skip)).toEqual({ 1: "kept_tail" });
+  });
+});
+
+describe("selectHidable crossings", () => {
+  const policy: HidePolicy = { by: "ids", ids: [1, 2, 3] };
+  const items = [
+    comment(1, { component: questions }),
+    comment(2, { component: anchor, resolved_at: null }),
+    comment(3),
+  ];
+
+  it("names what a by-id hide walks over, and still picks it", () => {
+    const result = selectHidable(items, policy, hide);
+
+    expect(result.pick).toEqual([1, 2, 3]);
+    expect(result.crossed).toEqual([
+      { id: 1, reason: "open_question" },
+      { id: 2, reason: "unresolved_anchor" },
+    ]);
+    accountsFor(result, [1, 2, 3]);
+  });
+
+  it("says nothing about a by-id pick that is already settled", () => {
+    const settled = [
+      comment(1, { component: questions }),
+      comment(2, { component: anchor, resolved_at: "2026-09-08T14:00Z" }),
+      answered(50, 1),
+    ];
+    expect(selectHidable(settled, policy, hide).crossed).toEqual([]);
+  });
+
+  it("leaves the selectors reporting a skip and crossing nothing", () => {
+    const result = selectHidable(items, { by: "all", keep_last: 0 }, hide);
+
+    expect(result.pick).toEqual([3]);
+    expect(reasons(result.skip)).toEqual({
+      1: "open_question",
+      2: "unresolved_anchor",
+    });
+    expect(result.crossed).toEqual([]);
+    accountsFor(result, [1, 2, 3]);
+  });
+
+  it("crosses nothing while unhiding, in either direction of selector", () => {
+    const hiddenItems = [
+      comment(1, { hidden: true, component: questions }),
+      comment(2, {
+        hidden: true,
+        component: anchor,
+        resolved_at: null,
+      }),
+    ];
+    expect(selectHidable(hiddenItems, policy, unhide).crossed).toEqual([]);
+    expect(
+      selectHidable(hiddenItems, { by: "all", keep_last: 0 }, unhide).crossed,
+    ).toEqual([]);
   });
 });
 

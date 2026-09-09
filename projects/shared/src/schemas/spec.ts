@@ -402,10 +402,20 @@ export const SpecCommentsResolveInput = z.strictObject({
 });
 export type SpecCommentsResolveInput = z.infer<typeof SpecCommentsResolveInput>;
 
-/** Payload of the `spec_comments_resolved` timeline event. */
+/**
+ * Payload of the `spec_comments_resolved` timeline event.
+ *
+ * `via` is absent on a deliberate resolve and `"hide"` when hiding the
+ * comment settled it (T-307). No reader discounts a hide-resolved
+ * annotation — `spec_unresolved_comments` stays one integer, and the review
+ * gate keeps reading it — so this field is the only way a later reader can
+ * tell the two apart. Optional because every event written before T-307 has
+ * no such key.
+ */
 export const SpecCommentsResolvedPayload = z.strictObject({
   comment_ids: z.array(Id),
   paths: z.array(z.string()),
+  via: z.literal("hide").optional(),
 });
 export type SpecCommentsResolvedPayload = z.infer<
   typeof SpecCommentsResolvedPayload

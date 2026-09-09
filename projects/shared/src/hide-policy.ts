@@ -23,9 +23,28 @@ export type SkipReason =
   /** The id names no comment on this card. */
   | "not_a_comment";
 
+/**
+ * The two exemptions that a hide has to settle rather than merely step over
+ * (T-307): they name unfinished business, not tidiness.
+ */
+export type CrossedReason = Extract<
+  SkipReason,
+  "open_question" | "unresolved_anchor"
+>;
+
+export const SKIP_REASON_LABEL: Record<SkipReason, string> = {
+  open_question: "question unanswered",
+  unresolved_anchor: "spec annotation unresolved",
+  kept_tail: "within the tail kept back",
+  already: "already in that state",
+  not_a_comment: "not a comment on this card",
+};
+
 export type HideSelection = {
   pick: number[];
   skip: Array<{ id: number; reason: SkipReason }>;
+  /** In `pick`, but unsettled: named by id, or reached under force. */
+  crossed: Array<{ id: number; reason: CrossedReason }>;
 };
 
 /**
@@ -53,6 +72,11 @@ export function isHidden(comment: { hidden_at?: string | null }): boolean {
  * something to protect against, and naming an id is the operator saying they
  * know — the card's own requirement is that keeping one good comment in the
  * middle stays possible.
+ *
+ * A by-id pick that walks over an exemption is still reported, in `crossed`
+ * (T-307). Before hiding settled what it buried, saying nothing there was
+ * merely terse; now that a hide declines a question and resolves somebody
+ * else's annotation, the caller has to be able to name that before it writes.
  */
 export function selectHidable(
   items: TimelineItem[],
@@ -66,13 +90,16 @@ export function selectHidable(
 
   const pick: number[] = [];
   const skip: HideSelection["skip"] = [];
-  const guard =
-    opts.hidden && policy.by !== "ids"
-      ? {
-          tail: keptTail(comments, policy.keep_last),
-          answered: answeredIds(items),
-        }
-      : null;
+  const crossed: HideSelection["crossed"] = [];
+  const guard = opts.hidden
+    ? {
+        tail:
+          policy.by === "ids"
+            ? new Set<number>()
+            : keptTail(comments, policy.keep_last),
+        answered: answeredIds(items),
+      }
+    : null;
 
   for (const id of candidates(comments, policy)) {
     const comment = byId.get(id);
@@ -84,14 +111,23 @@ export function selectHidable(
       skip.push({ id, reason: "already" });
       continue;
     }
-    const reason = guard === null ? null : exemption(comment, guard);
-    if (reason !== null) {
-      skip.push({ id, reason });
-      continue;
+    if (guard !== null) {
+      if (guard.tail.has(comment.id)) {
+        skip.push({ id, reason: "kept_tail" });
+        continue;
+      }
+      const reason = unsettled(comment, guard.answered);
+      if (reason !== null) {
+        if (policy.by !== "ids") {
+          skip.push({ id, reason });
+          continue;
+        }
+        crossed.push({ id, reason });
+      }
     }
     pick.push(id);
   }
-  return { pick, skip };
+  return { pick, skip, crossed };
 }
 
 /**
@@ -110,14 +146,12 @@ function candidates(comments: TimelineComment[], policy: HidePolicy): number[] {
   return comments.slice(0, cut + 1).map((comment) => comment.id);
 }
 
-type Guard = { tail: Set<number>; answered: Set<number> };
-
-function exemption(comment: TimelineComment, guard: Guard): SkipReason | null {
-  if (guard.tail.has(comment.id)) return "kept_tail";
-  if (
-    comment.component?.type === "questions" &&
-    !guard.answered.has(comment.id)
-  ) {
+/** Unfinished business this comment carries, whoever wrote it. */
+function unsettled(
+  comment: TimelineComment,
+  answered: Set<number>,
+): CrossedReason | null {
+  if (comment.component?.type === "questions" && !answered.has(comment.id)) {
     return "open_question";
   }
   if (

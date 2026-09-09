@@ -6,16 +6,27 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render, screen, waitFor } from "@testing-library/react";
-import type { Label, Member, MemberRole, Project, Status } from "@todou/shared";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type {
+  Issue,
+  Label,
+  Me,
+  Member,
+  MemberRole,
+  Project,
+  Status,
+} from "@todou/shared";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  api,
   labelsQuery,
   membersQuery,
+  meQuery,
   projectQuery,
   statusesQuery,
 } from "../src/api/queries.ts";
 import { NewIssuePage } from "../src/pages/new-issue.tsx";
+import { cmSetValue } from "./cm.ts";
 import { testQueryClient } from "./render.tsx";
 
 const SLUG = "todou";
@@ -56,6 +67,18 @@ const MEMBERS: Member[] = [
   },
 ];
 
+const ME: Me = {
+  id: 1,
+  login: "user",
+  display_name: "User",
+  kind: "human",
+  avatar_url: null,
+  owner: null,
+  email: null,
+  is_instance_admin: false,
+  created_at: "2026-08-01T00:00:00.000Z",
+};
+
 /** The new-issue page as seen by someone holding `role` here. */
 function renderAs(role: MemberRole) {
   const project: Project = {
@@ -71,6 +94,7 @@ function renderAs(role: MemberRole) {
   client.setQueryData(statusesQuery(SLUG).queryKey, STATUSES);
   client.setQueryData(labelsQuery(SLUG).queryKey, LABELS);
   client.setQueryData(membersQuery(SLUG).queryKey, MEMBERS);
+  client.setQueryData(meQuery.queryKey, ME);
 
   const rootRoute = createRootRoute();
   const authedRoute = createRoute({
@@ -149,6 +173,115 @@ describe("the new-issue sidebar", () => {
     await screen.findByLabelText("Title");
     await waitFor(() => {
       expect(triageControls().status).not.toBeNull();
+    });
+  });
+});
+
+/**
+ * Slash commands on the page that opens the card (T-307). Same registry as
+ * the composer's, minus the two that need a card to already exist.
+ */
+describe("the new-issue page's slash commands", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const created = { id: 1, number: 12, body: "" } as Issue;
+
+  const start = (role: MemberRole) => {
+    const createIssue = vi.spyOn(api, "createIssue").mockResolvedValue(created);
+    const view = renderAs(role);
+    return { view, createIssue };
+  };
+
+  const fillTitle = async () => {
+    const title = await screen.findByLabelText("Title");
+    fireEvent.change(title, { target: { value: "Dig up the potatoes" } });
+  };
+
+  const submitButton = () => screen.getByRole("button", { name: /Create|Fix/ });
+
+  it("labels the issue and drops the line from the body", async () => {
+    const { view, createIssue } = start("admin");
+    await fillTitle();
+    cmSetValue(view.container, "the potatoes sprouted\n/label bug");
+    await waitFor(() =>
+      expect(submitButton().textContent).toBe("Create issue and label bug"),
+    );
+
+    submitButton().click();
+    await waitFor(() => expect(createIssue).toHaveBeenCalled());
+    expect(createIssue.mock.calls[0]?.[1]).toMatchObject({
+      title: "Dig up the potatoes",
+      body: "the potatoes sprouted",
+      label_ids: [7],
+    });
+  });
+
+  it("counts a label the sidebar already holds only once", async () => {
+    const { view, createIssue } = start("admin");
+    await fillTitle();
+    // The sidebar's own pick, then the same label named in a command.
+    (await screen.findByRole("button", { name: "Edit labels" })).click();
+    (await screen.findByRole("option", { name: /bug/ })).click();
+    // Proven picked, or the command below would be the only source and this
+    // would assert nothing about the two agreeing.
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("option", { name: /bug/ })
+          .getAttribute("aria-selected"),
+      ).toBe("true"),
+    );
+    cmSetValue(view.container, "/label bug");
+    await waitFor(() =>
+      expect(submitButton().textContent).toBe("Create issue and label bug"),
+    );
+
+    submitButton().click();
+    await waitFor(() => expect(createIssue).toHaveBeenCalled());
+    expect(createIssue.mock.calls[0]?.[1]?.label_ids).toEqual([7]);
+  });
+
+  it("offers no /hide-all here, so the line stays prose", async () => {
+    const { view, createIssue } = start("admin");
+    await fillTitle();
+    cmSetValue(view.container, "before this\n/hide-all");
+    await waitFor(() =>
+      expect(submitButton().textContent).toBe("Create issue"),
+    );
+
+    submitButton().click();
+    await waitFor(() => expect(createIssue).toHaveBeenCalled());
+    expect(createIssue.mock.calls[0]?.[1]?.body).toBe("before this\n/hide-all");
+  });
+
+  it("blocks the submit when an argument names nothing", async () => {
+    const { view, createIssue } = start("admin");
+    await fillTitle();
+    cmSetValue(view.container, "/label nope");
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeNull());
+    expect(screen.getByRole("alert").textContent).toContain(
+      'no label named "nope"',
+    );
+    expect(submitButton().textContent).toBe("Fix the command");
+    submitButton().click();
+    expect(createIssue).not.toHaveBeenCalled();
+  });
+
+  it("does not open the panel for a reporter, who holds none of the fields", async () => {
+    const { view, createIssue } = start("reporter");
+    await fillTitle();
+    cmSetValue(view.container, "please\n/label bug");
+    await waitFor(() =>
+      expect(submitButton().textContent).toBe("Create issue"),
+    );
+
+    submitButton().click();
+    await waitFor(() => expect(createIssue).toHaveBeenCalled());
+    expect(createIssue.mock.calls[0]?.[1]).toMatchObject({
+      body: "please\n/label bug",
+      label_ids: [],
     });
   });
 });

@@ -449,6 +449,258 @@ describe("hidden comments", () => {
     });
   });
 
+  /**
+   * Hiding settles what it buries (T-307). The point of every case here is
+   * that a hide reaching an unsettled comment declines or resolves it
+   * whoever wrote it, inside the hide's own transaction, and that `unhide`
+   * gives back the body and nothing else.
+   */
+  describe("settling what it buries", () => {
+    /** A questions comment, and the ids the settling has to reach. */
+    const ask = (number: number, who: Who = writer) =>
+      say(number, "which one?", who, {
+        type: "questions",
+        questions: [
+          {
+            question: "Which storage?",
+            options: [{ label: "a table" }, { label: "metadata" }],
+          },
+          {
+            question: "When?",
+            options: [{ label: "now" }, { label: "later" }],
+          },
+        ],
+      });
+
+    /**
+     * One inline annotation, written by `reviewer` on a spec `author`
+     * pushed — the server refuses a review by the account that pushed, so
+     * the two halves of the symmetry need different pushers.
+     */
+    const annotate = async (
+      number: number,
+      author: Who,
+      reviewer: Who,
+    ): Promise<number> => {
+      const push = await req(
+        `/projects/${slug}/issues/${number}/spec/push`,
+        author,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            files: [{ path: "design.md", body: "line one\nline two\n" }],
+          }),
+        },
+      );
+      expect(push.status).toBe(200);
+      const review = await req(
+        `/projects/${slug}/issues/${number}/spec/reviews`,
+        reviewer,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            version: 1,
+            verdict: "request_changes",
+            comments: [
+              {
+                anchor: {
+                  path: "design.md",
+                  version: 1,
+                  line_start: 1,
+                  line_end: 1,
+                },
+                body: "say why",
+              },
+            ],
+          }),
+        },
+      );
+      expect(review.status).toBe(201);
+      const [id] = (await json(review)).comment_ids as number[];
+      if (id === undefined) throw new Error("no annotation id");
+      return id;
+    };
+
+    /** Every event of one card, newest last, with its payload. */
+    const eventRows = async (number: number) => {
+      const { db, row } = await issueRow(number);
+      return await db
+        .select({ type: issueEvents.type, payload: issueEvents.payload })
+        .from(issueEvents)
+        .where(eq(issueEvents.issueId, row.id));
+    };
+
+    const answered = async (number: number) =>
+      (await eventRows(number)).filter((e) => e.type === "question_answered");
+
+    const resolvedEvents = async (number: number) =>
+      (await eventRows(number)).filter(
+        (e) => e.type === "spec_comments_resolved",
+      );
+
+    it("declines every question of a comment it hides", async () => {
+      const number = await newCard("hide an unanswered question");
+      const id = await ask(number);
+      const before = (await issueRow(number)).row.openQuestions;
+      expect(before).toBe(2);
+
+      const result = await hide(number, [id]);
+      expect(result.settled).toEqual({
+        declined_questions: [id],
+        resolved_annotations: [],
+      });
+
+      const events = await answered(number);
+      expect(events).toHaveLength(1);
+      expect(events[0]?.payload).toEqual({
+        comment_id: id,
+        answers: [
+          { key: "q1", selected: [], other: null, declined: true },
+          { key: "q2", selected: [], other: null, declined: true },
+        ],
+      });
+      expect((await issueRow(number)).row.openQuestions).toBe(0);
+    });
+
+    it("leaves a later answer nothing to say", async () => {
+      const number = await newCard("answer after the hide");
+      const id = await ask(number);
+      await hide(number, [id]);
+
+      const res = await req(
+        `/projects/${slug}/issues/${number}/comments/${id}/answers`,
+        owner,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            answers: [
+              { key: "q1", selected: [0] },
+              { key: "q2", selected: [0] },
+            ],
+          }),
+        },
+      );
+      expect(res.status).toBe(409);
+      expect(await answered(number)).toHaveLength(1);
+    });
+
+    it("settles nothing on a comment somebody already answered", async () => {
+      const number = await newCard("hide an answered question");
+      const id = await ask(number);
+      const answer = await req(
+        `/projects/${slug}/issues/${number}/comments/${id}/answers`,
+        owner,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            answers: [
+              { key: "q1", selected: [0] },
+              { key: "q2", selected: [1] },
+            ],
+          }),
+        },
+      );
+      expect(answer.status).toBe(201);
+
+      const result = await hide(number, [id]);
+      expect(result.settled).toBeUndefined();
+      expect(await answered(number)).toHaveLength(1);
+    });
+
+    it("resolves an annotation it hides, whoever wrote it", async () => {
+      // The hider's own annotation, and somebody else's: the symmetry is
+      // the requirement, so one case cannot stand in for the other.
+      for (const [label, reviewer] of [
+        ["their own", writer],
+        ["somebody else's", owner],
+      ] as const) {
+        const number = await newCard(`hide ${label} annotation`);
+        const author = reviewer === writer ? owner : writer;
+        const id = await annotate(number, author, reviewer);
+        expect((await issueRow(number)).row.specUnresolvedComments).toBe(1);
+
+        const result = await hide(number, [id]);
+        expect(result.settled).toEqual({
+          declined_questions: [],
+          resolved_annotations: [id],
+        });
+
+        const events = await resolvedEvents(number);
+        expect(events).toHaveLength(1);
+        expect(events[0]?.payload).toEqual({
+          comment_ids: [id],
+          paths: ["design.md"],
+          via: "hide",
+        });
+        expect((await issueRow(number)).row.specUnresolvedComments).toBe(0);
+
+        const listed = await json(
+          await req(`/projects/${slug}/issues/${number}/spec/comments`, writer),
+        );
+        expect(listed.items[0].resolved_at).not.toBeNull();
+      }
+    });
+
+    it("settles nothing on an annotation already resolved", async () => {
+      const number = await newCard("hide a resolved annotation");
+      const id = await annotate(number, owner, writer);
+      const resolve = await req(
+        `/projects/${slug}/issues/${number}/spec/comments/resolve`,
+        writer,
+        { method: "POST", body: JSON.stringify({ comment_ids: [id] }) },
+      );
+      expect(resolve.status).toBe(200);
+
+      const result = await hide(number, [id]);
+      expect(result.settled).toBeUndefined();
+      const events = await resolvedEvents(number);
+      expect(events).toHaveLength(1);
+      expect(events[0]?.payload).toEqual({
+        comment_ids: [id],
+        paths: ["design.md"],
+      });
+    });
+
+    it("settles both halves of one call, and counts them once", async () => {
+      const number = await newCard("hide a question and an annotation");
+      const annotation = await annotate(number, owner, writer);
+      const question = await ask(number);
+
+      const seen = await eventsDuring(async () => {
+        const result = await hide(number, [question, annotation]);
+        expect(result.settled).toEqual({
+          declined_questions: [question],
+          resolved_annotations: [annotation],
+        });
+      });
+      // Two counters moved, one list row: a second issue event would only
+      // requeue the first one's inbox work (T-275).
+      expect(seen.filter((e) => e.entity === "issue")).toHaveLength(1);
+      expect((await issueRow(number)).row.openQuestions).toBe(0);
+      expect((await issueRow(number)).row.specUnresolvedComments).toBe(0);
+    });
+
+    it("gives back the bodies and nothing else on unhide", async () => {
+      const number = await newCard("unhide settles nothing");
+      const annotation = await annotate(number, owner, writer);
+      const question = await ask(number);
+      await hide(number, [question, annotation]);
+
+      const res = await setHidden(number, [question, annotation], false);
+      expect(res.status).toBe(200);
+      const back = await json(res);
+      expect(back.settled).toBeUndefined();
+
+      const shown = await bodies(number);
+      expect(shown[question]).toBe("which one?");
+      expect(shown[annotation]).toBe("say why");
+      // The decline and the resolve stay: an answer cannot be edited, ever.
+      expect(await answered(number)).toHaveLength(1);
+      expect((await issueRow(number)).row.openQuestions).toBe(0);
+      expect((await issueRow(number)).row.specUnresolvedComments).toBe(0);
+    });
+  });
+
   describe("silence", () => {
     it("leaves the timeline, updated_at and other readers untouched", async () => {
       const number = await newCard("a quiet write");

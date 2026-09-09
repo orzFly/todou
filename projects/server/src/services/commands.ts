@@ -10,6 +10,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import {
+  comments,
   issueAssignees,
   issueEvents,
   issueLabels,
@@ -22,7 +23,10 @@ import { NotFoundError, ValidationFailedError } from "../errors.ts";
 import { requireCapability, routeInfoOf } from "./access.ts";
 import {
   type CommentRow,
+  type HideInTxResult,
+  hideCommentsInTx,
   insertCommentInTx,
+  requireSettleCapabilities,
   toTimelineComment,
 } from "./comments.ts";
 import { loadReferenceInputs } from "./cross-references.ts";
@@ -91,6 +95,7 @@ export async function executeCommands(
     ).map((row) => [row.id, row]),
   );
   const userIds = new Set<number>();
+  const hideIds: number[] = [];
   for (const [i, command] of input.commands.entries()) {
     const at = `command[${i}]`;
     switch (command.type) {
@@ -109,6 +114,39 @@ export async function executeCommands(
       case "unassign":
         userIds.add(command.user_id);
         break;
+      case "comments_hide":
+        hideIds.push(...command.comment_ids);
+        break;
+    }
+  }
+  if (hideIds.length > 0) {
+    // Validated here rather than left to the transaction so a stale id fails
+    // the whole submission before the comment is written. The hide endpoint
+    // answers 404 for the same mistake; this one answers 422, as it does for
+    // every other invalid id in a submission.
+    const found = new Set(
+      (
+        await db
+          .select({ id: comments.id })
+          .from(comments)
+          .where(
+            and(
+              eq(comments.issueId, issue.id),
+              inArray(comments.id, [...new Set(hideIds)]),
+            ),
+          )
+      ).map((row) => row.id),
+    );
+    for (const [i, command] of input.commands.entries()) {
+      if (command.type !== "comments_hide") continue;
+      for (const id of command.comment_ids) {
+        if (found.has(id)) continue;
+        throw new ValidationFailedError(
+          `command[${i}]: comment ${id} is not on this issue`,
+        );
+      }
+      await requireCapability(ctx, actor, slug, "comment.hide");
+      await requireSettleCapabilities(ctx, actor, slug, db, issue.id, command);
     }
   }
   if (userIds.size > 0) {
@@ -161,8 +199,20 @@ export async function executeCommands(
           text: body,
           self: { projectId: project.id, number: issueNumber },
         });
+  /**
+   * A submission that is nothing but `/hide-all` leaves `updated_at` and the
+   * card's place in "recently updated" alone (T-307), or the web command
+   * would reorder a list that `todou comment hide` on the same card does
+   * not. Counted as sent rather than as applied, because a `/label` naming a
+   * label the card already carries bumps the card today and this is not the
+   * card that changes that.
+   */
+  const touched =
+    body !== null ||
+    input.commands.some((command) => command.type !== "comments_hide");
   const events: ChangeEvent[] = [];
   const commandEvents: ChangeEvent[] = [];
+  const hideEvents: ChangeEvent[] = [];
   let crossTargets: ReferenceTarget[] = [];
   /**
    * Where the card sits once the commands have applied (T-279). Filled in by
@@ -173,7 +223,8 @@ export async function executeCommands(
    */
   let listRow: IssueListRow | undefined;
 
-  const commentRow: CommentRow | null = await db.transaction(async (tx) => {
+  const applied = await db.transaction(async (tx) => {
+    let hide: HideInTxResult | null = null;
     const addEvent = async (
       type: (typeof issueEvents.$inferInsert)["type"],
       payload: Record<string, unknown>,
@@ -317,31 +368,58 @@ export async function executeCommands(
           });
           break;
         }
+        case "comments_hide": {
+          const result = await hideCommentsInTx(tx, {
+            projectId: project.id,
+            issueId: issue.id,
+            issueNumber,
+            actorId: actor.id,
+            input: {
+              hidden: command.hidden,
+              comment_ids: command.comment_ids,
+            },
+            agentContext,
+          });
+          // Two of them in one submission apply in order, which is
+          // well-defined; the later one's answer is the one to report.
+          hide = result;
+          hideEvents.push(...result.events);
+          break;
+        }
       }
     }
 
     await tx
       .update(issues)
-      .set({ statusId, updatedAt: new Date() })
+      .set(touched ? { statusId, updatedAt: new Date() } : { statusId })
       .where(eq(issues.id, issue.id));
-    listRow = {
-      kind: "fields",
-      status_id: statusId,
-      label_ids: [...labeled],
-      assignee_ids: [...assigned],
-    };
-    return comment;
+    if (touched) {
+      listRow = {
+        kind: "fields",
+        status_id: statusId,
+        label_ids: [...labeled],
+        assignee_ids: [...assigned],
+      };
+    }
+    return { comment, hide };
   });
+  const commentRow: CommentRow | null = applied.comment;
+  const hide = applied.hide;
 
   // Comment first, then its events, then the issue row — the order every
-  // subscriber already expects from createComment and updateIssue.
-  events.push(...commandEvents, {
-    entity: "issue",
-    id: issue.id,
-    action: "updated",
-    issue_number: issueNumber,
-    list_row: listRow,
-  });
+  // subscriber already expects from createComment and updateIssue. The hide's
+  // own timeline event rides along whatever `touched` says: a hide does
+  // change what a default timeline read returns.
+  events.push(...commandEvents, ...hideEvents);
+  if (touched) {
+    events.push({
+      entity: "issue",
+      id: issue.id,
+      action: "updated",
+      issue_number: issueNumber,
+      list_row: listRow,
+    });
+  }
   for (const e of events) ctx.bus.publish(project.id, e);
   if (commentRow !== null) {
     await recordCrossReferences(
@@ -364,5 +442,17 @@ export async function executeCommands(
   if (commentRow !== null) {
     comment = await toTimelineComment(ctx, commentRow, { elideHidden: false });
   }
-  return { comment, issue: toIssue(bundle) };
+  return {
+    comment,
+    issue: toIssue(bundle),
+    ...(hide === null
+      ? {}
+      : {
+          hide: {
+            hidden: hide.hidden,
+            unchanged: hide.unchanged,
+            ...(hide.settled === null ? {} : { settled: hide.settled }),
+          },
+        }),
+  };
 }

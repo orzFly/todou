@@ -1,5 +1,17 @@
-import type { CommandInput, Label, Member, Status } from "@todou/shared";
-import { canonicalizeLabelName } from "@todou/shared";
+import type {
+  CommandInput,
+  CrossedReason,
+  HideSelection,
+  Label,
+  Member,
+  Status,
+  TimelineItem,
+} from "@todou/shared";
+import {
+  canonicalizeLabelName,
+  SKIP_REASON_LABEL,
+  selectHidable,
+} from "@todou/shared";
 
 /**
  * Slash commands (T-161), the text half. A command is an ordinary draft line
@@ -12,17 +24,36 @@ import { canonicalizeLabelName } from "@todou/shared";
  * panel) and the composer (button label, submit) read the same verdict.
  */
 
-export type CommandArgument = "none" | "status" | "label" | "member";
+export type CommandArgument = "none" | "status" | "label" | "member" | "force";
+
+/**
+ * What the parse layer emits. `/hide-all` cannot compile to a `CommandInput`
+ * here: the id list comes from draining the timeline, which is async, while
+ * everything in this file is pure and re-runs on every keystroke. So the
+ * draft carries the intent and the composer resolves it at submit time.
+ *
+ * Two names for what looks like one thing, deliberately: an intent a
+ * keystroke can revoke and an id list a transaction will apply are not the
+ * same value, and collapsing them would put an empty `comment_ids` sentinel
+ * on the wire.
+ */
+export type DraftCommand =
+  | CommandInput
+  | { type: "hide_all"; hidden: boolean; force: boolean };
 
 export type CommandDef = {
   /** The word after the slash. */
   name: string;
   argument: CommandArgument;
+  /** Whether the command also stands alone, with no argument at all. */
+  argumentOptional?: boolean;
   /** One-line panel description, e.g. "→ Done". */
   detail: string;
   /** Summary for the submit button, e.g. "close" or "label area:web". */
   summarize: (argument: string) => string;
-  compile: (argument: string) => CommandInput | null;
+  compile: (argument: string) => DraftCommand | null;
+  /** Why this argument compiled to nothing, when the kind cannot say. */
+  invalidReason?: (argument: string) => string;
 };
 
 export type CommandRegistry = {
@@ -62,7 +93,12 @@ const RESERVED = new Set([
   "unlabel",
   "assign",
   "unassign",
+  "hide-all",
+  "unhide-all",
 ]);
+
+/** Which page the registry is for; not every command exists on both. */
+export type CommandSurface = "comment" | "new-issue";
 
 /** `--status` aside, the same rule the CLI's `resolveClosedStatus` follows. */
 function firstClosedStatus(statuses: Status[]): Status | undefined {
@@ -84,11 +120,13 @@ export function buildCommandRegistry({
   labels,
   members,
   me,
+  surface,
 }: {
   statuses: Status[];
   labels: Label[];
   members: Member[];
   me: { id: number; login: string } | undefined;
+  surface: CommandSurface;
 }): CommandRegistry {
   const commands: CommandDef[] = [];
 
@@ -173,6 +211,32 @@ export function buildCommandRegistry({
     });
   }
 
+  // Only on a card: a page whose issue does not exist yet has no comments,
+  // so offering these there would be offering nothing (T-307).
+  if (surface === "comment") {
+    commands.push({
+      name: "hide-all",
+      argument: "force",
+      argumentOptional: true,
+      detail: "hide every comment before this one",
+      summarize: (argument) =>
+        argument === "" ? "hide every comment" : "hide every comment, force",
+      compile: (argument) =>
+        argument === "" || argument === "force"
+          ? { type: "hide_all", hidden: true, force: argument === "force" }
+          : null,
+      invalidReason: (argument) =>
+        `/hide-all takes nothing or "force", not "${argument}"`,
+    });
+    commands.push({
+      name: "unhide-all",
+      argument: "none",
+      detail: "put every hidden comment back",
+      summarize: () => "unhide every comment",
+      compile: () => ({ type: "hide_all", hidden: false, force: false }),
+    });
+  }
+
   for (const status of statuses) {
     const name = slugifyCommandName(status.name);
     if (name === "" || RESERVED.has(name)) continue;
@@ -197,7 +261,7 @@ export type RecognizedLine = {
   /** Everything after the command word, trimmed; "" for no-argument commands. */
   argument: string;
   /** Null when the argument names nothing that exists. */
-  compiled: CommandInput | null;
+  compiled: DraftCommand | null;
 };
 
 /**
@@ -218,14 +282,20 @@ export function recognizeCommandLine(
   // quoting; a no-argument command with trailing words is not that command.
   const argument = (match[2] ?? "").trim();
   if (command.argument === "none" && argument !== "") return null;
-  if (command.argument !== "none" && argument === "") return null;
+  if (
+    command.argument !== "none" &&
+    argument === "" &&
+    command.argumentOptional !== true
+  ) {
+    return null;
+  }
   return { command, argument, compiled: command.compile(argument) };
 }
 
 export type ParsedDraft = {
   /** The draft with every recognized command line removed. */
   body: string;
-  commands: CommandInput[];
+  commands: DraftCommand[];
   /** Recognized but unresolvable — a label or member that does not exist. */
   invalid: { line: string; reason: string }[];
   /** Submit-button material: one summary per recognized command, in order. */
@@ -283,7 +353,7 @@ export function parseCommandLines(
 ): ParsedDraft {
   const lines = text.split("\n");
   const found = commandLinesOf(text, registry);
-  const commands: CommandInput[] = [];
+  const commands: DraftCommand[] = [];
   const invalid: { line: string; reason: string }[] = [];
   const summaries: string[] = [];
   const kept: string[] = [];
@@ -299,13 +369,14 @@ export function parseCommandLines(
       invalid.push({
         line: line.trim(),
         reason:
-          kind === "label"
+          recognized.command.invalidReason?.(recognized.argument) ??
+          (kind === "label"
             ? `no label named "${recognized.argument}"`
             : kind === "member"
               ? `no member named "${recognized.argument}"`
               : kind === "status"
                 ? `no status named "${recognized.argument}"`
-                : "this command has no target in this project",
+                : "this command has no target in this project"),
       });
       continue;
     }
@@ -320,4 +391,156 @@ export function parseCommandLines(
 export function summarizeCommands(summaries: string[]): string {
   if (summaries.length <= 1) return summaries.join("");
   return `${summaries.slice(0, -1).join(", ")} and ${summaries.at(-1)}`;
+}
+
+/** The three fields the new-issue sidebar holds, as commands see them. */
+export type IssueDraftFields = {
+  statusId: string;
+  labelIds: number[];
+  assigneeIds: number[];
+};
+
+/**
+ * Fold the parsed commands into the new-issue draft (T-307). `POST issues`
+ * already takes the three fields, so nothing new goes to the server — the
+ * commands are a second way of filling the same form.
+ *
+ * The switch is exhaustive on purpose: a new `CommandInput` variant has to
+ * fail the build here rather than be silently ignored on this page.
+ */
+export function applyDraftCommands(
+  state: IssueDraftFields,
+  commands: DraftCommand[],
+): IssueDraftFields {
+  let { statusId } = state;
+  const labelIds = new Set(state.labelIds);
+  const assigneeIds = new Set(state.assigneeIds);
+  for (const command of commands) {
+    switch (command.type) {
+      case "status":
+        statusId = String(command.status_id);
+        break;
+      case "label_add":
+        labelIds.add(command.label_id);
+        break;
+      case "label_remove":
+        labelIds.delete(command.label_id);
+        break;
+      case "assign":
+        assigneeIds.add(command.user_id);
+        break;
+      case "unassign":
+        assigneeIds.delete(command.user_id);
+        break;
+      case "hide_all":
+      case "comments_hide":
+        // Unreachable: `buildCommandRegistry` does not offer `/hide-all` on
+        // this surface, so no draft here can parse into one.
+        break;
+      default:
+        command satisfies never;
+    }
+  }
+  return {
+    statusId,
+    labelIds: [...labelIds],
+    assigneeIds: [...assigneeIds],
+  };
+}
+
+/**
+ * The new-issue page's submit label. A sibling of `submitLabel` rather than a
+ * parameter of it: its "Run:" branch has no meaning here, because this button
+ * always creates an issue.
+ */
+export function newIssueSubmitLabel(state: {
+  submitting: boolean;
+  broken: number;
+  summaries: string[];
+}): string {
+  if (state.submitting) return "Creating…";
+  if (state.broken > 0) {
+    return `Fix ${state.broken === 1 ? "the command" : `${state.broken} commands`}`;
+  }
+  if (state.summaries.length === 0) return "Create issue";
+  const summary = summarizeCommands(state.summaries);
+  return state.summaries.length === 1
+    ? `Create issue and ${summary}`
+    : `Create issue, ${summary}`;
+}
+
+export type HideAllDraft = Extract<DraftCommand, { type: "hide_all" }>;
+
+/**
+ * Which comments one `/hide-all` line covers, over a drained timeline.
+ *
+ * `force` runs the by-id path so the exemptions do not hold anything back;
+ * what it walks over comes back in `crossed`, which is what the preview
+ * turns into "declines 1 unanswered question". Plain `/hide-all` keeps no
+ * tail — "every comment" does not, whatever the CLI's `--keep-last 3`
+ * default says.
+ */
+export function hideSelectionFor(
+  items: TimelineItem[],
+  draft: HideAllDraft,
+): HideSelection {
+  const opts = { hidden: draft.hidden };
+  if (!draft.force)
+    return selectHidable(items, { by: "all", keep_last: 0 }, opts);
+  const ids = items
+    .filter((item) => item.type === "comment")
+    .map((item) => item.id);
+  return selectHidable(items, { by: "ids", ids }, opts);
+}
+
+export type HidePreview = {
+  /** One line: what the press will do, counted. */
+  headline: string;
+  /** What it holds back, and why; empty under `force`. */
+  kept: Array<{ id: number; reason: string }>;
+};
+
+const CROSSED_SUMMARY: Record<CrossedReason, (n: number) => string> = {
+  open_question: (n) =>
+    `declines ${n} unanswered question${n === 1 ? "" : "s"}`,
+  unresolved_anchor: (n) => `resolves ${n} annotation${n === 1 ? "" : "s"}`,
+};
+
+/**
+ * The block above the editor. It names the irreversible half before the
+ * press, which is the whole reason it exists: `unhide` restores a body, and
+ * neither a declined answer nor a resolved annotation.
+ *
+ * Only the two exemptions are listed under `keeps`. `already` means somebody
+ * got there first and is nothing to act on, and `kept_tail` cannot occur at
+ * `keep_last: 0`.
+ */
+export function hidePreview(
+  selection: HideSelection,
+  draft: HideAllDraft,
+): HidePreview {
+  const n = selection.pick.length;
+  if (!draft.hidden) {
+    return { headline: `restores ${n} comment${n === 1 ? "" : "s"}`, kept: [] };
+  }
+  const kept = selection.skip.filter(
+    (entry) =>
+      entry.reason === "open_question" || entry.reason === "unresolved_anchor",
+  );
+  const counts = new Map<CrossedReason, number>();
+  for (const entry of selection.crossed) {
+    counts.set(entry.reason, (counts.get(entry.reason) ?? 0) + 1);
+  }
+  const parts = [`hides ${n} comment${n === 1 ? "" : "s"}`];
+  if (kept.length > 0) parts.push(`keeps ${kept.length}`);
+  for (const [reason, count] of counts) {
+    parts.push(CROSSED_SUMMARY[reason](count));
+  }
+  return {
+    headline: parts.join(" · "),
+    kept: kept.map((entry) => ({
+      id: entry.id,
+      reason: `${SKIP_REASON_LABEL[entry.reason]} — /hide-all force hides it too`,
+    })),
+  };
 }

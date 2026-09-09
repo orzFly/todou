@@ -1,8 +1,45 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { queryOptions, useInfiniteQuery } from "@tanstack/react-query";
 import type { TimelineItem, TimelinePage } from "@todou/shared";
+import { drainPaged } from "@todou/shared";
 import { api } from "@/api/queries.ts";
 
 export const TIMELINE_PAGE_LIMIT = 50;
+
+/** The server's ceiling on `limit`; one request covers any card we have. */
+const DRAIN_PAGE_LIMIT = 100;
+
+/**
+ * Every comment on the card, however folded the page is (T-307). What the
+ * reader can see is a head window and a tail window with an unloaded gap
+ * between them, so a `/hide-all` computed from the rendered items would
+ * silently miss the middle.
+ *
+ * No `include_hidden`: the selection needs `hidden_at`, `component`,
+ * `resolved_at` and the author, never a body, and a blanked body is a
+ * smaller response. `question_answered` rides along because it is the only
+ * event `selectHidable` reads.
+ *
+ * Keyed under the card's timeline prefix so the existing
+ * `invalidateQueries(["timeline", slug, number])` reaches it.
+ */
+export function allCommentsQuery(slug: string, issueNumber: number) {
+  return queryOptions({
+    queryKey: ["timeline", slug, issueNumber, "all"] as const,
+    queryFn: async (): Promise<TimelineItem[]> => {
+      const { items } = await drainPaged<TimelineItem>(
+        "timeline",
+        undefined,
+        (after) =>
+          api.getTimeline(slug, issueNumber, {
+            after,
+            types: "comment,question_answered",
+            limit: DRAIN_PAGE_LIMIT,
+          }),
+      );
+      return items;
+    },
+  });
+}
 
 /**
  * Every page this app reads carries the hidden bodies (T-281). Revealing a

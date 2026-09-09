@@ -1,6 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, waitFor } from "@testing-library/react";
-import type { CommandInput, Label, Me, Member, Status } from "@todou/shared";
+import type {
+  CommandInput,
+  Label,
+  Me,
+  Member,
+  Status,
+  TimelineComment,
+  TimelineItem,
+} from "@todou/shared";
 import { describe, expect, it, vi } from "vitest";
 import {
   labelsQuery,
@@ -8,6 +16,14 @@ import {
   meQuery,
   statusesQuery,
 } from "../src/api/queries.ts";
+import { allCommentsQuery } from "../src/api/timeline.ts";
+
+vi.mock("sonner", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+const { toast } = await import("sonner");
+
 import { Composer, submitLabel } from "../src/components/timeline/composer.tsx";
 import { cmFocus, cmGetValue, cmSetValue, cmView } from "./cm.ts";
 
@@ -86,6 +102,61 @@ const STATUSES: Status[] = [
   status(3, "Done", "closed", 2),
 ];
 
+const OTHER = {
+  id: 200,
+  login: "bob",
+  display_name: "Bob",
+  kind: "human" as const,
+  avatar_url: null,
+  owner: null,
+};
+
+const comment = (
+  id: number,
+  over: {
+    hidden?: boolean;
+    component?: TimelineComment["component"];
+    resolved_at?: string | null;
+    author?: TimelineComment["author"];
+  } = {},
+): TimelineItem => ({
+  type: "comment",
+  id,
+  author: over.author ?? ME,
+  body: `body ${id}`,
+  component: over.component ?? null,
+  created_at: "2026-09-08T12:00:00.000Z",
+  edited_at: null,
+  resolved_at: over.resolved_at ?? null,
+  hidden_at: over.hidden === true ? "2026-09-08T13:00:00.000Z" : null,
+  agent_context: null,
+});
+
+const QUESTIONS: TimelineComment["component"] = {
+  type: "questions",
+  questions: [
+    {
+      key: "q1",
+      multiple: false,
+      question: "Which?",
+      options: [{ label: "a" }, { label: "b" }],
+    },
+  ],
+};
+
+const ANCHOR: TimelineComment["component"] = {
+  type: "spec_comment",
+  anchor: {
+    path: "design.md",
+    version: 1,
+    line_start: 4,
+    line_end: 4,
+    col_start: null,
+    col_end: null,
+    quote: "a sentence",
+  },
+};
+
 function mount(
   handlers: {
     onSend?: (body: string) => void;
@@ -93,15 +164,27 @@ function mount(
       body: string,
       commands: CommandInput[],
     ) => Promise<unknown>;
+    /** What the composer's timeline drain finds, seeded (T-307). */
+    timeline?: TimelineItem[];
   } = {},
 ) {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    defaultOptions: {
+      // The drain is read through `fetchQuery` at submit time, which refetches
+      // a stale entry; the seed below is the whole card as far as these tests
+      // are concerned, and no fetch is wired up.
+      queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+      mutations: { retry: false },
+    },
   });
   client.setQueryData(statusesQuery("todou").queryKey, STATUSES);
   client.setQueryData(labelsQuery("todou").queryKey, LABELS);
   client.setQueryData(membersQuery("todou").queryKey, MEMBERS);
   client.setQueryData(meQuery.queryKey, ME);
+  client.setQueryData(
+    allCommentsQuery("todou", 7).queryKey,
+    handlers.timeline ?? [],
+  );
   const onSend = handlers.onSend ?? vi.fn();
   const onSendWithCommands =
     handlers.onSendWithCommands ?? vi.fn(async () => undefined);
@@ -249,6 +332,142 @@ describe("Composer with slash commands", () => {
     expect(lines.filter((l) => l.broken).map((l) => l.text)).toEqual([
       "/label nope",
     ]);
+  });
+});
+
+/**
+ * `/hide-all` (T-307). The ids come from a drain of the whole timeline, not
+ * from the rendered items, because the page folds its middle away.
+ */
+describe("Composer hiding every comment", () => {
+  /** Plain, unanswered questions, unresolved annotation by someone else. */
+  const CARD = [
+    comment(101),
+    comment(102),
+    comment(103, { component: QUESTIONS }),
+    comment(104, { component: ANCHOR, author: OTHER }),
+  ];
+
+  it("keeps the unsettled comments back and says which, and why", async () => {
+    const view = mount({ timeline: CARD });
+    cmSetValue(view.container, "/hide-all");
+    await waitFor(() =>
+      expect(view.container.textContent).toContain("hides 2 comments"),
+    );
+    expect(view.container.textContent).toContain("keeps 2");
+    expect(view.container.textContent).toContain("#comment-103");
+    expect(view.container.textContent).toContain("question unanswered");
+    expect(view.container.textContent).toContain("#comment-104");
+    expect(view.container.textContent).toContain("spec annotation unresolved");
+
+    submitButton(view).click();
+    await waitFor(() =>
+      expect(view.onSendWithCommands).toHaveBeenCalledWith("", [
+        { type: "comments_hide", hidden: true, comment_ids: [101, 102] },
+      ]),
+    );
+  });
+
+  it("names what force will settle, then hides those too", async () => {
+    const view = mount({ timeline: CARD });
+    cmSetValue(view.container, "/hide-all force");
+    await waitFor(() =>
+      expect(view.container.textContent).toContain("hides 4 comments"),
+    );
+    // The irreversible half, before the press — and the annotation is Bob's.
+    expect(view.container.textContent).toContain(
+      "declines 1 unanswered question",
+    );
+    expect(view.container.textContent).toContain("resolves 1 annotation");
+    expect(view.container.textContent).not.toContain("keeps");
+
+    submitButton(view).click();
+    await waitFor(() =>
+      expect(view.onSendWithCommands).toHaveBeenCalledWith("", [
+        {
+          type: "comments_hide",
+          hidden: true,
+          comment_ids: [101, 102, 103, 104],
+        },
+      ]),
+    );
+  });
+
+  it("puts back exactly what is hidden now", async () => {
+    const view = mount({
+      timeline: [
+        comment(101, { hidden: true }),
+        comment(102),
+        comment(103, { hidden: true, component: QUESTIONS }),
+      ],
+    });
+    cmSetValue(view.container, "/unhide-all");
+    await waitFor(() =>
+      expect(view.container.textContent).toContain("restores 2 comments"),
+    );
+
+    submitButton(view).click();
+    await waitFor(() =>
+      expect(view.onSendWithCommands).toHaveBeenCalledWith("", [
+        { type: "comments_hide", hidden: false, comment_ids: [101, 103] },
+      ]),
+    );
+  });
+
+  it("carries the prose and the other commands with it", async () => {
+    const view = mount({ timeline: CARD });
+    cmSetValue(view.container, "the conclusion\n/hide-all\n/close");
+    await waitFor(() => expect(submitButton(view).disabled).toBe(false));
+    expect(submitButton(view).textContent).toContain(
+      "Comment, hide every comment and close",
+    );
+
+    submitButton(view).click();
+    await waitFor(() =>
+      expect(view.onSendWithCommands).toHaveBeenCalledWith("the conclusion", [
+        { type: "comments_hide", hidden: true, comment_ids: [101, 102] },
+        { type: "status", status_id: 3 },
+      ]),
+    );
+  });
+
+  it("blocks the submit when there is nothing left to hide", async () => {
+    const view = mount({
+      timeline: [
+        comment(101, { hidden: true }),
+        comment(102, { hidden: true }),
+      ],
+    });
+    cmSetValue(view.container, "/hide-all");
+    await waitFor(() =>
+      expect(view.container.querySelector('[role="alert"]')).not.toBeNull(),
+    );
+    expect(view.container.textContent).toContain("nothing to hide");
+    expect(submitButton(view).disabled).toBe(true);
+    submitButton(view).click();
+    expect(view.onSendWithCommands).not.toHaveBeenCalled();
+  });
+
+  it("says what the hide settled once the server has answered", async () => {
+    const view = mount({
+      timeline: CARD,
+      onSendWithCommands: vi.fn(async () => ({
+        comment: null,
+        issue: {},
+        hide: {
+          hidden: [103, 104],
+          unchanged: [],
+          settled: { declined_questions: [103], resolved_annotations: [104] },
+        },
+      })),
+    });
+    cmSetValue(view.container, "/hide-all force");
+    await waitFor(() => expect(submitButton(view).disabled).toBe(false));
+    submitButton(view).click();
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(vi.mocked(toast.success).mock.calls[0]?.[0]).toBe(
+      "Hiding also declined 1 unanswered question(s) and resolved 1 annotation(s).",
+    );
   });
 });
 

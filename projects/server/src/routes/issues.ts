@@ -229,7 +229,17 @@ const createCommandsRoute = createRoute({
     "submission (422) and the comment is not created; a command whose effect " +
     "already holds succeeds without recording an event. No event type is " +
     "specific to commands: effects land the same closed / status_changed / " +
-    "label_added / assigned events as any other path.",
+    "label_added / assigned events as any other path.\n\n" +
+    "`comments_hide` is the one variant that is not a field change (T-307): " +
+    "it carries the ids `/hide-all` resolved and hides them in this same " +
+    "transaction, needs `comment.hide` on top of `comment.commands`, and " +
+    "settles what it buries exactly as `…/comments/hide` does — see that " +
+    "endpoint for what is written and what `hidden: false` does not undo. " +
+    "Its outcome comes back under `hide`, absent when no such command was " +
+    "sent. A submission carrying nothing else does **not** move " +
+    "`updated_at`, so the web command reorders no list that `todou comment " +
+    "hide` on the same card leaves alone; whatever the settling itself " +
+    "writes still counts as activity.",
   request: { params: issueParams, body: jsonBody(CommandSubmitInput) },
   responses: {
     200: { description: "Applied", ...jsonBody(CommandSubmitResult) },
@@ -343,8 +353,21 @@ const hideCommentsRoute = createRoute({
     "deserve hiding is the caller's to compute; the only rules here are " +
     "that every id must belong to this card (404, nothing written) and that " +
     "an id already in the target state is reported under `unchanged` " +
-    "instead of being rewritten. The write records no timeline event and " +
-    "does not touch `updated_at` or anyone's unread count.",
+    "instead of being rewritten. A hide that settles nothing records no " +
+    "timeline event and does not touch `updated_at` or anyone's unread " +
+    "count.\n\n" +
+    "**Hiding settles what it buries** (T-307), in this call's own " +
+    "transaction and whoever wrote the comment: a hidden comment carrying " +
+    "unanswered questions has every one of them declined, and a hidden " +
+    'unresolved spec annotation is resolved with `via: "hide"` on the ' +
+    "`spec_comments_resolved` event. Both are timeline entries and both " +
+    "move the card's counters, so a hide that settles something is neither " +
+    "silent nor free of `updated_at`. Requires `question.answer` and " +
+    "`spec.resolve` in addition to `comment.hide`, but only when it would " +
+    "settle something. What was settled comes back under `settled`, absent " +
+    "when nothing was. **None of it is reversible**: `hidden: false` " +
+    "restores the body, never the answer and never the annotation's open " +
+    "state, and settles nothing of its own.",
   request: { params: issueParams, body: jsonBody(CommentHideInput) },
   responses: {
     200: { description: "New state", ...jsonBody(CommentHideResult) },
@@ -628,6 +651,7 @@ export function issueRoutes() {
         slug,
         number,
         c.req.valid("json"),
+        c.get("agentContext"),
       ),
       200,
     );

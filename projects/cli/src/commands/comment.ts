@@ -601,6 +601,8 @@ abstract class CommentHideBase extends ProjectCommand {
         dry_run: this.dryRun,
         [this.dryRun ? "would_write" : "written"]: outcome.written,
         skipped: outcome.skipped,
+        crossed: outcome.crossed,
+        settled: outcome.settled ?? null,
       },
       () =>
         this.dryRun
@@ -682,8 +684,9 @@ export class CommentHideCommand extends CommentHideBase {
       is deleted, and \`comment unhide\` puts any of it back.
 
       Hiding is card-level and visible to everyone; it is not a per-reader
-      preference. It records no timeline event, does not move the card's
-      \`updated_at\`, and does not mark anything read for anybody.
+      preference. A hide that settles nothing records no timeline event,
+      does not move the card's \`updated_at\`, and does not mark anything
+      read for anybody.
 
       Three selectors, one per invocation. Naming ids hides exactly those.
       \`--to <id>\` hides everything up to and including that comment.
@@ -696,6 +699,13 @@ export class CommentHideCommand extends CommentHideBase {
       comment in the middle, or putting away one answered question, is a
       decision the operator is allowed to make. \`--dry-run\` prints the
       picks and every skip with its reason, and sends nothing.
+
+      **Hiding settles what it buries, and \`unhide\` does not undo that.**
+      A hidden comment whose questions were unanswered has them declined; a
+      hidden spec annotation is resolved, whoever wrote it. Both are
+      timeline entries, both move the card's counters, and neither comes
+      back when the body does. Only naming an id reaches an unsettled
+      comment, so \`--dry-run\` lists those separately, ahead of the write.
     `,
     examples: [
       ["Hide three comments by id", "$0 comment hide 16 3403 3405 3407"],
@@ -724,6 +734,10 @@ export class CommentUnhideCommand extends CommentHideBase {
       No exemptions apply here: \`--all\` picks exactly the comments that
       are hidden right now. \`--keep-last\` is accepted and ignored, since
       there is nothing to hold back from being readable again.
+
+      This restores the bodies and nothing else. A question the hide
+      declined stays declined — answers cannot be edited, ever — and an
+      annotation it resolved stays resolved.
     `,
     examples: [
       ["Put one back", "$0 comment unhide 16 3403"],

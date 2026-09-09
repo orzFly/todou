@@ -52,6 +52,18 @@ const comment = (
   agent_context: null,
 });
 
+const openQuestions = {
+  type: "questions",
+  questions: [
+    {
+      key: "q1",
+      multiple: false,
+      question: "Which?",
+      options: [{ label: "a" }, { label: "b" }],
+    },
+  ],
+};
+
 const event = (id: number) => ({
   type: "event",
   id,
@@ -298,23 +310,7 @@ describe("comment hide", () => {
   it("sends nothing at all for --dry-run", async () => {
     const result = await hide(
       ["comment", "hide", "3", "--all", "--keep-last", "1", "--dry-run"],
-      [
-        comment(101),
-        comment(102, {
-          component: {
-            type: "questions",
-            questions: [
-              {
-                key: "q1",
-                multiple: false,
-                question: "Which?",
-                options: [{ label: "a" }, { label: "b" }],
-              },
-            ],
-          },
-        }),
-        comment(103),
-      ],
+      [comment(101), comment(102, { component: openQuestions }), comment(103)],
     );
     expect(result.exitCode).toBe(0);
     expect(hideCalls(result.calls)).toEqual([]);
@@ -325,6 +321,36 @@ describe("comment hide", () => {
     expect(result.stdout).toContain("question unanswered");
     expect(result.stdout).toContain("within the tail kept back");
     expect(result.stdout).toContain("(dry run — nothing written)");
+  });
+
+  it("names what a by-id --dry-run would settle on its way past", async () => {
+    const result = await hide(
+      ["comment", "hide", "3", "102", "104", "--dry-run"],
+      [
+        comment(101),
+        comment(102, { component: openQuestions }),
+        comment(104, {
+          component: {
+            type: "spec_comment",
+            anchor: {
+              path: "design.md",
+              version: 1,
+              line_start: 4,
+              line_end: 4,
+              col_start: null,
+              col_end: null,
+              quote: "a sentence",
+            },
+          },
+        }),
+      ],
+    );
+    expect(result.exitCode).toBe(0);
+    expect(hideCalls(result.calls)).toEqual([]);
+    expect(result.stdout).toContain("would hide 2 comment(s)");
+    expect(result.stdout).toContain("would settle 2 comment(s) while hiding");
+    expect(result.stdout).toContain("question unanswered → declined");
+    expect(result.stdout).toContain("spec annotation unresolved → resolved");
   });
 
   it("refuses two selectors at once, and none at all", async () => {

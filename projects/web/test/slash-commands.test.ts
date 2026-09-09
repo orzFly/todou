@@ -53,6 +53,7 @@ const registry = buildCommandRegistry({
   labels: LABELS,
   members: MEMBERS,
   me: ME,
+  surface: "comment",
 });
 
 describe("slugifyCommandName", () => {
@@ -78,11 +79,50 @@ describe("buildCommandRegistry", () => {
       "unlabel",
       "assign",
       "unassign",
+      "hide-all",
+      "unhide-all",
       "todo",
       "in-progress",
       "done",
       "wont-fix",
     ]);
+  });
+
+  it("offers no hide commands on the new-issue surface", () => {
+    const page = buildCommandRegistry({
+      statuses: STATUSES,
+      labels: LABELS,
+      members: MEMBERS,
+      me: ME,
+      surface: "new-issue",
+    });
+    expect(page.byName.has("hide-all")).toBe(false);
+    expect(page.byName.has("unhide-all")).toBe(false);
+    // …and the line stays prose rather than becoming a broken command.
+    expect(recognizeCommandLine("/hide-all", page)).toBeNull();
+    expect(page.byName.has("label")).toBe(true);
+  });
+
+  it("takes /hide-all bare or with force, and nothing else", () => {
+    expect(recognizeCommandLine("/hide-all", registry)?.compiled).toEqual({
+      type: "hide_all",
+      hidden: true,
+      force: false,
+    });
+    expect(recognizeCommandLine("/hide-all force", registry)?.compiled).toEqual(
+      { type: "hide_all", hidden: true, force: true },
+    );
+    expect(recognizeCommandLine("/unhide-all", registry)?.compiled).toEqual({
+      type: "hide_all",
+      hidden: false,
+      force: false,
+    });
+
+    const wrong = parseCommandLines("/hide-all quietly", registry);
+    expect(wrong.commands).toEqual([]);
+    expect(wrong.invalid[0]?.reason).toBe(
+      '/hide-all takes nothing or "force", not "quietly"',
+    );
   });
 
   it("closes to the first closed status and reopens to the default open one", () => {
@@ -102,6 +142,7 @@ describe("buildCommandRegistry", () => {
       labels: [],
       members: [],
       me: ME,
+      surface: "comment",
     });
     // /close is still the closed-category shorthand — which here happens to
     // be the same status — and the colliding name is reachable explicitly.
@@ -121,6 +162,7 @@ describe("buildCommandRegistry", () => {
       labels: [],
       members: [],
       me: ME,
+      surface: "comment",
     });
     expect(openOnly.byName.has("close")).toBe(false);
   });
@@ -300,6 +342,8 @@ describe("commandCompletionSource (the panel)", () => {
       "/unlabel",
       "/assign",
       "/unassign",
+      "/hide-all",
+      "/unhide-all",
       "/todo",
       "/in-progress",
       "/done",

@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { Id } from "./common.ts";
 import { Issue } from "./issue.ts";
-import { TimelineComment } from "./timeline.ts";
+import {
+  COMMENT_HIDE_MAX_IDS,
+  SettledByHide,
+  TimelineComment,
+} from "./timeline.ts";
 
 // Slash commands (T-161): the web composer compiles `/close`-style draft lines
 // into these payloads and submits them together with the comment body. The
@@ -15,6 +19,16 @@ export const CommandInput = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("label_remove"), label_id: Id }),
   z.strictObject({ type: z.literal("assign"), user_id: Id }),
   z.strictObject({ type: z.literal("unassign"), user_id: Id }),
+  // `/hide-all` (T-307). Not a field change, and here for the reason the
+  // rest are: the comment and the hide have to land together, all the more
+  // so now that hiding may also decline somebody's question. The ids are
+  // resolved by the composer at submit time, from a drain of the timeline
+  // — the rendered page is folded and would miss the middle.
+  z.strictObject({
+    type: z.literal("comments_hide"),
+    hidden: z.boolean(),
+    comment_ids: z.array(Id).min(1).max(COMMENT_HIDE_MAX_IDS),
+  }),
 ]);
 export type CommandInput = z.infer<typeof CommandInput>;
 
@@ -36,5 +50,17 @@ export const CommandSubmitResult = z.object({
   comment: TimelineComment.nullable(),
   /** The issue after every command was applied. */
   issue: Issue,
+  /**
+   * Absent unless the submission carried a `comments_hide`. Read it the way
+   * `CommentHideResult.settled` is read — `(result.hide ?? null) !== null` —
+   * because responses are cast and a server predating T-307 sends no key.
+   */
+  hide: z
+    .object({
+      hidden: z.array(Id),
+      unchanged: z.array(Id),
+      settled: SettledByHide.optional(),
+    })
+    .optional(),
 });
 export type CommandSubmitResult = z.infer<typeof CommandSubmitResult>;

@@ -326,9 +326,18 @@ export type CommentUpdateInput = z.infer<typeof CommentUpdateInput>;
  * The 500 cap sizes one transaction, not a card: a selector that picks more
  * splits into several calls.
  */
+export const COMMENT_HIDE_MAX_IDS = 500;
+
+/** Comment ids a hide settled, by what it settled about them (T-307). */
+export const SettledByHide = z.object({
+  declined_questions: z.array(Id),
+  resolved_annotations: z.array(Id),
+});
+export type SettledByHide = z.infer<typeof SettledByHide>;
+
 export const CommentHideInput = z.strictObject({
   hidden: z.boolean(),
-  comment_ids: z.array(Id).min(1).max(500),
+  comment_ids: z.array(Id).min(1).max(COMMENT_HIDE_MAX_IDS),
 });
 export type CommentHideInput = z.infer<typeof CommentHideInput>;
 
@@ -342,5 +351,16 @@ export const CommentHideResult = z.object({
    * which ids this call actually moved is what makes a replay free.
    */
   unchanged: z.array(Id),
+  /**
+   * What hiding settled on its way past (T-307), absent when it settled
+   * nothing. Optional rather than always-present because responses are cast
+   * and not parsed: a server predating T-307 sends no such key, so every
+   * reader has to treat `undefined` and "nothing settled" as one answer —
+   * `(result.settled ?? null) !== null`.
+   *
+   * `unhide` never settles anything, and none of this is reversible: the
+   * body comes back, the declined answer and the resolved annotation do not.
+   */
+  settled: SettledByHide.optional(),
 });
 export type CommentHideResult = z.infer<typeof CommentHideResult>;

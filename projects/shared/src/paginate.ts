@@ -1,0 +1,60 @@
+/**
+ * Backstop for drainPaged: at 100 entries per page this allows 100k entries,
+ * far beyond any real timeline, so hitting it means the server keeps minting
+ * fresh cursors rather than draining.
+ */
+export const MAX_DRAIN_PAGES = 1000;
+
+/**
+ * Follows next_cursor forward until the stream is drained. `cursor` lands on
+ * the newest entry seen (or stays at `after` when nothing was new), so
+ * callers can hand it straight back to `--since`. A failure mid-drain
+ * surfaces before the caller's cursor moves, so retrying from the same
+ * position re-reads this attempt's pages — nothing is lost or repeated.
+ *
+ * Servers that report `has_more` (T-75) end the drain on the last non-empty
+ * page, skipping the trailing empty-page request; when the field is absent
+ * (servers predating it), the empty page stays the terminator.
+ *
+ * The server promises next_cursor is null exactly on empty pages (filters
+ * are applied in SQL, so an empty page never hides more rows). A server that
+ * breaks that promise — a cursor that does not advance, or an empty page
+ * that still carries one — used to spin this loop forever and OOM the
+ * process (T-68: ~3M identical requests, ~4 GB RSS in 97s). Both anomalies
+ * still end the drain even when `has_more` claims otherwise — it is one more
+ * server promise, not proof of good behavior; a stalled page's items are
+ * dropped because they sit at or before the cursor we already handed out, so
+ * emitting them would break the never-repeat guarantee. MAX_DRAIN_PAGES
+ * bounds the remaining case of ever-fresh cursors, loudly.
+ *
+ * `makeError` exists so the CLI can keep raising a `CliError` with its usage
+ * hint: the exhaustion path is the one place this loop has to speak in its
+ * caller's error vocabulary.
+ */
+export async function drainPaged<T>(
+  label: string,
+  after: string | undefined,
+  fetchPage: (
+    after: string | undefined,
+  ) => Promise<{ items: T[]; next_cursor: string | null; has_more?: boolean }>,
+  makeError?: (message: string) => Error,
+): Promise<{ items: T[]; cursor: string | undefined }> {
+  const items: T[] = [];
+  let cursor = after;
+  for (let pages = 1; ; pages += 1) {
+    const page = await fetchPage(after);
+    const next = page.next_cursor ?? undefined;
+    if (next !== undefined && next === after) break;
+    if (page.items.length === 0) break;
+    items.push(...page.items);
+    if (next === undefined) break;
+    cursor = next;
+    if (page.has_more === false) break;
+    if (pages >= MAX_DRAIN_PAGES) {
+      const message = `giving up after ${MAX_DRAIN_PAGES} ${label} pages — the server keeps returning another next_cursor`;
+      throw makeError === undefined ? new Error(message) : makeError(message);
+    }
+    after = next;
+  }
+  return { items, cursor };
+}

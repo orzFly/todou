@@ -2,7 +2,7 @@ import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import type { Issue, Status } from "@todou/shared";
 import { CheckIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   api,
@@ -22,12 +22,16 @@ import {
   StagedFileUploadButton,
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
+import { CommandErrors } from "@/components/shared/command-errors.tsx";
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
 } from "@/components/shared/markdown-editor.tsx";
 import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
-import { withAttachmentMarkers } from "@/components/timeline/composer.tsx";
+import {
+  useCommandRegistry,
+  withAttachmentMarkers,
+} from "@/components/timeline/composer.tsx";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -44,7 +48,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
+import {
+  completionWith,
+  refCompletionSource,
+} from "@/lib/editor/ref-completion.ts";
+import {
+  commandCompletionSource,
+  commandDecoration,
+} from "@/lib/editor/slash-commands.ts";
+import {
+  applyDraftCommands,
+  newIssueSubmitLabel,
+  parseCommandLines,
+} from "@/lib/slash-commands.ts";
 import { cn } from "@/lib/utils";
 
 // Mirrors the server's choice when no status is sent with a new issue.
@@ -61,14 +77,15 @@ export function NewIssuePage() {
   const members = useSuspenseQuery(membersQuery(slug));
   const canCreateLabels = useCanCreateLabels(slug);
   const createLabel = useCreateLabel(slug);
-  const refCompletion = useRefCompletion(slug);
   // The three sidebar fields are `issue.triage`, which a reporter does not
   // hold: the server refuses them outright, so offering them would only
   // produce a 403 after the issue was already written.
   const canTriage = useCan(slug, "issue.triage");
+  const registry = useCommandRegistry(slug, "new-issue");
 
   const [title, setTitle] = useState("");
   const editor = useRef<MarkdownEditorHandle>(null);
+  const [draft, setDraft] = useState("");
   const [statusId, setStatusId] = useState("");
   const [labelIds, setLabelIds] = useState<number[]>([]);
   const [assigneeIds, setAssigneeIds] = useState<number[]>([]);
@@ -78,10 +95,54 @@ export function NewIssuePage() {
   // twice — the created issue survives the failed attempt here.
   const createdRef = useRef<Issue | null>(null);
 
+  // Same identity for the editor's lifetime: the compartment reconfigures on
+  // a new extension list, which would close whatever panel was open. The
+  // registry therefore arrives through a ref (T-161's rule, reused here).
+  const registryRef = useRef(registry);
+  registryRef.current = registry;
+  const extensions = useMemo(
+    () =>
+      canTriage
+        ? [
+            completionWith([
+              refCompletionSource(slug, queryClient),
+              commandCompletionSource(() => registryRef.current),
+            ]),
+            commandDecoration(() => registryRef.current),
+          ]
+        : // Every command this page offers writes one of the three triage
+          // fields, so without the capability none of them is installed and
+          // a `/label` line stays the prose it looks like.
+          [completionWith([refCompletionSource(slug, queryClient)])],
+    [slug, queryClient, canTriage],
+  );
+
+  const parsed = useMemo(
+    () =>
+      registry === null || !canTriage
+        ? null
+        : parseCommandLines(draft, registry),
+    [draft, registry, canTriage],
+  );
+  const broken = parsed?.invalid ?? [];
+
   async function submit() {
     const trimmedTitle = title.trim();
     if (submitting || trimmedTitle === "") return;
-    const body = editor.current?.getValue() ?? "";
+    // Re-parsed from the document rather than from the onChange mirror: the
+    // text at submit time is what gets executed.
+    const raw = editor.current?.getValue() ?? "";
+    const current =
+      registry === null || !canTriage ? null : parseCommandLines(raw, registry);
+    if (current !== null && current.invalid.length > 0) return;
+    const body = current === null ? raw : current.body;
+    const fields =
+      current === null
+        ? { statusId, labelIds, assigneeIds }
+        : applyDraftCommands(
+            { statusId, labelIds, assigneeIds },
+            current.commands,
+          );
     setSubmitting(true);
     try {
       let issue = createdRef.current;
@@ -94,9 +155,11 @@ export function NewIssuePage() {
           // server reads as "asked for nothing" — sending one is not a
           // request it has to refuse.
           status_id:
-            canTriage && statusId !== "" ? Number(statusId) : undefined,
-          label_ids: canTriage ? labelIds : [],
-          assignee_ids: canTriage ? assigneeIds : [],
+            canTriage && fields.statusId !== ""
+              ? Number(fields.statusId)
+              : undefined,
+          label_ids: canTriage ? fields.labelIds : [],
+          assignee_ids: canTriage ? fields.assigneeIds : [],
         });
         createdRef.current = issue;
       }
@@ -148,13 +211,19 @@ export function NewIssuePage() {
           <MarkdownEditor
             ref={editor}
             ariaLabel="Description"
-            placeholder="Markdown supported. Reference other issues with #N; paste or drop files."
+            placeholder={
+              canTriage
+                ? "Markdown supported. #N references other issues, / runs a command; paste or drop files."
+                : "Markdown supported. Reference other issues with #N; paste or drop files."
+            }
             className="min-h-56"
-            extensions={refCompletion}
+            extensions={extensions}
+            onChange={setDraft}
             onPaste={staging.onPaste}
             onDrop={staging.onDrop}
             onDragOver={staging.onDragOver}
           />
+          <CommandErrors broken={broken} />
           <StagedFileTray
             staged={staging.staged}
             onRemove={staging.remove}
@@ -178,8 +247,15 @@ export function NewIssuePage() {
           >
             Cancel
           </Button>
-          <Button type="submit" disabled={submitting || title.trim() === ""}>
-            {submitting ? "Creating…" : "Create issue"}
+          <Button
+            type="submit"
+            disabled={submitting || title.trim() === "" || broken.length > 0}
+          >
+            {newIssueSubmitLabel({
+              submitting,
+              broken: broken.length,
+              summaries: parsed?.summaries ?? [],
+            })}
           </Button>
         </div>
       </form>

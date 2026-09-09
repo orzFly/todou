@@ -8,10 +8,11 @@ import type {
   CommentHideResult,
   CommentLocation,
   CommentUpdateInput,
+  SettledByHide,
   TimelineComment,
 } from "@todou/shared";
 import { formatRef, QuestionAnsweredPayload } from "@todou/shared";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
@@ -25,7 +26,11 @@ import {
 } from "./access.ts";
 import { loadReferenceInputs } from "./cross-references.ts";
 import { encodeTimelineCursor } from "./cursor.ts";
-import { canonicalizeComponent, questionCount } from "./questions.ts";
+import {
+  answerEventFor,
+  canonicalizeComponent,
+  questionCount,
+} from "./questions.ts";
 import { refPrefixAt } from "./references.ts";
 import { throwIfCommentAliased } from "./relocation.ts";
 import {
@@ -538,12 +543,363 @@ export async function deleteComment(
  * Only the timeline event is published, because hiding does change what a
  * default timeline read hands back and the web page has to hear about it.
  */
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+/** A locked comment row, as much of it as the settling pass reads. */
+export type SettleCandidate = {
+  id: number;
+  component: CommentComponent | null;
+  resolvedAt: Date | null;
+};
+
+export type SettleHiddenOutcome = SettledByHide & { events: ChangeEvent[] };
+
+/**
+ * Settle what a hide buries, in the hide's own transaction (T-307): decline
+ * the questions nobody answered, resolve the annotations nobody resolved.
+ *
+ * Both apply whoever wrote the comment. Hiding is a person saying the comment
+ * no longer matters, and that judgement does not stop at authorship — a
+ * declined question and a hidden question go together rather than one
+ * happening without the other. So there is no authorship test and no refusal
+ * path here; a hide that reaches an unsettled comment settles it.
+ *
+ * Neither half is reversible. `unhide` restores the body, never the answer
+ * (answers cannot be edited, ever) and never the annotation's open state.
+ *
+ * The arithmetic and the event shapes are `submitAnswers` and
+ * `resolveSpecComments` copied, down to which of them moves `updated_at`:
+ * an answer is new activity, resolving an annotation is cleanup.
+ */
+export async function settleHiddenInTx(
+  tx: Tx,
+  args: {
+    projectId: number;
+    issueId: number;
+    issueNumber: number;
+    actorId: number;
+    rows: SettleCandidate[];
+    agentContext: AgentContext | null;
+  },
+): Promise<SettleHiddenOutcome> {
+  const declined: number[] = [];
+  const resolved: number[] = [];
+  const paths: string[] = [];
+  const events: ChangeEvent[] = [];
+
+  const withQuestions = args.rows.filter(
+    (row) => row.component?.type === "questions",
+  );
+  if (withQuestions.length > 0) {
+    const answerRows = await tx
+      .select()
+      .from(issueEvents)
+      .where(
+        and(
+          eq(issueEvents.issueId, args.issueId),
+          eq(issueEvents.type, "question_answered"),
+        ),
+      );
+    let closed = 0;
+    for (const row of withQuestions) {
+      const component = row.component;
+      if (component?.type !== "questions") continue;
+      if (answerEventFor(answerRows, row.id) !== undefined) continue;
+      const answers = component.questions.map((question) => ({
+        key: question.key,
+        selected: [],
+        other: null,
+        declined: true,
+      }));
+      const inserted = await tx
+        .insert(issueEvents)
+        .values({
+          projectId: args.projectId,
+          issueId: args.issueId,
+          actorId: args.actorId,
+          type: "question_answered",
+          payload: { comment_id: row.id, answers },
+          agentContext: args.agentContext,
+        })
+        .returning();
+      const event = inserted[0];
+      if (!event) throw new Error("event insert returned no row");
+      declined.push(row.id);
+      closed += answers.length;
+      events.push({
+        entity: "timeline",
+        id: event.id,
+        action: "created",
+        issue_number: args.issueNumber,
+      });
+    }
+    if (closed > 0) {
+      await tx
+        .update(issues)
+        .set({
+          openQuestions: sql`greatest(${issues.openQuestions} - ${closed}, 0)`,
+          updatedAt: new Date(),
+        })
+        .where(eq(issues.id, args.issueId));
+    }
+  }
+
+  for (const row of args.rows) {
+    const component = row.component;
+    if (component?.type !== "spec_comment" || row.resolvedAt !== null) continue;
+    resolved.push(row.id);
+    paths.push(component.anchor.path);
+  }
+  if (resolved.length > 0) {
+    await tx
+      .update(comments)
+      .set({ resolvedAt: new Date(), resolvedBy: args.actorId })
+      .where(inArray(comments.id, resolved));
+    const inserted = await tx
+      .insert(issueEvents)
+      .values({
+        projectId: args.projectId,
+        issueId: args.issueId,
+        actorId: args.actorId,
+        type: "spec_comments_resolved",
+        // `via` is the whole audit trail: no reader discounts a
+        // hide-resolved annotation, so without it a review round that
+        // disappeared is indistinguishable from one that was answered.
+        payload: { comment_ids: resolved, paths, via: "hide" },
+        agentContext: args.agentContext,
+      })
+      .returning();
+    const event = inserted[0];
+    if (!event) throw new Error("event insert returned no row");
+    await tx
+      .update(issues)
+      .set({
+        specUnresolvedComments: sql`greatest(${issues.specUnresolvedComments} - ${resolved.length}, 0)`,
+      })
+      .where(eq(issues.id, args.issueId));
+    events.push(
+      {
+        entity: "timeline",
+        id: event.id,
+        action: "created",
+        issue_number: args.issueNumber,
+      },
+      {
+        entity: "spec",
+        id: args.issueId,
+        action: "updated",
+        issue_number: args.issueNumber,
+      },
+    );
+  }
+
+  // One row event however many counters moved: both of them badge the same
+  // list row, and the second publish would only requeue the first's work.
+  if (declined.length > 0 || resolved.length > 0) {
+    events.push({
+      entity: "issue",
+      id: args.issueId,
+      action: "updated",
+      issue_number: args.issueNumber,
+      list_row: { kind: "activity" },
+    });
+  }
+  return {
+    declined_questions: declined,
+    resolved_annotations: resolved,
+    events,
+  };
+}
+
+/** The wire half of an outcome, or null when the hide settled nothing. */
+export type HideInTxResult = Omit<CommentHideResult, "settled"> & {
+  /** The ids this call actually moved; empty means nothing was written. */
+  written: number[];
+  settled: SettledByHide | null;
+  /** Publish after commit, in order. */
+  events: ChangeEvent[];
+};
+
+/**
+ * Hide or unhide a list of comments inside an open transaction, settling
+ * what a hide buries. Shared by the hide endpoint and the command endpoint
+ * (T-307), which submits `/hide-all` together with the comment it posts —
+ * two copies of this would be two hide policies waiting to disagree.
+ *
+ * The caller checks the capabilities (`settleScan` says which ones a hide
+ * will need) and owns the `ChangeEvent`s until the transaction commits.
+ */
+export async function hideCommentsInTx(
+  tx: Tx,
+  args: {
+    projectId: number;
+    issueId: number;
+    issueNumber: number;
+    actorId: number;
+    input: CommentHideInput;
+    agentContext: AgentContext | null;
+  },
+): Promise<HideInTxResult> {
+  const { input, issueNumber } = args;
+  const rows = await tx
+    .select({
+      id: comments.id,
+      hiddenAt: comments.hiddenAt,
+      // Widened for the settling pass (T-307), which must read the same
+      // locked rows the hide writes rather than a second, racier read.
+      component: comments.component,
+      resolvedAt: comments.resolvedAt,
+    })
+    .from(comments)
+    .where(
+      and(
+        eq(comments.issueId, args.issueId),
+        inArray(comments.id, input.comment_ids),
+      ),
+    )
+    .for("update");
+  const byId = new Map(rows.map((r) => [r.id, r]));
+
+  const written: number[] = [];
+  for (const id of input.comment_ids) {
+    const row = byId.get(id);
+    // One foreign id fails the whole call: a client whose selection drifted
+    // onto another card must not get half of it applied.
+    if (!row) throw new NotFoundError(`comment ${id} not found`);
+    if ((row.hiddenAt !== null) !== input.hidden) written.push(id);
+  }
+  const moved = new Set(written);
+  const result: HideInTxResult = {
+    hidden: input.comment_ids,
+    unchanged: input.comment_ids.filter((id) => !moved.has(id)),
+    written,
+    settled: null,
+    events: [],
+  };
+  if (written.length === 0) return result;
+
+  await tx
+    .update(comments)
+    .set(
+      input.hidden
+        ? { hiddenAt: new Date(), hiddenBy: args.actorId }
+        : { hiddenAt: null, hiddenBy: null },
+    )
+    .where(inArray(comments.id, written));
+
+  // One event for the call, not one per comment: hiding 55 comments would
+  // otherwise queue 55 inbox recomputations (T-275) that each conclude
+  // nothing changed. `spec resolve` publishes a batch the same way.
+  result.events.push({
+    entity: "timeline",
+    id: Math.max(...written),
+    action: "updated",
+    issue_number: issueNumber,
+  });
+  if (!input.hidden) return result;
+
+  const outcome = await settleHiddenInTx(tx, {
+    projectId: args.projectId,
+    issueId: args.issueId,
+    issueNumber,
+    actorId: args.actorId,
+    rows: written.map((id) => byId.get(id)).filter((row) => row !== undefined),
+    agentContext: args.agentContext,
+  });
+  result.settled = settledOf(outcome);
+  result.events.push(...outcome.events);
+  return result;
+}
+
+/** The wire half of an outcome, or null when the hide settled nothing. */
+export function settledOf(outcome: SettleHiddenOutcome): SettledByHide | null {
+  const { declined_questions, resolved_annotations } = outcome;
+  if (declined_questions.length === 0 && resolved_annotations.length === 0) {
+    return null;
+  }
+  return { declined_questions, resolved_annotations };
+}
+
+/**
+ * Which extra capabilities a hide over these ids will need, read before the
+ * transaction so a caller who may not answer questions is refused rather
+ * than rolled back. Conservative about the race: a comment settled between
+ * this scan and the write costs one capability check nobody notices.
+ */
+async function settleScan(
+  db: Db,
+  issueId: number,
+  ids: number[],
+): Promise<{ questions: boolean; annotations: boolean }> {
+  const rows = await db
+    .select({
+      id: comments.id,
+      component: comments.component,
+      resolvedAt: comments.resolvedAt,
+    })
+    .from(comments)
+    .where(
+      and(
+        eq(comments.issueId, issueId),
+        inArray(comments.id, ids),
+        isNull(comments.hiddenAt),
+      ),
+    );
+  const annotations = rows.some(
+    (row) => row.component?.type === "spec_comment" && row.resolvedAt === null,
+  );
+  const asked = rows.filter((row) => row.component?.type === "questions");
+  if (asked.length === 0) return { questions: false, annotations };
+  const answerRows = await db
+    .select()
+    .from(issueEvents)
+    .where(
+      and(
+        eq(issueEvents.issueId, issueId),
+        eq(issueEvents.type, "question_answered"),
+      ),
+    );
+  return {
+    questions: asked.some(
+      (row) => answerEventFor(answerRows, row.id) === undefined,
+    ),
+    annotations,
+  };
+}
+
+/**
+ * The extra capabilities a hide needs cleared before its transaction opens.
+ * The settling rides on `comment.hide`, which the caller has already checked,
+ * but the two capabilities it exercises are checked too and only when this
+ * call would exercise them. All three are `writer` today, so no user sees a
+ * difference; the check exists so a future divergence fails loudly instead of
+ * letting `comment.hide` quietly grant the other two.
+ */
+export async function requireSettleCapabilities(
+  ctx: AppContext,
+  actor: UserRow,
+  slug: string,
+  db: Db,
+  issueId: number,
+  input: CommentHideInput,
+): Promise<void> {
+  if (!input.hidden) return;
+  const scan = await settleScan(db, issueId, input.comment_ids);
+  if (scan.questions) {
+    await requireCapability(ctx, actor, slug, "question.answer");
+  }
+  if (scan.annotations) {
+    await requireCapability(ctx, actor, slug, "spec.resolve");
+  }
+}
+
 export async function setCommentsHidden(
   ctx: AppContext,
   actor: UserRow,
   slug: string,
   issueNumber: number,
   input: CommentHideInput,
+  agentContext: AgentContext | null = null,
 ): Promise<CommentHideResult> {
   const { project, role } = await requireCapability(
     ctx,
@@ -554,55 +910,23 @@ export async function setCommentsHidden(
   const db = await ctx.router.forProject(routeInfoOf(project));
   const issue = await loadIssue(db, project.id, issueNumber);
   assertIssueWritable(issue, actor, role);
+  await requireSettleCapabilities(ctx, actor, slug, db, issue.id, input);
 
-  const written = await db.transaction(async (tx) => {
-    const rows = await tx
-      .select({ id: comments.id, hiddenAt: comments.hiddenAt })
-      .from(comments)
-      .where(
-        and(
-          eq(comments.issueId, issue.id),
-          inArray(comments.id, input.comment_ids),
-        ),
-      )
-      .for("update");
-    const byId = new Map(rows.map((r) => [r.id, r]));
+  const result = await db.transaction((tx) =>
+    hideCommentsInTx(tx, {
+      projectId: project.id,
+      issueId: issue.id,
+      issueNumber,
+      actorId: actor.id,
+      input,
+      agentContext,
+    }),
+  );
 
-    const written: number[] = [];
-    for (const id of input.comment_ids) {
-      const row = byId.get(id);
-      // One foreign id fails the whole call: a client whose selection drifted
-      // onto another card must not get half of it applied.
-      if (!row) throw new NotFoundError(`comment ${id} not found`);
-      if ((row.hiddenAt !== null) !== input.hidden) written.push(id);
-    }
-    if (written.length > 0) {
-      await tx
-        .update(comments)
-        .set(
-          input.hidden
-            ? { hiddenAt: new Date(), hiddenBy: actor.id }
-            : { hiddenAt: null, hiddenBy: null },
-        )
-        .where(inArray(comments.id, written));
-    }
-    return written;
-  });
-
-  // One event for the call, not one per comment: hiding 55 comments would
-  // otherwise queue 55 inbox recomputations (T-275) that each conclude
-  // nothing changed. `spec resolve` publishes a batch the same way.
-  if (written.length > 0) {
-    ctx.bus.publish(project.id, {
-      entity: "timeline",
-      id: Math.max(...written),
-      action: "updated",
-      issue_number: issueNumber,
-    });
-  }
-  const moved = new Set(written);
+  for (const event of result.events) ctx.bus.publish(project.id, event);
   return {
-    hidden: input.comment_ids,
-    unchanged: input.comment_ids.filter((id) => !moved.has(id)),
+    hidden: result.hidden,
+    unchanged: result.unchanged,
+    ...(result.settled === null ? {} : { settled: result.settled }),
   };
 }
