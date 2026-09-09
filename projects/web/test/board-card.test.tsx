@@ -1,17 +1,28 @@
-import { fireEvent, waitFor, within } from "@testing-library/react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
+import { fireEvent, render, waitFor, within } from "@testing-library/react";
 import type {
   BoardRefPlacement,
   IssueListItem,
   MePrefs,
   ReferenceConfig,
   RefPlacement,
+  Status,
 } from "@todou/shared";
+import { Suspense } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { boardColumnQuery } from "../src/api/board.ts";
 import { prefsQuery } from "../src/api/prefs.ts";
-import { api } from "../src/api/queries.ts";
+import { api, statusesQuery } from "../src/api/queries.ts";
 import { referenceConfigQuery } from "../src/api/references.ts";
 import { IssueRow } from "../src/components/issue/issue-row.tsx";
-import { BoardCardContent } from "../src/pages/board.tsx";
+import { BoardCardContent, BoardPage } from "../src/pages/board.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 afterEach(() => vi.restoreAllMocks());
@@ -220,6 +231,117 @@ describe("BoardCardContent ref placement (T-153, T-157)", () => {
     const [card, row] = view.getAllByText("T-1");
     expect(card.className).toContain("mt-0.5");
     expect(row.className).toContain("shrink-0");
+  });
+});
+
+/**
+ * happy-dom has no layout engine and loads no Tailwind, so the rule "no text
+ * draws outside its own box" can only be pinned here by the classes that carry
+ * it; the widths themselves were measured in a browser (T-303).
+ */
+describe("board contains long tokens (T-303)", () => {
+  const LONG_TITLE = "CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1";
+  const LONG_STATUS = "AwaitingUpstreamDependencyResolutionAndSignOff123";
+
+  it("lets a title with no break point wrap inside the card", async () => {
+    const view = renderWithProviders(
+      <BoardCardContent slug="p" issue={{ ...issue(0), title: LONG_TITLE }} />,
+    );
+    const title = await view.findByText(LONG_TITLE);
+    expect(title.className).toContain("wrap-anywhere");
+  });
+
+  it("clips the meta row rather than letting a chip draw past the card", async () => {
+    const view = renderWithProviders(
+      <BoardCardContent slug="p" issue={issue(2)} />,
+    );
+    await view.findByText("issue 1");
+    const meta = view.container.querySelector(".mt-1\\.5");
+    expect(meta).not.toBeNull();
+    expect((meta as Element).className).toContain("overflow-hidden");
+  });
+
+  it("truncates a long status name without squeezing its neighbours", async () => {
+    const statuses: Status[] = [
+      {
+        id: 1,
+        name: "Todo",
+        category: "open",
+        color: "#123456",
+        position: 1,
+        is_default: true,
+      },
+      {
+        id: 2,
+        name: LONG_STATUS,
+        category: "open",
+        color: "#a855f7",
+        position: 2,
+        is_default: false,
+      },
+    ];
+    const client = testQueryClient();
+    client.setQueryData(statusesQuery("p").queryKey, statuses);
+    for (const status of statuses) {
+      client.setQueryData(boardColumnQuery("p", status.id).queryKey, {
+        items: [],
+        next_cursor: null,
+      });
+    }
+    client.setQueryData(referenceConfigQuery("p").queryKey, {
+      format: { prefix: "T", history: [] },
+      autolinks: [],
+    } satisfies ReferenceConfig);
+
+    // BoardPage reads its params strictly from "/authed/projects/$slug", so
+    // the shim tree needs that same pathless "authed" id.
+    const rootRoute = createRootRoute();
+    const authedRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      id: "authed",
+    });
+    const projectRoute = createRoute({
+      getParentRoute: () => authedRoute,
+      path: "/projects/$slug",
+    });
+    const boardRoute = createRoute({
+      getParentRoute: () => projectRoute,
+      path: "board",
+      component: () => (
+        <Suspense fallback={<div>loading board</div>}>
+          <BoardPage />
+        </Suspense>
+      ),
+    });
+    const issueRoute = createRoute({
+      getParentRoute: () => projectRoute,
+      path: "issues/$number",
+      component: () => <div>issue</div>,
+    });
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([
+        authedRoute.addChildren([
+          projectRoute.addChildren([boardRoute, issueRoute]),
+        ]),
+      ]),
+      history: createMemoryHistory({ initialEntries: ["/projects/p/board"] }),
+    });
+    const view = render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+
+    const name = await view.findByText(LONG_STATUS);
+    const header = name.parentElement as HTMLElement;
+    const [dot, , badge, category] = [...header.children] as HTMLElement[];
+    expect(name.className).toContain("truncate");
+    expect(name.className).toContain("min-w-0");
+    // Truncating the name alone would hand the shortfall to its neighbours,
+    // and the count badge is the one that visibly collapses.
+    for (const sibling of [dot, badge, category]) {
+      expect(sibling.className).toContain("shrink-0");
+    }
   });
 });
 

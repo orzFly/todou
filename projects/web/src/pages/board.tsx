@@ -174,16 +174,23 @@ function BoardColumn({ slug, status }: { slug: string; status: Status }) {
       data-testid={`column-${status.name}`}
     >
       <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
+        {/* The name is the only part that may give ground: without shrink-0 on
+            the other three, a long status name squeezes the count badge into an
+            ellipsis instead of truncating itself (T-303). */}
         <span
-          className="size-2.5 rounded-full"
+          className="size-2.5 shrink-0 rounded-full"
           style={{ backgroundColor: status.color }}
           aria-hidden
         />
-        <span className="text-sm font-medium">{status.name}</span>
-        <Badge variant="secondary" className="ml-auto">
+        <span className="min-w-0 truncate text-sm font-medium">
+          {status.name}
+        </span>
+        <Badge variant="secondary" className="ml-auto shrink-0">
           {column.data?.items.length ?? "…"}
         </Badge>
-        <span className="text-xs text-muted-foreground">{status.category}</span>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {status.category}
+        </span>
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
         {column.isPending && <Skeleton className="h-20 w-full" />}
@@ -276,7 +283,10 @@ export function BoardCardContent({
         to="/projects/$slug/issues/$number"
         params={{ slug, number: String(issue.number) }}
         className={cn(
-          "block text-sm font-medium hover:underline",
+          // `anywhere` rather than `break-word` because this component is also
+          // mounted in the DragOverlay and could land in any shrink-to-fit
+          // box, where `break-word` stops taking effect (T-303).
+          "block wrap-anywhere text-sm font-medium hover:underline",
           // The 99+ badge is ~27px wide; the ring only needs the old dot gap.
           issue.unread_comments > 0 ? "pr-8" : issue.unread && "pr-4",
         )}
@@ -294,7 +304,9 @@ export function BoardCardContent({
       {/* Meta row hosts the question badge; the card's top-right corner
           belongs to the unread marker above (T-46, T-77). */}
       {showMeta && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+        /* Clipped, not wrapped: everything on this row is a nowrap chip that
+           reads worse broken mid-token than cut at the card edge (T-303). */
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 overflow-hidden">
           {placement === "after" && (
             <span className="text-xs text-muted-foreground">{ref}</span>
           )}
