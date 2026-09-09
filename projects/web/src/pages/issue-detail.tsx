@@ -266,7 +266,12 @@ function TitleBlock({
   }
   return (
     <div className="flex items-start justify-between gap-2">
-      <h1 className="text-2xl font-semibold">
+      {/* `wrap-break-word` is not enough here: `min-width: auto` still sizes
+          this flex item to its longest word, so a title carrying one long
+          unbroken token stretches the box past the viewport and the whole page
+          scrolls sideways. `anywhere` is the variant that also folds the
+          soft-wrap opportunities into the min-content width. */}
+      <h1 className="text-2xl font-semibold wrap-anywhere">
         {refLeads ? (
           <>
             <span className="font-normal text-muted-foreground">

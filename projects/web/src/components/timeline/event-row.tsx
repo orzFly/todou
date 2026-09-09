@@ -542,7 +542,7 @@ export function EventRow({
           line box, and truncate's overflow:hidden would shear it off —
           while leaving the row exactly as tall as before. */}
       <span
-        className="min-w-0 flex-1 sm:-my-1 sm:truncate sm:py-1"
+        className="min-w-0 flex-1 wrap-anywhere sm:-my-1 sm:truncate sm:py-1"
         title={text}
       >
         {node}

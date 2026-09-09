@@ -251,7 +251,7 @@ function ReferencedGroup({
             key={event.id}
             id={eventAnchor(event.id)}
             title={event.created_at}
-            className="py-1"
+            className="py-1 wrap-anywhere"
           >
             {referenceSource(event, ctx).node}
           </li>
