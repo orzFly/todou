@@ -896,7 +896,7 @@ describe("search qualifiers", () => {
           key: "harness",
           value: "claud",
           message:
-            '"claud" is not a harness todou knows (claude-code, codex, hermes-agent, pi); matching it literally',
+            '"claud" is not a harness todou knows (claude-code, codex, hermes-agent, omp, pi); matching it literally',
           suggestion: "claude-code",
         },
       ]);

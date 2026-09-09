@@ -4,6 +4,7 @@ import type { Env } from "../config.ts";
 import { claudeCode } from "./claude-code.ts";
 import { codex } from "./codex.ts";
 import { hermesAgent } from "./hermes-agent.ts";
+import { omp } from "./omp.ts";
 import { pi } from "./pi.ts";
 import {
   type Ancestor,
@@ -27,8 +28,18 @@ import type {
  * The process tree answers that (T-128), and this order is only what decides
  * a case the tree cannot: no tree available, or two hosts at equal depth.
  * claude code leads because it is what drives this tracker.
+ *
+ * omp is the one exception, and it goes first: it sets `CLAUDECODE=1`
+ * alongside its own marker, on purpose, so that tools keyed on Claude Code
+ * behave inside it. Claude Code never sets `OMPCODE`, so one process holding
+ * both markers is omp and nothing else — which is exactly the equal-depth tie
+ * this order decides. Nested either way, the tree still arbitrates: an omp
+ * started from Claude Code sits nearer than the claude that spawned it, and a
+ * Claude Code started from omp sits nearer than the omp that spawned it
+ * (T-109).
  */
 export const HARNESSES = [
+  omp,
   claudeCode,
   codex,
   pi,
@@ -45,6 +56,7 @@ export const HARNESS_LABELS: Record<HarnessId, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
   "hermes-agent": "Hermes",
+  omp: "omp",
   pi: "pi",
 };
 

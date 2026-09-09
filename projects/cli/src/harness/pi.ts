@@ -1,14 +1,9 @@
-import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { AgentContext } from "@todou/shared";
 import type { Env } from "../config.ts";
 import { findInJsonlTail } from "./jsonl-tail.ts";
+import { currentSessionFile, flagValue } from "./session-log.ts";
 import type { Harness, HostProcess } from "./types.ts";
-
-/** Enough for the header line pi writes; anything longer is not one. */
-const HEADER_BYTES = 4096;
-/** Bounds the header reads when a project has a deep session archive. */
-const MAX_CANDIDATES = 64;
 
 /**
  * pi (earendil-works/pi). `PI_CODING_AGENT=true`, set by pi on itself at
@@ -21,7 +16,14 @@ export const pi = {
   matches: (env) => env.PI_CODING_AGENT === "true",
   context({ env, home, cwd, host }) {
     const context: AgentContext = { agent: "pi" };
-    const file = currentSessionFile(env, home, cwd, host());
+    const here = resolve(cwd);
+    const hostProcess = host();
+    const file = currentSessionFile({
+      dirs: sessionDirs(env, home, here, hostProcess),
+      cwd: here,
+      hostCwd: hostProcess?.cwd ? resolve(hostProcess.cwd) : undefined,
+      explicit: hostProcess && flagValue(hostProcess.argv, "--session"),
+    });
     if (!file) return context;
     context.session_id = file.id;
     const model = findInJsonlTail(file.path, modelFromLine);
@@ -29,96 +31,6 @@ export const pi = {
     return context;
   },
 } satisfies Harness;
-
-/**
- * The live session, identified by recency: pi appends the user's message
- * before running the tool that invokes us, so among the sessions that could
- * be ours the live one is always the most recently written.
- *
- * Recency stays the selector even now that the host process is known, because
- * `/resume` switches sessions from inside a running pi: the argv it started
- * with names a session it may have long left, while the one it is appending
- * to is by definition the most recently written. So the host only ever says
- * *where to look* (T-128).
- *
- * Two pi instances open on the same project remain genuinely ambiguous — no
- * fd to inspect, nothing in the environment, and argv defeated by `/resume` —
- * and this still resolves to whichever spoke last.
- */
-function currentSessionFile(
-  env: Env,
-  home: string,
-  cwd: string,
-  host: HostProcess | undefined,
-): { id: string; path: string } | undefined {
-  const here = resolve(cwd);
-  const hostCwd = host?.cwd ? resolve(host.cwd) : undefined;
-  const scanned: { path: string; mtime: number; explicit?: true }[] = [];
-  for (const dir of sessionDirs(env, home, here, host)) {
-    let names: string[];
-    try {
-      names = readdirSync(dir);
-    } catch {
-      continue; // No session has ever been recorded for this directory.
-    }
-    for (const name of names) {
-      if (!name.endsWith(".jsonl")) continue;
-      const path = join(dir, name);
-      try {
-        scanned.push({ path, mtime: statSync(path).mtimeMs });
-      } catch {
-        // Raced with a session being deleted; simply not a candidate.
-      }
-    }
-  }
-  scanned.sort((a, b) => b.mtime - a.mtime);
-
-  // `--session <path>` may point outside every directory scanned above, so it
-  // is added after the cap rather than competing for a place under it.
-  const candidates = scanned.slice(0, MAX_CANDIDATES);
-  const named = host && flagValue(host.argv, "--session");
-  if (named) {
-    try {
-      const path = resolve(named);
-      candidates.push({ path, mtime: statSync(path).mtimeMs, explicit: true });
-    } catch {
-      // Named a file we cannot stat; the scan still stands on its own.
-    }
-    candidates.sort((a, b) => b.mtime - a.mtime);
-  }
-
-  for (const { path, explicit } of candidates) {
-    const header = sessionHeader(path);
-    if (!header) continue;
-    // A session whose cwd does not contain ours belongs to another project:
-    // the only filter available under --session-dir, where pi drops every
-    // project's sessions into one flat directory. A file pi was handed by
-    // path is its own by construction, so the filter has nothing to add.
-    //
-    // pi's own cwd answers the same question more directly when the host is
-    // known, and is accepted alongside rather than instead of ours: /proc
-    // resolves symlinks while pi records the path it was handed, so either
-    // one can be the one that matches.
-    if (
-      explicit ||
-      contains(header.cwd, here) ||
-      (hostCwd !== undefined && contains(header.cwd, hostCwd))
-    ) {
-      return { id: header.id, path };
-    }
-  }
-  return undefined;
-}
-
-/** Reads `--flag value` and `--flag=value` alike. */
-function flagValue(argv: readonly string[], flag: string): string | undefined {
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i] as string;
-    if (arg === flag) return argv[i + 1];
-    if (arg.startsWith(`${flag}=`)) return arg.slice(flag.length + 1);
-  }
-  return undefined;
-}
 
 /**
  * Where pi could be keeping this project's sessions. The default layout
@@ -166,45 +78,6 @@ function sessionDirs(
 /** pi's own encoding of a cwd into one directory name. */
 function sessionDirName(cwd: string): string {
   return `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
-}
-
-function contains(parent: string, child: string): boolean {
-  const base = resolve(parent);
-  return (
-    child === base || child.startsWith(base.endsWith(sep) ? base : base + sep)
-  );
-}
-
-/** pi writes the session id and cwd as the first line of every session file. */
-function sessionHeader(path: string): { id: string; cwd: string } | undefined {
-  try {
-    const fd = openSync(path, "r");
-    try {
-      const buffer = Buffer.alloc(HEADER_BYTES);
-      const filled = readSync(fd, buffer, 0, HEADER_BYTES, 0);
-      const newline = buffer.subarray(0, filled).indexOf(0x0a);
-      if (newline === -1) return undefined;
-      const entry = JSON.parse(buffer.toString("utf8", 0, newline)) as {
-        type?: string;
-        id?: unknown;
-        cwd?: unknown;
-      };
-      if (
-        entry.type === "session" &&
-        typeof entry.id === "string" &&
-        entry.id !== "" &&
-        typeof entry.cwd === "string" &&
-        entry.cwd !== ""
-      ) {
-        return { id: entry.id, cwd: entry.cwd };
-      }
-    } finally {
-      closeSync(fd);
-    }
-  } catch {
-    // Unreadable or foreign file: not a session we can claim.
-  }
-  return undefined;
 }
 
 /**

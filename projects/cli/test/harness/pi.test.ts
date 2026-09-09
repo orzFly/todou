@@ -119,13 +119,13 @@ describe("pi detection", () => {
       agentDir: dir,
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub", "deepseek-v4-pro"), userLine],
+      lines: [modelChange("llm-gw", "deepseek-v4-pro"), userLine],
     });
     expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
       {
         agent: "pi",
         session_id: SID,
-        model: "axonhub/deepseek-v4-pro",
+        model: "llm-gw/deepseek-v4-pro",
       },
     );
   });
@@ -137,13 +137,13 @@ describe("pi detection", () => {
       cwd: project,
       id: SID,
       lines: [
-        modelChange("axonhub", "old-model"),
-        assistant("axonhub", "answered-with"),
+        modelChange("llm-gw", "old-model"),
+        assistant("llm-gw", "answered-with"),
       ],
     });
     expect(
       detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)?.model,
-    ).toBe("axonhub/answered-with");
+    ).toBe("llm-gw/answered-with");
 
     const swapped = agentDir();
     writeSession({
@@ -151,7 +151,7 @@ describe("pi detection", () => {
       cwd: project,
       id: SID,
       lines: [
-        assistant("axonhub", "old-model"),
+        assistant("llm-gw", "old-model"),
         modelChange("openai", "switched-to"),
       ],
     });
@@ -179,18 +179,18 @@ describe("pi detection", () => {
       agentDir: dir,
       cwd: project,
       id: OTHER_SID,
-      lines: [modelChange("axonhub", "stale-model")],
+      lines: [modelChange("llm-gw", "stale-model")],
       mtime: 1_000_000,
     });
     writeSession({
       agentDir: dir,
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub", "live-model")],
+      lines: [modelChange("llm-gw", "live-model")],
       mtime: 2_000_000,
     });
     expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
-      { agent: "pi", session_id: SID, model: "axonhub/live-model" },
+      { agent: "pi", session_id: SID, model: "llm-gw/live-model" },
     );
   });
 
@@ -200,12 +200,12 @@ describe("pi detection", () => {
       agentDir: dir,
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub", "deepseek-v4-pro")],
+      lines: [modelChange("llm-gw", "deepseek-v4-pro")],
     });
     expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, nested)).toEqual({
       agent: "pi",
       session_id: SID,
-      model: "axonhub/deepseek-v4-pro",
+      model: "llm-gw/deepseek-v4-pro",
     });
   });
 
@@ -215,7 +215,7 @@ describe("pi detection", () => {
       agentDir: dir,
       cwd: nested,
       id: SID,
-      lines: [modelChange("axonhub", "deeper-model")],
+      lines: [modelChange("llm-gw", "deeper-model")],
     });
     expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
       { agent: "pi" },
@@ -230,19 +230,19 @@ describe("pi detection", () => {
       dir: flat,
       cwd: join(tmpdir(), "todou-pi-elsewhere"),
       id: OTHER_SID,
-      lines: [modelChange("axonhub", "foreign-model")],
+      lines: [modelChange("llm-gw", "foreign-model")],
       mtime: 2_000_000,
     });
     writeSession({
       dir: flat,
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub", "ours")],
+      lines: [modelChange("llm-gw", "ours")],
       mtime: 1_000_000,
     });
     expect(
       detect({ ...ENV, PI_CODING_AGENT_SESSION_DIR: flat }, home, project),
-    ).toEqual({ agent: "pi", session_id: SID, model: "axonhub/ours" });
+    ).toEqual({ agent: "pi", session_id: SID, model: "llm-gw/ours" });
   });
 
   it("treats bound-but-empty pi directories as unset (T-120 shape)", () => {
@@ -251,7 +251,7 @@ describe("pi detection", () => {
       agentDir: dir,
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub", "deepseek-v4-pro")],
+      lines: [modelChange("llm-gw", "deepseek-v4-pro")],
     });
     expect(
       detect(
@@ -263,7 +263,7 @@ describe("pi detection", () => {
         home,
         project,
       )?.model,
-    ).toBe("axonhub/deepseek-v4-pro");
+    ).toBe("llm-gw/deepseek-v4-pro");
   });
 
   it("falls back to the registry order with no readable process tree", () => {
@@ -305,14 +305,14 @@ describe("pi detection", () => {
       cwd: project,
       id: SID,
       lines: [
-        modelChange("axonhub", "deepseek-v4-pro"),
+        modelChange("llm-gw", "deepseek-v4-pro"),
         JSON.stringify({ type: "note", text: 'mentions "model" but is junk' }),
         '{"type":"model_change","modelId":',
       ],
     });
     expect(
       detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)?.model,
-    ).toBe("axonhub/deepseek-v4-pro");
+    ).toBe("llm-gw/deepseek-v4-pro");
   });
 });
 
@@ -362,7 +362,7 @@ describe("pi session recovery through the host process", () => {
       dir: flat,
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub", "recovered")],
+      lines: [modelChange("llm-gw", "recovered")],
     });
     expect(
       detectAgentContext(
@@ -371,7 +371,7 @@ describe("pi session recovery through the host process", () => {
         project,
         piHost({ argv: ["pi", "--session-dir", flat] }),
       ),
-    ).toEqual({ agent: "pi", session_id: SID, model: "axonhub/recovered" });
+    ).toEqual({ agent: "pi", session_id: SID, model: "llm-gw/recovered" });
   });
 
   it("lets pi's flag beat the environment variable", () => {
@@ -382,13 +382,13 @@ describe("pi session recovery through the host process", () => {
       dir: fromEnv,
       cwd: project,
       id: OTHER_SID,
-      lines: [modelChange("axonhub", "from-env")],
+      lines: [modelChange("llm-gw", "from-env")],
     });
     writeSession({
       dir: fromFlag,
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub", "from-flag")],
+      lines: [modelChange("llm-gw", "from-flag")],
     });
     expect(
       detectAgentContext(
@@ -397,7 +397,7 @@ describe("pi session recovery through the host process", () => {
         project,
         piHost({ argv: ["pi", `--session-dir=${fromFlag}`] }),
       ),
-    ).toEqual({ agent: "pi", session_id: SID, model: "axonhub/from-flag" });
+    ).toEqual({ agent: "pi", session_id: SID, model: "llm-gw/from-flag" });
   });
 
   it("claims pi's session when we run outside pi's own directory", () => {
@@ -410,7 +410,7 @@ describe("pi session recovery through the host process", () => {
       agentDir: dir,
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub", "by-host-cwd")],
+      lines: [modelChange("llm-gw", "by-host-cwd")],
     });
     expect(
       detectAgentContext(
@@ -419,7 +419,7 @@ describe("pi session recovery through the host process", () => {
         elsewhere,
         piHost({ cwd: project }),
       ),
-    ).toEqual({ agent: "pi", session_id: SID, model: "axonhub/by-host-cwd" });
+    ).toEqual({ agent: "pi", session_id: SID, model: "llm-gw/by-host-cwd" });
   });
 
   it("takes a --session path from outside every scanned directory", () => {
@@ -429,7 +429,7 @@ describe("pi session recovery through the host process", () => {
       dir: outside,
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub", "named")],
+      lines: [modelChange("llm-gw", "named")],
     });
     expect(
       detectAgentContext(
@@ -438,7 +438,7 @@ describe("pi session recovery through the host process", () => {
         project,
         piHost({ argv: ["pi", "--session", path] }),
       ),
-    ).toEqual({ agent: "pi", session_id: SID, model: "axonhub/named" });
+    ).toEqual({ agent: "pi", session_id: SID, model: "llm-gw/named" });
   });
 
   it("lets a newer session beat the one named on the command line", () => {
@@ -452,14 +452,14 @@ describe("pi session recovery through the host process", () => {
       dir: outside,
       cwd: project,
       id: OTHER_SID,
-      lines: [modelChange("axonhub", "started-with")],
+      lines: [modelChange("llm-gw", "started-with")],
       mtime: 1_000_000,
     });
     writeSession({
       agentDir: dir,
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub", "resumed-into")],
+      lines: [modelChange("llm-gw", "resumed-into")],
       mtime: 2_000_000,
     });
     expect(
@@ -469,7 +469,7 @@ describe("pi session recovery through the host process", () => {
         project,
         piHost({ argv: ["pi", "--session", started], cwd: project }),
       ),
-    ).toEqual({ agent: "pi", session_id: SID, model: "axonhub/resumed-into" });
+    ).toEqual({ agent: "pi", session_id: SID, model: "llm-gw/resumed-into" });
   });
 });
 
@@ -488,7 +488,7 @@ describe("cli integration", () => {
       agentDir: dir,
       cwd: process.cwd(),
       id: SID,
-      lines: [modelChange("axonhub", "deepseek-v4-pro")],
+      lines: [modelChange("llm-gw", "deepseek-v4-pro")],
     });
     const { fetchImpl } = fakeFetch([["GET", "/api/me", me]]);
     const result = await runCli(["whoami"], {
@@ -497,7 +497,7 @@ describe("cli integration", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toContain(
-      `detected harness: pi (session ${SID}, model axonhub/deepseek-v4-pro)`,
+      `detected harness: pi (session ${SID}, model llm-gw/deepseek-v4-pro)`,
     );
   });
 

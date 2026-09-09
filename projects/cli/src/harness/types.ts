@@ -50,11 +50,13 @@ export type LiveSession = {
 };
 
 /**
- * One detectable agent harness. `matches` must stay a pure environment
- * predicate — token auto-selection consults it on every command, before any
- * client exists. `context` is called only when `matches` returned true and
- * may probe the filesystem; probe failures degrade to "less metadata",
- * never to an error.
+ * One detectable agent harness, one file per harness in this directory, with
+ * its tests under `test/harness/` and its entry in `index.ts`.
+ *
+ * `matches` must stay a pure environment predicate — token auto-selection
+ * consults it on every command, before any client exists. `context` is called
+ * only when `matches` returned true and may probe the filesystem; probe
+ * failures degrade to "less metadata", never to an error.
  *
  * A harness that needs only part of the context may destructure only that
  * part: `context({ env, home })`.
