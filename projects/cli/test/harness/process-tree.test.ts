@@ -15,6 +15,8 @@ const CLAUDE = { CLAUDECODE: "1" };
 const CODEX = { CODEX_THREAD_ID: "00000000-0000-7000-8000-000000000001" };
 const PI = { PI_CODING_AGENT: "true" };
 const HERMES = { HERMES_REAL_HOME: "/home/todou" };
+/* omp sets the claude-code marker too, so its shells always carry both. */
+const OMP = { OMPCODE: "1", CLAUDECODE: "1" };
 
 /* ------------------------------------------------------------- macOS */
 
@@ -90,6 +92,42 @@ describe("process-tree arbitration", () => {
       { pid: 102, ppid: 0, env: {} },
     ]);
     expect(detectHarnessId({ ...CLAUDE, ...HERMES }, io)).toBe("hermes-agent");
+  });
+
+  it("picks omp over the claude code session that launched it", () => {
+    // omp inherits CLAUDECODE from the claude that spawned it and sets it
+    // again for its own shells, so only the tree separates the two.
+    const io = procTree([
+      { pid: 100, ppid: 101, env: { ...OMP } },
+      { pid: 101, ppid: 102, env: { ...CLAUDE } },
+      { pid: 102, ppid: 103, env: { ...CLAUDE } },
+      { pid: 103, ppid: 0, env: {} },
+    ]);
+    expect(detectHarnessId({ ...OMP }, io)).toBe("omp");
+  });
+
+  it("picks claude code over the omp session that launched it", () => {
+    // Here CLAUDECODE is introduced twice over — by omp at the bottom and by
+    // claude in the middle — and the nearer one is what we are running under.
+    const io = procTree([
+      { pid: 100, ppid: 101, env: { ...OMP } },
+      { pid: 101, ppid: 102, env: { OMPCODE: "1" } },
+      { pid: 102, ppid: 103, env: { OMPCODE: "1" } },
+      { pid: 103, ppid: 0, env: {} },
+    ]);
+    expect(detectHarnessId({ ...OMP }, io)).toBe("claude-code");
+  });
+
+  it("gives omp the equal-depth tie its double marker creates", () => {
+    // One process introduced both markers, and only omp does that — so this
+    // is the case the registry order exists to settle, and it settles it the
+    // one way that can be right (T-109).
+    const io = procTree([
+      { pid: 100, ppid: 101, env: { ...OMP } },
+      { pid: 101, ppid: 0, env: {} },
+    ]);
+    expect(detectHarnessId({ ...OMP }, io)).toBe("omp");
+    expect(detectHarnessId({ ...OMP }, noTree())).toBe("omp");
   });
 
   it("reads a ppid past a comm holding spaces and parentheses", () => {

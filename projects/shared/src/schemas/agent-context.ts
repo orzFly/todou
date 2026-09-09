@@ -23,6 +23,7 @@ export const HARNESS_IDS = [
   "claude-code",
   "codex",
   "hermes-agent",
+  "omp",
   "pi",
 ] as const;
 export type HarnessId = (typeof HARNESS_IDS)[number];
