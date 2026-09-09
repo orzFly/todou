@@ -37,8 +37,16 @@ import { cn } from "@/lib/utils";
  * padding is subtracted from its first and last track — 14px of padding on
  * the row itself would leave the 27px marker column 13px wide. Rows take that
  * padding back through `ISSUE_LIST_ROW`.
+ *
+ * The flexible track is `minmax(0,1fr)`, not `1fr`: `1fr` means
+ * `minmax(auto, 1fr)`, and that `auto` floor is the widest min-content in the
+ * track. One unbreakable label chip is enough to push the track past the
+ * container, and since nothing above the list clips, the whole page scrolls
+ * sideways (T-306). The floor also decides whether the title's own `truncate`
+ * ever fires: in an over-wide track it has room to spare and never ellipsises.
  */
-const ISSUE_LIST_GRID = "grid grid-cols-[27px_max-content_1fr] gap-x-2 px-3.5";
+const ISSUE_LIST_GRID =
+  "grid grid-cols-[27px_max-content_minmax(0,1fr)] gap-x-2 px-3.5";
 
 /**
  * The same list with the ref trailing its title instead (T-153): no ref
@@ -46,7 +54,8 @@ const ISSUE_LIST_GRID = "grid grid-cols-[27px_max-content_1fr] gap-x-2 px-3.5";
  * max-content track still leaves its two gaps behind, doubling the space
  * between the marker and the title.
  */
-const ISSUE_LIST_GRID_TRAILING_REF = "grid grid-cols-[27px_1fr] gap-x-2 px-3.5";
+const ISSUE_LIST_GRID_TRAILING_REF =
+  "grid grid-cols-[27px_minmax(0,1fr)] gap-x-2 px-3.5";
 
 /** The column layout a list of `IssueRow`s must wear, per the viewer's preference. */
 export function useIssueListGrid(): string {
@@ -199,7 +208,10 @@ export function IssueRowMeta({
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
-      <LabelChips labels={issue.labels} />
+      {/* The one thing on this line that can give ground: the status pill's
+          width comes from the project's status list, the tag icon is 14px,
+          and the title sits on the line above with its own truncate. */}
+      <LabelChips labels={issue.labels} truncate />
       <LabelPicker
         allLabels={allLabels}
         selected={issue.labels}

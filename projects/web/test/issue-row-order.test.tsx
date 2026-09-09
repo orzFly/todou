@@ -133,9 +133,20 @@ describe("IssueRow ref placement (T-153, T-157)", () => {
 
   it("drops the ref column from the list, rather than emptying it", async () => {
     expect(await renderGrid("before")).toContain(
-      "grid-cols-[27px_max-content_1fr]",
+      "grid-cols-[27px_max-content_minmax(0,1fr)]",
     );
-    expect(await renderGrid("after")).toContain("grid-cols-[27px_1fr]");
+    expect(await renderGrid("after")).toContain(
+      "grid-cols-[27px_minmax(0,1fr)]",
+    );
+  });
+
+  /* A bare `1fr` is `minmax(auto, 1fr)`, and that floor is the widest
+     min-content in the track: one unbreakable label chip then widens the row
+     past the viewport and the whole page scrolls sideways (T-306). */
+  it("floors the flexible track in both orders", async () => {
+    for (const placement of ["before", "after"] as const) {
+      expect(await renderGrid(placement)).not.toMatch(/[[_]1fr[\]_]/);
+    }
   });
 
   it("indents the meta line under the title in both orders", async () => {

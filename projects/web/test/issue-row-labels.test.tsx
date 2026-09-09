@@ -87,3 +87,31 @@ describe("IssueRow labels wrap instead of folding (T-98)", () => {
     expect(view.queryByText(/^\+\d/)).toBeNull();
   });
 });
+
+/* The ellipsis itself is layout, which happy-dom does not resolve — this pins
+   the opt-in, and the real-browser pass covers whether one appears. The
+   opposite invariant, that a call site without the prop renders verbatim,
+   lives in label-chip-truncate.test.tsx. */
+describe("IssueRow keeps a long label inside the row (T-306)", () => {
+  it("opts the row's chips into truncation", async () => {
+    const view = renderRow(4);
+    await view.findByText("issue 1");
+    for (const label of labels) {
+      const chip = view.getByTitle(label.name);
+      expect(chip.className).toContain("min-w-0");
+      expect(chip.querySelector(".truncate")).not.toBeNull();
+    }
+  });
+
+  it("renders a row with no meta line and puts no chip on it", async () => {
+    const view = renderWithProviders(
+      <ul>
+        <IssueRow slug="p" issue={issue(4)} />
+      </ul>,
+    );
+    await view.findByText("issue 1");
+    for (const label of labels) {
+      expect(view.queryByTitle(label.name)).toBeNull();
+    }
+  });
+});
