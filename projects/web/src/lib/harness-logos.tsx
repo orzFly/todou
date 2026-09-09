@@ -5,9 +5,16 @@
  * That package is the plain-SVG sibling of @lobehub/icons: 903 `currentColor`
  * files on a 24×24 grid and nothing else — no dependencies, no peers, no React.
  * (It is @lobehub/icons, the component package, that peer-depends on antd and
- * @lobehub/ui.) Vite's svgr plugin compiles each `?react` import into a
- * component that spreads props onto its <svg>, which is what lets the badge
- * attach its own sizing class, test id, and aria-hidden.
+ * @lobehub/ui — never reach for that one.) Vite's svgr plugin compiles each
+ * `?react` import into a component that spreads props onto its <svg>, which is
+ * what lets the badge attach its own sizing class, test id, and aria-hidden.
+ *
+ * A new harness's mark is therefore one line here, and only the icons actually
+ * imported are bundled, so the package's size is a node_modules cost rather
+ * than a payload one. Take upstream's mark rather than drawing one: a drawing
+ * is a guess at somebody's brand. When the collection does not carry it,
+ * vendor that one path verbatim with its own licence beside it, as OmpMark
+ * does below.
  *
  * LICENCE NOTICE, and this is the only copy of it: the build inlines these
  * paths into the app bundle, and the published package ships no LICENSE file

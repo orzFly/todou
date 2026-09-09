@@ -18,6 +18,12 @@ export type AgentContext = z.infer<typeof AgentContext>;
  * logo in `projects/web/src/lib/harness.ts` — so an id added here fails to
  * compile until both sides exist. Other clients may report anything;
  * `AgentContext.agent` stays a free-form string on the wire.
+ *
+ * So adding a harness starts here, and the two builds then name what is
+ * still missing: a detector (`Harness` in `cli/src/harness/types.ts`), a
+ * label beside the registry it joins, and a mark (`HARNESS_META`, whose
+ * `logo` is required). A resume command, a token profile on the host and an
+ * integration page under `docs/` are each optional on top.
  */
 export const HARNESS_IDS = [
   "claude-code",
