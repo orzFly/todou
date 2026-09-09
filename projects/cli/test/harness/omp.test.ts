@@ -186,13 +186,13 @@ describe("omp detection", () => {
       sessionsRoot: sessionsIn(dir),
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub/deepseek-v4-flash"), userLine],
+      lines: [modelChange("llm-gw/deepseek-v4-flash"), userLine],
     });
     expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
       {
         agent: "omp",
         session_id: SID,
-        model: "axonhub/deepseek-v4-flash",
+        model: "llm-gw/deepseek-v4-flash",
       },
     );
   });
@@ -204,23 +204,20 @@ describe("omp detection", () => {
       cwd: project,
       id: SID,
       lines: [
-        modelChange("axonhub/old-model"),
-        assistant("axonhub", "answered-with"),
+        modelChange("llm-gw/old-model"),
+        assistant("llm-gw", "answered-with"),
       ],
     });
     expect(
       detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)?.model,
-    ).toBe("axonhub/answered-with");
+    ).toBe("llm-gw/answered-with");
 
     const swapped = agentDir();
     writeSession({
       sessionsRoot: sessionsIn(swapped),
       cwd: project,
       id: SID,
-      lines: [
-        assistant("axonhub", "old-model"),
-        modelChange("openai/switched"),
-      ],
+      lines: [assistant("llm-gw", "old-model"), modelChange("openai/switched")],
     });
     expect(
       detect({ ...ENV, PI_CODING_AGENT_DIR: swapped }, home, project)?.model,
@@ -236,7 +233,7 @@ describe("omp detection", () => {
       cwd: project,
       id: SID,
       lines: [
-        modelChange("axonhub/first-choice"),
+        modelChange("llm-gw/first-choice"),
         modelChange("openai/stood-in", "fallback"),
       ],
     });
@@ -251,12 +248,12 @@ describe("omp detection", () => {
       sessionsRoot: sessionsIn(dir),
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub/deepseek-v4-flash")],
+      lines: [modelChange("llm-gw/deepseek-v4-flash")],
     });
     expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, nested)).toEqual({
       agent: "omp",
       session_id: SID,
-      model: "axonhub/deepseek-v4-flash",
+      model: "llm-gw/deepseek-v4-flash",
     });
   });
 
@@ -266,7 +263,7 @@ describe("omp detection", () => {
       sessionsRoot: sessionsIn(dir),
       cwd: nested,
       id: SID,
-      lines: [modelChange("axonhub/deeper-model")],
+      lines: [modelChange("llm-gw/deeper-model")],
     });
     expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
       {
@@ -281,21 +278,21 @@ describe("omp detection", () => {
       sessionsRoot: sessionsIn(dir),
       cwd: project,
       id: OTHER_SID,
-      lines: [modelChange("axonhub/stale-model")],
+      lines: [modelChange("llm-gw/stale-model")],
       mtime: 1_000_000,
     });
     writeSession({
       sessionsRoot: sessionsIn(dir),
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub/live-model")],
+      lines: [modelChange("llm-gw/live-model")],
       mtime: 2_000_000,
     });
     expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
       {
         agent: "omp",
         session_id: SID,
-        model: "axonhub/live-model",
+        model: "llm-gw/live-model",
       },
     );
   });
@@ -307,11 +304,11 @@ describe("omp detection", () => {
         sessionsRoot: sessionsIn(dir),
         cwd: homeProject,
         id: SID,
-        lines: [modelChange("axonhub/at-home")],
+        lines: [modelChange("llm-gw/at-home")],
       });
       expect(
         detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, homeProject)?.model,
-      ).toBe("axonhub/at-home");
+      ).toBe("llm-gw/at-home");
     });
 
     it("encodes a cwd under the temporary directory relative to it", () => {
@@ -329,7 +326,7 @@ describe("omp detection", () => {
         sessionsRoot: sessionsIn(dir),
         cwd: project,
         id: SID,
-        lines: [modelChange("axonhub/absolute")],
+        lines: [modelChange("llm-gw/absolute")],
         // A home and a temporary directory that contain nothing, so the cwd
         // is under neither and takes the third branch.
         homeRoot: "/nonexistent-home",
@@ -341,7 +338,7 @@ describe("omp detection", () => {
           "/nonexistent-home",
           project,
         )?.model,
-      ).toBe("axonhub/absolute");
+      ).toBe("llm-gw/absolute");
     });
 
     it("follows a named profile when the variable did not reach us", () => {
@@ -358,11 +355,11 @@ describe("omp detection", () => {
         ),
         cwd: project,
         id: SID,
-        lines: [modelChange("axonhub/profiled")],
+        lines: [modelChange("llm-gw/profiled")],
       });
       expect(
         detect({ ...ENV, OMP_PROFILE: "work" }, home, project)?.model,
-      ).toBe("axonhub/profiled");
+      ).toBe("llm-gw/profiled");
     });
 
     it("follows PI_CONFIG_DIR", () => {
@@ -370,11 +367,11 @@ describe("omp detection", () => {
         sessionsRoot: join(home, ".omp-alt", "agent", "sessions"),
         cwd: project,
         id: SID,
-        lines: [modelChange("axonhub/relocated")],
+        lines: [modelChange("llm-gw/relocated")],
       });
       expect(
         detect({ ...ENV, PI_CONFIG_DIR: ".omp-alt" }, home, project)?.model,
-      ).toBe("axonhub/relocated");
+      ).toBe("llm-gw/relocated");
     });
 
     it("follows the XDG data directory, and only while omp's own is in place", () => {
@@ -383,10 +380,10 @@ describe("omp detection", () => {
         sessionsRoot: join(xdg, "omp", "sessions"),
         cwd: project,
         id: SID,
-        lines: [modelChange("axonhub/xdg")],
+        lines: [modelChange("llm-gw/xdg")],
       });
       expect(detect({ ...ENV, XDG_DATA_HOME: xdg }, home, project)?.model).toBe(
-        "axonhub/xdg",
+        "llm-gw/xdg",
       );
       // A relocated agent directory takes its data with it, so the split no
       // longer applies and the session above is not ours to claim.
@@ -407,19 +404,19 @@ describe("omp detection", () => {
         dir: flat,
         cwd: scratchDir("todou-omp-elsewhere-"),
         id: OTHER_SID,
-        lines: [modelChange("axonhub/foreign-model")],
+        lines: [modelChange("llm-gw/foreign-model")],
         mtime: 2_000_000,
       });
       writeSession({
         dir: flat,
         cwd: project,
         id: SID,
-        lines: [modelChange("axonhub/ours")],
+        lines: [modelChange("llm-gw/ours")],
         mtime: 1_000_000,
       });
       expect(
         detect({ ...ENV, PI_CODING_AGENT_SESSION_DIR: flat }, home, project),
-      ).toEqual({ agent: "omp", session_id: SID, model: "axonhub/ours" });
+      ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/ours" });
     });
 
     it("treats bound-but-empty omp directories as unset (T-120 shape)", () => {
@@ -428,7 +425,7 @@ describe("omp detection", () => {
         sessionsRoot: sessionsIn(dir),
         cwd: project,
         id: SID,
-        lines: [modelChange("axonhub/deepseek-v4-flash")],
+        lines: [modelChange("llm-gw/deepseek-v4-flash")],
       });
       expect(
         detect(
@@ -442,7 +439,7 @@ describe("omp detection", () => {
           home,
           project,
         )?.model,
-      ).toBe("axonhub/deepseek-v4-flash");
+      ).toBe("llm-gw/deepseek-v4-flash");
     });
   });
 
@@ -489,14 +486,14 @@ describe("omp detection", () => {
       cwd: project,
       id: SID,
       lines: [
-        modelChange("axonhub/deepseek-v4-flash"),
+        modelChange("llm-gw/deepseek-v4-flash"),
         JSON.stringify({ type: "note", text: 'mentions "model" but is junk' }),
         '{"type":"model_change","model":',
       ],
     });
     expect(
       detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)?.model,
-    ).toBe("axonhub/deepseek-v4-flash");
+    ).toBe("llm-gw/deepseek-v4-flash");
   });
 });
 
@@ -536,7 +533,7 @@ describe("omp session recovery through the host process", () => {
       dir: flat,
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub/recovered")],
+      lines: [modelChange("llm-gw/recovered")],
     });
     expect(
       detectAgentContext(
@@ -545,7 +542,7 @@ describe("omp session recovery through the host process", () => {
         project,
         ompHost({ argv: ["omp", "--session-dir", flat] }),
       ),
-    ).toEqual({ agent: "omp", session_id: SID, model: "axonhub/recovered" });
+    ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/recovered" });
   });
 
   it("lets omp's flag beat the environment variable", () => {
@@ -555,13 +552,13 @@ describe("omp session recovery through the host process", () => {
       dir: fromEnv,
       cwd: project,
       id: OTHER_SID,
-      lines: [modelChange("axonhub/from-env")],
+      lines: [modelChange("llm-gw/from-env")],
     });
     writeSession({
       dir: fromFlag,
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub/from-flag")],
+      lines: [modelChange("llm-gw/from-flag")],
     });
     expect(
       detectAgentContext(
@@ -570,7 +567,7 @@ describe("omp session recovery through the host process", () => {
         project,
         ompHost({ argv: ["omp", `--session-dir=${fromFlag}`] }),
       ),
-    ).toEqual({ agent: "omp", session_id: SID, model: "axonhub/from-flag" });
+    ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/from-flag" });
   });
 
   it("claims omp's session when we run outside omp's own directory", () => {
@@ -580,7 +577,7 @@ describe("omp session recovery through the host process", () => {
       sessionsRoot: sessionsIn(dir),
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub/by-host-cwd")],
+      lines: [modelChange("llm-gw/by-host-cwd")],
     });
     expect(
       detectAgentContext(
@@ -589,7 +586,7 @@ describe("omp session recovery through the host process", () => {
         elsewhere,
         ompHost({ cwd: project }),
       ),
-    ).toEqual({ agent: "omp", session_id: SID, model: "axonhub/by-host-cwd" });
+    ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/by-host-cwd" });
   });
 
   it("takes a --resume path from outside every scanned directory", () => {
@@ -598,7 +595,7 @@ describe("omp session recovery through the host process", () => {
       dir: outside,
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub/named")],
+      lines: [modelChange("llm-gw/named")],
     });
     expect(
       detectAgentContext(
@@ -607,7 +604,7 @@ describe("omp session recovery through the host process", () => {
         project,
         ompHost({ argv: ["omp", "--resume", path] }),
       ),
-    ).toEqual({ agent: "omp", session_id: SID, model: "axonhub/named" });
+    ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/named" });
   });
 
   it("ignores a --resume that names an id prefix rather than a file", () => {
@@ -618,7 +615,7 @@ describe("omp session recovery through the host process", () => {
       sessionsRoot: sessionsIn(dir),
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub/by-scan")],
+      lines: [modelChange("llm-gw/by-scan")],
     });
     expect(
       detectAgentContext(
@@ -627,7 +624,7 @@ describe("omp session recovery through the host process", () => {
         project,
         ompHost({ argv: ["omp", "--resume", "01900000"] }),
       ),
-    ).toEqual({ agent: "omp", session_id: SID, model: "axonhub/by-scan" });
+    ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/by-scan" });
   });
 
   it("lets a newer session beat the one named on the command line", () => {
@@ -640,14 +637,14 @@ describe("omp session recovery through the host process", () => {
       dir: outside,
       cwd: project,
       id: OTHER_SID,
-      lines: [modelChange("axonhub/started-with")],
+      lines: [modelChange("llm-gw/started-with")],
       mtime: 1_000_000,
     });
     writeSession({
       sessionsRoot: sessionsIn(dir),
       cwd: project,
       id: SID,
-      lines: [modelChange("axonhub/resumed-into")],
+      lines: [modelChange("llm-gw/resumed-into")],
       mtime: 2_000_000,
     });
     expect(
@@ -657,7 +654,7 @@ describe("omp session recovery through the host process", () => {
         project,
         ompHost({ argv: ["omp", "-r", started], cwd: project }),
       ),
-    ).toEqual({ agent: "omp", session_id: SID, model: "axonhub/resumed-into" });
+    ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/resumed-into" });
   });
 });
 
@@ -678,7 +675,7 @@ describe("cli integration", () => {
       sessionsRoot: sessionsIn(dir),
       cwd: process.cwd(),
       id: SID,
-      lines: [modelChange("axonhub/deepseek-v4-flash")],
+      lines: [modelChange("llm-gw/deepseek-v4-flash")],
       homeRoot: home,
     });
     const { fetchImpl } = fakeFetch([["GET", "/api/me", me]]);
@@ -689,7 +686,7 @@ describe("cli integration", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toContain(
-      `detected harness: omp (session ${SID}, model axonhub/deepseek-v4-flash)`,
+      `detected harness: omp (session ${SID}, model llm-gw/deepseek-v4-flash)`,
     );
   });
 
