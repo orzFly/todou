@@ -185,7 +185,10 @@ export function NewIssuePage() {
       </form>
 
       {canTriage && (
-        <aside className="space-y-5 text-sm">
+        // A grid item floors at min-content, so without `min-w-0` the Labels
+        // chips never shrink; and unlike issue-detail's sidebar there is no
+        // `lg:overflow-y-auto` here to clip them — they paint over the form.
+        <aside className="min-w-0 space-y-5 text-sm">
           <section className="space-y-2">
             <h3 className="text-xs font-medium text-muted-foreground uppercase">
               Status
@@ -222,6 +225,7 @@ export function NewIssuePage() {
                 labels={labels.data.filter((label) =>
                   labelIds.includes(label.id),
                 )}
+                truncate
               />
             </div>
             <LabelPicker

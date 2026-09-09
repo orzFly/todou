@@ -19,18 +19,22 @@ export function LabelChip({
   label,
   valueOnly = false,
   bordered = true,
+  truncate = false,
   className,
 }: {
   label: Label;
   valueOnly?: boolean;
   bordered?: boolean;
+  truncate?: boolean;
   className?: string;
 }) {
   const { value } = splitLabelName(label.name);
+  const text = valueOnly ? value : label.name;
   return (
     <span
       className={cn(
         "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap",
+        truncate && "min-w-0",
         className,
       )}
       style={{
@@ -40,7 +44,10 @@ export function LabelChip({
       }}
       title={label.name}
     >
-      {valueOnly ? value : label.name}
+      {/* `text-overflow: ellipsis` has no effect on an inline-flex box, and
+          turning the chip into a block would shift it where it sits inline
+          (LabelInline, event-row's `align-middle`) — hence the inner span. */}
+      {truncate ? <span className="truncate">{text}</span> : text}
     </span>
   );
 }
@@ -69,9 +76,11 @@ export function LabelInline({ label }: { label: Label }) {
  */
 export function LabelChips({
   labels,
+  truncate = false,
   className,
 }: {
   labels: Label[];
+  truncate?: boolean;
   className?: string;
 }) {
   const { groups, plain } = groupLabelsByPrefix(labels);
@@ -80,16 +89,30 @@ export function LabelChips({
       {groups.map((group) => (
         <span
           key={group.prefix}
-          className={cn("inline-flex items-center gap-1", className)}
+          className={cn(
+            "inline-flex items-center gap-1",
+            truncate && "min-w-0",
+            className,
+          )}
         >
           <span className="text-xs text-muted-foreground">{group.prefix}</span>
           {group.labels.map((label) => (
-            <LabelChip key={label.id} label={label} valueOnly />
+            <LabelChip
+              key={label.id}
+              label={label}
+              valueOnly
+              truncate={truncate}
+            />
           ))}
         </span>
       ))}
       {plain.map((label) => (
-        <LabelChip key={label.id} label={label} className={className} />
+        <LabelChip
+          key={label.id}
+          label={label}
+          truncate={truncate}
+          className={className}
+        />
       ))}
     </>
   );

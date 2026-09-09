@@ -486,7 +486,7 @@ function Sidebar({
     // Sticky on large screens (T-63): the sidebar keeps Status and the
     // Latest spec section in view while the timeline scrolls; when taller
     // than the viewport it scrolls internally.
-    <aside className="space-y-5 text-sm lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:self-start lg:overflow-y-auto">
+    <aside className="min-w-0 space-y-5 text-sm lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:self-start lg:overflow-y-auto">
       <section className="space-y-2">
         <h3 className="text-xs font-medium text-muted-foreground uppercase">
           Status
@@ -527,7 +527,7 @@ function Sidebar({
           Labels
         </h3>
         <div className="flex flex-wrap items-center gap-1.5">
-          <LabelChips labels={issue.labels} />
+          <LabelChips labels={issue.labels} truncate />
         </div>
         {!trashed && (
           <LabelPicker
