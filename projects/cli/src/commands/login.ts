@@ -27,7 +27,14 @@ export class LoginCommand extends Command<CliContext> {
     details:
       "Opens the browser to authorize the CLI; the token lands in ~/.config/todou/config.toml. Use --no-browser when the browser is on another machine: the CLI prints a one-time code and waits for you to authorize it there. Use --manual to paste a token instead.",
     examples: [
-      ["Log in to a todou server", "todou login https://todou.example"],
+      [
+        "Authorize this machine in a browser",
+        "todou login https://todou.example",
+      ],
+      [
+        "Store a separate token for an agent to pick up",
+        "todou login https://todou.example --profile claude-code",
+      ],
     ],
   });
 
