@@ -69,6 +69,12 @@ wanted() { [ -z "$ONLY" ] || [ "$ONLY" = "$1" ]; }
 cat > "$WORK/detect.mts" <<'PROBE'
 import { readFileSync } from "node:fs";
 import { detectAgentContext } from "../../projects/cli/src/harness/index.ts";
+import { omp } from "../../projects/cli/src/harness/omp.ts";
+import {
+  hostIndex,
+  openSessionLogs,
+  readAncestors,
+} from "../../projects/cli/src/harness/process-tree.ts";
 
 const statePath = process.env.TODOU_OMP_STATE;
 const { TODOU_OMP_STATE: _withheld, ...withoutState } = process.env;
@@ -78,6 +84,17 @@ try {
 } catch {
   record = null;
 }
+
+// What the scan now stands on when no state file is there to believe: the log
+// omp is holding open (T-310). Resolved through the same two functions the
+// detector uses, so this reports the real input rather than a re-derivation
+// of it — and reports it separately, because "the scan agreed" cannot on its
+// own tell an exact answer from a lucky one.
+const ancestors = readAncestors();
+const depth = hostIndex((env) => omp.matches(env), ancestors);
+const host = depth === undefined ? undefined : ancestors[depth];
+const openLogs = host ? openSessionLogs("/proc", host.pid) : undefined;
+
 console.log(
   JSON.stringify({
     detected: detectAgentContext(process.env),
@@ -85,6 +102,13 @@ console.log(
     state_path: statePath ?? null,
     socket: process.env.TODOU_MESSAGING_SOCKET ?? null,
     record,
+    host: {
+      pid: host?.pid ?? null,
+      // null when the descriptor table could not be read at all, which is a
+      // different answer from an empty one.
+      open_logs: openLogs === undefined ? null : openLogs.length,
+      open_log: openLogs?.length === 1 ? openLogs[0] : null,
+    },
   }),
 );
 PROBE
@@ -209,17 +233,26 @@ if wanted 2; then
       else
         bad "both instances reported '$IDA'"
       fi
-      # Not an assertion: the scan picks the most recently written session, so
-      # with two instances it is right about one of them by construction and
-      # may be right about both if the writes happened to interleave kindly.
-      # Printed because a run where it agreed twice proves less than it looks.
+      # This was a print until T-310, and deliberately so: recency is right
+      # about one of two instances by construction and may be right about both
+      # if the writes interleave kindly, so agreeing proved nothing. The scan
+      # asks omp's descriptor table now, which no amount of timing changes —
+      # hence an assertion, with the descriptor itself checked below so that a
+      # pass cannot be read as another lucky interleaving.
       SCANA=$(json "$WORK/two-a.json" scanned.session_id)
       SCANB=$(json "$WORK/two-b.json" scanned.session_id)
-      if [ "$SCANA" != "$IDA" ] || [ "$SCANB" != "$IDB" ]; then
-        printf '       (the scan alone would have said %s / %s)\n' \
-          "${SCANA:-nothing}" "${SCANB:-nothing}"
+      if [ "$SCANA" = "$IDA" ] && [ "$SCANB" = "$IDB" ]; then
+        ok "the scan alone tells them apart, with no state file to read"
       else
-        printf '       (the scan alone happened to agree this run)\n'
+        bad "the scan said ${SCANA:-nothing} / ${SCANB:-nothing}, not $IDA / $IDB"
+      fi
+      HELDA=$(json "$WORK/two-a.json" host.open_log)
+      COUNTA=$(json "$WORK/two-a.json" host.open_logs)
+      FILEA=$(json "$WORK/two-a.json" record.session_file)
+      if [ "$COUNTA" = 1 ] && [ -n "$HELDA" ] && [ "$HELDA" = "$FILEA" ]; then
+        ok "and it is the descriptor doing it: one log held open, omp's own"
+      else
+        bad "expected one held log matching the record, got ${COUNTA:-unreadable}: '${HELDA:-none}' vs '${FILEA:-none}'"
       fi
     else
       bad "one of the two probes produced nothing"
@@ -358,6 +391,23 @@ if wanted 6; then
         ok "the scan still answers ($ID)"
       else
         bad "reported agent '$AGENT', session '${ID:-none}'"
+      fi
+      # With no record to check the answer against, the descriptor is the only
+      # thing separating an exact answer from the newest file in the project —
+      # and this is the configuration where that is all todou has (T-310).
+      COUNT=$(json "$WORK/bare.json" host.open_logs)
+      HELD=$(json "$WORK/bare.json" host.open_log)
+      # omp names the file after the session, so the path is enough to say the
+      # id came out of the log omp is writing rather than off the top of a
+      # recency sort that happened to agree.
+      case "${ID:+$HELD}" in
+        *"$ID"*) NAMED=yes ;;
+        *) NAMED=no ;;
+      esac
+      if [ "$COUNT" = 1 ] && [ "$NAMED" = yes ]; then
+        ok "and it came from the held descriptor, not from recency"
+      else
+        bad "expected one held log naming ${ID:-the session}, got ${COUNT:-unreadable}: '${HELD:-none}'"
       fi
     else
       bad "the probe produced nothing; see $WORK/bare.omp.log"
