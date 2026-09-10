@@ -399,6 +399,32 @@ describe("omp detection", () => {
       ).toEqual({ agent: "omp" });
     });
 
+    it("keeps the XDG split under a profile that overrules the override", () => {
+      // The override does not relocate anything here — omp discards it in
+      // favour of the profile — so omp's directory is still where omp put it
+      // and the split still applies. Reading the override as a relocation
+      // would lose this session entirely.
+      const xdg = scratchDir("todou-omp-xdg-profile-");
+      writeSession({
+        sessionsRoot: join(xdg, "omp", "profiles", "work", "sessions"),
+        cwd: project,
+        id: SID,
+        lines: [modelChange("llm-gw/xdg-profiled")],
+      });
+      expect(
+        detect(
+          {
+            ...ENV,
+            XDG_DATA_HOME: xdg,
+            OMP_PROFILE: "work",
+            PI_CODING_AGENT_DIR: agentDir(),
+          },
+          home,
+          project,
+        )?.model,
+      ).toBe("llm-gw/xdg-profiled");
+    });
+
     it("reads a flat session directory, filtering foreign projects by header cwd", () => {
       const flat = scratchDir("todou-omp-flat-");
       // Under one flat directory every project lands side by side, so the

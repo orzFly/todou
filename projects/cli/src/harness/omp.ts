@@ -143,20 +143,48 @@ export function ompAgentDir(
   home: string,
 ): { dir: string; configRoot: string; profile?: string; relocated: boolean } {
   const configRoot = join(home, env.PI_CONFIG_DIR || ".omp");
-  const profile = env.OMP_PROFILE || env.PI_PROFILE;
-  const fallback = profile
+  const profile = ompProfile(env);
+  // A profile *discards* `PI_CODING_AGENT_DIR` rather than losing to it: omp
+  // drops the override twice over, once where it reads the variable and again
+  // inside the object that resolves the directory, so an override set beside a
+  // profile reaches nothing. Measured on omp 18.1.15 — with both set, the
+  // session lands under the profile's directory and the override's is never
+  // created.
+  //
+  // Inside omp the two orders agree, because omp overwrites
+  // `PI_CODING_AGENT_DIR` with whatever the profile resolved to before its
+  // tools inherit the environment. They part company in the ordinary shell
+  // where `todou integration install omp` runs, and getting it backwards there
+  // is precisely the "installs into a directory omp never reads" this
+  // function's contract warns about.
+  const dir = profile
     ? join(configRoot, "profiles", profile, "agent")
-    : join(configRoot, "agent");
-  // omp exports this itself whenever a profile is active, so the profile
-  // branch above only has to cover a variable that did not survive the way
-  // to us.
-  const dir = env.PI_CODING_AGENT_DIR || fallback;
+    : env.PI_CODING_AGENT_DIR || join(configRoot, "agent");
   return {
     dir,
     configRoot,
     ...(profile ? { profile } : {}),
-    relocated: dir !== fallback,
+    // Only an override with no profile to overrule it moves the directory off
+    // omp's own layout, which is the condition omp itself puts on the XDG
+    // split below.
+    relocated: !profile && !!env.PI_CODING_AGENT_DIR,
   };
+}
+
+/**
+ * The active profile, or nothing.
+ *
+ * `??`, not the `||` every other variable in this file is read with: omp
+ * chooses between these two with an explicit undefined check, so a
+ * bound-but-empty `OMP_PROFILE` shadows `PI_PROFILE` instead of falling
+ * through to it — and then fails omp's own profile-name validation, leaving no
+ * profile at all. Measured: `OMP_PROFILE= PI_PROFILE=x` files the session under
+ * the default agent directory, and omp deletes both variables from the
+ * environment its tools inherit.
+ */
+function ompProfile(env: Env): string | undefined {
+  const named = env.OMP_PROFILE ?? env.PI_PROFILE;
+  return named ? named : undefined;
 }
 
 /**

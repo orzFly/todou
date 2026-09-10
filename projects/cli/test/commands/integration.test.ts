@@ -86,6 +86,45 @@ describe("todou integration install", () => {
     expect(existsSync(target(join(home, ".omp-alt", "agent")))).toBe(true);
   });
 
+  /*
+   * The two combinations where the variables disagree with each other. Inside
+   * omp they cannot: omp normalises its own environment before its tools see
+   * it. In the shell this command is typed into, nothing has normalised
+   * anything, so these are the cases that decide whether the file lands where
+   * omp will read it. Both were measured against omp 18.1.15.
+   */
+  it("lets a profile overrule PI_CODING_AGENT_DIR", async () => {
+    const home = ompHome();
+    const dir = fresh("todou-integ-ignored-");
+    const result = await run(["integration", "install", "omp"], home, {
+      OMP_PROFILE: "work",
+      PI_CODING_AGENT_DIR: dir,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(
+      existsSync(target(join(home, ".omp", "profiles", "work", "agent"))),
+    ).toBe(true);
+    // omp does not merely prefer the profile here, it discards the override —
+    // it never even creates this directory.
+    expect(existsSync(target(dir))).toBe(false);
+  });
+
+  it("does not fall through an empty OMP_PROFILE to PI_PROFILE", async () => {
+    const home = ompHome();
+    const result = await run(["integration", "install", "omp"], home, {
+      OMP_PROFILE: "",
+      PI_PROFILE: "work",
+    });
+    expect(result.exitCode).toBe(0);
+    // A bound-but-empty OMP_PROFILE shadows PI_PROFILE and then fails omp's
+    // own name check, which leaves omp with no profile and its sessions in
+    // the default agent directory.
+    expect(existsSync(target(join(home, ".omp", "agent")))).toBe(true);
+    expect(
+      existsSync(target(join(home, ".omp", "profiles", "work", "agent"))),
+    ).toBe(false);
+  });
+
   it("writes a file that names itself as ours", async () => {
     const home = ompHome();
     await run(["integration", "install", "omp"], home);
