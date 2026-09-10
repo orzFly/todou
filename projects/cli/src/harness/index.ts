@@ -9,6 +9,7 @@ import { pi } from "./pi.ts";
 import {
   type Ancestor,
   hostIndex,
+  openSessionLogs,
   type ProcessTreeIo,
   readAncestors,
 } from "./process-tree.ts";
@@ -116,7 +117,12 @@ export function detectAgentContext(
           const depth = hostIndex((e) => harness.matches(e), ancestors());
           const found = depth === undefined ? undefined : ancestors()[depth];
           if (found) {
-            host = { pid: found.pid, argv: found.argv, cwd: found.cwd };
+            host = {
+              pid: found.pid,
+              argv: found.argv,
+              cwd: found.cwd,
+              openLogs: openSessionLogs(io?.procRoot ?? "/proc", found.pid),
+            };
           }
         }
         return host;
@@ -163,7 +169,15 @@ export function liveSessionIdReader(opts: {
           const depth = hostIndex((e) => harness.matches(e), ancestors());
           const found = depth === undefined ? undefined : ancestors()[depth];
           if (found) {
-            host = { pid: found.pid, argv: found.argv, cwd: found.cwd };
+            host = {
+              pid: found.pid,
+              argv: found.argv,
+              cwd: found.cwd,
+              openLogs: openSessionLogs(
+                opts.io?.procRoot ?? "/proc",
+                found.pid,
+              ),
+            };
           }
         }
         return host;

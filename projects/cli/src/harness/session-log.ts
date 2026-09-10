@@ -6,6 +6,22 @@ const HEADER_BYTES = 4096;
 /** Bounds the header reads when a project has a deep session archive. */
 const MAX_CANDIDATES = 64;
 
+/**
+ * How stale a session log may be and still be taken for the live one.
+ *
+ * The bound is not there to break ties. A live session's log is *seconds*
+ * old — the harness appends the user's message and then runs the tool that
+ * invokes us — so this sits three orders of magnitude clear of any real
+ * answer and never decides between two plausible ones.
+ *
+ * It is there for the case where the right answer is "no session at all".
+ * Under `--no-session` the harness writes no log, and recency on its own
+ * then returns whatever this project last wrote, however long dead: a real
+ * id, for a real past session, reported as the current one. That is worse
+ * than reporting nothing, and nothing is what a floor gets us.
+ */
+const MAX_AGE_MS = 60 * 60 * 1000;
+
 /** The identity a session file states about itself in its opening entries. */
 export type SessionHeader = { id: string; cwd: string };
 
@@ -16,17 +32,23 @@ export type SessionHeader = { id: string; cwd: string };
  * detectors hand this the directories to scan and read their own model out of
  * the file it returns.
  *
- * Recency is the selector: the harness appends the user's message before
- * running the tool that invokes us, so among the sessions that could be ours
- * the live one is always the most recently written. It stays the selector
- * even when the host process is known, because `/resume` switches sessions
- * from inside a running harness: the argv it started with names a session it
- * may have long left, while the one it is appending to is by definition the
- * most recently written. So the host only ever says *where to look* (T-128).
+ * There are two ways to answer, and the first one is not a heuristic: a
+ * harness that holds its log open for append says which session it is in,
+ * and `hostPid` is where that gets asked. Only harnesses measured to hold
+ * exactly one such descriptor pass it — see the call sites.
  *
- * Two instances open on the same project remain genuinely ambiguous — no fd
- * to inspect, nothing in the environment, and argv defeated by `/resume` —
- * and this still resolves to whichever spoke last.
+ * Where that cannot be asked, recency is the selector: the harness appends
+ * the user's message before running the tool that invokes us, so among the
+ * sessions that could be ours the live one is the most recently written. It
+ * stays the selector even when the host process is known, because `/resume`
+ * switches sessions from inside a running harness: the argv it started with
+ * names a session it may have long left, while the one it is appending to is
+ * by definition the most recently written. So the host only ever says *where
+ * to look* (T-128).
+ *
+ * Recency alone cannot tell two live instances apart, and it cannot tell a
+ * live session from this project's archive when the harness is writing no log
+ * at all. The descriptor settles the first; `MAX_AGE_MS` bounds the second.
  */
 export function currentSessionFile(opts: {
   /** Where this harness could be keeping this project's sessions. */
@@ -37,7 +59,31 @@ export function currentSessionFile(opts: {
   hostCwd?: string;
   /** A session file named on the host's argv, which may sit outside `dirs`. */
   explicit?: string;
+  /**
+   * The logs the harness process holds open (`HostProcess.openLogs`). Omitted
+   * by harnesses not measured to hold theirs open, which is the whole of the
+   * opt-in — see the call sites.
+   */
+  openLogs?: readonly string[];
 }): { id: string; path: string } | undefined {
+  const held = opts.openLogs?.[0];
+  if (opts.openLogs?.length === 1 && held !== undefined) {
+    // The descriptor outranks everything below, `explicit` included: argv says
+    // what the harness was started with, the descriptor what it is appending
+    // to now, and `/resume` is exactly where those two part company.
+    const header = sessionHeader(held);
+    return header ? { id: header.id, path: held } : undefined;
+  }
+  // Readable, and naming no log at all: this harness is writing no session.
+  // Falling through to recency here would hand back the project's newest
+  // archived session as though it were the current one.
+  if (opts.openLogs?.length === 0) return undefined;
+  // Everything else — not opted in, table unreadable, or several logs with
+  // nothing to say which is live — leaves recency to answer.
+
+  // Anything older than this is not what the harness is writing right now,
+  // whatever else it may be the newest of.
+  const cutoff = Date.now() - MAX_AGE_MS;
   const scanned: { path: string; mtime: number; explicit?: true }[] = [];
   for (const dir of opts.dirs) {
     let names: string[];
@@ -50,7 +96,8 @@ export function currentSessionFile(opts: {
       if (!name.endsWith(".jsonl")) continue;
       const path = join(dir, name);
       try {
-        scanned.push({ path, mtime: statSync(path).mtimeMs });
+        const mtime = statSync(path).mtimeMs;
+        if (mtime >= cutoff) scanned.push({ path, mtime });
       } catch {
         // Raced with a session being deleted; simply not a candidate.
       }

@@ -14,6 +14,17 @@ export type HostProcess = {
   argv: readonly string[];
   /** Linux only: macOS would need an `lsof` spawn to answer this. */
   cwd?: string;
+  /**
+   * Session logs the process holds open, for harnesses that append to theirs
+   * for the life of the session — the difference between knowing which
+   * session it is in and guessing from which file was written last.
+   *
+   * `undefined` means the descriptor table could not be read; an empty array
+   * means it could, and the harness is holding no log open. Those are opposite
+   * answers, so a consumer must not collapse them: the first is ignorance, the
+   * second says there is no live session to name.
+   */
+  openLogs?: readonly string[];
 };
 
 /**

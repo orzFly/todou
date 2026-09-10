@@ -151,6 +151,16 @@ function writeSession(opts: {
   return path;
 }
 
+/**
+ * An mtime `secondsAgo` back, in the seconds `utimesSync` takes.
+ *
+ * Ordering fixtures may not use bare small numbers any more: those land in
+ * 1970, and the detector now refuses a log too old to be the one the harness
+ * is writing. A fixture that means "older than the other" has to say so
+ * without also meaning "older than an hour".
+ */
+const recently = (secondsAgo: number) => Date.now() / 1000 - secondsAgo;
+
 /** The sessions directory omp uses under a given $PI_CODING_AGENT_DIR. */
 const sessionsIn = (dir: string) => join(dir, "sessions");
 
@@ -282,14 +292,14 @@ describe("omp detection", () => {
       cwd: project,
       id: OTHER_SID,
       lines: [modelChange("llm-gw/stale-model")],
-      mtime: 1_000_000,
+      mtime: recently(2),
     });
     writeSession({
       sessionsRoot: sessionsIn(dir),
       cwd: project,
       id: SID,
       lines: [modelChange("llm-gw/live-model")],
-      mtime: 2_000_000,
+      mtime: recently(1),
     });
     expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
       {
@@ -297,6 +307,25 @@ describe("omp detection", () => {
         session_id: SID,
         model: "llm-gw/live-model",
       },
+    );
+  });
+
+  it("refuses a session log too old to be the one being written", () => {
+    const dir = agentDir();
+    // Being the newest log this project has is not the same as being live. A
+    // live one is seconds old, because omp appends the user's message before
+    // running the tool that calls us; an hour is three orders of magnitude of
+    // room. What this rules out is `--no-session`, where the newest log is a
+    // finished session and recency would report it as the current one.
+    writeSession({
+      sessionsRoot: sessionsIn(dir),
+      cwd: project,
+      id: SID,
+      lines: [modelChange("llm-gw/finished-yesterday")],
+      mtime: recently(26 * 60 * 60),
+    });
+    expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
+      { agent: "omp" },
     );
   });
 
@@ -434,14 +463,14 @@ describe("omp detection", () => {
         cwd: scratchDir("todou-omp-elsewhere-"),
         id: OTHER_SID,
         lines: [modelChange("llm-gw/foreign-model")],
-        mtime: 2_000_000,
+        mtime: recently(1),
       });
       writeSession({
         dir: flat,
         cwd: project,
         id: SID,
         lines: [modelChange("llm-gw/ours")],
-        mtime: 1_000_000,
+        mtime: recently(2),
       });
       expect(
         detect({ ...ENV, PI_CODING_AGENT_SESSION_DIR: flat }, home, project),
@@ -528,7 +557,17 @@ describe("omp detection", () => {
 
 describe("omp session recovery through the host process", () => {
   /** A process tree in which omp itself is our host, carrying argv and cwd. */
-  function ompHost(opts: { argv?: string[]; cwd?: string }) {
+  function ompHost(opts: {
+    argv?: string[];
+    cwd?: string;
+    /**
+     * Descriptors to hang off omp. Absent leaves no `fd/` at all, which is
+     * how a kernel without `/proc` and a process we may not read both look —
+     * and is why every case written before this option still exercises the
+     * recency path.
+     */
+    openLogs?: string[];
+  }) {
     const root = scratchDir("todou-omp-proc-");
     const write = (
       pid: number,
@@ -536,6 +575,7 @@ describe("omp session recovery through the host process", () => {
       env: Record<string, string>,
       argv: string[],
       cwd?: string,
+      openLogs?: string[],
     ) => {
       const dir = join(root, String(pid));
       mkdirSync(dir, { recursive: true });
@@ -548,13 +588,128 @@ describe("omp session recovery through the host process", () => {
       );
       writeFileSync(join(dir, "cmdline"), `${argv.join("\0")}\0`);
       if (cwd) symlinkSync(cwd, join(dir, "cwd"));
+      if (openLogs) {
+        const fd = join(dir, "fd");
+        mkdirSync(fd, { recursive: true });
+        // Numbered the way the kernel does, and pointed straight at the
+        // target: an empty directory is a process holding nothing open.
+        for (const [i, target] of openLogs.entries()) {
+          symlinkSync(target, join(fd, String(i)));
+        }
+      }
     };
     // The shell omp spawned carries both markers; omp itself carries neither,
     // which is what identifies it as the one that introduced them.
     write(100, 101, { OMPCODE: "1", CLAUDECODE: "1" }, ["sh", "-c", "todou"]);
-    write(101, 0, {}, opts.argv ?? ["omp"], opts.cwd);
+    write(101, 0, {}, opts.argv ?? ["omp"], opts.cwd, opts.openLogs);
     return { platform: "linux" as const, procRoot: root, startPid: 100 };
   }
+
+  /*
+   * omp holds its live log open for append, so the descriptor table answers
+   * what recency can only infer. These four cover the answer and each way of
+   * not having one, because the interesting part is which of those falls back
+   * to guessing and which reports nothing at all.
+   */
+  it("takes the log omp holds open over the newest one", () => {
+    const dir = agentDir();
+    // What recency alone would have said: newer, and not the one omp is in.
+    // This is T-308's smoke test in miniature — two instances, one project.
+    writeSession({
+      sessionsRoot: sessionsIn(dir),
+      cwd: project,
+      id: OTHER_SID,
+      lines: [modelChange("llm-gw/other-instance")],
+      mtime: recently(1),
+    });
+    const held = writeSession({
+      sessionsRoot: sessionsIn(dir),
+      cwd: project,
+      id: SID,
+      lines: [modelChange("llm-gw/ours")],
+      mtime: recently(30),
+    });
+    expect(
+      detectAgentContext(
+        { ...ENV, PI_CODING_AGENT_DIR: dir },
+        home,
+        project,
+        ompHost({ openLogs: [held] }),
+      ),
+    ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/ours" });
+  });
+
+  it("reports no session when omp holds no log open", () => {
+    const dir = agentDir();
+    // `--no-session`: the log below is a real past session of this project,
+    // and recency would hand back its id as the current one.
+    writeSession({
+      sessionsRoot: sessionsIn(dir),
+      cwd: project,
+      id: SID,
+      lines: [modelChange("llm-gw/archived")],
+      mtime: recently(1),
+    });
+    expect(
+      detectAgentContext(
+        { ...ENV, PI_CODING_AGENT_DIR: dir },
+        home,
+        project,
+        ompHost({ openLogs: [] }),
+      ),
+    ).toEqual({ agent: "omp" });
+  });
+
+  it("falls back to recency when several logs are held open", () => {
+    const dir = agentDir();
+    const older = writeSession({
+      sessionsRoot: sessionsIn(dir),
+      cwd: project,
+      id: OTHER_SID,
+      lines: [modelChange("llm-gw/older")],
+      mtime: recently(30),
+    });
+    const newer = writeSession({
+      sessionsRoot: sessionsIn(dir),
+      cwd: project,
+      id: SID,
+      lines: [modelChange("llm-gw/newer")],
+      mtime: recently(1),
+    });
+    // Nothing measured says what two open logs mean, so this is the one case
+    // that stays a guess rather than becoming a refusal.
+    expect(
+      detectAgentContext(
+        { ...ENV, PI_CODING_AGENT_DIR: dir },
+        home,
+        project,
+        ompHost({ openLogs: [older, newer] }),
+      ),
+    ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/newer" });
+  });
+
+  it("reports no session when the held log has no header yet", () => {
+    const dir = agentDir();
+    // A log open but not yet declared is still the session omp is in, so the
+    // scan's answer is the wrong one and silence is the right one.
+    writeSession({
+      sessionsRoot: sessionsIn(dir),
+      cwd: project,
+      id: OTHER_SID,
+      lines: [modelChange("llm-gw/somebody-else")],
+      mtime: recently(1),
+    });
+    const blank = join(sessionsIn(dir), "brand-new.jsonl");
+    writeFileSync(blank, "");
+    expect(
+      detectAgentContext(
+        { ...ENV, PI_CODING_AGENT_DIR: dir },
+        home,
+        project,
+        ompHost({ openLogs: [blank] }),
+      ),
+    ).toEqual({ agent: "omp" });
+  });
 
   it("recovers a --session-dir that exists only on omp's command line", () => {
     const flat = scratchDir("todou-omp-flat-");
@@ -667,14 +822,14 @@ describe("omp session recovery through the host process", () => {
       cwd: project,
       id: OTHER_SID,
       lines: [modelChange("llm-gw/started-with")],
-      mtime: 1_000_000,
+      mtime: recently(2),
     });
     writeSession({
       sessionsRoot: sessionsIn(dir),
       cwd: project,
       id: SID,
       lines: [modelChange("llm-gw/resumed-into")],
-      mtime: 2_000_000,
+      mtime: recently(1),
     });
     expect(
       detectAgentContext(
@@ -728,14 +883,14 @@ describe("the session omp publishes for itself", () => {
       cwd: project,
       id: SID,
       lines: [modelChange("llm-gw/ours")],
-      mtime: 1000,
+      mtime: recently(2),
     });
     writeSession({
       sessionsRoot: sessionsIn(dir),
       cwd: project,
       id: OTHER_SID,
       lines: [modelChange("llm-gw/the-other-instance")],
-      mtime: 2000,
+      mtime: recently(1),
     });
     const ours = join(
       sessionsIn(dir),

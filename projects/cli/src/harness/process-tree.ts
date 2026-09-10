@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, readlinkSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, readlinkSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Env } from "../config.ts";
 
@@ -124,6 +124,49 @@ function procEntry(
     // A cwd we cannot resolve costs a locator, not the ancestor.
   }
   return { ancestor: { pid, uid, env, argv, cwd }, ppid };
+}
+
+/**
+ * The session logs a process is holding open, from its descriptor table.
+ * `undefined` when that table cannot be read at all — no `/proc` on this
+ * platform, another account's process, or one that has since exited.
+ *
+ * A harness that appends to its log for the life of the session names it here,
+ * which is the difference between knowing which session it is in and inferring
+ * it from which file was touched last. The empty array is therefore a real
+ * answer and not a failure: the table was readable and the harness is writing
+ * no session log, which is what `--no-session` looks like from outside.
+ *
+ * The `.jsonl` suffix is the whole test; a file unlinked under the harness
+ * reads back as `<path> (deleted)` and drops out without a special case.
+ * Checking `fdinfo` for the write flag would be narrower, but no harness
+ * measured so far holds a session log open for reading, and an extra
+ * descriptor only ever makes this ambiguous — which callers already treat as
+ * "ask something else".
+ */
+export function openSessionLogs(
+  procRoot: string,
+  pid: number,
+): readonly string[] | undefined {
+  const dir = join(procRoot, String(pid), "fd");
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return undefined;
+  }
+  const logs: string[] = [];
+  for (const name of names) {
+    try {
+      const target = readlinkSync(join(dir, name));
+      if (target.endsWith(".jsonl") && !logs.includes(target)) {
+        logs.push(target);
+      }
+    } catch {
+      // Closed between the listing and the readlink.
+    }
+  }
+  return logs;
 }
 
 function parseNulSeparated(raw: string): Env {

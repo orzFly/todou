@@ -50,6 +50,13 @@ export const omp = {
       cwd: here,
       hostCwd,
       explicit: resumedFile(hostProcess),
+      // Measured on omp 18.1.15: it keeps the live log open for append, one
+      // write descriptor for as long as the session lasts, on the process the
+      // bash tool's shell hangs off — not on the worker beside it. That makes
+      // the descriptor table an answer where recency could only guess, which
+      // is what two omp instances in one project defeat (T-308's smoke test
+      // caught the scan swapping them).
+      openLogs: hostProcess?.openLogs,
     });
     if (!file) return context;
     context.session_id = file.id;

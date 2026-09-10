@@ -23,6 +23,13 @@ export const pi = {
       cwd: here,
       hostCwd: hostProcess?.cwd ? resolve(hostProcess.cwd) : undefined,
       explicit: hostProcess && flagValue(hostProcess.argv, "--session"),
+      // No `openLogs` deliberately. omp holds its session log open and so can
+      // be asked which one it is in; whether pi does has not been measured,
+      // and pi is not installed anywhere it could be. Opting in on the
+      // strength of the fork's behaviour would turn "pi holds no descriptor"
+      // into "pi has no session" — and unlike omp, which publishes its id
+      // through the todou extension, the scan is this harness's only path to
+      // one at all.
     });
     if (!file) return context;
     context.session_id = file.id;
