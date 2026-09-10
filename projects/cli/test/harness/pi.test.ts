@@ -88,6 +88,16 @@ function writeSession(opts: {
   return path;
 }
 
+/**
+ * An mtime `secondsAgo` back, in the seconds `utimesSync` takes.
+ *
+ * Ordering fixtures may not use bare small numbers any more: those land in
+ * 1970, and the detector now refuses a log too old to be the one the harness
+ * is writing. A fixture that means "older than the other" has to say so
+ * without also meaning "older than an hour".
+ */
+const recently = (secondsAgo: number) => Date.now() / 1000 - secondsAgo;
+
 /* Fixture process trees and session directories, swept together at the end. */
 const procRoots: string[] = [];
 afterAll(() => {
@@ -180,17 +190,34 @@ describe("pi detection", () => {
       cwd: project,
       id: OTHER_SID,
       lines: [modelChange("llm-gw", "stale-model")],
-      mtime: 1_000_000,
+      mtime: recently(2),
     });
     writeSession({
       agentDir: dir,
       cwd: project,
       id: SID,
       lines: [modelChange("llm-gw", "live-model")],
-      mtime: 2_000_000,
+      mtime: recently(1),
     });
     expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
       { agent: "pi", session_id: SID, model: "llm-gw/live-model" },
+    );
+  });
+
+  it("refuses a session log too old to be the one being written", () => {
+    const dir = agentDir();
+    // pi has no integration to publish its id and does not opt into the
+    // descriptor check, so this floor is the whole of what keeps a finished
+    // session from being reported as the live one.
+    writeSession({
+      agentDir: dir,
+      cwd: project,
+      id: SID,
+      lines: [modelChange("llm-gw", "finished-yesterday")],
+      mtime: recently(26 * 60 * 60),
+    });
+    expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
+      { agent: "pi" },
     );
   });
 
@@ -231,14 +258,14 @@ describe("pi detection", () => {
       cwd: join(tmpdir(), "todou-pi-elsewhere"),
       id: OTHER_SID,
       lines: [modelChange("llm-gw", "foreign-model")],
-      mtime: 2_000_000,
+      mtime: recently(1),
     });
     writeSession({
       dir: flat,
       cwd: project,
       id: SID,
       lines: [modelChange("llm-gw", "ours")],
-      mtime: 1_000_000,
+      mtime: recently(2),
     });
     expect(
       detect({ ...ENV, PI_CODING_AGENT_SESSION_DIR: flat }, home, project),
@@ -453,14 +480,14 @@ describe("pi session recovery through the host process", () => {
       cwd: project,
       id: OTHER_SID,
       lines: [modelChange("llm-gw", "started-with")],
-      mtime: 1_000_000,
+      mtime: recently(2),
     });
     writeSession({
       agentDir: dir,
       cwd: project,
       id: SID,
       lines: [modelChange("llm-gw", "resumed-into")],
-      mtime: 2_000_000,
+      mtime: recently(1),
     });
     expect(
       detectAgentContext(
