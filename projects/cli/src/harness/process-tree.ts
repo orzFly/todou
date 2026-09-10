@@ -58,6 +58,86 @@ export function readAncestors(
   return ancestors;
 }
 
+let cachedPids: readonly number[] | undefined;
+
+/**
+ * Our ancestors' pids alone, same chain and same same-uid rule as above.
+ *
+ * Separate from `readAncestors` because the caller that needs only pids —
+ * matching them against the records a harness extension published under
+ * `<pid>.json` — runs on the path where nothing matched on the environment,
+ * which is every ordinary command outside a harness. So it pays for a `stat`
+ * and a `stat` file per level and skips `environ`, `cmdline` and `cwd`
+ * entirely; on macOS it needs the process table but not the second `ps` spawn
+ * that reads every environment.
+ */
+export function ancestorPids(io?: Partial<ProcessTreeIo>): readonly number[] {
+  if (io === undefined && cachedPids !== undefined) return cachedPids;
+  const pids = collectPids(io);
+  if (io === undefined) cachedPids = pids;
+  return pids;
+}
+
+function collectPids(io?: Partial<ProcessTreeIo>): readonly number[] {
+  try {
+    const uid = process.getuid?.();
+    if (uid === undefined) return [];
+    const startPid = io?.startPid ?? process.ppid;
+    switch (io?.platform ?? process.platform) {
+      case "linux":
+        return pidsFromProc(startPid, uid, io?.procRoot ?? "/proc");
+      case "darwin":
+        return pidsFromPs(startPid, uid, io?.ps ?? runPs);
+      default:
+        return [];
+    }
+  } catch {
+    return [];
+  }
+}
+
+function pidsFromProc(
+  startPid: number,
+  uid: number,
+  root: string,
+): readonly number[] {
+  const pids: number[] = [];
+  let pid = startPid;
+  for (let depth = 0; depth < MAX_DEPTH && pid > 0; depth++) {
+    let ppid: number;
+    try {
+      const dir = join(root, String(pid));
+      if (statSync(dir).uid !== uid) break;
+      const stat = readFileSync(join(dir, "stat"), "utf8");
+      ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+    } catch {
+      break; // unreadable: the chain ends here
+    }
+    pids.push(pid);
+    if (!(ppid > 0) || ppid === pid) break;
+    pid = ppid;
+  }
+  return pids;
+}
+
+function pidsFromPs(
+  startPid: number,
+  uid: number,
+  ps: (args: readonly string[]) => string,
+): readonly number[] {
+  const table = parsePsTable(ps(["-Ao", "pid=,ppid=,uid="]));
+  const pids: number[] = [];
+  let pid = startPid;
+  for (let depth = 0; depth < MAX_DEPTH && pid > 0; depth++) {
+    const row = table.get(pid);
+    if (row === undefined || row.uid !== uid) break;
+    pids.push(pid);
+    if (row.ppid <= 0 || row.ppid === pid) break;
+    pid = row.ppid;
+  }
+  return pids;
+}
+
 function collect(io?: Partial<ProcessTreeIo>): readonly Ancestor[] {
   try {
     const uid = process.getuid?.();

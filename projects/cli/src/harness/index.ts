@@ -5,9 +5,11 @@ import { claudeCode } from "./claude-code.ts";
 import { codex } from "./codex.ts";
 import { hermesAgent } from "./hermes-agent.ts";
 import { omp } from "./omp.ts";
+import { publishedState } from "./omp-state.ts";
 import { pi } from "./pi.ts";
 import {
   type Ancestor,
+  ancestorPids,
   hostIndex,
   openSessionLogs,
   type ProcessTreeIo,
@@ -62,19 +64,31 @@ export const HARNESS_LABELS: Record<HarnessId, string> = {
 };
 
 /**
+ * The selected harness, and the pid to treat as its host when selection
+ * already knows which ancestor that is. Absent means the marker boundary
+ * decides it, as it always has.
+ */
+type Selection = { harness: Harness; hostPid?: number };
+
+/**
  * The harness whose host process sits nearest to us, among those the
- * environment already matched.
+ * environment already matched — or, when it matched none, whichever one an
+ * ancestor published a record naming.
  *
- * `ancestors` is a thunk and stays unevaluated unless two harnesses actually
- * tie: outside a harness, and in the ordinary single-harness case, detection
- * performs no I/O at all.
+ * Both thunks stay unevaluated in the ordinary single-harness case, so the
+ * common path still performs no I/O. The two that do cost something are a
+ * genuine tie, which walks the tree, and no match at all, which lists one
+ * directory and walks the tree only if that directory held anything — the
+ * price of finding a harness whose runtimes carry none of its markers (T-313).
  */
 function select(
   env: Env,
   ancestors: () => readonly Ancestor[],
-): Harness | null {
+  pids: () => readonly number[],
+): Selection | null {
   const candidates = HARNESSES.filter((h) => h.matches(env));
-  if (candidates.length <= 1) return candidates[0] ?? null;
+  if (candidates.length === 0) return published(env, pids);
+  if (candidates.length === 1) return { harness: candidates[0] as Harness };
 
   const chain = ancestors();
   let best: { harness: Harness; depth: number } | undefined;
@@ -86,7 +100,71 @@ function select(
     }
   }
   // Nothing attributable — markers introduced outside the visible chain.
-  return best?.harness ?? (candidates[0] as Harness);
+  return { harness: best?.harness ?? (candidates[0] as Harness) };
+}
+
+/**
+ * The second stage: a harness found not by a marker in our environment but by
+ * a record an ancestor published naming itself.
+ *
+ * Reached only when the first stage put up no candidate at all, so it cannot
+ * change what a matching environment selects. It exists because omp spawns its
+ * eval runtimes without its own markers while they are still inside the same
+ * session, and the state file is the only thing that says so (T-313) —
+ * Python's runtime has no todou variable in its environment either, so the
+ * process tree is the whole of the evidence there.
+ *
+ * `host` is pinned to the publisher rather than left to `hostIndex`: with no
+ * marker anywhere in the chain that would stop at our immediate parent, which
+ * on this path is the eval runtime and not the omp holding the session.
+ */
+function published(env: Env, pids: () => readonly number[]): Selection | null {
+  const state = publishedState(env, pids);
+  // A record with no `agent` names no harness to select; believing it would
+  // mean guessing which one wrote a layout more than one may come to use.
+  if (state?.agent === undefined) return null;
+  const harness = HARNESSES.find((h) => h.id === state.agent);
+  return harness ? { harness, hostPid: state.pid } : null;
+}
+
+/**
+ * `host()` as both callers need it: resolved once, from the pid selection
+ * pinned or the nearest ancestor that does not carry the harness's markers.
+ * Shared because two copies of this drifted into two answers for the same
+ * question once already.
+ */
+function hostResolver(
+  selection: Selection,
+  ancestors: () => readonly Ancestor[],
+  io?: Partial<ProcessTreeIo>,
+): () => HostProcess | undefined {
+  let resolved = false;
+  let host: HostProcess | undefined;
+  return () => {
+    if (resolved) return host;
+    resolved = true;
+    const found =
+      selection.hostPid === undefined
+        ? nearestUnmarked(selection.harness, ancestors())
+        : ancestors().find((a) => a.pid === selection.hostPid);
+    if (found) {
+      host = {
+        pid: found.pid,
+        argv: found.argv,
+        cwd: found.cwd,
+        openLogs: openSessionLogs(io?.procRoot ?? "/proc", found.pid),
+      };
+    }
+    return host;
+  };
+}
+
+function nearestUnmarked(
+  harness: Harness,
+  chain: readonly Ancestor[],
+): Ancestor | undefined {
+  const depth = hostIndex((e) => harness.matches(e), chain);
+  return depth === undefined ? undefined : chain[depth];
 }
 
 /**
@@ -102,31 +180,17 @@ export function detectAgentContext(
   try {
     let chain: readonly Ancestor[] | undefined;
     const ancestors = () => (chain ??= readAncestors(io));
-    const harness = select(env, ancestors);
-    if (harness === null) return null;
+    let pidChain: readonly number[] | undefined;
+    const pids = () => (pidChain ??= ancestorPids(io));
+    const selection = select(env, ancestors, pids);
+    if (selection === null) return null;
 
-    let resolved = false;
-    let host: HostProcess | undefined;
-    return harness.context({
+    return selection.harness.context({
       env,
       home,
       cwd,
-      host: () => {
-        if (!resolved) {
-          resolved = true;
-          const depth = hostIndex((e) => harness.matches(e), ancestors());
-          const found = depth === undefined ? undefined : ancestors()[depth];
-          if (found) {
-            host = {
-              pid: found.pid,
-              argv: found.argv,
-              cwd: found.cwd,
-              openLogs: openSessionLogs(io?.procRoot ?? "/proc", found.pid),
-            };
-          }
-        }
-        return host;
-      },
+      host: hostResolver(selection, ancestors, io),
+      ancestorPids: pids,
     });
   } catch {
     return null;
@@ -153,35 +217,19 @@ export function liveSessionIdReader(opts: {
   try {
     let chain: readonly Ancestor[] | undefined;
     const ancestors = () => (chain ??= readAncestors(opts.io));
-    const harness = select(opts.env, ancestors);
-    const probe = harness?.liveSessionId;
-    if (harness === null || probe === undefined) return nothing;
+    let pidChain: readonly number[] | undefined;
+    const pids = () => (pidChain ??= ancestorPids(opts.io));
+    const selection = select(opts.env, ancestors, pids);
+    const probe = selection?.harness.liveSessionId;
+    if (selection === null || probe === undefined) return nothing;
+    const harness = selection.harness;
 
-    let resolved = false;
-    let host: HostProcess | undefined;
     const ctx: HarnessContext = {
       env: opts.env,
       home: opts.home ?? homedir(),
       cwd: opts.cwd ?? process.cwd(),
-      host: () => {
-        if (!resolved) {
-          resolved = true;
-          const depth = hostIndex((e) => harness.matches(e), ancestors());
-          const found = depth === undefined ? undefined : ancestors()[depth];
-          if (found) {
-            host = {
-              pid: found.pid,
-              argv: found.argv,
-              cwd: found.cwd,
-              openLogs: openSessionLogs(
-                opts.io?.procRoot ?? "/proc",
-                found.pid,
-              ),
-            };
-          }
-        }
-        return host;
-      },
+      host: hostResolver(selection, ancestors, opts.io),
+      ancestorPids: pids,
     };
     return () => {
       try {
@@ -206,5 +254,12 @@ export function detectHarnessId(
   io?: Partial<ProcessTreeIo>,
 ): HarnessId | null {
   let chain: readonly Ancestor[] | undefined;
-  return select(env, () => (chain ??= readAncestors(io)))?.id ?? null;
+  let pidChain: readonly number[] | undefined;
+  return (
+    select(
+      env,
+      () => (chain ??= readAncestors(io)),
+      () => (pidChain ??= ancestorPids(io)),
+    )?.harness.id ?? null
+  );
 }

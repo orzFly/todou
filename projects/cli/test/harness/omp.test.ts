@@ -66,9 +66,23 @@ const OTHER_SID = "01900000-0000-7000-8000-000000000002";
  * leaving it to be guessed would make these tests pass or fail on whether
  * $TMPDIR happened to be set in the shell that ran them.
  */
-const ENV = { OMPCODE: "1", TMPDIR: tmpdir() };
+/*
+ * `XDG_RUNTIME_DIR` is pinned to an empty directory for the same reason: it is
+ * where the extension publishes its records, so leaving it unset would point
+ * these tests at whatever a real omp on the developer's machine had written
+ * there. Cases that want a record write one into a directory of their own.
+ */
+const ENV = {
+  OMPCODE: "1",
+  TMPDIR: tmpdir(),
+  XDG_RUNTIME_DIR: scratchDir("todou-omp-noruntime-"),
+};
 /* The same marker with both other roots out of reach: omp's absolute form. */
-const ENV_ABS = { OMPCODE: "1", TMPDIR: "/nonexistent-tmp" };
+const ENV_ABS = {
+  OMPCODE: "1",
+  TMPDIR: "/nonexistent-tmp",
+  XDG_RUNTIME_DIR: ENV.XDG_RUNTIME_DIR,
+};
 
 /** omp opens every session file with a fixed-width slot for the title. */
 const titleLine = JSON.stringify({
@@ -1074,6 +1088,321 @@ describe("cli integration", () => {
     const headers = calls[0]?.init.headers as Record<string, string>;
     expect(JSON.parse(headers["x-todou-agent-context"] as string)).toEqual({
       agent: "omp",
+    });
+  });
+});
+
+/*
+ * omp creates its session log at the first turn, not at session start, so
+ * early in a session there is no log and no descriptor to hold — and the
+ * variable that names the extension's record reaches only omp's own bash tool.
+ * These cases are that window: the record is the only thing that can answer,
+ * and it is found by asking which ancestor published it (T-312).
+ */
+describe("the session omp published, found by ancestor pid", () => {
+  /**
+   * omp's pid is our own throughout, because the record is only believed while
+   * the process that wrote it is alive — a fixture pid would be rejected for
+   * being dead and would prove nothing about the lookup.
+   */
+  const OMP_PID = process.pid;
+  const CHILD_PID = 424242;
+
+  /** A runtime directory holding whatever records a case asks for. */
+  function runtimeWith(
+    records: Record<number, unknown>,
+  ): Record<string, string> {
+    const runtime = scratchDir("todou-omp-rt-");
+    const dir = join(runtime, "todou-omp");
+    mkdirSync(dir, { recursive: true });
+    for (const [pid, body] of Object.entries(records)) {
+      writeFileSync(
+        join(dir, `${pid}.json`),
+        typeof body === "string" ? body : JSON.stringify(body),
+      );
+    }
+    return { XDG_RUNTIME_DIR: runtime };
+  }
+
+  const record = (pid: number, sessionId: string, sessionFile?: string) => ({
+    v: 1,
+    pid,
+    agent: "omp",
+    session_id: sessionId,
+    ...(sessionFile === undefined ? {} : { session_file: sessionFile }),
+    updated_at: "2026-09-10T16:24:50.805Z",
+  });
+
+  /**
+   * A chain of `[child, omp]`, with the environments each carries when it was
+   * exec'd. `childEnv` empty is the eval-runtime shape: spawned by omp without
+   * any of omp's markers.
+   */
+  function chain(opts: {
+    childEnv?: Record<string, string>;
+    childComm?: string;
+    openLogs?: string[];
+  }) {
+    const root = scratchDir("todou-omp-chain-");
+    const write = (
+      pid: number,
+      ppid: number,
+      env: Record<string, string>,
+      argv: string[],
+      openLogs?: string[],
+    ) => {
+      const dir = join(root, String(pid));
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "stat"), `${pid} (proc) S ${ppid} 0 0 0 -1`);
+      writeFileSync(
+        join(dir, "environ"),
+        `${Object.entries(env)
+          .map(([k, v]) => `${k}=${v}`)
+          .join("\0")}\0`,
+      );
+      writeFileSync(join(dir, "cmdline"), `${argv.join("\0")}\0`);
+      symlinkSync(project, join(dir, "cwd"));
+      if (openLogs) {
+        const fd = join(dir, "fd");
+        mkdirSync(fd, { recursive: true });
+        for (const [i, target] of openLogs.entries()) {
+          symlinkSync(target, join(fd, String(i)));
+        }
+      }
+    };
+    write(CHILD_PID, OMP_PID, opts.childEnv ?? {}, [
+      opts.childComm ?? "python3",
+    ]);
+    write(OMP_PID, 1, {}, ["omp"], opts.openLogs);
+    return {
+      platform: "linux" as const,
+      procRoot: root,
+      startPid: CHILD_PID,
+    };
+  }
+
+  /* The window itself: a session whose log has not been created yet. */
+  it("answers before the log exists, with the id and no model", () => {
+    const runtime = runtimeWith({
+      [OMP_PID]: record(OMP_PID, SID, join(project, "not-created-yet.jsonl")),
+    });
+    expect(
+      detectAgentContext(
+        { ...ENV, ...runtime },
+        home,
+        project,
+        chain({ childEnv: { OMPCODE: "1", CLAUDECODE: "1" } }),
+      ),
+    ).toEqual({ agent: "omp", session_id: SID });
+  });
+
+  it("outranks a descriptor naming a different session", () => {
+    const dir = agentDir();
+    const held = writeSession({
+      sessionsRoot: sessionsIn(dir),
+      cwd: project,
+      id: OTHER_SID,
+      lines: [modelChange("llm-gw/held")],
+    });
+    const ours = writeSession({
+      sessionsRoot: sessionsIn(dir),
+      cwd: project,
+      id: SID,
+      lines: [modelChange("llm-gw/ours")],
+    });
+    const runtime = runtimeWith({ [OMP_PID]: record(OMP_PID, SID, ours) });
+    expect(
+      detectAgentContext(
+        { ...ENV, ...runtime, PI_CODING_AGENT_DIR: dir },
+        home,
+        project,
+        chain({ childEnv: { OMPCODE: "1" }, openLogs: [held] }),
+      ),
+    ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/ours" });
+  });
+
+  it("leaves the descriptor in charge when nothing was published", () => {
+    const dir = agentDir();
+    const held = writeSession({
+      sessionsRoot: sessionsIn(dir),
+      cwd: project,
+      id: SID,
+      lines: [modelChange("llm-gw/held")],
+    });
+    expect(
+      detectAgentContext(
+        { ...ENV, PI_CODING_AGENT_DIR: dir },
+        home,
+        project,
+        chain({ childEnv: { OMPCODE: "1" }, openLogs: [held] }),
+      ),
+    ).toEqual({ agent: "omp", session_id: SID, model: "llm-gw/held" });
+  });
+
+  /*
+   * The two shapes measured inside omp: the JavaScript runtime is another omp
+   * process and the Python one is a plain python3, and neither carries a
+   * marker. Selection has nothing in the environment to go on, so the record
+   * is what says we are in a session at all.
+   */
+  for (const comm of ["python3", "omp"]) {
+    it(`finds omp from a bare ${comm} eval runtime`, () => {
+      const runtime = runtimeWith({
+        [OMP_PID]: record(OMP_PID, SID, join(project, "not-created-yet.jsonl")),
+      });
+      expect(
+        detectAgentContext(
+          { TMPDIR: tmpdir(), ...runtime },
+          home,
+          project,
+          chain({ childEnv: {}, childComm: comm }),
+        ),
+      ).toEqual({ agent: "omp", session_id: SID });
+    });
+  }
+
+  it("takes the nearest publisher, so omp inside omp resolves to itself", () => {
+    const inner = 424243;
+    const root = scratchDir("todou-omp-nested-");
+    const write = (pid: number, ppid: number, argv: string[]) => {
+      const dir = join(root, String(pid));
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "stat"), `${pid} (proc) S ${ppid} 0 0 0 -1`);
+      writeFileSync(join(dir, "environ"), "\0");
+      writeFileSync(join(dir, "cmdline"), `${argv.join("\0")}\0`);
+    };
+    // Our pid is the *inner* omp; the outer one is a pid that is also alive,
+    // so the walk has two believable publishers and order alone decides.
+    write(CHILD_PID, OMP_PID, ["sh"]);
+    write(OMP_PID, inner, ["omp"]);
+    write(inner, 1, ["omp"]);
+    const runtime = runtimeWith({
+      [OMP_PID]: record(OMP_PID, SID),
+      [inner]: record(inner, OTHER_SID),
+    });
+    expect(
+      detectAgentContext({ TMPDIR: tmpdir(), ...runtime }, home, project, {
+        platform: "linux" as const,
+        procRoot: root,
+        startPid: CHILD_PID,
+      }),
+    ).toEqual({ agent: "omp", session_id: SID });
+  });
+
+  describe("refuses a record it cannot believe", () => {
+    const bare = { TMPDIR: tmpdir() };
+    const rejects = (records: Record<number, unknown>) => {
+      expect(
+        detectAgentContext(
+          { ...bare, ...runtimeWith(records) },
+          home,
+          project,
+          chain({ childEnv: {} }),
+        ),
+      ).toBeNull();
+    };
+
+    it("a version it does not know", () => {
+      rejects({ [OMP_PID]: { ...record(OMP_PID, SID), v: 2 } });
+    });
+
+    it("a pid that disagrees with the file it is named by", () => {
+      rejects({ [OMP_PID]: record(OMP_PID + 1, SID) });
+    });
+
+    /*
+     * The record has to be believable in every way except that the process it
+     * names is gone, and it has to sit on an ancestor — a pid outside the chain
+     * is never read at all and would prove nothing. Only a fixture tree can
+     * offer a dead ancestor, so the whole chain is fixture pids here.
+     */
+    it("a pid nobody is using, even sitting on an ancestor", () => {
+      const DEAD = 424244;
+      const root = scratchDir("todou-omp-dead-");
+      for (const [pid, ppid] of [
+        [CHILD_PID, DEAD],
+        [DEAD, 1],
+      ]) {
+        const dir = join(root, String(pid));
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "stat"), `${pid} (proc) S ${ppid} 0 0 0 -1`);
+        writeFileSync(join(dir, "environ"), "\0");
+        writeFileSync(join(dir, "cmdline"), "omp\0");
+      }
+      expect(
+        detectAgentContext(
+          { ...bare, ...runtimeWith({ [DEAD]: record(DEAD, SID) }) },
+          home,
+          project,
+          { platform: "linux" as const, procRoot: root, startPid: CHILD_PID },
+        ),
+      ).toBeNull();
+    });
+
+    it("a record naming no agent", () => {
+      const { agent: _, ...noAgent } = record(OMP_PID, SID);
+      rejects({ [OMP_PID]: noAgent });
+    });
+
+    it("half-written json", () => {
+      rejects({ [OMP_PID]: '{"v":1,"pid":' });
+    });
+  });
+
+  it("ignores a runtime directory that holds no records", () => {
+    expect(
+      detectAgentContext(
+        { TMPDIR: tmpdir(), ...runtimeWith({}) },
+        home,
+        project,
+        chain({ childEnv: {} }),
+      ),
+    ).toBeNull();
+  });
+
+  /*
+   * The second stage runs only when the first put up nothing, which is what
+   * keeps every ordering rule in HARNESSES intact. Here Claude Code matches on
+   * the environment while a believable omp record sits on an ancestor: the
+   * record must not take the selection.
+   */
+  it("never takes a harness that matched on the environment", () => {
+    const runtime = runtimeWith({ [OMP_PID]: record(OMP_PID, SID) });
+    expect(
+      detectAgentContext(
+        { CLAUDECODE: "1", TMPDIR: tmpdir(), ...runtime },
+        home,
+        project,
+        chain({ childEnv: { CLAUDECODE: "1" } }),
+      ),
+    ).toMatchObject({ agent: "claude-code" });
+  });
+
+  describe("liveSessionId", () => {
+    const read = (env: Record<string, string>, io: object) =>
+      liveSessionIdReader({ env, home, cwd: project, io })();
+
+    it("reads the record even with no variable in the environment", () => {
+      const runtime = runtimeWith({ [OMP_PID]: record(OMP_PID, SID) });
+      expect(
+        read({ TMPDIR: tmpdir(), ...runtime }, chain({ childEnv: {} })),
+      ).toEqual({ id: SID });
+    });
+
+    it("names a publisher whose record would not read", () => {
+      const runtime = runtimeWith({ [OMP_PID]: '{"v":1,"pid":' });
+      // Selection needs a harness first, so the marker is present here; what
+      // is under test is that a found-but-unreadable record is reported rather
+      // than silently degrading to the startup snapshot.
+      expect(
+        read({ ...ENV, ...runtime }, chain({ childEnv: { OMPCODE: "1" } })),
+      ).toEqual({
+        unreadable: join(
+          runtime.XDG_RUNTIME_DIR as string,
+          "todou-omp",
+          `${OMP_PID}.json`,
+        ),
+      });
     });
   });
 });

@@ -46,11 +46,21 @@ PROJECT="$WORK/project"
 # dials — so a runtime directory here fails with EACCES while imitating the
 # real degradation, a sandbox that blocks unix sockets outright.
 RUNTIME="${XDG_RUNTIME_DIR:-/tmp}/todou-smoke-$$"
+# A runtime directory that stays empty, so the probe can ask what todou would
+# answer with no record to find at all. It has to be a real empty directory
+# rather than a missing one: both resolve to "nothing published", and the one
+# a machine without the extension actually has is the missing kind, so the
+# stricter of the two is what a check should stand on.
+EMPTY_RUNTIME="$WORK/empty-runtime"
 # The extension makes this itself; made here too because check 5 dials a
 # socket that is *absent from a directory that exists*, which is the shape a
 # session that has exited leaves behind. Without the directory the sender
 # fails to bind its own listener instead, which is a different failure.
-mkdir -p "$HOME_DIR" "$PROJECT" "$RUNTIME/todou-omp"
+mkdir -p "$HOME_DIR" "$PROJECT" "$RUNTIME/todou-omp" "$EMPTY_RUNTIME"
+# An empty .zshrc, because a HOME without one sends zsh into
+# `zsh-newuser-install` — a full-screen wizard that waits for a keypress. It
+# takes over the pty the moment anything runs a shell, and blocks it.
+: > "$HOME_DIR/.zshrc"
 trap 'rm -rf "$WORK" "$RUNTIME"' EXIT
 
 FAILURES=0
@@ -63,9 +73,10 @@ wanted() { [ -z "$ONLY" ] || [ "$ONLY" = "$1" ]; }
 
 # The detector, called the way a tool inside omp would reach it, plus the raw
 # record so a mismatch says which side is wrong rather than only that they
-# disagree. `scanned` is the same detector with the variable withheld — what
-# todou sees on an omp with no extension — so a run says not just that the
-# answer is right but whether the extension is what made it right.
+# disagree. `scanned` is the same detector with the record put out of reach —
+# what todou sees on an omp with no extension — so a run says not just that the
+# answer is right but whether the record is what made it right. `published` is
+# the middle case: no variable, but a record still findable by pid.
 cat > "$WORK/detect.mts" <<'PROBE'
 import { readFileSync } from "node:fs";
 import { detectAgentContext } from "../../projects/cli/src/harness/index.ts";
@@ -78,6 +89,14 @@ import {
 
 const statePath = process.env.TODOU_OMP_STATE;
 const { TODOU_OMP_STATE: _withheld, ...withoutState } = process.env;
+// Withholding the variable no longer withholds the record: it is found by
+// ancestor pid now, which is the whole of T-312. So the no-extension answer
+// has to withhold the directory it is found in as well, or `scanned` below
+// would quietly stop exercising the scan and check 2 would assert nothing.
+const withoutRecord = {
+  ...withoutState,
+  XDG_RUNTIME_DIR: process.env.TODOU_SMOKE_EMPTY_RUNTIME,
+};
 let record: unknown = null;
 try {
   record = JSON.parse(readFileSync(statePath ?? "", "utf8"));
@@ -98,7 +117,10 @@ const openLogs = host ? openSessionLogs("/proc", host.pid) : undefined;
 console.log(
   JSON.stringify({
     detected: detectAgentContext(process.env),
-    scanned: detectAgentContext(withoutState),
+    scanned: detectAgentContext(withoutRecord),
+    // The variable withheld but the record still reachable by pid: what every
+    // context except omp's own bash tool actually gets.
+    published: detectAgentContext(withoutState),
     state_path: statePath ?? null,
     socket: process.env.TODOU_MESSAGING_SOCKET ?? null,
     record,
@@ -135,7 +157,8 @@ PUSH
 # omp resolves `~` from HOME, and the extension puts its files under
 # XDG_RUNTIME_DIR — both redirected so a run cannot reach the real ones.
 omp_env() {
-  env HOME="$HOME_DIR" XDG_RUNTIME_DIR="$RUNTIME" "$@"
+  env HOME="$HOME_DIR" XDG_RUNTIME_DIR="$RUNTIME" \
+    TODOU_SMOKE_EMPTY_RUNTIME="$EMPTY_RUNTIME" "$@"
 }
 
 # One print-mode turn whose whole job is to run one command. `--auto-approve`
@@ -411,6 +434,117 @@ if wanted 6; then
       fi
     else
       bad "the probe produced nothing; see $WORK/bare.omp.log"
+    fi
+  fi
+fi
+
+# 7 — the window this card is about. A session that has not taken a turn has no
+#     log on disk and therefore no descriptor to hold, so the record is the only
+#     thing that can answer — and the variable naming it does not reach here.
+#     Driven through `!`, omp's direct shell invoke: the one path into a session
+#     that runs without a turn, which is also why this check needs no model.
+if wanted 7; then
+  step "7. a session answers before its first turn"
+  if ! command -v script >/dev/null; then
+    skip "needs script(1) to give omp a pty"
+  else
+    SESSIONS="$HOME_DIR/.omp/agent/sessions"
+    # Everything is captured from inside the one `!` invocation, at the moment
+    # the probe runs: a sampler from outside could only say the window existed
+    # at some point, and the record is deleted on shutdown so afterwards is too
+    # late to read it. `TODOU_SMOKE_EMPTY_RUNTIME` is passed explicitly because
+    # omp curates the environment it hands a `!` shell, and whether a test-only
+    # variable survives that is not something this check should depend on.
+    # XDG_RUNTIME_DIR deliberately is *not* passed: whether it arrives is part
+    # of what is under test.
+    cat > "$WORK/blind.sh" <<BLIND
+#!/bin/sh
+# Wait for the record rather than sleeping a guessed amount: it appears a few
+# seconds into startup, and the assertion that follows it — that no log exists
+# — is only meaningful once the session it belongs to has begun.
+i=0
+while [ "\$i" -lt 60 ]; do
+  set -- "$RUNTIME"/todou-omp/*.json
+  [ -f "\$1" ] && break
+  i=\$((i + 1))
+  sleep 0.5
+done
+# The newest record, not the first the glob offers: earlier checks in a full
+# run leave the directory behind them, and pid order is not run order.
+ls -t "$RUNTIME"/todou-omp/*.json 2>/dev/null | head -1 |
+  xargs -r cat > "$WORK/blind.record" 2>/dev/null
+# Whether *this session's* log exists — not whether any log does. Earlier
+# checks share this home and have already written seven of their own, so a
+# count would say the window had closed when it had not.
+SESSION_LOG=\$(grep -o '"session_file":"[^"]*"' "$WORK/blind.record" |
+  head -1 | cut -d'"' -f4)
+if [ -n "\$SESSION_LOG" ] && [ -e "\$SESSION_LOG" ]; then
+  echo present > "$WORK/blind.logstate"
+else
+  echo absent > "$WORK/blind.logstate"
+fi
+TODOU_SMOKE_EMPTY_RUNTIME="$EMPTY_RUNTIME" node "$WORK/detect.mts" \
+  > "$WORK/blind.json" 2>"$WORK/blind.err"
+BLIND
+    MODEL_FLAG=""
+    [ -n "${TODOU_SMOKE_OMP_MODEL:-}" ] &&
+      MODEL_FLAG="--model '$TODOU_SMOKE_OMP_MODEL'"
+    {
+      sleep 12
+      printf '!sh %s\r' "$WORK/blind.sh"
+      sleep 20
+      printf '/exit\r'
+      sleep 3
+    } | omp_env script -qc "omp --cwd '$PROJECT' --no-title $MODEL_FLAG" /dev/null \
+      > "$WORK/blind.omp.log" 2>&1
+
+    LOGSTATE=$(cat "$WORK/blind.logstate" 2>/dev/null)
+    RECORD_ID=$(grep -o '"session_id":"[^"]*"' "$WORK/blind.record" 2>/dev/null |
+      head -1 | cut -d'"' -f4)
+    RECORD_PID=$(grep -o '"pid":[0-9]*' "$WORK/blind.record" 2>/dev/null |
+      head -1 | cut -d: -f2)
+
+    # The precondition first. Without it a future omp that creates its log
+    # eagerly would turn every assertion below into a test of the descriptor
+    # path, passing while proving nothing about this card.
+    if [ -n "$RECORD_ID" ] && [ "$LOGSTATE" = "absent" ]; then
+      ok "the window is real: a record and no log for it yet ($RECORD_ID)"
+    elif [ -z "$RECORD_ID" ]; then
+      bad "no record was published; see $WORK/blind.omp.log"
+    else
+      bad "omp had already written this session's log: the window has moved, and the checks below no longer test it"
+    fi
+
+    if [ -s "$WORK/blind.json" ]; then
+      DETECTED=$(json "$WORK/blind.json" detected.session_id)
+      SCANNED=$(json "$WORK/blind.json" scanned.session_id)
+      HOSTPID=$(json "$WORK/blind.json" host.pid)
+      OPENLOGS=$(json "$WORK/blind.json" host.open_logs)
+      if [ -n "$RECORD_ID" ] && [ "$DETECTED" = "$RECORD_ID" ]; then
+        ok "todou reports it from a direct-shell invoke ($DETECTED)"
+      else
+        bad "expected $RECORD_ID from a direct-shell invoke, got ${DETECTED:-nothing}"
+      fi
+      # And the record is what did it: with the record out of reach the same
+      # call in the same place has nothing to fall back to, because the log it
+      # would scan for does not exist yet.
+      if [ -z "$SCANNED" ]; then
+        ok "and without the record there is no answer to be had"
+      else
+        bad "the scan answered $SCANNED with no log on disk; the record was not what resolved this"
+      fi
+      if [ "$OPENLOGS" = "0" ]; then
+        ok "the descriptor path was blind, as the window requires"
+      else
+        bad "expected no held log, got ${OPENLOGS:-unreadable}"
+      fi
+      if [ -n "$RECORD_PID" ] && [ "$HOSTPID" = "$RECORD_PID" ]; then
+        ok "and the host is the omp that published it (pid $HOSTPID)"
+      else
+        bad "expected host pid $RECORD_PID, got ${HOSTPID:-none}"
+      fi
+    else
+      bad "the probe produced nothing; see $WORK/blind.err and $WORK/blind.omp.log"
     fi
   fi
 fi

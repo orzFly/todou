@@ -2,12 +2,17 @@ import type { AgentContext, HarnessId } from "@todou/shared";
 import type { Env } from "../config.ts";
 
 /**
- * The ancestor that introduced this harness's markers.
+ * The ancestor that introduced this harness's markers, or — when the harness
+ * was identified by a record one of them published — the ancestor that wrote
+ * it.
  *
  * Deliberately narrower than the process tree's own record: it carries no
  * environment, so a detector cannot reach into another process's environment
- * and quietly promote it into an existence signal. The process tree arbitrates
- * between harnesses that already matched; it never widens `matches` (T-128).
+ * and quietly promote it into an existence signal (T-128). That rule is
+ * unchanged. What the process tree may now do beyond arbitrating is described
+ * on `Harness.matches`, and it is not this: reading a *file a harness wrote
+ * about itself* is the harness speaking, while reading its environment is us
+ * guessing from something it never meant to say.
  */
 export type HostProcess = {
   pid: number;
@@ -42,6 +47,15 @@ export type HarnessContext = {
    * ancestor.
    */
   host(): HostProcess | undefined;
+  /**
+   * Our ancestors' pids, nearest first — enough to ask which of them published
+   * a `<pid>.json` record about itself, and nothing more. Pids only, so this
+   * grants no reach into another process's environment (see `HostProcess`).
+   *
+   * Lazy and cached for the same reason as `host`, and cheaper than it: the
+   * caller that needs this runs before anything is known to match.
+   */
+  ancestorPids(): readonly number[];
 };
 
 /**
@@ -66,8 +80,19 @@ export type LiveSession = {
  *
  * `matches` must stay a pure environment predicate — token auto-selection
  * consults it on every command, before any client exists. `context` is called
- * only when `matches` returned true and may probe the filesystem; probe
+ * only when the harness was selected and may probe the filesystem; probe
  * failures degrade to "less metadata", never to an error.
+ *
+ * Selection has two stages, and `matches` is the whole of the first. When it
+ * puts up at least one candidate the second stage does not run, so it can
+ * never take a harness away from one that matched on the environment — which
+ * is what keeps the claude-code tie-break, and every other ordering rule in
+ * `HARNESSES`, exactly as it was. Only when nothing matches does selection ask
+ * whether an ancestor published a record naming itself; that is the one way a
+ * harness can be found without a marker in our environment, and it is there
+ * because omp's eval runtimes are spawned without its markers while still
+ * being the same session (T-313). The cost of that second stage is a failed
+ * `readdir` on a machine that never installed the extension.
  *
  * A harness that needs only part of the context may destructure only that
  * part: `context({ env, home })`.

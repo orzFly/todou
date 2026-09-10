@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
-import { basename, isAbsolute } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, isAbsolute, join } from "node:path";
 import type { Env } from "../config.ts";
 
 /** What the extension publishes, once every field has been believed. */
@@ -10,6 +11,14 @@ export type OmpState = {
   sessionFile?: string;
   /** Where this was read from, for a diagnostic that names the file. */
   path: string;
+  /** The process that published it, already checked against `path` and /proc. */
+  pid: number;
+  /**
+   * Which harness wrote this, when the record said. Detection reads it rather
+   * than assuming omp: the record layout is the extension's, and a second
+   * harness adopting it must not be silently reported as the first.
+   */
+  agent?: string;
 };
 
 /** The only record layout this reads; anything else is treated as absent. */
@@ -36,9 +45,24 @@ const SESSION_ID = /^[0-9a-zA-Z-]+$/;
 export function readOmpState(env: Env): OmpState | undefined {
   const path = env.TODOU_OMP_STATE;
   if (!path) return undefined;
+  return readOmpStateAt(path);
+}
+
+/**
+ * The same record, read from a path the caller located some other way than by
+ * being handed it in the environment.
+ *
+ * Split out because the variable is the weaker of the two ways to find this
+ * file: omp builds a curated environment for its non-tool contexts and the
+ * variable is not in it, so anything that is not omp's own bash tool sees
+ * nothing — which was T-312, an omp session reporting no session at all for as
+ * long as it took the first turn to create the log.
+ */
+export function readOmpStateAt(path: string): OmpState | undefined {
   let record: {
     v?: unknown;
     pid?: unknown;
+    agent?: unknown;
     session_id?: unknown;
     session_file?: unknown;
   };
@@ -77,7 +101,98 @@ export function readOmpState(env: Env): OmpState | undefined {
       ? { sessionFile }
       : {}),
     path,
+    pid: record.pid,
+    ...(typeof record.agent === "string" && record.agent !== ""
+      ? { agent: record.agent }
+      : {}),
   };
+}
+
+/**
+ * Where the extension publishes, resolved the way the extension resolves it.
+ *
+ * `||`, not `??`: a bound-but-empty value means "unset" to the extension too,
+ * and the two have to agree on the directory or the reader looks somewhere the
+ * writer never wrote. Read from our own environment rather than omp's — the
+ * variable was measured identical in every context this reaches, and a
+ * disagreement costs a lookup that finds nothing and falls through to the
+ * descriptor, never a wrong answer.
+ */
+export function ompStateDir(env: Env): string {
+  return join(env.XDG_RUNTIME_DIR || tmpdir(), "todou-omp");
+}
+
+/**
+ * The pids that have published a record, from one listing of the directory.
+ *
+ * This exists to be the cheap half of the lookup: a machine that never
+ * installed the extension answers with one failed `readdir` and no process
+ * tree walked at all.
+ */
+export function publishedStatePids(env: Env): readonly number[] {
+  let names: string[];
+  try {
+    names = readdirSync(ompStateDir(env));
+  } catch {
+    return []; // No extension has ever published here.
+  }
+  const pids: number[] = [];
+  for (const name of names) {
+    // The sockets of the push channel live in the same directory.
+    if (!name.endsWith(".json")) continue;
+    const pid = Number(basename(name, ".json"));
+    if (Number.isInteger(pid) && pid > 0) pids.push(pid);
+  }
+  return pids;
+}
+
+/**
+ * The session omp published, found by asking which of our ancestors published
+ * it rather than by trusting a variable to have reached us.
+ *
+ * Nearest ancestor first, which is what makes an omp running inside another
+ * omp's bash tool resolve to itself: an inherited `TODOU_OMP_STATE` names the
+ * outer one, and the extension carries its own guard against exactly that.
+ * Here the pid in the path *is* the question, so the nearer publisher wins by
+ * construction.
+ *
+ * `ancestors` is a thunk so the cheap directory listing above can rule the
+ * whole thing out before a process tree is walked — on macOS that walk costs a
+ * `ps` spawn.
+ */
+export function publishedState(
+  env: Env,
+  ancestors: () => readonly number[],
+): OmpState | undefined {
+  return publishedStateAttempt(env, ancestors).state;
+}
+
+/**
+ * The same lookup, keeping the difference between "no ancestor published" and
+ * "one did and its record would not read". Only the re-readable probe needs
+ * that difference: falling back quietly there restores the startup snapshot it
+ * exists to replace (T-289), so the failure has to be reportable.
+ */
+export function publishedStateAttempt(
+  env: Env,
+  ancestors: () => readonly number[],
+): { state?: OmpState; unreadable?: string } {
+  const published = publishedStatePids(env);
+  if (published.length === 0) return {};
+  const dir = ompStateDir(env);
+  const known = new Set(published);
+  let unreadable: string | undefined;
+  for (const pid of ancestors()) {
+    if (!known.has(pid)) continue;
+    const path = join(dir, `${pid}.json`);
+    const state = readOmpStateAt(path);
+    if (state) return { state };
+    // Named but not believed. Kept rather than returned, because a nearer
+    // ancestor's unusable record must not hide a further one's good record —
+    // the nesting case this walk exists to get right.
+    unreadable ??= path;
+  }
+  return unreadable === undefined ? {} : { unreadable };
 }
 
 /** `…/todou-omp/<pid>.json`, or undefined when the name is not a pid. */

@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -208,15 +208,26 @@ describe("process-tree cost", () => {
     { pid: 102, ppid: 0, env: {} },
   ];
 
+  /*
+   * Where a harness extension publishes what session it is in. Selection looks
+   * here when nothing matched on the environment, so every assertion below
+   * about spending nothing needs the directory to be empty — left unset it
+   * would resolve to $TMPDIR and pick up whatever a real omp on the machine
+   * running the suite had written.
+   */
+  const NO_RUNTIME = { XDG_RUNTIME_DIR: scratchDir("todou-noruntime-") };
+
   it("reads nothing at all outside every harness", () => {
     const { io, calls } = psTree(chain());
-    expect(detectHarnessId({}, io)).toBeNull();
+    expect(detectHarnessId(NO_RUNTIME, io)).toBeNull();
     expect(calls()).toBe(0);
   });
 
   it("reads nothing when a single harness signals", () => {
     const { io, calls } = psTree(chain());
-    expect(detectHarnessId(CLAUDE, io)).toBe("claude-code");
+    expect(detectHarnessId({ ...CLAUDE, ...NO_RUNTIME }, io)).toBe(
+      "claude-code",
+    );
     expect(calls()).toBe(0);
   });
 
@@ -240,6 +251,33 @@ describe("process-tree cost", () => {
       { pid: 102, ppid: 0, env: {} },
     ]);
     expect(detectHarnessId({ ...CLAUDE, ...CODEX }, io)).toBe("claude-code");
+  });
+
+  /*
+   * Matching published records needs the chain but nothing off it, so it pays
+   * for the process table and not for the second `ps` that reads every
+   * ancestor's environment. Our own pid stands in for the publisher because a
+   * record is only believed while the process it names is alive.
+   */
+  it("spends one ps call, not two, to match a published record", () => {
+    const runtime = scratchDir("todou-runtime-");
+    const dir = join(runtime, "todou-omp");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, `${process.pid}.json`),
+      JSON.stringify({
+        v: 1,
+        pid: process.pid,
+        agent: "omp",
+        session_id: "01900000-0000-7000-8000-000000000001",
+      }),
+    );
+    const { io, calls } = psTree([
+      { pid: 100, ppid: process.pid, env: {} },
+      { pid: process.pid, ppid: 0, env: {} },
+    ]);
+    expect(detectHarnessId({ XDG_RUNTIME_DIR: runtime }, io)).toBe("omp");
+    expect(calls()).toBe(1);
   });
 });
 
@@ -295,5 +333,73 @@ describe("macOS ps parsing", () => {
       agent: "pi",
       session_id: "01900000-0000-7000-8000-00000000000a",
     });
+  });
+});
+
+describe("the pid-only chain", () => {
+  /**
+   * A /proc offering `stat` and nothing else. `readAncestors` needs `environ`
+   * and `cmdline` and would end the chain here; the pid walk must not, because
+   * it runs on the path where nothing has matched yet and has no use for
+   * either file.
+   */
+  function statOnlyTree(procs: [number, number][]): Partial<ProcessTreeIo> {
+    const root = scratchDir("todou-statonly-");
+    for (const [pid, ppid] of procs) {
+      const dir = join(root, String(pid));
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "stat"), `${pid} (proc) S ${ppid} 0 0 0 -1`);
+    }
+    return {
+      platform: "linux",
+      procRoot: root,
+      startPid: procs[0]?.[0] ?? 1,
+    };
+  }
+
+  function publish(pid: number, sessionId: string): Record<string, string> {
+    const runtime = scratchDir("todou-runtime-");
+    const dir = join(runtime, "todou-omp");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, `${pid}.json`),
+      JSON.stringify({ v: 1, pid, agent: "omp", session_id: sessionId }),
+    );
+    return { XDG_RUNTIME_DIR: runtime };
+  }
+
+  const SID = "01900000-0000-7000-8000-000000000001";
+
+  it("walks past ancestors that expose only stat", () => {
+    expect(
+      detectHarnessId(
+        publish(process.pid, SID),
+        statOnlyTree([
+          [424245, 424246],
+          [424246, process.pid],
+          [process.pid, 0],
+        ]),
+      ),
+    ).toBe("omp");
+  });
+
+  it("stops at an ancestor it cannot read at all", () => {
+    // The publisher sits beyond a gap in the tree, so the chain never reaches
+    // it and the record is never found — ignorance, not a wrong answer.
+    expect(
+      detectHarnessId(
+        publish(process.pid, SID),
+        statOnlyTree([[424245, 424247]]),
+      ),
+    ).toBeNull();
+  });
+
+  it("stops at a uid that is not ours", () => {
+    const { io } = psTree([
+      { pid: 100, ppid: 101, env: {} },
+      { pid: 101, ppid: process.pid, uid: UID + 1, env: {} },
+      { pid: process.pid, ppid: 0, env: {} },
+    ]);
+    expect(detectHarnessId(publish(process.pid, SID), io)).toBeNull();
   });
 });

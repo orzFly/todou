@@ -2,7 +2,12 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { AgentContext } from "@todou/shared";
 import type { Env } from "../config.ts";
 import { findInJsonlTail } from "./jsonl-tail.ts";
-import { readOmpState } from "./omp-state.ts";
+import {
+  publishedState,
+  publishedStateAttempt,
+  readOmpState,
+  readOmpStateAt,
+} from "./omp-state.ts";
 import { currentSessionFile, flagValue } from "./session-log.ts";
 import type { Harness, HostProcess, LiveSession } from "./types.ts";
 
@@ -23,13 +28,20 @@ import type { Harness, HostProcess, LiveSession } from "./types.ts";
 export const omp = {
   id: "omp",
   matches: (env) => env.OMPCODE === "1",
-  context({ env, home, cwd, host }) {
+  context({ env, home, cwd, host, ancestorPids }) {
     const context: AgentContext = { agent: "omp" };
     // omp's own answer beats every heuristic below it, and costs one small
     // read where the scan costs a directory listing and a header read per
     // candidate. Anything wrong with the record falls through to the scan,
     // which is what an omp without the extension does anyway.
-    const state = readOmpState(env);
+    //
+    // Asked by ancestor pid before the environment, because the variable only
+    // reaches omp's own bash tool: everything else omp spawns — the `!` shell,
+    // both eval runtimes — gets a curated environment without it. That gap was
+    // invisible for as long as the descriptor below could cover it, and omp
+    // creates the log lazily at the first turn, so early in a session neither
+    // could answer and a live session reported none at all (T-312).
+    const state = publishedState(env, ancestorPids) ?? readOmpState(env);
     if (state) {
       context.session_id = state.sessionId;
       // The extension deliberately publishes no model: it changes every turn,
@@ -64,12 +76,16 @@ export const omp = {
     if (model) context.model = model;
     return context;
   },
-  liveSessionId({ env }): LiveSession {
-    const path = env.TODOU_OMP_STATE;
+  liveSessionId({ env, ancestorPids }): LiveSession {
+    // Same order as `context`, and for the same reason: a resident reader in
+    // any context but omp's bash tool never sees the variable.
+    const attempt = publishedStateAttempt(env, ancestorPids);
+    if (attempt.state) return { id: attempt.state.sessionId };
+    const path = env.TODOU_OMP_STATE ?? attempt.unreadable;
     // Nothing published: the extension is not installed, and there is no
     // re-readable answer to have failed at. Silence is the whole report.
     if (path === undefined) return {};
-    const state = readOmpState(env);
+    const state = readOmpStateAt(path);
     // Named a file and then could not believe it — the one case worth saying
     // out loud, because falling back quietly restores exactly the startup
     // snapshot this probe exists to replace (T-289).
