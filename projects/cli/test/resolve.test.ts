@@ -121,7 +121,7 @@ describe("reference reads, memoized per client (T-214)", () => {
   it("resolves one ref per client per ref, misses included", async () => {
     const answer = {
       names: { project_ref: "68", number: 158 },
-      at: { slug: "roise", number: 94 },
+      at: { slug: "beta", number: 94 },
     };
     const { fetchImpl, calls } = fakeFetch([
       [

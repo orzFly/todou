@@ -188,7 +188,7 @@ describe("issue list cursors across sub-millisecond rows", () => {
 });
 
 /**
- * The shape PGlite (and thus the dogfood deployment) actually stores:
+ * The shape PGlite (and thus the acme deployment) actually stores:
  * several rows with byte-identical millisecond timestamps. Pagination
  * inside such a cluster rests entirely on the id tie-break; this pins the
  * production list path that T-78's Load More rides on.

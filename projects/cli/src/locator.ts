@@ -271,8 +271,8 @@ export function resolvePrefixedRef(
 
 /**
  * The prefix in `slug/P-16`, checked against the project the slug names
- * (design §5). It used to be decoration — `dogfood/FOO-1` silently meant
- * `dogfood/1` — which is the same copy-paste accident as a bare foreign
+ * (design §5). It used to be decoration — `acme/FOO-1` silently meant
+ * `acme/1` — which is the same copy-paste accident as a bare foreign
  * prefix, one slug away.
  *
  * History is admitted here, unlike on the bare ladder's first rung: the slug

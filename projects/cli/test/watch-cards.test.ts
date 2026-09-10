@@ -69,7 +69,7 @@ const cardRoutes: Route[] = [
     "/api/projects",
     [
       { id: 2, slug: "todou" },
-      { id: 7, slug: "dogfood" },
+      { id: 7, slug: "acme" },
     ],
   ],
   [
@@ -79,7 +79,7 @@ const cardRoutes: Route[] = [
   ],
   [
     "GET",
-    "/api/projects/dogfood/references/config",
+    "/api/projects/acme/references/config",
     { format: { prefix: "D", history: [] }, autolinks: [] },
   ],
   [
@@ -178,9 +178,9 @@ describe("watch: the cards an entry is about (T-286)", () => {
             ? {
                 items: [
                   opened(146, "todou"),
-                  // From dogfood's side this is a foreign reference, so it
+                  // From acme's side this is a foreign reference, so it
                   // is spelled — and resolved — against `todou`.
-                  referenced(5, { by_project_id: 2, by_issue: 281 }, "dogfood"),
+                  referenced(5, { by_project_id: 2, by_issue: 281 }, "acme"),
                 ],
                 next_cursor: "e1",
                 has_more: false,
@@ -190,7 +190,7 @@ describe("watch: the cards an entry is about (T-286)", () => {
       ...cardRoutes,
     ]);
     const result = await runCli(
-      ["watch", "-p", "todou,dogfood", "--poll", "--since", "e0"],
+      ["watch", "-p", "todou,acme", "--poll", "--since", "e0"],
       { fetchImpl, env: loggedInEnv() },
     );
 

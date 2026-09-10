@@ -61,12 +61,12 @@ const event = (over: Partial<TimelineEvent> = {}): TimelineEvent => ({
 describe("renderActivityLine", () => {
   it("shows a comment body — the point of the exercise", () => {
     const line = renderActivityLine(
-      comment({ body: "要在 dogfood 上开——先把 CLI 发布到镜像里" }),
+      comment({ body: "要在 acme 上开——先把 CLI 发布到镜像里" }),
       paint,
       ctx,
     );
     expect(line).toMatch(
-      /^T-146 #comment-757 User commented .+: 要在 dogfood 上开——先把 CLI 发布到镜像里$/,
+      /^T-146 #comment-757 User commented .+: 要在 acme 上开——先把 CLI 发布到镜像里$/,
     );
     expect(line.split("\n")).toHaveLength(1);
   });
@@ -297,16 +297,16 @@ describe("renderActivityLine", () => {
    * every case here is a pure rendering question, network kept out of it.
    */
   describe("cards the entry is about", () => {
-    /** The card being read is `todou` (id 2); `dogfood` (id 7) is elsewhere. */
+    /** The card being read is `todou` (id 2); `acme` (id 7) is elsewhere. */
     const known: ActivityLineContext = {
       ...ctx,
       project: "todou",
       projectId: 2,
-      slugOfProject: (id) => (id === 2 ? "todou" : id === 7 ? "dogfood" : null),
+      slugOfProject: (id) => (id === 2 ? "todou" : id === 7 ? "acme" : null),
       cardOf: (slug, number) =>
         slug === "todou" && number === 281
           ? { title: "评论 collapse：把中间的探索讨论折叠掉", body: null }
-          : slug === "dogfood" && number === 31
+          : slug === "acme" && number === 31
             ? { title: "T-286 probe: watch line shapes", body: null }
             : slug === "todou" && number === 146
               ? {
@@ -337,19 +337,17 @@ describe("renderActivityLine", () => {
           paint,
           known,
         ),
-      ).toContain(
-        'referenced (by dogfood#31 "T-286 probe: watch line shapes")',
-      );
+      ).toContain('referenced (by acme#31 "T-286 probe: watch line shapes")');
     });
 
     it("reads a pre-T-266 payload's slug, and still names the card", () => {
       expect(
         renderActivityLine(
-          referenced({ by_project: "dogfood", by_issue: 31 }),
+          referenced({ by_project: "acme", by_issue: 31 }),
           paint,
           known,
         ),
-      ).toContain('by dogfood#31 "T-286 probe: watch line shapes"');
+      ).toContain('by acme#31 "T-286 probe: watch line shapes"');
     });
 
     it("appends the comment the mention was written in", () => {
@@ -359,9 +357,7 @@ describe("renderActivityLine", () => {
           paint,
           known,
         ),
-      ).toContain(
-        'by dogfood#31 "T-286 probe: watch line shapes" #comment-4242',
-      );
+      ).toContain('by acme#31 "T-286 probe: watch line shapes" #comment-4242');
     });
 
     /**

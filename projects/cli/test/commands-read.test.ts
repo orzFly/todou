@@ -74,14 +74,14 @@ describe("whoami", () => {
 describe("project list", () => {
   it("renders a slug/name table", async () => {
     const projects = [
-      { id: 1, slug: "dogfood", name: "Dogfood", description: "sandbox" },
+      { id: 1, slug: "acme", name: "Acme", description: "sandbox" },
     ];
     const { fetchImpl } = fakeFetch([["GET", "/api/projects", projects]]);
     const result = await runCli(["project", "list"], {
       fetchImpl,
       env: loggedInEnv(),
     });
-    expect(result.stdout).toBe("dogfood  Dogfood  sandbox\n");
+    expect(result.stdout).toBe("acme  Acme  sandbox\n");
   });
 });
 
@@ -566,15 +566,12 @@ describe("issue view", () => {
 
   it("rejects a ref contradicting -p, and a URL on a foreign server", async () => {
     const { fetchImpl } = fakeFetch([]);
-    const conflict = await runCli(
-      ["issue", "view", "dogfood/3", "-p", "todou"],
-      {
-        fetchImpl,
-        env: loggedInEnv(),
-      },
-    );
+    const conflict = await runCli(["issue", "view", "acme/3", "-p", "todou"], {
+      fetchImpl,
+      env: loggedInEnv(),
+    });
     expect(conflict.exitCode).toBe(1);
-    expect(conflict.stderr).toContain('says project "dogfood"');
+    expect(conflict.stderr).toContain('says project "acme"');
 
     const elsewhere = await runCli(
       ["issue", "view", "https://other.example/projects/todou/issues/3"],
@@ -884,13 +881,13 @@ describe("issue view, several numbers (T-184)", () => {
 
   it("refuses a batch that spans two projects", async () => {
     const { fetchImpl } = fakeFetch([]);
-    const result = await runCli(["issue", "view", "todou/3", "dogfood/4"], {
+    const result = await runCli(["issue", "view", "todou/3", "acme/4"], {
       fetchImpl,
       env: loggedInEnv(),
     });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain(
-      '"todou/3" says project "todou" but "dogfood/4" says "dogfood"',
+      '"todou/3" says project "todou" but "acme/4" says "acme"',
     );
   });
 });
@@ -2229,7 +2226,7 @@ describe("positional prefix resolution (T-214)", () => {
   it("resolves a prefix another project holds", async () => {
     const { fetchImpl, calls } = fakeFetch([
       ...viewRoutes("homelab", 5),
-      ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+      ["GET", "/api/projects/acme/references/config", prefixed(null)],
       ["GET", "/api/projects/homelab/references/config", prefixed("CH")],
       ["GET", "/api/me/reference-directory", DIRECTORY],
     ]);
@@ -2238,7 +2235,7 @@ describe("positional prefix resolution (T-214)", () => {
     // project — TODOU_PROJECT here.
     const result = await runCli(["issue", "view", "CH-5"], {
       fetchImpl,
-      env: loggedInEnv("dogfood"),
+      env: loggedInEnv("acme"),
     });
     expect(result.exitCode).toBe(0);
     expect(hit(calls, "/projects/homelab/issues/5")).toBeGreaterThan(0);
@@ -2247,23 +2244,23 @@ describe("positional prefix resolution (T-214)", () => {
 
   it("refuses a prefix nobody holds, without reading an issue", async () => {
     const { fetchImpl, calls } = fakeFetch([
-      ...viewRoutes("dogfood", 1),
-      ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+      ...viewRoutes("acme", 1),
+      ["GET", "/api/projects/acme/references/config", prefixed(null)],
       ["GET", "/api/me/reference-directory", DIRECTORY],
     ]);
-    const result = await runCli(["issue", "view", "FOO-1", "-p", "dogfood"], {
+    const result = await runCli(["issue", "view", "FOO-1", "-p", "acme"], {
       fetchImpl,
       env: loggedInEnv(),
     });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toBe(
       'error: no project uses the prefix "FOO" (from "FOO-1")\n' +
-        'write this project\'s own card as "#1" or "dogfood/1"; ' +
+        'write this project\'s own card as "#1" or "acme/1"; ' +
         "prefixes in reach: CH- (homelab), T- (todou)\n",
     );
     // The refusal has to land before the read: a command that already
     // fetched the wrong card has done the damage this card is about.
-    expect(hit(calls, "/projects/dogfood/issues/1")).toBe(0);
+    expect(hit(calls, "/projects/acme/issues/1")).toBe(0);
   });
 
   it("refuses when the prefix and -p disagree", async () => {
@@ -2288,14 +2285,14 @@ describe("positional prefix resolution (T-214)", () => {
 
   it("refuses a prefix two projects hold", async () => {
     const { fetchImpl } = fakeFetch([
-      ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+      ["GET", "/api/projects/acme/references/config", prefixed(null)],
       [
         "GET",
         "/api/me/reference-directory",
         directory([claim("M", "mirror"), claim("M", "muon")]),
       ],
     ]);
-    const result = await runCli(["issue", "view", "M-3", "-p", "dogfood"], {
+    const result = await runCli(["issue", "view", "M-3", "-p", "acme"], {
       fetchImpl,
       env: loggedInEnv(),
     });
@@ -2326,12 +2323,12 @@ describe("positional prefix resolution (T-214)", () => {
 
   it("keeps the batch's own error when two prefixes disagree", async () => {
     const { fetchImpl } = fakeFetch([
-      ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+      ["GET", "/api/projects/acme/references/config", prefixed(null)],
       ["GET", "/api/me/reference-directory", DIRECTORY],
     ]);
     const result = await runCli(["issue", "view", "T-1", "CH-2"], {
       fetchImpl,
-      env: loggedInEnv("dogfood"),
+      env: loggedInEnv("acme"),
     });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain(
@@ -2342,18 +2339,18 @@ describe("positional prefix resolution (T-214)", () => {
 
   it("does not let --json skip the ladder", async () => {
     const { fetchImpl, calls } = fakeFetch([
-      ...viewRoutes("dogfood", 1),
-      ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+      ...viewRoutes("acme", 1),
+      ["GET", "/api/projects/acme/references/config", prefixed(null)],
       ["GET", "/api/me/reference-directory", DIRECTORY],
     ]);
     const result = await runCli(
-      ["issue", "view", "FOO-1", "-p", "dogfood", "--json"],
+      ["issue", "view", "FOO-1", "-p", "acme", "--json"],
       { fetchImpl, env: loggedInEnv() },
     );
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain('no project uses the prefix "FOO"');
-    expect(hit(calls, "/projects/dogfood/issues/1")).toBe(0);
+    expect(hit(calls, "/projects/acme/issues/1")).toBe(0);
   });
 
   /**
@@ -2367,53 +2364,53 @@ describe("positional prefix resolution (T-214)", () => {
     const OWN_ONLY = directory([claim("T", "todou")]);
     const ANSWER = {
       names: { project_ref: "68", number: 158 },
-      at: { slug: "roise", number: 94 },
+      at: { slug: "beta", number: 94 },
     };
     const moved = {
       __status: 301,
-      body: { moved_to: { slug: "roise", number: 94 } },
+      body: { moved_to: { slug: "beta", number: 94 } },
     };
 
     it("follows the id it hands back, and names the ref that was typed", async () => {
       const { fetchImpl, calls } = fakeFetch([
-        ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+        ["GET", "/api/projects/acme/references/config", prefixed(null)],
         ["GET", "/api/me/reference-directory", OWN_ONLY],
         ["GET", "/api/me/refs/resolve", ANSWER],
         // The request goes to the address the ref SPELLS, so it meets the
         // same 301 `68/158` would have — one downstream, not two.
         ["GET", "/api/projects/68/issues/158", moved],
         ["GET", "/api/projects/68/references/config", { __status: 404 }],
-        ...viewRoutes("roise", 94),
-        ["GET", "/api/projects/roise/references/config", prefixed("RN")],
+        ...viewRoutes("beta", 94),
+        ["GET", "/api/projects/beta/references/config", prefixed("RN")],
       ]);
       const result = await runCli(["issue", "view", "CH-158"], {
         fetchImpl,
-        env: loggedInEnv("dogfood"),
+        env: loggedInEnv("acme"),
       });
       expect(result.exitCode).toBe(0);
       expect(hit(calls, "/me/refs/resolve")).toBe(1);
       expect(hit(calls, "/projects/68/issues/158")).toBe(1);
       expect(result.stdout).toContain("moved from CH-158");
-      expect(result.stdout).toContain("roise/RN-94 Fix the potato");
+      expect(result.stdout).toContain("beta/RN-94 Fix the potato");
       // The holder is spelled as an id, which is noise where the reader
-      // typed a prefix — and `roise/158` would name a different card.
+      // typed a prefix — and `beta/158` would name a different card.
       expect(result.stdout).not.toContain("moved from 68/");
-      expect(result.stdout).not.toContain("roise/RN-158");
+      expect(result.stdout).not.toContain("beta/RN-158");
     });
 
     it("carries the typed ref into --json beside the real address", async () => {
       const { fetchImpl } = fakeFetch([
-        ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+        ["GET", "/api/projects/acme/references/config", prefixed(null)],
         ["GET", "/api/me/reference-directory", OWN_ONLY],
         ["GET", "/api/me/refs/resolve", ANSWER],
         ["GET", "/api/projects/68/issues/158", moved],
         ["GET", "/api/projects/68/references/config", { __status: 404 }],
-        ...viewRoutes("roise", 94),
-        ["GET", "/api/projects/roise/references/config", prefixed("RN")],
+        ...viewRoutes("beta", 94),
+        ["GET", "/api/projects/beta/references/config", prefixed("RN")],
       ]);
       const result = await runCli(["issue", "view", "CH-158", "--json"], {
         fetchImpl,
-        env: loggedInEnv("dogfood"),
+        env: loggedInEnv("acme"),
       });
       expect(result.exitCode).toBe(0);
       const parsed = JSON.parse(result.stdout) as { moved_from: unknown };
@@ -2427,62 +2424,62 @@ describe("positional prefix resolution (T-214)", () => {
 
     it("reports today's refusal, word for word, when it has no answer", async () => {
       const { fetchImpl, calls } = fakeFetch([
-        ...viewRoutes("dogfood", 1),
-        ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+        ...viewRoutes("acme", 1),
+        ["GET", "/api/projects/acme/references/config", prefixed(null)],
         ["GET", "/api/me/reference-directory", DIRECTORY],
         ["GET", "/api/me/refs/resolve", { __status: 404 }],
       ]);
-      const result = await runCli(["issue", "view", "FOO-1", "-p", "dogfood"], {
+      const result = await runCli(["issue", "view", "FOO-1", "-p", "acme"], {
         fetchImpl,
         env: loggedInEnv(),
       });
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toBe(
         'error: no project uses the prefix "FOO" (from "FOO-1")\n' +
-          'write this project\'s own card as "#1" or "dogfood/1"; ' +
+          'write this project\'s own card as "#1" or "acme/1"; ' +
           "prefixes in reach: CH- (homelab), T- (todou)\n",
       );
       // The read is best-effort, so stdout alone cannot tell "asked and
       // was told no" from "never asked".
       expect(hit(calls, "/me/refs/resolve")).toBe(1);
-      expect(hit(calls, "/projects/dogfood/issues/1")).toBe(0);
+      expect(hit(calls, "/projects/acme/issues/1")).toBe(0);
     });
 
     it("reports the same on a server that has no such endpoint", async () => {
       // The route is absent entirely, which is what an old server is.
       const { fetchImpl } = fakeFetch([
-        ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+        ["GET", "/api/projects/acme/references/config", prefixed(null)],
         ["GET", "/api/me/reference-directory", DIRECTORY],
       ]);
-      const result = await runCli(["issue", "view", "FOO-1", "-p", "dogfood"], {
+      const result = await runCli(["issue", "view", "FOO-1", "-p", "acme"], {
         fetchImpl,
         env: loggedInEnv(),
       });
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toBe(
         'error: no project uses the prefix "FOO" (from "FOO-1")\n' +
-          'write this project\'s own card as "#1" or "dogfood/1"; ' +
+          'write this project\'s own card as "#1" or "acme/1"; ' +
           "prefixes in reach: CH- (homelab), T- (todou)\n",
       );
     });
 
     it("lets -p through when that is where the card now is", async () => {
-      // The report this card came from: `-p roise` with a ref whose prefix
+      // The report this card came from: `-p beta` with a ref whose prefix
       // names the project the card LEFT. Judging by the prefix refused it.
       const { fetchImpl } = fakeFetch([
-        ["GET", "/api/projects/roise/references/config", prefixed("RN")],
+        ["GET", "/api/projects/beta/references/config", prefixed("RN")],
         ["GET", "/api/me/reference-directory", OWN_ONLY],
         ["GET", "/api/me/refs/resolve", ANSWER],
         ["GET", "/api/projects/68/issues/158", moved],
         ["GET", "/api/projects/68/references/config", { __status: 404 }],
-        ...viewRoutes("roise", 94),
+        ...viewRoutes("beta", 94),
       ]);
-      const result = await runCli(["issue", "view", "CH-158", "-p", "roise"], {
+      const result = await runCli(["issue", "view", "CH-158", "-p", "beta"], {
         fetchImpl,
         env: loggedInEnv(),
       });
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("roise/RN-94 Fix the potato");
+      expect(result.stdout).toContain("beta/RN-94 Fix the potato");
     });
 
     it("refuses -p naming a project the card is not in, by its real address", async () => {
@@ -2497,9 +2494,9 @@ describe("positional prefix resolution (T-214)", () => {
       });
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toBe(
-        'error: "CH-158" resolves to project "roise" (prefix CH), ' +
+        'error: "CH-158" resolves to project "beta" (prefix CH), ' +
           'but -p/--project says "todou"\n' +
-          'write "roise/94" for that card, or drop -p/--project\n',
+          'write "beta/94" for that card, or drop -p/--project\n',
       );
       // The old hint invented `todou/158` — a card number that in the
       // deployment this was found on named a real, unrelated card.
@@ -2509,12 +2506,12 @@ describe("positional prefix resolution (T-214)", () => {
 
     it("asks once per ref across a batch", async () => {
       const { fetchImpl, calls } = fakeFetch([
-        ["GET", "/api/projects/dogfood/references/config", prefixed(null)],
+        ["GET", "/api/projects/acme/references/config", prefixed(null)],
         ["GET", "/api/me/reference-directory", OWN_ONLY],
         ["GET", "/api/me/refs/resolve", { __status: 404 }],
       ]);
       const result = await runCli(
-        ["issue", "view", "FOO-1", "FOO-1", "FOO-2", "-p", "dogfood"],
+        ["issue", "view", "FOO-1", "FOO-1", "FOO-2", "-p", "acme"],
         { fetchImpl, env: loggedInEnv() },
       );
       expect(result.exitCode).toBe(1);
@@ -2527,8 +2524,8 @@ describe("positional prefix resolution (T-214)", () => {
   it("keeps the loose reading when the config cannot be read", async () => {
     // An old server has no config route at all; the T-80 behaviour — take
     // the number, ignore the prefix — has to survive there.
-    const { fetchImpl, calls } = fakeFetch(viewRoutes("dogfood", 1));
-    const result = await runCli(["issue", "view", "FOO-1", "-p", "dogfood"], {
+    const { fetchImpl, calls } = fakeFetch(viewRoutes("acme", 1));
+    const result = await runCli(["issue", "view", "FOO-1", "-p", "acme"], {
       fetchImpl,
       env: loggedInEnv(),
     });

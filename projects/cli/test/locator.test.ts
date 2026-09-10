@@ -316,7 +316,7 @@ describe("resolvePrefixedRef, rung 4: the server resolves what we cannot", () =>
         inputs({
           resolved: {
             names: { project_ref: "68", number: 158 },
-            at: { slug: "roise", number: 94 },
+            at: { slug: "beta", number: 94 },
           },
         }),
       ),

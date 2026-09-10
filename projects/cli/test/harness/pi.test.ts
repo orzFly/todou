@@ -129,13 +129,13 @@ describe("pi detection", () => {
       agentDir: dir,
       cwd: project,
       id: SID,
-      lines: [modelChange("llm-gw", "deepseek-v4-pro"), userLine],
+      lines: [modelChange("llm-gw", "example-v4-pro"), userLine],
     });
     expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
       {
         agent: "pi",
         session_id: SID,
-        model: "llm-gw/deepseek-v4-pro",
+        model: "llm-gw/example-v4-pro",
       },
     );
   });
@@ -227,12 +227,12 @@ describe("pi detection", () => {
       agentDir: dir,
       cwd: project,
       id: SID,
-      lines: [modelChange("llm-gw", "deepseek-v4-pro")],
+      lines: [modelChange("llm-gw", "example-v4-pro")],
     });
     expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, nested)).toEqual({
       agent: "pi",
       session_id: SID,
-      model: "llm-gw/deepseek-v4-pro",
+      model: "llm-gw/example-v4-pro",
     });
   });
 
@@ -278,7 +278,7 @@ describe("pi detection", () => {
       agentDir: dir,
       cwd: project,
       id: SID,
-      lines: [modelChange("llm-gw", "deepseek-v4-pro")],
+      lines: [modelChange("llm-gw", "example-v4-pro")],
     });
     expect(
       detect(
@@ -290,7 +290,7 @@ describe("pi detection", () => {
         home,
         project,
       )?.model,
-    ).toBe("llm-gw/deepseek-v4-pro");
+    ).toBe("llm-gw/example-v4-pro");
   });
 
   it("falls back to the registry order with no readable process tree", () => {
@@ -332,14 +332,14 @@ describe("pi detection", () => {
       cwd: project,
       id: SID,
       lines: [
-        modelChange("llm-gw", "deepseek-v4-pro"),
+        modelChange("llm-gw", "example-v4-pro"),
         JSON.stringify({ type: "note", text: 'mentions "model" but is junk' }),
         '{"type":"model_change","modelId":',
       ],
     });
     expect(
       detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)?.model,
-    ).toBe("llm-gw/deepseek-v4-pro");
+    ).toBe("llm-gw/example-v4-pro");
   });
 });
 
@@ -515,7 +515,7 @@ describe("cli integration", () => {
       agentDir: dir,
       cwd: process.cwd(),
       id: SID,
-      lines: [modelChange("llm-gw", "deepseek-v4-pro")],
+      lines: [modelChange("llm-gw", "example-v4-pro")],
     });
     const { fetchImpl } = fakeFetch([["GET", "/api/me", me]]);
     const result = await runCli(["whoami"], {
@@ -524,7 +524,7 @@ describe("cli integration", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toContain(
-      `detected harness: pi (session ${SID}, model llm-gw/deepseek-v4-pro)`,
+      `detected harness: pi (session ${SID}, model llm-gw/example-v4-pro)`,
     );
   });
 

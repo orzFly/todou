@@ -103,7 +103,7 @@ export class WatchCommand extends ProjectCommand {
       both name it: an \`opened\` entry carries the card's title, quoted, and
       then its body in the same block shape a comment uses; a reference
       carries the title of the card it came from, spelled that project's way
-      (\`by dogfood#31 "…"\`) when it is not the one being read. **A title is
+      (\`by acme#31 "…"\`) when it is not the one being read. **A title is
       never cut** — not by \`--summary\`, which governs bodies. A card that
       cannot be read — trashed, moved away, or a read that failed — leaves
       the line exactly as it was, title and all absent.

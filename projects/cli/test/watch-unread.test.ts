@@ -319,7 +319,7 @@ describe("watch (project-level)", () => {
    */
   it("gives a comment's whole body, header line then indented continuation", async () => {
     const instruction =
-      "要在 dogfood 上开——先把 CLI 发布到镜像里\n\n然后再回来说一声";
+      "要在 acme 上开——先把 CLI 发布到镜像里\n\n然后再回来说一声";
     const { fetchImpl } = fakeFetch([
       ["GET", "/api/me", me],
       [
@@ -353,7 +353,7 @@ describe("watch (project-level)", () => {
     const lines = result.stdout.trimEnd().split("\n");
     expect(lines).toHaveLength(5);
     expect(lines[0]).toMatch(
-      /^#3 #comment-9 User commented .+: 要在 dogfood 上开——先把 CLI 发布到镜像里$/,
+      /^#3 #comment-9 User commented .+: 要在 acme 上开——先把 CLI 发布到镜像里$/,
     );
     // A real newline, not a fold: the paragraph break survives and the
     // continuation carries the indent that keeps a `^\S` split honest.

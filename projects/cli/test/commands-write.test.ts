@@ -188,7 +188,7 @@ describe("issue edit", () => {
     ]);
     const result = await runCli(
       ["issue", "edit", "todou/3", "--title", "Renamed"],
-      { fetchImpl, env: loggedInEnv("dogfood") },
+      { fetchImpl, env: loggedInEnv("acme") },
     );
     expect(result.exitCode).toBe(0);
     expect(patched).toEqual({ title: "Renamed" });

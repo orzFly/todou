@@ -188,8 +188,9 @@ export function projectTriggerAt(
 
 /**
  * Shortest word that may open the project panel. Measured over this
- * repository's English documentation (2786 words) against a pool of `T-`,
- * `todou/`, `DOG-` and `dogfood/`: one character opens on 18.5% of words,
+ * repository's English documentation (2786 words) against a pool of `T-`
+ * and `todou/` plus a second project's prefix and slug: one character opens
+ * on 18.5% of words,
  * two on 5.6%, three on 2.5% — and of those 69 hits, 60 are the word "todou"
  * itself, where opening is the right answer. Four characters selects exactly
  * the same words as three, so three is the shortest threshold whose hits

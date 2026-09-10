@@ -81,7 +81,7 @@ describe("worker-hosted pglite", () => {
     // The worker builds its own PGlite instance, so it needs pg_trgm linked
     // in separately from the two sites in driver.ts (T-141) — miss it and
     // migration 0010's CREATE EXTENSION fails on this path alone, which is
-    // the one the dogfood deployment runs on.
+    // the one the acme deployment runs on.
     const res = await t.app.request(
       `/api/projects/workerized/search?q=${encodeURIComponent("other thread")}`,
       { headers: { cookie } },

@@ -110,8 +110,8 @@ describe("summarize", () => {
   });
 
   it("counts CJK by character, not by byte", () => {
-    expect(summarize("要在 dogfood 上开先把 CLI 发布到镜像里", 8)).toBe(
-      "要在 dogfo…",
+    expect(summarize("要在 acme 上开先把 CLI 发布到镜像里", 8)).toBe(
+      "要在 acme …",
     );
   });
 

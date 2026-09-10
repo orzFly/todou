@@ -402,7 +402,7 @@ describe("refs migrate", () => {
   });
 
   it("reads a retired slug in a link's href the same way as in a token", async () => {
-    // Measured on the dogfood corpus: every unresolved candidate in one
+    // Measured on the acme corpus: every unresolved candidate in one
     // project was an attachment URL spelling that project's PREVIOUS slug.
     // A token would have resolved — the scanner normalises it through the
     // slug history — so an href that did not was the two paths disagreeing.

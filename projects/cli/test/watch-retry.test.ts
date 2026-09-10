@@ -61,7 +61,7 @@ describe("watchRetryOptions", () => {
   };
 
   it("blocking budget outlasts a slow deploy restart, poll stays snappy", () => {
-    // A dogfood restart is a measured ~92s outage (SIGTERM ignored, systemd
+    // A acme restart is a measured ~92s outage (SIGTERM ignored, systemd
     // kills at 90s); the sentinel must never give up inside that window.
     expect(
       guaranteedRideOutMs(watchRetryOptions({ poll: false })),

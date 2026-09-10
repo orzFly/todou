@@ -74,7 +74,7 @@ one several projects hold are both refused (exit 1) before any card is read, so 
 another project cannot hand you a different card. A holder you cannot read is resolved by the server
 on your behalf, and only ever to a card that is yours to read; when it will not answer you get the
 same refusal as a prefix nobody holds. `-p` therefore stays a fence, judged by where the card **is
-now**: `CH-158 -p roise` is right for a card that has moved into roise and refused, naming the card's
+now**: `CH-158 -p beta` is right for a card that has moved into beta and refused, naming the card's
 real address, when it has not. `<proj>/T-16` is checked against that project's own prefixes, current
 and retired.
 
@@ -190,7 +190,7 @@ todou issue watch 16 -p <proj> --follow=uds                            # the sam
   returns one batch N seconds after the first entry.
 - The two entries that are about a card name it: an `opened` entry gives the card's title in quotes
   and then its body, in the same block shape; a reference gives the title of the card it came from
-  (`by T-281 "…"` locally, `by dogfood#31 "…"` from another project, plus `#comment-<id>` when the
+  (`by T-281 "…"` locally, `by acme#31 "…"` from another project, plus `#comment-<id>` when the
   mention has one). Titles are never truncated — `--summary` governs bodies. A card nobody can read
   leaves the line without a title, which is all a reader loses.
 - `--summary` buys back one line per entry, body folded and cut: bare it means 120 characters,

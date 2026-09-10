@@ -20,12 +20,12 @@ const AT = "2026-06-01T00:00:00Z";
 const ORIGIN = "https://todou.example";
 
 /** Project ids the fake resolver below hands out, one per slug. */
-const IDS: Record<string, number> = { todou: 7, alpha: 12, roise: 3 };
+const IDS: Record<string, number> = { todou: 7, alpha: 12, beta: 3 };
 
 const ANCHOR: ScanConfig = {
   internalPrefix: null,
   cross: {
-    slugs: ["todou", "alpha", "roise"],
+    slugs: ["todou", "alpha", "beta"],
     directory: {
       entries: [{ prefix: "T", slug: "todou", from: "2025-01-01", to: null }],
       contested: [],
@@ -121,7 +121,7 @@ describe("token rewrites", () => {
     ["alpha#3", "[alpha#3](/projects/12/issues/3)"],
     ["alpha/3", "[alpha/3](/projects/12/issues/3)"],
     ["alpha/#3", "[alpha/#3](/projects/12/issues/3)"],
-    ["roise/T-3", "[roise/T-3](/projects/3/issues/3)"],
+    ["beta/T-3", "[beta/T-3](/projects/3/issues/3)"],
     ["T-9", "[T-9](/projects/7/issues/9)"],
     ["#12#comment-34", "[#12#comment-34](/projects/7/issues/12#comment-34)"],
     ["#comment-34", "[#comment-34](/projects/7/issues/1#comment-34)"],
@@ -165,7 +165,7 @@ describe("href normalisation", () => {
   });
 
   it("keeps the /view twin a /view twin", () => {
-    expect(resolve("[f](/api/projects/roise/attachments/8/view)")).toBe(
+    expect(resolve("[f](/api/projects/beta/attachments/8/view)")).toBe(
       "[f](/api/projects/3/attachments/8/view)",
     );
   });
@@ -444,7 +444,7 @@ describe("maskMarkdownCode", () => {
   });
 
   it("leaves text with no code alone", () => {
-    const text = "plain #1 and roise#7";
+    const text = "plain #1 and beta#7";
     expect(maskMarkdownCode(text)).toBe(text);
   });
 });

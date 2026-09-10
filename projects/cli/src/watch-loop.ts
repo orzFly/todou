@@ -142,9 +142,9 @@ export function watchTimeoutSec(
 
 /**
  * The retry budgets behind watch/poll commands. A blocking watch is a
- * sentinel: it must ride out a full deploy restart, and on dogfood the
- * server today ignores SIGTERM, so systemd's 90s stop timeout makes every
- * restart a ~92s outage. 14 attempts guarantee ≥135s of retrying even at
+ * sentinel: it must ride out a full deploy restart, and on our deployment
+ * the server today ignores SIGTERM, so systemd's 90s stop timeout makes
+ * every restart a ~92s outage. 14 attempts guarantee ≥135s of retrying even at
  * the jitter floor (~200s typical) before giving up with exit code 4.
  * `--poll` callers expect promptness, so a blip gets two quick retries and
  * a real outage fails fast. `--forever` asked for exactly one ending —

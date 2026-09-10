@@ -23,12 +23,12 @@ const actor = {
   owner: null,
 };
 
-/** `todou` is id 2 and the project being read; `dogfood` is id 7. */
+/** `todou` is id 2 and the project being read; `acme` is id 7. */
 const spelling = {
   refPrefix: "T",
   projectId: 2,
   slugOfProject: (id: unknown) =>
-    id === 2 ? "todou" : id === 7 ? "dogfood" : null,
+    id === 2 ? "todou" : id === 7 ? "acme" : null,
 };
 
 const opened = (project: string, number: number): ActivityCardRef => ({
@@ -186,18 +186,18 @@ describe("resolveActivityCards", () => {
   it("groups by project, one list request each", async () => {
     const { client, calls } = stub([
       ["GET", "/api/projects/todou/issues", { items: [card(281, "本项目")] }],
-      ["GET", "/api/projects/dogfood/issues", { items: [card(31, "隔壁")] }],
+      ["GET", "/api/projects/acme/issues", { items: [card(31, "隔壁")] }],
     ]);
     const cardOf = await resolveActivityCards(client, [
       referenced("todou", 30, { by_project_id: 2, by_issue: 281 }),
       referenced("todou", 30, { by_project_id: 7, by_issue: 31 }),
       // Pre-T-266 payloads name the project by slug; same group as above.
-      referenced("todou", 30, { by_project: "dogfood", by_issue: 31 }),
+      referenced("todou", 30, { by_project: "acme", by_issue: 31 }),
     ]);
     expect(cardOf("todou", 281)?.title).toBe("本项目");
-    expect(cardOf("dogfood", 31)?.title).toBe("隔壁");
+    expect(cardOf("acme", 31)?.title).toBe("隔壁");
     expect(listed(calls, "todou")).toEqual(["281"]);
-    expect(listed(calls, "dogfood")).toEqual(["31"]);
+    expect(listed(calls, "acme")).toEqual(["31"]);
   });
 
   it("skips a card the whole-card read already covers", async () => {
@@ -229,7 +229,7 @@ describe("resolveActivityCards", () => {
           throw new Error("ECONNRESET");
         },
       ],
-      ["GET", "/api/projects/dogfood/issues", { items: [card(31, "隔壁")] }],
+      ["GET", "/api/projects/acme/issues", { items: [card(31, "隔壁")] }],
     ]);
     const cardOf = await resolveActivityCards(client, [
       opened("todou", 146),
@@ -239,6 +239,6 @@ describe("resolveActivityCards", () => {
     expect(cardOf("todou", 146)).toBeUndefined();
     expect(cardOf("todou", 281)).toBeUndefined();
     // The read that worked still counts — one failure is not the batch's.
-    expect(cardOf("dogfood", 31)?.title).toBe("隔壁");
+    expect(cardOf("acme", 31)?.title).toBe("隔壁");
   });
 });

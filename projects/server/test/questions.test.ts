@@ -19,7 +19,7 @@ const QUESTIONS = [
   {
     question: "Ship behind a flag?",
     multiple: true,
-    options: [{ label: "dev" }, { label: "dogfood" }, { label: "prod" }],
+    options: [{ label: "dev" }, { label: "acme" }, { label: "prod" }],
   },
 ];
 
@@ -208,7 +208,7 @@ describe.each(PLACEMENTS)("questions T-19 (%s placement)", (placement) => {
         key: "q2",
         selected: [
           { index: 0, label: "dev" },
-          { index: 1, label: "dogfood" },
+          { index: 1, label: "acme" },
         ],
         other: null,
         declined: false,

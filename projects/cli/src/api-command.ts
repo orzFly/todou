@@ -408,7 +408,7 @@ export abstract class ProjectCommand extends ApiCommand {
         at = answer?.at;
       } else resolved = listed;
     } else resolved = own;
-    // What keeps `-p dogfood` a sandbox fence: a prefix that resolves
+    // What keeps `-p acme` a sandbox fence: a prefix that resolves
     // elsewhere refuses rather than overriding the flag, so a ref pasted
     // from another project cannot silently redirect a command at it.
     // Neither a first-rung hit nor the loose fallback can trip this — both
@@ -416,8 +416,8 @@ export abstract class ProjectCommand extends ApiCommand {
     //
     // Judged by where the card IS, not by which project the prefix names:
     // the two part company as soon as a card moves, and judging by the
-    // prefix refused `CH-158 -p roise` for a card sitting in roise, with a
-    // hint naming `roise/158` — a different card that really existed.
+    // prefix refused `CH-158 -p beta` for a card sitting in beta, with a
+    // hint naming `beta/158` — a different card that really existed.
     const landed = at?.slug ?? resolved.project;
     if (this.project !== undefined && this.project !== landed) {
       // The project has to be spelled out: unlike `todou/16`, the one a

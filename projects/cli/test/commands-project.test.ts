@@ -36,10 +36,10 @@ function makeRepo(dir: string, remotes: Array<[string, string]> = []): void {
   }
 }
 
-const dogfood: Route = [
+const acme: Route = [
   "GET",
-  "/api/projects/dogfood",
-  { id: 1, slug: "dogfood", name: "Dogfood", description: "" },
+  "/api/projects/acme",
+  { id: 1, slug: "acme", name: "Acme", description: "" },
 ];
 
 function readToml(path: string): Record<string, unknown> {
@@ -49,8 +49,8 @@ function readToml(path: string): Record<string, unknown> {
 describe("project link → directory config", () => {
   it("writes .todou.toml with server and project when there is no remote", async () => {
     const { home, work } = setup();
-    const { fetchImpl } = fakeFetch([dogfood]);
-    const result = await runCli(["project", "link", "dogfood"], {
+    const { fetchImpl } = fakeFetch([acme]);
+    const result = await runCli(["project", "link", "acme"], {
       fetchImpl,
       env: { ...loggedInEnv(), HOME: home },
       cwd: work,
@@ -58,10 +58,10 @@ describe("project link → directory config", () => {
     expect(result.exitCode).toBe(0);
     expect(readToml(join(work, ".todou.toml"))).toEqual({
       server: "http://stub.test",
-      project: "dogfood",
+      project: "acme",
     });
     expect(result.stderr).toContain(
-      "linked ./.todou.toml → http://stub.test · dogfood",
+      "linked ./.todou.toml → http://stub.test · acme",
     );
     expect(result.stderr).toContain("not auto-gitignored");
     expect(result.stderr).not.toContain("takes precedence");
@@ -71,8 +71,8 @@ describe("project link → directory config", () => {
   it("prefers .config/todou.toml when a .config directory exists", async () => {
     const { home, work } = setup();
     mkdirSync(join(work, ".config"));
-    const { fetchImpl } = fakeFetch([dogfood]);
-    const result = await runCli(["project", "link", "dogfood"], {
+    const { fetchImpl } = fakeFetch([acme]);
+    const result = await runCli(["project", "link", "acme"], {
       fetchImpl,
       env: { ...loggedInEnv(), HOME: home },
       cwd: work,
@@ -86,29 +86,29 @@ describe("project link → directory config", () => {
     const { home, work } = setup();
     writeFileSync(join(work, ".todou.toml"), 'project = "old"\n');
     mkdirSync(join(work, ".config"));
-    const { fetchImpl } = fakeFetch([dogfood]);
-    const result = await runCli(["project", "link", "dogfood"], {
+    const { fetchImpl } = fakeFetch([acme]);
+    const result = await runCli(["project", "link", "acme"], {
       fetchImpl,
       env: { ...loggedInEnv(), HOME: home },
       cwd: work,
     });
     expect(result.exitCode).toBe(0);
-    expect(readToml(join(work, ".todou.toml")).project).toBe("dogfood");
+    expect(readToml(join(work, ".todou.toml")).project).toBe("acme");
     expect(existsSync(join(work, ".config", "todou.toml"))).toBe(false);
   });
 
   it("rewrites the whole file, dropping unknown keys", async () => {
     const { home, work } = setup();
     writeFileSync(join(work, ".todou.toml"), 'project = "old"\nfuture = 1\n');
-    const { fetchImpl } = fakeFetch([dogfood]);
-    await runCli(["project", "link", "dogfood"], {
+    const { fetchImpl } = fakeFetch([acme]);
+    await runCli(["project", "link", "acme"], {
       fetchImpl,
       env: { ...loggedInEnv(), HOME: home },
       cwd: work,
     });
     expect(readToml(join(work, ".todou.toml"))).toEqual({
       server: "http://stub.test",
-      project: "dogfood",
+      project: "acme",
     });
   });
 
@@ -118,8 +118,8 @@ describe("project link → directory config", () => {
     makeRepo(repo);
     const sub = join(repo, "sub");
     mkdirSync(sub);
-    const { fetchImpl } = fakeFetch([dogfood]);
-    const result = await runCli(["project", "link", "dogfood"], {
+    const { fetchImpl } = fakeFetch([acme]);
+    const result = await runCli(["project", "link", "acme"], {
       fetchImpl,
       env: { ...loggedInEnv(), HOME: home },
       cwd: sub,
@@ -137,8 +137,8 @@ describe("project link → directory config", () => {
     const sub = join(repo, "sub");
     mkdirSync(sub);
     writeFileSync(join(sub, ".todou.toml"), 'project = "near"\n');
-    const { fetchImpl } = fakeFetch([dogfood]);
-    const result = await runCli(["project", "link", "dogfood"], {
+    const { fetchImpl } = fakeFetch([acme]);
+    const result = await runCli(["project", "link", "acme"], {
       fetchImpl,
       env: { ...loggedInEnv(), HOME: home },
       cwd: sub,
@@ -153,21 +153,21 @@ describe("project link → directory config", () => {
     const { home, work, xdg } = setup();
     const repo = join(work, "repo");
     makeRepo(repo, [["origin", "git@example.com:me/repo.git"]]);
-    const { fetchImpl } = fakeFetch([dogfood]);
-    const result = await runCli(["project", "link", "dogfood"], {
+    const { fetchImpl } = fakeFetch([acme]);
+    const result = await runCli(["project", "link", "acme"], {
       fetchImpl,
       env: { ...loggedInEnv(), HOME: home, XDG_CONFIG_HOME: xdg },
       cwd: repo,
     });
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toContain(
-      "linked git@example.com:me/repo.git → http://stub.test · dogfood",
+      "linked git@example.com:me/repo.git → http://stub.test · acme",
     );
     expect(readToml(join(xdg, "todou", "config.toml")).bindings).toEqual([
       {
         remote: "git@example.com:me/repo.git",
         server: "http://stub.test",
-        project: "dogfood",
+        project: "acme",
       },
     ]);
     expect(existsSync(join(repo, ".todou.toml"))).toBe(false);
@@ -177,8 +177,8 @@ describe("project link → directory config", () => {
     const { home, work, xdg } = setup();
     const repo = join(work, "repo");
     makeRepo(repo, [["origin", "git@example.com:me/repo.git"]]);
-    const { fetchImpl } = fakeFetch([dogfood]);
-    const result = await runCli(["project", "link", "dogfood", "--local"], {
+    const { fetchImpl } = fakeFetch([acme]);
+    const result = await runCli(["project", "link", "acme", "--local"], {
       fetchImpl,
       env: { ...loggedInEnv(), HOME: home, XDG_CONFIG_HOME: xdg },
       cwd: repo,
@@ -190,8 +190,8 @@ describe("project link → directory config", () => {
 
   it("--global without a remote is an error", async () => {
     const { home, work } = setup();
-    const { fetchImpl } = fakeFetch([dogfood]);
-    const result = await runCli(["project", "link", "dogfood", "--global"], {
+    const { fetchImpl } = fakeFetch([acme]);
+    const result = await runCli(["project", "link", "acme", "--global"], {
       fetchImpl,
       env: { ...loggedInEnv(), HOME: home },
       cwd: work,
@@ -202,9 +202,9 @@ describe("project link → directory config", () => {
 
   it("--local with --global is an error", async () => {
     const { home, work } = setup();
-    const { fetchImpl } = fakeFetch([dogfood]);
+    const { fetchImpl } = fakeFetch([acme]);
     const result = await runCli(
-      ["project", "link", "dogfood", "--local", "--global"],
+      ["project", "link", "acme", "--local", "--global"],
       { fetchImpl, env: { ...loggedInEnv(), HOME: home }, cwd: work },
     );
     expect(result.exitCode).toBe(1);
@@ -289,10 +289,10 @@ describe("project unlink → directory config", () => {
 describe("project edit", () => {
   const patched: Route = [
     "PATCH",
-    "/api/projects/dogfood",
+    "/api/projects/acme",
     (init: RequestInit) => ({
       id: 1,
-      slug: "dogfood",
+      slug: "acme",
       ...JSON.parse(String(init.body)),
     }),
   ];
@@ -303,18 +303,18 @@ describe("project edit", () => {
     const { home, work } = setup();
     const { fetchImpl, calls } = fakeFetch([patched]);
     const result = await runCli(
-      ["project", "edit", "dogfood", "--name", "Dogfood", "--description", "A"],
+      ["project", "edit", "acme", "--name", "Acme", "--description", "A"],
       { fetchImpl, env: { ...loggedInEnv(), HOME: home }, cwd: work },
     );
     expect(result.exitCode).toBe(0);
-    expect(patchBody(calls)).toEqual({ name: "Dogfood", description: "A" });
-    expect(result.stdout).toContain("updated project dogfood — Dogfood");
+    expect(patchBody(calls)).toEqual({ name: "Acme", description: "A" });
+    expect(result.stdout).toContain("updated project acme — Acme");
   });
 
   it("omits the field that was not passed, and clears on --description ''", async () => {
     const { home, work } = setup();
     const named = fakeFetch([patched]);
-    await runCli(["project", "edit", "dogfood", "--name", "Renamed"], {
+    await runCli(["project", "edit", "acme", "--name", "Renamed"], {
       fetchImpl: named.fetchImpl,
       env: { ...loggedInEnv(), HOME: home },
       cwd: work,
@@ -322,7 +322,7 @@ describe("project edit", () => {
     expect(patchBody(named.calls)).toEqual({ name: "Renamed" });
 
     const cleared = fakeFetch([patched]);
-    await runCli(["project", "edit", "dogfood", "--description", ""], {
+    await runCli(["project", "edit", "acme", "--description", ""], {
       fetchImpl: cleared.fetchImpl,
       env: { ...loggedInEnv(), HOME: home },
       cwd: work,
@@ -333,7 +333,7 @@ describe("project edit", () => {
   it("refuses a no-op edit before making a request", async () => {
     const { home, work } = setup();
     const { fetchImpl, calls } = fakeFetch([patched]);
-    const result = await runCli(["project", "edit", "dogfood"], {
+    const result = await runCli(["project", "edit", "acme"], {
       fetchImpl,
       env: { ...loggedInEnv(), HOME: home },
       cwd: work,
@@ -345,7 +345,7 @@ describe("project edit", () => {
 
   it("falls back to the directory config when the slug is omitted", async () => {
     const { home, work } = setup();
-    writeFileSync(join(work, ".todou.toml"), 'project = "dogfood"\n');
+    writeFileSync(join(work, ".todou.toml"), 'project = "acme"\n');
     const { fetchImpl, calls } = fakeFetch([patched]);
     const result = await runCli(["project", "edit", "--name", "Bound"], {
       fetchImpl,
@@ -353,7 +353,7 @@ describe("project edit", () => {
       cwd: work,
     });
     expect(result.exitCode).toBe(0);
-    expect(calls[0]?.url).toContain("/api/projects/dogfood");
+    expect(calls[0]?.url).toContain("/api/projects/acme");
     expect(patchBody(calls)).toEqual({ name: "Bound" });
   });
 
@@ -361,7 +361,7 @@ describe("project edit", () => {
     const { home, work } = setup();
     const { fetchImpl, calls } = fakeFetch([patched]);
     const result = await runCli(
-      ["project", "edit", "dogfood", "-p", "todou", "--name", "X"],
+      ["project", "edit", "acme", "-p", "todou", "--name", "X"],
       { fetchImpl, env: { ...loggedInEnv(), HOME: home }, cwd: work },
     );
     expect(result.exitCode).toBe(1);
@@ -373,14 +373,14 @@ describe("project edit", () => {
     const { home, work } = setup();
     const { fetchImpl } = fakeFetch([patched]);
     const result = await runCli(
-      ["project", "edit", "dogfood", "--name", "Dogfood", "--json"],
+      ["project", "edit", "acme", "--name", "Acme", "--json"],
       { fetchImpl, env: { ...loggedInEnv(), HOME: home }, cwd: work },
     );
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       id: 1,
-      slug: "dogfood",
-      name: "Dogfood",
+      slug: "acme",
+      name: "Acme",
     });
   });
 });
@@ -388,16 +388,16 @@ describe("project edit", () => {
 describe("project edit --slug (T-156)", () => {
   const renamed: Route = [
     "PATCH",
-    "/api/projects/dogfood",
+    "/api/projects/acme",
     (init: RequestInit) => ({
       id: 1,
-      name: "Dogfood",
+      name: "Acme",
       ...JSON.parse(String(init.body)),
     }),
   ];
   const reserved: Route = [
     "PATCH",
-    "/api/projects/dogfood",
+    "/api/projects/acme",
     {
       __status: 409,
       body: {
@@ -416,12 +416,12 @@ describe("project edit --slug (T-156)", () => {
     const { home, work } = setup();
     const { fetchImpl, calls } = fakeFetch([renamed]);
     const result = await runCli(
-      ["project", "edit", "dogfood", "--slug", "chowchow"],
+      ["project", "edit", "acme", "--slug", "chowchow"],
       { fetchImpl, env: { ...loggedInEnv(), HOME: home }, cwd: work },
     );
     expect(result.exitCode).toBe(0);
     expect(patchBody(calls)).toEqual({ slug: "chowchow" });
-    expect(result.stdout).toContain("renamed dogfood → chowchow");
+    expect(result.stdout).toContain("renamed acme → chowchow");
     expect(result.stdout).toContain("todou project link chowchow");
   });
 
@@ -429,7 +429,7 @@ describe("project edit --slug (T-156)", () => {
     const { home, work } = setup();
     const { fetchImpl, calls } = fakeFetch([reserved]);
     const result = await runCli(
-      ["project", "edit", "dogfood", "--slug", "taken"],
+      ["project", "edit", "acme", "--slug", "taken"],
       { fetchImpl, env: { ...loggedInEnv(), HOME: home }, cwd: work },
     );
     expect(result.exitCode).toBe(1);
@@ -441,7 +441,7 @@ describe("project edit --slug (T-156)", () => {
     const { home, work } = setup();
     const { fetchImpl, calls } = fakeFetch([renamed]);
     const result = await runCli(
-      ["project", "edit", "dogfood", "--slug", "taken", "--reclaim"],
+      ["project", "edit", "acme", "--slug", "taken", "--reclaim"],
       { fetchImpl, env: { ...loggedInEnv(), HOME: home }, cwd: work },
     );
     expect(result.exitCode).toBe(0);
@@ -495,7 +495,7 @@ describe("whoami project source", () => {
 
   it("names the directory config that supplied the project", async () => {
     const { home, work } = setup();
-    writeFileSync(join(work, ".todou.toml"), 'project = "dogfood"\n');
+    writeFileSync(join(work, ".todou.toml"), 'project = "acme"\n');
     const { fetchImpl } = fakeFetch([["GET", "/api/me", me]]);
     const result = await runCli(["whoami"], {
       fetchImpl,
@@ -504,7 +504,7 @@ describe("whoami project source", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toContain(
-      "project: dogfood (directory config ./.todou.toml)",
+      "project: acme (directory config ./.todou.toml)",
     );
   });
 

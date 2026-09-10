@@ -199,13 +199,13 @@ describe("omp detection", () => {
       sessionsRoot: sessionsIn(dir),
       cwd: project,
       id: SID,
-      lines: [modelChange("llm-gw/deepseek-v4-flash"), userLine],
+      lines: [modelChange("llm-gw/example-v4-flash"), userLine],
     });
     expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)).toEqual(
       {
         agent: "omp",
         session_id: SID,
-        model: "llm-gw/deepseek-v4-flash",
+        model: "llm-gw/example-v4-flash",
       },
     );
   });
@@ -261,12 +261,12 @@ describe("omp detection", () => {
       sessionsRoot: sessionsIn(dir),
       cwd: project,
       id: SID,
-      lines: [modelChange("llm-gw/deepseek-v4-flash")],
+      lines: [modelChange("llm-gw/example-v4-flash")],
     });
     expect(detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, nested)).toEqual({
       agent: "omp",
       session_id: SID,
-      model: "llm-gw/deepseek-v4-flash",
+      model: "llm-gw/example-v4-flash",
     });
   });
 
@@ -483,7 +483,7 @@ describe("omp detection", () => {
         sessionsRoot: sessionsIn(dir),
         cwd: project,
         id: SID,
-        lines: [modelChange("llm-gw/deepseek-v4-flash")],
+        lines: [modelChange("llm-gw/example-v4-flash")],
       });
       expect(
         detect(
@@ -497,7 +497,7 @@ describe("omp detection", () => {
           home,
           project,
         )?.model,
-      ).toBe("llm-gw/deepseek-v4-flash");
+      ).toBe("llm-gw/example-v4-flash");
     });
   });
 
@@ -544,14 +544,14 @@ describe("omp detection", () => {
       cwd: project,
       id: SID,
       lines: [
-        modelChange("llm-gw/deepseek-v4-flash"),
+        modelChange("llm-gw/example-v4-flash"),
         JSON.stringify({ type: "note", text: 'mentions "model" but is junk' }),
         '{"type":"model_change","model":',
       ],
     });
     expect(
       detect({ ...ENV, PI_CODING_AGENT_DIR: dir }, home, project)?.model,
-    ).toBe("llm-gw/deepseek-v4-flash");
+    ).toBe("llm-gw/example-v4-flash");
   });
 });
 
@@ -1029,7 +1029,7 @@ describe("cli integration", () => {
       sessionsRoot: sessionsIn(dir),
       cwd: process.cwd(),
       id: SID,
-      lines: [modelChange("llm-gw/deepseek-v4-flash")],
+      lines: [modelChange("llm-gw/example-v4-flash")],
       homeRoot: home,
     });
     const { fetchImpl } = fakeFetch([["GET", "/api/me", me]]);
@@ -1040,7 +1040,7 @@ describe("cli integration", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toContain(
-      `detected harness: omp (session ${SID}, model llm-gw/deepseek-v4-flash)`,
+      `detected harness: omp (session ${SID}, model llm-gw/example-v4-flash)`,
     );
   });
 
