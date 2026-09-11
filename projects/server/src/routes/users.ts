@@ -26,6 +26,10 @@ export function userRoutes() {
     c.header("content-length", String(size));
     c.header("content-disposition", "inline");
     c.header("x-content-type-options", "nosniff");
+    // Same binding as the attachment routes: an avatar embedded cross-site
+    // loads nothing. The type is not normalised here — setAvatar allows only
+    // png, jpeg, webp and gif, so the stored value is an allowlist result.
+    c.header("cross-origin-resource-policy", "same-origin");
     // The URL embeds a per-upload version (?v=...), so the response can be
     // cached hard; a new upload changes the URL, not this cache entry.
     c.header("cache-control", "private, max-age=31536000, immutable");

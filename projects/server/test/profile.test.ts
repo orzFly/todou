@@ -157,6 +157,7 @@ describe("avatars", () => {
     expect(img.status).toBe(200);
     expect(img.headers.get("content-type")).toBe("image/png");
     expect(img.headers.get("cache-control")).toContain("immutable");
+    expect(img.headers.get("cross-origin-resource-policy")).toBe("same-origin");
     expect(new Uint8Array(await img.arrayBuffer())).toEqual(PNG_BYTES);
 
     // Replacing rotates the storage key, so the URL version changes.

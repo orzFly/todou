@@ -11,6 +11,7 @@ import type { Context } from "hono";
 import type { AppEnv } from "../auth/middleware.ts";
 import { ValidationFailedError } from "../errors.ts";
 import { contentDisposition } from "../http/content-disposition.ts";
+import { servedContentType } from "../http/content-type.ts";
 import {
   completeDirectUpload,
   listIssueAttachments,
@@ -258,21 +259,35 @@ export function attachmentRoutes() {
     const ctx = c.get("appCtx");
     const { stream, size } = await ctx.storage.getStream(row.storageKey);
 
-    c.header("content-type", row.contentType);
+    c.header(
+      "content-type",
+      servedContentType(
+        row.contentType,
+        disposition === "inline" ? "view" : "download",
+      ),
+    );
     c.header("content-length", String(size));
     c.header(
       "content-disposition",
       contentDisposition(disposition, row.filename),
     );
+    // Attachments are user-supplied and share the API's origin. A cross-site
+    // subresource load carries no session cookie (SameSite=Lax) and so already
+    // ends in a 401; CORP turns "you get nothing useful" into "the load never
+    // happens", which is worth having the day an unauthenticated path exists.
+    c.header("cross-origin-resource-policy", "same-origin");
+    // On both branches, not just the view: a `script` or `style` destination
+    // ignores content-disposition, so the download route needs the type
+    // binding as much as the view route does.
+    c.header("x-content-type-options", "nosniff");
     if (disposition === "inline") {
-      // Attachments are user-supplied and share the API's origin. The CSP
-      // sandbox (no allow-same-origin) gives the document an opaque origin
-      // even when this URL is opened as a top-level tab, so its scripts can
-      // run but cannot use the viewer's cookies against the API. The web
+      // The CSP sandbox (no allow-same-origin) gives the document an opaque
+      // origin even when this URL is opened as a top-level tab, so its scripts
+      // can run but cannot use the viewer's cookies against the API. The web
       // client's <iframe sandbox> is the first fence; this one holds when
-      // the URL is visited directly.
+      // the URL is visited directly. Only the view branch needs it — nothing
+      // renders from a download.
       c.header("content-security-policy", "sandbox allow-scripts");
-      c.header("x-content-type-options", "nosniff");
     }
     return c.body(Readable.toWeb(stream) as ReadableStream);
   };
@@ -294,9 +309,14 @@ export function attachmentRoutes() {
     });
     const url = await ctx.storage.urlFor(row.storageKey, {
       filename: row.filename,
-      contentType: row.contentType,
+      contentType: servedContentType(row.contentType, "download"),
     });
     if (url !== null) {
+      // Carried on the 302 like every other blob response, though the store's
+      // own response is what the browser finally uses and it replays only the
+      // response-content-* parameters. The part that cannot be closed in code
+      // is the operational requirement in docs/deploy.md.
+      c.header("cross-origin-resource-policy", "same-origin");
       // The redirect target expires; caching the 302 would outlive it.
       c.header("cache-control", "no-store");
       return c.redirect(url, 302);

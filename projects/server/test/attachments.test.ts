@@ -44,11 +44,12 @@ describe("attachments (fs backend)", () => {
 
   function upload(
     name: string,
-    content: string,
+    content: string | Uint8Array<ArrayBuffer>,
     extra?: Record<string, string>,
+    type = "text/plain",
   ) {
     const form = new FormData();
-    form.set("file", new File([content], name, { type: "text/plain" }));
+    form.set("file", new File([content], name, { type }));
     form.set("issue_number", "1");
     return t.app.request(`/api/projects/${slug}/attachments`, {
       method: "POST",
@@ -92,7 +93,12 @@ describe("attachments (fs backend)", () => {
   });
 
   it("serves the view route inline with a CSP sandbox (T-58)", async () => {
-    const res = await upload("demo.html", "<script>alert(1)</script>");
+    const res = await upload(
+      "demo.html",
+      "<script>alert(1)</script>",
+      undefined,
+      "text/html",
+    );
     const attachment = await json(res);
     const viewUrl = attachment.url.replace("/download/", "/view/");
 
@@ -107,15 +113,104 @@ describe("attachments (fs backend)", () => {
       expect(view.headers.get("content-security-policy")).toBe(
         "sandbox allow-scripts",
       );
+      expect(view.headers.get("content-type")).toBe("text/html");
       expect(view.headers.get("x-content-type-options")).toBe("nosniff");
     }
 
-    // The download twin stays a plain attachment with no sandbox headers.
+    // The download twin stays a plain attachment with no sandbox headers,
+    // and answers text/plain: a `script` destination ignores
+    // content-disposition, so an HTML file must not come back as one here.
     const download = await t.app.request(attachment.url, {
       headers: { cookie },
     });
     expect(download.headers.get("content-disposition")).toContain("attachment");
     expect(download.headers.get("content-security-policy")).toBeNull();
+    expect(download.headers.get("content-type")).toBe(
+      "text/plain; charset=utf-8",
+    );
+    expect(download.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  // The card's headline requirement: /download must never serve a script or
+  // stylesheet header, whichever type the uploader declared.
+  it.each([
+    ["main.js", "text/javascript"],
+    ["main.js", "application/javascript"],
+    ["theme.css", "text/css"],
+  ])("never serves %s (%s) as script or style", async (name, type) => {
+    const attachment = await json(
+      await upload(name, "body{}", undefined, type),
+    );
+    const urls = [
+      attachment.url,
+      attachment.url.replace("/download/", "/view/"),
+    ];
+    for (const url of urls) {
+      const res = await t.app.request(url, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    }
+  });
+
+  // The "图片不坏" regression guard: nosniff gates only script and style
+  // destinations, so an image still renders from the bytes.
+  it("keeps a png an image on both routes, byte for byte", async () => {
+    const bytes = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xd8, 0x00,
+    ]);
+    const attachment = await json(
+      await upload("shot.png", bytes, undefined, "image/png"),
+    );
+
+    for (const url of [
+      attachment.url,
+      attachment.url.replace("/download/", "/view/"),
+    ]) {
+      const res = await t.app.request(url, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("image/png");
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes);
+    }
+  });
+
+  it("leaves a pre-T-27 octet-stream row as octet-stream", async () => {
+    const attachment = await json(
+      await upload("old.bin", "bytes", undefined, "application/octet-stream"),
+    );
+    const res = await t.app.request(attachment.url, { headers: { cookie } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+  });
+
+  it("binds every blob response to this origin (CORP)", async () => {
+    const attachment = await json(await upload("corp.txt", "x"));
+    for (const url of [
+      attachment.url,
+      attachment.url.replace("/download/", "/view/"),
+    ]) {
+      const res = await t.app.request(url, { headers: { cookie } });
+      expect(res.headers.get("cross-origin-resource-policy")).toBe(
+        "same-origin",
+      );
+    }
+  });
+
+  // The download twin of this guard already exists; /view had no such test,
+  // so nothing would have caught a regression that started trusting the URL
+  // segment. Firefox takes the save-as name from content-disposition, so a
+  // link written with a misleading segment must not choose what lands on disk.
+  it("names the stored file on /view despite a lying URL segment", async () => {
+    const attachment = await json(await upload("honest.txt", "text"));
+    const view = await t.app.request(
+      `${attachment.url.replace(/\/download\/.*$/, "/view")}/not-the-real-name.bin`,
+      { headers: { cookie } },
+    );
+    expect(view.status).toBe(200);
+    expect(view.headers.get("content-disposition")).toBe(
+      'inline; filename="honest.txt"',
+    );
   });
 
   // Every one of these used to 500: a code point above 0xFF cannot go into a
@@ -483,9 +578,13 @@ describe("attachments (s3 backend)", () => {
     await fake.close();
   });
 
-  function multipartUpload(name: string, content: string) {
+  function multipartUpload(
+    name: string,
+    content: string | Uint8Array<ArrayBuffer>,
+    type = "text/plain",
+  ) {
     const form = new FormData();
-    form.set("file", new File([content], name, { type: "text/plain" }));
+    form.set("file", new File([content], name, { type }));
     form.set("issue_number", "1");
     return t.app.request(`/api/projects/${slug}/attachments`, {
       method: "POST",
@@ -536,6 +635,9 @@ describe("attachments (s3 backend)", () => {
       const res = await t.app.request(url, { headers: { cookie } });
       expect(res.status).toBe(302);
       expect(res.headers.get("cache-control")).toBe("no-store");
+      expect(res.headers.get("cross-origin-resource-policy")).toBe(
+        "same-origin",
+      );
       const location = res.headers.get("location") as string;
       const parsed = new URL(location);
       expect(parsed.searchParams.get("X-Amz-Signature")).toBeTruthy();
@@ -543,13 +645,85 @@ describe("attachments (s3 backend)", () => {
         "redirected.txt",
       );
       expect(parsed.searchParams.get("response-content-type")).toBe(
-        "text/plain",
+        "text/plain; charset=utf-8",
       );
       // The fake verifies SigV4 for real — a 200 proves the redirect target.
       const followed = await fetch(location);
       expect(followed.status).toBe(200);
       expect(await followed.text()).toBe("presigned bytes");
     }
+  });
+
+  // The presign is the only place the type policy can be enforced on this
+  // backend — S3 replays response-content-* and nothing else, so a script
+  // type here would come back from the store as one.
+  it("presigns a js attachment as text/plain, and the store replays it", async () => {
+    const attachment = await json(
+      await multipartUpload("evil.js", "alert(1)", "text/javascript"),
+    );
+    const res = await t.app.request(attachment.url, { headers: { cookie } });
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") as string;
+    expect(new URL(location).searchParams.get("response-content-type")).toBe(
+      "text/plain; charset=utf-8",
+    );
+
+    const followed = await fetch(location);
+    expect(followed.status).toBe(200);
+    expect(followed.headers.get("content-type")).toBe(
+      "text/plain; charset=utf-8",
+    );
+    expect(await followed.text()).toBe("alert(1)");
+  });
+
+  it("presigns a png as an image and serves its bytes", async () => {
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+    const attachment = await json(
+      await multipartUpload("shot.png", bytes, "image/png"),
+    );
+    const res = await t.app.request(attachment.url, { headers: { cookie } });
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") as string;
+    expect(new URL(location).searchParams.get("response-content-type")).toBe(
+      "image/png",
+    );
+
+    const followed = await fetch(location);
+    expect(followed.status).toBe(200);
+    expect(followed.headers.get("content-type")).toBe("image/png");
+    expect(new Uint8Array(await followed.arrayBuffer())).toEqual(bytes);
+  });
+
+  // The direct-upload ticket is the one path that can store a hostile type:
+  // DirectUploadRequest.content_type is an unvalidated z.string(), while the
+  // multipart route's File normalises an illegal type to "". Today this row
+  // 500s on the fs backend and puts a raw CRLF into a presign parameter here.
+  it("normalises a CRLF content_type declared on the ticket", async () => {
+    const body = "hostile type";
+    const ticket = await json(
+      await requestDirect({
+        filename: "hostile.txt",
+        content_type: "text/plain\r\nX-Evil: 1",
+        size: body.length,
+      }),
+    );
+    const put = await fetch(ticket.url, { method: "PUT", body });
+    expect(put.status).toBe(200);
+
+    const attachment = await json(await complete(ticket.upload_id));
+    const res = await t.app.request(attachment.url, { headers: { cookie } });
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") as string;
+    expect(new URL(location).searchParams.get("response-content-type")).toBe(
+      "application/octet-stream",
+    );
+
+    const followed = await fetch(location);
+    expect(followed.status).toBe(200);
+    expect(followed.headers.get("content-type")).toBe(
+      "application/octet-stream",
+    );
+    expect(await followed.text()).toBe(body);
   });
 
   // The store decodes this parameter and replays it as the response header,

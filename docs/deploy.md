@@ -673,7 +673,7 @@ Credentials resolve in order: `TODOU_STORAGE_S3_*` environment >
 (+ `AWS_SESSION_TOKEN`). The startup log names the source; the server
 refuses to boot if the bucket is unreachable.
 
-Two operational requirements:
+Three operational requirements:
 
 - **Bucket CORS.** Direct uploads (PUT) and the web app's text previews
   (GET after the 302) are cross-origin requests from the browser. MinIO's
@@ -694,6 +694,22 @@ Two operational requirements:
   host. HTML attachments are served through the sandboxed `/view` route
   either way, but a separate origin removes the whole class of
   same-origin confusion.
+
+- **Set `X-Content-Type-Options: nosniff` as a default response header**
+  on the bucket, or at the CDN in front of it. Attachment responses the
+  server streams carry it itself, but a download here is a 302 to a
+  presigned URL and S3 replays only the `response-content-*` parameters —
+  nothing in the presign can add the header. Without it, a stored
+  `text/javascript` served from the bucket's origin is executable in a
+  `script` destination. The separate-origin requirement above is what
+  keeps this from being urgent: a presigned URL on its own origin is a
+  capability that authenticates itself, and an attacker's script host on
+  an origin that is not the application's gains them nothing they could
+  not get from their own server. It becomes a real hole only when that
+  origin is shared with the app, which is what that bullet forbids — so a
+  deployment already following it can set this header on whatever
+  schedule it likes, and one that is not has a reason to fix the origin
+  first.
 
 ### Migrating existing attachments
 
