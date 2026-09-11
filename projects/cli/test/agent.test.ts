@@ -143,6 +143,7 @@ describe("agent opt-out-uds / opt-in-uds", () => {
         "https://todou.example": {
           token: "FAKE_H4RQ7XNM2VZB9KTC",
           tokens: { "claude-code": "FAKE_D6WJY3PLS8XGQF5N" },
+          instead_of: [],
         },
       },
       bindings: [

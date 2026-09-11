@@ -100,8 +100,12 @@ const TWO_SERVERS: CliConfig = {
     "https://todou.example": {
       token: SENTINELS.default,
       tokens: { "claude-code": SENTINELS.claude, harness: SENTINELS.harness },
+      instead_of: [],
     },
-    "https://staging.example": { tokens: { "bot-one": SENTINELS.other } },
+    "https://staging.example": {
+      tokens: { "bot-one": SENTINELS.other },
+      instead_of: [],
+    },
   },
   bindings: [],
 };
@@ -146,6 +150,7 @@ describe("config show", () => {
       context: {
         server: "https://todou.example",
         server_source: "default_server",
+        server_instead_of: null,
         token_source: "default",
         token_profile: null,
         project: null,
@@ -157,12 +162,14 @@ describe("config show", () => {
           active: false,
           default_token: false,
           profiles: ["bot-one"],
+          instead_of: [],
         },
         {
           origin: "https://todou.example",
           active: true,
           default_token: true,
           profiles: ["claude-code", "harness"],
+          instead_of: [],
         },
       ],
       bindings: [],
@@ -199,6 +206,7 @@ describe("config show", () => {
     expect(report.context).toEqual({
       server: "https://todou.example",
       server_source: "default_server",
+      server_instead_of: null,
       token_source: "env-token",
       token_profile: null,
       project: null,
@@ -226,6 +234,7 @@ describe("config show", () => {
         "https://todou.example": {
           token: SENTINELS.default,
           tokens: { "claude-code": SENTINELS.claude },
+          instead_of: [],
         },
       },
       bindings: [{ remote, server: "https://todou.example", project: "bound" }],
@@ -268,7 +277,11 @@ describe("config show", () => {
     const env = seed("unbound-xdg", {
       default_server: "https://todou.example",
       servers: {
-        "https://todou.example": { token: SENTINELS.default, tokens: {} },
+        "https://todou.example": {
+          token: SENTINELS.default,
+          tokens: {},
+          instead_of: [],
+        },
       },
       bindings: [
         {
@@ -294,6 +307,7 @@ describe("config show", () => {
         active: true,
         default_token: true,
         profiles: [],
+        instead_of: [],
       },
     ]);
   });
@@ -324,6 +338,7 @@ describe("config show", () => {
     expect(report.context).toEqual({
       server: null,
       server_source: null,
+      server_instead_of: null,
       token_source: null,
       token_profile: null,
       project: null,
@@ -343,6 +358,47 @@ describe("config show", () => {
       "  token: none (run `todou login https://todou.example`)",
     );
     expect(report.context.token_source).toBeNull();
+  });
+
+  it("reports the alias a --server was rewritten from", async () => {
+    // "Why is my server this one" is what this command answers, and a
+    // --server that silently became another base needs to be visible.
+    const env = seed("aliased", {
+      default_server: "http://gateway.test/todou",
+      servers: {
+        "http://gateway.test/todou": {
+          tokens: {},
+          instead_of: ["https://todou.example"],
+        },
+      },
+      bindings: [],
+    });
+    const { human, report } = await show({
+      env: { ...env, TODOU_SERVER: "https://todou.example" },
+    });
+
+    expect(human).toContain(
+      "  server: http://gateway.test/todou (TODOU_SERVER",
+    );
+    expect(human).toContain("via instead_of https://todou.example)");
+    expect(human).toContain(
+      "* http://gateway.test/todou — default token: none · profiles: none · " +
+        "instead_of: https://todou.example",
+    );
+    expect(report.context.server_instead_of).toBe("https://todou.example");
+    expect(report.servers[0]?.instead_of).toEqual(["https://todou.example"]);
+  });
+
+  it("prints no instead_of clause when there is nothing to say", async () => {
+    // Both renderings, one assertion each: that the "unchanged when there
+    // are no aliases" property holds is what keeps this from becoming noise
+    // in every agent's `config show`.
+    const env = seed("plain", TWO_SERVERS);
+    const { human, report } = await show({ env });
+
+    expect(human).not.toContain("instead_of");
+    expect(report.context.server_instead_of).toBeNull();
+    expect(report.servers.every((s) => s.instead_of.length === 0)).toBe(true);
   });
 
   it("lets an unknown --profile fail, and leaks nothing while failing", async () => {

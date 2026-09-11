@@ -17,6 +17,7 @@ const config: CliConfig = {
         "claude-code": "todou_pat_claude",
         ci: "todou_pat_ci",
       },
+      instead_of: [],
     },
   },
   bindings: [],
@@ -32,6 +33,7 @@ const shared: CliConfig = {
         "claude-code": "todou_pat_claude",
         harness: "todou_pat_harness",
       },
+      instead_of: [],
     },
   },
   bindings: [],
@@ -99,6 +101,7 @@ describe("token selection matrix", () => {
           "http://stub.test": {
             token: "todou_pat_default",
             tokens: { "hermes-agent": "todou_pat_hermes" },
+            instead_of: [],
           },
         },
         bindings: [],
@@ -168,7 +171,11 @@ describe("token selection matrix", () => {
       config: {
         default_server: "http://stub.test",
         servers: {
-          "http://stub.test": { token: "todou_pat_default", tokens: {} },
+          "http://stub.test": {
+            token: "todou_pat_default",
+            tokens: {},
+            instead_of: [],
+          },
         },
         bindings: [],
       },
@@ -227,6 +234,7 @@ describe("config compatibility and login --profile", () => {
     expect(loaded.servers["http://stub.test"]).toEqual({
       token: "todou_pat_old",
       tokens: {},
+      instead_of: [],
     });
   });
 
@@ -259,6 +267,7 @@ describe("config compatibility and login --profile", () => {
     expect(loaded.servers["http://stub.test"]).toEqual({
       token: "todou_pat_default",
       tokens: { "claude-code": "todou_pat_claude" },
+      instead_of: [],
     });
   });
 

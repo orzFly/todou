@@ -12,7 +12,7 @@ import {
   summarize,
 } from "../format.ts";
 import { applyHidePolicy, hideSummary } from "../hide.ts";
-import { parseCommentId, parseIssueRef, parsePositiveInt } from "../parse.ts";
+import { parseCommentId, parsePositiveInt } from "../parse.ts";
 import { confirm } from "../prompt.ts";
 import { readQuestionsInput } from "../questions.ts";
 import { refFormat, withIssueRef } from "../refs.ts";
@@ -45,19 +45,6 @@ function bodyShape(body: string): string {
 
 function isTTY(stream: unknown): boolean {
   return Boolean((stream as { isTTY?: boolean })?.isTTY);
-}
-
-/**
- * The comment a whole permalink points at, fragment included — a full URL
- * or the root-relative address a stored reference carries (T-266).
- */
-function permalinkCommentId(ref: string): number | undefined {
-  if (!/^(https?:\/\/|\/)/i.test(ref)) return undefined;
-  try {
-    return parseIssueRef(ref, "issue number").commentId;
-  } catch {
-    return undefined;
-  }
 }
 
 export class CommentAddCommand extends ProjectCommand {
@@ -361,8 +348,12 @@ export class CommentViewCommand extends ProjectCommand {
   commentId = Option.String({ required: false });
 
   protected async run(client: TodouClient): Promise<void> {
-    const { project, number } = await this.resolveIssueRef(client, this.number);
-    const commentId = this.resolveCommentId();
+    const {
+      project,
+      number,
+      commentId: permalink,
+    } = await this.resolveIssueRef(client, this.number);
+    const commentId = this.resolveCommentId(permalink);
     const found = await this.fetchComment(client, project, number, commentId);
     const spelling = await fetchRefSpelling(client, found.project);
     const paint = makePainter(this.context.stdout, this.context.env);
@@ -435,11 +426,15 @@ export class CommentViewCommand extends ProjectCommand {
     }
   }
 
-  /** The id argument, or the one a pasted permalink already carries. */
-  private resolveCommentId(): number {
+  /**
+   * The id argument, or the one a pasted permalink already carries. The
+   * permalink's is the one `resolveIssueRef` parsed — parsing the same
+   * argument twice would be two chances to disagree about it, and the
+   * second pass has no server context to localize a URL with (T-311).
+   */
+  private resolveCommentId(permalink: number | undefined): number {
     if (this.commentId !== undefined) return parseCommentId(this.commentId);
-    const anchored = permalinkCommentId(this.number);
-    if (anchored !== undefined) return anchored;
+    if (permalink !== undefined) return permalink;
     throw new CliError(
       `"${this.number}" names an issue but no comment`,
       `pass the id as a second argument (\`todou comment view ${this.number} 123\`), ` +

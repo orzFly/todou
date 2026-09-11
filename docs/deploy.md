@@ -521,6 +521,16 @@ card's new address as an ordinary response and goes on using the old one.
 The web UI needs the origin root. Its asset paths are root-absolute, so the
 browser requests them from the origin whichever path the app was loaded from.
 
+The web UI and the CLI therefore hold different base URLs by design, and a
+link copied out of the browser names the origin while the CLI is pointed at
+the prefix. `instead_of` on the CLI's server entry is what bridges them: the
+list names the other addresses the same deployment answers at, and a pasted
+link at one of them is localized before anything else looks at it. Setting
+`http.public_origin` makes the CLI accept those links with no client
+configuration at all — a URL whose origin the server declares as its own
+addresses this deployment, so it needs no entry — and `instead_of` remains
+the answer for a server that declares nothing and for a second alias.
+
 ## Auth modes
 
 `auth.mode` picks how HUMANS sign in — exactly one per deployment. Bearer

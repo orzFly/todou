@@ -19,6 +19,7 @@ import {
   waitForCallback,
 } from "../login-flow.ts";
 import { fetchWebOrigin } from "../resolve.ts";
+import { buildAliasTable, rewriteServer } from "../server-alias.ts";
 
 export class LoginCommand extends Command<CliContext> {
   static paths = [["login"]];
@@ -61,7 +62,14 @@ export class LoginCommand extends Command<CliContext> {
           "usage: todou login <origin>, e.g. todou login https://todou.example",
         );
       }
-      const origin = normalizeServer(given);
+      // A token belongs on the entry the CLI will actually use, and the
+      // address a person logs in at may be an alias of it (T-311) — the
+      // public hostname, say, while requests go to the proxy. On a config
+      // with no aliases yet — every first login — the table is empty and
+      // this is inert.
+      const origin = normalizeServer(
+        rewriteServer(given, buildAliasTable(config)).server,
+      );
       if (!/^https?:\/\//.test(origin)) {
         throw new CliError(`server must be an http(s) origin, got "${origin}"`);
       }

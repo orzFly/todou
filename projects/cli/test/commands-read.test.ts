@@ -564,21 +564,185 @@ describe("issue view", () => {
     expect(agreeing.exitCode).toBe(0);
   });
 
-  it("rejects a ref contradicting -p, and a URL on a foreign server", async () => {
-    const { fetchImpl } = fakeFetch([]);
-    const conflict = await runCli(["issue", "view", "acme/3", "-p", "todou"], {
-      fetchImpl,
-      env: loggedInEnv(),
-    });
-    expect(conflict.exitCode).toBe(1);
-    expect(conflict.stderr).toContain('says project "acme"');
+  it("resolves a URL at a configured alias, and requests the real base", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "todou-alias-"));
+    const env = { ...loggedInEnv(), XDG_CONFIG_HOME: dir };
+    saveCliConfig(
+      {
+        default_server: "http://stub.test",
+        servers: {
+          "http://stub.test": {
+            tokens: {},
+            instead_of: ["https://public.test"],
+          },
+        },
+        bindings: [],
+      },
+      env,
+    );
+    const { fetchImpl, calls } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3", issue],
+      ["GET", "/api/projects/todou/issues/3/timeline", timelinePages[1]],
+    ]);
+    const result = await runCli(
+      ["issue", "view", "https://public.test/projects/todou/issues/3"],
+      { fetchImpl, env },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("#3 Fix the potato");
+    expect(calls.every((c) => c.url.startsWith("http://stub.test"))).toBe(true);
+    // The alias is local configuration, so nothing had to be asked.
+    expect(calls.every((c) => !c.url.includes("/api/version"))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
 
-    const elsewhere = await runCli(
+  it("resolves a URL at the active base written with its path prefix", async () => {
+    // Broken with no alias at all until now: the configured base carries a
+    // mount prefix, and the parser only knew the unprefixed route shape.
+    const env = {
+      ...loggedInEnv(),
+      TODOU_SERVER: "http://stub.test/todou",
+    };
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/todou/api/projects/todou/issues/3", issue],
+      ["GET", "/todou/api/projects/todou/issues/3/timeline", timelinePages[1]],
+    ]);
+    const result = await runCli(
+      [
+        "issue",
+        "view",
+        // The query and fragment a link copied out of a browser carries:
+        // the query belongs to the page, and the parser matches the whole
+        // pathname, so leaving it on refused a perfectly good permalink.
+        "http://stub.test/todou/projects/todou/issues/3?a=1#comment-5",
+      ],
+      { fetchImpl, env },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("#3 Fix the potato");
+  });
+
+  it("accepts a URL on the origin the server declares as its own", async () => {
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3", issue],
+      ["GET", "/api/projects/todou/issues/3/timeline", timelinePages[1]],
+      [
+        "GET",
+        "/api/version",
+        { version: "v0", public_origin: "https://public.test" },
+      ],
+    ]);
+    const result = await runCli(
+      [
+        "issue",
+        "view",
+        "https://public.test/projects/todou/issues/3?a=1#comment-7",
+      ],
+      { fetchImpl, env: loggedInEnv() },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("#3 Fix the potato");
+  });
+
+  it("costs no /api/version request on a run that never needed it", async () => {
+    // What justifies reaching for the declared origin at all: it runs only
+    // where the command was already about to fail.
+    const { fetchImpl, calls } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3", issue],
+      ["GET", "/api/projects/todou/issues/3/timeline", timelinePages[1]],
+    ]);
+    const plain = await runCli(["issue", "view", "3"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(plain.exitCode).toBe(0);
+    const local = await runCli(
+      ["issue", "view", "http://stub.test/projects/todou/issues/3"],
+      { fetchImpl, env: loggedInEnv() },
+    );
+    expect(local.exitCode).toBe(0);
+    expect(calls.filter((c) => c.url.includes("/api/version"))).toHaveLength(0);
+  });
+
+  it("names the file and the line when an unknown origin fails", async () => {
+    const { fetchImpl } = fakeFetch([]);
+    const result = await runCli(
       ["issue", "view", "https://other.example/projects/todou/issues/3"],
       { fetchImpl, env: loggedInEnv() },
     );
-    expect(elsewhere.exitCode).toBe(1);
-    expect(elsewhere.stderr).toContain("active server");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      '"https://other.example/projects/todou/issues/3" points at https://other.example, but this CLI talks to http://stub.test',
+    );
+    expect(result.stderr).toContain('instead_of = ["https://other.example"]');
+    expect(result.stderr).toContain("--server");
+  });
+
+  it("points --server at a URL belonging to another configured server", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "todou-configured-"));
+    const env = { ...loggedInEnv(), XDG_CONFIG_HOME: dir };
+    saveCliConfig(
+      {
+        default_server: "http://stub.test",
+        servers: {
+          "http://stub.test": { tokens: {}, instead_of: [] },
+          "https://elsewhere.test": { tokens: {}, instead_of: [] },
+        },
+        bindings: [],
+      },
+      env,
+    );
+    const { fetchImpl } = fakeFetch([]);
+    const result = await runCli(
+      ["issue", "view", "https://elsewhere.test/projects/todou/issues/3"],
+      { fetchImpl, env },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      "points at https://elsewhere.test, which is configured but not active",
+    );
+    expect(result.stderr).toContain("--server https://elsewhere.test");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("reads a comment through a permalink at an alias", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "todou-alias-comment-"));
+    const env = { ...loggedInEnv("todou"), XDG_CONFIG_HOME: dir };
+    saveCliConfig(
+      {
+        default_server: "http://stub.test",
+        servers: {
+          "http://stub.test": {
+            tokens: {},
+            instead_of: ["https://public.test"],
+          },
+        },
+        bindings: [],
+      },
+      env,
+    );
+    const comment = {
+      type: "comment",
+      id: 123,
+      author: me,
+      body: "the body",
+      created_at: "2026-08-11T10:30:00Z",
+      edited_at: null,
+    };
+    const { fetchImpl } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3/comments/123", comment],
+    ]);
+    const result = await runCli(
+      [
+        "comment",
+        "view",
+        "https://public.test/projects/todou/issues/3#comment-123",
+      ],
+      { fetchImpl, env },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("the body");
+    rmSync(dir, { recursive: true, force: true });
   });
 });
 

@@ -3,7 +3,12 @@ import { resolveVersion } from "@todou/shared/version";
 import { Command, Option } from "clipanion";
 import type { CliContext } from "../api-command.ts";
 import type { CliConfig, Env } from "../config.ts";
-import { configPath, loadCliConfig, tildePath } from "../config.ts";
+import {
+  configPath,
+  loadCliConfig,
+  normalizeServer,
+  tildePath,
+} from "../config.ts";
 import type {
   ProjectSource,
   ResolvedContext,
@@ -39,6 +44,8 @@ export type ConfigReport = {
   context: {
     server: string | null;
     server_source: ServerSource | null;
+    /** The alias `server` was rewritten from; null when none matched. */
+    server_instead_of: string | null;
     token_source: TokenSource | null;
     /** Profile name only; never the token stored under it. */
     token_profile: string | null;
@@ -51,6 +58,8 @@ export type ConfigReport = {
     /** Existence only — "is a default identity stored here", not which. */
     default_token: boolean;
     profiles: string[];
+    /** This entry's `instead_of`, normalized; empty when it has none. */
+    instead_of: string[];
   }>;
   bindings: Array<{
     remote: string;
@@ -97,6 +106,7 @@ export function buildConfigReport(input: {
     context: {
       server: ctx.server ?? null,
       server_source: ctx.serverSource,
+      server_instead_of: ctx.serverInsteadOf ?? null,
       token_source: ctx.tokenSource,
       token_profile: ctx.tokenProfile ?? null,
       project: ctx.project ?? null,
@@ -111,6 +121,9 @@ export function buildConfigReport(input: {
         active: origin === ctx.server,
         default_token: Boolean(entry.token),
         profiles: Object.keys(entry.tokens).sort(),
+        // Addresses, not credentials: `ConfigReport` stays a type with no
+        // field a token value could be assigned to.
+        instead_of: entry.instead_of.map(normalizeServer),
       })),
     bindings: config.bindings.map((binding) => ({
       remote: binding.remote,
@@ -162,8 +175,19 @@ function projectSourceLabel(report: ConfigReport, cwd: string): string | null {
   }
 }
 
-function withSource(value: string, source: string | null): string {
-  return source === null ? value : `${value} (${source})`;
+/**
+ * A value and where it came from, with the alias it was rewritten from
+ * inside the same parentheses (T-311): the alias clause belongs to the
+ * source, and a line carrying two bracket groups would read as two facts.
+ */
+function withSource(
+  value: string,
+  source: string | null,
+  insteadOf: string | null = null,
+): string {
+  const alias = insteadOf === null ? null : `via instead_of ${insteadOf}`;
+  if (source === null) return alias === null ? value : `${value} (${alias})`;
+  return `${value} (${source}${alias === null ? "" : `, ${alias}`})`;
 }
 
 /** How the identity was chosen — never anything about what it is. */
@@ -196,7 +220,13 @@ function serversBlock(report: ConfigReport): string[] {
       (entry) =>
         `${entry.active ? "*" : " "} ${entry.origin} — default token: ` +
         `${entry.default_token ? "set" : "none"} · profiles: ` +
-        `${entry.profiles.length === 0 ? "none" : entry.profiles.join(", ")}`,
+        `${entry.profiles.length === 0 ? "none" : entry.profiles.join(", ")}` +
+        // Printed only when there is something to say, following the
+        // `--follow=uds: opted out` precedent: an ordinary config's output
+        // is byte-identical to what it was before aliases existed.
+        (entry.instead_of.length === 0
+          ? ""
+          : ` · instead_of: ${entry.instead_of.join(", ")}`),
     ),
   ];
 }
@@ -230,7 +260,14 @@ export function renderConfigReport(
     `  server: ${
       report.context.server === null
         ? "none (pass --server, set TODOU_SERVER, or run `todou login <origin>`)"
-        : withSource(report.context.server, serverSourceLabel(report, cwd))
+        : withSource(
+            report.context.server,
+            serverSourceLabel(report, cwd),
+            // Printed on the line that answers "why is my server this one",
+            // so a --server that silently became another base is visible
+            // rather than mysterious.
+            report.context.server_instead_of,
+          )
     }`,
     `  token: ${tokenLine(report)}`,
     `  project: ${

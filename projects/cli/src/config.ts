@@ -18,6 +18,8 @@ export const ServerEntry = z.object({
   token: z.string().optional(),
   /** Named token profiles, e.g. tokens."claude-code". */
   tokens: z.record(z.string(), z.string()).default({}),
+  /** Other base URLs this same deployment answers at (git's insteadOf). */
+  instead_of: z.array(z.string()).default([]),
 });
 export type ServerEntry = z.infer<typeof ServerEntry>;
 
@@ -64,13 +66,21 @@ export function saveCliConfig(config: CliConfig, env: Env = process.env): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   // Round-trip through JSON to drop undefined optionals smol-toml rejects.
   const doc = JSON.parse(JSON.stringify(config)) as {
-    servers?: Record<string, { tokens?: Record<string, string> }>;
+    servers?: Record<
+      string,
+      { tokens?: Record<string, string>; instead_of?: string[] }
+    >;
   } & Record<string, unknown>;
   // Empty profile tables would render as noisy empty [servers.X.tokens]
-  // sections; the schema defaults them back on load.
+  // sections; the schema defaults them back on load. An empty alias list
+  // goes the same way, for the same reason — a hand-written config must
+  // not grow `instead_of = []` under it.
   for (const entry of Object.values(doc.servers ?? {})) {
     if (entry.tokens && Object.keys(entry.tokens).length === 0) {
       delete entry.tokens;
+    }
+    if (entry.instead_of && entry.instead_of.length === 0) {
+      delete entry.instead_of;
     }
   }
   writeFileSync(path, `${stringify(doc)}\n`, { mode: 0o600 });

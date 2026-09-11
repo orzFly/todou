@@ -111,8 +111,6 @@ export type IssueRef = {
   prefix?: string;
   /** The `#comment-<id>` a permalink carried, for commands that take one. */
   commentId?: number;
-  /** Set for URL-form refs, so callers can reject a foreign server. */
-  origin?: string;
 };
 
 const ISSUE_URL_PATH = /^\/projects\/([^/]+)\/issues\/([^/]+)\/?$/;
@@ -181,7 +179,6 @@ function parseIssueUrl(value: string, what: string): IssueRef {
     project: checkSlug(match[1] as string, value),
     number: parsePositiveInt(match[2] as string, what),
     ...commentAnchor(url.hash),
-    origin: url.origin,
   };
 }
 

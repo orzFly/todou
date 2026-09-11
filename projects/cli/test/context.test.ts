@@ -54,8 +54,16 @@ describe("gitRemoteUrl", () => {
 const config: CliConfig = {
   default_server: "https://fallback.example",
   servers: {
-    "https://todou.example": { token: "todou_pat_bound", tokens: {} },
-    "https://fallback.example": { token: "todou_pat_fallback", tokens: {} },
+    "https://todou.example": {
+      token: "todou_pat_bound",
+      tokens: {},
+      instead_of: [],
+    },
+    "https://fallback.example": {
+      token: "todou_pat_fallback",
+      tokens: {},
+      instead_of: [],
+    },
   },
   bindings: [
     {
@@ -204,6 +212,156 @@ describe("serverSource", () => {
     });
     expect(ctx.binding).toBeNull();
     expect(ctx.serverSource).toBe("default_server");
+  });
+});
+
+describe("resolveContext through an alias (T-311)", () => {
+  /** The deployment answers at the public address; the CLI reaches the proxy. */
+  const aliased: CliConfig = {
+    default_server: "https://todou.example",
+    servers: {
+      "http://gateway.test/todou": {
+        token: "todou_pat_proxy",
+        tokens: {},
+        instead_of: ["https://todou.example"],
+      },
+      "https://elsewhere.test": { tokens: {}, instead_of: [] },
+    },
+    bindings: [],
+  };
+
+  const resolve = (over: {
+    flags?: { server?: string };
+    env?: Record<string, string>;
+    remoteUrl?: string | null;
+    dirConfig?: { path: string; project: string; server?: string } | null;
+    config?: CliConfig;
+  }) =>
+    resolveContext({
+      flags: over.flags ?? {},
+      env: over.env ?? {},
+      config: over.config ?? aliased,
+      remoteUrl: over.remoteUrl ?? null,
+      dirConfig: over.dirConfig ?? null,
+    });
+
+  it("resolves --server <alias> to the real base and names the alias", () => {
+    const ctx = resolve({ flags: { server: "https://todou.example" } });
+    expect(ctx.server).toBe("http://gateway.test/todou");
+    expect(ctx.serverSource).toBe("flag");
+    expect(ctx.serverInsteadOf).toBe("https://todou.example");
+  });
+
+  it("does the same for TODOU_SERVER", () => {
+    const ctx = resolve({ env: { TODOU_SERVER: "https://todou.example" } });
+    expect(ctx.server).toBe("http://gateway.test/todou");
+    expect(ctx.serverSource).toBe("env");
+    expect(ctx.serverInsteadOf).toBe("https://todou.example");
+  });
+
+  it("does the same for default_server", () => {
+    const ctx = resolve({});
+    expect(ctx.server).toBe("http://gateway.test/todou");
+    expect(ctx.serverSource).toBe("default_server");
+    expect(ctx.serverInsteadOf).toBe("https://todou.example");
+  });
+
+  it("does the same for a directory config", () => {
+    const ctx = resolve({
+      dirConfig: {
+        path: "/work/scratch/.todou.toml",
+        project: "dirproj",
+        server: "https://todou.example",
+      },
+    });
+    expect(ctx.server).toBe("http://gateway.test/todou");
+    expect(ctx.serverSource).toBe("dir-config");
+    expect(ctx.serverInsteadOf).toBe("https://todou.example");
+  });
+
+  it("does the same for a binding", () => {
+    const config: CliConfig = {
+      ...aliased,
+      bindings: [
+        {
+          remote: "git@example.com:me/repo.git",
+          server: "https://todou.example",
+          project: "todou",
+        },
+      ],
+    };
+    const ctx = resolve({
+      config,
+      remoteUrl: "git@example.com:me/repo.git",
+    });
+    expect(ctx.server).toBe("http://gateway.test/todou");
+    expect(ctx.serverSource).toBe("binding");
+    expect(ctx.serverInsteadOf).toBe("https://todou.example");
+  });
+
+  it("picks the token stored on the entry the alias names", () => {
+    // The whole reason the rewrite runs before the chain picks: the entry
+    // holding the token is keyed by the base, not by the alias.
+    const ctx = resolve({ flags: { server: "https://todou.example" } });
+    expect(ctx.token).toBe("todou_pat_proxy");
+    expect(ctx.tokenSource).toBe("default");
+  });
+
+  it("keeps a directory config's project when its server is an alias", () => {
+    // Today the project is dropped here, because the file says the public
+    // address and the active base is the proxy's — one deployment, two
+    // spellings, and a `.todou.toml` committed to a repo naming the public
+    // one had its `project` silently ignored.
+    const ctx = resolve({
+      flags: { server: "https://todou.example" },
+      dirConfig: {
+        path: "/work/scratch/.todou.toml",
+        project: "dirproj",
+        server: "https://todou.example",
+      },
+    });
+    expect(ctx.project).toBe("dirproj");
+    expect(ctx.projectSource).toBe("dir-config");
+  });
+
+  it("keeps a binding's project when its server is an alias", () => {
+    const config: CliConfig = {
+      ...aliased,
+      bindings: [
+        {
+          remote: "git@example.com:me/repo.git",
+          server: "https://todou.example",
+          project: "todou",
+        },
+      ],
+    };
+    const ctx = resolve({
+      flags: { server: "https://todou.example" },
+      config,
+      remoteUrl: "git@example.com:me/repo.git",
+    });
+    expect(ctx.project).toBe("todou");
+    expect(ctx.projectSource).toBe("binding");
+  });
+
+  it("still drops a local project pinned elsewhere", () => {
+    const ctx = resolve({
+      flags: { server: "https://elsewhere.test" },
+      dirConfig: {
+        path: "/work/scratch/.todou.toml",
+        project: "dirproj",
+        server: "https://todou.example",
+      },
+    });
+    expect(ctx.project).toBeUndefined();
+    expect(ctx.projectSource).toBeNull();
+  });
+
+  it("changes nothing when no entry has instead_of", () => {
+    const ctx = resolve({ flags: { server: "https://elsewhere.test" } });
+    expect(ctx.server).toBe("https://elsewhere.test");
+    expect(ctx.serverInsteadOf).toBeUndefined();
+    expect(ctx.token).toBeUndefined();
   });
 });
 

@@ -2,6 +2,7 @@ import { TodouClient } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import { CliError } from "../src/errors.ts";
 import {
+  declaredPublicOrigin,
   fetchReferenceDirectory,
   fetchRefPrefix,
   fetchResolvedRef,
@@ -186,6 +187,66 @@ describe("fetchWebOrigin", () => {
     expect(
       await fetchWebOrigin(new TodouClient({ fetch: fetchImpl }), API),
     ).toBe(API);
+  });
+});
+
+describe("declaredPublicOrigin (T-311)", () => {
+  /** One client per case: `fetchVersion` memoizes per client instance. */
+  const declaredOrigin = (version: unknown) => {
+    const { fetchImpl } = fakeFetch([["GET", "/api/version", version]]);
+    return declaredPublicOrigin(new TodouClient({ fetch: fetchImpl }));
+  };
+
+  it("returns the server's own public origin", () => {
+    return expect(
+      declaredOrigin({
+        version: "v0",
+        public_origin: "https://public.test",
+      }),
+    ).resolves.toBe("https://public.test");
+  });
+
+  it("returns undefined when the server declares none", async () => {
+    await expect(declaredOrigin({ version: "v0" })).resolves.toBeUndefined();
+  });
+
+  it("refuses a declared value carrying a path", async () => {
+    // The server constrains public_origin to a bare origin, so there is no
+    // prefix to strip — but an old or lying server does not get to hand the
+    // caller a path.
+    await expect(
+      declaredOrigin({
+        version: "v0",
+        public_origin: "https://public.test/todou",
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      declaredOrigin({
+        version: "v0",
+        public_origin: "https://public.test/?a=1",
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      declaredOrigin({ version: "v0", public_origin: "not a url" }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("shares the one read with fetchWebOrigin", async () => {
+    // Two callers, one /api/version: the memoization is what makes the
+    // reference resolver's fallback free on a run that asks both.
+    const { fetchImpl, calls } = fakeFetch([
+      [
+        "GET",
+        "/api/version",
+        { version: "v0", public_origin: "https://public.test" },
+      ],
+    ]);
+    const client = new TodouClient({ fetch: fetchImpl });
+    expect(await declaredPublicOrigin(client)).toBe("https://public.test");
+    expect(await fetchWebOrigin(client, "http://gateway.test/todou")).toBe(
+      "https://public.test",
+    );
+    expect(calls).toHaveLength(1);
   });
 });
 

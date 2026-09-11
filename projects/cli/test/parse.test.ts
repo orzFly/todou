@@ -92,6 +92,10 @@ describe("parseIssueRef", () => {
   });
 
   it("parses an issue URL, keeping the comment it anchors at", () => {
+    // No origin on the result (T-311): which server a URL addresses is
+    // decided by `resolveIssueRef` before it gets here, against the active
+    // base, its aliases, and the origin the server declares — none of which
+    // a pure parser can see.
     expect(
       parseIssueRef(
         "https://todou.example/projects/todou/issues/16/#comment-3",
@@ -101,7 +105,6 @@ describe("parseIssueRef", () => {
       project: "todou",
       number: 16,
       commentId: 3,
-      origin: "https://todou.example",
     });
     expect(
       parseIssueRef(
@@ -111,7 +114,6 @@ describe("parseIssueRef", () => {
     ).toEqual({
       project: "9",
       number: 16,
-      origin: "https://todou.example",
     });
   });
 

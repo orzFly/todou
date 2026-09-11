@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { loadCliConfig } from "../src/config.ts";
+import { loadCliConfig, saveCliConfig } from "../src/config.ts";
 import { CliError } from "../src/errors.ts";
 import { browserCommand, waitForCallback } from "../src/login-flow.ts";
 import {
@@ -217,6 +217,42 @@ describe("todou login --manual", () => {
     });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("http(s) origin");
+  });
+
+  it("stores the token on the entry an alias names", async () => {
+    // Logging in at the address a person knows has to end up on the entry
+    // the CLI will use for requests, or the next command is back to
+    // "not logged in to http://stub.test".
+    const { fetchImpl } = fakeFetch([["GET", "/api/me", me], bareVersion]);
+    const env = { XDG_CONFIG_HOME: join(dir, "alias") };
+    saveCliConfig(
+      {
+        default_server: "https://todou.example",
+        servers: {
+          "http://stub.test": {
+            tokens: {},
+            instead_of: ["https://todou.example"],
+          },
+        },
+        bindings: [],
+      },
+      env,
+    );
+
+    const result = await runCli(
+      ["login", "https://todou.example", "--manual"],
+      { fetchImpl, env, stdinText: "todou_pat_alias\n" },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain("logged in to http://stub.test as claude");
+
+    const config = loadCliConfig(env);
+    expect(Object.keys(config.servers)).toEqual(["http://stub.test"]);
+    expect(config.servers["http://stub.test"]?.token).toBe("todou_pat_alias");
+    expect(config.servers["http://stub.test"]?.instead_of).toEqual([
+      "https://todou.example",
+    ]);
+    expect(config.default_server).toBe("http://stub.test");
   });
 });
 

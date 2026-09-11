@@ -122,6 +122,13 @@ todou login https://todou.example
 # prints a one-time code to authorize from a browser anywhere, and waits.
 todou login https://todou.example --no-browser
 
+# Reached through a reverse proxy, or mounted under a path? Tell the CLI
+# which other addresses are the same deployment, and links copied from the
+# web UI paste straight in. (A server that declares its own public origin
+# needs no entry at all.)
+#   [servers."http://198.51.100.7/todou"]
+#   instead_of = ["https://todou.example"]
+
 # Bind this git repository to a server/project (stored in the user
 # config, not the repo), then work from anywhere inside it:
 todou project link my-project

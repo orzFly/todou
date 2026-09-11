@@ -8,7 +8,7 @@ import {
 } from "@todou/shared";
 import { type BaseContext, Command, Option } from "clipanion";
 import { type Clock, systemClock } from "./clock.ts";
-import { type CliConfig, loadCliConfig } from "./config.ts";
+import { type CliConfig, configPath, loadCliConfig } from "./config.ts";
 import {
   gitRemoteUrl,
   type ResolvedContext,
@@ -29,12 +29,18 @@ import { parseIssueRef } from "./parse.ts";
 import type { openPeerPush } from "./peer-push.ts";
 import type { RefFormat } from "./refs.ts";
 import {
+  declaredPublicOrigin,
   fetchAccessHint,
   fetchReferenceConfig,
   fetchReferenceDirectory,
   fetchResolvedRef,
   fetchWebOrigin,
 } from "./resolve.ts";
+import {
+  type AliasRow,
+  buildAliasTable,
+  localizeIssueUrl,
+} from "./server-alias.ts";
 import type { SessionSource } from "./watch-loop.ts";
 
 export type CursorRecord = {
@@ -296,6 +302,33 @@ export abstract class ApiCommand extends Command<CliContext> {
   }
 }
 
+/** The parser's own wording for a URL that carries no issue route (T-311). */
+function notAnIssueUrl(raw: string): CliError {
+  return new CliError(
+    `"${raw}" is not an issue URL`,
+    "expected <server>/projects/<project>/issues/<number>",
+  );
+}
+
+/**
+ * A root-relative address with the query dropped and the fragment kept, so
+ * the path parser reads exactly what it knows how to read.
+ *
+ * `parseIssueRef` matches the whole pathname, so a `?tracking=1` left on a
+ * valid permalink would turn it into "not an issue URL". And the query
+ * belongs to the page the link was copied from, not to the reference: two
+ * people pasting the same card from two tabs with different parameters mean
+ * the same card.
+ */
+function issueAddressOf(address: string): string {
+  const query = address.indexOf("?");
+  if (query === -1) return address;
+  const fragment = address.indexOf("#", query);
+  return (
+    address.slice(0, query) + (fragment === -1 ? "" : address.slice(fragment))
+  );
+}
+
 /** Base for commands scoped to a project (adds -p and its guard). */
 export abstract class ProjectCommand extends ApiCommand {
   project = Option.String("-p,--project", {
@@ -342,17 +375,16 @@ export abstract class ProjectCommand extends ApiCommand {
     at?: MovedTo;
     /** The ref as typed, for the `moved from` line `at` cannot spell. */
     asTyped?: string;
+    /** The `#comment-<id>` a permalink carried, absent otherwise (T-311). */
+    commentId?: number;
   }> {
-    const ref = parseIssueRef(raw, "issue number");
-    if (ref.origin !== undefined && this.ctx.server !== undefined) {
-      const active = new URL(this.ctx.server).origin;
-      if (ref.origin !== active) {
-        throw new CliError(
-          `"${raw}" points at ${ref.origin}, but the active server is ${active}`,
-          "pass --server to switch servers, or reference the issue as <project>/<number>",
-        );
-      }
-    }
+    // A URL is localized first: the address a person copies out of the web
+    // UI need not be the one the CLI talks to, and the mount prefix is in
+    // the way of the route shape the parser looks for (T-311).
+    const ref = parseIssueRef(
+      /^https?:\/\//i.test(raw) ? await this.localizeRefUrl(client, raw) : raw,
+      "issue number",
+    );
     if (ref.project !== undefined) {
       if (this.project !== undefined && this.project !== ref.project) {
         throw new CliError(
@@ -368,10 +400,18 @@ export abstract class ProjectCommand extends ApiCommand {
           await fetchReferenceConfig(client, ref.project),
         );
       }
-      return { project: ref.project, number: ref.number };
+      return {
+        project: ref.project,
+        number: ref.number,
+        ...(ref.commentId === undefined ? {} : { commentId: ref.commentId }),
+      };
     }
     if (ref.prefix === undefined) {
-      return { project: this.requireProject(), number: ref.number };
+      return {
+        project: this.requireProject(),
+        number: ref.number,
+        ...(ref.commentId === undefined ? {} : { commentId: ref.commentId }),
+      };
     }
     const project = this.ctx.project;
     const config =
@@ -435,7 +475,98 @@ export abstract class ProjectCommand extends ApiCommand {
       project: resolved.project,
       number: ref.number,
       ...(at === undefined ? {} : { at, asTyped: raw }),
+      ...(ref.commentId === undefined ? {} : { commentId: ref.commentId }),
     };
+  }
+
+  /**
+   * A URL-form reference as the root-relative address the parser takes
+   * (T-311). The active base and its configured aliases are tried first;
+   * failing those, a URL whose origin the server itself declares as its own
+   * is accepted, since there is nothing local left to match it against —
+   * most reverse-proxy deployments need no configuration at all.
+   *
+   * The declared read is the one cost this can add, and it lands only on a
+   * run that was already about to fail with "points at <origin>, but the
+   * active server is <base>". `fetchVersion` memoizes per client, so a
+   * command resolving several positionals asks once.
+   *
+   * Returns the route with the fragment kept: an address handed to the
+   * parser has to be one the parser accepts, which is `/…` plus at most a
+   * `#comment-<id>`. A query in the URL the user pasted belongs to the page
+   * they had open and is dropped here rather than aimed at the parser.
+   */
+  private async localizeRefUrl(
+    client: TodouClient,
+    raw: string,
+  ): Promise<string> {
+    const active = this.ctx.server;
+    const table = buildAliasTable(this.config);
+    if (active !== undefined) {
+      const bases = [
+        active,
+        ...table.filter((row) => row.server === active).map((row) => row.alias),
+      ];
+      const localized = localizeIssueUrl(raw, bases);
+      if (localized !== null) {
+        // "" is a covered URL that addresses the base root: an address
+        // carrying no issue, which the parser words better than this layer
+        // could.
+        if (localized === "") throw notAnIssueUrl(raw);
+        return issueAddressOf(localized);
+      }
+    }
+    const declared = await declaredPublicOrigin(client);
+    let parsed: URL;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      throw notAnIssueUrl(raw);
+    }
+    if (declared !== undefined && parsed.origin === declared) {
+      // A declared origin is a bare origin, so the pathname is the whole
+      // address; only the query has to go.
+      return issueAddressOf(`${parsed.pathname}${parsed.hash}`);
+    }
+    throw await this.foreignRefError(raw, parsed.origin, table);
+  }
+
+  /**
+   * Why a URL matched nothing. Two shapes, because the reader's next move
+   * differs: a URL belonging to another *configured* server is one
+   * `--server` away, while one on an address the CLI has never heard of is
+   * a guess about the deployment, and what settles it is an `instead_of`
+   * line named by file and by exact text.
+   *
+   * The alias is hand-edited on purpose: there is no config-writing
+   * command, and inventing one is a larger surface than aliases need. What
+   * makes hand-editing safe is schema membership — `saveCliConfig` rewrites
+   * the whole document from the parsed config, so a key zod does not know
+   * would be dropped by the next `todou login`.
+   */
+  private async foreignRefError(
+    raw: string,
+    origin: string,
+    table: AliasRow[],
+  ): Promise<CliError> {
+    const configured = new Set([
+      ...Object.keys(this.config.servers),
+      ...table.flatMap((row) => [row.alias, row.server]),
+    ]);
+    if (configured.has(origin)) {
+      return new CliError(
+        `"${raw}" points at ${origin}, which is configured but not active`,
+        `run it with --server ${origin}`,
+      );
+    }
+    const active = this.ctx.server ?? "(none configured)";
+    const path = configPath(this.context.env);
+    return new CliError(
+      `"${raw}" points at ${origin}, but this CLI talks to ${active}`,
+      `if they are the same deployment, add it under [servers."${active}"] in ${path}:\n` +
+        `  instead_of = ["${origin}"]\n` +
+        `otherwise pass --server to switch servers, or reference the issue as <project>/<number>`,
+    );
   }
 
   /**

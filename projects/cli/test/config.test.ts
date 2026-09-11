@@ -1,4 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -40,7 +47,11 @@ describe("load/save round-trip", () => {
       {
         default_server: "https://todou.example",
         servers: {
-          "https://todou.example": { token: "todou_pat_x", tokens: {} },
+          "https://todou.example": {
+            token: "todou_pat_x",
+            tokens: {},
+            instead_of: [],
+          },
         },
         bindings: [
           {
@@ -90,6 +101,55 @@ describe("load/save round-trip", () => {
     saveCliConfig({ servers: {}, bindings: [] }, env);
     const mode = statSync(configPath(env)).mode & 0o777;
     expect(mode).toBe(0o600);
+  });
+
+  it("keeps a hand-written instead_of through a rewrite", () => {
+    // Hand-editing is the only way to write this key, and `saveCliConfig`
+    // rewrites the whole document from the parsed config — so a key the
+    // schema did not know would be dropped by the next `todou login`.
+    const env = envFor("instead-of");
+    const path = configPath(env);
+    mkdirSync(join(env.XDG_CONFIG_HOME, "todou"), { recursive: true });
+    writeFileSync(
+      path,
+      [
+        'default_server = "http://198.51.100.7/todou"',
+        "",
+        '[servers."http://198.51.100.7/todou"]',
+        'token = "todou_pat_fallback"',
+        'instead_of = ["https://todou.example"]',
+        "",
+      ].join("\n"),
+    );
+    const loaded = loadCliConfig(env);
+    expect(loaded.servers["http://198.51.100.7/todou"]?.instead_of).toEqual([
+      "https://todou.example",
+    ]);
+    saveCliConfig(loaded, env);
+    expect(loadCliConfig(env).servers["http://198.51.100.7/todou"]).toEqual({
+      token: "todou_pat_fallback",
+      tokens: {},
+      instead_of: ["https://todou.example"],
+    });
+  });
+
+  it("writes no instead_of for an entry that has none", () => {
+    // Defaulted like `tokens`, and deleted the same way: otherwise every
+    // login would grow an `instead_of = []` into a file nobody asked it to.
+    const env = envFor("no-instead-of");
+    saveCliConfig(
+      {
+        servers: { "https://todou.example": { tokens: {}, instead_of: [] } },
+        bindings: [],
+      },
+      env,
+    );
+    const written = readFileSync(configPath(env), "utf8");
+    expect(written).not.toContain("instead_of");
+    expect(written).not.toContain("tokens");
+    expect(
+      loadCliConfig(env).servers["https://todou.example"]?.instead_of,
+    ).toEqual([]);
   });
 });
 
