@@ -73,9 +73,39 @@ describe("servedContentType", () => {
       );
     });
 
-    it("keeps a charset beside a type that is otherwise untouched", () => {
+    it("keeps a declared charset on any text type, on either route", () => {
+      expect(servedContentType("text/html; charset=gbk", "view")).toBe(
+        "text/html; charset=gbk",
+      );
+      expect(servedContentType("text/html; charset=gbk", "download")).toBe(
+        "text/plain; charset=gbk",
+      );
+    });
+
+    it("does not invent a charset for a text type that is not plain", () => {
+      // `utf-8` is the fallback for text/plain only; an HTML document says
+      // what it is in its own bytes, and this header does not contradict it.
+      expect(servedContentType("text/html", "view")).toBe("text/html");
+      expect(servedContentType("text/xml", "view")).toBe("text/xml");
+    });
+
+    it("drops a charset declared beside a non-text type", () => {
+      // The card turned on this boundary: charset belongs to text and nothing
+      // else, so neither a kept image nor a binary downgrade carries one.
       expect(servedContentType("image/png; charset=utf-8", "download")).toBe(
-        "image/png; charset=utf-8",
+        "image/png",
+      );
+      expect(servedContentType("image/png; charset=utf-8", "view")).toBe(
+        "image/png",
+      );
+      expect(
+        servedContentType("application/pdf; charset=utf-8", "download"),
+      ).toBe("application/pdf");
+      expect(
+        servedContentType("application/zip; charset=utf-8", "download"),
+      ).toBe("application/octet-stream");
+      expect(servedContentType("application/zip; charset=utf-8", "view")).toBe(
+        "application/octet-stream",
       );
     });
 
@@ -110,14 +140,6 @@ describe("servedContentType", () => {
       expect(servedContentType("application/octet-stream", "download")).toBe(
         OCTET,
       );
-    });
-
-    it("keeps a charset even where the base type was downgraded to binary", () => {
-      // The design carries a matched charset through and maps only the base
-      // type, so a binary downgrade does not silently drop the parameter.
-      expect(
-        servedContentType("application/zip; charset=utf-8", "download"),
-      ).toBe("application/octet-stream; charset=utf-8");
     });
   });
 

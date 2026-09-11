@@ -81,11 +81,16 @@ export function servedContentType(
   }
 
   const type = mappedType(base, variant);
-  // `text/plain` with no charset is decoded against a locale default rather
-  // than UTF-8, which is what turns an attached Chinese log into mojibake in a
-  // browser tab. Every text file this deployment produces is UTF-8.
-  const charset =
-    findCharset(parameters) ?? (type === TEXT_PLAIN ? "utf-8" : null);
+  // `charset` belongs to text and nothing else, so a type served as anything
+  // else never carries one — a claim an uploader made about a ZIP is not
+  // replayed as fact on every download of it.
+  const charset = !type.startsWith("text/")
+    ? null
+    : // `text/plain` with no charset is decoded against a locale default
+      // rather than UTF-8, which is what turns an attached Chinese log into
+      // mojibake in a browser tab. Every text file this deployment produces
+      // is UTF-8.
+      (findCharset(parameters) ?? (type === TEXT_PLAIN ? "utf-8" : null));
   return charset === null ? type : `${type}; charset=${charset}`;
 }
 
