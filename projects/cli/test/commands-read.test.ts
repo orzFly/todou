@@ -564,6 +564,38 @@ describe("issue view", () => {
     expect(agreeing.exitCode).toBe(0);
   });
 
+  it("rejects a ref whose own project contradicts -p", async () => {
+    // The guard `resolveIssueRef` applies to whatever its ref spells,
+    // including a project it read out of a localized URL — which is why
+    // this assertion belongs beside the URL cases below rather than only
+    // in the batch and prefix paths, which are different branches.
+    const { fetchImpl, calls } = fakeFetch([]);
+    const conflict = await runCli(["issue", "view", "acme/3", "-p", "todou"], {
+      fetchImpl,
+      env: loggedInEnv(),
+    });
+    expect(conflict.exitCode).toBe(1);
+    expect(conflict.stderr).toContain('says project "acme"');
+    expect(conflict.stderr).toContain('but -p/--project says "todou"');
+    expect(conflict.stderr).toContain("they must agree");
+
+    // Same guard, reached through a URL: the project comes from the
+    // address now, not from the spelling the user typed.
+    const viaUrl = await runCli(
+      [
+        "issue",
+        "view",
+        "http://stub.test/projects/acme/issues/3",
+        "-p",
+        "todou",
+      ],
+      { fetchImpl, env: loggedInEnv() },
+    );
+    expect(viaUrl.exitCode).toBe(1);
+    expect(viaUrl.stderr).toContain('says project "acme"');
+    expect(calls).toHaveLength(0);
+  });
+
   it("resolves a URL at a configured alias, and requests the real base", async () => {
     const dir = mkdtempSync(join(tmpdir(), "todou-alias-"));
     const env = { ...loggedInEnv(), XDG_CONFIG_HOME: dir };
@@ -703,6 +735,96 @@ describe("issue view", () => {
     );
     expect(result.stderr).toContain("--server https://elsewhere.test");
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("finds a configured server whose base carries a path prefix", async () => {
+    // Origin equality read this as an address the CLI had never heard of,
+    // and advised `instead_of = ["http://elsewhere.test"]` — an alias
+    // covering every path on that origin, which would have rewritten the
+    // other deployment's own links, and `--server <its base>`, onto the
+    // active server. Belonging is a question of coverage.
+    const dir = mkdtempSync(join(tmpdir(), "todou-prefixed-server-"));
+    const env = { ...loggedInEnv(), XDG_CONFIG_HOME: dir };
+    saveCliConfig(
+      {
+        default_server: "http://stub.test",
+        servers: {
+          "http://stub.test": { tokens: {}, instead_of: [] },
+          "http://elsewhere.test/todou": { tokens: {}, instead_of: [] },
+        },
+        bindings: [],
+      },
+      env,
+    );
+    const { fetchImpl, calls } = fakeFetch([]);
+    const result = await runCli(
+      ["issue", "view", "http://elsewhere.test/todou/projects/todou/issues/3"],
+      { fetchImpl, env },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      "points at http://elsewhere.test/todou, which is configured but not active",
+    );
+    expect(result.stderr).toContain("--server http://elsewhere.test/todou");
+    // The advice must not be the alias one: that is the cross-deployment
+    // rewrite the whole segment-wise match exists to prevent.
+    expect(result.stderr).not.toContain("instead_of");
+    // Nothing was sent to that deployment — the only request is the
+    // declared-origin probe against the active server, which is the
+    // fallback every unmatched URL pays for (T-311 design §"declared
+    // public origin").
+    expect(calls.every((c) => !c.url.includes("elsewhere.test"))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("names the longest covering base when two could answer", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "todou-longest-server-"));
+    const env = { ...loggedInEnv(), XDG_CONFIG_HOME: dir };
+    saveCliConfig(
+      {
+        default_server: "http://stub.test",
+        servers: {
+          "http://stub.test": { tokens: {}, instead_of: [] },
+          "http://elsewhere.test": { tokens: {}, instead_of: [] },
+          "http://elsewhere.test/staging": { tokens: {}, instead_of: [] },
+        },
+        bindings: [],
+      },
+      env,
+    );
+    const { fetchImpl } = fakeFetch([]);
+    const result = await runCli(
+      [
+        "issue",
+        "view",
+        "http://elsewhere.test/staging/projects/todou/issues/3",
+      ],
+      { fetchImpl, env },
+    );
+    expect(result.stderr).toContain(
+      "points at http://elsewhere.test/staging, which is configured but not active",
+    );
+    expect(result.stderr).toContain("--server http://elsewhere.test/staging");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it.each([
+    ["a query", "http://stub.test?x=1"],
+    ["a comment fragment", "http://stub.test#comment-2"],
+    ["a bare numeric fragment", "http://stub.test#3"],
+  ])("refuses the base root carrying %s", async (_why, url) => {
+    // The empty-address branch ran before the query was stripped, so
+    // `?x=1` localized to a non-empty "?x=1" and reached the parser. The
+    // bare `#3` was worse than a wrong message: it parsed as this
+    // project's card 3.
+    const { fetchImpl, calls } = fakeFetch([]);
+    const result = await runCli(["issue", "view", url], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("is not an issue URL");
+    expect(calls).toHaveLength(0);
   });
 
   it("reads a comment through a permalink at an alias", async () => {

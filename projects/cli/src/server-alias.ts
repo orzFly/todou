@@ -101,6 +101,28 @@ export function rewriteServer(
 }
 
 /**
+ * The base that covers `url`, of those given; null when none does. The
+ * longest wins, so a deployment mounted at `/todou` and another at
+ * `/todou/staging` stay distinguishable.
+ *
+ * This is the one place that choice is made, so a localization and the
+ * error explaining a failed one name the same base by construction — the
+ * two had drifted apart when the failure path compared origins instead,
+ * which is the bug that let a *different configured server* be reported as
+ * an unconfigured address (T-311 review).
+ */
+export function coveringBase(url: string, bases: string[]): string | null {
+  let winner: string | null = null;
+  for (const base of bases) {
+    if (baseRemainder(url, base) === null) continue;
+    const normalized = normalizeServer(base);
+    if (winner === null || normalized.length > winner.length)
+      winner = normalized;
+  }
+  return winner;
+}
+
+/**
  * A URL-form reference as a root-relative address the path parser takes
  * (`/projects/p/issues/159#comment-3721`). Query and fragment are carried
  * over; the longest base wins. Three outcomes, all distinct:
@@ -112,16 +134,6 @@ export function rewriteServer(
  *   origin and then fails.
  */
 export function localizeIssueUrl(raw: string, bases: string[]): string | null {
-  let address: string | null = null;
-  let longest = -1;
-  for (const base of bases) {
-    const remainder = baseRemainder(raw, base);
-    if (remainder === null) continue;
-    const length = normalizeServer(base).length;
-    if (length > longest) {
-      longest = length;
-      address = remainder;
-    }
-  }
-  return address;
+  const base = coveringBase(raw, bases);
+  return base === null ? null : baseRemainder(raw, base);
 }

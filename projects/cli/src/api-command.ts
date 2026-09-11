@@ -39,6 +39,7 @@ import {
 import {
   type AliasRow,
   buildAliasTable,
+  coveringBase,
   localizeIssueUrl,
 } from "./server-alias.ts";
 import type { SessionSource } from "./watch-loop.ts";
@@ -491,10 +492,11 @@ export abstract class ProjectCommand extends ApiCommand {
    * active server is <base>". `fetchVersion` memoizes per client, so a
    * command resolving several positionals asks once.
    *
-   * Returns the route with the fragment kept: an address handed to the
-   * parser has to be one the parser accepts, which is `/…` plus at most a
-   * `#comment-<id>`. A query in the URL the user pasted belongs to the page
-   * they had open and is dropped here rather than aimed at the parser.
+   * Every returned address starts with `/`: a covered URL that names no
+   * issue route — the base root, with or without a query, a fragment, or a
+   * numeric one — is the caller's `is not an issue URL`, and refusing it
+   * here rather than letting the parser word it is what keeps a bare
+   * `#3` from being read as this project's card 3.
    */
   private async localizeRefUrl(
     client: TodouClient,
@@ -502,33 +504,37 @@ export abstract class ProjectCommand extends ApiCommand {
   ): Promise<string> {
     const active = this.ctx.server;
     const table = buildAliasTable(this.config);
+    let address: string | null = null;
     if (active !== undefined) {
       const bases = [
         active,
         ...table.filter((row) => row.server === active).map((row) => row.alias),
       ];
-      const localized = localizeIssueUrl(raw, bases);
-      if (localized !== null) {
-        // "" is a covered URL that addresses the base root: an address
-        // carrying no issue, which the parser words better than this layer
-        // could.
-        if (localized === "") throw notAnIssueUrl(raw);
-        return issueAddressOf(localized);
+      address = localizeIssueUrl(raw, bases);
+    }
+    if (address === null) {
+      const declared = await declaredPublicOrigin(client);
+      let parsed: URL;
+      try {
+        parsed = new URL(raw);
+      } catch {
+        throw notAnIssueUrl(raw);
       }
-    }
-    const declared = await declaredPublicOrigin(client);
-    let parsed: URL;
-    try {
-      parsed = new URL(raw);
-    } catch {
-      throw notAnIssueUrl(raw);
-    }
-    if (declared !== undefined && parsed.origin === declared) {
+      if (declared === undefined || parsed.origin !== declared) {
+        throw await this.foreignRefError(raw, table);
+      }
       // A declared origin is a bare origin, so the pathname is the whole
       // address; only the query has to go.
-      return issueAddressOf(`${parsed.pathname}${parsed.hash}`);
+      address = `${parsed.pathname}${parsed.hash}`;
     }
-    throw await this.foreignRefError(raw, parsed.origin, table);
+    // The query goes and the fragment stays, then what is left has to be a
+    // route: a covered URL naming none — the base root, with or without a
+    // query, a `#comment-<id>` fragment, or a bare `#3` — is the caller's
+    // `is not an issue URL`, and refusing it here is what keeps that last
+    // spelling from being read as this project's card 3.
+    const route = issueAddressOf(address);
+    if (!route.startsWith("/")) throw notAnIssueUrl(raw);
+    return route;
   }
 
   /**
@@ -538,6 +544,16 @@ export abstract class ProjectCommand extends ApiCommand {
    * a guess about the deployment, and what settles it is an `instead_of`
    * line named by file and by exact text.
    *
+   * "Belongs to" is `coveringBase`, not origin equality: a base carries an
+   * optional path prefix, so a URL under `http://b.test/todou` has origin
+   * `http://b.test`, which equals no key in the file. Comparing origins
+   * read that as an unknown address and advised adding
+   * `instead_of = ["http://b.test"]` under the active entry — an alias
+   * covering *every* path on that origin, which would have silently
+   * rewritten the other deployment's links, and its `--server`, onto the
+   * active one. The longest covering base is what both the localization and
+   * this message name.
+   *
    * The alias is hand-edited on purpose: there is no config-writing
    * command, and inventing one is a larger surface than aliases need. What
    * makes hand-editing safe is schema membership — `saveCliConfig` rewrites
@@ -546,19 +562,20 @@ export abstract class ProjectCommand extends ApiCommand {
    */
   private async foreignRefError(
     raw: string,
-    origin: string,
     table: AliasRow[],
   ): Promise<CliError> {
-    const configured = new Set([
+    const bases = [
       ...Object.keys(this.config.servers),
       ...table.flatMap((row) => [row.alias, row.server]),
-    ]);
-    if (configured.has(origin)) {
+    ];
+    const covered = coveringBase(raw, bases);
+    if (covered !== null) {
       return new CliError(
-        `"${raw}" points at ${origin}, which is configured but not active`,
-        `run it with --server ${origin}`,
+        `"${raw}" points at ${covered}, which is configured but not active`,
+        `run it with --server ${covered}`,
       );
     }
+    const origin = new URL(raw).origin;
     const active = this.ctx.server ?? "(none configured)";
     const path = configPath(this.context.env);
     return new CliError(

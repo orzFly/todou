@@ -5,6 +5,7 @@ import {
   type AliasRow,
   baseRemainder,
   buildAliasTable,
+  coveringBase,
   localizeIssueUrl,
   rewriteServer,
 } from "../src/server-alias.ts";
@@ -207,6 +208,34 @@ describe("rewriteServer", () => {
     expect(rewriteServer("https://public.test/x", table).server).toBe(
       "http://gateway.test/todou",
     );
+  });
+});
+
+describe("coveringBase", () => {
+  const bases = [API, "https://public.test"];
+
+  it("returns the covering base itself", () => {
+    // The base, not its remainder: this is what an error message names and
+    // what `localizeIssueUrl` then takes the remainder of, so the two can
+    // never disagree about which base claimed the URL.
+    expect(coveringBase("https://public.test/projects/p/issues/1", bases)).toBe(
+      "https://public.test",
+    );
+    expect(coveringBase(`${API}/projects/p/issues/1`, bases)).toBe(API);
+  });
+
+  it("returns null when nothing covers", () => {
+    expect(coveringBase("https://elsewhere.test/x", bases)).toBeNull();
+    expect(coveringBase("not a url", bases)).toBeNull();
+  });
+
+  it("returns the longest covering base, normalized", () => {
+    expect(
+      coveringBase("https://public.test/s/projects/p/issues/1", [
+        "https://public.test",
+        "https://public.test/s/",
+      ]),
+    ).toBe("https://public.test/s");
   });
 });
 
