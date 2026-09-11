@@ -415,12 +415,19 @@ describe("QuestionsCard (unanswered)", () => {
     const view = renderCard();
     await view.findByText("awaiting answer");
 
-    // The submit button is disabled here; a disabled button cannot intercept
-    // a keystroke, so the callback has to carry the condition itself.
+    // Only q1, which leaves q2 genuinely unresolved — its "other" box counts
+    // as an answer the moment it holds text (`resolved()`), so touching it
+    // would finish the form and this test would be asserting nothing.
     fireEvent.click(optionButton(view, "New entity"));
-    cmSetValue(view.container, "half an answer", 1);
+    const submit = view.container.querySelector<HTMLButtonElement>(
+      ".flex.justify-end > button",
+    ) as HTMLButtonElement;
+    // The premise, stated: the button is disabled here, and a disabled button
+    // cannot intercept a keystroke — so the callback has to carry the
+    // condition itself.
+    expect(submit.disabled).toBe(true);
 
-    cmPressKey(view.container, "Enter", { ctrlKey: true }, 1);
+    cmPressKey(view.container, "Enter", { ctrlKey: true });
 
     await act(async () => {});
     expect(posts).toEqual([]);
