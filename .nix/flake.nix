@@ -39,8 +39,30 @@
             commands = [
               {
                 name = "todou";
+                # `$PRJ_ROOT` is set on devshell entry and inherited from
+                # there, so anything that did not come through the shell does
+                # not have it — an agent's eval sandbox, a cron unit, any bare
+                # subprocess. Under `set -u` that was a hard failure rather
+                # than a degradation, which is what stopped todou running
+                # inside omp's eval runtimes at all (T-314).
+                #
+                # The checkout is found from the working directory instead,
+                # walking up for the marker that only its root carries. That
+                # needs nothing on PATH, which is the point: the environments
+                # this has to work in are missing more than one variable.
                 command = ''
-                  exec node "$PRJ_ROOT/projects/cli/src/index.ts" "$@"
+                  root="''${PRJ_ROOT:-}"
+                  if [ -z "$root" ]; then
+                    root=$PWD
+                    while [ ! -e "$root/pnpm-workspace.yaml" ]; do
+                      if [ "$root" = "/" ]; then
+                        echo "todou: run this inside the checkout, or set PRJ_ROOT" >&2
+                        exit 1
+                      fi
+                      root=$(dirname "$root")
+                    done
+                  fi
+                  exec node "$root/projects/cli/src/index.ts" "$@"
                 '';
               }
             ];
