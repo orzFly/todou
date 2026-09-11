@@ -6,7 +6,13 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type {
   Issue,
   Label,
@@ -26,7 +32,7 @@ import {
   statusesQuery,
 } from "../src/api/queries.ts";
 import { NewIssuePage } from "../src/pages/new-issue.tsx";
-import { cmSetValue } from "./cm.ts";
+import { cmPressKey, cmSetValue } from "./cm.ts";
 import { testQueryClient } from "./render.tsx";
 
 const SLUG = "todou";
@@ -283,5 +289,42 @@ describe("the new-issue page's slash commands", () => {
       body: "please\n/label bug",
       label_ids: [],
     });
+  });
+});
+
+describe("the new-issue page's Ctrl-Enter", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const created = { id: 1, number: 12, body: "" } as Issue;
+
+  const start = () => {
+    const createIssue = vi.spyOn(api, "createIssue").mockResolvedValue(created);
+    return { view: renderAs("admin"), createIssue };
+  };
+
+  it("creates the issue from the description box", async () => {
+    const { view, createIssue } = start();
+    const title = await screen.findByLabelText("Title");
+    fireEvent.change(title, { target: { value: "Dig up the potatoes" } });
+    cmSetValue(view.container, "the potatoes sprouted");
+    cmPressKey(view.container, "Enter", { ctrlKey: true });
+
+    await waitFor(() => expect(createIssue).toHaveBeenCalledOnce());
+    expect(createIssue.mock.calls[0]?.[1]).toMatchObject({
+      title: "Dig up the potatoes",
+      body: "the potatoes sprouted",
+    });
+  });
+
+  it("creates nothing when the title is empty", async () => {
+    const { view, createIssue } = start();
+    await screen.findByLabelText("Title");
+    cmSetValue(view.container, "a body with no title");
+    cmPressKey(view.container, "Enter", { ctrlKey: true });
+
+    await act(async () => {});
+    expect(createIssue).not.toHaveBeenCalled();
   });
 });

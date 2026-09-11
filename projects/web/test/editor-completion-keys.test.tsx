@@ -4,9 +4,12 @@ import { act, render, waitFor } from "@testing-library/react";
 import type {
   IssueListItem,
   IssueListPage,
+  Label,
+  Member,
   Project,
   ReferenceConfig,
   ReferenceDirectory,
+  Status,
 } from "@todou/shared";
 import { describe, expect, it, vi } from "vitest";
 import { issueCompletionQuery } from "../src/api/issues.ts";
@@ -21,6 +24,8 @@ import {
   completionWith,
   refCompletionSource,
 } from "../src/lib/editor/ref-completion.ts";
+import { commandCompletionSource } from "../src/lib/editor/slash-commands.ts";
+import { buildCommandRegistry } from "../src/lib/slash-commands.ts";
 import { cmGetValue, cmPressKey, cmType, cmView } from "./cm.ts";
 import { renderWithProviders } from "./render.tsx";
 
@@ -206,5 +211,55 @@ describe("the completion panel's keys", () => {
 
     cmPressKey(view.baseElement, "Escape");
     expect(onClose).toHaveBeenCalledOnce();
+  });
+});
+
+const commandRegistry = buildCommandRegistry({
+  statuses: [
+    {
+      id: 1,
+      name: "Todo",
+      category: "open",
+      color: "#000000",
+      position: 0,
+      is_default: true,
+    } satisfies Status,
+    {
+      id: 2,
+      name: "Done",
+      category: "closed",
+      color: "#000000",
+      position: 1,
+      is_default: false,
+    } satisfies Status,
+  ],
+  labels: [] as Label[],
+  members: [] as Member[],
+  me: undefined,
+  surface: "comment",
+});
+
+const commandExtensions = completionWith([
+  commandCompletionSource(() => commandRegistry),
+]);
+
+describe("the slash panel's keys", () => {
+  it("ends the command on Enter rather than reaching force", async () => {
+    const view = render(
+      <MarkdownEditor ariaLabel="Body" extensions={commandExtensions} />,
+    );
+    await panelFor(view.container, "/hide-all ");
+    cmPressKey(view.container, "Enter");
+    expect(cmGetValue(view.container)).toBe("/hide-all \n");
+  });
+
+  it("reaches force one row down, so nothing was dropped", async () => {
+    const view = render(
+      <MarkdownEditor ariaLabel="Body" extensions={commandExtensions} />,
+    );
+    await panelFor(view.container, "/hide-all ");
+    cmPressKey(view.container, "ArrowDown");
+    cmPressKey(view.container, "Enter");
+    expect(cmGetValue(view.container)).toBe("/hide-all force");
   });
 });

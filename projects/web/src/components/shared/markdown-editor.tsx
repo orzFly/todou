@@ -5,6 +5,7 @@ import {
   deleteLine,
   history,
   historyKeymap,
+  insertBlankLine,
   moveLineDown,
   moveLineUp,
   selectLine,
@@ -81,7 +82,13 @@ export type MarkdownEditorProps = {
   ariaLabel?: string;
   autoFocus?: boolean;
   readOnly?: boolean;
-  /** Mod-Enter. Receives the current document so callers need no ref. */
+  /**
+   * Mod-Enter. Receives the current document so callers need no ref.
+   *
+   * Mod-Enter belongs to this prop alone: without one the key does nothing,
+   * and a blank line goes on Alt-Enter instead. Callers that submit another
+   * way leave Alt-Enter to the editor.
+   */
   onSubmit?: (value: string) => void;
   /** Escape. */
   onCancel?: () => void;
@@ -109,6 +116,10 @@ const lineKeymap = [
   { key: "Mod-Shift-d", run: copyLineDown },
   { key: "Alt-ArrowUp", run: moveLineUp },
   { key: "Alt-ArrowDown", run: moveLineDown },
+  // Where Mod-Enter used to land: @codemirror/commands' defaultKeymap binds
+  // Mod-Enter to insertBlankLine, and this editor now claims that key for
+  // submit, so the blank line needs a binding of its own.
+  { key: "Alt-Enter", run: insertBlankLine },
 ];
 
 /**
@@ -288,9 +299,11 @@ export function MarkdownEditor({
             {
               key: "Mod-Enter",
               run: (v) => {
-                const submit = handlers.current.onSubmit;
-                if (submit === undefined) return false;
-                submit(v.state.doc.toString());
+                // Swallowed whether or not anyone is listening. Falling
+                // through would reach defaultKeymap's Mod-Enter →
+                // insertBlankLine, and a key that means "submit" everywhere
+                // else in the app should not silently add a line here.
+                handlers.current.onSubmit?.(v.state.doc.toString());
                 return true;
               },
             },

@@ -54,8 +54,13 @@ function firstLevelOption(command: CommandDef): Completion {
     apply: (view, _completion, from, to) => {
       // A trailing space for the argument, then straight into the second
       // level — picking `/label` without a label is never the whole intent.
+      // A command that takes no argument cannot be followed by anything on
+      // this line, so the newline is completed along with it and the cursor
+      // lands where the prose starts.
       const insert =
-        command.argument === "none" ? `/${command.name}` : `/${command.name} `;
+        command.argument === "none"
+          ? `/${command.name}\n`
+          : `/${command.name} `;
       view.dispatch({
         changes: { from, to, insert },
         selection: { anchor: from + insert.length },
@@ -97,9 +102,37 @@ export function commandCompletionSource(
             ? ["force"]
             : registry.statusNames;
     if (names.length === 0) return null;
+    const options: Completion[] = names.map((name) => ({
+      label: name,
+      type: "command",
+    }));
+    /**
+     * A command that also stands alone gets a first row that ends it, so
+     * Enter lands on "I am done" rather than on whatever candidate happens to
+     * sort first. `/hide-all` with nothing typed is already complete, and its
+     * only candidate, `force`, is an escalation — a key that reads as
+     * "newline" elsewhere should not reach it. Type a character and this row
+     * is gone, because the argument is no longer empty.
+     */
+    if (typed === "" && command.argumentOptional === true) {
+      options.unshift({
+        label: "↵",
+        detail: "end of command",
+        // Equal scores are ordered by label's localeCompare, so source order
+        // counts for nothing: without the boost this row sorts after `force`
+        // and the whole design inverts.
+        boost: 1,
+        apply: (view, _completion, from, to) => {
+          view.dispatch({
+            changes: { from, to, insert: "\n" },
+            selection: { anchor: from + 1 },
+          });
+        },
+      });
+    }
     return {
       from: context.pos - typed.length,
-      options: names.map((name) => ({ label: name, type: "command" })),
+      options,
     };
   };
 }

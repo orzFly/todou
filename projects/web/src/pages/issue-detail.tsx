@@ -302,7 +302,8 @@ function TitleBlock({
   );
 }
 
-function BodyBlock({
+/** Exported so tests can mount just the body editor; the page needs seven queries seeded. */
+export function BodyBlock({
   slug,
   issue,
   readOnly = false,
@@ -395,6 +396,7 @@ function BodyBlock({
               className="min-h-44"
               placeholder="Describe the issue… (paste or drop files)"
               extensions={refCompletion}
+              onSubmit={() => void handleSave()}
               onPaste={staging.onPaste}
               onDrop={staging.onDrop}
               onDragOver={staging.onDragOver}

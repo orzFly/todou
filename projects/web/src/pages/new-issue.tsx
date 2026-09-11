@@ -219,6 +219,7 @@ export function NewIssuePage() {
             className="min-h-56"
             extensions={extensions}
             onChange={setDraft}
+            onSubmit={() => void submit()}
             onPaste={staging.onPaste}
             onDrop={staging.onDrop}
             onDragOver={staging.onDragOver}

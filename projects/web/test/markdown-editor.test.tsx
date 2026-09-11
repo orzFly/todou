@@ -55,13 +55,31 @@ describe("MarkdownEditor", () => {
     expect(onCancel).toHaveBeenCalledOnce();
   });
 
-  it("falls through to the default binding when no handler is given", () => {
+  it("leaves Mod-Enter dead when no submit handler is given", () => {
     const view = render(<MarkdownEditor initialValue="text" />);
     const cm = cmView(view.container);
     cm.dispatch({ selection: { anchor: 4 } });
     cmPressKey(view.container, "Enter", { ctrlKey: true });
     cmPressKey(view.container, "Escape");
-    // No onSubmit means Mod-Enter is just Enter; Escape does nothing.
+    // A key that submits everywhere else must not silently add a line here.
+    expect(cmGetValue(view.container)).toBe("text");
+  });
+
+  it("inserts a blank line on Alt-Enter", () => {
+    const view = render(<MarkdownEditor initialValue="text" />);
+    cmView(view.container).dispatch({ selection: { anchor: 4 } });
+    cmPressKey(view.container, "Enter", { altKey: true });
+    expect(cmGetValue(view.container)).toBe("text\n");
+  });
+
+  it("inserts a blank line on Alt-Enter even when submit is one key away", () => {
+    const onSubmit = vi.fn();
+    const view = render(
+      <MarkdownEditor initialValue="text" onSubmit={onSubmit} />,
+    );
+    cmView(view.container).dispatch({ selection: { anchor: 4 } });
+    cmPressKey(view.container, "Enter", { altKey: true });
+    expect(onSubmit).not.toHaveBeenCalled();
     expect(cmGetValue(view.container)).toBe("text\n");
   });
 

@@ -22,7 +22,7 @@ import {
 } from "../src/lib/rehype-source-lines.ts";
 import { useSpecReviewDrafts } from "../src/lib/spec-drafts.ts";
 import { buildSegmentIndex } from "../src/lib/spec-source-index.ts";
-import { cmSetValue } from "./cm.ts";
+import { cmGetValue, cmPressKey, cmSetValue } from "./cm.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 afterEach(() => {
@@ -629,6 +629,34 @@ describe("ReviewSubmitDialog: the comment verdict", () => {
 
     cmSetValue(view.baseElement, "something");
     await waitFor(() => expect(button?.disabled).toBe(false));
+  });
+
+  /**
+   * The summary box deliberately gets no `onSubmit`: the form ends in three
+   * verdicts and has no primary action, so binding the key to any one of them
+   * would choose for the user. Nothing in the source says so — it is the
+   * absence of a prop — so this guards it against being "completed" later.
+   */
+  it("leaves Ctrl-Enter dead: three verdicts, no primary action", async () => {
+    const posts = stubFetch(PUSHER);
+    const { view } = mount([DRAFT]);
+
+    await view.findByText("Approve");
+    cmSetValue(view.baseElement, "a summary with no verdict picked");
+    await waitFor(() =>
+      expect(view.getByText("Comment").closest("button")?.disabled).toBe(false),
+    );
+
+    cmPressKey(view.baseElement, "Enter", { ctrlKey: true });
+
+    await act(async () => {});
+    expect(posts).toEqual([]);
+    // The dialog is still standing…
+    expect(view.getByText("Approve")).toBeTruthy();
+    // …and the blank line did not land on Ctrl-Enter either.
+    expect(cmGetValue(view.baseElement)).toBe(
+      "a summary with no verdict picked",
+    );
   });
 });
 

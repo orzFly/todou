@@ -1,8 +1,8 @@
-import { fireEvent, waitFor } from "@testing-library/react";
+import { act, fireEvent, waitFor } from "@testing-library/react";
 import type { QuestionsComponent } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QuestionsCard } from "../src/components/timeline/questions-card.tsx";
-import { cmSetValue } from "./cm.ts";
+import { cmPressKey, cmSetValue } from "./cm.ts";
 import { renderWithProviders } from "./render.tsx";
 
 // A fence in an answer reaches the real pierre CodeView through MarkdownView,
@@ -372,6 +372,58 @@ describe("QuestionsCard (unanswered)", () => {
     expect(optionButton(view, "New entity").getAttribute("aria-pressed")).toBe(
       "true",
     );
+  });
+
+  it("submits the whole form from a question's Other box on Ctrl-Enter", async () => {
+    const posts = stubFetch();
+    const view = renderCard();
+    await view.findByText("awaiting answer");
+
+    fireEvent.click(optionButton(view, "New entity"));
+    fireEvent.click(optionButton(view, "dev"));
+    // The second question's box, not the first: what is submitted is the
+    // form the editor belongs to, not the box it sits in.
+    cmSetValue(view.container, "and keep it strict", 1);
+    await waitFor(() =>
+      expect(
+        (
+          view.container.querySelector(
+            ".flex.justify-end > button",
+          ) as HTMLButtonElement
+        ).disabled,
+      ).toBe(false),
+    );
+
+    cmPressKey(view.container, "Enter", { ctrlKey: true }, 1);
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).toEqual({
+      answers: [
+        { key: "schema", selected: [0], declined: false },
+        {
+          key: "scope",
+          selected: [0],
+          other: "and keep it strict",
+          declined: false,
+        },
+      ],
+    });
+  });
+
+  it("sends nothing on Ctrl-Enter while a question is still open", async () => {
+    const posts = stubFetch();
+    const view = renderCard();
+    await view.findByText("awaiting answer");
+
+    // The submit button is disabled here; a disabled button cannot intercept
+    // a keystroke, so the callback has to carry the condition itself.
+    fireEvent.click(optionButton(view, "New entity"));
+    cmSetValue(view.container, "half an answer", 1);
+
+    cmPressKey(view.container, "Enter", { ctrlKey: true }, 1);
+
+    await act(async () => {});
+    expect(posts).toEqual([]);
   });
 });
 

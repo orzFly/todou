@@ -234,6 +234,13 @@ function AnswerForm({
           draft={drafts[q.key] ?? emptyDraft()}
           disabled={submit.isPending}
           onChange={(update) => patch(q.key, update)}
+          // The three conditions the submit button carries, written again
+          // here: a disabled button cannot intercept a keystroke, and this
+          // submission is final — a card's questions can be answered once.
+          onSubmit={() => {
+            if (!ready || !complete || submit.isPending) return;
+            submit.mutate();
+          }}
         />
       ))}
       <div className="flex justify-end">
@@ -260,6 +267,7 @@ function QuestionForm({
   draft,
   disabled,
   onChange,
+  onSubmit,
 }: {
   slug: string;
   issueNumber: number;
@@ -267,6 +275,8 @@ function QuestionForm({
   draft: Draft;
   disabled: boolean;
   onChange: (update: (d: Draft) => Draft) => void;
+  /** Ctrl-Enter in this question's "Other" box submits the whole form. */
+  onSubmit: () => void;
 }) {
   const toggleOption = (index: number) =>
     onChange((d) => {
@@ -386,6 +396,7 @@ function QuestionForm({
         }
         className="min-h-8"
         extensions={refCompletion}
+        onSubmit={onSubmit}
       />
     </fieldset>
   );
