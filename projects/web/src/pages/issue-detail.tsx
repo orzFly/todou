@@ -132,6 +132,13 @@ export function IssueDetailPage() {
             <AttachmentList slug={slug} issueNumber={issueNumber} />
             <TimelineDivider />
             <Timeline
+              // The row keys inside `Timeline` carry no card, so a jump to
+              // another card that shares a comment id would reuse the row's
+              // instance and let its in-flight write follow the new props.
+              // The slug is in the key because that reuse is what makes a
+              // cross-project jump destructive rather than a 404. Same remedy
+              // and same reason as the `Composer` below.
+              key={`${slug}/${issueNumber}`}
               slug={slug}
               issueNumber={issueNumber}
               pendingComments={composer.pending.filter((p) => !p.failed)}
