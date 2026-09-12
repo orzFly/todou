@@ -87,7 +87,13 @@ and each of them is silent when written wrong:
   delivered like any other. So a reply that arrives anyway is answered with a
   `refused` receipt — which is what tells the replying session its message
   went nowhere — and counted, with the total reported on stderr when the
-  watch exits, whether or not it exited badly.
+  watch exits, whether or not it exited badly. The node goes away with the
+  watch: a normal end, a `SIGINT`, `SIGTERM` or `SIGHUP` all unlink it, and
+  the signal is re-raised afterwards so the exit status still names the
+  signal that ended the watch. A `SIGKILL`ed watch runs no code and leaves
+  its node behind; the next watch to bind in that directory unlinks it once
+  the pid in its name is gone, collecting the address's previous
+  `todou-watch-<pid>.sock` name in the same pass.
 - The auth line has to be the *first* line on the connection. Only the
   first frame is read as an auth frame, so a connection that opens with a
   blank line or unparseable JSON is closed wherever the token is required.

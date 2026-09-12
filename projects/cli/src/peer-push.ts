@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { rmSync } from "node:fs";
+import { readdirSync, rmSync } from "node:fs";
 import { connect, createServer, type Socket } from "node:net";
 import { dirname, isAbsolute, join } from "node:path";
 import { type Clock, systemClock } from "./clock.ts";
+import { alive } from "./pid.ts";
 import { describeError } from "./watch-loop.ts";
 
 /** Receipt statuses that mean the message did not reach the session. */
@@ -174,7 +175,67 @@ export type PeerPushOptions<T> = {
   note?: (message: string) => void;
   /** Test seam; production leaves it unset and a real socket is dialled. */
   dial?: (target: string, payload: string) => Promise<void>;
+  /** Test seam for the signal path; production re-raises on this process. */
+  raise?: (signal: NodeJS.Signals) => void;
 };
+
+/**
+ * The files this channel owns, matched by the pid they are named after.
+ *
+ * Two names, not one: the address was `todou-watch-<pid>.sock` before it was
+ * renamed to carry its no-reply meaning, and the machines the card measured
+ * carry files under both. A file whose writer is gone is only removable by a
+ * later version if that version still knows the name, so the retired
+ * alternative stays — a rename adds an alternative here rather than replacing
+ * one, and that is the whole cost of the next rename.
+ *
+ * What the pattern excludes needs no special case to exclude it, and every
+ * neighbouring name is somebody else's: `<pid>.sock` is the receiving
+ * session's own inbox, `<pid>.json` is the omp extension's record, and
+ * `peer.sock` is the target this channel dials. The anchored `.sock` suffix
+ * keeps the matches inside this family.
+ */
+const SELF_NAMES = /^(?:no-reply-)?todou-watch-([0-9]+)\.sock$/;
+
+/**
+ * Housekeeping before the bind: unlink the files of this family whose process
+ * is gone. `SIGKILL`, an OOM kill and a power cut run no cleanup at all, so
+ * this is the only collector their residue ever gets — and it is also the only
+ * one a previous name's leftover files ever get.
+ *
+ * Silent about failure by design: a directory that will not list, or a file
+ * that will not unlink, leaves this where it stands and the channel opens
+ * anyway. A watch that refused to start over a leftover file would be a worse
+ * bug than the one being fixed, so nothing here is a precondition — the
+ * unconditional `rmSync(self)` at the bind stays exactly where it is, because
+ * the bind must not rest on a pass that is allowed to fail.
+ *
+ * A live pid means a live sibling watch, whose socket this must not take: the
+ * pid check is what keeps one watch from unlinking another's receipts.
+ */
+function sweepStale(dir: string): void {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return; // No such directory, or no permission to read it.
+  }
+  for (const name of names) {
+    const pid = Number(SELF_NAMES.exec(name)?.[1]);
+    if (!Number.isInteger(pid) || pid <= 0 || alive(pid)) continue;
+    try {
+      rmSync(join(dir, name), { force: true });
+    } catch {
+      // Housekeeping: a file that will not unlink is not this watch's problem.
+    }
+  }
+}
+
+/**
+ * The terminations that still run JavaScript. SIGKILL and a power cut do not,
+ * which is why the sweep above is the backstop rather than belt and braces.
+ */
+const CLEANUP_SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
 
 /**
  * The cross-session push transport behind `watch --follow=uds` (T-252): one
@@ -369,7 +430,10 @@ export async function openPeerPush<T>(
   // A named pipe has no filesystem node to leave behind, so on Windows this
   // has nothing to clean and can fail with something other than ENOENT,
   // which would degrade the whole channel over a no-op.
-  if (!isWindows) rmSync(self, { force: true });
+  if (!isWindows) {
+    sweepStale(dirname(self));
+    rmSync(self, { force: true });
+  }
   await new Promise<void>((resolve, reject_) => {
     server.once("error", reject_);
     server.listen(self, () => {
@@ -388,6 +452,43 @@ export async function openPeerPush<T>(
         "auth line, but nothing here has confirmed that receipts come back, " +
         "so a refusal there may pass as delivered",
     );
+  }
+
+  // A `finally` in the watch loop is the only path to the old close, and a
+  // standing watch is ended by a signal almost every time — so the cleanup
+  // has to sit on the signal path too, where the stack never unwinds.
+  //
+  // The signal is re-raised rather than answered with `process.exit`, so the
+  // parent still sees a process killed by that signal instead of one that
+  // chose an exit code: a watch is normally a background task whose
+  // supervisor reads exactly that distinction, and nothing here has the
+  // authority to edit what its supervisor is told.
+  const raise =
+    opts.raise ??
+    ((signal: NodeJS.Signals) => process.kill(process.pid, signal));
+  const onSignal = (signal: NodeJS.Signals) => {
+    close();
+    raise(signal);
+  };
+  function close(): void {
+    if (closed) return;
+    closed = true;
+    if (!isWindows) {
+      for (const signal of CLEANUP_SIGNALS) process.off(signal, onSignal);
+      process.off("exit", close);
+    }
+    for (const socket of sockets) socket.destroy();
+    sockets.clear();
+    server.close();
+    if (!isWindows) rmSync(self, { force: true });
+  }
+  // Registered after the bind rather than before it: an open that fails on
+  // `listen` throws with nothing on `process` to take off again. Both are
+  // removed by `close`, so a command that ends normally — or is closed twice
+  // — leaves nothing behind.
+  if (!isWindows) {
+    for (const signal of CLEANUP_SIGNALS) process.on(signal, onSignal);
+    process.on("exit", close);
   }
 
   return {
@@ -492,14 +593,7 @@ export async function openPeerPush<T>(
     },
     replies: () => ({ discarded, unbounced }),
     whenRejected,
-    close: () => {
-      if (closed) return;
-      closed = true;
-      for (const socket of sockets) socket.destroy();
-      sockets.clear();
-      server.close();
-      if (!isWindows) rmSync(self, { force: true });
-    },
+    close,
   };
 }
 

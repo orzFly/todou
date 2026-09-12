@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { connect, createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -959,3 +960,190 @@ function dialLine(target: string, line: string): Promise<void> {
     );
   });
 }
+
+/**
+ * A directory that a test has seeded by hand, with the peer listening in it —
+ * the shape `openPeerPush` sweeps before it binds.
+ */
+async function seededPeer(
+  name: string,
+  seed: Record<string, string>,
+): Promise<{ peer: FakePeer; dir: string }> {
+  const peer = await fakePeer(name);
+  const dir = dirname(peer.target);
+  for (const [file, content] of Object.entries(seed)) {
+    writeFileSync(join(dir, file), content);
+  }
+  return { peer, dir };
+}
+
+describe("openPeerPush stale socket sweep (T-319)", () => {
+  it("removes its family's dead files and nothing else", async () => {
+    // A reaped child's pid is free, which is how a test gets a dead one
+    // honestly — and one that is certainly running, for the file that must
+    // survive.
+    const gone = spawnSync(process.execPath, ["-e", ""]).pid as number;
+    const live = spawn(
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1000)"],
+      {
+        stdio: "ignore",
+      },
+    );
+    const { peer, dir } = await seededPeer("sweep", {
+      [`no-reply-todou-watch-${gone}.sock`]: "",
+      [`todou-watch-${gone}.sock`]: "",
+      [`no-reply-todou-watch-${live.pid}.sock`]: "",
+      [`${gone}.sock`]: "",
+      [`${gone}.json`]: "",
+      "no-reply-todou-watch-notapid.sock": "",
+    });
+
+    try {
+      const push = await openPeerPush<string>({
+        target: peer.target,
+        render,
+        fromName: "todou-watch",
+        clock: virtualClock(),
+      });
+
+      // Ours, and dead.
+      expect(existsSync(join(dir, `no-reply-todou-watch-${gone}.sock`))).toBe(
+        false,
+      );
+      // The retired name is still matched: a rename only obliges the next
+      // version to know it, and nothing else will ever collect these.
+      expect(existsSync(join(dir, `todou-watch-${gone}.sock`))).toBe(false);
+      // A live sibling watch keeps its receipts address.
+      expect(
+        existsSync(join(dir, `no-reply-todou-watch-${live.pid}.sock`)),
+      ).toBe(true);
+      // The receiving session's own inbox, the extension's record, a name
+      // this family does not own, and the target itself.
+      expect(existsSync(join(dir, `${gone}.sock`))).toBe(true);
+      expect(existsSync(join(dir, `${gone}.json`))).toBe(true);
+      expect(existsSync(join(dir, "no-reply-todou-watch-notapid.sock"))).toBe(
+        true,
+      );
+      expect(existsSync(peer.target)).toBe(true);
+
+      push.close();
+      await peer.close();
+    } finally {
+      live.kill("SIGKILL");
+    }
+  });
+
+  it("opens and pushes with nothing in the directory but the target", async () => {
+    const peer = await fakePeer("emptysweep");
+    const dir = dirname(peer.target);
+    expect(existsSync(join(dir, "peer.sock"))).toBe(true);
+
+    // The sweep is housekeeping, never a precondition.
+    const push = await openPeerPush<string>({
+      target: peer.target,
+      render,
+      fromName: "todou-watch",
+      clock: virtualClock(),
+    });
+    await push.send(["entry one"], "c0", "c1");
+    await peer.received(1);
+    expect(peer.frames[0]?.message.content).toContain("entry one");
+
+    push.close();
+    await peer.close();
+  });
+});
+
+describe("openPeerPush signal and exit cleanup (T-319)", () => {
+  // Never `process.emit("SIGTERM")`: that would run vitest's own listeners
+  // too, and a test run that tears itself down proves nothing. The listener
+  // the channel added is called directly instead.
+  const EVENTS = ["SIGINT", "SIGTERM", "SIGHUP", "exit"] as const;
+
+  /** What `process.listeners` reports for one of those events. */
+  type Listeners = ReturnType<typeof process.listeners>;
+
+  /** Each channel's listeners as they stand, so an open's additions show up
+   * as a difference against this. */
+  const snapshot = (): Listeners[] =>
+    EVENTS.map((event) => process.listeners(event));
+
+  /** What this open added to `process`, event by event. */
+  const added = (before: Listeners[]): Listeners[] =>
+    EVENTS.map((event, i) =>
+      process.listeners(event).filter((l) => !before[i]?.includes(l)),
+    );
+
+  const leftover = (before: Listeners[]) => added(before).flat().length;
+
+  it("removes the node, re-raises, and leaves nothing on process", async () => {
+    const peer = await fakePeer("signal");
+    const before = snapshot();
+    const raised: string[] = [];
+    await openPeerPush<string>({
+      target: peer.target,
+      render,
+      fromName: "todou-watch",
+      clock: virtualClock(),
+      raise: (signal) => raised.push(signal),
+    });
+    const self = join(
+      dirname(peer.target),
+      `no-reply-todou-watch-${process.pid}.sock`,
+    );
+    expect(existsSync(self)).toBe(true);
+
+    const [signalListener] = added(before)[1] as Array<
+      (signal: NodeJS.Signals) => void
+    >;
+    expect(signalListener).toBeTypeOf("function");
+    signalListener?.("SIGTERM");
+
+    expect(existsSync(self)).toBe(false);
+    // Re-raised rather than answered with an exit code, so the supervising
+    // parent still sees the signal it sent.
+    expect(raised).toEqual(["SIGTERM"]);
+    expect(leftover(before)).toBe(0);
+    await peer.close();
+  });
+
+  it("takes the listeners off when close() is called directly", async () => {
+    const peer = await fakePeer("closelisteners");
+    const before = snapshot();
+    const push = await openPeerPush<string>({
+      target: peer.target,
+      render,
+      fromName: "todou-watch",
+      clock: virtualClock(),
+      raise: () => {},
+    });
+    push.close();
+
+    expect(leftover(before)).toBe(0);
+    // Idempotent, which is what the two exit paths rely on.
+    push.close();
+    expect(leftover(before)).toBe(0);
+    await peer.close();
+  });
+
+  it("registers nothing on Windows", async () => {
+    const peer = await fakePeer("windows");
+    const before = snapshot();
+    const push = await openPeerPush<string>({
+      target: peer.target,
+      render,
+      fromName: "todou-watch",
+      clock: virtualClock(),
+      platform: "win32",
+      token: "abc",
+      raise: () => {},
+    });
+
+    // A named pipe leaves no filesystem node, so there is nothing to sweep
+    // and nothing for a handler to remove.
+    expect(leftover(before)).toBe(0);
+    push.close();
+    await peer.close();
+  });
+});

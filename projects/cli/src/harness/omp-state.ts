@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import type { Env } from "../config.ts";
+import { alive } from "../pid.ts";
 
 /** What the extension publishes, once every field has been believed. */
 export type OmpState = {
@@ -261,18 +262,4 @@ function pidFromPath(path: string): number | undefined {
   const name = basename(path, ".json");
   if (!/^[0-9]+$/.test(name)) return undefined;
   return Number(name);
-}
-
-/**
- * Signal 0 checks for a process without touching it. EPERM counts as alive:
- * the pid is in use by somebody, which is all this asks.
- */
-function alive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
 }
