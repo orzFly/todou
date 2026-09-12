@@ -6,14 +6,24 @@ import {
 import {
   act,
   fireEvent,
+  type RenderResult,
   render,
   renderHook,
+  screen,
   waitFor,
+  within,
 } from "@testing-library/react";
-import type { Attachment, CommentCreateResult, Issue, Me } from "@todou/shared";
+import type {
+  Attachment,
+  CommentCreateResult,
+  Issue,
+  Me,
+  TimelineComment,
+} from "@todou/shared";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
+import { CommentItem } from "../src/components/timeline/comment-item.tsx";
 import {
   Composer,
   useCommentComposer,
@@ -311,5 +321,202 @@ describe("a body edit aimed at a card the page then left", () => {
     await waitFor(() => expect(updateIssue).toHaveBeenCalled());
     expect(uploadAttachment.mock.calls[0]?.[1]).toBe(7);
     expect(updateIssue.mock.calls[0]?.[1]).toBe(7);
+  });
+});
+
+/**
+ * The row's own worth, below the page: `Timeline` is keyed by card, so a real
+ * page no longer re-points a mounted row — these render `CommentItem` directly
+ * and change its props, which is what the sealing has to survive on its own.
+ * That is the half that holds if the key is ever lost.
+ */
+const comment = (id: number, body: string): TimelineComment => ({
+  type: "comment",
+  id,
+  author: {
+    id: me.id,
+    login: me.login,
+    display_name: me.display_name,
+    kind: "human",
+    avatar_url: null,
+    owner: null,
+  },
+  body,
+  component: null,
+  created_at: "2026-09-08T09:00:00Z",
+  edited_at: null,
+  resolved_at: null,
+  hidden_at: null,
+  agent_context: null,
+});
+
+/** `MarkdownView` resolves issue refs against the project's config. */
+function stubCommentFetch() {
+  vi.stubGlobal("fetch", (async (input: unknown, init?: RequestInit) => {
+    const url = String(input);
+    if (init?.method !== undefined && init.method !== "GET") {
+      return new Response(null, { status: 204 });
+    }
+    if (url.includes("/references/config")) {
+      return new Response(
+        JSON.stringify({ format: { prefix: "T", history: [] }, autolinks: [] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (url.includes("/reference-directory")) {
+      return new Response(
+        JSON.stringify({ entries: [], contested: [], slug_entries: [] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    return new Response(JSON.stringify([]), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch);
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
+/** The row on card 7 in project `p`, then on card 8 in project `q`: the jump
+ *  whose comment id collides, because another project's database counts its
+ *  comments from 1 as well. */
+function Row({ hidden = false }: { hidden?: boolean } = {}) {
+  const [onNext, setOnNext] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOnNext(true)}>
+        the next card
+      </button>
+      <CommentItem
+        slug={onNext ? "q" : SLUG}
+        issueNumber={onNext ? 8 : 7}
+        comment={{
+          ...comment(11, onNext ? "card 8 body" : "card 7 body"),
+          hidden_at: hidden ? "2026-09-08T11:00:00Z" : null,
+        }}
+        viewer={{ id: me.id, isAdmin: false, role: "writer" }}
+      />
+    </>
+  );
+}
+
+describe("a comment edit aimed at a card the page then left", () => {
+  /** Radix opens the menu on pointerdown, not on click. */
+  const openMenu = async (view: RenderResult) => {
+    const trigger = await waitFor(() =>
+      within(view.container).getByLabelText("comment actions"),
+    );
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
+    return trigger;
+  };
+
+  const editButton = (view: RenderResult) =>
+    waitFor(() => within(view.container).getByLabelText("edit comment"));
+
+  it("lands the attachment and the edit on the card the editor was opened on", async () => {
+    stubCommentFetch();
+    const attachment = held<Attachment>();
+    const uploadAttachment = vi
+      .spyOn(api, "uploadAttachment")
+      .mockReturnValue(attachment.promise);
+    const updateComment = vi
+      .spyOn(api, "updateComment")
+      .mockResolvedValue(comment(11, "card 7, rewritten"));
+    const view = renderWithProviders(<Row />);
+
+    fireEvent.click(await editButton(view));
+    await waitFor(() => expect(cmView(view.container)).toBeDefined());
+    cmSetValue(view.container, "card 7, rewritten");
+    dropBox(view.container);
+    fireEvent.click(view.getByText("Save"));
+
+    // The upload is what holds the edit open: the row's props move to the
+    // other project while the write is still in flight.
+    await waitFor(() => expect(uploadAttachment).toHaveBeenCalled());
+    fireEvent.click(view.getByText("the next card"));
+    attachment.release(uploaded());
+
+    await waitFor(() => expect(updateComment).toHaveBeenCalled());
+    expect(uploadAttachment.mock.calls[0]?.[1]).toBe(7);
+    expect(updateComment.mock.calls[0]?.slice(0, 3)).toEqual([SLUG, 7, 11]);
+  });
+
+  it("hides on the card the reader was looking at", async () => {
+    stubCommentFetch();
+    const setCommentsHidden = vi
+      .spyOn(api, "setCommentsHidden")
+      .mockResolvedValue({ hidden: [], unchanged: [] });
+    // Offline: the retryer pauses before `mutationFn` is ever called, so the
+    // window is the whole pause — the options are read when it resumes.
+    onlineManager.setOnline(false);
+    // The unhide control rather than the menu's Hide: it is the same mutation
+    // with the same closure, and a plain button that needs no popper to open.
+    const client = queryClient();
+    const view = renderWithProviders(<Row hidden />, client);
+
+    fireEvent.click(
+      await waitFor(() =>
+        within(view.container).getByLabelText("unhide comment"),
+      ),
+    );
+    await letTheLoopRun();
+    expect(setCommentsHidden).not.toHaveBeenCalled();
+
+    fireEvent.click(view.getByText("the next card"));
+    await act(async () => {
+      onlineManager.setOnline(true);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(setCommentsHidden).toHaveBeenCalled());
+    expect(setCommentsHidden.mock.calls[0]?.slice(0, 2)).toEqual([SLUG, 7]);
+    // Not merely aimed right: the request still went out, after the jump.
+    expect(setCommentsHidden).toHaveBeenCalledTimes(1);
+  });
+
+  it("deletes on the card the reader was looking at", async () => {
+    stubCommentFetch();
+    const deleteComment = vi
+      .spyOn(api, "deleteComment")
+      .mockResolvedValue(undefined);
+    onlineManager.setOnline(false);
+    const view = renderWithProviders(<Row />);
+
+    await openMenu(view);
+    fireEvent.click(await view.findByText("Delete comment…"));
+    fireEvent.click(await view.findByText("Delete"));
+    await letTheLoopRun();
+    fireEvent.click(view.getByText("the next card"));
+    act(() => onlineManager.setOnline(true));
+
+    await waitFor(() => expect(deleteComment).toHaveBeenCalled());
+    expect(deleteComment.mock.calls[0]?.slice(0, 2)).toEqual([SLUG, 7]);
+  });
+
+  it("refreshes the timeline of the card the request reached", async () => {
+    stubCommentFetch();
+    const write = held<TimelineComment>();
+    vi.spyOn(api, "updateComment").mockReturnValue(write.promise);
+    const client = queryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const view = renderWithProviders(<Row />, client);
+
+    fireEvent.click(await editButton(view));
+    await waitFor(() => expect(cmView(view.container)).toBeDefined());
+    cmSetValue(view.container, "card 7, rewritten");
+    fireEvent.click(view.getByText("Save"));
+    await waitFor(() => expect(api.updateComment).toHaveBeenCalled());
+
+    fireEvent.click(view.getByText("the next card"));
+    write.release(comment(11, "card 7, rewritten"));
+
+    await waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: ["timeline", SLUG, 7],
+      }),
+    );
   });
 });

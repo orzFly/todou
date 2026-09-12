@@ -45,6 +45,16 @@ export type Viewer = {
   role?: MemberRole | null;
 };
 
+/**
+ * What a comment write was aimed at, decided before its handler's first
+ * `await` and carried through the mutation's variables. `Mutation.execute`
+ * hands them to `fn` unchanged, so they survive the option swap a
+ * route-param change performs on a mutation still pending — a closure's
+ * `slug`/`issueNumber` do not, and a cross-project jump into a database
+ * that reuses this comment id would overwrite the other card's comment.
+ */
+export type Target = { slug: string; issueNumber: number; commentId: number };
+
 /** Mirror of the server rule: the author or a project admin may edit. */
 export function canEditComment(
   viewer: Viewer | null | undefined,
@@ -80,36 +90,38 @@ export function CommentItem({
   const staging = useStagedFiles();
   const queryClient = useQueryClient();
   const refCompletion = useRefCompletion(slug);
+  const target: Target = { slug, issueNumber, commentId: comment.id };
   const save = useMutation({
-    mutationFn: (finalBody: string) =>
-      api.updateComment(slug, issueNumber, comment.id, finalBody),
-    onSuccess: () => {
+    mutationFn: (vars: Target & { body: string }) =>
+      api.updateComment(vars.slug, vars.issueNumber, vars.commentId, vars.body),
+    onSuccess: (_updated, vars) => {
       queryClient.invalidateQueries({
-        queryKey: ["timeline", slug, issueNumber],
+        queryKey: ["timeline", vars.slug, vars.issueNumber],
       });
       setEditing(false);
       staging.clear();
     },
     onError: (error) => toast.error(error.message),
   });
-  const invalidateTimeline = () =>
+  const invalidateTimeline = (target: Target) =>
     queryClient.invalidateQueries({
-      queryKey: ["timeline", slug, issueNumber],
+      queryKey: ["timeline", target.slug, target.issueNumber],
     });
   const setHidden = useMutation({
-    mutationFn: (hidden: boolean) =>
-      api.setCommentsHidden(slug, issueNumber, {
-        hidden,
-        comment_ids: [comment.id],
+    mutationFn: (vars: Target & { hidden: boolean }) =>
+      api.setCommentsHidden(vars.slug, vars.issueNumber, {
+        hidden: vars.hidden,
+        comment_ids: [vars.commentId],
       }),
-    onSuccess: invalidateTimeline,
+    onSuccess: (_result, vars) => invalidateTimeline(vars),
     onError: (error) => toast.error(error.message),
   });
   const remove = useMutation({
-    mutationFn: () => api.deleteComment(slug, issueNumber, comment.id),
-    onSuccess: () => {
+    mutationFn: (vars: Target) =>
+      api.deleteComment(vars.slug, vars.issueNumber, vars.commentId),
+    onSuccess: (_result, vars) => {
       setConfirmingDelete(false);
-      return invalidateTimeline();
+      return invalidateTimeline(vars);
     },
     onError: (error) => toast.error(error.message),
   });
@@ -117,11 +129,17 @@ export function CommentItem({
   async function handleSave() {
     if (uploading) return;
     const body = editor.current?.getValue() ?? comment.body;
+    // `target` was read during render, before any of this: the upload below is
+    // a real request, and by the time it answers the page may be showing
+    // another card, whose comment of the same id this PATCH would overwrite.
     let full = body;
     if (staging.staged.length > 0) {
       setUploading(true);
       try {
-        const markers = await staging.uploadAll(slug, issueNumber);
+        const markers = await staging.uploadAll(
+          target.slug,
+          target.issueNumber,
+        );
         full = withAttachmentMarkers(body.trimEnd(), markers);
       } catch (error) {
         toast.error(`Could not upload files: ${(error as Error).message}`);
@@ -130,7 +148,7 @@ export function CommentItem({
         setUploading(false);
       }
     }
-    save.mutate(full);
+    save.mutate({ ...target, body: full });
   }
 
   return (
@@ -192,7 +210,7 @@ export function CommentItem({
                 variant="ghost"
                 aria-label="unhide comment"
                 disabled={!canHideComment(viewer) || setHidden.isPending}
-                onClick={() => setHidden.mutate(false)}
+                onClick={() => setHidden.mutate({ ...target, hidden: false })}
               >
                 <EyeOffIcon className="size-3.5" />
               </Button>
@@ -229,7 +247,11 @@ export function CommentItem({
                 {/* The entries need more room than the trigger's 28px. */}
                 <DropdownMenuContent className="w-auto" align="end">
                   {canHideComment(viewer) && !isHidden(comment) && (
-                    <DropdownMenuItem onSelect={() => setHidden.mutate(true)}>
+                    <DropdownMenuItem
+                      onSelect={() =>
+                        setHidden.mutate({ ...target, hidden: true })
+                      }
+                    >
                       <EyeOffIcon className="size-3.5" />
                       Hide comment
                     </DropdownMenuItem>
@@ -349,7 +371,7 @@ export function CommentItem({
         confirmLabel="Delete"
         destructive
         pending={remove.isPending}
-        onConfirm={() => remove.mutate()}
+        onConfirm={() => remove.mutate(target)}
       />
     </div>
   );
