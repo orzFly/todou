@@ -16,15 +16,30 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import type { Me } from "@todou/shared";
-import { describe, expect, it } from "vitest";
+import type { Me, QuestionsComponent } from "@todou/shared";
+import { describe, expect, it, vi } from "vitest";
+import {
+  api,
+  labelsQuery,
+  membersQuery,
+  meQuery,
+  projectQuery,
+  statusesQuery,
+} from "../src/api/queries.ts";
+import {
+  type StagedFiles,
+  useStagedFiles,
+} from "../src/components/issue/staged-files.tsx";
 import { MarkdownEditor } from "../src/components/shared/markdown-editor.tsx";
 import { AppShell } from "../src/components/shell.tsx";
+import { useCommentComposer } from "../src/components/timeline/composer.tsx";
+import { QuestionsCard } from "../src/components/timeline/questions-card.tsx";
 import {
   hasUnsavedWork,
   registerDirtySource,
   useDirtySource,
 } from "../src/lib/unsaved-guard.ts";
+import { NewIssuePage } from "../src/pages/new-issue.tsx";
 import { router } from "../src/router.tsx";
 import { cmSetValue } from "./cm.ts";
 import { testQueryClient } from "./render.tsx";
@@ -199,6 +214,182 @@ function renderOnTheAppRouter() {
     },
   };
 }
+
+describe("the surfaces a form loses along with its text", () => {
+  /**
+   * Each of these is a predicate the guard has to be told about separately —
+   * a title, a picked option, a staged attachment, an unsent comment — none
+   * of which is a markdown document, so nothing else would report them.
+   */
+  it("counts a title with an empty description box", async () => {
+    mountNewIssue();
+    expect(hasUnsavedWork()).toBe(false);
+
+    fireEvent.change(await screen.findByLabelText("Title"), {
+      target: { value: "Dig up the potatoes" },
+    });
+
+    await waitFor(() => expect(hasUnsavedWork()).toBe(true));
+  });
+
+  it("counts a picked option, with no Other text typed", async () => {
+    mountQuestionsCard();
+    await screen.findByText("awaiting answer");
+    expect(hasUnsavedWork()).toBe(false);
+
+    fireEvent.click(optionButton("New entity"));
+
+    await waitFor(() => expect(hasUnsavedWork()).toBe(true));
+  });
+
+  it("counts a decline on its own", async () => {
+    mountQuestionsCard();
+    await screen.findByText("awaiting answer");
+    expect(hasUnsavedWork()).toBe(false);
+
+    fireEvent.click(optionButton("Decline to answer"));
+
+    await waitFor(() => expect(hasUnsavedWork()).toBe(true));
+  });
+
+  it("counts a staged attachment that was never uploaded", async () => {
+    const tray = mountStagedFiles();
+    expect(hasUnsavedWork()).toBe(false);
+
+    act(() => {
+      tray.stage([new File(["bytes"], "shot.png", { type: "image/png" })]);
+    });
+
+    expect(hasUnsavedWork()).toBe(true);
+
+    act(() => {
+      tray.remove(tray.staged[0]?.key ?? 0);
+    });
+    expect(hasUnsavedWork()).toBe(false);
+  });
+
+  it("counts a comment whose send failed", async () => {
+    vi.spyOn(api, "createComment").mockRejectedValue(new Error("offline"));
+    const composer = renderHook(() => useCommentComposer("p", 7, me), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={testQueryClient()}>
+          {children}
+        </QueryClientProvider>
+      ),
+    });
+    expect(hasUnsavedWork()).toBe(false);
+
+    act(() => composer.result.current.send("a comment that will fail"));
+
+    await waitFor(() => expect(hasUnsavedWork()).toBe(true));
+  });
+});
+
+/**
+ * The page's own sidebar fields need queries seeded; the assertions here are
+ * about the guard, so the shortest seeding that mounts the form is the point.
+ */
+function mountNewIssue() {
+  const client = testQueryClient();
+  client.setQueryData(projectQuery("p").queryKey, {
+    id: 1,
+    slug: "p",
+    name: "p",
+    description: "",
+    created_at: "2026-01-01T00:00:00Z",
+    viewer_role: "admin",
+  });
+  client.setQueryData(statusesQuery("p").queryKey, []);
+  client.setQueryData(labelsQuery("p").queryKey, []);
+  client.setQueryData(membersQuery("p").queryKey, []);
+  client.setQueryData(meQuery.queryKey, me);
+
+  const rootRoute = createRootRoute({ component: () => <Outlet /> });
+  // The page reads its params from `/authed/projects/$slug/issues/new`, so the
+  // pathless layout has to be in the shim's route ids.
+  const authedRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    id: "authed",
+    component: () => <Outlet />,
+  });
+  const projectRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: "/projects/$slug",
+    component: () => <Outlet />,
+  });
+  const newIssueRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "issues/new",
+    component: NewIssuePage,
+  });
+  const testRouter = createRouter({
+    routeTree: rootRoute.addChildren([
+      authedRoute.addChildren([projectRoute.addChildren([newIssueRoute])]),
+    ]),
+    history: createMemoryHistory({
+      initialEntries: ["/projects/p/issues/new"],
+    }),
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={testRouter} />
+    </QueryClientProvider>,
+  );
+}
+
+function mountQuestionsCard() {
+  const client = testQueryClient();
+  // Answer state resolves to "nothing answered yet", which is what puts the
+  // form rather than the answered summary on screen.
+  client.setQueryData(["questions", "p", 19], { items: [] });
+  return render(
+    <QueryClientProvider client={client}>
+      <QuestionsCard
+        slug="p"
+        issueNumber={19}
+        commentId={42}
+        component={questionComponent}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+function mountStagedFiles() {
+  let latest: StagedFiles | null = null;
+  function Harness() {
+    latest = useStagedFiles();
+    return null;
+  }
+  render(
+    <QueryClientProvider client={testQueryClient()}>
+      <Harness />
+    </QueryClientProvider>,
+  );
+  return {
+    get staged() {
+      if (latest === null) throw new Error("harness did not mount");
+      return latest.staged;
+    },
+    stage: (files: File[]) => latest?.stage(files),
+    remove: (key: number) => latest?.remove(key),
+  };
+}
+
+const questionComponent: QuestionsComponent = {
+  type: "questions",
+  questions: [
+    {
+      key: "schema",
+      header: "Data model",
+      question: "Where does the payload live?",
+      multiple: false,
+      options: [{ label: "New entity" }, { label: "Inline" }],
+    },
+  ],
+};
+
+const optionButton = (label: string) =>
+  screen.getByText(label).closest("button") as HTMLButtonElement;
 
 describe("leaving a page with unsaved work", () => {
   it("follows a link straight through when nothing is unsaved", async () => {

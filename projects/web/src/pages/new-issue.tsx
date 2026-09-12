@@ -180,6 +180,13 @@ export function NewIssuePage() {
       navigate({
         to: "/projects/$slug/issues/$number",
         params: { slug, number: String(issue.number) },
+        // The work this navigation leaves behind is committed: the issue
+        // exists, its attachments are uploaded, and `createdRef` reuses it.
+        // The guard cannot know that — its predicates read the title and the
+        // body, and the state that would clear them lands after this call —
+        // so the page that did the committing says so itself and the
+        // navigation goes through (T-317).
+        ignoreBlocker: true,
       });
     } catch (error) {
       toast.error((error as Error).message);
@@ -248,6 +255,10 @@ export function NewIssuePage() {
             variant="ghost"
             onClick={() => {
               staging.clear();
+              // Deliberately still blocked when there is a title or a body:
+              // Cancel drops the form on the floor, so it is exactly the kind
+              // of leaving the guard exists to ask about, and it is the only
+              // control here whose confirmation is not a lie (T-317).
               navigate({ to: "/projects/$slug", params: { slug }, search: {} });
             }}
           >

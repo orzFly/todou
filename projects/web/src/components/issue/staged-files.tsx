@@ -30,13 +30,26 @@ export type StagedFile = {
 
 let stagedKey = 0;
 
+/** What `useStagedFiles` hands its caller: the tray, and the ways into it. */
+export type StagedFiles = {
+  staged: StagedFile[];
+  /** `false` when the list was empty — the caller's cue to ignore the paste. */
+  stage: (files: Iterable<File>, opts?: { fromClipboard?: boolean }) => boolean;
+  remove: (key: number) => void;
+  clear: () => void;
+  uploadAll: (slug: string, issueNumber: number) => Promise<string[]>;
+  onPaste: (event: FileClipboardEvent) => void;
+  onDrop: (event: FileDragEvent) => void;
+  onDragOver: (event: FileDragEvent) => void;
+};
+
 /**
  * Local staging for pasted/dropped editor files (any type): previewable
  * and removable, but nothing touches the server until uploadAll() at
  * submit time — abandoning the draft leaves no orphaned attachments.
  * Size limits are the server's call; its 422 message is surfaced per file.
  */
-export function useStagedFiles() {
+export function useStagedFiles(): StagedFiles {
   const [staged, setStaged] = useState<StagedFile[]>([]);
   const queryClient = useQueryClient();
   const stagedRef = useRef(staged);

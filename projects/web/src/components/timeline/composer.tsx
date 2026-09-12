@@ -66,6 +66,22 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
   const [pending, setPending] = useState<PendingComment[]>([]);
   const queryClient = useQueryClient();
 
+  // `/issues/7 → /issues/8` is one route with a changed param, so this hook
+  // keeps running across the jump — and it is the page that owns it, above the
+  // keyed `Composer`, so the key cannot reach `pending`. Left alone, a failed
+  // comment from card 7 would render its "sending failed" row on card 8 and
+  // Retry would post card 7's body to card 8.
+  //
+  // `Composer` resets the same way, and for the same reason (T-317): together
+  // they are what "the new card's composer is clean" means. Clearing from
+  // inside the mutation's callbacks instead would not survive the argv the
+  // failed send is retried with.
+  const [pendingFor, setPendingFor] = useState(issueNumber);
+  if (pendingFor !== issueNumber) {
+    setPendingFor(issueNumber);
+    setPending([]);
+  }
+
   // A comment in flight or one whose send failed exists only here — the
   // editor was cleared the moment it was submitted — and a failed send is
   // exactly when someone reaches for the reload button.
@@ -341,8 +357,10 @@ export function Composer({
     commands.length === 0;
   // A broken command line counts as content even though `empty` cannot see it:
   // it yields neither a body nor a command, so a draft that is nothing else
-  // reads as empty while still rendering its error block. Reachable by walking
-  // to the next card, which resets `touched` and keeps the draft.
+  // reads as empty while still rendering its error block. That error block is
+  // then the one thing that can outlive the buttons explaining what to do
+  // about it — and the next card drops it along with the draft it came from,
+  // because `issue-detail.tsx` keys this component by card number (T-317).
   const expanded = touched || !empty || broken.length > 0;
   const label = submitLabel({
     uploading,

@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  renderHook,
+  waitFor,
+} from "@testing-library/react";
 import type {
   CommandInput,
   Label,
@@ -11,6 +17,7 @@ import type {
 } from "@todou/shared";
 import { describe, expect, it, vi } from "vitest";
 import {
+  api,
   labelsQuery,
   membersQuery,
   meQuery,
@@ -24,8 +31,13 @@ vi.mock("sonner", async (importOriginal) => ({
 }));
 const { toast } = await import("sonner");
 
-import { Composer, submitLabel } from "../src/components/timeline/composer.tsx";
+import {
+  Composer,
+  submitLabel,
+  useCommentComposer,
+} from "../src/components/timeline/composer.tsx";
 import { cmFocus, cmGetValue, cmSetValue, cmView } from "./cm.ts";
+import { testQueryClient } from "./render.tsx";
 
 describe("submitLabel", () => {
   const base = {
@@ -623,5 +635,44 @@ describe("Composer buttons", () => {
     cmFocus(view.container);
     await waitFor(() => expect(maybeSubmit(view)).not.toBeNull());
     expect(actionRow(view)?.className).toContain("composer-actions-in");
+  });
+});
+
+/**
+ * `useCommentComposer` belongs to the page, above the keyed `Composer`, so the
+ * key cannot reach its `pending` list. A failure from card 7 that survived the
+ * jump would render its "sending failed" row on card 8 with a Retry that posts
+ * card 7's body to card 8 (T-317).
+ */
+describe("a failed comment across a card change", () => {
+  it("does not follow the reader to the next card", async () => {
+    const createComment = vi
+      .spyOn(api, "createComment")
+      .mockRejectedValue(new Error("offline"));
+    const hook = renderHook(
+      ({ issueNumber }: { issueNumber: number }) =>
+        useCommentComposer("p", issueNumber, ME),
+      {
+        initialProps: { issueNumber: 7 },
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={testQueryClient()}>
+            {children}
+          </QueryClientProvider>
+        ),
+      },
+    );
+
+    act(() => hook.result.current.send("a comment for card 7"));
+    await waitFor(() =>
+      expect(hook.result.current.pending[0]?.failed).toBe(true),
+    );
+
+    hook.rerender({ issueNumber: 8 });
+    expect(hook.result.current.pending).toEqual([]);
+
+    // And there is nothing left to retry into the wrong card.
+    createComment.mockClear();
+    act(() => hook.result.current.retry(0));
+    expect(createComment).not.toHaveBeenCalled();
   });
 });

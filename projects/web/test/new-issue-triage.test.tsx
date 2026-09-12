@@ -292,6 +292,47 @@ describe("the new-issue page's slash commands", () => {
   });
 });
 
+/**
+ * The guard must not stop the navigation that follows a successful creation
+ * (T-317). The predicates read the title and the body, and nothing resets
+ * them before the `navigate()` call — so without `ignoreBlocker` the page
+ * that just committed the issue asks the reader whether to discard it, and
+ * "Keep editing" strands them on a form whose Create button will not post
+ * again (`createdRef`).
+ */
+describe("the guard after a created issue", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const created = { id: 1, number: 12, body: "" } as Issue;
+
+  const start = () => {
+    const createIssue = vi.spyOn(api, "createIssue").mockResolvedValue(created);
+    return { createIssue, view: renderAs("admin") };
+  };
+
+  it("lands on the new card instead of asking to discard it", async () => {
+    const { view, createIssue } = start();
+    fireEvent.change(await screen.findByLabelText("Title"), {
+      target: { value: "Dig up the potatoes" },
+    });
+
+    submitButtonFor().click();
+    await waitFor(() => expect(createIssue).toHaveBeenCalledOnce());
+
+    // The destination route renders nothing; the confirmation is the thing
+    // that must not appear.
+    expect(screen.queryByText("Leave with unsaved changes?")).toBeNull();
+    await act(async () => {});
+    expect(screen.queryByText("Leave with unsaved changes?")).toBeNull();
+    expect(view.container.querySelector("form")).toBeNull();
+  });
+});
+
+const submitButtonFor = () =>
+  screen.getByRole("button", { name: /Create|Fix/ });
+
 describe("the new-issue page's Ctrl-Enter", () => {
   afterEach(() => {
     vi.restoreAllMocks();
