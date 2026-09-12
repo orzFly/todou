@@ -23,10 +23,16 @@
  *     Claude Code's messaging socket does, and hands each batch to the agent.
  */
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 
 /**
  * The record layout `harness/omp-state.ts` will read.
@@ -201,8 +207,14 @@ export default function todou(pi: Pi): void {
 
   /**
    * The address a receipt goes back to, or null. Same rule the sender applies
-   * to replies — absolute, `.sock` — so an address that cannot be honoured is
-   * dropped rather than dialled.
+   * to replies — absolute, `.sock`, in the directory this channel listens in
+   * — so an address that cannot be honoured is dropped rather than dialled.
+   *
+   * The directory is what keeps this from being a dialler an unauthenticated
+   * frame can aim: `from` is read before anything is authenticated, so
+   * without it any local `.sock` would be reachable by anyone who can open
+   * this one. A real sender's receipt address is built in the target's own
+   * directory, so the restriction costs it nothing.
    */
   function replyTo(from: unknown): string | null {
     if (typeof from !== "string" || !from.startsWith("uds:")) return null;
@@ -213,7 +225,9 @@ export default function todou(pi: Pi): void {
     } catch {
       path = raw;
     }
-    return isAbsolute(path) && path.endsWith(".sock") ? path : null;
+    if (!isAbsolute(path) || !path.endsWith(".sock")) return null;
+    if (socketPath === undefined) return null;
+    return dirname(path) === dirname(socketPath) ? path : null;
   }
 
   /**
@@ -258,10 +272,32 @@ export default function todou(pi: Pi): void {
     }
     if (frame.type === "auth") {
       // A wrong token gets the connection closed and no receipt, which is
-      // what Claude Code does on the platform where it checks at all.
-      if (token !== undefined && frame.token !== token) return "stop";
+      // what Claude Code does on the platform where it checks at all. The
+      // undefined case is refused rather than passed: `listen()` is only ever
+      // reached through `claim()`, which sets the token first, so today it
+      // cannot happen — but read as "no token configured, let everything in"
+      // it is the one default that would hold this gate open.
+      if (token === undefined || frame.token !== token) return "stop";
       authed.ok = true;
       return "go";
+    }
+    // Before the frame type is looked at, not inside the `user` branch: every
+    // frame type added later is behind the gate by default, and letting one
+    // through takes an explicit edit here rather than remembering that this
+    // check exists. Today the two placements behave identically, since `user`
+    // is the only frame that is handled at all.
+    // The sender's contract is that silence means delivery, so a batch
+    // dropped here would be one it believes was read and never re-sends: a
+    // legitimate sender whose token went missing — only the socket in its
+    // environment, no token beside it — would lose every batch with nothing
+    // on either side to show for it. A `control` frame gets no receipt even
+    // unauthenticated, so two extensions exchanging them cannot bounce — the
+    // same rule `peer-push.ts` states for its own side.
+    if (!authed.ok) {
+      if (frame.type === "user") {
+        refuse(frame, "this push channel requires an auth line first");
+      }
+      return "stop";
     }
     if (frame.type !== "user") return "go";
     const content = frame.message?.content;
@@ -312,7 +348,20 @@ export default function todou(pi: Pi): void {
     // Nothing to do about a later listener error, and an unhandled one would
     // take omp down — which is the one thing this must never do.
     created.on("error", () => {});
-    created.listen(path);
+    created.listen(path, () => {
+      // Node creates the node under the process umask, so it lands group- and
+      // world-writable on a machine with a permissive one, leaving the 0700
+      // directory above as the only fence — and `mkdirSync`'s mode does not
+      // correct a directory an earlier run created under a looser umask. Done
+      // here rather than after `listen()` because the node does not exist
+      // until this callback fires.
+      try {
+        chmodSync(path, 0o600);
+      } catch {
+        // A socket that could not be tightened is still a working channel,
+        // and failing here would leave the extension unable to take any push.
+      }
+    });
     server = created;
   }
 

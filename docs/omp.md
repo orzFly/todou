@@ -116,11 +116,21 @@ command and reads its output is started *by* the session and has the same
 variables set, so guessing would send exactly the batches that belong on
 stdout down the push channel instead.
 
-The rest of the channel behaves as it does under Claude Code —
-[docs/claude-code.md](claude-code.md) describes the delivery guarantees, the
-degradation when a push cannot be confirmed, and `todou agent opt-out-uds`.
-One difference is worth stating: an omp session is not asked to approve a
-push, so the "held for approval" outcome does not arise there.
+Delivery guarantees, the degradation when a push cannot be confirmed, and
+`todou agent opt-out-uds` are as [docs/claude-code.md](claude-code.md)
+describes them, with two differences.
+
+An omp session is not asked to approve a push, so the "held for approval"
+outcome does not arise. And where Claude Code tolerates a missing or wrong
+auth line on POSIX, omp requires one: every connection has to open with
+`{"type":"auth","token":"…"}` carrying the token the session published, and a
+`user` frame that arrives without it is refused with a receipt — the sender
+learns its batch went nowhere instead of reading the silence as delivery.
+Only `user` frames are answered that way; a `control` frame is never replied
+to, so two sessions exchanging receipts cannot ping-pong. A connection that
+opens with a *wrong* token is closed with no receipt at all, which is what
+Claude Code does on the platform where it checks: holding the wrong
+credential is a fact about the sender, not something this side confirms.
 
 ## Where the metadata comes from
 
