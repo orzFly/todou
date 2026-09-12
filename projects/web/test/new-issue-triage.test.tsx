@@ -4,6 +4,7 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
 import {
@@ -31,6 +32,7 @@ import {
   projectQuery,
   statusesQuery,
 } from "../src/api/queries.ts";
+import { UnsavedChangesGuard } from "../src/components/shared/unsaved-guard.tsx";
 import { NewIssuePage } from "../src/pages/new-issue.tsx";
 import { cmPressKey, cmSetValue } from "./cm.ts";
 import { testQueryClient } from "./render.tsx";
@@ -102,7 +104,19 @@ function renderAs(role: MemberRole) {
   client.setQueryData(membersQuery(SLUG).queryKey, MEMBERS);
   client.setQueryData(meQuery.queryKey, ME);
 
-  const rootRoute = createRootRoute();
+  // The guard rather than `AppShell`, whose only contribution to leaving is to
+  // render this: the shell would also open the user-level stream, fetch the
+  // auth mode and put a Suspense boundary around the page, none of which the
+  // navigation reads and each of which is another way for these tests to fail
+  // for reasons that are not theirs.
+  const rootRoute = createRootRoute({
+    component: () => (
+      <>
+        <UnsavedChangesGuard />
+        <Outlet />
+      </>
+    ),
+  });
   const authedRoute = createRoute({
     getParentRoute: () => rootRoute,
     id: "authed",
@@ -110,6 +124,11 @@ function renderAs(role: MemberRole) {
   const projectRoute = createRoute({
     getParentRoute: () => authedRoute,
     path: "/projects/$slug",
+  });
+  const projectIndexRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "/",
+    component: () => <div>the project</div>,
   });
   const newIssueRoute = createRoute({
     getParentRoute: () => projectRoute,
@@ -119,11 +138,16 @@ function renderAs(role: MemberRole) {
   const issueRoute = createRoute({
     getParentRoute: () => projectRoute,
     path: "issues/$number",
+    component: () => <div>the card</div>,
   });
   const router = createRouter({
     routeTree: rootRoute.addChildren([
       authedRoute.addChildren([
-        projectRoute.addChildren([newIssueRoute, issueRoute]),
+        projectRoute.addChildren([
+          projectIndexRoute,
+          newIssueRoute,
+          issueRoute,
+        ]),
       ]),
     ]),
     history: createMemoryHistory({
@@ -321,12 +345,29 @@ describe("the guard after a created issue", () => {
     submitButtonFor().click();
     await waitFor(() => expect(createIssue).toHaveBeenCalledOnce());
 
-    // The destination route renders nothing; the confirmation is the thing
-    // that must not appear.
-    expect(screen.queryByText("Leave with unsaved changes?")).toBeNull();
-    await act(async () => {});
+    // Arrival is the assertion that fails when the guard stops this: a blocked
+    // navigation leaves the form standing and the card unreached.
+    expect(await screen.findByText("the card")).toBeTruthy();
     expect(screen.queryByText("Leave with unsaved changes?")).toBeNull();
     expect(view.container.querySelector("form")).toBeNull();
+  });
+
+  /**
+   * The other half of the test above: it asserts an absence, which is only
+   * worth anything while the guard really is in this tree. Cancel is the
+   * control on this page that navigates without `ignoreBlocker` (T-317), so
+   * one confirmation here proves the fixture can produce one at all.
+   */
+  it("still asks when Cancel drops the same unsaved form", async () => {
+    start();
+    fireEvent.change(await screen.findByLabelText("Title"), {
+      target: { value: "Dig up the potatoes" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(await screen.findByText("Leave with unsaved changes?")).toBeTruthy();
+    expect(screen.queryByText("the project")).toBeNull();
   });
 });
 
