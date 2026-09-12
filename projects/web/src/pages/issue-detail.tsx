@@ -144,6 +144,15 @@ export function IssueDetailPage() {
                 className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4"
               >
                 <Composer
+                  // `/issues/7 → /issues/8` is one route with a changed param,
+                  // so the router keeps this subtree and nothing remounts. The
+                  // key is what empties the box on arrival at the next card:
+                  // the draft, the staged files and the editor's own document
+                  // all go together, instead of a lit-up button over an empty
+                  // box that submits nothing. Resetting from inside instead
+                  // does not survive Strict Mode's double render of the
+                  // transition (T-317).
+                  key={issueNumber}
                   slug={slug}
                   issueNumber={issueNumber}
                   onSend={composer.send}

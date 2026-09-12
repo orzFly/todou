@@ -28,6 +28,7 @@ import { tags } from "@lezer/highlight";
 import { parser as commonmarkParser, GFM } from "@lezer/markdown";
 import { useEffect, useImperativeHandle, useRef } from "react";
 
+import { useDirtySource } from "@/lib/unsaved-guard.ts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -232,6 +233,11 @@ export function MarkdownEditor({
 }: MarkdownEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
+  // Compared against, never written: a ref outlives the mount effect below,
+  // so the box stays "edited from what it was opened with" even after
+  // Suspense rebuilds the document — which is also why the baseline cannot
+  // come from the EditorView, whose doc may already be the rebuilt one.
+  const baseline = useRef(initialValue);
   // Keymap and DOM handlers are built once but must always call today's
   // props, not the ones captured at mount.
   const handlers = useRef({
@@ -255,6 +261,16 @@ export function MarkdownEditor({
   const placeholderSlot = useRef(new Compartment()).current;
   const readOnlySlot = useRef(new Compartment()).current;
   const extensionsSlot = useRef(new Compartment()).current;
+
+  // Read through the ref rather than the closure: the EditorView is a
+  // different instance after a rebuild, and only the baseline has to survive
+  // that. Whitespace-only differences are not worth a confirmation.
+  useDirtySource(
+    () =>
+      !readOnly &&
+      (view.current?.state.doc.toString() ?? baseline.current).trim() !==
+        baseline.current.trim(),
+  );
 
   useImperativeHandle(ref, () => ({
     getValue: () => view.current?.state.doc.toString() ?? "",

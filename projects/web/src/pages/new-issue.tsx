@@ -61,6 +61,7 @@ import {
   newIssueSubmitLabel,
   parseCommandLines,
 } from "@/lib/slash-commands.ts";
+import { useDirtySource } from "@/lib/unsaved-guard.ts";
 import { cn } from "@/lib/utils";
 
 // Mirrors the server's choice when no status is sent with a new issue.
@@ -94,6 +95,10 @@ export function NewIssuePage() {
   // A retry after a failed attachment upload must not create the issue
   // twice — the created issue survives the failed attempt here.
   const createdRef = useRef<Issue | null>(null);
+
+  // A title on its own is a page that would lose everything to a refresh:
+  // the body box is empty, so nothing else on the form registers.
+  useDirtySource(() => title.trim() !== "");
 
   // Same identity for the editor's lifetime: the compartment reconfigures on
   // a new extension list, which would close whatever panel was open. The

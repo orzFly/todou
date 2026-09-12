@@ -14,6 +14,7 @@ import {
   attachmentLinkMarker,
 } from "@/lib/attachment-refs.ts";
 import { renameIfClipboardDefault } from "@/lib/pasted-filename.ts";
+import { useDirtySource } from "@/lib/unsaved-guard.ts";
 
 export type StagedFile = {
   key: number;
@@ -40,6 +41,10 @@ export function useStagedFiles() {
   const queryClient = useQueryClient();
   const stagedRef = useRef(staged);
   stagedRef.current = staged;
+
+  // Nothing has reached the server while a file sits in the tray, so leaving
+  // drops it — the fourth surface of the form the editor cannot see.
+  useDirtySource(() => staged.length > 0);
 
   // Object URLs survive React state; reclaim them if the editor unmounts
   // with staged files still around.

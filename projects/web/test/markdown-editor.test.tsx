@@ -6,6 +6,7 @@ import {
   MarkdownEditor,
   type MarkdownEditorHandle,
 } from "../src/components/shared/markdown-editor.tsx";
+import { hasUnsavedWork } from "../src/lib/unsaved-guard.ts";
 import {
   cmGetValue,
   cmPlaceholder,
@@ -152,5 +153,54 @@ describe("MarkdownEditor", () => {
     expect(getComputedStyle(content as HTMLElement).minHeight).toBe(
       "min-content",
     );
+  });
+});
+
+describe("the editor reports unsaved work", () => {
+  it("is clean on mount, even with an initial value", () => {
+    render(<MarkdownEditor initialValue="already here" />);
+    expect(hasUnsavedWork()).toBe(false);
+  });
+
+  it("turns dirty on a typed change", () => {
+    const view = render(<MarkdownEditor initialValue="start" />);
+    cmSetValue(view.container, "start and more");
+    expect(hasUnsavedWork()).toBe(true);
+  });
+
+  it("is clean again once the text is back to what it opened with", () => {
+    const view = render(<MarkdownEditor initialValue="start" />);
+    cmSetValue(view.container, "changed");
+    cmSetValue(view.container, "start");
+    expect(hasUnsavedWork()).toBe(false);
+  });
+
+  it("ignores whitespace alone", () => {
+    const view = render(<MarkdownEditor initialValue="start" />);
+    cmSetValue(view.container, "  start\n\n");
+    expect(hasUnsavedWork()).toBe(false);
+  });
+
+  it("stays clean while read-only, whatever the document holds", () => {
+    const view = render(<MarkdownEditor initialValue="fixed" readOnly />);
+    cmSetValue(view.container, "edited by the caller");
+    expect(hasUnsavedWork()).toBe(false);
+  });
+
+  /**
+   * The question card's Other box re-renders with a new `initialValue` as the
+   * draft changes, and a Suspense reveal rebuilds the document from that same
+   * prop. A baseline taken from the EditorView would therefore read a draft
+   * someone typed as clean — the one mistake that empties the guard of its
+   * purpose rather than merely annoying.
+   */
+  it("keeps the baseline the editor opened with across a prop change", () => {
+    const view = render(<MarkdownEditor initialValue="opened with this" />);
+    view.rerender(<MarkdownEditor initialValue="a draft arrived from state" />);
+    cmSetValue(view.container, "opened with this");
+    expect(hasUnsavedWork()).toBe(false);
+
+    cmSetValue(view.container, "a draft arrived from state");
+    expect(hasUnsavedWork()).toBe(true);
   });
 });

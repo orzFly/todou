@@ -24,6 +24,7 @@ import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
+import { useDirtySource } from "@/lib/unsaved-guard.ts";
 
 type Draft = { selected: Set<number>; other: string; declined: boolean };
 
@@ -168,6 +169,12 @@ function AnswerForm({
 }) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>(() =>
     Object.fromEntries(component.questions.map((q) => [q.key, emptyDraft()])),
+  );
+  // Options and "decline" are not text and have no editor of their own, so
+  // nothing else on this card would notice them going up in smoke. The Other
+  // box is a MarkdownEditor and registers itself.
+  useDirtySource(() =>
+    Object.values(drafts).some((d) => d.selected.size > 0 || d.declined),
   );
   const queryClient = useQueryClient();
   const submit = useMutation({

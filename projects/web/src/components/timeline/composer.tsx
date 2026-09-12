@@ -47,6 +47,7 @@ import {
   parseCommandLines,
   summarizeCommands,
 } from "@/lib/slash-commands.ts";
+import { useDirtySource } from "@/lib/unsaved-guard.ts";
 
 export type PendingComment = {
   key: number;
@@ -64,6 +65,11 @@ let pendingKey = 0;
 export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
   const [pending, setPending] = useState<PendingComment[]>([]);
   const queryClient = useQueryClient();
+
+  // A comment in flight or one whose send failed exists only here — the
+  // editor was cleared the moment it was submitted — and a failed send is
+  // exactly when someone reaches for the reload button.
+  useDirtySource(() => pending.length > 0);
 
   const mutation = useMutation({
     mutationFn: (vars: { key: number; body: string }) =>
@@ -272,14 +278,6 @@ export function Composer({
   const [running, setRunning] = useState(false);
   const [draft, setDraft] = useState("");
   const [touched, setTouched] = useState(false);
-  // `/issues/7 → /issues/8` is one route with a changed param, so the router
-  // keeps this instance and nothing remounts. Without this the buttons would
-  // arrive on the next card already open, and "for this visit" would be a lie.
-  const [touchedFor, setTouchedFor] = useState(issueNumber);
-  if (touchedFor !== issueNumber) {
-    setTouchedFor(issueNumber);
-    setTouched(false);
-  }
   const staging = useStagedFiles();
   const queryClient = useQueryClient();
   const registry = useCommandRegistry(slug, "comment");

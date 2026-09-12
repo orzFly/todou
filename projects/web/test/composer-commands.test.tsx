@@ -191,6 +191,9 @@ function mount(
   const tree = (issueNumber: number) => (
     <QueryClientProvider client={client}>
       <Composer
+        // Exactly what issue-detail.tsx passes: the card number, so the
+        // router's reused route subtree still gets a fresh composer.
+        key={issueNumber}
         slug="todou"
         issueNumber={issueNumber}
         onSend={onSend}
@@ -547,13 +550,48 @@ describe("Composer buttons", () => {
     expect(attachButton(view)).not.toBeNull();
   });
 
-  it("hides them again on the next card, which reuses this instance", async () => {
+  it("arrives empty on the next card, which reuses this route", async () => {
     const view = mount();
     cmFocus(view.container);
     await waitFor(() => expect(maybeSubmit(view)).not.toBeNull());
+    // What `issue-detail.tsx` puts on the Composer: the card number, so a
+    // changed param mounts a fresh one rather than reusing this instance.
     view.rerender(view.tree(8));
     expect(maybeSubmit(view)).toBeNull();
     expect(attachButton(view)).toBeNull();
+  });
+
+  it("sends the draft and the tray with the buttons on the next card", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    fireEvent.drop(cmView(view.container).contentDOM, {
+      dataTransfer: carrying(
+        new File(["bytes"], "shot.png", { type: "image/png" }),
+      ),
+    });
+    cmSetValue(view.container, "a reply for card 7");
+    await waitFor(() => expect(submitButton(view).disabled).toBe(false));
+
+    view.rerender(view.tree(8));
+    // Card 7's own text must not sit in card 8's box, one click from being
+    // posted to the wrong card.
+    expect(cmGetValue(view.container)).toBe("");
+    expect(attachButton(view)).toBeNull();
+
+    // Card 8's own draft is its own: typing here is unaffected.
+    cmFocus(view.container);
+    cmSetValue(view.container, "for card 8");
+    await waitFor(() => expect(submitButton(view).disabled).toBe(false));
+    expect(cmGetValue(view.container)).toBe("for card 8");
+  });
+
+  it("keeps the draft while it is still the same card", async () => {
+    const view = mount();
+    cmFocus(view.container);
+    cmSetValue(view.container, "still card 7");
+    await waitFor(() => expect(submitButton(view).disabled).toBe(false));
+    view.rerender(view.tree(7));
+    expect(cmGetValue(view.container)).toBe("still card 7");
   });
 
   it("never leaves a command error standing on its own", async () => {
@@ -563,12 +601,12 @@ describe("Composer buttons", () => {
     await waitFor(() =>
       expect(view.container.querySelector('[role="alert"]')).not.toBeNull(),
     );
-    // The next card resets "entered this box" but keeps the draft, and a lone
-    // broken line parses to neither body nor command — the one way the error
-    // block can outlive the buttons that explain what to do about it.
+    // A broken line parses to neither body nor command, so it is the one way
+    // the error block can outlive the buttons that explain what to do about
+    // it — and a broken line is text on this card, which the next card drops.
     view.rerender(view.tree(8));
-    expect(view.container.querySelector('[role="alert"]')).not.toBeNull();
-    expect(maybeSubmit(view)).not.toBeNull();
+    expect(view.container.querySelector('[role="alert"]')).toBeNull();
+    expect(maybeSubmit(view)).toBeNull();
   });
 
   it("gives the buttons their own row at every width", async () => {

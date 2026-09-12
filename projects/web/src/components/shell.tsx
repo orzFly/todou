@@ -16,6 +16,7 @@ import { NewIssueButton, ProjectNav } from "@/components/project-nav.tsx";
 import { ProjectSwitcher } from "@/components/project-switcher.tsx";
 import { SearchBox } from "@/components/search-box.tsx";
 import { SearchToggle } from "@/components/search-toggle.tsx";
+import { UnsavedChangesGuard } from "@/components/shared/unsaved-guard.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { ThemeMenu } from "@/components/theme-menu.tsx";
 import { Button } from "@/components/ui/button";
@@ -88,6 +89,7 @@ export function AppShell({
 
   return (
     <div className="min-h-dvh bg-background">
+      <UnsavedChangesGuard />
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
         {/* `relative` is the anchor the collapsed search expands against. */}
         <div className="relative mx-auto flex h-14 max-w-6xl items-center gap-2 px-4">
