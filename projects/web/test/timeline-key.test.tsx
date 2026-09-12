@@ -213,7 +213,17 @@ function renderAt(url: string) {
 
 type View = ReturnType<typeof renderAt>;
 
-afterEach(() => vi.unstubAllGlobals());
+/**
+ * `unstubAllGlobals` covers `vi.stubGlobal` only. The geometry spies
+ * (`scrollY`, `innerHeight`, `documentElement.scrollHeight`) and the
+ * `scrollTo` / `scrollBy` ones are not the config's to restore — the vitest
+ * config sets no `restoreMocks`, and `setup.ts` reinstalls `fetch` alone — so a
+ * case added below one that mocks them would otherwise inherit its numbers.
+ */
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 /** Navigate the way an in-app link does: through the router, not a reload. */
 async function goToCard(view: View, number: number, marker?: string) {
@@ -229,11 +239,13 @@ async function goToCard(view: View, number: number, marker?: string) {
 }
 
 /**
- * Stand on each card once before the case proper. A row is only reusable when
- * the destination's timeline is already in the query cache: on a cold one the
- * queries go pending, `Timeline` returns its skeleton, and every row unmounts
- * with nothing to do with the key. Warming both is what makes these cases be
- * about the key rather than about a cache miss.
+ * Stand on each card once before the case proper, so the case's own final move
+ * lands on a card whose timeline is already cached. A row is only reusable when
+ * the destination's data is there: on a cold one the queries go pending,
+ * `Timeline` returns its skeleton, and every row unmounts with nothing to do
+ * with the key. Warming is what makes those cases be about the key rather than
+ * about a cache miss — which is the opposite of what the pill case needs, so it
+ * warms by hand and leaves its own destination cold.
  */
 async function warmBothCards(view: View) {
   await goToCard(view, 8);
@@ -272,12 +284,24 @@ describe("the issue page's timeline, keyed by card", () => {
 
   it("does not announce the card it just left as new content", async () => {
     stubPage();
+    const pill = () => within(view.container).queryByText("新消息") !== null;
     const view = renderAt("/projects/p/issues/7");
     await waitFor(() =>
       expect(view.container.querySelectorAll("[data-comment-id]").length).toBe(
         6,
       ),
     );
+
+    // Warm card 8 the only way that leaves it warm *and* leaves a cold card to
+    // move onto: one real navigation each way. That first 7→8 is a cold jump
+    // too, and on the broken path it raises the pill by itself — it passes
+    // harmlessly here only because the reader is still at the bottom, where the
+    // effect takes its `scrollToBottom` branch instead. Warming with
+    // `setQueryData` would leave no cold jump anywhere below this line, and the
+    // case would then pass either way.
+    await goToCard(view, 8);
+    await goToCard(view, 7);
+
     // Put the reader away from the bottom and let the component's own scroll
     // listener record it: at the bottom the same effect calls `scrollToBottom`
     // instead, and the pill could not appear even on the broken path.
@@ -289,24 +313,27 @@ describe("the issue page's timeline, keyed by card", () => {
     vi.spyOn(window, "scrollTo").mockImplementation(() => {});
     vi.spyOn(window, "scrollBy").mockImplementation(() => {});
     fireEvent.scroll(window);
-    await warmBothCards(view);
+    // Everything above is setup, and it left no pill for the case to inherit:
+    // the moves so far landed on cards whose timeline was already in the cache.
+    expect(pill()).toBe(false);
 
-    await goToCard(view, 8);
+    await goToCard(view, 9);
 
-    // Unkeyed, the move leaves `items` empty for a render, `lastKey` goes
-    // `comment-6 → null`, and `prevLastKey.current` is still `comment-6` — so
-    // the guard passes, the reader is not at the bottom, and the pill is raised.
-    // The later `null → comment-6` is the transition the guard skips, so
-    // nothing clears it again.
-    expect(within(view.container).queryByText("新消息")).toBeNull();
+    // This move lands on a card with nothing cached, so `items` goes empty for a
+    // render. Unkeyed, `lastKey` goes `comment-6 → null` while
+    // `prevLastKey.current` is still `comment-6` — the guard passes, the reader
+    // is not at the bottom, and the pill is raised. The later `null →
+    // comment-6` is the transition the guard skips, so nothing clears it again.
+    expect(pill()).toBe(false);
   });
 
   it("still lands on the newest entry when the route reaches the next card", async () => {
     stubPage();
     const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
     vi.spyOn(window, "scrollBy").mockImplementation(() => {});
+    const DOC_HEIGHT = 5_000;
     vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(
-      5_000,
+      DOC_HEIGHT,
     );
     vi.spyOn(window, "innerHeight", "get").mockReturnValue(800);
     vi.spyOn(window, "scrollY", "get").mockReturnValue(0);
@@ -322,11 +349,12 @@ describe("the issue page's timeline, keyed by card", () => {
     await goToCard(view, 8);
 
     // `didInitialScroll` is a ref, so a remount is the only thing that resets
-    // it, and the arrival lands twice: once from the fresh instance's initial
-    // scroll and once from the append the newly-read tail reports. Unkeyed the
-    // ref is already true and only the append fires — the landing the reader
-    // expects never happens.
-    await waitFor(() => expect(scrollTo.mock.calls.length).toBe(2));
+    // it. That scroll is this one, by its exact arguments — `scrollToBottom()`
+    // asks for the document's end. The router also scrolls to the top on
+    // arrival, so counting calls would mix the two; assert the landing instead.
+    // Unkeyed the ref is already true and this call never happens.
+    await waitFor(() => expect(scrollTo).toHaveBeenCalled());
+    expect(scrollTo.mock.calls).toContainEqual([0, DOC_HEIGHT]);
   });
 });
 
