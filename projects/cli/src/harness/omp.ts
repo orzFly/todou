@@ -1,14 +1,23 @@
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "node:path";
 import type { AgentContext } from "@todou/shared";
 import type { Env } from "../config.ts";
 import { findInJsonlTail } from "./jsonl-tail.ts";
 import {
+  isSessionId,
   publishedState,
   publishedStateAttempt,
   readOmpState,
   readOmpStateAt,
 } from "./omp-state.ts";
-import { currentSessionFile, flagValue } from "./session-log.ts";
+import { contains, currentSessionFile, flagValue } from "./session-log.ts";
 import type { Harness, HostProcess, LiveSession } from "./types.ts";
 
 /**
@@ -70,10 +79,25 @@ export const omp = {
       // caught the scan swapping them).
       openLogs: hostProcess?.openLogs,
     });
-    if (!file) return context;
-    context.session_id = file.id;
-    const model = findInJsonlTail(file.path, modelFromLine);
-    if (model) context.model = model;
+    if (file) {
+      context.session_id = file.id;
+      const model = findInJsonlTail(file.path, modelFromLine);
+      if (model) context.model = model;
+      return context;
+    }
+    // Third, and only where the two above had nothing: the breadcrumb omp
+    // drops against its terminal the moment a session is created, which is
+    // the only record of that session until the log exists.
+    const breadcrumb = terminalBreadcrumb({
+      dirs: terminalSessionRoots(env, home),
+      stdin: hostProcess?.stdin,
+      cwd: here,
+      hostCwd,
+    });
+    // The id alone. The log it names does not exist — that is half of why the
+    // breadcrumb was believed at all — so there is nothing to read a model out
+    // of, which is the answer a freshly opened session already gets today.
+    if (breadcrumb) context.session_id = breadcrumb;
     return context;
   },
   liveSessionId({ env, ancestorPids }): LiveSession {
@@ -211,24 +235,135 @@ function ompProfile(env: Env): string | undefined {
 }
 
 /**
- * The `sessions` directories omp may be writing to, in the order it prefers
- * them. Both are offered rather than resolved, because choosing between them
- * is an `existsSync` on omp's side and a `readdirSync` that finds nothing on
- * ours — the same answer for one syscall instead of two.
+ * The directories omp may be keeping one kind of per-user data in, in the order
+ * it prefers them. Both are offered rather than resolved, because choosing
+ * between them is an `existsSync` on omp's side and a `readdirSync` that finds
+ * nothing on ours — the same answer for one syscall instead of two.
+ *
+ * Parameterised over the XDG variable and the directory name together, because
+ * omp files its two kinds under different XDG categories and everything else
+ * about resolving them is identical. Two copies of the profile and relocation
+ * rules would eventually disagree, and a disagreement here reads as one of the
+ * two kinds simply not being there.
  */
-function sessionRoots(env: Env, home: string): string[] {
+function agentDataRoots(
+  env: Env,
+  home: string,
+  xdgHome: string | undefined,
+  name: string,
+): string[] {
   const { dir, profile, relocated } = ompAgentDir(env, home);
   const roots: string[] = [];
   // The XDG split applies only while the agent directory sits where omp put
   // it: an explicitly relocated one takes its data with it.
-  if (!relocated && env.XDG_DATA_HOME) {
-    const xdg = join(env.XDG_DATA_HOME, "omp");
-    roots.push(
-      join(profile ? join(xdg, "profiles", profile) : xdg, "sessions"),
-    );
+  if (!relocated && xdgHome) {
+    const xdg = join(xdgHome, "omp");
+    roots.push(join(profile ? join(xdg, "profiles", profile) : xdg, name));
   }
-  roots.push(join(dir, "sessions"));
+  roots.push(join(dir, name));
   return roots;
+}
+
+/** omp counts a session log as data. */
+function sessionRoots(env: Env, home: string): string[] {
+  return agentDataRoots(env, home, env.XDG_DATA_HOME, "sessions");
+}
+
+/** And the terminal breadcrumbs as state, which is a different variable. */
+function terminalSessionRoots(env: Env, home: string): string[] {
+  return agentDataRoots(env, home, env.XDG_STATE_HOME, "terminal-sessions");
+}
+
+/**
+ * The session omp filed against the terminal it is attached to.
+ *
+ * omp writes three lines per terminal the moment a session exists — its cwd,
+ * the session file's absolute path, and `fresh` while that file has yet to be
+ * created — and uses them itself for `--continue`. It is the only thing that
+ * knows the session between creation and the first line of log, which is the
+ * whole state a just-opened omp is in and exactly where somebody types `todou`
+ * in the `!` shell.
+ *
+ * It is asked last because it locates by *terminal* and a terminal is not a
+ * process: with one omp running inside another's shell on one tty, the
+ * breadcrumb names the inner session while the host resolved above is the
+ * outer one. The descriptor probe cannot make that mistake, so it goes first;
+ * by the time this is reached the three conditions below have narrowed what is
+ * left to the window where nothing else has an answer at all.
+ *
+ * All three, or nothing — there is no guessing to degrade to, and the result
+ * of not answering is what this file did yesterday:
+ *
+ *  - **`fresh`**, which omp rewrites once the log lands. Its absence beside a
+ *    path that does not exist means a session deleted or moved away.
+ *  - **The session file must not exist.** The previous omp on this pts left a
+ *    breadcrumb naming a file that does — it ran turns — and pts numbers are
+ *    reused hard by pane-splitting multiplexers. This is what rules it out.
+ *  - **The cwd must contain ours or the host's**, the same test the scan makes
+ *    and for the same reason: one flat session directory holds every project.
+ */
+function terminalBreadcrumb(opts: {
+  dirs: readonly string[];
+  stdin: string | undefined;
+  cwd: string;
+  hostCwd?: string;
+}): string | undefined {
+  const terminal = terminalId(opts.stdin);
+  if (terminal === undefined) return undefined;
+  for (const dir of opts.dirs) {
+    let lines: string[];
+    try {
+      lines = readFileSync(join(dir, terminal), "utf8").split("\n");
+    } catch {
+      continue; // No breadcrumb for this terminal under this root.
+    }
+    const cwd = lines[0]?.trim();
+    const file = lines[1]?.trim();
+    if (!cwd || !file) continue;
+    if (lines[2]?.trim() !== "fresh") continue;
+    if (existsSync(file)) continue;
+    if (
+      !contains(cwd, opts.cwd) &&
+      !(opts.hostCwd !== undefined && contains(cwd, opts.hostCwd))
+    ) {
+      continue;
+    }
+    const id = sessionIdFromLogName(file);
+    if (id !== undefined) return id;
+  }
+  return undefined;
+}
+
+/**
+ * omp's name for the terminal it is on, from the host's own stdin: `/dev/`
+ * dropped and the rest flattened, so `/dev/pts/9` files under `pts-9`.
+ *
+ * Only that form is accepted. Where omp's stdin is not a tty it names the
+ * terminal from `ZELLIJ_PANE_ID`, `TMUX_PANE` and their like instead —
+ * variables that need not have reached us and need not still hold the same
+ * value if they did. And the directory is never listed to find out what is in
+ * it: it holds every terminal this user has ever had, under names that pid
+ * reuse and tty reuse both collide on.
+ */
+function terminalId(stdin: string | undefined): string | undefined {
+  if (stdin === undefined || !stdin.startsWith("/dev/")) return undefined;
+  const name = stdin.slice("/dev/".length).replaceAll("/", "-");
+  return name === "" ? undefined : name;
+}
+
+/**
+ * The session id out of `<timestamp>_<session id>.jsonl`, which is where it is
+ * written down while the file itself does not exist. `--resume` is handed a
+ * path and opens it as given, under any name at all, so a name this cannot
+ * read is a breadcrumb to walk away from rather than something to improvise on.
+ */
+function sessionIdFromLogName(file: string): string | undefined {
+  const name = basename(file, ".jsonl");
+  if (name === basename(file)) return undefined;
+  const cut = name.lastIndexOf("_");
+  if (cut < 0) return undefined;
+  const id = name.slice(cut + 1);
+  return id !== "" && isSessionId(id) ? id : undefined;
 }
 
 /**

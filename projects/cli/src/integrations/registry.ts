@@ -44,7 +44,7 @@ export const INTEGRATIONS: readonly Integration[] = [
   {
     id: "omp",
     label: "omp",
-    version: 1,
+    version: 2,
     tracesOnThisMachine(env, home) {
       const { dir, configRoot } = ompAgentDir(env, home);
       // The config root counts too: a fresh omp that has been configured but

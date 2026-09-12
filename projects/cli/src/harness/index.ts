@@ -14,6 +14,7 @@ import {
   openSessionLogs,
   type ProcessTreeIo,
   readAncestors,
+  readFd,
 } from "./process-tree.ts";
 import type {
   Harness,
@@ -148,11 +149,13 @@ function hostResolver(
         ? nearestUnmarked(selection.harness, ancestors())
         : ancestors().find((a) => a.pid === selection.hostPid);
     if (found) {
+      const procRoot = io?.procRoot ?? "/proc";
       host = {
         pid: found.pid,
         argv: found.argv,
         cwd: found.cwd,
-        openLogs: openSessionLogs(io?.procRoot ?? "/proc", found.pid),
+        openLogs: openSessionLogs(procRoot, found.pid),
+        stdin: readFd(procRoot, found.pid, 0),
       };
     }
     return host;

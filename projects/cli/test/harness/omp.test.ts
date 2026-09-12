@@ -13,6 +13,7 @@ import {
   detectAgentContext,
   liveSessionIdReader,
 } from "../../src/harness/index.ts";
+import { readOmpStateAt } from "../../src/harness/omp-state.ts";
 import { fakeFetch, loggedInEnv, runCli } from "../harness.ts";
 
 /*
@@ -569,56 +570,68 @@ describe("omp detection", () => {
   });
 });
 
-describe("omp session recovery through the host process", () => {
-  /** A process tree in which omp itself is our host, carrying argv and cwd. */
-  function ompHost(opts: {
-    argv?: string[];
-    cwd?: string;
-    /**
-     * Descriptors to hang off omp. Absent leaves no `fd/` at all, which is
-     * how a kernel without `/proc` and a process we may not read both look —
-     * and is why every case written before this option still exercises the
-     * recency path.
-     */
-    openLogs?: string[];
-  }) {
-    const root = scratchDir("todou-omp-proc-");
-    const write = (
-      pid: number,
-      ppid: number,
-      env: Record<string, string>,
-      argv: string[],
-      cwd?: string,
-      openLogs?: string[],
-    ) => {
-      const dir = join(root, String(pid));
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, "stat"), `${pid} (proc) S ${ppid} 0 0 0 -1`);
-      writeFileSync(
-        join(dir, "environ"),
-        `${Object.entries(env)
-          .map(([k, v]) => `${k}=${v}`)
-          .join("\0")}\0`,
-      );
-      writeFileSync(join(dir, "cmdline"), `${argv.join("\0")}\0`);
-      if (cwd) symlinkSync(cwd, join(dir, "cwd"));
-      if (openLogs) {
-        const fd = join(dir, "fd");
-        mkdirSync(fd, { recursive: true });
-        // Numbered the way the kernel does, and pointed straight at the
-        // target: an empty directory is a process holding nothing open.
-        for (const [i, target] of openLogs.entries()) {
-          symlinkSync(target, join(fd, String(i)));
-        }
+/** A process tree in which omp itself is our host, carrying argv and cwd. */
+function ompHost(opts: {
+  argv?: string[];
+  cwd?: string;
+  /**
+   * Descriptors to hang off omp. Absent leaves no `fd/` at all, which is
+   * how a kernel without `/proc` and a process we may not read both look —
+   * and is why every case written before this option still exercises the
+   * recency path.
+   */
+  openLogs?: string[];
+  /** What omp's fd 0 points at: its terminal, or anything else it was given. */
+  stdin?: string;
+}) {
+  const root = scratchDir("todou-omp-proc-");
+  const write = (
+    pid: number,
+    ppid: number,
+    env: Record<string, string>,
+    argv: string[],
+    cwd?: string,
+    fds?: Record<number, string>,
+  ) => {
+    const dir = join(root, String(pid));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "stat"), `${pid} (proc) S ${ppid} 0 0 0 -1`);
+    writeFileSync(
+      join(dir, "environ"),
+      `${Object.entries(env)
+        .map(([k, v]) => `${k}=${v}`)
+        .join("\0")}\0`,
+    );
+    writeFileSync(join(dir, "cmdline"), `${argv.join("\0")}\0`);
+    if (cwd) symlinkSync(cwd, join(dir, "cwd"));
+    if (fds) {
+      const fd = join(dir, "fd");
+      mkdirSync(fd, { recursive: true });
+      // Numbered the way the kernel does, and pointed straight at the
+      // target: an empty directory is a process holding nothing open. The
+      // links are allowed to dangle — a terminal is not a file we can make.
+      for (const [n, target] of Object.entries(fds)) {
+        symlinkSync(target, join(fd, n));
       }
-    };
-    // The shell omp spawned carries both markers; omp itself carries neither,
-    // which is what identifies it as the one that introduced them.
-    write(100, 101, { OMPCODE: "1", CLAUDECODE: "1" }, ["sh", "-c", "todou"]);
-    write(101, 0, {}, opts.argv ?? ["omp"], opts.cwd, opts.openLogs);
-    return { platform: "linux" as const, procRoot: root, startPid: 100 };
+    }
+  };
+  // Descriptor 0 is the terminal's slot, so the logs start at 1 whenever one
+  // is asked for — which is also how a real process is numbered.
+  const fds: Record<number, string> = {};
+  if (opts.stdin !== undefined) fds[0] = opts.stdin;
+  for (const [i, target] of (opts.openLogs ?? []).entries()) {
+    fds[i + 1] = target;
   }
+  const table =
+    opts.stdin === undefined && opts.openLogs === undefined ? undefined : fds;
+  // The shell omp spawned carries both markers; omp itself carries neither,
+  // which is what identifies it as the one that introduced them.
+  write(100, 101, { OMPCODE: "1", CLAUDECODE: "1" }, ["sh", "-c", "todou"]);
+  write(101, 0, {}, opts.argv ?? ["omp"], opts.cwd, table);
+  return { platform: "linux" as const, procRoot: root, startPid: 100 };
+}
 
+describe("omp session recovery through the host process", () => {
   /*
    * omp holds its live log open for append, so the descriptor table answers
    * what recency can only infer. These four cover the answer and each way of
@@ -936,6 +949,56 @@ describe("the session omp publishes for itself", () => {
     expect(detect({ ...ENV, TODOU_OMP_STATE: path }, home, project)).toEqual({
       agent: "omp",
       session_id: SID,
+    });
+  });
+
+  /*
+   * The push endpoint travels in the record because omp's curated environment
+   * does not carry it anywhere but the bash tool. It is read as a pair, and a
+   * record that fails any part of it has to degrade to "no channel" without
+   * taking the session id down with it — the id is what an older extension
+   * publishes, and that extension is installed on real machines right now.
+   */
+  describe("the push channel the record carries", () => {
+    const SOCK = "/run/user/1000/todou-omp/9.sock";
+    const TOKEN = "9f2c4e6a8b0d2f4a6c8e0b2d4f6a8c0e2b4d6f8a0c2e4b6d";
+    const channel = (socket?: unknown, token?: unknown) =>
+      readOmpStateAt(
+        writeState(process.pid, {
+          ...state(process.pid, SID),
+          ...(socket === undefined ? {} : { socket }),
+          ...(token === undefined ? {} : { token }),
+        }),
+      );
+
+    it("reads a socket and a token that belong together", () => {
+      expect(channel(SOCK, TOKEN)).toMatchObject({
+        sessionId: SID,
+        socket: SOCK,
+        token: TOKEN,
+      });
+    });
+
+    it.each([
+      ["a relative socket path", "todou-omp/9.sock", TOKEN],
+      ["a socket that is not one", "/run/user/1000/todou-omp/9", TOKEN],
+      ["a socket that is not a string", 9, TOKEN],
+      ["an empty token", SOCK, ""],
+      ["a token of some other type", SOCK, { value: TOKEN }],
+      ["a token past any plausible length", SOCK, "a".repeat(513)],
+      ["a socket with no token beside it", SOCK, undefined],
+      ["a token with no socket beside it", undefined, TOKEN],
+    ])("keeps the session id and drops the channel on %s", (_n, sock, tok) => {
+      const read = channel(sock, tok);
+      expect(read?.sessionId).toBe(SID);
+      expect(read?.socket).toBeUndefined();
+      expect(read?.token).toBeUndefined();
+    });
+
+    it("reads the record an older extension wrote, channel and all absent", () => {
+      // The regression that matters: every omp on this machine running the
+      // previous extension publishes exactly this, and it must keep answering.
+      expect(channel()).toMatchObject({ sessionId: SID });
     });
   });
 
@@ -1404,5 +1467,204 @@ describe("the session omp published, found by ancestor pid", () => {
         ),
       });
     });
+  });
+});
+
+/*
+ * The last layer, and the narrowest. omp files three lines per terminal —
+ * cwd, session file, and `fresh` while that file has yet to be created — the
+ * moment a session exists, which is earlier than anything else here can
+ * answer: earlier than the log the scan reads, and earlier than the descriptor
+ * omp opens on it. A just-opened omp sits in exactly that state until its
+ * first turn, and that is when somebody types `todou` in the `!` shell.
+ */
+describe("the session omp filed against its terminal", () => {
+  const TTY = "/dev/pts/7";
+  /** The name omp derives from the tty, and files the breadcrumb under. */
+  const TERMINAL = "pts-7";
+
+  /** A session file path in omp's own naming, for a file nobody created. */
+  const uncreated = (id: string) =>
+    join(project, "sessions", `2026-09-12T02-49-21-732Z_${id}.jsonl`);
+
+  /** Each part of a breadcrumb a case may want to take away or point aside. */
+  type Breadcrumb = {
+    cwd?: string;
+    file?: string;
+    fresh?: false;
+    terminal?: string;
+  };
+
+  /** omp's breadcrumb, written where a given agent directory keeps them. */
+  function breadcrumb(root: string, opts: Breadcrumb = {}): void {
+    const dir = join(root, "terminal-sessions");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, opts.terminal ?? TERMINAL),
+      `${opts.cwd ?? project}\n${opts.file ?? uncreated(SID)}\n${
+        opts.fresh === false ? "" : "fresh"
+      }\n`,
+    );
+  }
+
+  /** The whole arrangement: a relocated agent directory, and omp on a tty. */
+  function read(opts: {
+    breadcrumb?: Breadcrumb;
+    stdin?: string;
+    openLogs?: string[];
+    env?: Record<string, string>;
+    dir?: string;
+  }) {
+    const dir = opts.dir ?? agentDir();
+    if (opts.breadcrumb) breadcrumb(dir, opts.breadcrumb);
+    return detectAgentContext(
+      { ...ENV, PI_CODING_AGENT_DIR: dir, ...opts.env },
+      home,
+      project,
+      ompHost({
+        cwd: project,
+        stdin: opts.stdin ?? TTY,
+        ...(opts.openLogs === undefined ? {} : { openLogs: opts.openLogs }),
+      }),
+    );
+  }
+
+  it("answers with the session, and with no model to read", () => {
+    // The model lives in the log, and the log not existing is half of why the
+    // breadcrumb was believed — so this is the same answer a session opened a
+    // moment ago already gave, with the session in it now.
+    expect(read({ breadcrumb: {} })).toEqual({ agent: "omp", session_id: SID });
+  });
+
+  it("leaves the descriptor in charge wherever there is one", () => {
+    // Ordering, stated against a breadcrumb that would otherwise be taken:
+    // the descriptor names the session omp is appending to right now, while
+    // this names whatever last opened the terminal.
+    const dir = agentDir();
+    const held = writeSession({
+      sessionsRoot: sessionsIn(dir),
+      cwd: project,
+      id: OTHER_SID,
+      lines: [modelChange("llm-gw/held")],
+    });
+    expect(read({ dir, breadcrumb: {}, openLogs: [held] })).toEqual({
+      agent: "omp",
+      session_id: OTHER_SID,
+      model: "llm-gw/held",
+    });
+  });
+
+  it("is never reached once omp has published a record of its own", () => {
+    const runtime = scratchDir("todou-omp-crumb-rt-");
+    const statePath = join(runtime, `${process.pid}.json`);
+    writeFileSync(
+      statePath,
+      JSON.stringify({
+        v: 1,
+        pid: process.pid,
+        agent: "omp",
+        session_id: OTHER_SID,
+        updated_at: "2026-09-12T02:49:21.732Z",
+      }),
+    );
+    expect(
+      read({ breadcrumb: {}, env: { TODOU_OMP_STATE: statePath } }),
+    ).toEqual({ agent: "omp", session_id: OTHER_SID });
+  });
+
+  /*
+   * Each of the four things that has to be true, taken away one at a time.
+   * None of them degrades to a guess: the result is what this file reported
+   * before the breadcrumb existed at all.
+   */
+  const nothing = { agent: "omp" };
+
+  it("refuses one whose session file is already there", () => {
+    // The realistic collision: pane-splitting multiplexers reuse a pts number
+    // hard, and the omp that had it before left a breadcrumb naming a log it
+    // really did write. Existence is what tells the two apart.
+    const dir = agentDir();
+    const written = writeSession({
+      sessionsRoot: sessionsIn(dir),
+      cwd: project,
+      id: OTHER_SID,
+    });
+    expect(read({ dir, breadcrumb: { file: written } })).toEqual(nothing);
+  });
+
+  it("refuses one with the fresh marker rewritten away", () => {
+    // omp clears it once the log lands, so a missing marker beside a path
+    // that does not exist is a session deleted or moved, not one starting.
+    expect(read({ breadcrumb: { fresh: false } })).toEqual(nothing);
+  });
+
+  it("refuses one filed from another project", () => {
+    expect(
+      read({ breadcrumb: { cwd: scratchDir("todou-omp-elsewhere-") } }),
+    ).toEqual(nothing);
+  });
+
+  it("refuses a file name that yields no session id", () => {
+    // `--resume` opens the path it is handed, under any name at all, so the
+    // id is only there to be read while omp chose the name itself.
+    for (const file of [
+      join(project, "sessions", "handed-to-resume.jsonl"),
+      join(project, "sessions", `2026-09-12_${SID}.txt`),
+      join(project, "sessions", "2026-09-12_../../etc.jsonl"),
+    ]) {
+      expect(read({ breadcrumb: { file } })).toEqual(nothing);
+    }
+  });
+
+  it("reads no breadcrumb at all when omp's stdin is not a terminal", () => {
+    // Without a tty omp names the terminal from ZELLIJ_PANE_ID and its like,
+    // which need not have reached us and need not still say the same thing.
+    expect(read({ breadcrumb: {}, stdin: "pipe:[918273]" })).toEqual(nothing);
+    // And with no descriptor table to read at all, which is every platform
+    // without /proc and every process that is not ours to look into.
+    const dir = agentDir();
+    breadcrumb(dir);
+    expect(
+      detectAgentContext(
+        { ...ENV, PI_CODING_AGENT_DIR: dir },
+        home,
+        project,
+        ompHost({ cwd: project }),
+      ),
+    ).toEqual(nothing);
+  });
+
+  it("never guesses at the terminal by listing the directory", () => {
+    // It holds every terminal this user has ever had. Our own fd 0 is the
+    // bash tool's pty or /dev/null, and it is not omp's.
+    expect(read({ breadcrumb: { terminal: "pts-99" } })).toEqual(nothing);
+  });
+
+  /*
+   * omp keeps sessions under the data directory and these under the state
+   * one, so the two follow different XDG variables — and both stop following
+   * XDG at the same point, which is a rule that exists once.
+   */
+  it("follows the XDG state directory, and only while omp's own is in place", () => {
+    const xdg = scratchDir("todou-omp-state-");
+    breadcrumb(join(xdg, "omp"));
+    expect(
+      detectAgentContext(
+        { ...ENV, XDG_STATE_HOME: xdg },
+        home,
+        project,
+        ompHost({ cwd: project, stdin: TTY }),
+      ),
+    ).toEqual({ agent: "omp", session_id: SID });
+    // A relocated agent directory takes its state with it, exactly as it
+    // takes its sessions.
+    expect(
+      detectAgentContext(
+        { ...ENV, XDG_STATE_HOME: xdg, PI_CODING_AGENT_DIR: agentDir() },
+        home,
+        project,
+        ompHost({ cwd: project, stdin: TTY }),
+      ),
+    ).toEqual(nothing);
   });
 });

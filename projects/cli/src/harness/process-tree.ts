@@ -249,6 +249,28 @@ export function openSessionLogs(
   return logs;
 }
 
+/**
+ * What one descriptor of a process points at, or undefined when it cannot be
+ * read — no `/proc` on this platform, another account's process, one that has
+ * since exited, or a descriptor closed between the ask and the readlink.
+ *
+ * One descriptor rather than a listing, because the caller knows which number
+ * it means: a `readdir` to find a fixed name would cost more and answer the
+ * same question. A file unlinked underneath reads back as `<path> (deleted)`,
+ * and is left that way: whether that still counts is the caller's to decide.
+ */
+export function readFd(
+  procRoot: string,
+  pid: number,
+  fd: number,
+): string | undefined {
+  try {
+    return readlinkSync(join(procRoot, String(pid), "fd", String(fd)));
+  } catch {
+    return undefined;
+  }
+}
+
 function parseNulSeparated(raw: string): Env {
   const env: Record<string, string> = {};
   for (const entry of raw.split("\0")) {

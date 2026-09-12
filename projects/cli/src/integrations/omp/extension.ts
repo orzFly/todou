@@ -15,9 +15,10 @@
  * the session scan it used before this existed, which is the right outcome for
  * a broken extension and the reason the try/catch is not a formality.
  *
- *  1. Publishes which session omp is in, to a file named after omp's pid, so
- *     that `todou` running under the bash tool stops having to guess from
- *     session-log mtimes.
+ *  1. Publishes which session omp is in, and where the socket below listens,
+ *     to a file named after omp's pid — so that `todou` stops having to guess
+ *     the session from session-log mtimes, and finds the channel from anywhere
+ *     omp's curated environment does not reach.
  *  2. Listens for `todou watch --follow=uds`, speaking the same wire protocol
  *     Claude Code's messaging socket does, and hands each batch to the agent.
  */
@@ -27,7 +28,16 @@ import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 
-/** The record layout `harness/omp-state.ts` will read; bump both together. */
+/**
+ * The record layout `harness/omp-state.ts` will read.
+ *
+ * Adding a field does not bump it, and must not: every todou already installed
+ * on the machine rejects a record whose version it does not know outright, so a
+ * bump would make each of them unable to read the session id too, from the
+ * moment this extension updates. Optional fields leave both generations
+ * working — an old reader ignores what it has no name for, and a new one treats
+ * their absence as the older extension that really is running.
+ */
 const STATE_VERSION = 1;
 
 /**
@@ -144,6 +154,19 @@ export default function todou(pi: Pi): void {
         agent: "omp",
         session_id: here.id,
         ...(here.file === undefined ? {} : { session_file: here.file }),
+        // The push channel, published rather than left to be derived: omp
+        // builds a curated environment for everything but its own bash tool,
+        // so the pair `claim` exported reaches none of them and a todou run
+        // from the `!` shell would see an omp with no channel at all. The
+        // token could not be derived in any case, and deriving the socket from
+        // this file's own name would tie the reader permanently to a naming
+        // rule neither side ever wrote down.
+        //
+        // Written as a pair or not at all — a record carrying one of them is a
+        // channel nothing can open.
+        ...(socketPath === undefined || token === undefined
+          ? {}
+          : { socket: socketPath, token }),
         updated_at: new Date().toISOString(),
       })}\n`,
       { mode: 0o600 },

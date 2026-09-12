@@ -6,7 +6,7 @@ export type FollowSituation =
   | "uds"
   | "uds-opted-out"
   | "claude-code-no-peer"
-  | "omp-not-installed"
+  | "omp-no-peer"
   | "known-harness"
   | "no-harness";
 
@@ -18,15 +18,43 @@ export type FollowAdvice = {
 };
 
 /**
+ * How a harness starts a command that has to outlive the turn.
+ *
+ * The one clause in this file an agent acts on verbatim, so it is the
+ * harness's own spelling or nothing: Claude Code's Bash tool takes `run in
+ * background`, omp's takes `async`, and an agent handed the other one's name
+ * goes looking for a parameter that does not exist — then falls back on a
+ * trailing `&` or a `nohup`, which is precisely what omp steers it away from.
+ *
+ * omp's names `async` and not `hub`, though both belong to one job system: a
+ * `--follow=uds` watch has to end with the session it pushes into, and a hub
+ * process is managed per project — it outlives the session and goes on pushing
+ * at a socket nobody holds. hub earns its mention as where that job is read,
+ * not as the way to start it.
+ *
+ * Only the two harnesses todou has measured have an entry. For the rest the
+ * sentences below simply make no claim, because a guess here would be read as
+ * an instruction.
+ */
+const BACKGROUNDED: Record<"claude-code" | "omp", string> = {
+  "claude-code": "started as a background task (run in background = true)",
+  omp: "started with the bash tool's `async: true` (`hub` is where you see how that job is doing)",
+};
+
+/**
  * The half that names a transport and the half that falls back to polling,
  * with the clause that opens each of them as the parameter. Two situations
  * ask the reader the same question in different words — whether it can keep
  * reading a running command's output — and everything after that question is
  * the same advice, so it is written once and cannot drift apart.
  */
-function streamOrPoll(lead: string, fallback: string): string[] {
+function streamOrPoll(
+  lead: string,
+  fallback: string,
+  backgrounded = "",
+): string[] {
   return [
-    `${lead} \`--follow=stdout\` with \`todou watch\` or \`todou issue watch\`, and if you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.`,
+    `${lead} \`--follow=stdout\` with \`todou watch\` or \`todou issue watch\`${backgrounded ? `, ${backgrounded}` : ""}, and if you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.`,
     `${fallback} Either watch, run without \`--follow\`, blocks, returns one batch and exits; re-open it from the cursor it printed. \`--poll\` checks once without blocking.`,
   ];
 }
@@ -37,10 +65,20 @@ const MONITOR = streamOrPoll(
   "Without one you cannot use follow at all: use poll mode.",
 );
 
+/* Named rather than repeated: omp gets this question in the same words as
+   every unmeasured harness, and only the answer about backgrounding differs. */
+const UNKNOWN_LEAD =
+  "If you can watch a stream continuously and be woken by what it writes, try";
+const UNKNOWN_FALLBACK = "If you cannot, use poll mode.";
+
 /** Any other harness, and no harness: todou cannot answer for it. */
-const UNKNOWN_HARNESS = streamOrPoll(
-  "If you can watch a stream continuously and be woken by what it writes, try",
-  "If you cannot, use poll mode.",
+const UNKNOWN_HARNESS = streamOrPoll(UNKNOWN_LEAD, UNKNOWN_FALLBACK);
+
+/** The same question, with omp's own way of keeping the command running. */
+const OMP_STREAM = streamOrPoll(
+  UNKNOWN_LEAD,
+  UNKNOWN_FALLBACK,
+  BACKGROUNDED.omp,
 );
 
 const CLOSING =
@@ -48,13 +86,17 @@ const CLOSING =
 
 /**
  * The answer when the push channel is there, said once for both harnesses
- * that have one. Only the name differs, and two copies of this paragraph
- * would eventually differ in more than the name.
+ * that have one. Only the name and the backgrounding clause differ, and two
+ * copies of this paragraph would eventually differ in more than those.
+ *
+ * The id rather than the label, because both are read from it: `HARNESS_LABELS`
+ * stays the one place a harness is spelled for a reader, and folding the clause
+ * into it would make a display name carry a tool's parameter.
  */
-function udsParagraphs(label: string): string[] {
+function udsParagraphs(harness: "claude-code" | "omp"): string[] {
   return [
-    `running under ${label}, and \`--follow=uds\` is available.`,
-    "Use it with `todou watch` or `todou issue watch`, started as a background task (run in background = true). If you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.",
+    `running under ${HARNESS_LABELS[harness]}, and \`--follow=uds\` is available.`,
+    `Use it with \`todou watch\` or \`todou issue watch\`, ${BACKGROUNDED[harness]}. If you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.`,
     CLOSING,
   ];
 }
@@ -106,26 +148,29 @@ export function followAdvice(input: {
         CLOSING,
       ]);
     }
-    return advice("uds", udsParagraphs("Claude Code"));
+    return advice("uds", udsParagraphs("claude-code"));
   }
 
   if (harness === "omp") {
-    // The one situation with a way out that is an agent's own to take: the
-    // extension is per-user and installing it changes nothing about anyone
-    // else's session, unlike `opt-out-uds`, which is the user's standing
-    // decision about this machine. So this one names its command.
+    // States what was looked for and not found, and stops there. The two ways
+    // an omp has no channel — no extension, and an extension too old to
+    // publish one — are indistinguishable from here, and the branch that used
+    // to name the first of them was simply wrong on a machine where the
+    // extension was installed all along. Which of the two it is belongs to
+    // `todou integration status`, which reads the file and reports the
+    // version; naming an install command here would put a command an agent
+    // can run into a report both agents and people read.
     if (!socket) {
-      return advice("omp-not-installed", [
-        "running under omp, but the todou extension is not installed in it, so there is no session socket to push to.",
-        "Run `todou integration install omp` and restart omp — the extension also lets todou read which session omp is in, instead of inferring it from session-log timestamps.",
-        ...UNKNOWN_HARNESS,
+      return advice("omp-no-peer", [
+        "running under omp, but no omp above this process has published a todou push socket, so `--follow=uds` has no session to push to.",
+        ...OMP_STREAM,
         CLOSING,
       ]);
     }
     if (optedOut) {
       return advice("uds-opted-out", [
         "running under omp, but `--follow=uds` is opted out on this machine.",
-        ...UNKNOWN_HARNESS,
+        ...OMP_STREAM,
         CLOSING,
       ]);
     }

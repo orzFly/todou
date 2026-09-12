@@ -1,6 +1,7 @@
 import type { Env } from "../config.ts";
 import { detectHarnessId } from "./index.ts";
-import type { ProcessTreeIo } from "./process-tree.ts";
+import { publishedState } from "./omp-state.ts";
+import { ancestorPids, type ProcessTreeIo } from "./process-tree.ts";
 
 /**
  * Where a push transport delivers, and what it authenticates with — the pair
@@ -47,15 +48,31 @@ export function harnessMessaging(
   // reason the other probes take one: an answer that depends on the real
   // /proc is one a test cannot state.
   switch (detectHarnessId(env, io)) {
-    case "omp":
-      // Exported by the extension `todou integration install omp` writes, and
-      // absent in an omp without it — which is a real answer, not a gap:
-      // there is no session there to push to, and `follow-advice.ts` names
-      // the command that changes it.
-      return {
-        socket: env.TODOU_MESSAGING_SOCKET,
-        token: env.TODOU_MESSAGING_TOKEN,
-      };
+    case "omp": {
+      // Exported by the extension `todou integration install omp` writes —
+      // into omp's own bash tool, and nowhere else. Preferred where it is
+      // there, because reading it costs nothing.
+      if (env.TODOU_MESSAGING_SOCKET) {
+        return {
+          socket: env.TODOU_MESSAGING_SOCKET,
+          token: env.TODOU_MESSAGING_TOKEN,
+        };
+      }
+      // Every other context omp spawns — the `!` shell, both eval runtimes —
+      // gets a curated environment with none of the pair in it, so without
+      // this an omp with the extension running and its socket listening
+      // reports no push channel at all, and says so in prose that blames the
+      // extension for not being installed.
+      //
+      // Asked by ancestor pid, exactly as the session id is (T-312), and just
+      // as lazily: a machine that never installed the extension pays one
+      // failed `readdir` and never walks the tree. The record's pair is
+      // believed or dropped whole, so a socket here always has its token.
+      const state = publishedState(env, () => ancestorPids(io));
+      return state?.socket === undefined
+        ? {}
+        : { socket: state.socket, token: state.token };
+    }
     case "claude-code":
     case null:
       return {

@@ -1,6 +1,9 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { harnessMessaging } from "../../src/harness/messaging.ts";
 import type { ProcessTreeIo } from "../../src/harness/process-tree.ts";
+import { procTree, scratchDir } from "./proc-fixture.ts";
 
 /** No ancestors to attribute a marker to, so the environment alone decides. */
 const NO_TREE: Partial<ProcessTreeIo> = {
@@ -69,5 +72,98 @@ describe("harnessMessaging", () => {
     expect(
       read({ CODEX_THREAD_ID: "t1", CLAUDE_CODE_MESSAGING_SOCKET: CC }),
     ).toEqual({});
+  });
+});
+
+/*
+ * omp exports the pair into its own bash tool's environment and nowhere else,
+ * so every other context it spawns — the `!` shell above all, which is where a
+ * person types `todou` — has to find the channel the same way it finds the
+ * session: by asking which ancestor published a record about itself (T-312).
+ */
+describe("harnessMessaging under omp, with nothing in the environment", () => {
+  /** The pid chain `[us, near, far]`, none of them carrying omp's markers. */
+  const NEAR = 424242;
+  const FAR = 424243;
+
+  /**
+   * A runtime directory with the records a case asks for, and the tree that
+   * reaches them. Our own pid stands for nothing here: the records name
+   * fixture pids, and only `alive()` would object — which is why every case
+   * that expects a hit uses `process.pid` as the publisher.
+   */
+  function environment(records: Record<number, unknown>): {
+    env: Record<string, string>;
+    io: Partial<ProcessTreeIo>;
+  } {
+    const runtime = scratchDir("todou-msg-rt-");
+    const dir = join(runtime, "todou-omp");
+    mkdirSync(dir, { recursive: true });
+    for (const [pid, body] of Object.entries(records)) {
+      writeFileSync(join(dir, `${pid}.json`), JSON.stringify(body));
+    }
+    return {
+      env: { OMPCODE: "1", CLAUDECODE: "1", XDG_RUNTIME_DIR: runtime },
+      io: procTree([
+        // Both markers, as omp really builds them, so that the tie between
+        // the two matching harnesses is decided here the way it is in life.
+        {
+          pid: 1000,
+          ppid: process.pid,
+          env: { OMPCODE: "1", CLAUDECODE: "1" },
+        },
+        { pid: process.pid, ppid: NEAR, argv: ["omp"] },
+        { pid: NEAR, ppid: FAR, argv: ["omp"] },
+        { pid: FAR, ppid: 1, argv: ["omp"] },
+      ]),
+    };
+  }
+
+  const record = (pid: number, extra: object = {}) => ({
+    v: 1,
+    pid,
+    agent: "omp",
+    session_id: "01900000-0000-7000-8000-000000000001",
+    updated_at: "2026-09-12T02:49:21.732Z",
+    ...extra,
+  });
+
+  const channel = { socket: "/run/user/1000/todou-omp/9.sock", token: "t0ken" };
+
+  it("takes the channel an ancestor published", () => {
+    const { env, io } = environment({
+      [process.pid]: record(process.pid, channel),
+    });
+    expect(harnessMessaging(env, io)).toEqual(channel);
+  });
+
+  it("reports no channel for an extension too old to publish one", () => {
+    // Installed on real machines right now, and the record it writes still
+    // carries a session id — so this must be "no channel", not "no record".
+    const { env, io } = environment({ [process.pid]: record(process.pid) });
+    expect(harnessMessaging(env, io)).toEqual({});
+  });
+
+  it("takes the nearer publisher when omp is running inside omp", () => {
+    const far = "/run/user/1000/todou-omp/far.sock";
+    const { env, io } = environment({
+      [process.pid]: record(process.pid, channel),
+      [FAR]: record(FAR, { socket: far, token: "far-token" }),
+    });
+    expect(harnessMessaging(env, io)).toEqual(channel);
+  });
+
+  it("keeps preferring the variable where omp did export it", () => {
+    // The bash tool's own environment, with a published record beside it: the
+    // variable is free to read and says the same thing.
+    const { env, io } = environment({
+      [process.pid]: record(process.pid, channel),
+    });
+    expect(
+      harnessMessaging(
+        { ...env, TODOU_MESSAGING_SOCKET: OMP, TODOU_MESSAGING_TOKEN: "env" },
+        io,
+      ),
+    ).toEqual({ socket: OMP, token: "env" });
   });
 });

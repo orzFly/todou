@@ -22,6 +22,14 @@ const UNKNOWN_HARNESS = [
   `If you cannot, use poll mode. ${STREAM_OR_POLL_TAIL}`,
 ];
 
+/** The same question put to omp, which is told how to background the watch. */
+const ASYNC =
+  "started with the bash tool's `async: true` (`hub` is where you see how that job is doing)";
+const OMP_STREAM = [
+  `If you can watch a stream continuously and be woken by what it writes, try \`--follow=stdout\` with \`todou watch\` or \`todou issue watch\`, ${ASYNC}, and if you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.`,
+  `If you cannot, use poll mode. ${STREAM_OR_POLL_TAIL}`,
+];
+
 const CLOSING =
   "Whichever mode you use, the watch carries spec and question activity too: a review verdict and a question answer each arrive on it as their own line, so you do not need a separate `spec wait` or `question wait` running beside it.";
 
@@ -78,7 +86,7 @@ describe("followAdvice", () => {
     });
   });
 
-  it("offers uds under omp once its extension is installed", () => {
+  it("offers uds under omp, in omp's own words for a background job", () => {
     expect(
       followAdvice({ harness: "omp", socket: SOCKET, optedOut: false }),
     ).toEqual({
@@ -86,28 +94,44 @@ describe("followAdvice", () => {
       harness: "omp",
       paragraphs: [
         "running under omp, and `--follow=uds` is available.",
-        "Use it with `todou watch` or `todou issue watch`, started as a background task (run in background = true). If you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.",
+        `Use it with \`todou watch\` or \`todou issue watch\`, ${ASYNC}. If you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.`,
         CLOSING,
       ],
     });
   });
 
-  it("names the install command when omp has no extension", () => {
-    // The one situation whose way out belongs to the reader: installing a
-    // per-user extension changes nothing for anyone else, unlike the opt-out
-    // above, which is the user's standing decision about this machine.
+  it("states the missing publisher under omp, and nothing beyond it", () => {
+    // What this used to say — that the extension is not installed — is not
+    // something this can tell: a machine with the extension installed and its
+    // socket listening reaches here whenever omp's curated environment did not
+    // carry the pair. So the report names only what was looked for.
     expect(
       followAdvice({ harness: "omp", socket: undefined, optedOut: false }),
     ).toEqual({
-      situation: "omp-not-installed",
+      situation: "omp-no-peer",
       harness: "omp",
       paragraphs: [
-        "running under omp, but the todou extension is not installed in it, so there is no session socket to push to.",
-        "Run `todou integration install omp` and restart omp — the extension also lets todou read which session omp is in, instead of inferring it from session-log timestamps.",
-        ...UNKNOWN_HARNESS,
+        "running under omp, but no omp above this process has published a todou push socket, so `--follow=uds` has no session to push to.",
+        ...OMP_STREAM,
         CLOSING,
       ],
     });
+  });
+
+  it("never names the extension or a command to install it", () => {
+    // The extension is the path T-308 laid for an agent to be installed along,
+    // not an instruction to hand whoever reads this — and both agents and
+    // people read it. Which of the two omp channel-less states this is belongs
+    // to `todou integration status`, which can actually tell them apart.
+    for (const advice of [
+      followAdvice({ harness: "omp", socket: undefined, optedOut: false }),
+      followAdvice({ harness: "omp", socket: SOCKET, optedOut: true }),
+      followAdvice({ harness: "omp", socket: SOCKET, optedOut: false }),
+    ]) {
+      const text = advice.paragraphs.join("\n");
+      expect(text).not.toContain("install");
+      expect(text).not.toContain("extension");
+    }
   });
 
   it("does not tell an opted-out omp to install anything", () => {
@@ -120,10 +144,30 @@ describe("followAdvice", () => {
       harness: "omp",
       paragraphs: [
         "running under omp, but `--follow=uds` is opted out on this machine.",
-        ...UNKNOWN_HARNESS,
+        ...OMP_STREAM,
         CLOSING,
       ],
     });
+  });
+
+  it("keeps Claude Code's own parameter name off omp, and omp's off it", () => {
+    // Each one names a tool parameter that exists only in the other harness;
+    // an agent handed the wrong one looks for something that is not there.
+    const omp = followAdvice({
+      harness: "omp",
+      socket: SOCKET,
+      optedOut: false,
+    }).paragraphs.join("\n");
+    expect(omp).toContain("async: true");
+    expect(omp).not.toContain("run in background");
+
+    const cc = followAdvice({
+      harness: "claude-code",
+      socket: SOCKET,
+      optedOut: false,
+    }).paragraphs.join("\n");
+    expect(cc).toContain("run in background");
+    expect(cc).not.toContain("async");
   });
 
   it("says what it does not know about another harness, by name", () => {

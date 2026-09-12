@@ -30,6 +30,14 @@ export type HostProcess = {
    * second says there is no live session to name.
    */
   openLogs?: readonly string[];
+  /**
+   * What the process's own stdin points at — its terminal, where it has one.
+   *
+   * A harness that files anything per terminal names it from here, and from
+   * nowhere else: our own stdin is whatever the tool that ran us handed over,
+   * a pty or `/dev/null`, and never the terminal the harness is sitting on.
+   */
+  stdin?: string;
 };
 
 /**

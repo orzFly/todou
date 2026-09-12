@@ -10,7 +10,16 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { integration } from "../../src/integrations/registry.ts";
 import { runCli } from "../harness.ts";
+
+/**
+ * The version the registry carries now, read rather than written out. A bump is
+ * a real event — it is the whole of how an installed extension is told it is
+ * stale — and a literal in each assertion below would turn every one into a
+ * sweep through cases that are not about the version at all.
+ */
+const V = integration("omp")?.version;
 
 const scratch: string[] = [];
 afterAll(() => {
@@ -50,7 +59,7 @@ describe("todou integration install", () => {
     const home = ompHome();
     const result = await run(["integration", "install", "omp"], home);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("install v1");
+    expect(result.stdout).toContain(`install v${V}`);
     expect(existsSync(target(join(home, ".omp", "agent")))).toBe(true);
   });
 
@@ -132,7 +141,7 @@ describe("todou integration install", () => {
     expect(text).toContain("// installed by todou");
     // The marker the overwrite check reads, and the version `status` reports.
     expect(text).toContain("// TODOU_INTEGRATION_ID=omp");
-    expect(text).toContain("// TODOU_INTEGRATION_VERSION=1");
+    expect(text).toContain(`// TODOU_INTEGRATION_VERSION=${V}`);
     // And the extension itself, not just a header.
     expect(text).toContain("TODOU_OMP_STATE");
     expect(text).toContain("export default function todou");
@@ -145,7 +154,7 @@ describe("todou integration install", () => {
     writeFileSync(path, `${readFileSync(path, "utf8")}\n// edited by hand\n`);
     const result = await run(["integration", "install", "omp"], home);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("reinstall v1");
+    expect(result.stdout).toContain(`reinstall v${V}`);
     expect(readFileSync(path, "utf8")).not.toContain("edited by hand");
   });
 
@@ -184,7 +193,7 @@ describe("todou integration install", () => {
       home,
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("would install v1");
+    expect(result.stdout).toContain(`would install v${V}`);
     expect(readdirSync(home, { recursive: true }).sort()).toEqual(before);
   });
 
@@ -195,7 +204,7 @@ describe("todou integration install", () => {
       ["integration", "install", "omp", "--dry-run"],
       home,
     );
-    expect(result.stdout).toContain("would reinstall v1");
+    expect(result.stdout).toContain(`would reinstall v${V}`);
   });
 });
 
@@ -235,7 +244,7 @@ describe("todou integration status", () => {
     expect(result.stdout).toContain("omp: not installed");
     await run(["integration", "install", "omp"], home);
     expect((await run(["integration", "status"], home)).stdout).toContain(
-      "omp: installed v1",
+      `omp: installed v${V}`,
     );
   });
 
@@ -246,12 +255,14 @@ describe("todou integration status", () => {
     writeFileSync(
       path,
       readFileSync(path, "utf8").replace(
-        "TODOU_INTEGRATION_VERSION=1",
+        `TODOU_INTEGRATION_VERSION=${V}`,
         "TODOU_INTEGRATION_VERSION=0",
       ),
     );
     const result = await run(["integration", "status"], home);
-    expect(result.stdout).toContain("installed v0, current is v1 — reinstall");
+    expect(result.stdout).toContain(
+      `installed v0, current is v${V} — reinstall`,
+    );
   });
 
   it("says when the agent leaves no sign of itself here", async () => {

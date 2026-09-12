@@ -49,9 +49,13 @@ export class AgentCanIFollowCommand extends Command<CliContext> {
   async execute(): Promise<number | undefined> {
     try {
       const env = this.context.env;
+      // Threaded the way `watch` threads it: under omp the answer depends on
+      // which ancestor published a record, so a test can only state a
+      // situation by handing this command a process tree of its own.
+      const tree = this.context.processTree;
       const advice = followAdvice({
-        harness: detectHarnessId(env),
-        socket: harnessMessaging(env).socket,
+        harness: detectHarnessId(env, tree),
+        socket: harnessMessaging(env, tree).socket,
         optedOut: optedOut(loadCliConfig(env)),
       });
       this.context.stdout.write(`${advice.paragraphs.join("\n\n")}\n`);

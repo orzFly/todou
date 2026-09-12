@@ -19,13 +19,41 @@ export type OmpState = {
    * harness adopting it must not be silently reported as the first.
    */
   agent?: string;
+  /**
+   * Where the extension's push socket listens, and what it authenticates with.
+   *
+   * Both or neither, always: a socket without its token is a channel nothing
+   * can open, and a caller offered one of them alone would report a push
+   * transport that refuses every connection.
+   */
+  socket?: string;
+  token?: string;
 };
 
 /** The only record layout this reads; anything else is treated as absent. */
 const VERSION = 1;
 
+/**
+ * Generous next to the 48 hex characters the extension generates. The bound is
+ * only here so that an unbounded string out of a file cannot be carried into a
+ * frame; it is not meant to pin down a format the writer may still change.
+ */
+const MAX_TOKEN_CHARS = 512;
+
 /** It ends up in a URL — the same guard the claude-code detector applies. */
 const SESSION_ID = /^[0-9a-zA-Z-]+$/;
+
+/**
+ * Whether a string may be reported as a session id.
+ *
+ * Exported because the record is no longer the only place omp's session id is
+ * read from: `omp.ts` recovers one out of a file name, and an id that path
+ * accepted while this one refused would be a second, looser definition of the
+ * same thing.
+ */
+export function isSessionId(value: string): boolean {
+  return value.length <= 200 && SESSION_ID.test(value);
+}
 
 /**
  * The session id omp itself published, from the state file the todou omp
@@ -65,6 +93,8 @@ export function readOmpStateAt(path: string): OmpState | undefined {
     agent?: unknown;
     session_id?: unknown;
     session_file?: unknown;
+    socket?: unknown;
+    token?: unknown;
   };
   try {
     record = JSON.parse(readFileSync(path, "utf8"));
@@ -84,11 +114,7 @@ export function readOmpStateAt(path: string): OmpState | undefined {
   }
   if (!alive(record.pid)) return undefined;
   const sessionId = record.session_id;
-  if (
-    typeof sessionId !== "string" ||
-    sessionId.length > 200 ||
-    !SESSION_ID.test(sessionId)
-  ) {
+  if (typeof sessionId !== "string" || !isSessionId(sessionId)) {
     return undefined;
   }
   const sessionFile = record.session_file;
@@ -105,7 +131,42 @@ export function readOmpStateAt(path: string): OmpState | undefined {
     ...(typeof record.agent === "string" && record.agent !== ""
       ? { agent: record.agent }
       : {}),
+    // Absent, like `session_file`, is an older extension rather than a reason
+    // to reject the id — it is what every omp running the version before this
+    // one publishes, and its session is still worth knowing.
+    ...channel(record),
   };
+}
+
+/**
+ * The push endpoint a record carries, or nothing.
+ *
+ * Checked as a pair and discarded as a pair: the extension generates both in
+ * one step, so half of one is a record that was never written that way, and a
+ * caller handed a socket with no token would dial an endpoint that hangs up on
+ * it. Falling back to "this omp has no push channel" is a state the callers
+ * already handle — it is what an omp without the extension looks like.
+ */
+function channel(record: {
+  socket?: unknown;
+  token?: unknown;
+}): { socket: string; token: string } | undefined {
+  const { socket, token } = record;
+  if (
+    typeof socket !== "string" ||
+    !isAbsolute(socket) ||
+    !socket.endsWith(".sock")
+  ) {
+    return undefined;
+  }
+  if (
+    typeof token !== "string" ||
+    token === "" ||
+    token.length > MAX_TOKEN_CHARS
+  ) {
+    return undefined;
+  }
+  return { socket, token };
 }
 
 /**
