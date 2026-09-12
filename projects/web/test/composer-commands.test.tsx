@@ -34,6 +34,7 @@ const { toast } = await import("sonner");
 import {
   Composer,
   submitLabel,
+  type Target,
   useCommentComposer,
 } from "../src/components/timeline/composer.tsx";
 import { cmFocus, cmGetValue, cmSetValue, cmView } from "./cm.ts";
@@ -171,10 +172,11 @@ const ANCHOR: TimelineComment["component"] = {
 
 function mount(
   handlers: {
-    onSend?: (body: string) => void;
+    onSend?: (body: string, target: Target) => void;
     onSendWithCommands?: (
       body: string,
       commands: CommandInput[],
+      target: Target,
     ) => Promise<unknown>;
     /** What the composer's timeline drain finds, seeded (T-307). */
     timeline?: TimelineItem[];
@@ -225,6 +227,13 @@ const submitButton = (view: { container: HTMLElement }) => {
   return button as HTMLButtonElement;
 };
 
+/**
+ * The card the composer was mounted on (T-321). Every submission carries it,
+ * sealed in before the first `await`, so a send that outlives its composer
+ * still names the card it was written on.
+ */
+const ON_CARD_7: Target = { slug: "todou", issueNumber: 7 };
+
 describe("Composer with slash commands", () => {
   it("says what the submit is about to do", async () => {
     const view = mount();
@@ -261,7 +270,7 @@ describe("Composer with slash commands", () => {
     await waitFor(() => expect(submitButton(view).disabled).toBe(false));
     submitButton(view).click();
     await waitFor(() =>
-      expect(view.onSend).toHaveBeenCalledWith("no commands here"),
+      expect(view.onSend).toHaveBeenCalledWith("no commands here", ON_CARD_7),
     );
     expect(view.onSendWithCommands).not.toHaveBeenCalled();
   });
@@ -272,10 +281,14 @@ describe("Composer with slash commands", () => {
     await waitFor(() => expect(submitButton(view).disabled).toBe(false));
     submitButton(view).click();
     await waitFor(() =>
-      expect(view.onSendWithCommands).toHaveBeenCalledWith("shipping this", [
-        { type: "status", status_id: 3 },
-        { type: "label_add", label_id: 10 },
-      ]),
+      expect(view.onSendWithCommands).toHaveBeenCalledWith(
+        "shipping this",
+        [
+          { type: "status", status_id: 3 },
+          { type: "label_add", label_id: 10 },
+        ],
+        ON_CARD_7,
+      ),
     );
     expect(view.onSend).not.toHaveBeenCalled();
   });
@@ -286,9 +299,11 @@ describe("Composer with slash commands", () => {
     await waitFor(() => expect(submitButton(view).disabled).toBe(false));
     submitButton(view).click();
     await waitFor(() =>
-      expect(view.onSendWithCommands).toHaveBeenCalledWith("", [
-        { type: "status", status_id: 3 },
-      ]),
+      expect(view.onSendWithCommands).toHaveBeenCalledWith(
+        "",
+        [{ type: "status", status_id: 3 }],
+        ON_CARD_7,
+      ),
     );
   });
 
@@ -377,9 +392,11 @@ describe("Composer hiding every comment", () => {
 
     submitButton(view).click();
     await waitFor(() =>
-      expect(view.onSendWithCommands).toHaveBeenCalledWith("", [
-        { type: "comments_hide", hidden: true, comment_ids: [101, 102] },
-      ]),
+      expect(view.onSendWithCommands).toHaveBeenCalledWith(
+        "",
+        [{ type: "comments_hide", hidden: true, comment_ids: [101, 102] }],
+        ON_CARD_7,
+      ),
     );
   });
 
@@ -398,13 +415,17 @@ describe("Composer hiding every comment", () => {
 
     submitButton(view).click();
     await waitFor(() =>
-      expect(view.onSendWithCommands).toHaveBeenCalledWith("", [
-        {
-          type: "comments_hide",
-          hidden: true,
-          comment_ids: [101, 102, 103, 104],
-        },
-      ]),
+      expect(view.onSendWithCommands).toHaveBeenCalledWith(
+        "",
+        [
+          {
+            type: "comments_hide",
+            hidden: true,
+            comment_ids: [101, 102, 103, 104],
+          },
+        ],
+        ON_CARD_7,
+      ),
     );
   });
 
@@ -423,9 +444,11 @@ describe("Composer hiding every comment", () => {
 
     submitButton(view).click();
     await waitFor(() =>
-      expect(view.onSendWithCommands).toHaveBeenCalledWith("", [
-        { type: "comments_hide", hidden: false, comment_ids: [101, 103] },
-      ]),
+      expect(view.onSendWithCommands).toHaveBeenCalledWith(
+        "",
+        [{ type: "comments_hide", hidden: false, comment_ids: [101, 103] }],
+        ON_CARD_7,
+      ),
     );
   });
 
@@ -439,10 +462,14 @@ describe("Composer hiding every comment", () => {
 
     submitButton(view).click();
     await waitFor(() =>
-      expect(view.onSendWithCommands).toHaveBeenCalledWith("the conclusion", [
-        { type: "comments_hide", hidden: true, comment_ids: [101, 102] },
-        { type: "status", status_id: 3 },
-      ]),
+      expect(view.onSendWithCommands).toHaveBeenCalledWith(
+        "the conclusion",
+        [
+          { type: "comments_hide", hidden: true, comment_ids: [101, 102] },
+          { type: "status", status_id: 3 },
+        ],
+        ON_CARD_7,
+      ),
     );
   });
 
@@ -662,7 +689,12 @@ describe("a failed comment across a card change", () => {
       },
     );
 
-    act(() => hook.result.current.send("a comment for card 7"));
+    act(() =>
+      hook.result.current.send("a comment for card 7", {
+        slug: "p",
+        issueNumber: 7,
+      }),
+    );
     await waitFor(() =>
       expect(hook.result.current.pending[0]?.failed).toBe(true),
     );

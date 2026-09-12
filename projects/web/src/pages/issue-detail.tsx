@@ -69,6 +69,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 import { useScrollInsets } from "@/lib/scroll-insets.ts";
+import { useDirtySource } from "@/lib/unsaved-guard.ts";
 
 export function IssueDetailPage() {
   const { slug, number: numberParam } = useParams({
@@ -212,7 +213,7 @@ function TrashBanner({ slug, issue }: { slug: string; issue: Issue }) {
   );
 }
 
-function TitleBlock({
+export function TitleBlock({
   slug,
   issue,
   readOnly = false,
@@ -227,19 +228,29 @@ function TitleBlock({
   const [title, setTitle] = useState(issue.title);
   const queryClient = useQueryClient();
   const rename = useMutation({
-    mutationFn: () => api.updateIssue(slug, issue.number, { title }),
-    onSuccess: () => {
+    // The card is sealed in when the form is submitted, not read back off the
+    // closure: this is one route with a changed param, so the page keeps
+    // running across `/issues/7 → /issues/8` and every settle-time callback
+    // would otherwise run against the new card.
+    mutationFn: (target: { slug: string; number: number; title: string }) =>
+      api.updateIssue(target.slug, target.number, { title: target.title }),
+    onSuccess: (_updated, target) => {
       queryClient.invalidateQueries({
-        queryKey: ["issue", slug, issue.number],
+        queryKey: ["issue", target.slug, target.number],
       });
-      queryClient.invalidateQueries({ queryKey: ["issues", slug] });
+      queryClient.invalidateQueries({ queryKey: ["issues", target.slug] });
       queryClient.invalidateQueries({
-        queryKey: ["timeline", slug, issue.number],
+        queryKey: ["timeline", target.slug, target.number],
       });
       setEditing(false);
     },
     onError: (error) => toast.error(error.message),
   });
+
+  // A rename is the one page write with no editor behind it, so nothing else
+  // reports it: without this the guard asks nothing before leaving a title
+  // that has not landed.
+  useDirtySource(() => rename.isPending);
 
   if (editing) {
     return (
@@ -247,7 +258,7 @@ function TitleBlock({
         className="flex items-center gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          rename.mutate();
+          rename.mutate({ slug, number: issue.number, title });
         }}
       >
         <Input
@@ -328,11 +339,11 @@ export function BodyBlock({
   const staging = useStagedFiles();
   const queryClient = useQueryClient();
   const save = useMutation({
-    mutationFn: (finalBody: string) =>
-      api.updateIssue(slug, issue.number, { body: finalBody }),
-    onSuccess: () => {
+    mutationFn: (vars: { slug: string; issueNumber: number; body: string }) =>
+      api.updateIssue(vars.slug, vars.issueNumber, { body: vars.body }),
+    onSuccess: (_updated, vars) => {
       queryClient.invalidateQueries({
-        queryKey: ["issue", slug, issue.number],
+        queryKey: ["issue", vars.slug, vars.issueNumber],
       });
       setEditing(false);
       staging.clear();
@@ -342,12 +353,20 @@ export function BodyBlock({
 
   async function handleSave() {
     if (uploading) return;
+    // Read before the first `await`, for the same reason the composer does:
+    // the upload is a real request, and by the time it answers the page may be
+    // showing another card — whose body this PATCH would then overwrite with
+    // this card's draft.
+    const target = { slug, issueNumber: issue.number };
     const body = editor.current?.getValue() ?? issue.body;
     let full = body;
     if (staging.staged.length > 0) {
       setUploading(true);
       try {
-        const markers = await staging.uploadAll(slug, issue.number);
+        const markers = await staging.uploadAll(
+          target.slug,
+          target.issueNumber,
+        );
         full = withAttachmentMarkers(body.trimEnd(), markers);
       } catch (error) {
         toast.error(`Could not upload files: ${(error as Error).message}`);
@@ -356,7 +375,7 @@ export function BodyBlock({
         setUploading(false);
       }
     }
-    save.mutate(full);
+    save.mutate({ ...target, body: full });
   }
 
   return (
@@ -455,7 +474,7 @@ export function BodyBlock({
   );
 }
 
-function Sidebar({
+export function Sidebar({
   slug,
   issue,
   statuses,
@@ -479,19 +498,38 @@ function Sidebar({
   const canCreateLabels = useCanCreateLabels(slug);
   const createLabel = useCreateLabel(slug);
   const patch = useMutation({
-    mutationFn: (input: { label_ids?: number[]; assignee_ids?: number[] }) =>
-      api.updateIssue(slug, issue.number, input),
-    onSettled: () => {
+    // The card rides in the variables so the request and the settle-time
+    // invalidation read it from there rather than from this closure, which
+    // `/issues/7 → /issues/8` moves out from under them.
+    mutationFn: (vars: {
+      slug: string;
+      issueNumber: number;
+      label_ids?: number[];
+      assignee_ids?: number[];
+    }) =>
+      api.updateIssue(vars.slug, vars.issueNumber, {
+        ...(vars.label_ids === undefined ? {} : { label_ids: vars.label_ids }),
+        ...(vars.assignee_ids === undefined
+          ? {}
+          : { assignee_ids: vars.assignee_ids }),
+      }),
+    onSettled: (_data, _error, vars) => {
       queryClient.invalidateQueries({
-        queryKey: ["issue", slug, issue.number],
+        queryKey: ["issue", vars.slug, vars.issueNumber],
       });
-      queryClient.invalidateQueries({ queryKey: ["issues", slug] });
+      queryClient.invalidateQueries({ queryKey: ["issues", vars.slug] });
       queryClient.invalidateQueries({
-        queryKey: ["timeline", slug, issue.number],
+        queryKey: ["timeline", vars.slug, vars.issueNumber],
       });
     },
     onError: (error) => toast.error(error.message),
   });
+
+  // A label toggle is a write with no editor behind it, so nothing else
+  // reports it to the guard.
+  useDirtySource(() => patch.isPending);
+
+  const patchTarget = { slug, issueNumber: issue.number };
 
   return (
     // Sticky on large screens (T-63): the sidebar keeps Status and the
@@ -547,6 +585,7 @@ function Sidebar({
             onToggle={(label) => {
               const current = issue.labels.map((l) => l.id);
               patch.mutate({
+                ...patchTarget,
                 label_ids: current.includes(label.id)
                   ? current.filter((id) => id !== label.id)
                   : [...current, label.id],
@@ -592,6 +631,7 @@ function Sidebar({
                       e.preventDefault();
                       const current = issue.assignees.map((a) => a.id);
                       patch.mutate({
+                        ...patchTarget,
                         assignee_ids: active
                           ? current.filter((id) => id !== member.user.id)
                           : [...current, member.user.id],

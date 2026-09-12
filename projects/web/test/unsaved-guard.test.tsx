@@ -16,7 +16,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import type { Me, QuestionsComponent } from "@todou/shared";
+import type { Issue, Me, QuestionsComponent } from "@todou/shared";
 import { describe, expect, it, vi } from "vitest";
 import {
   api,
@@ -39,10 +39,11 @@ import {
   registerDirtySource,
   useDirtySource,
 } from "../src/lib/unsaved-guard.ts";
+import { Sidebar, TitleBlock } from "../src/pages/issue-detail.tsx";
 import { NewIssuePage } from "../src/pages/new-issue.tsx";
 import { router } from "../src/router.tsx";
 import { cmSetValue } from "./cm.ts";
-import { testQueryClient } from "./render.tsx";
+import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 const me: Me = {
   id: 1,
@@ -215,6 +216,90 @@ function renderOnTheAppRouter() {
   };
 }
 
+/**
+ * A promise the test releases by hand: what the guard is asked about is a
+ * write that is still in flight, so it has to stay in flight across the read.
+ */
+function held<T>() {
+  let release: (value: T) => void = () => {};
+  const promise = new Promise<T>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+}
+
+const CARD: Issue = {
+  id: 11,
+  number: 7,
+  title: "Fix the potato",
+  body: "the first draft",
+  status: {
+    id: 1,
+    name: "Todo",
+    category: "open",
+    color: "#6b7280",
+    position: 0,
+    is_default: true,
+  },
+  author: {
+    id: 1,
+    login: "user",
+    display_name: "User",
+    kind: "human",
+    avatar_url: null,
+    owner: null,
+  },
+  assignees: [],
+  labels: [],
+  created_at: "2026-09-08T09:00:00Z",
+  updated_at: "2026-09-08T09:00:00Z",
+  body_edited_at: null,
+  open_questions: 0,
+  spec_version: null,
+  spec_review_status: null,
+  spec_unresolved_comments: 0,
+  deleted_at: null,
+  deleted_by: null,
+  unread: false,
+  unread_comments: 0,
+  moves: [],
+};
+
+function renderTitleBlock() {
+  return render(
+    <QueryClientProvider client={testQueryClient()}>
+      <TitleBlock slug="p" issue={CARD} />
+    </QueryClientProvider>,
+  );
+}
+
+/** The sidebar's own sections reach for router context, so the shim carries it. */
+function renderSidebar() {
+  const client = testQueryClient();
+  // `useCanCreateLabels` suspends on the project, and a suspending query
+  // without a seed renders the shell's spinner, not the sidebar.
+  client.setQueryData(projectQuery("p").queryKey, {
+    id: 1,
+    slug: "p",
+    name: "p",
+    description: "",
+    created_at: "2026-01-01T00:00:00Z",
+    viewer_role: "writer",
+  });
+  return renderWithProviders(
+    <Sidebar
+      slug="p"
+      issue={CARD}
+      statuses={[CARD.status]}
+      allLabels={[{ id: 10, name: "bug", color: "#ff0000" }]}
+      members={[]}
+      canDelete={false}
+      trashed={false}
+    />,
+    client,
+  );
+}
+
 describe("the surfaces a form loses along with its text", () => {
   /**
    * Each of these is a predicate the guard has to be told about separately —
@@ -279,9 +364,48 @@ describe("the surfaces a form loses along with its text", () => {
     });
     expect(hasUnsavedWork()).toBe(false);
 
-    act(() => composer.result.current.send("a comment that will fail"));
+    act(() =>
+      composer.result.current.send("a comment that will fail", {
+        slug: "p",
+        issueNumber: 7,
+      }),
+    );
 
     await waitFor(() => expect(hasUnsavedWork()).toBe(true));
+  });
+
+  /**
+   * A rename and a label toggle have no editor and no source of their own, so
+   * without these the guard asks nothing about a write that has not landed
+   * (T-321). Both are held open across the assertion: what is being asked is
+   * whether the page knows about the write while it is still in flight.
+   */
+  it("counts a title rename that has not landed", async () => {
+    const write = held<Issue>();
+    vi.spyOn(api, "updateIssue").mockReturnValue(write.promise);
+    renderTitleBlock();
+    expect(hasUnsavedWork()).toBe(false);
+
+    fireEvent.click(await screen.findByLabelText("edit title"));
+    fireEvent.click(screen.getByLabelText("save title"));
+
+    await waitFor(() => expect(hasUnsavedWork()).toBe(true));
+    act(() => write.release(CARD));
+    await waitFor(() => expect(hasUnsavedWork()).toBe(false));
+  });
+
+  it("counts a label change that has not landed", async () => {
+    const write = held<Issue>();
+    vi.spyOn(api, "updateIssue").mockReturnValue(write.promise);
+    renderSidebar();
+    expect(hasUnsavedWork()).toBe(false);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit labels" }));
+    fireEvent.click(await screen.findByRole("option", { name: /bug/ }));
+
+    await waitFor(() => expect(hasUnsavedWork()).toBe(true));
+    act(() => write.release(CARD));
+    await waitFor(() => expect(hasUnsavedWork()).toBe(false));
   });
 });
 

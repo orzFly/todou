@@ -55,6 +55,15 @@ export type PendingComment = {
   failed?: boolean;
 };
 
+/**
+ * The card a submission was aimed at, decided when the reader pressed the
+ * button. Both the request and the settle-time invalidation read it from the
+ * mutation's variables: `Mutation.execute` hands them to `fn` unchanged, so
+ * they survive the option swap a route-param change performs on a mutation
+ * that is still pending.
+ */
+export type Target = { slug: string; issueNumber: number };
+
 let pendingKey = 0;
 
 /**
@@ -88,11 +97,11 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
   useDirtySource(() => pending.length > 0);
 
   const mutation = useMutation({
-    mutationFn: (vars: { key: number; body: string }) =>
-      api.createComment(slug, issueNumber, vars.body),
+    mutationFn: (vars: Target & { key: number; body: string }) =>
+      api.createComment(vars.slug, vars.issueNumber, vars.body),
     onSuccess: async (_created, vars) => {
       await queryClient.invalidateQueries({
-        queryKey: ["timeline", slug, issueNumber],
+        queryKey: ["timeline", vars.slug, vars.issueNumber],
       });
       setPending((prev) => prev.filter((p) => p.key !== vars.key));
     },
@@ -103,7 +112,7 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
     },
   });
 
-  function send(body: string) {
+  function send(body: string, target: Target) {
     const key = pendingKey++;
     setPending((prev) => [
       ...prev,
@@ -123,7 +132,7 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
         },
       },
     ]);
-    mutation.mutate({ key, body });
+    mutation.mutate({ ...target, key, body });
   }
 
   function retry(key: number) {
@@ -132,7 +141,10 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
     setPending((prev) =>
       prev.map((p) => (p.key === key ? { ...p, failed: false } : p)),
     );
-    mutation.mutate({ key, body: entry.comment.body });
+    // This hook's own card, because it is the only one a retry can be for:
+    // `pendingFor` above clears the list on a card change, so no failed row
+    // survives the jump to be retried (T-317).
+    mutation.mutate({ slug, issueNumber, key, body: entry.comment.body });
   }
 
   /**
@@ -142,17 +154,20 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
    * rejects on failure so the composer can keep the draft.
    */
   const commands = useMutation({
-    mutationFn: (vars: { body: string; commands: CommandInput[] }) =>
-      api.submitCommands(slug, issueNumber, vars),
-    onSuccess: async () => {
+    mutationFn: (vars: Target & { body: string; commands: CommandInput[] }) =>
+      api.submitCommands(vars.slug, vars.issueNumber, {
+        body: vars.body,
+        commands: vars.commands,
+      }),
+    onSuccess: async (_result, vars) => {
       await Promise.all([
         queryClient.invalidateQueries({
-          queryKey: ["timeline", slug, issueNumber],
+          queryKey: ["timeline", vars.slug, vars.issueNumber],
         }),
         queryClient.invalidateQueries({
-          queryKey: ["issue", slug, issueNumber],
+          queryKey: ["issue", vars.slug, vars.issueNumber],
         }),
-        queryClient.invalidateQueries({ queryKey: ["issues", slug] }),
+        queryClient.invalidateQueries({ queryKey: ["issues", vars.slug] }),
       ]);
     },
   });
@@ -161,8 +176,8 @@ export function useCommentComposer(slug: string, issueNumber: number, me: Me) {
     pending,
     send,
     retry,
-    sendWithCommands: (body: string, input: CommandInput[]) =>
-      commands.mutateAsync({ body, commands: input }),
+    sendWithCommands: (body: string, input: CommandInput[], target: Target) =>
+      commands.mutateAsync({ ...target, body, commands: input }),
   };
 }
 
@@ -281,10 +296,11 @@ export function Composer({
 }: {
   slug: string;
   issueNumber: number;
-  onSend: (body: string) => void;
+  onSend: (body: string, target: Target) => void;
   onSendWithCommands: (
     body: string,
     commands: CommandInput[],
+    target: Target,
   ) => Promise<unknown>;
   failed: PendingComment[];
   onRetry: (key: number) => void;
@@ -372,6 +388,12 @@ export function Composer({
 
   async function submit() {
     if (uploading || running) return;
+    // The card this draft belongs to, read before the first `await`: the page
+    // keys this component by card number, so its props name the card the draft
+    // was written on for as long as it is mounted — but an upload outlives it,
+    // and the page hook this calls back into has moved to the next card by
+    // then.
+    const target: Target = { slug, issueNumber };
     const raw = editor.current?.getValue() ?? "";
     // Re-parsed from the document rather than trusting the onChange mirror:
     // the text at submit time is what gets executed.
@@ -392,7 +414,10 @@ export function Composer({
     if (staging.staged.length > 0) {
       setUploading(true);
       try {
-        const markers = await staging.uploadAll(slug, issueNumber);
+        const markers = await staging.uploadAll(
+          target.slug,
+          target.issueNumber,
+        );
         full = withAttachmentMarkers(current.body, markers);
       } catch (error) {
         // Draft and staged images stay put for another attempt.
@@ -412,10 +437,12 @@ export function Composer({
         const items =
           firstHideAll(current.commands) === undefined
             ? []
-            : await queryClient.fetchQuery(allCommentsQuery(slug, issueNumber));
+            : await queryClient.fetchQuery(
+                allCommentsQuery(target.slug, target.issueNumber),
+              );
         const resolved = resolveDraftCommands(current.commands, items);
         if (resolved.length === 0) return;
-        const result = (await onSendWithCommands(full, resolved)) as
+        const result = (await onSendWithCommands(full, resolved, target)) as
           | CommandSubmitResult
           | undefined;
         const settled = result === undefined ? null : settledToast(result);
@@ -429,7 +456,7 @@ export function Composer({
         setRunning(false);
       }
     } else {
-      onSend(full);
+      onSend(full, target);
     }
     editor.current?.setValue("");
     setDraft("");
