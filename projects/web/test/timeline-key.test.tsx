@@ -292,13 +292,11 @@ describe("the issue page's timeline, keyed by card", () => {
       ),
     );
 
-    // Warm card 8 the only way that leaves it warm *and* leaves a cold card to
-    // move onto: one real navigation each way. That first 7→8 is a cold jump
-    // too, and on the broken path it raises the pill by itself — it passes
-    // harmlessly here only because the reader is still at the bottom, where the
-    // effect takes its `scrollToBottom` branch instead. Warming with
-    // `setQueryData` would leave no cold jump anywhere below this line, and the
-    // case would then pass either way.
+    // Warm card 8 by navigating to it and back, which is also how the page is
+    // left standing on 7. The first 7→8 is a cold jump and on the broken path
+    // it raises the pill by itself — harmless here only because the reader is
+    // still at the bottom, where the effect takes its `scrollToBottom` branch
+    // instead.
     await goToCard(view, 8);
     await goToCard(view, 7);
 
@@ -324,6 +322,11 @@ describe("the issue page's timeline, keyed by card", () => {
     // `prevLastKey.current` is still `comment-6` — the guard passes, the reader
     // is not at the bottom, and the pill is raised. The later `null →
     // comment-6` is the transition the guard skips, so nothing clears it again.
+    //
+    // A cold destination is what this case rests on, and it is the one thing
+    // here that a change to the setup could quietly take away: warming card 9
+    // the way card 8 is warmed above would leave no empty render on this move
+    // and the assertion would hold on both paths.
     expect(pill()).toBe(false);
   });
 
