@@ -477,6 +477,14 @@ describe("filenames are unique within one card (T-269)", () => {
     );
     expect(entry?.payload?.attachment?.filename).toBe(clashing.filename);
   });
+
+  it("puts the suffix before a compound extension", async () => {
+    const first = await put(2, "rn178-bench.tar.gz");
+    expect(first.filename).toBe("rn178-bench.tar.gz");
+    const second = await put(2, "rn178-bench.tar.gz");
+    expect(second.filename).toBe(`rn178-bench-${second.id}.tar.gz`);
+    expect(second.url).toContain(`/download/rn178-bench-${second.id}.tar.gz`);
+  });
 });
 
 describe("direct uploads (fs backend)", () => {
