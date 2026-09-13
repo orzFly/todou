@@ -5,7 +5,7 @@ import {
   loadTomlConfig,
 } from "@todou/shared/config";
 import { z } from "zod";
-import { compileTrustedProxies } from "./http/proxy.ts";
+import { compileTrustedProxies, type TrustedPeerCheck } from "./http/proxy.ts";
 
 export { ConfigError };
 
@@ -132,8 +132,9 @@ const ConfigSchema = z.object({
 
 export type Config = z.infer<typeof ConfigSchema> & {
   projectUrlFor: ((project: ProjectRouteInfo) => string) | null;
-  /** Compiled from http.trusted_proxies at load, like projectUrlFor. */
-  isTrustedPeer: (addr: string) => boolean;
+  /** Compiled from http.trusted_proxies at load, like projectUrlFor.
+   *  `.rules` exposes the compiled BlockList entries for the startup line. */
+  isTrustedPeer: TrustedPeerCheck;
   /** Resolved at load; null unless storage.backend is "s3". */
   s3Credentials: S3Credentials | null;
 };

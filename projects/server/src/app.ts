@@ -14,6 +14,7 @@ import {
 } from "./middleware/body-limit.ts";
 import { canonicalSlugMiddleware } from "./middleware/canonical-slug.ts";
 import { compressMiddleware } from "./middleware/compress.ts";
+import { forwardedHeaderTrace } from "./middleware/proxy-trace.ts";
 import { activityRoutes } from "./routes/activity.ts";
 import { agentRoutes } from "./routes/agents.ts";
 import { attachmentRoutes } from "./routes/attachments.ts";
@@ -106,6 +107,7 @@ export function createApp(ctx: AppContext) {
     c.set("appCtx", ctx);
     await next();
   });
+  app.use("*", forwardedHeaderTrace(ctx));
   if (ctx.config.http.compression) {
     app.use("*", compressMiddleware());
   }

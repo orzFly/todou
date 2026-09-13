@@ -7,9 +7,14 @@ import type { Config } from "../config.ts";
  * X-Forwarded-Host, and the forward-mode identity header) are only believed
  * when the TCP peer matches http.trusted_proxies.
  */
-export function compileTrustedProxies(
-  entries: string[],
-): (addr: string) => boolean {
+export type TrustedPeerCheck = ((addr: string) => boolean) & {
+  /** node BlockList's rules — what the matcher holds, not a config echo.
+   *  Sorted lexicographically: node's own order is undocumented and groups
+   *  by kind/family, so it must not leak into output or tests. */
+  readonly rules: readonly string[];
+};
+
+export function compileTrustedProxies(entries: string[]): TrustedPeerCheck {
   const list = new BlockList();
   for (const entry of entries) {
     const [addr, prefix, ...rest] = entry.split("/");
@@ -32,11 +37,25 @@ export function compileTrustedProxies(
       list.addSubnet(addr, bits, family);
     }
   }
-  return (addr) => {
+  const check = (addr: string) => {
     const normalized = normalizeMapped(addr);
     const family = familyOf(normalized);
     return family !== null && list.check(normalized, family);
   };
+  return Object.assign(check, { rules: [...list.rules].sort() });
+}
+
+/**
+ * The one-line answer to "did my trusted_proxies actually compile", printed
+ * once at startup before anything else can fail. Pure so the wording is
+ * unit-testable; the caller owns the printing.
+ */
+export function describeTrustedProxies(config: Config): string {
+  const rules = config.isTrustedPeer.rules;
+  if (rules.length === 0) {
+    return "http.trusted_proxies compiled to: (nothing — no peer can ever be trusted)";
+  }
+  return `http.trusted_proxies compiled to: ${rules.join(" | ")}`;
 }
 
 function familyOf(addr: string): "ipv4" | "ipv6" | null {
@@ -73,9 +92,26 @@ export function remoteAddrOf(c: RequestLike): string | null {
   return typeof addr === "string" && addr !== "" ? addr : null;
 }
 
-export function isTrustedRequest(c: RequestLike, config: Config): boolean {
+/**
+ * Why a request is not trusted. `addr` is for server logs only — returning
+ * it in a response hands an address that may belong to another reverse
+ * proxy to anyone who can reach the backend port (T-333).
+ */
+export type PeerTrust =
+  | { trusted: true; addr: string }
+  | { trusted: false; reason: "no-peer" }
+  | { trusted: false; reason: "not-listed"; addr: string };
+
+export function peerTrust(c: RequestLike, config: Config): PeerTrust {
   const addr = remoteAddrOf(c);
-  return addr !== null && config.isTrustedPeer(addr);
+  if (addr === null) return { trusted: false, reason: "no-peer" };
+  return config.isTrustedPeer(addr)
+    ? { trusted: true, addr }
+    : { trusted: false, reason: "not-listed", addr };
+}
+
+export function isTrustedRequest(c: RequestLike, config: Config): boolean {
+  return peerTrust(c, config).trusted;
 }
 
 /** Chained proxies append to X-Forwarded-*; the first token is the origin-facing value. */

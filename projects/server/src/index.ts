@@ -6,6 +6,7 @@ import { bootstrap } from "./bootstrap.ts";
 import { loadConfig, resolveS3Settings } from "./config.ts";
 import { DbRouter } from "./db/router.ts";
 import { projects } from "./db/system-schema.ts";
+import { describeTrustedProxies } from "./http/proxy.ts";
 import { relabelAttachments } from "./services/attachment-relabel.ts";
 import {
   runStartupChores,
@@ -57,6 +58,10 @@ class ServeCommand extends ConfiguredCommand {
 
   async execute(): Promise<number | undefined> {
     const config = this.loadConfig();
+    // Before bootstrap: the line must be out even when a bad database or
+    // storage backend kills startup — it is the one diagnostic that does
+    // not require logging into the host.
+    this.context.stdout.write(`${describeTrustedProxies(config)}\n`);
     const context = await bootstrap(config);
     const app = createApp(context);
     const port = this.port ? Number(this.port) : config.http.port;

@@ -3,7 +3,7 @@ import { getCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
 import type { AppContext } from "../bootstrap.ts";
 import { UnauthorizedError } from "../errors.ts";
-import { isTrustedRequest, type RequestLike } from "../http/proxy.ts";
+import { peerTrust, type RequestLike } from "../http/proxy.ts";
 import { type UserRow, verifyPat } from "./pat.ts";
 import { normalizeLogin, provisionUser } from "./provision.ts";
 import { SESSION_COOKIE, validateSession } from "./session.ts";
@@ -68,9 +68,21 @@ async function forwardUser(c: RequestLike, ctx: AppContext): Promise<UserRow> {
   const forward = ctx.config.auth.forward;
   // user_header presence is enforced by loadConfig in forward mode.
   const userHeader = forward.user_header as string;
-  if (!isTrustedRequest(c, ctx.config)) {
+  const trust = peerTrust(c, ctx.config);
+  if (!trust.trusted) {
+    if (trust.reason === "not-listed") {
+      console.error(
+        `forward auth: rejected peer ${trust.addr} — not in http.trusted_proxies`,
+      );
+      throw new UnauthorizedError(
+        "request did not arrive from a trusted proxy (check http.trusted_proxies; the observed peer address is in the server log)",
+      );
+    }
+    console.error(
+      "forward auth: rejected a request with no peer address (no node socket in the adapter env)",
+    );
     throw new UnauthorizedError(
-      "request did not arrive from a trusted proxy (check http.trusted_proxies)",
+      "this request has no peer address, so proxy trust cannot be decided at all; nothing in the configuration can change that (the server log has the detail)",
     );
   }
   const raw = c.req.header(userHeader);

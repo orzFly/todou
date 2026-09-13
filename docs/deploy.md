@@ -492,6 +492,14 @@ trusted_proxies = ["127.0.0.1/32", "::1/128"]   # add your proxy's address/CIDR
 public_origin = "https://todou.example"          # optional; see oidc below
 ```
 
+At startup the server prints what `trusted_proxies` actually compiled to,
+before anything else it does — so "did my configuration take effect" is
+answered by the first line of the log, no shell on the host required:
+
+```text
+http.trusted_proxies compiled to: Address: IPv4 192.168.1.5 | Subnet: IPv4 10.0.0.0/8
+```
+
 The session cookie is `HttpOnly; SameSite=Lax`; its `Secure` flag follows
 the request — set automatically when a trusted proxy says
 `X-Forwarded-Proto: https`, absent over plain HTTP, so one deployment can
@@ -631,9 +639,14 @@ Two hard requirements, both enforced:
 - the request must come from a peer in `http.trusted_proxies`, and
 - **the proxy must strip/overwrite the identity header on every route** —
   a client that can reach the backend port directly, or a proxy that
-  passes the header through, is an impersonation hole. The 401 messages
-  distinguish "untrusted peer" from "header missing" to keep this
-  debuggable.
+  passes the header through, is an impersonation hole.
+
+The 401 messages keep the failure modes distinguishable. "Untrusted peer"
+(check `http.trusted_proxies`), "identity header missing" (the proxy must
+set it), and "no peer address at all" (a socket-level anomaly no
+configuration can fix) each say which side is misconfigured. The peer
+address the server observed is written to the server log only — it may
+belong to another reverse proxy, so it never appears in a response.
 
 Provisioning follows the same rules as oidc (subject keying, auto-create
 with suffixing, first-human-is-admin): the header value doubles as the

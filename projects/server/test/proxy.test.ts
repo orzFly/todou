@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.ts";
 import {
   compileTrustedProxies,
+  describeTrustedProxies,
+  peerTrust,
   remoteAddrOf,
   requestOrigin,
   requestProto,
@@ -29,6 +31,87 @@ function fakeRequest(options: {
 function configWith(toml: string) {
   return loadConfig({ tomlSource: toml, env: {} });
 }
+
+describe("peerTrust", () => {
+  const config = configWith("");
+
+  it("reports the address when the peer is trusted", () => {
+    // 证伪: trusted branch without addr → red.
+    expect(
+      peerTrust(fakeRequest({ remoteAddress: "127.0.0.1" }), config),
+    ).toEqual({
+      trusted: true,
+      addr: "127.0.0.1",
+    });
+  });
+
+  it("reports not-listed with the address for a peer off the list", () => {
+    // 证伪: merging both untrusted reasons into one → red. This is the
+    // flattening this card exists to undo.
+    expect(
+      peerTrust(fakeRequest({ remoteAddress: "10.9.9.9" }), config),
+    ).toEqual({
+      trusted: false,
+      reason: "not-listed",
+      addr: "10.9.9.9",
+    });
+  });
+
+  it("reports no-peer when the adapter has no socket address", () => {
+    // 证伪: routing null remoteAddrOf through not-listed → red.
+    expect(peerTrust(fakeRequest({}), config)).toEqual({
+      trusted: false,
+      reason: "no-peer",
+    });
+  });
+});
+
+describe("compileTrustedProxies rules", () => {
+  it("exposes sorted, node-formatted rules — not a config echo", () => {
+    // 证伪: echoing the input array → red (no Address:/Subnet: prefixes,
+    // different order). With only the default list an echo would pass,
+    // because the defaults happen to look like CIDRs.
+    expect(compileTrustedProxies(["10.0.0.0/8", "192.168.1.5"]).rules).toEqual([
+      "Address: IPv4 192.168.1.5",
+      "Subnet: IPv4 10.0.0.0/8",
+    ]);
+  });
+
+  it("sorts the default list deterministically", () => {
+    // 证伪: dropping .sort() → red. node (v20 and v24 alike) emits the
+    // IPv6 entry first here, so this distinguishes sorted from raw. Note
+    // 127.0.0.1/32 carries a prefix length, so node files it under Subnet.
+    expect(compileTrustedProxies(["127.0.0.1/32", "::1/128"]).rules).toEqual([
+      "Subnet: IPv4 127.0.0.1/32",
+      "Subnet: IPv6 ::1/128",
+    ]);
+  });
+});
+
+describe("describeTrustedProxies", () => {
+  it("renders the compiled rules, not the configuration", () => {
+    // 证伪: joining config.http.trusted_proxies instead of .rules → red.
+    // toBe, not toContain: a half-built line must not pass.
+    expect(
+      describeTrustedProxies(
+        configWith('[http]\ntrusted_proxies = ["10.0.0.0/8", "192.168.1.5"]'),
+      ),
+    ).toBe(
+      "http.trusted_proxies compiled to: Address: IPv4 192.168.1.5 | Subnet: IPv4 10.0.0.0/8",
+    );
+  });
+
+  it("says outright that an empty list trusts nobody", () => {
+    // 证伪: joining an empty rules array without the special case → red
+    // (a sentence ending in ": "). This is the legal config that 401s
+    // every forward-mode request.
+    expect(
+      describeTrustedProxies(configWith("[http]\ntrusted_proxies = []")),
+    ).toBe(
+      "http.trusted_proxies compiled to: (nothing — no peer can ever be trusted)",
+    );
+  });
+});
 
 describe("compileTrustedProxies", () => {
   it("matches bare addresses and CIDR blocks per family", () => {
