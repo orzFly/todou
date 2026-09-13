@@ -1,10 +1,6 @@
-import { closeCompletion, completionStatus } from "@codemirror/autocomplete";
 import {
   copyLineDown,
-  defaultKeymap,
   deleteLine,
-  history,
-  historyKeymap,
   insertBlankLine,
   moveLineDown,
   moveLineUp,
@@ -14,22 +10,18 @@ import {
   defineLanguageFacet,
   HighlightStyle,
   Language,
-  syntaxHighlighting,
 } from "@codemirror/language";
 import { selectNextOccurrence } from "@codemirror/search";
-import { Compartment, EditorState, type Extension } from "@codemirror/state";
-import {
-  drawSelection,
-  EditorView,
-  keymap,
-  placeholder as placeholderExt,
-} from "@codemirror/view";
+import type { Extension } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { parser as commonmarkParser, GFM } from "@lezer/markdown";
-import { useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useImperativeHandle, useRef } from "react";
 
-import { useDirtySource } from "@/lib/unsaved-guard.ts";
-import { cn } from "@/lib/utils";
+import {
+  CodeEditor,
+  type CodeEditorHandle,
+} from "@/components/shared/code-editor.tsx";
 
 /**
  * GFM markdown, assembled straight from the Lezer parser rather than through
@@ -48,19 +40,7 @@ const markdownLanguage = new Language(
   "markdown",
 );
 
-export type MarkdownEditorHandle = {
-  getValue: () => string;
-  setValue: (value: string) => void;
-  focus: () => void;
-  /**
-   * Close an open completion panel, reporting whether there was one. An
-   * editor inside a dismissable layer needs this because that layer listens
-   * for Escape on the document in the capture phase and calls
-   * `preventDefault` — after which CodeMirror's own handlers decline the
-   * event, so the layer's owner has to do the closing.
-   */
-  dismissCompletion: () => boolean;
-};
+export type MarkdownEditorHandle = CodeEditorHandle;
 
 /**
  * Native-event shape shared by React's synthetic events and the DOM's own —
@@ -147,65 +127,6 @@ const highlightStyle = HighlightStyle.define([
   },
 ]);
 
-/** Mirrors ui/textarea.tsx's look, with every colour coming from a variable. */
-const editorTheme = EditorView.theme({
-  "&": {
-    color: "var(--foreground)",
-    backgroundColor: "transparent",
-    fontFamily: "var(--font-sans)",
-    // style-mod cannot express a media query against the generated theme
-    // class, so the breakpoint lives in the wrapper's Tailwind classes and
-    // the editor simply inherits it.
-    fontSize: "inherit",
-    // Lets the wrapper's max-height clamp the editor so .cm-scroller,
-    // not the page, does the scrolling.
-    flex: "1 1 auto",
-    minHeight: "0",
-  },
-  "&.cm-focused": { outline: "none" },
-  /**
-   * alignSelf and minHeight here, with flexGrow on .cm-scroller below, are what
-   * makes the blank area under a short document part of the editor rather than
-   * a dead shell. The base theme already means to do that, with
-   * `.cm-scroller { height: 100% }` and `.cm-content { min-height: 100% }` —
-   * but callers give this component a min-height, never a height, so the
-   * containing block is never definite, both percentages silently resolve to
-   * `auto`, and the contenteditable stays as short as its text. None of the
-   * three below depends on percentage resolution: the scroller takes the
-   * leftover height through flex, align-self overrides the base theme's
-   * `align-items: flex-start !important` so the content stretches down the
-   * cross axis, and min-content floors that stretch — a stretched box is
-   * clamped to the flex line, which costs a document taller than the caller's
-   * max-height its bottom padding, with no way to scroll to it.
-   */
-  ".cm-content": {
-    padding: "0.5rem 0.625rem",
-    lineHeight: "1.5",
-    caretColor: "var(--foreground)",
-    alignSelf: "stretch",
-    minHeight: "min-content",
-  },
-  // CodeMirror's own base theme puts monospace here; this is a comment box,
-  // not a code box.
-  ".cm-scroller": {
-    overflow: "auto",
-    fontFamily: "inherit",
-    fontSize: "inherit",
-    lineHeight: "inherit",
-    // Not `flex: 1`, which would zero the basis; the other two components of
-    // the shorthand are already at their defaults.
-    flexGrow: "1",
-  },
-  ".cm-line": { padding: "0" },
-  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--foreground)" },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection":
-    {
-      backgroundColor: "color-mix(in oklab, var(--primary) 22%, transparent)",
-    },
-  ".cm-placeholder": { color: "var(--muted-foreground)" },
-  ".cm-gutters": { display: "none" },
-});
-
 /**
  * The one markdown input surface for the whole app: comments, issue bodies,
  * spec annotations and question answers all mount this.
@@ -215,201 +136,88 @@ const editorTheme = EditorView.theme({
  * derived flags; routing every keystroke through React would re-render the
  * timeline on every character.
  */
-export function MarkdownEditor({
-  initialValue = "",
-  placeholder = "",
-  ariaLabel,
-  autoFocus = false,
-  readOnly = false,
-  onSubmit,
-  onCancel,
-  onChange,
-  onPaste,
-  onDrop,
-  onDragOver,
-  extensions,
-  className,
+export const MarkdownEditor = forwardRef<
+  MarkdownEditorHandle,
+  MarkdownEditorProps
+>(function MarkdownEditor(
+  {
+    initialValue,
+    placeholder,
+    ariaLabel,
+    autoFocus,
+    readOnly,
+    onSubmit,
+    onCancel,
+    onChange,
+    onPaste,
+    onDrop,
+    onDragOver,
+    extensions,
+    className,
+  },
   ref,
-}: MarkdownEditorProps) {
-  const host = useRef<HTMLDivElement>(null);
-  const view = useRef<EditorView | null>(null);
-  // Compared against, never written: a ref outlives the mount effect below,
-  // so the box stays "edited from what it was opened with" even after
-  // Suspense rebuilds the document — which is also why the baseline cannot
-  // come from the EditorView, whose doc may already be the rebuilt one.
-  const baseline = useRef(initialValue);
+) {
   // Keymap and DOM handlers are built once but must always call today's
   // props, not the ones captured at mount.
-  const handlers = useRef({
-    onSubmit,
-    onCancel,
-    onChange,
-    onPaste,
-    onDrop,
-    onDragOver,
-  });
-  handlers.current = {
-    onSubmit,
-    onCancel,
-    onChange,
-    onPaste,
-    onDrop,
-    onDragOver,
-  };
-  // One compartment per mutable extension, so a prop change reconfigures
-  // that slice instead of rebuilding the view (and losing undo history).
-  const placeholderSlot = useRef(new Compartment()).current;
-  const readOnlySlot = useRef(new Compartment()).current;
-  const extensionsSlot = useRef(new Compartment()).current;
+  const handlers = useRef({ onSubmit, onCancel, onPaste, onDrop, onDragOver });
+  handlers.current = { onSubmit, onCancel, onPaste, onDrop, onDragOver };
+  useImperativeHandle(ref, () => innerRef.current as MarkdownEditorHandle, []);
 
-  // Read through the ref rather than the closure: the EditorView is a
-  // different instance after a rebuild, and only the baseline has to survive
-  // that. Whitespace-only differences are not worth a confirmation.
-  useDirtySource(
-    () =>
-      !readOnly &&
-      (view.current?.state.doc.toString() ?? baseline.current).trim() !==
-        baseline.current.trim(),
-  );
-
-  useImperativeHandle(ref, () => ({
-    getValue: () => view.current?.state.doc.toString() ?? "",
-    setValue: (value: string) => {
-      const current = view.current;
-      if (!current) return;
-      current.dispatch({
-        changes: { from: 0, to: current.state.doc.length, insert: value },
-      });
-    },
-    focus: () => view.current?.focus(),
-    dismissCompletion: () => {
-      const current = view.current;
-      // "pending" is a query in flight with nothing on screen yet, which is
-      // not something the reader can have meant to dismiss.
-      if (current === null || completionStatus(current.state) !== "active") {
-        return false;
-      }
-      closeCompletion(current);
-      return true;
-    },
-  }));
-
-  // Mount once. initialValue/ariaLabel changes do not rebuild the view —
-  // remount with a new `key` if a caller ever needs that.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only by design; every mutable prop is reconfigured through the compartments below.
-  useEffect(() => {
-    const parent = host.current;
-    if (parent === null) return;
-    const instance = new EditorView({
-      parent,
-      state: EditorState.create({
-        doc: initialValue,
-        extensions: [
-          history(),
-          drawSelection(),
-          // Without this CM silently collapses every extra range, which is
-          // what makes Mod-D look like a no-op.
-          EditorState.allowMultipleSelections.of(true),
-          EditorView.lineWrapping,
-          keymap.of([
-            {
-              key: "Mod-Enter",
-              run: (v) => {
-                // Swallowed whether or not anyone is listening. Falling
-                // through would reach defaultKeymap's Mod-Enter →
-                // insertBlankLine, and a key that means "submit" everywhere
-                // else in the app should not silently add a line here.
-                handlers.current.onSubmit?.(v.state.doc.toString());
-                return true;
-              },
-            },
-            {
-              key: "Escape",
-              run: () => {
-                const cancel = handlers.current.onCancel;
-                if (cancel === undefined) return false;
-                cancel();
-                return true;
-              },
-            },
-            ...lineKeymap,
-            ...defaultKeymap,
-            ...historyKeymap,
-          ]),
-          markdownLanguage.extension,
-          syntaxHighlighting(highlightStyle),
-          editorTheme,
-          EditorView.contentAttributes.of({
-            // CodeMirror's contenteditable opts out of the niceties a
-            // <textarea> gets for free.
-            spellcheck: "true",
-            autocapitalize: "sentences",
-            autocorrect: "on",
-            ...(ariaLabel === undefined ? {} : { "aria-label": ariaLabel }),
-          }),
-          EditorView.domEventHandlers({
-            paste: (event) => {
-              handlers.current.onPaste?.(event);
-              return false;
-            },
-            drop: (event) => {
-              handlers.current.onDrop?.(event);
-              return false;
-            },
-            dragover: (event) => {
-              handlers.current.onDragOver?.(event);
-              return false;
-            },
-          }),
-          EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
-              handlers.current.onChange?.(update.state.doc.toString());
-            }
-          }),
-          placeholderSlot.of(placeholderExt(placeholder)),
-          readOnlySlot.of(EditorState.readOnly.of(readOnly)),
-          extensionsSlot.of(extensions ?? []),
-        ],
-      }),
-    });
-    view.current = instance;
-    if (autoFocus) instance.focus();
-    return () => {
-      instance.destroy();
-      view.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    view.current?.dispatch({
-      effects: placeholderSlot.reconfigure(placeholderExt(placeholder)),
-    });
-  }, [placeholder, placeholderSlot]);
-
-  useEffect(() => {
-    view.current?.dispatch({
-      effects: readOnlySlot.reconfigure(EditorState.readOnly.of(readOnly)),
-    });
-  }, [readOnly, readOnlySlot]);
-
-  useEffect(() => {
-    view.current?.dispatch({
-      effects: extensionsSlot.reconfigure(extensions ?? []),
-    });
-  }, [extensions, extensionsSlot]);
+  const innerRef = useRef<CodeEditorHandle | null>(null);
 
   return (
-    <div
-      ref={host}
-      data-slot="markdown-editor"
-      data-read-only={readOnly ? "true" : undefined}
-      className={cn(
-        // text-base below md is not cosmetic: iOS auto-zooms a focused field
-        // under 16px. Same rule ui/textarea.tsx follows.
-        "flex w-full flex-col overflow-hidden rounded-lg border border-input bg-transparent text-base transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 md:text-sm dark:bg-input/30",
-        readOnly && "opacity-50",
-        className,
-      )}
+    <CodeEditor
+      slot="markdown-editor"
+      ref={innerRef}
+      initialValue={initialValue}
+      placeholder={placeholder}
+      ariaLabel={ariaLabel}
+      autoFocus={autoFocus}
+      readOnly={readOnly}
+      keymap={[
+        {
+          key: "Mod-Enter",
+          run: (v) => {
+            // Swallowed whether or not anyone is listening. Falling
+            // through would reach defaultKeymap's Mod-Enter →
+            // insertBlankLine, and a key that means "submit" everywhere
+            // else in the app should not silently add a line here.
+            handlers.current.onSubmit?.(v.state.doc.toString());
+            return true;
+          },
+        },
+        {
+          key: "Escape",
+          run: () => {
+            const cancel = handlers.current.onCancel;
+            if (cancel === undefined) return false;
+            cancel();
+            return true;
+          },
+        },
+        ...lineKeymap,
+      ]}
+      language={markdownLanguage}
+      highlightStyle={highlightStyle}
+      onChange={onChange}
+      extensions={[
+        EditorView.domEventHandlers({
+          paste: (event) => {
+            handlers.current.onPaste?.(event);
+            return false;
+          },
+          drop: (event) => {
+            handlers.current.onDrop?.(event);
+            return false;
+          },
+          dragover: (event) => {
+            handlers.current.onDragOver?.(event);
+            return false;
+          },
+        }),
+        ...(extensions ? [extensions] : []),
+      ]}
+      className={className}
     />
   );
-}
+});
