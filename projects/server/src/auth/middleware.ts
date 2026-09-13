@@ -60,9 +60,11 @@ export function authMiddleware(ctx: AppContext) {
  * Forward mode: the reverse proxy authenticated the human; every request is
  * resolved from the identity header alone — no session, no cookie. The
  * asserted username doubles as the durable subject key, so renaming a login
- * inside todou never detaches the identity. The two 401s stay
- * distinguishable on purpose: "which side is misconfigured" is the first
- * question a forward-auth deployment debugs.
+ * inside todou never detaches the identity. The 401s stay distinguishable
+ * on purpose — untrusted peer (points at http.trusted_proxies, observed
+ * address only in the log), no peer address at all (no configuration can
+ * help), identity header missing or unusable — because "which side is
+ * misconfigured" is the first question a forward-auth deployment debugs.
  */
 async function forwardUser(c: RequestLike, ctx: AppContext): Promise<UserRow> {
   const forward = ctx.config.auth.forward;

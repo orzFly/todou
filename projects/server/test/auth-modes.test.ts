@@ -60,12 +60,26 @@ describe("forward mode", () => {
     try {
       const res = await me(fromPeer("10.9.9.9"), { "Remote-User": "alice" });
       expect(res.status).toBe(401);
-      const message = (await json(res)).error.message as string;
+      // Read the raw body once: json() would leave it unusable for a
+      // second read, and a property-style res.text is a function object —
+      // a negative matcher against it passes vacuously.
+      const raw = await res.text();
+      const parsed: unknown = JSON.parse(raw);
+      const message =
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "error" in parsed &&
+        typeof parsed.error === "object" &&
+        parsed.error !== null &&
+        "message" in parsed.error &&
+        typeof parsed.error.message === "string"
+          ? parsed.error.message
+          : "";
       // Points at the knob, never leaks the observed address (T-333: the
-      // peer address may belong to another reverse proxy).
+      // peer address may belong to another reverse proxy). The not-contains
+      // on `raw` covers the whole body — message, details, every field.
       expect(message).toContain("http.trusted_proxies");
-      expect(message).not.toContain("10.9.9.9");
-      expect(res.text).not.toContain("10.9.9.9");
+      expect(raw).not.toContain("10.9.9.9");
       // The address landed in the log — otherwise the not-in-body
       // assertions above would be vacuously true.
       const logged = errSpy.mock.calls
