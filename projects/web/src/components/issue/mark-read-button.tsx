@@ -54,7 +54,7 @@ export function MarkReadButton({
         event.preventDefault();
         event.stopPropagation();
         setMarked(true);
-        mutate(undefined, { onError: () => setMarked(false) });
+        mutate({ slug, number }, { onError: () => setMarked(false) });
       }}
     >
       <span className="inline-flex group-hover:hidden group-focus-visible:hidden">

@@ -19,6 +19,12 @@ const readInvalidations = (
   ["inbox"],
 ];
 
+/** What a single-issue mark-read was aimed at, fixed at its `mutate()` call. */
+export type ReadTarget = { slug: string; number: number };
+
+/** The bulk sweep's scope; an absent slug is every project. */
+export type BulkReadTarget = { slug: string | undefined };
+
 /**
  * Advance my last-seen position on an issue (T-46). Best-effort by design:
  * failures only warn — read state must never block the page, and the next
@@ -27,10 +33,11 @@ const readInvalidations = (
 export function useMarkIssueRead(slug: string, number: number) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => api.markIssueRead(slug, number, {}),
+    mutationFn: (vars: ReadTarget) =>
+      api.markIssueRead(vars.slug, vars.number, {}),
     onError: (error) => console.warn("mark-read failed", error),
-    onSettled: () => {
-      for (const queryKey of readInvalidations(slug)) {
+    onSettled: (_data, _error, vars) => {
+      for (const queryKey of readInvalidations(vars.slug)) {
         queryClient.invalidateQueries({ queryKey });
       }
     },
@@ -76,10 +83,11 @@ export function clearInboxUnread(page: InboxPage, slug?: string): InboxPage {
 export function useMarkAllReadAction(slug?: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () =>
-      api.markAllRead(slug === undefined ? {} : { projects: [slug] }),
-    onMutate: async () => {
-      const issuesKey = slug === undefined ? ["issues"] : ["issues", slug];
+    mutationFn: (vars: BulkReadTarget) =>
+      api.markAllRead(vars.slug === undefined ? {} : { projects: [vars.slug] }),
+    onMutate: async (vars: BulkReadTarget) => {
+      const issuesKey =
+        vars.slug === undefined ? ["issues"] : ["issues", vars.slug];
       await queryClient.cancelQueries({ queryKey: issuesKey });
       await queryClient.cancelQueries({ queryKey: ["inbox"] });
       const lists = queryClient.getQueriesData<IssueListPage>({
@@ -96,7 +104,7 @@ export function useMarkAllReadAction(slug?: string) {
       }
       for (const [key, data] of inboxes) {
         if (!data) continue;
-        queryClient.setQueryData(key, clearInboxUnread(data, slug));
+        queryClient.setQueryData(key, clearInboxUnread(data, vars.slug));
       }
       return { lists, inboxes };
     },
@@ -109,8 +117,8 @@ export function useMarkAllReadAction(slug?: string) {
       }
       toast.error(`Could not mark as read: ${error.message}`);
     },
-    onSettled: () => {
-      for (const queryKey of readInvalidations(slug)) {
+    onSettled: (_data, _error, vars) => {
+      for (const queryKey of readInvalidations(vars.slug)) {
         queryClient.invalidateQueries({ queryKey });
       }
     },
@@ -141,17 +149,18 @@ export function clearUnread(
 export function useMarkReadAction(slug: string, number: number) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => api.markIssueRead(slug, number, {}),
-    onMutate: async () => {
-      await queryClient.cancelQueries({ queryKey: ["issues", slug] });
+    mutationFn: (vars: ReadTarget) =>
+      api.markIssueRead(vars.slug, vars.number, {}),
+    onMutate: async (vars: ReadTarget) => {
+      await queryClient.cancelQueries({ queryKey: ["issues", vars.slug] });
       const snapshot = queryClient.getQueriesData<IssueListPage>({
-        queryKey: ["issues", slug],
+        queryKey: ["issues", vars.slug],
       });
       for (const [key, data] of snapshot) {
         // The prefix also matches the tab-counts cache (no `items`); leave
         // anything that isn't a list page untouched.
         if (!data || !("items" in data)) continue;
-        queryClient.setQueryData(key, clearUnread(data, number));
+        queryClient.setQueryData(key, clearUnread(data, vars.number));
       }
       return { snapshot };
     },
@@ -161,8 +170,8 @@ export function useMarkReadAction(slug: string, number: number) {
       }
       toast.error(`Could not mark as read: ${error.message}`);
     },
-    onSettled: () => {
-      for (const queryKey of readInvalidations(slug)) {
+    onSettled: (_data, _error, vars) => {
+      for (const queryKey of readInvalidations(vars.slug)) {
         queryClient.invalidateQueries({ queryKey });
       }
     },

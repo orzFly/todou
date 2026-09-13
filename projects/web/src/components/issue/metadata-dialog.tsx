@@ -105,14 +105,17 @@ export function MetadataDialog({
 
   const submit = (entries: IssueMetadataWriteEntry[]) => {
     setRefused(entries);
-    write.mutate(entries, {
-      onSuccess: () => {
-        setEditing(null);
-        setAdding(null);
-        setNewNamespace(null);
-        setRefused(null);
+    write.mutate(
+      { slug, issueNumber, entries },
+      {
+        onSuccess: () => {
+          setEditing(null);
+          setAdding(null);
+          setNewNamespace(null);
+          setRefused(null);
+        },
       },
-    });
+    );
   };
 
   /** Re-send what was refused, expecting what the server says is there now. */

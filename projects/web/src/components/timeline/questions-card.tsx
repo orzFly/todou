@@ -21,6 +21,7 @@ import { questionsQuery } from "@/api/questions.ts";
 import { MarkdownEditor } from "@/components/shared/markdown-editor.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
+import type { Target } from "@/components/timeline/comment-item.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
@@ -36,6 +37,30 @@ const emptyDraft = (): Draft => ({
 
 const resolved = (d: Draft): boolean =>
   d.selected.size > 0 || d.other.trim() !== "" || d.declined;
+
+/**
+ * The submission's payload, assembled at the `mutate()` call rather than
+ * by the mutation itself. `drafts` is component state and does not reset
+ * when the card under it is swapped, while `component` is a prop that
+ * does — read together at the wrong moment they pair the new card's keys
+ * with empty answers, and a sealed target would deliver that to the old
+ * card accurately.
+ */
+const answersOf = (
+  drafts: Record<string, Draft>,
+  component: QuestionsComponent,
+): QuestionAnswerInput[] =>
+  component.questions.map((q) => {
+    const d = drafts[q.key] ?? emptyDraft();
+    return {
+      key: q.key,
+      selected: [...d.selected].sort((a, b) => a - b),
+      ...(d.other.trim() === "" ? {} : { other: d.other }),
+      declined: d.declined,
+    };
+  });
+
+type SubmitVars = Target & { answers: QuestionAnswerInput[] };
 
 /**
  * A drag that selects text inside a row still fires the row's click (measured
@@ -177,34 +202,27 @@ function AnswerForm({
     Object.values(drafts).some((d) => d.selected.size > 0 || d.declined),
   );
   const queryClient = useQueryClient();
+  const target: Target = { slug, issueNumber, commentId };
   const submit = useMutation({
-    mutationFn: () => {
-      const answers: QuestionAnswerInput[] = component.questions.map((q) => {
-        const d = drafts[q.key] ?? emptyDraft();
-        return {
-          key: q.key,
-          selected: [...d.selected].sort((a, b) => a - b),
-          ...(d.other.trim() === "" ? {} : { other: d.other }),
-          declined: d.declined,
-        };
-      });
-      return api.submitAnswers(slug, issueNumber, commentId, { answers });
-    },
-    onSuccess: () => {
+    mutationFn: (vars: SubmitVars) =>
+      api.submitAnswers(vars.slug, vars.issueNumber, vars.commentId, {
+        answers: vars.answers,
+      }),
+    onSuccess: (_result, vars) => {
       for (const key of [
-        ["questions", slug, issueNumber],
-        ["timeline", slug, issueNumber],
-        ["issue", slug, issueNumber],
-        ["issues", slug],
+        ["questions", vars.slug, vars.issueNumber],
+        ["timeline", vars.slug, vars.issueNumber],
+        ["issue", vars.slug, vars.issueNumber],
+        ["issues", vars.slug],
       ]) {
         queryClient.invalidateQueries({ queryKey: key });
       }
     },
-    onError: (error) => {
+    onError: (error, vars) => {
       toast.error(error.message);
       // A conflict means someone answered first; show their answers.
       queryClient.invalidateQueries({
-        queryKey: ["questions", slug, issueNumber],
+        queryKey: ["questions", vars.slug, vars.issueNumber],
       });
     },
   });
@@ -246,7 +264,7 @@ function AnswerForm({
           // submission is final — a card's questions can be answered once.
           onSubmit={() => {
             if (!ready || !complete || submit.isPending) return;
-            submit.mutate();
+            submit.mutate({ ...target, answers: answersOf(drafts, component) });
           }}
         />
       ))}
@@ -254,7 +272,9 @@ function AnswerForm({
         <Button
           size="sm"
           disabled={!ready || !complete || submit.isPending}
-          onClick={() => submit.mutate()}
+          onClick={() =>
+            submit.mutate({ ...target, answers: answersOf(drafts, component) })
+          }
         >
           {submit.isPending
             ? "Submitting…"

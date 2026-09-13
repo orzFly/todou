@@ -24,7 +24,8 @@ export function MarkReadOnView({
   const { mutate } = useMarkIssueRead(slug, number);
 
   useEffect(() => {
-    mutate();
+    const target = { slug, number };
+    mutate(target);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
       if (event.type !== "updated" || event.action.type !== "success") return;
@@ -34,7 +35,10 @@ export function MarkReadOnView({
       }
       if (document.visibilityState !== "visible") return;
       clearTimeout(timer);
-      timer = setTimeout(mutate, ABSORB_DEBOUNCE_MS);
+      // Wrapped rather than passed as `mutate` itself: `setTimeout` would call
+      // it with the delay as the first argument, and the variables — the whole
+      // point — would be that number.
+      timer = setTimeout(() => mutate(target), ABSORB_DEBOUNCE_MS);
     });
     return () => {
       clearTimeout(timer);

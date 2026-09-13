@@ -6,6 +6,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import { specFilesQuery } from "@/api/spec.ts";
+import type { Target } from "@/components/timeline/comment-item.tsx";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils.ts";
 
@@ -40,15 +41,17 @@ export function SpecCommentAnchorCard({
     ...specFilesQuery(slug, issueNumber, anchor.version),
     enabled: expanded,
   });
+  const target: Target = { slug, issueNumber, commentId };
   const queryClient = useQueryClient();
   const resolve = useMutation({
-    mutationFn: () => api.resolveSpecComments(slug, issueNumber, [commentId]),
-    onSuccess: () => {
+    mutationFn: (vars: Target) =>
+      api.resolveSpecComments(vars.slug, vars.issueNumber, [vars.commentId]),
+    onSuccess: (_result, vars) => {
       for (const key of [
-        ["timeline", slug, issueNumber],
-        ["spec", slug, issueNumber],
-        ["issue", slug, issueNumber],
-        ["issues", slug],
+        ["timeline", vars.slug, vars.issueNumber],
+        ["spec", vars.slug, vars.issueNumber],
+        ["issue", vars.slug, vars.issueNumber],
+        ["issues", vars.slug],
       ]) {
         queryClient.invalidateQueries({ queryKey: key });
       }
@@ -83,7 +86,7 @@ export function SpecCommentAnchorCard({
             variant="ghost"
             className="h-5 px-1.5 text-xs"
             disabled={resolve.isPending}
-            onClick={() => resolve.mutate()}
+            onClick={() => resolve.mutate(target)}
           >
             <CheckIcon className="size-3" />
             Resolve

@@ -4,6 +4,13 @@ import {
   QueryClientProvider,
 } from "@tanstack/react-query";
 import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
+import {
   act,
   fireEvent,
   type RenderResult,
@@ -18,17 +25,32 @@ import type {
   CommentCreateResult,
   Issue,
   Me,
+  QuestionsComponent,
+  SpecCommentComponent,
+  SpecComments,
+  SpecFiles,
+  SpecInfo,
   TimelineComment,
 } from "@todou/shared";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useWriteIssueMetadata } from "../src/api/metadata.ts";
 import { api } from "../src/api/queries.ts";
+import {
+  useMarkAllReadAction,
+  useMarkIssueRead,
+  useMarkReadAction,
+} from "../src/api/reads.ts";
 import { CommentItem } from "../src/components/timeline/comment-item.tsx";
 import {
   Composer,
   useCommentComposer,
 } from "../src/components/timeline/composer.tsx";
+import { QuestionsCard } from "../src/components/timeline/questions-card.tsx";
+import { SpecCommentAnchorCard } from "../src/components/timeline/spec-comment-card.tsx";
+import { parseSpecSearch } from "../src/lib/spec-search.ts";
 import { BodyBlock } from "../src/pages/issue-detail.tsx";
+import { SpecViewPage } from "../src/pages/spec-view.tsx";
 import { cmPressKey, cmSetValue, cmView } from "./cm.ts";
 import { renderWithProviders } from "./render.tsx";
 
@@ -518,5 +540,517 @@ describe("a comment edit aimed at a card the page then left", () => {
         queryKey: ["timeline", SLUG, 7],
       }),
     );
+  });
+});
+
+/** An anchor the card row can resolve without a file version query. */
+const specComponent = (path: string): SpecCommentComponent => ({
+  type: "spec_comment",
+  anchor: {
+    path,
+    version: 2,
+    line_start: 3,
+    line_end: 4,
+    col_start: null,
+    col_end: null,
+    quote: "Anchors point at…\nResolve is one-way.",
+  },
+});
+
+/**
+ * The card row re-pointed at another card, the way a page does it when the
+ * route moves: same instance, new props. No `key` — a key would unmount the
+ * row and leave its closure standing on the card it was built for, which is
+ * the situation the sealing exists for, not the one it has to survive.
+ */
+function CardRow() {
+  const [onNext, setOnNext] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOnNext(true)}>
+        the next card
+      </button>
+      <SpecCommentAnchorCard
+        slug={onNext ? "q" : SLUG}
+        issueNumber={onNext ? 8 : 7}
+        commentId={11}
+        component={specComponent(onNext ? "other.md" : "design.md")}
+        resolvedAt={null}
+        canResolve
+      />
+    </>
+  );
+}
+
+describe("a spec comment resolve aimed at a card the row then left", () => {
+  it("resolves on the card the button was pressed on", async () => {
+    const resolveSpecComments = vi
+      .spyOn(api, "resolveSpecComments")
+      .mockResolvedValue({} as never);
+    // Offline: the retryer pauses before `mutationFn` is ever called, so the
+    // window is the whole pause — the options are read when it resumes.
+    onlineManager.setOnline(false);
+    const view = renderWithProviders(<CardRow />);
+
+    fireEvent.click(await view.findByText("Resolve"));
+    await letTheLoopRun();
+    expect(resolveSpecComments).not.toHaveBeenCalled();
+
+    fireEvent.click(view.getByText("the next card"));
+    act(() => onlineManager.setOnline(true));
+
+    await waitFor(() => expect(resolveSpecComments).toHaveBeenCalled());
+    expect(resolveSpecComments.mock.calls[0]?.slice(0, 3)).toEqual([
+      SLUG,
+      7,
+      [11],
+    ]);
+    // Not merely aimed right: the request still went out, after the jump.
+    expect(resolveSpecComments).toHaveBeenCalledTimes(1);
+  });
+});
+
+const questionsOf = (
+  keys: ReadonlyArray<[string, string]>,
+): QuestionsComponent => ({
+  type: "questions",
+  questions: keys.map(([key, label]) => ({
+    key,
+    header: key,
+    question: `Which ${key}?`,
+    multiple: false,
+    options: [{ label }],
+  })),
+});
+
+/**
+ * The questions row re-pointed at another card under a project whose question
+ * keys are all different — a second project's questions are written from
+ * scratch, so nothing lines up with the drafts still sitting in this row.
+ *
+ * One instance, new props: no `key`, for the reason given on `CardRow`.
+ */
+function QuestionsRow({
+  nextKeys,
+}: {
+  nextKeys: ReadonlyArray<[string, string]>;
+}) {
+  const [onNext, setOnNext] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOnNext(true)}>
+        the next card
+      </button>
+      <QuestionsCard
+        slug={onNext ? "q" : SLUG}
+        issueNumber={onNext ? 8 : 7}
+        commentId={11}
+        component={questionsOf(
+          onNext
+            ? nextKeys
+            : [
+                ["schema", "New entity"],
+                ["scope", "dev"],
+              ],
+        )}
+      />
+    </>
+  );
+}
+
+/**
+ * Route-table stub. Option labels and question text go through `MarkdownView`,
+ * which resolves issue refs against the project's config — without that reply
+ * the second option's label never renders and its click has nothing to land on.
+ */
+function stubAnswers() {
+  vi.stubGlobal("fetch", (async (input: unknown, init?: RequestInit) => {
+    const url = String(input);
+    if ((init?.method ?? "GET") !== "GET") {
+      return new Response(null, { status: 204 });
+    }
+    if (url.includes("/questions")) {
+      return Response.json({
+        items: [
+          {
+            comment_id: 11,
+            author: me,
+            created_at: "2026-09-08T09:00:00Z",
+            questions: [],
+            answer: null,
+          },
+        ],
+        open: 2,
+      });
+    }
+    if (url.includes("/references/config")) {
+      return Response.json({
+        format: { prefix: "T", history: [] },
+        autolinks: [],
+      });
+    }
+    if (url.includes("/reference-directory")) {
+      return Response.json({
+        entries: [],
+        contested: [],
+        slug_entries: [],
+      });
+    }
+    return Response.json([]);
+  }) as unknown as typeof fetch);
+}
+
+const optionButton = (view: RenderResult, label: string) =>
+  view.getByText(label).closest("button") as HTMLButtonElement;
+
+describe("a question answer aimed at a card the row then left", () => {
+  /**
+   * The option rows refuse a click that lands inside a live text selection
+   * (the copy guard), and a range left standing by an earlier case in this
+   * file would make every pick below a no-op.
+   */
+  afterEach(() => window.getSelection()?.removeAllRanges());
+
+  it("submits to the card the reader answered on", async () => {
+    stubAnswers();
+    const submitAnswers = vi
+      .spyOn(api, "submitAnswers")
+      .mockResolvedValue({} as never);
+    // Same question keys on the next card: this case is about the target
+    // alone, and the payload case below is the one that moves the keys.
+    const view = renderWithProviders(
+      <QuestionsRow
+        nextKeys={[
+          ["schema", "New entity"],
+          ["scope", "dev"],
+        ]}
+      />,
+    );
+    await view.findByText("awaiting answer");
+
+    // The form starts working before the window opens: `ready` is the answer
+    // query's `isSuccess`, and a client that is already offline never fires it
+    // — every click below would be inert. Offline here is about the write.
+    fireEvent.click(optionButton(view, "New entity"));
+    fireEvent.click(optionButton(view, "dev"));
+    const submit = await view.findByText("Submit answers");
+    expect((submit.closest("button") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+
+    onlineManager.setOnline(false);
+    fireEvent.click(submit);
+    await letTheLoopRun();
+    expect(submitAnswers).not.toHaveBeenCalled();
+
+    fireEvent.click(view.getByText("the next card"));
+    act(() => onlineManager.setOnline(true));
+
+    await waitFor(() => expect(submitAnswers).toHaveBeenCalled());
+    expect(submitAnswers.mock.calls[0]?.slice(0, 3)).toEqual([SLUG, 7, 11]);
+    expect(submitAnswers).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends the answers the reader gave, not the next card's blank ones", async () => {
+    stubAnswers();
+    const submitAnswers = vi
+      .spyOn(api, "submitAnswers")
+      .mockResolvedValue({} as never);
+    // The next card shares no question key with card 7. Sealed target alone
+    // would submit this payload to card 7 accurately: `component` moves with
+    // the props while `drafts` is state that does not reset, so the answers
+    // have to be read at `mutate()` rather than inside `mutationFn`.
+    const view = renderWithProviders(
+      <QuestionsRow nextKeys={[["ship", "Yes"]]} />,
+    );
+    await view.findByText("awaiting answer");
+
+    fireEvent.click(optionButton(view, "New entity"));
+    fireEvent.click(optionButton(view, "dev"));
+    const submit = await view.findByText("Submit answers");
+    expect((submit.closest("button") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+
+    onlineManager.setOnline(false);
+    fireEvent.click(submit);
+    await letTheLoopRun();
+    expect(submitAnswers).not.toHaveBeenCalled();
+
+    fireEvent.click(view.getByText("the next card"));
+    await act(async () => {
+      onlineManager.setOnline(true);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(submitAnswers).toHaveBeenCalled());
+    const answers = submitAnswers.mock.calls[0]?.[3].answers;
+    expect(answers.map((a) => a.key)).toEqual(["schema", "scope"]);
+    expect(answers[0]?.selected).toEqual([0]);
+    expect(answers[1]?.selected).toEqual([0]);
+  });
+});
+
+describe("a read write aimed at a card the hook then left", () => {
+  it("marks read on the card the hook was mounted on", async () => {
+    const markIssueRead = vi
+      .spyOn(api, "markIssueRead")
+      .mockResolvedValue(undefined);
+    onlineManager.setOnline(false);
+    const hook = renderHook(
+      ({ issueNumber }: { issueNumber: number }) =>
+        useMarkIssueRead(SLUG, issueNumber),
+      { initialProps: { issueNumber: 7 }, wrapper: wrapperFor(queryClient()) },
+    );
+
+    act(() => hook.result.current.mutate({ slug: SLUG, number: 7 }));
+    await letTheLoopRun();
+    expect(markIssueRead).not.toHaveBeenCalled();
+
+    hook.rerender({ issueNumber: 8 });
+    act(() => onlineManager.setOnline(true));
+
+    await waitFor(() => expect(markIssueRead).toHaveBeenCalled());
+    expect(markIssueRead.mock.calls[0]?.slice(0, 2)).toEqual([SLUG, 7]);
+  });
+
+  it("marks read on the card the button was pressed on", async () => {
+    const markIssueRead = vi
+      .spyOn(api, "markIssueRead")
+      .mockResolvedValue(undefined);
+    onlineManager.setOnline(false);
+    const hook = renderHook(
+      ({ issueNumber }: { issueNumber: number }) =>
+        useMarkReadAction(SLUG, issueNumber),
+      { initialProps: { issueNumber: 7 }, wrapper: wrapperFor(queryClient()) },
+    );
+
+    act(() => hook.result.current.mutate({ slug: SLUG, number: 7 }));
+    await letTheLoopRun();
+    expect(markIssueRead).not.toHaveBeenCalled();
+
+    hook.rerender({ issueNumber: 8 });
+    act(() => onlineManager.setOnline(true));
+
+    await waitFor(() => expect(markIssueRead).toHaveBeenCalled());
+    expect(markIssueRead.mock.calls[0]?.slice(0, 2)).toEqual([SLUG, 7]);
+  });
+
+  it("sweeps the scope the button was pressed on", async () => {
+    const markAllRead = vi
+      .spyOn(api, "markAllRead")
+      .mockResolvedValue(undefined);
+    onlineManager.setOnline(false);
+    const hook = renderHook(
+      ({ slug }: { slug: string }) => useMarkAllReadAction(slug),
+      { initialProps: { slug: SLUG }, wrapper: wrapperFor(queryClient()) },
+    );
+
+    act(() => hook.result.current.mutate({ slug: SLUG }));
+    await letTheLoopRun();
+    expect(markAllRead).not.toHaveBeenCalled();
+
+    hook.rerender({ slug: "q" });
+    act(() => onlineManager.setOnline(true));
+
+    await waitFor(() => expect(markAllRead).toHaveBeenCalled());
+    expect(markAllRead.mock.calls[0]?.[0]).toEqual({ projects: [SLUG] });
+  });
+});
+
+describe("a metadata write aimed at a card the hook then left", () => {
+  it("writes to the card the dialog was opened on", async () => {
+    const writeIssueMetadata = vi
+      .spyOn(api, "writeIssueMetadata")
+      .mockResolvedValue({} as never);
+    onlineManager.setOnline(false);
+    const hook = renderHook(
+      ({ issueNumber }: { issueNumber: number }) =>
+        useWriteIssueMetadata(SLUG, issueNumber),
+      { initialProps: { issueNumber: 7 }, wrapper: wrapperFor(queryClient()) },
+    );
+
+    act(() =>
+      hook.result.current.mutate({
+        slug: SLUG,
+        issueNumber: 7,
+        entries: [{ namespace: "ci", key: "url", value: "x", if_match: null }],
+      }),
+    );
+    await letTheLoopRun();
+    expect(writeIssueMetadata).not.toHaveBeenCalled();
+
+    hook.rerender({ issueNumber: 8 });
+    act(() => onlineManager.setOnline(true));
+
+    await waitFor(() => expect(writeIssueMetadata).toHaveBeenCalled());
+    expect(writeIssueMetadata.mock.calls[0]?.slice(0, 2)).toEqual([SLUG, 7]);
+  });
+});
+
+/**
+ * The spec page's own resolve, which the route params feed. It is the one
+ * place here that needs a router: `SpecViewBody` reads them through
+ * `useParams`/`useSearch`, and `load-bearing` is that the in-flight write
+ * keeps the params it started under.
+ */
+describe("a spec resolve aimed at a page the router then left", () => {
+  /** Mounted on the issue the case then navigates away from. */
+  function renderSpec() {
+    vi.spyOn(api, "getSpec").mockResolvedValue({
+      current_version: 1,
+      current_version_cursor: "c1",
+      review_status: "unreviewed",
+      unresolved_comments: 1,
+      unresolved_carried_comments: 0,
+      files: [{ path: "design.md", size: 20 }],
+      versions: [
+        {
+          number: 1,
+          author: me,
+          message: "v1",
+          created_at: "2026-09-08T09:00:00Z",
+        },
+      ],
+    } satisfies SpecInfo);
+    vi.spyOn(api, "getSpecFiles").mockResolvedValue({
+      version: 1,
+      files: [
+        {
+          path: "design.md",
+          body: "line one\nline two\nline three\nline four\n",
+          size: 40,
+        },
+      ],
+    } satisfies SpecFiles);
+    vi.spyOn(api, "getSpecComments").mockResolvedValue({
+      current_version: 1,
+      items: [
+        {
+          comment_id: 11,
+          author: me,
+          created_at: "2026-09-08T10:00:00Z",
+          body: "is this right?",
+          // File-level: it renders in the "File comments" strip, which is the
+          // one resolve affordance that does not need the markdown blocks to
+          // carry their source-line stamps.
+          anchor: {
+            path: "design.md",
+            version: 1,
+            line_start: null,
+            line_end: null,
+            col_start: null,
+            col_end: null,
+            quote: "",
+          },
+          resolved: null,
+          outdated: false,
+          current_line_start: null,
+          current_line_end: null,
+        },
+      ],
+    } satisfies SpecComments);
+    vi.spyOn(api, "getReferenceConfig").mockResolvedValue({
+      format: { prefix: "T", history: [] },
+      autolinks: [],
+    });
+
+    const rootRoute = createRootRoute();
+    const authedRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      id: "authed",
+    });
+    const projectRoute = createRoute({
+      getParentRoute: () => authedRoute,
+      path: "/projects/$slug",
+    });
+    const issueRoute = createRoute({
+      getParentRoute: () => projectRoute,
+      path: "issues/$number",
+      component: () => <div>the next card</div>,
+    });
+    const specRoute = createRoute({
+      getParentRoute: () => projectRoute,
+      path: "issues/$number/spec",
+      component: SpecViewPage,
+      validateSearch: parseSpecSearch,
+    });
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([
+        authedRoute.addChildren([
+          projectRoute.addChildren([issueRoute, specRoute]),
+        ]),
+      ]),
+      history: createMemoryHistory({
+        initialEntries: ["/projects/p/issues/7/spec"],
+      }),
+      defaultPendingMs: 0,
+    });
+    const view = render(
+      <QueryClientProvider client={queryClient()}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    return { ...view, router };
+  }
+
+  it("resolves on the card the page was showing", async () => {
+    const resolveSpecComments = vi
+      .spyOn(api, "resolveSpecComments")
+      .mockResolvedValue({} as never);
+    const view = renderSpec();
+
+    // The whole toolbar has settled once Finish review is on screen; the
+    // comment strip lands with the same commit.
+    const settled = () => view.findByRole("button", { name: /finish review/i });
+
+    // Warm the destination first. A cold navigation suspends, which unmounts
+    // the page and leaves its closures standing on the card they were built
+    // for — the mutation would then reach the right card with or without the
+    // seal, and this case would assert nothing. Cached, the jump is a plain
+    // re-render of the same instance with new params: the option swap the
+    // design is about. The mock answers every slug alike, so warming q/8 is
+    // the same navigation twice.
+    await settled();
+    await act(async () => {
+      await view.router.navigate({
+        to: "/projects/$slug/issues/$number/spec",
+        params: { slug: "q", number: "8" },
+      });
+    });
+    await settled();
+    await act(async () => {
+      await view.router.navigate({
+        to: "/projects/$slug/issues/$number/spec",
+        params: { slug: SLUG, number: "7" },
+      });
+    });
+    await settled();
+
+    const resolve = await view.findByRole("button", { name: /^resolve$/i });
+    onlineManager.setOnline(false);
+    fireEvent.click(resolve);
+    await letTheLoopRun();
+    expect(resolveSpecComments).not.toHaveBeenCalled();
+
+    // Leave through the router for another card's spec: the same route, new
+    // params. `SpecViewBody` reads them through `useParams`, so this is what
+    // re-points every closure the page mounted with.
+    await act(async () => {
+      await view.router.navigate({
+        to: "/projects/$slug/issues/$number/spec",
+        params: { slug: "q", number: "8" },
+      });
+    });
+    act(() => onlineManager.setOnline(true));
+
+    await waitFor(() => expect(resolveSpecComments).toHaveBeenCalled());
+    expect(resolveSpecComments.mock.calls[0]?.slice(0, 3)).toEqual([
+      SLUG,
+      7,
+      [11],
+    ]);
+    expect(resolveSpecComments).toHaveBeenCalledTimes(1);
   });
 });

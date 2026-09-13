@@ -42,11 +42,14 @@ export function MarkAllReadButton({
       title={label}
       aria-label={label}
       onClick={() =>
-        mutate(undefined, {
-          // Nothing visibly changes when the scope was already clean, so
-          // say so — otherwise the click reads as a dead button.
-          onSuccess: () => toast.success(`Marked ${scope} as read`),
-        })
+        mutate(
+          { slug },
+          {
+            // Nothing visibly changes when the scope was already clean, so
+            // say so — otherwise the click reads as a dead button.
+            onSuccess: () => toast.success(`Marked ${scope} as read`),
+          },
+        )
       }
     >
       <CheckCheckIcon className="size-3.5" />

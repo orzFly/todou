@@ -26,10 +26,17 @@ import { testQueryClient } from "./render.tsx";
 /**
  * The key on `Timeline` (T-324), asserted against the real issue page.
  *
+ * T-325 moved every target a row's writes need into the mutation's own
+ * variables, so nothing below relies on this key to reach the right card. What
+ * the key still owns is the state only a remount resets: an open row editor,
+ * the "new messages" pill's refs, the initial scroll-to-bottom flag, and the
+ * prepend compensation's two refs. None of those travel in mutation
+ * variables, so a reused row would carry the previous card's reading state
+ * onto the next one.
+ *
  * `issue-detail.tsx` is the only place that key exists, so a test that builds
  * its own `Timeline` cannot fail when that line is taken out — it would keep
- * passing while `spec-comment-card.tsx` and `questions-card.tsx`, which still
- * read their card from a closure, stand unprotected. These go through
+ * passing while the rows below stand unprotected. These go through
  * `IssueDetailPage` on the real route instead, so deleting the key fails them.
  *
  * The route ids matter: the page and the layout read their params from

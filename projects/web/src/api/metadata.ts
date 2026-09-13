@@ -67,14 +67,24 @@ export function groupMetadata(entries: IssueMetadataEntry[]): MetadataGroup[] {
  * edit happened and never retried automatically: what to do about it is the
  * reader's decision, and only they can make it.
  */
+
+/** The target and payload of one write, both fixed at its `mutate()` call. */
+export type MetadataWriteVars = {
+  slug: string;
+  issueNumber: number;
+  entries: IssueMetadataWriteEntry[];
+};
+
 export function useWriteIssueMetadata(slug: string, issueNumber: number) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (entries: IssueMetadataWriteEntry[]) =>
-      api.writeIssueMetadata(slug, issueNumber, { entries }),
-    onSettled: () => {
+    mutationFn: (vars: MetadataWriteVars) =>
+      api.writeIssueMetadata(vars.slug, vars.issueNumber, {
+        entries: vars.entries,
+      }),
+    onSettled: (_data, _error, vars) => {
       queryClient.invalidateQueries({
-        queryKey: ["issue-metadata", slug, issueNumber],
+        queryKey: ["issue-metadata", vars.slug, vars.issueNumber],
       });
     },
   });

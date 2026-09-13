@@ -70,6 +70,7 @@ import {
 import { SpecVersionPicker } from "@/components/spec/spec-version-picker.tsx";
 import { SpecViewToggle } from "@/components/spec/spec-view-toggle.tsx";
 import { useLinkedTriggerWidths } from "@/components/spec/use-linked-trigger-widths.ts";
+import type { Target } from "@/components/timeline/comment-item.tsx";
 import {
   DiffstatBar,
   StatNumbers,
@@ -890,14 +891,14 @@ function SpecViewBody({
 
   const queryClient = useQueryClient();
   const resolve = useMutation({
-    mutationFn: (commentId: number) =>
-      api.resolveSpecComments(slug, issueNumber, [commentId]),
-    onSuccess: () => {
+    mutationFn: (vars: Target) =>
+      api.resolveSpecComments(vars.slug, vars.issueNumber, [vars.commentId]),
+    onSuccess: (_result, vars) => {
       for (const key of [
-        ["spec", slug, issueNumber],
-        ["timeline", slug, issueNumber],
-        ["issue", slug, issueNumber],
-        ["issues", slug],
+        ["spec", vars.slug, vars.issueNumber],
+        ["timeline", vars.slug, vars.issueNumber],
+        ["issue", vars.slug, vars.issueNumber],
+        ["issues", vars.slug],
       ]) {
         queryClient.invalidateQueries({ queryKey: key });
       }
@@ -1386,7 +1387,9 @@ function SpecViewBody({
                     <UnplacedComment
                       key={item.comment_id}
                       item={item}
-                      onResolve={(id) => resolve.mutate(id)}
+                      onResolve={(id) =>
+                        resolve.mutate({ slug, issueNumber, commentId: id })
+                      }
                       resolving={resolve.isPending}
                     />
                   ))}
@@ -1485,7 +1488,9 @@ function SpecViewBody({
                       }
                       onEditDraft={editDraft}
                       onRemoveDraft={drafts.remove}
-                      onResolve={(id) => resolve.mutate(id)}
+                      onResolve={(id) =>
+                        resolve.mutate({ slug, issueNumber, commentId: id })
+                      }
                       resolving={resolve.isPending}
                     />
                   )}
@@ -1500,7 +1505,9 @@ function SpecViewBody({
                     <UnplacedComment
                       key={item.comment_id}
                       item={item}
-                      onResolve={(id) => resolve.mutate(id)}
+                      onResolve={(id) =>
+                        resolve.mutate({ slug, issueNumber, commentId: id })
+                      }
                       resolving={resolve.isPending}
                     />
                   ))}
