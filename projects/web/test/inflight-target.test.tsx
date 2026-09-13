@@ -130,8 +130,6 @@ function wrapperFor(client: QueryClient) {
 afterEach(() => {
   // The manager is module-global: leaving it offline hangs every later file.
   onlineManager.setOnline(true);
-  // A failing case must not leave the fake clock behind either.
-  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -796,10 +794,16 @@ describe("a question answer aimed at a card the row then left", () => {
 });
 
 /**
- * Seed for the metadata block below: both cards resolve, because the write
- * must be aimed from a dialog that stayed mounted while the card changed.
+ * Seed for the metadata block below. Both cards the case visits resolve:
+ * an unseeded project sends the dialog's `useCan` suspense to the network,
+ * which crashes the subtree into the route error boundary — the re-point
+ * then happens against a tree that no longer exists.
  */
-function seedMetadata(client: QueryClient, slugParam: string = SLUG) {
+function seedMetadata(
+  client: QueryClient,
+  slugParam: string,
+  issueNumber: number,
+) {
   const project = {
     id: 1,
     slug: slugParam,
@@ -825,8 +829,10 @@ function seedMetadata(client: QueryClient, slugParam: string = SLUG) {
     ],
   };
   client.setQueryData(projectQuery(slugParam).queryKey, project);
-  client.setQueryData(issueMetadataQuery(slugParam, 7).queryKey, entries);
-  client.setQueryData(issueMetadataQuery(slugParam, 8).queryKey, entries);
+  client.setQueryData(
+    issueMetadataQuery(slugParam, issueNumber).queryKey,
+    entries,
+  );
 }
 
 describe("a read write aimed at a card the page then left", () => {
@@ -834,7 +840,6 @@ describe("a read write aimed at a card the page then left", () => {
     const markIssueRead = vi
       .spyOn(api, "markIssueRead")
       .mockResolvedValue(undefined);
-    vi.useFakeTimers();
     function MarkReadOnViewRow() {
       const [onNext, setOnNext] = useState(false);
       return (
@@ -851,17 +856,17 @@ describe("a read write aimed at a card the page then left", () => {
     renderWithProviders(<MarkReadOnViewRow />);
 
     // The mount write is already in flight; the pause is the window.
-    await act(async () => {});
+    await letTheLoopRun();
     expect(markIssueRead).not.toHaveBeenCalled();
 
-    // The re-point re-runs the effect and queues a second, debounced write.
-    // Freezing the clock here keeps both writes queued for one resume, so
-    // the first call is the mount's — assert the aim, never the call count.
+    // The re-point re-runs the effect, which mutates the new card
+    // immediately. Flush before resuming: the new write must be created
+    // while still offline, so resume order stays FIFO — mount's first.
     fireEvent.click(screen.getByText("the next card"));
     await act(async () => {});
     act(() => onlineManager.setOnline(true));
 
-    await act(async () => {});
+    await waitFor(() => expect(markIssueRead).toHaveBeenCalled());
     expect(markIssueRead.mock.calls[0]?.slice(0, 2)).toEqual([SLUG, 7]);
   });
 });
@@ -957,8 +962,8 @@ describe("a metadata write aimed at a card the dialog then left", () => {
       );
     }
     const client = queryClient();
-    seedMetadata(client, SLUG);
-    seedMetadata(client, "q");
+    seedMetadata(client, SLUG, 7);
+    seedMetadata(client, "q", 8);
 
     onlineManager.setOnline(false);
     const view = renderWithProviders(<MetadataDialogRow />, client);
