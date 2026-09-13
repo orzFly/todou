@@ -132,10 +132,6 @@ export function MetadataEditorTab({
           onSaved?.();
         },
         onError: (error) => {
-          // Everything the reader needs to know about a failed write shows
-          // here, next to Save. A 409 additionally goes up to the shell,
-          // which pairs it with the refused entries into a conflict notice
-          // and owns the retry.
           // A 409 is fully explained by the shell's conflict notice, and
           // the retry is the shell's to run — reporting it here too would
           // duplicate the message and survive the retry, since the retry
