@@ -1,0 +1,13 @@
+todou v0.4.1
+
+A deployment behind an authenticating reverse proxy could not sign
+anyone in. The batch gateway built its sub-requests without the
+connection's peer address and without the proxy's identity headers, so
+every batched read answered 401 and the web UI bounced to a login page
+blaming the proxy for a header it had sent. Only auth.mode = "forward"
+was affected; a Bearer PAT authenticated throughout.
+
+Server only — no migration, no configuration change. If you widened
+http.trusted_proxies while chasing this, narrow it back: in forward
+mode it is the only thing between the backend port and anyone who can
+send an identity header.
