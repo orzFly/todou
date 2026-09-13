@@ -47,7 +47,10 @@ export function startAtDraftPage() {
       ignoreBlocker: true,
     })
     .catch(() => undefined);
-  // One tick so the navigate's history write lands before the next render.
+  // The delay itself carries no weight (0/1/10ms all pass) — `findBy`'s
+  // 1000ms polling does the waiting. It exists only to save one poll cycle.
+  // If a test ever swaps `findBy` for `getBy`, this becomes the ONLY timing
+  // guarantee, and it will flake under load.
   return new Promise((resolve) => setTimeout(resolve, 50));
 }
 
