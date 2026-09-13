@@ -99,11 +99,14 @@ between versions — the same reason designs and plans live there.
    tracked and unchanged. The tag message file it only reads, so commit that
    one yourself either way.
 4. Hand over to the orchestrator, who runs the release **in the main
-   checkout**. `release.sh` requires HEAD to be `master` and to equal
-   `origin/master`, so it cannot run from a worktree: an agent that drafted
-   the notes sits on a `worktree-*` branch, where `--dry-run` downgrades both
-   checks to warnings and a real run exits 1. That agent stops with its branch
-   committed and the notes approved; the orchestrator takes it from there:
+   checkout**. `release.sh` cuts only from `master` or from a release line
+   named `vX.Y.x`, and HEAD has to equal that branch on `origin`. A
+   `worktree-*` branch — where the agent that drafted the notes sits — is
+   refused outright: `--dry-run` downgrades the refusal to a warning, a real
+   run exits 1. (The worktree is not what is refused; one checked out on a
+   release line cuts a release fine. See below.) That agent stops with its
+   branch committed and the notes approved; the orchestrator takes it from
+   there:
 
    ```bash
    # the notes branch is one commit; the script pushes only at the very end,
@@ -114,12 +117,12 @@ between versions — the same reason designs and plans live there.
      --co-author "Claude Opus 5 <noreply@anthropic.com>"
    ```
 
-   The script verifies (master, clean, synced with origin, notes present,
-   tag free), bumps the five `package.json` files, commits
-   `chore(release): v0.2.0`, tags, and pushes `master` + tag to origin
-   first, then to the GitHub mirror. `--co-author` adds the trailer on agent
-   runs. `--dry-run` rehearses the full command sequence from any branch,
-   downgrading failed checks to warnings.
+   The script verifies (the branch and its numbering, clean tree, synced
+   with origin, notes present, tag free), bumps the five `package.json`
+   files, commits `chore(release): v0.2.0`, tags, and pushes the branch +
+   tag to origin first, then to the GitHub mirror. `--co-author` adds the
+   trailer on agent runs. `--dry-run` rehearses the full command sequence
+   from any branch, downgrading failed checks to warnings.
 
 5. The tag on the mirror triggers CI:
    - **release.yaml** asserts the checkout describes exactly as the tag and
@@ -132,6 +135,42 @@ between versions — the same reason designs and plans live there.
    deployments pick the version up from their own git state; images carry it
    baked in).
 
+## Patch releases off a release line
+
+A fix that has to ship without everything else sitting on `master` goes out
+from a maintenance line: `vX.Y.x`, branched at the release it patches.
+
+```bash
+git branch v0.4.x v0.4.0    # the line, at the tag it patches
+git cherry-pick <fix>       # each fix, once it has landed on master
+git push origin v0.4.x      # you do this one; the script's push comes last
+```
+
+- **The fix lands on `master` first.** A line exists to leave things out, not
+  to carry anything `master` will not get.
+- **Both artifacts live on the line.** `docs/releases/vX.Y.Z.md` and its
+  `.tag.txt` are read from the checkout, like every other precondition.
+- **The script runs on the line**, named with `--branch`:
+
+  ```bash
+  scripts/release.sh 0.4.1 --branch v0.4.x \
+    --tag-message-file docs/releases/v0.4.1.tag.txt \
+    --co-author "Claude Opus 5 <noreply@anthropic.com>"
+  ```
+
+  A worktree checked out on the line is a fine place to run it from. Git
+  refuses to check one branch out twice, so the main checkout stays on
+  `master` while the release is cut.
+- **A line owns its numbering.** `--branch v0.4.x` cuts `0.4.z` and refuses
+  anything else. `master` keeps cutting any version, patches included — a
+  `0.4.1` straight off `master` is right whenever no `0.5` work has started.
+- **Push the line to `origin` before the first cut.** Until it is there, the
+  sync check reports `HEAD is not origin/v0.4.x — pull or push first`.
+
+CI needs nothing: `release.yaml` and `docker.yaml` trigger on `v*` tags from
+any branch. The script pushes the line to the mirror alongside the tag, so
+the commits behind a release stay reachable there by branch too.
+
 ## Who does what
 
 | Step | Who |
@@ -140,6 +179,7 @@ between versions — the same reason designs and plans live there.
 | Draft notes + tag message | anyone (usually an agent, on the release card, on its own branch) |
 | Approve them (spec review) | the user — a precondition for tagging |
 | Merge to `master`, push, run `scripts/release.sh` | the orchestrator, in the main checkout |
+| Open a release line and cherry-pick onto it | the orchestrator, in a worktree on the line |
 | Artifacts, GitHub release, images | CI |
 | Deploy, CLI distribution | operators, per `docs/deploy.md` |
 
