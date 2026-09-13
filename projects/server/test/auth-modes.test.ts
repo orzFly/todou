@@ -167,6 +167,28 @@ describe("forward mode", () => {
     expect(bad.status).toBe(401);
   });
 
+  it("authenticates batched sub-requests like any other request", async () => {
+    const res = await t.app.request(
+      "/api/batch",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "Remote-User": "alice",
+        },
+        body: JSON.stringify({
+          requests: [{ url: "/auth/mode" }, { url: "/me" }],
+        }),
+      },
+      fromPeer("127.0.0.1"),
+    );
+    expect(res.status).toBe(200);
+    const { responses } = await json(res);
+    expect(responses[0]).toEqual({ status: 200, body: { mode: "forward" } });
+    expect(responses[1].status).toBe(200);
+    expect(responses[1].body.login).toBe("alice");
+  });
+
   it("400s the single-mode login endpoint and 204s logout", async () => {
     const login = await t.app.request("/api/auth/login", { method: "POST" });
     expect(login.status).toBe(400);

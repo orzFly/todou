@@ -6,6 +6,7 @@ import {
   BatchResult,
 } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
+import type { AppContext } from "../bootstrap.ts";
 
 const jsonBody = <T extends z.ZodType>(schema: T) => ({
   content: { "application/json": { schema } },
@@ -62,7 +63,28 @@ export function rejectBatchTarget(url: string): BatchItemResult | null {
  *  has to decode to re-envelope. */
 const FORWARDED_HEADERS = ["cookie", "authorization"] as const;
 
-type Dispatcher = { fetch: (request: Request) => Response | Promise<Response> };
+/**
+ * Forward mode carries the identity in proxy-set headers rather than in a
+ * cookie, so a sub-request that does not repeat them is anonymous however
+ * the envelope arrived. The names are configuration, hence resolved per
+ * request instead of living in the const above.
+ */
+function forwardedHeaderNames(ctx: AppContext): string[] {
+  if (ctx.config.auth.mode !== "forward") return [...FORWARDED_HEADERS];
+  const forward = ctx.config.auth.forward;
+  return [
+    ...FORWARDED_HEADERS,
+    ...[forward.user_header, forward.name_header, forward.email_header].filter(
+      (name): name is string => name !== undefined,
+    ),
+  ];
+}
+
+// Method shorthand, not a property: the assembled app's fetch declares its
+// own env type, and only bivariance lets it satisfy this shape.
+type Dispatcher = {
+  fetch(request: Request, env?: unknown): Response | Promise<Response>;
+};
 
 /**
  * `getApp` breaks the cycle between this route and the assembled app it
@@ -75,7 +97,7 @@ export function batchRoutes(getApp: () => Dispatcher) {
   app.openapi(batchRoute, async (c) => {
     const { requests } = c.req.valid("json");
     const headers = new Headers();
-    for (const name of FORWARDED_HEADERS) {
+    for (const name of forwardedHeaderNames(c.get("appCtx"))) {
       const value = c.req.raw.headers.get(name);
       if (value !== null) headers.set(name, value);
     }
@@ -89,6 +111,11 @@ export function batchRoutes(getApp: () => Dispatcher) {
             new Request(new URL(`/api${url}`, "http://batch.internal"), {
               headers,
             }),
+            // Proxy trust is decided on the peer address of the node socket,
+            // which lives in the env rather than in the request — a
+            // sub-request dispatched without it has no peer at all, and
+            // forward mode 401s every item as untrusted.
+            c.env,
           );
           if (res.status === 204) return { status: 204, body: null };
           if (!res.headers.get("content-type")?.includes("application/json")) {
