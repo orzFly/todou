@@ -24,7 +24,9 @@ import type {
   Attachment,
   CommentCreateResult,
   Issue,
+  IssueMetadataEntry,
   Me,
+  Project,
   QuestionsComponent,
   SpecCommentComponent,
   SpecComments,
@@ -34,13 +36,12 @@ import type {
 } from "@todou/shared";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useWriteIssueMetadata } from "../src/api/metadata.ts";
-import { api } from "../src/api/queries.ts";
-import {
-  useMarkAllReadAction,
-  useMarkIssueRead,
-  useMarkReadAction,
-} from "../src/api/reads.ts";
+import { issueMetadataQuery } from "../src/api/metadata.ts";
+import { api, projectQuery } from "../src/api/queries.ts";
+import { MarkAllReadButton } from "../src/components/issue/mark-all-read-button.tsx";
+import { MarkReadButton } from "../src/components/issue/mark-read-button.tsx";
+import { MarkReadOnView } from "../src/components/issue/mark-read-on-view.tsx";
+import { MetadataSection } from "../src/components/issue/metadata-section.tsx";
 import { CommentItem } from "../src/components/timeline/comment-item.tsx";
 import {
   Composer,
@@ -129,6 +130,8 @@ function wrapperFor(client: QueryClient) {
 afterEach(() => {
   // The manager is module-global: leaving it offline hangs every later file.
   onlineManager.setOnline(true);
+  // A failing case must not leave the fake clock behind either.
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -792,66 +795,141 @@ describe("a question answer aimed at a card the row then left", () => {
   });
 });
 
-describe("a read write aimed at a card the hook then left", () => {
-  it("marks read on the card the hook was mounted on", async () => {
+/**
+ * Seed for the metadata block below: both cards resolve, because the write
+ * must be aimed from a dialog that stayed mounted while the card changed.
+ */
+function seedMetadata(client: QueryClient, slugParam: string = SLUG) {
+  const project = {
+    id: 1,
+    slug: slugParam,
+    name: "Project",
+    viewer_role: "writer",
+  } as unknown as Project;
+  const entries = {
+    entries: [
+      {
+        namespace: "ci",
+        key: "url",
+        value: "x",
+        updated_at: "2026-01-01T00:00:00Z",
+        updated_by: {
+          id: me.id,
+          login: me.login,
+          display_name: me.display_name,
+          kind: me.kind,
+          avatar_url: null,
+          owner: null,
+        },
+      } satisfies IssueMetadataEntry,
+    ],
+  };
+  client.setQueryData(projectQuery(slugParam).queryKey, project);
+  client.setQueryData(issueMetadataQuery(slugParam, 7).queryKey, entries);
+  client.setQueryData(issueMetadataQuery(slugParam, 8).queryKey, entries);
+}
+
+describe("a read write aimed at a card the page then left", () => {
+  it("marks read on the card the view was mounted on", async () => {
     const markIssueRead = vi
       .spyOn(api, "markIssueRead")
       .mockResolvedValue(undefined);
-    onlineManager.setOnline(false);
-    const hook = renderHook(
-      ({ issueNumber }: { issueNumber: number }) =>
-        useMarkIssueRead(SLUG, issueNumber),
-      { initialProps: { issueNumber: 7 }, wrapper: wrapperFor(queryClient()) },
-    );
+    vi.useFakeTimers();
+    function MarkReadOnViewRow() {
+      const [onNext, setOnNext] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOnNext(true)}>
+            the next card
+          </button>
+          <MarkReadOnView slug={onNext ? "q" : SLUG} number={onNext ? 8 : 7} />
+        </>
+      );
+    }
 
-    act(() => hook.result.current.mutate({ slug: SLUG, number: 7 }));
-    await letTheLoopRun();
+    onlineManager.setOnline(false);
+    renderWithProviders(<MarkReadOnViewRow />);
+
+    // The mount write is already in flight; the pause is the window.
+    await act(async () => {});
     expect(markIssueRead).not.toHaveBeenCalled();
 
-    hook.rerender({ issueNumber: 8 });
+    // The re-point re-runs the effect and queues a second, debounced write.
+    // Freezing the clock here keeps both writes queued for one resume, so
+    // the first call is the mount's — assert the aim, never the call count.
+    fireEvent.click(screen.getByText("the next card"));
+    await act(async () => {});
     act(() => onlineManager.setOnline(true));
 
-    await waitFor(() => expect(markIssueRead).toHaveBeenCalled());
+    await act(async () => {});
     expect(markIssueRead.mock.calls[0]?.slice(0, 2)).toEqual([SLUG, 7]);
   });
+});
 
+describe("a read write aimed at a card the row then left", () => {
   it("marks read on the card the button was pressed on", async () => {
     const markIssueRead = vi
       .spyOn(api, "markIssueRead")
       .mockResolvedValue(undefined);
-    onlineManager.setOnline(false);
-    const hook = renderHook(
-      ({ issueNumber }: { issueNumber: number }) =>
-        useMarkReadAction(SLUG, issueNumber),
-      { initialProps: { issueNumber: 7 }, wrapper: wrapperFor(queryClient()) },
-    );
+    function MarkReadButtonRow() {
+      const [onNext, setOnNext] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOnNext(true)}>
+            the next card
+          </button>
+          <MarkReadButton
+            slug={onNext ? "q" : SLUG}
+            number={onNext ? 8 : 7}
+            unread
+            unreadComments={0}
+          />
+        </>
+      );
+    }
+    const client = queryClient();
+    client.setQueryData(["me-prefs"], { show_weak_unread: true });
 
-    act(() => hook.result.current.mutate({ slug: SLUG, number: 7 }));
+    onlineManager.setOnline(false);
+    const view = renderWithProviders(<MarkReadButtonRow />, client);
+
+    fireEvent.click(await view.findByTitle("new activity — mark as read"));
     await letTheLoopRun();
     expect(markIssueRead).not.toHaveBeenCalled();
 
-    hook.rerender({ issueNumber: 8 });
+    fireEvent.click(view.getByText("the next card"));
     act(() => onlineManager.setOnline(true));
 
     await waitFor(() => expect(markIssueRead).toHaveBeenCalled());
     expect(markIssueRead.mock.calls[0]?.slice(0, 2)).toEqual([SLUG, 7]);
   });
+});
 
+describe("a sweep aimed at a scope the header then left", () => {
   it("sweeps the scope the button was pressed on", async () => {
     const markAllRead = vi
       .spyOn(api, "markAllRead")
       .mockResolvedValue(undefined);
-    onlineManager.setOnline(false);
-    const hook = renderHook(
-      ({ slug }: { slug: string }) => useMarkAllReadAction(slug),
-      { initialProps: { slug: SLUG }, wrapper: wrapperFor(queryClient()) },
-    );
+    function MarkAllReadButtonRow() {
+      const [onNext, setOnNext] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOnNext(true)}>
+            the next card
+          </button>
+          <MarkAllReadButton slug={onNext ? "q" : SLUG} />
+        </>
+      );
+    }
 
-    act(() => hook.result.current.mutate({ slug: SLUG }));
+    onlineManager.setOnline(false);
+    const view = renderWithProviders(<MarkAllReadButtonRow />);
+
+    fireEvent.click(await view.findByTitle("Mark p as read"));
     await letTheLoopRun();
     expect(markAllRead).not.toHaveBeenCalled();
 
-    hook.rerender({ slug: "q" });
+    fireEvent.click(view.getByText("the next card"));
     act(() => onlineManager.setOnline(true));
 
     await waitFor(() => expect(markAllRead).toHaveBeenCalled());
@@ -859,31 +937,45 @@ describe("a read write aimed at a card the hook then left", () => {
   });
 });
 
-describe("a metadata write aimed at a card the hook then left", () => {
+describe("a metadata write aimed at a card the dialog then left", () => {
   it("writes to the card the dialog was opened on", async () => {
     const writeIssueMetadata = vi
       .spyOn(api, "writeIssueMetadata")
       .mockResolvedValue({} as never);
-    onlineManager.setOnline(false);
-    const hook = renderHook(
-      ({ issueNumber }: { issueNumber: number }) =>
-        useWriteIssueMetadata(SLUG, issueNumber),
-      { initialProps: { issueNumber: 7 }, wrapper: wrapperFor(queryClient()) },
-    );
+    function MetadataDialogRow() {
+      const [onNext, setOnNext] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOnNext(true)}>
+            the next card
+          </button>
+          <MetadataSection
+            slug={onNext ? "q" : SLUG}
+            issueNumber={onNext ? 8 : 7}
+          />
+        </>
+      );
+    }
+    const client = queryClient();
+    seedMetadata(client, SLUG);
+    seedMetadata(client, "q");
 
-    act(() =>
-      hook.result.current.mutate({
-        slug: SLUG,
-        issueNumber: 7,
-        entries: [{ namespace: "ci", key: "url", value: "x", if_match: null }],
-      }),
-    );
+    onlineManager.setOnline(false);
+    const view = renderWithProviders(<MetadataDialogRow />, client);
+
+    fireEvent.click(await view.findByTestId("metadata-open"));
+    fireEvent.click(await view.findByTitle("Edit this value"));
+    fireEvent.change(await view.findByLabelText("ci/url"), {
+      target: { value: "impl" },
+    });
+    fireEvent.click(view.getByText("Save"));
     await letTheLoopRun();
     expect(writeIssueMetadata).not.toHaveBeenCalled();
 
-    hook.rerender({ issueNumber: 8 });
+    // The dialog lives in a portal: its own subtree is what re-points, and
+    // the write the resume picks up must read the props from before it.
+    fireEvent.click(view.getByText("the next card"));
     act(() => onlineManager.setOnline(true));
-
     await waitFor(() => expect(writeIssueMetadata).toHaveBeenCalled());
     expect(writeIssueMetadata.mock.calls[0]?.slice(0, 2)).toEqual([SLUG, 7]);
   });

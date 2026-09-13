@@ -79,7 +79,7 @@ export function MetadataDialog({
   // The same query the sidebar summary runs, so opening this costs nothing.
   const metadata = useQuery(issueMetadataQuery(slug, issueNumber));
   const canWrite = useCan(slug, "metadata.write");
-  const write = useWriteIssueMetadata(slug, issueNumber);
+  const write = useWriteIssueMetadata();
   const groups = groupMetadata(metadata.data?.entries ?? []);
 
   const [editing, setEditing] = useState<Editing | null>(null);

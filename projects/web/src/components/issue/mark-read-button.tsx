@@ -29,7 +29,7 @@ export function MarkReadButton({
   unreadComments: number;
 }) {
   const [marked, setMarked] = useState(false);
-  const { mutate } = useMarkReadAction(slug, number);
+  const { mutate } = useMarkReadAction();
   // Absent or still-loading prefs behave like the default (show): the
   // marker must never flicker off while the query warms up.
   const showWeakUnread = useQuery(prefsQuery).data?.show_weak_unread ?? true;

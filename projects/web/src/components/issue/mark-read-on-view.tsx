@@ -21,7 +21,7 @@ export function MarkReadOnView({
   number: number;
 }) {
   const queryClient = useQueryClient();
-  const { mutate } = useMarkIssueRead(slug, number);
+  const { mutate } = useMarkIssueRead();
 
   useEffect(() => {
     const target = { slug, number };

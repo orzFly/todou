@@ -30,7 +30,7 @@ export type BulkReadTarget = { slug: string | undefined };
  * failures only warn — read state must never block the page, and the next
  * visit retries naturally.
  */
-export function useMarkIssueRead(slug: string, number: number) {
+export function useMarkIssueRead() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (vars: ReadTarget) =>
@@ -80,7 +80,7 @@ export function clearInboxUnread(page: InboxPage, slug?: string): InboxPage {
  * would keep rendering rows the sweep just emptied until the refetch
  * lands.
  */
-export function useMarkAllReadAction(slug?: string) {
+export function useMarkAllReadAction() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (vars: BulkReadTarget) =>
@@ -146,7 +146,7 @@ export function clearUnread(
  * the marker optimistically across every cache under ["issues", slug] —
  * list filter pages and board columns share that prefix.
  */
-export function useMarkReadAction(slug: string, number: number) {
+export function useMarkReadAction() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (vars: ReadTarget) =>

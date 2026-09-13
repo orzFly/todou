@@ -75,7 +75,7 @@ export type MetadataWriteVars = {
   entries: IssueMetadataWriteEntry[];
 };
 
-export function useWriteIssueMetadata(slug: string, issueNumber: number) {
+export function useWriteIssueMetadata() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (vars: MetadataWriteVars) =>

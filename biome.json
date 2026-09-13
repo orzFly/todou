@@ -17,6 +17,9 @@
     "enabled": true,
     "rules": {
       "preset": "recommended",
+      "correctness": {
+        "noUnusedFunctionParameters": "error"
+      },
       "suspicious": {
         "noImportCycles": "error"
       }

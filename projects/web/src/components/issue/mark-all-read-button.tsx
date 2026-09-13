@@ -29,7 +29,7 @@ export function MarkAllReadButton({
   compact?: boolean;
   className?: string;
 }) {
-  const { mutate, isPending } = useMarkAllReadAction(slug);
+  const { mutate, isPending } = useMarkAllReadAction();
   const scope = scopeName ?? (slug === undefined ? "everything" : slug);
   const label = `Mark ${scope} as read`;
 
