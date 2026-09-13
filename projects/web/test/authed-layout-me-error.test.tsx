@@ -119,17 +119,19 @@ function expectDraftIntact(text: string) {
   expect(beforeUnload()).toBe(true);
 }
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
   // Testing-library's own cleanup has run by now (globals-registered first),
   // so no guard is mounted to refuse the URL `replace`.
   restoreAppRouterPage();
-  // The router is a module singleton: a test that drove a match into the
-  // error state leaves it there, and the next test inherits the leftover
-  // match — one regression then fails four tests instead of one. Drop the
-  // match cache so every test starts from an empty slate.
+  // The router is a module singleton. A test that crashed its tree (root
+  // error boundary) or drove a match into the error state leaves that state
+  // in the router's stores and match cache; the next test's mount then
+  // renders from the leftover instead of its own URL. Drop the cache and
+  // settle one load on the restored URL, so the next test mounts from a
+  // fully-resolved, error-free router.
   router.clearCache();
-  router.invalidate();
+  await router.load();
 });
 
 afterAll(teardownAppRouter);
@@ -203,14 +205,45 @@ describe("/api/me failing while a draft is on screen", () => {
     expectDraftIntact("half a thought");
   });
 
-  it("dissolves the dialog on its own once the session returns, and re-arms for a later loss", async () => {
+  it("after staying, a recovered session re-arms the dialog for a later loss", async () => {
+    const view = mountDraftPage();
+    await typeDraftTitle("half a thought");
+
+    failingSpy("me", 401);
+    await refetchFail(view.client, meQuery.queryKey);
+    const dialog = await screen.findByRole("dialog");
+
+    // Stay on the page. This is the path where the reset earns its keep:
+    // `announced` is now true, and only a successful refetch clears it.
+    const stay = [...dialog.querySelectorAll("button")].find((button) =>
+      /stay|keep|本页/i.test(button.textContent ?? ""),
+    );
+    expect(stay).toBeDefined();
+    fireEvent.click(stay as HTMLButtonElement);
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    // Session returns: page back to normal, no dialog (it was dismissed, not
+    // dissolved — the recovery reset is what allows the next announcement).
+    vi.spyOn(api, "me").mockResolvedValue(me);
+    await refetchFail(view.client, meQuery.queryKey);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expectDraftIntact("half a thought");
+
+    // A later 401 announces itself again — fails if the reset is gone.
+    failingSpy("me", 401);
+    await refetchFail(view.client, meQuery.queryKey);
+    expect(await screen.findByText("Your session has ended")).toBeTruthy();
+    expectDraftIntact("half a thought");
+  });
+
+  it("dissolves the dialog on its own when the session returns untouched", async () => {
     const view = mountDraftPage();
     await typeDraftTitle("half a thought");
 
     failingSpy("me", 401);
     await refetchFail(view.client, meQuery.queryKey);
     // Dialog is up and stays up while the session stays dead — no click, no
-    // dismiss. (Also guards against a dialog that closes by itself, which a
+    // dismiss. (Guards against a dialog that closes by itself, which a
     // click-then-assert sequence would never notice.)
     await screen.findByText("Your session has ended");
     await act(async () => {
@@ -219,16 +252,10 @@ describe("/api/me failing while a draft is on screen", () => {
     expect(screen.getByRole("dialog")).toBeTruthy();
 
     // The session returns (re-login in another tab): the dialog dissolves on
-    // its own, with no user action. Deleting the recovery reset breaks this.
+    // its own, with no user action.
     vi.spyOn(api, "me").mockResolvedValue(me);
     await refetchFail(view.client, meQuery.queryKey);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expectDraftIntact("half a thought");
-
-    // …and the reset cleared the record: a later 401 announces itself again.
-    failingSpy("me", 401);
-    await refetchFail(view.client, meQuery.queryKey);
-    expect(await screen.findByText("Your session has ended")).toBeTruthy();
     expectDraftIntact("half a thought");
   });
 
