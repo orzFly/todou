@@ -136,12 +136,18 @@ export function MetadataEditorTab({
           // here, next to Save. A 409 additionally goes up to the shell,
           // which pairs it with the refused entries into a conflict notice
           // and owns the retry.
-          setSaveError((error as Error).message);
-          if (onConflict === undefined) return;
+          // A 409 is fully explained by the shell's conflict notice, and
+          // the retry is the shell's to run — reporting it here too would
+          // duplicate the message and survive the retry, since the retry
+          // goes through the shell's mutation, which cannot clear this
+          // panel's error. Everything else (network, 500) shows here,
+          // next to the Save the reader pressed.
           const conflicts = conflictsOf(error);
-          if (conflicts !== null) {
+          if (conflicts !== null && onConflict !== undefined) {
             onConflict({ refused: diff, conflicts });
+            return;
           }
+          setSaveError((error as Error).message);
         },
       },
     );

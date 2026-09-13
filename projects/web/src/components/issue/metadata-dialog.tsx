@@ -302,9 +302,6 @@ export function MetadataDialog({
                 canWrite={canWrite}
                 entries={entries}
                 onJumpRef={onBulkView}
-                onConflicts={(lines) => {
-                  setConflictNotice(lines);
-                }}
                 onConflict={(payload) => {
                   setRefused(payload.refused);
                   setConflictNotice(
@@ -324,9 +321,6 @@ export function MetadataDialog({
                 issueNumber={issueNumber}
                 canWrite={canWrite}
                 entries={entries}
-                onConflicts={(lines) => {
-                  setConflictNotice(lines);
-                }}
                 onConflict={(payload) => {
                   setRefused(payload.refused);
                   setConflictNotice(
@@ -364,7 +358,6 @@ function BulkPanel({
   canWrite,
   entries,
   onJumpRef,
-  onConflicts,
   onConflict,
   onSaved,
 }: {
@@ -373,7 +366,6 @@ function BulkPanel({
   canWrite: boolean;
   entries: IssueMetadataEntry[];
   onJumpRef: (view: EditorView | null) => void;
-  onConflicts: (lines: ConflictLine[]) => void;
   onConflict: (payload: WriteConflict) => void;
   onSaved: () => void;
 }) {
@@ -391,10 +383,7 @@ function BulkPanel({
       entries={entries}
       onSaved={onSaved}
       onView={onJumpRef}
-      onConflict={(payload) => {
-        onConflicts(conflictLines(payload.refused, payload.conflicts, entries));
-        onConflict(payload);
-      }}
+      onConflict={onConflict}
     />
   );
 }
@@ -404,7 +393,6 @@ function JsonPanel({
   issueNumber,
   canWrite,
   entries,
-  onConflicts,
   onConflict,
   onSaved,
 }: {
@@ -412,7 +400,6 @@ function JsonPanel({
   issueNumber: number;
   canWrite: boolean;
   entries: IssueMetadataEntry[];
-  onConflicts: (lines: ConflictLine[]) => void;
   onConflict: (payload: WriteConflict) => void;
   onSaved: () => void;
 }) {
@@ -429,10 +416,7 @@ function JsonPanel({
       placeholder={'{"namespace": {"key": "value"}}'}
       entries={entries}
       onSaved={onSaved}
-      onConflict={(payload) => {
-        onConflicts(conflictLines(payload.refused, payload.conflicts, entries));
-        onConflict(payload);
-      }}
+      onConflict={onConflict}
     />
   );
 }

@@ -213,12 +213,8 @@ describe("the metadata editor tabs", () => {
     const spy = vi
       .spyOn(api, "writeIssueMetadata")
       .mockResolvedValue({ entries: [] });
-    // 40 existing keys stay untouched; the text adds 30 more, so the diff
-    // is 30 > 64? No — make it 65: 64 untouched keys deleted + 1 addition
-    // would still exceed. Simplest: keep 30 untouched keys and add 35 new
-    // ones, giving a 35-entry diff... that is under the cap. Build a diff
-    // over the cap directly: 60 kept, 5 deleted, 10 added = 15 < 64. So:
-    // 70 snapshot keys, text deletes all 70 and adds 0 → 70 > 64.
+    // 70 snapshot keys, emptied text: the diff is 70 deletions, over the
+    // 64-entry write cap.
     const keys = Array.from({ length: 70 }, (_, i) =>
       entry("ci", `k${i}`, `v${i}`),
     );
@@ -413,6 +409,47 @@ describe("the metadata dialog shell", () => {
       ),
     );
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves no stale panel error behind after a successful retry", async () => {
+    // Nit-1 regression: the 409 used to render twice — once as the panel's
+    // technical line, once as the shell's notice — and the panel's copy
+    // survived a successful retry, because the retry runs on the shell's
+    // mutation, which cannot clear the panel's error. Falsifies by:
+    // restoring the panel-side 409 report.
+    const conflict = Object.assign(new Error("if_match did not hold"), {
+      status: 409,
+      code: "metadata_precondition",
+      details: {
+        failed: [{ namespace: "orch", key: "phase", current: "spec" }],
+      },
+    });
+    const spy = vi
+      .spyOn(api, "writeIssueMetadata")
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({ entries: [] });
+    mount([entry("orch", "phase", "plan")]);
+    await openDialog();
+    await openTab("Bulk");
+    cmSetValue(await editorReady(), "orch/phase = impl");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByTestId("metadata-conflict");
+    // While the 409 stands, the notice is the only reporter.
+    expect(screen.getByTestId("metadata-editor-tab").textContent).not.toContain(
+      "if_match did not hold",
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Write over the new value" }),
+    );
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+    // The write landed; no trace of the failure may remain anywhere.
+    await waitFor(() =>
+      expect(screen.queryByTestId("metadata-conflict")).toBeNull(),
+    );
+    expect(screen.getByTestId("metadata-editor-tab").textContent).not.toContain(
+      "if_match did not hold",
+    );
   });
 
   it("hides every write affordance from a reader, shows all to a writer", async () => {
