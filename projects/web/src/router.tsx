@@ -3,21 +3,35 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  Link,
   lazyRouteComponent,
   Navigate,
   Outlet,
 } from "@tanstack/react-router";
+import { useState } from "react";
 import { issueSearchSchema } from "@/api/issues.ts";
 import { meQuery } from "@/api/queries.ts";
 import { searchPageSchema } from "@/api/search.ts";
+import { ConnectionBanner } from "@/components/connection-banner.tsx";
 import {
   PagePending,
   type PageSkeletonKind,
 } from "@/components/page-skeleton.tsx";
 import { AppShell } from "@/components/shell.tsx";
 import { TitleController } from "@/components/title-controller.tsx";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Toaster } from "@/components/ui/sonner";
+import { statusOf } from "@/lib/http-status.ts";
 import { parseSpecSearch } from "@/lib/spec-search.ts";
+import { hasUnsavedWork } from "@/lib/unsaved-guard.ts";
 import { AgentsSettingsPage } from "@/pages/agents-settings.tsx";
 import { BoardPage } from "@/pages/board.tsx";
 import { CliAuthPage } from "@/pages/cli-auth.tsx";
@@ -66,27 +80,141 @@ const authedRoute = createRoute({
 });
 
 function AuthedLayout() {
-  const me = useQuery(meQuery);
-  if (me.isError) {
-    const status = (me.error as { status?: number }).status;
-    if (status === 401) {
-      // Carry the interrupted location (e.g. /cli-auth?...) through login.
-      // Read window.location (the last COMMITTED url), never live router
-      // state: that updates mid-transition, so Navigate would re-fire with
-      // an ever-nesting redirect param and wedge the main thread.
-      const here = window.location.pathname + window.location.search;
-      return (
-        <Navigate to="/login" search={here === "/" ? {} : { redirect: here }} />
-      );
-    }
+  // The 15s retry interval is what retires the warm-state banner without
+  // user action: meQuery only refetches on window focus otherwise, so the
+  // banner would outlive the outage by minutes. 401 is excluded — a dead
+  // session stays dead, and retrying it only multiplies the 401s.
+  const me = useQuery({
+    ...meQuery,
+    refetchInterval: (query) =>
+      query.state.status === "error" && statusOf(query.state.error) !== 401
+        ? 15_000
+        : false,
+  });
+
+  // Read once, on the render the 401 arrived in: this is the last moment the
+  // content is known to still exist (T-317's premise). Later renders reuse
+  // it — re-reading would flip a kept page into a Navigate the moment the
+  // user cleared their draft, destroying what the dialog promised to protect.
+  // Derived during render, not in an effect: the 401 branch below redirects
+  // on the very render the error arrives in, and an effect would only run
+  // after that render has replaced the tree — the recorded entry would never
+  // get a chance to exist.
+  const [sessionLoss, setSessionLoss] = useState<{
+    hadUnsavedWork: boolean;
+    announced: boolean;
+  } | null>(null);
+  const errored401 = me.isError && statusOf(me.error) === 401;
+  if (errored401 && sessionLoss === null) {
+    setSessionLoss({ hadUnsavedWork: hasUnsavedWork(), announced: false });
+  } else if (!errored401 && me.isSuccess && sessionLoss !== null) {
+    // The session came back (re-login in another tab): back to a clean
+    // slate, so a later loss can be announced again.
+    setSessionLoss(null);
+  }
+
+  if (me.isError && statusOf(me.error) !== 401 && me.data === undefined) {
+    // Cold-start failure: there is no cached account, so nothing to keep —
+    // but the shell still frames the answer, and the account slot says
+    // "unavailable" instead of spinning a skeleton forever.
     return (
-      <div className="mx-auto max-w-lg px-4 py-20 text-center text-destructive">
-        Failed to reach the todou server: {me.error.message}
-      </div>
+      <AppShell accountUnavailable>
+        <main className="mx-auto max-w-lg px-4 py-20 text-center">
+          <p className="text-destructive">
+            Failed to reach the todou server: {me.error.message}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-4"
+            onClick={() => me.refetch()}
+          >
+            Try again
+          </Button>
+        </main>
+      </AppShell>
     );
   }
+
+  if (me.isError && statusOf(me.error) === 401 && sessionLoss?.hadUnsavedWork) {
+    // Session lost with unsaved work on screen: keep the page mounted (the
+    // guard stays armed; writes fail their own way) and explain instead of
+    // throwing the draft away. One dialog per lost session — window-focus
+    // refetches keep failing and must not re-open it.
+    const here = window.location.pathname + window.location.search;
+    return (
+      <>
+        <AppShell me={me.data}>
+          <Outlet />
+        </AppShell>
+        <Dialog
+          open={!sessionLoss.announced}
+          onOpenChange={(open) => {
+            if (!open) setSessionLoss({ ...sessionLoss, announced: true });
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Your session has ended</DialogTitle>
+              <DialogDescription>
+                The server no longer accepts this session, so nothing on this
+                page can be submitted right now. Copy anything you need, or keep
+                working and sign in elsewhere — the page stays as it is.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() =>
+                  setSessionLoss({ ...sessionLoss, announced: true })
+                }
+              >
+                Stay on this page
+              </Button>
+              {/* A real link (resolved at render), styled as a button —
+                  middle-click and the status-bar preview keep working. Going
+                  to /login still crosses the unsaved-changes guard, which
+                  asks once more: deliberately, because that prompt is the
+                  one thing standing between the draft and a discarded tab. */}
+              <Button asChild>
+                <Link
+                  to="/login"
+                  search={here === "/" ? {} : { redirect: here }}
+                >
+                  Go to login
+                </Link>
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </>
+    );
+  }
+
+  if (me.isError && statusOf(me.error) === 401) {
+    // Carry the interrupted location (e.g. /cli-auth?...) through login.
+    // Read window.location (the last COMMITTED url), never live router
+    // state: that updates mid-transition, so Navigate would re-fire with
+    // an ever-nesting redirect param and wedge the main thread.
+    const here = window.location.pathname + window.location.search;
+    return (
+      <Navigate to="/login" search={here === "/" ? {} : { redirect: here }} />
+    );
+  }
+
+  const warmFailure = me.isError && statusOf(me.error) !== 401;
   return (
-    <AppShell me={me.data}>
+    <AppShell
+      me={me.data}
+      notice={
+        warmFailure ? (
+          <ConnectionBanner
+            message={me.error?.message ?? "network error"}
+            onRetry={() => me.refetch()}
+          />
+        ) : undefined
+      }
+    >
       {/* Deliberately not `<Outlet/>` while the account is in flight (T-265).
           Mounting the page here would fire its queries alongside /api/me, and
           a visitor without a session can take the page's 401 first — long
