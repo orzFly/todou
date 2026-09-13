@@ -8,7 +8,7 @@ import { fireEvent } from "@testing-library/react";
  */
 export function cmView(root: ParentNode, index = 0): EditorView {
   const hosts = root.querySelectorAll<HTMLElement>(
-    '[data-slot="markdown-editor"]',
+    '[data-slot="markdown-editor"], [data-slot="code-editor"]',
   );
   const host = hosts[index];
   if (host === undefined) {
@@ -23,7 +23,9 @@ export function cmView(root: ParentNode, index = 0): EditorView {
 }
 
 export function cmCount(root: ParentNode): number {
-  return root.querySelectorAll('[data-slot="markdown-editor"]').length;
+  return root.querySelectorAll(
+    '[data-slot="markdown-editor"], [data-slot="code-editor"]',
+  ).length;
 }
 
 export function cmGetValue(root: ParentNode, index = 0): string {
@@ -94,7 +96,7 @@ export function cmPressKey(
 
 export function cmPlaceholder(root: ParentNode, index = 0): string {
   const host = root.querySelectorAll<HTMLElement>(
-    '[data-slot="markdown-editor"]',
+    '[data-slot="markdown-editor"], [data-slot="code-editor"]',
   )[index];
   return host?.querySelector(".cm-placeholder")?.textContent ?? "";
 }

@@ -969,10 +969,16 @@ describe("a metadata write aimed at a card the dialog then left", () => {
     const view = renderWithProviders(<MetadataDialogRow />, client);
 
     fireEvent.click(await view.findByTestId("metadata-open"));
-    fireEvent.click(await view.findByTitle("Edit this value"));
-    fireEvent.change(await view.findByLabelText("ci/url"), {
-      target: { value: "impl" },
+    // Radix tabs activate on mousedown; Bulk is where the edit happens now.
+    fireEvent.mouseDown(view.getByRole("tab", { name: "Bulk" }));
+    // Wait for the Bulk editor's mount effect to produce its content.
+    await waitFor(() => {
+      const el = view
+        .getByTestId("metadata-editor-tab")
+        .querySelector('[data-slot="code-editor"] .cm-content');
+      if (el === null) throw new Error("editor not mounted yet");
     });
+    cmSetValue(document.body, "ci/url = impl");
     fireEvent.click(view.getByText("Save"));
     await letTheLoopRun();
     expect(writeIssueMetadata).not.toHaveBeenCalled();

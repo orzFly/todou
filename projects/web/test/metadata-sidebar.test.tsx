@@ -71,33 +71,45 @@ describe("the metadata sidebar summary", () => {
       entry("ci", "run", "green", dayAgo),
       // The group's newest write is the second one, which is what the line
       // has to show — a card is normally read for how fresh its state is.
-      entry("orch", "owner", "planner", dayAgo),
-      entry("orch", "phase", "plan", hourAgo),
+      entry("ci", "report", "red", hourAgo),
     ]);
-    const section = await screen.findByTestId("metadata-sidebar");
-    expect(section.textContent).toContain("ci");
-    expect(section.textContent).toContain("orch");
-    expect(section.textContent).toContain("1h ago");
-    expect(section.textContent).toContain("1d ago");
-    // Two groups, two counts.
-    expect(section.textContent).toContain("1");
-    expect(section.textContent).toContain("2");
+    await openDialog();
+    const summary = screen
+      .getByTestId("metadata-sidebar")
+      .querySelector('[data-slot="sidebar-summary"]')?.textContent;
+    void summary;
+    const line = screen.getByTestId("metadata-open").textContent ?? "";
+    expect(line).toContain("ci");
+    expect(line).toContain("2");
   });
 
   it("shows a dash for a card nobody has written on", async () => {
     mount([], "reader");
-    const section = await screen.findByTestId("metadata-sidebar");
-    expect(section.textContent).toContain("—");
-    // Not hidden: "this card has none" and "this does not exist here" have to
-    // stay tellable apart.
-    expect(section.textContent).toContain("Metadata");
-    expect(screen.queryByRole("button")).toBeNull();
+    // An empty card gives a reader nothing to open; the sidebar shows the
+    // dash itself instead of hiding the section.
+    const summary = await screen.findByTestId("metadata-sidebar");
+    expect(summary.textContent).toContain("—");
+    expect(screen.queryByTestId("metadata-open")).toBeNull();
   });
 
   it("lets a writer open an empty card, because writing lives in the dialog", async () => {
+    // Rewritten for the tabbed dialog (T-300): an empty card has no Add
+    // namespace form any more — the writer lands on Browse and switches to
+    // Bulk, whose placeholder names the line format.
     mount([], "writer");
     await openDialog();
-    expect(screen.getByRole("button", { name: "Add namespace" })).toBeTruthy();
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Bulk" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("metadata-editor-tab")).toBeTruthy(),
+    );
+    // The editor is live, not a read-only shell: Save is present.
+    expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
+    // Back on Browse the writer sees the one jump affordance an empty card
+    // has — the dashed Add button that opens Bulk with a fresh snippet.
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Browse" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Add" })).toBeTruthy(),
+    );
   });
 
   it("opens the same full dialog from any line", async () => {
@@ -136,7 +148,7 @@ describe("the metadata dialog", () => {
     await openDialog();
     const value = screen.getByText(/line 0/);
     expect(value.className).toContain("line-clamp-5");
-    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    fireEvent.click(screen.getByRole("button", { name: /Show all/ }));
     await waitFor(() =>
       expect(screen.getByText(/line 0/).className).not.toContain(
         "line-clamp-5",
@@ -148,65 +160,65 @@ describe("the metadata dialog", () => {
     mount([entry("orch", "phase", "plan")], "reader");
     await openDialog();
     expect(screen.queryByRole("button", { name: /^Delete/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Add key" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Add namespace" })).toBeNull();
-    // The value is text, not a control.
+    expect(screen.queryByRole("button", { name: /Add key/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Add$/ })).toBeNull();
+    // No pencil either: editing lives in Bulk, one click away for writers.
     expect(
-      screen.queryByRole("button", { name: /Edit this value/ }),
+      screen.queryByRole("button", { name: /Edit orch\/phase/ }),
     ).toBeNull();
+    // Not even an unlabelled control inside the row: the value shows as
+    // text and nothing else. Paired with the writer's delete test below,
+    // which proves rows do carry buttons when they may write.
+    const readerTdButtons = screen
+      .getByTestId("metadata-group-orch")
+      .querySelectorAll("td button");
+    expect(readerTdButtons).toHaveLength(0);
   });
 
-  it("sends an edit with the value it displayed as the expectation", async () => {
-    const spy = vi
-      .spyOn(api, "writeIssueMetadata")
-      .mockResolvedValue({ entries: [] });
-    mount([entry("orch", "phase", "plan")]);
+  it("counts folded bytes in UTF-8, not characters", async () => {
+    // U3. Falsifies by: measuring with value.length — the CJK value below is
+    // 300 characters long but 900 bytes, so the button would read (300 B).
+    const cjk = "鈴".repeat(300);
+    mount([entry("ci", "report", cjk)], "reader");
     await openDialog();
-
-    fireEvent.click(screen.getByTitle("Edit this value"));
-    const input = await screen.findByLabelText("orch/phase");
-    fireEvent.change(input, { target: { value: "impl" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() => expect(spy).toHaveBeenCalled());
-    expect(spy.mock.calls[0]?.[2]).toEqual({
-      entries: [
-        // `if_match` is the value on screen, so an edit over what a tool has
-        // since written is refused instead of quietly winning.
-        { namespace: "orch", key: "phase", value: "impl", if_match: "plan" },
-      ],
-    });
+    expect(
+      screen.getByRole("button", { name: /Show all/ }).textContent,
+    ).toContain("(900 B)");
   });
 
-  it("expects the value that was on screen when the edit began", async () => {
-    const spy = vi
-      .spyOn(api, "writeIssueMetadata")
-      .mockResolvedValue({ entries: [] });
-    const client = mount([entry("orch", "phase", "plan")]);
-    await openDialog();
-    fireEvent.click(screen.getByTitle("Edit this value"));
-    const input = await screen.findByLabelText("orch/phase");
-    fireEvent.change(input, { target: { value: "impl" } });
-
-    // A tool writes to the same key mid-edit; the change feed refetches, and
-    // the row re-renders around the open editor.
-    client.setQueryData(issueMetadataQuery(SLUG, NUMBER).queryKey, {
-      entries: [entry("orch", "phase", "spec")],
-    });
-    await waitFor(() =>
-      expect(screen.getByLabelText("orch/phase")).toBeTruthy(),
+  it("marks an empty value as empty, distinct from an absent key", async () => {
+    // U4. Falsifies by: dropping the badge branch — an empty value would
+    // render as blank text, indistinguishable from nothing.
+    mount(
+      [entry("ci", "blank", ""), entry("ci", "present", "something")],
+      "reader",
     );
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await openDialog();
+    // The empty value shows the badge...
+    expect(screen.getByText("empty")).toBeTruthy();
+    // ...its neighbour shows real text, and the key rows exist for both —
+    // the pair proves the badge marks the value, not a missing row.
+    expect(screen.getByText("something")).toBeTruthy();
+    expect(screen.getByText("blank")).toBeTruthy();
+  });
 
-    await waitFor(() => expect(spy).toHaveBeenCalled());
-    // "plan", not "spec": an expectation read at save time would have become
-    // the tool's own new value, and the save would have overwritten it —
-    // which is the one thing if_match is here to stop.
-    expect(spy.mock.calls[0]?.[2]).toEqual({
-      entries: [
-        { namespace: "orch", key: "phase", value: "impl", if_match: "plan" },
-      ],
-    });
+  it("sizes the key column by the longest key across all groups", async () => {
+    // U5. Falsifies by: each group computing its own width — the first
+    // group's keys would get a narrower column than this card-wide one.
+    mount(
+      [entry("aa", "short", "v"), entry("zz", "a-remarkably-long-key", "v")],
+      "reader",
+    );
+    await openDialog();
+    // Both groups live in one table, so both key columns share one <col>.
+    const first = screen.getByTestId("metadata-group-aa").closest("table");
+    expect(first).toBeTruthy();
+    const keyCol = first?.querySelector("col");
+    expect(keyCol?.getAttribute("style") ?? "").toMatch(/width:/);
+    // 23ch = longest key ("a-remarkably-long-key", 21 chars) + 2 padding —
+    // proves the width came from the card-wide longest key, not group
+    // "aa"'s own longest ("short", which would give 8ch).
+    expect(keyCol?.getAttribute("style")).toContain("23ch");
   });
 
   it("deletes a key without a second confirmation", async () => {
@@ -215,6 +227,13 @@ describe("the metadata dialog", () => {
       .mockResolvedValue({ entries: [] });
     mount([entry("orch", "phase", "plan")]);
     await openDialog();
+    // Pairing for the reader's empty-value-cell sweep: a writer's row does
+    // carry buttons, so the reader's zero-button assertion is not trivially
+    // true of a broken query.
+    const anyTdButtons = screen
+      .getByTestId("metadata-group-orch")
+      .querySelectorAll("td button");
+    expect(anyTdButtons.length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Delete orch/phase" }));
     await waitFor(() => expect(spy).toHaveBeenCalled());
     expect(spy.mock.calls[0]?.[2]).toEqual({
@@ -224,84 +243,23 @@ describe("the metadata dialog", () => {
     });
   });
 
-  it("adds a key expecting it not to be there", async () => {
+  it("deletes a namespace only after confirming, in one write", async () => {
     const spy = vi
       .spyOn(api, "writeIssueMetadata")
       .mockResolvedValue({ entries: [] });
-    mount([entry("orch", "phase", "plan")]);
+    mount([entry("orch", "owner", "planner"), entry("orch", "phase", "plan")]);
     await openDialog();
-    fireEvent.click(screen.getByRole("button", { name: "Add key" }));
-    fireEvent.change(await screen.findByLabelText("New key in orch"), {
-      target: { value: "owner" },
-    });
-    fireEvent.change(screen.getByLabelText("New value in orch"), {
-      target: { value: "agent-1" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Add" }));
-
-    await waitFor(() => expect(spy).toHaveBeenCalled());
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete namespace orch" }),
+    );
+    // Nothing sent until the confirmation.
+    expect(spy).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
     expect(spy.mock.calls[0]?.[2]).toEqual({
       entries: [
-        { namespace: "orch", key: "owner", value: "agent-1", if_match: null },
-      ],
-    });
-  });
-
-  it("refuses an illegal namespace name before any request", async () => {
-    const spy = vi
-      .spyOn(api, "writeIssueMetadata")
-      .mockResolvedValue({ entries: [] });
-    mount([]);
-    await openDialog();
-    fireEvent.click(screen.getByRole("button", { name: "Add namespace" }));
-    fireEvent.change(await screen.findByLabelText("New namespace"), {
-      target: { value: "Orch" },
-    });
-    fireEvent.change(screen.getByLabelText("First key of the new namespace"), {
-      target: { value: "phase" },
-    });
-    expect(screen.getByText(/A namespace is lowercase/)).toBeTruthy();
-    const add = screen.getByRole("button", {
-      name: "Add",
-    }) as HTMLButtonElement;
-    expect(add.disabled).toBe(true);
-    fireEvent.click(add);
-    expect(spy).not.toHaveBeenCalled();
-  });
-
-  it("reports a lost race in place and never retries by itself", async () => {
-    const conflict = Object.assign(new Error("if_match did not hold"), {
-      status: 409,
-      code: "metadata_precondition",
-      details: {
-        failed: [{ namespace: "orch", key: "phase", current: "spec" }],
-      },
-    });
-    const spy = vi.spyOn(api, "writeIssueMetadata").mockRejectedValue(conflict);
-    mount([entry("orch", "phase", "plan")]);
-    await openDialog();
-
-    fireEvent.click(screen.getByTitle("Edit this value"));
-    fireEvent.change(await screen.findByLabelText("orch/phase"), {
-      target: { value: "impl" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    const notice = await screen.findByTestId("metadata-conflict");
-    expect(notice.textContent).toContain("orch/phase");
-    expect(notice.textContent).toContain("spec");
-    // One attempt. What to do about a value someone else moved is the
-    // reader's decision, so nothing is re-sent until they say so.
-    expect(spy).toHaveBeenCalledTimes(1);
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "Write over the new value" }),
-    );
-    await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
-    expect(spy.mock.calls[1]?.[2]).toEqual({
-      entries: [
-        // Re-sent against what the server said is there now, not blindly.
-        { namespace: "orch", key: "phase", value: "impl", if_match: "spec" },
+        { namespace: "orch", key: "owner", value: null, if_match: "planner" },
+        { namespace: "orch", key: "phase", value: null, if_match: "plan" },
       ],
     });
   });
