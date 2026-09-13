@@ -43,9 +43,18 @@ export function parseJsonDoc(text: string): JsonParse {
   }
   const errors: ParseError[] = [];
   const entries = new Map<string, string>();
+  // `JSON.parse` hands back no positions, so each report locates itself by
+  // the offending key's first occurrence in the raw text. An occurrence can
+  // also sit inside a string value, but a wrong line beats a constant line
+  // 1 pointing at the document head on every multi-namespace card.
+  const lineOf = (needle: string): number =>
+    text.slice(0, Math.max(0, text.indexOf(needle))).split("\n").length;
   for (const [ns, members] of Object.entries(doc as Record<string, unknown>)) {
     if (!MetadataNamespace.safeParse(ns).success) {
-      errors.push({ line: 1, message: `\`${ns}\` is not a valid namespace` });
+      errors.push({
+        line: lineOf(`"${ns}"`),
+        message: `\`${ns}\` is not a valid namespace`,
+      });
       continue;
     }
     if (
@@ -54,7 +63,7 @@ export function parseJsonDoc(text: string): JsonParse {
       Array.isArray(members)
     ) {
       errors.push({
-        line: 1,
+        line: lineOf(`"${ns}"`),
         message: `\`${ns}\` must hold an object of keys, not ${jsonKindOf(members)}`,
       });
       continue;
@@ -64,14 +73,14 @@ export function parseJsonDoc(text: string): JsonParse {
     )) {
       if (!MetadataKey.safeParse(key).success) {
         errors.push({
-          line: 1,
+          line: lineOf(`"${key}"`),
           message: `\`${key}\` is not a valid key in \`${ns}\``,
         });
         continue;
       }
       if (typeof value !== "string") {
         errors.push({
-          line: 1,
+          line: lineOf(`"${key}"`),
           message: `\`${ns}/${key}\` must be a string, not ${jsonKindOf(value)}`,
         });
         continue;

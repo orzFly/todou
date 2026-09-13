@@ -205,6 +205,37 @@ describe("the metadata editor tabs", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
   });
 
+  it("refuses a save above the 64-entry write cap without any request", async () => {
+    // D9. Falsifies by: truncating or dropping the cap check — the save
+    // would then go out (possibly 400ing at the server, or silently
+    // dropping entries) instead of refusing in place. The spy pair proves
+    // refusal was the panel's own decision, not a network failure.
+    const spy = vi
+      .spyOn(api, "writeIssueMetadata")
+      .mockResolvedValue({ entries: [] });
+    // 40 existing keys stay untouched; the text adds 30 more, so the diff
+    // is 30 > 64? No — make it 65: 64 untouched keys deleted + 1 addition
+    // would still exceed. Simplest: keep 30 untouched keys and add 35 new
+    // ones, giving a 35-entry diff... that is under the cap. Build a diff
+    // over the cap directly: 60 kept, 5 deleted, 10 added = 15 < 64. So:
+    // 70 snapshot keys, text deletes all 70 and adds 0 → 70 > 64.
+    const keys = Array.from({ length: 70 }, (_, i) =>
+      entry("ci", `k${i}`, `v${i}`),
+    );
+    mount(keys);
+    await openDialog();
+    await openTab("Bulk");
+    // Empty the document: every one of the 70 keys is deleted.
+    cmSetValue(await editorReady(), "");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("metadata-editor-tab").textContent).toContain(
+        "70 entries",
+      ),
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it("drops the draft when switching tabs and back", async () => {
     // S7. Falsifies by: force-mounting both panels so the draft survives.
     mount([entry("orch", "phase", "plan")]);
@@ -289,15 +320,120 @@ describe("the metadata dialog shell", () => {
     );
   });
 
+  it("words an already-deleted 409, and the retry sends if_match null", async () => {
+    // X3's second branch: the key was deleted by someone else while we were
+    // deleting it. The server treats `{value: null, if_match: null}` as
+    // "expect absent, delete" and answers unchanged — so the retry must
+    // send exactly that, and the notice must clear afterwards.
+    const conflict = Object.assign(new Error("if_match did not hold"), {
+      status: 409,
+      code: "metadata_precondition",
+      details: {
+        failed: [{ namespace: "orch", key: "phase", current: null }],
+      },
+    });
+    const spy = vi
+      .spyOn(api, "writeIssueMetadata")
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({ entries: [] });
+    mount([entry("orch", "phase", "plan")]);
+    await openDialog();
+    fireEvent.click(screen.getByRole("button", { name: "Delete orch/phase" }));
+    const notice = await screen.findByTestId("metadata-conflict");
+    expect(notice.textContent).toContain("already deleted");
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Write over the new value" }),
+    );
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+    expect(spy.mock.calls[1]?.[2]).toEqual({
+      entries: [
+        // Still a deletion; the expectation dropped to null because there
+        // is nothing there to match.
+        { namespace: "orch", key: "phase", value: null, if_match: null },
+      ],
+    });
+    await waitFor(() =>
+      expect(screen.queryByTestId("metadata-conflict")).toBeNull(),
+    );
+  });
+
+  it("retries a Bulk-saved 409 against the server's current", async () => {
+    // Defect-2 regression: the conflict notice used to render from the
+    // panel's mutation while the retry button drove the dialog's own state,
+    // which had never seen the refused write — clicking the button did
+    // nothing. Falsifies by: any regression that decouples the notice from
+    // the retry's payload again.
+    const conflict = Object.assign(new Error("if_match did not hold"), {
+      status: 409,
+      code: "metadata_precondition",
+      details: {
+        failed: [{ namespace: "orch", key: "phase", current: "spec" }],
+      },
+    });
+    const spy = vi
+      .spyOn(api, "writeIssueMetadata")
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({ entries: [] });
+    mount([entry("orch", "phase", "plan")]);
+    await openDialog();
+    await openTab("Bulk");
+    cmSetValue(await editorReady(), "orch/phase = impl");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByTestId("metadata-conflict");
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Write over the new value" }),
+    );
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+    expect(spy.mock.calls[1]?.[2]).toEqual({
+      entries: [
+        { namespace: "orch", key: "phase", value: "impl", if_match: "spec" },
+      ],
+    });
+  });
+
+  it("shows a non-409 save error on the panel that made it", async () => {
+    // Defect-3 regression. Falsifies by: swallowing non-409 errors again —
+    // a network failure or 500 would leave the reader staring at a silent
+    // editor.
+    const spy = vi
+      .spyOn(api, "writeIssueMetadata")
+      .mockRejectedValue(new Error("the server is on fire"));
+    mount([entry("orch", "phase", "plan")]);
+    await openDialog();
+    await openTab("JSON");
+    cmSetValue(await editorReady(), '{\n  "orch": {"phase": "impl"}\n}');
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("metadata-editor-tab").textContent).toContain(
+        "the server is on fire",
+      ),
+    );
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
   it("hides every write affordance from a reader, shows all to a writer", async () => {
     // X4 — the paired absence assertions. Falsifies by: rendering the group
-    // header entries for readers too. The queryBy half is only meaningful
-    // because the writer half proves the selectors work.
+    // header entries for readers too. The reader's three queryBy assertions
+    // below are the actual drill surface; the writer half proves the
+    // selectors can match, so a broken query cannot fake the absences.
     const { unmount: unmountReader } = mount(
       [entry("orch", "phase", "plan")],
       "reader",
     );
     await openDialog();
+    expect(
+      screen.queryByRole("button", { name: "Add key in orch" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Delete namespace orch" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Edit orch/phase in Bulk" }),
+    ).toBeNull();
     unmountReader();
     mount([entry("orch", "phase", "plan")], "writer");
     await openDialog();

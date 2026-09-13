@@ -32,12 +32,14 @@ describe("parseJsonDoc", () => {
     });
   });
 
-  it("reports a non-string member", () => {
-    // J3. Falsifies by: skipping member type checks.
-    const result = parseJsonDoc('{"ci": {"n": 1}}');
+  it("reports a non-string member at its own line", () => {
+    // J3. Falsifies by: skipping member type checks, or hard-coding line 1 —
+    // the member sits on line 3 of this formatted document, and the line
+    // assertion is what fails when the position drifts back to the head.
+    const result = parseJsonDoc('{\n  "ci": {\n    "n": 1\n  }\n}');
     expect(result).toMatchObject({
       ok: false,
-      errors: [{ message: expect.stringContaining("ci/n") }],
+      errors: [{ line: 3, message: expect.stringContaining("ci/n") }],
     });
   });
 
@@ -47,9 +49,15 @@ describe("parseJsonDoc", () => {
       ok: false,
       errors: [{ message: expect.stringContaining("object") }],
     });
-    expect(parseJsonDoc('{"ci": "text"}')).toMatchObject({
+    // Each namespace offence is located at its own line, not the head —
+    // both namespaces here hold non-objects, on lines 2 and 3.
+    const result = parseJsonDoc('{\n  "alpha": 1,\n  "ci": "text"\n}');
+    expect(result).toMatchObject({
       ok: false,
-      errors: [{ message: expect.stringContaining("ci") }],
+      errors: [
+        { line: 2, message: expect.stringContaining("alpha") },
+        { line: 3, message: expect.stringContaining("ci") },
+      ],
     });
   });
 

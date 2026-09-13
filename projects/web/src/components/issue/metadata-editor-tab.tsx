@@ -24,6 +24,12 @@ import {
 } from "@/lib/metadata-diff.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
 
+/** What a 409 hands up to the shell: the refused write and the server's report. */
+export type WriteConflict = {
+  refused: IssueMetadataWriteEntry[];
+  conflicts: MetadataConflict[];
+};
+
 /**
  * One editable tab of the metadata dialog (Bulk or JSON). The panel is
  * generic — the tab supplies how to turn entries into text (`serialize`)
@@ -35,6 +41,11 @@ import { useDirtySource } from "@/lib/unsaved-guard.ts";
  * panel mounts. A background refetch does not rewrite the editor once the
  * reader has typed anything — and the expectations a save sends are read
  * from the snapshot, not from whatever the server says now (S2).
+ *
+ * Errors split in two: a 409 goes to `onConflict` so the shell can pair the
+ * refused entries with the server's report and offer the retry; everything
+ * else (network, 500) renders right here, next to the Save the reader
+ * pressed.
  */
 export function MetadataEditorTab({
   slug,
@@ -46,9 +57,9 @@ export function MetadataEditorTab({
   parse,
   helpText,
   placeholder,
-  onParsed,
+  onView,
   onSaved,
-  onWriteError,
+  onConflict,
   entries,
 }: {
   slug: string;
@@ -64,19 +75,17 @@ export function MetadataEditorTab({
     | { ok: false; errors: ParseError[] };
   helpText: string;
   placeholder?: string;
-  /** The mounted editor, once it exists; null after unmount. */
-  onParsed?: (view: EditorView | null) => void;
+  /** The mounted EditorView, once it exists; null after unmount. */
+  onView?: (view: EditorView | null) => void;
   onSaved?: () => void;
   /** A 409 arrived: the shell renders the conflict notice from it. */
-  onWriteError?: (error: {
-    refused: IssueMetadataWriteEntry[];
-    conflicts: MetadataConflict[];
-  }) => void;
+  onConflict?: (payload: WriteConflict) => void;
   entries: IssueMetadataEntry[];
 }) {
   const [text, setText] = useState(() => serialize(entries));
   const dirty = useRef(false);
   const [errors, setErrors] = useState<ParseError[]>([]);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const write = useWriteIssueMetadata();
   const handleRef = useRef<CodeEditorHandle | null>(null);
 
@@ -114,6 +123,7 @@ export function MetadataEditorTab({
       return;
     }
     setErrors([]);
+    setSaveError(null);
     write.mutate(
       { slug, issueNumber, entries: diff } satisfies MetadataWriteVars,
       {
@@ -122,12 +132,15 @@ export function MetadataEditorTab({
           onSaved?.();
         },
         onError: (error) => {
-          const failed = conflictsOf(error);
-          if (failed !== null && onWriteError !== undefined) {
-            onWriteError({
-              refused: diff,
-              conflicts: failed,
-            });
+          // Everything the reader needs to know about a failed write shows
+          // here, next to Save. A 409 additionally goes up to the shell,
+          // which pairs it with the refused entries into a conflict notice
+          // and owns the retry.
+          setSaveError((error as Error).message);
+          if (onConflict === undefined) return;
+          const conflicts = conflictsOf(error);
+          if (conflicts !== null) {
+            onConflict({ refused: diff, conflicts });
           }
         },
       },
@@ -146,18 +159,21 @@ export function MetadataEditorTab({
           ))}
         </div>
       )}
+      {saveError !== null && write.isError && (
+        <p className="text-sm text-destructive">{saveError}</p>
+      )}
       <CodeEditor
         ref={handleRef}
         initialValue={serialize(entries)}
         placeholder={placeholder}
         readOnly={readOnly}
-        onView={onParsed}
+        onView={onView}
         onChange={(value) => {
           dirty.current = true;
           setText(value);
         }}
         language={language}
-        extensions={[]}
+        extensions={EMPTY_EXTENSIONS}
         className="min-h-40 max-h-[50vh]"
       />
       <div className="flex items-center justify-between gap-2">
@@ -171,3 +187,6 @@ export function MetadataEditorTab({
     </div>
   );
 }
+
+/** Stable identity, so CodeEditor's extensions effect does not churn per render. */
+const EMPTY_EXTENSIONS: Extension[] = [];

@@ -97,6 +97,8 @@ export type ConflictLine = {
   namespace: string;
   key: string;
   text: string;
+  /** What the server said is stored now — the retry's new `if_match`. */
+  current: string | null;
   /** Set when the refetched value equals `current`, naming the writer. */
   by: string | null;
 };
@@ -131,7 +133,7 @@ export function conflictLines(
       text =
         current === null
           ? "→ deleted by someone else"
-          : `→ now ${JSON.stringify(current)}`;
+          : `→ ${JSON.stringify(current)}`;
     }
     // The 409 names the value but not the writer; the refetch that follows
     // is on its way regardless, and only if it agrees with `current` is the
@@ -144,6 +146,7 @@ export function conflictLines(
       namespace: entry.namespace,
       key: entry.key,
       text,
+      current,
       by:
         writer !== undefined && writer.value === current
           ? writer.updated_by.display_name

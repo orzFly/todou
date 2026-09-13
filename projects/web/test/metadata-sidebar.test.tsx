@@ -175,6 +175,52 @@ describe("the metadata dialog", () => {
     expect(readerTdButtons).toHaveLength(0);
   });
 
+  it("counts folded bytes in UTF-8, not characters", async () => {
+    // U3. Falsifies by: measuring with value.length — the CJK value below is
+    // 300 characters long but 900 bytes, so the button would read (300 B).
+    const cjk = "鈴".repeat(300);
+    mount([entry("ci", "report", cjk)], "reader");
+    await openDialog();
+    expect(
+      screen.getByRole("button", { name: /Show all/ }).textContent,
+    ).toContain("(900 B)");
+  });
+
+  it("marks an empty value as empty, distinct from an absent key", async () => {
+    // U4. Falsifies by: dropping the badge branch — an empty value would
+    // render as blank text, indistinguishable from nothing.
+    mount(
+      [entry("ci", "blank", ""), entry("ci", "present", "something")],
+      "reader",
+    );
+    await openDialog();
+    // The empty value shows the badge...
+    expect(screen.getByText("empty")).toBeTruthy();
+    // ...its neighbour shows real text, and the key rows exist for both —
+    // the pair proves the badge marks the value, not a missing row.
+    expect(screen.getByText("something")).toBeTruthy();
+    expect(screen.getByText("blank")).toBeTruthy();
+  });
+
+  it("sizes the key column by the longest key across all groups", async () => {
+    // U5. Falsifies by: each group computing its own width — the first
+    // group's keys would get a narrower column than this card-wide one.
+    mount(
+      [entry("aa", "short", "v"), entry("zz", "a-remarkably-long-key", "v")],
+      "reader",
+    );
+    await openDialog();
+    // Both groups live in one table, so both key columns share one <col>.
+    const first = screen.getByTestId("metadata-group-aa").closest("table");
+    expect(first).toBeTruthy();
+    const keyCol = first?.querySelector("col");
+    expect(keyCol?.getAttribute("style") ?? "").toMatch(/width:/);
+    // 23ch = longest key ("a-remarkably-long-key", 21 chars) + 2 padding —
+    // proves the width came from the card-wide longest key, not group
+    // "aa"'s own longest ("short", which would give 8ch).
+    expect(keyCol?.getAttribute("style")).toContain("23ch");
+  });
+
   it("deletes a key without a second confirmation", async () => {
     const spy = vi
       .spyOn(api, "writeIssueMetadata")

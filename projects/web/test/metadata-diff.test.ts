@@ -167,7 +167,7 @@ describe("conflictLines", () => {
     ];
     const lines = conflictLines(refusedEntries, conflicts, []);
     expect(lines.map((l) => `${l.namespace}/${l.key} ${l.text}`)).toEqual([
-      'ci/edit → now "v9"',
+      'ci/edit → "v9"',
       "ci/gone → deleted by someone else",
       "ci/add → now exists",
       'ci/del → changed to "todou-2"',

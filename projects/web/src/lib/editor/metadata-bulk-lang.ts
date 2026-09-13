@@ -129,6 +129,7 @@ export function insertKeyInGroup(view: EditorView, namespace: string): void {
   const at = endOfGroup(view, namespace);
   const sep = at < view.state.doc.length ? "\n" : "";
   insertSnippetAt(view, `${sep}${namespace}/${KEY_FIELD} = ${VALUE_FIELD}`, at);
+  view.focus();
 }
 
 /**
@@ -140,6 +141,7 @@ export function appendNewEntry(view: EditorView): void {
   const at = doc.length;
   const sep = at === 0 ? "" : "\n\n";
   insertSnippetAt(view, `${sep}${ENTRY_FIELDS}`, at);
+  view.focus();
 }
 
 /**
@@ -163,6 +165,7 @@ export function selectValueOf(
         selection: { anchor: from, head: lineInfo.to },
         scrollIntoView: true,
       });
+      view.focus();
       return;
     }
   }

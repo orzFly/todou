@@ -14,6 +14,7 @@ import {
 } from "@/api/metadata.ts";
 import { useCan } from "@/api/queries.ts";
 import { MetadataBrowse } from "@/components/issue/metadata-browse.tsx";
+import type { WriteConflict } from "@/components/issue/metadata-editor-tab.tsx";
 import { MetadataEditorTab } from "@/components/issue/metadata-editor-tab.tsx";
 import { Button } from "@/components/ui/button";
 import {
@@ -108,8 +109,14 @@ export function MetadataDialog({
   /** Re-send what was refused, expecting what the server says is there now. */
   const retryAgainstCurrent = () => {
     if (refused === null) return;
+    // The 409's report of "what is there now" travels on the notice lines,
+    // whatever panel the refused write came from — the dialog's own
+    // mutation only knows about Browse-path writes.
     const now = new Map(
-      conflicts.map((c) => [`${c.namespace}/${c.key}`, c.current]),
+      conflictNotice.map((line) => [
+        `${line.namespace}/${line.key}`,
+        line.current,
+      ]),
     );
     submit(
       refused.map((entry) => {
@@ -148,24 +155,47 @@ export function MetadataDialog({
     ]);
   };
 
-  /** Switch to Bulk and place the cursor per `jump`, once the panel mounts. */
   const jumpToBulk = (jump: (view: EditorView) => void) => {
     write.reset();
     setConflictNotice([]);
     setTab("bulk");
     pendingJump.current = jump;
+    // A view may already be live (the tab was open before this click);
+    // the deferred flush below runs the jump against whatever view
+    // survives this render.
+    schedulePendingJumpFlush();
   };
 
-  const onBulkTabMount = (view: EditorView | null) => {
+  /**
+   * Run the pending jump against the view that is mounted *after* React
+   * has finished mounting and discarding views (StrictMode double-mount,
+   * Suspense fallbacks, fast refresh). Two invariants make this safe:
+   *
+   * - `bulkView.current` is always the newest view — `onView(null)` on a
+   *   destroyed instance clears it, and every mount overwrites it.
+   * - an animation frame fires only after React's synchronous effect
+   *   phase, so by flush time the surviving view owns `bulkView.current`.
+   *
+   * The jump runs against `bulkView.current`, never against the instance
+   * a particular mount happened to hold, so a discarded view cannot take
+   * the jump with it.
+   */
+  const flushPendingJump = () => {
+    const view = bulkView.current;
+    const jump = pendingJump.current;
+    if (view === null || jump === null) return;
+    pendingJump.current = null;
+    jump(view);
+  };
+
+  const schedulePendingJumpFlush = () => {
+    requestAnimationFrame(flushPendingJump);
+  };
+
+  const onBulkView = (view: EditorView | null) => {
     bulkView.current = view;
     if (view !== null && pendingJump.current !== null) {
-      const jump = pendingJump.current;
-      pendingJump.current = null;
-      // The EditorView only exists once its panel has mounted, so the view
-      // instance itself is the signal the panel is ready — driving the jump
-      // here rather than a frame later keeps it working where animation
-      // frames are throttled (background tabs, hidden windows).
-      jump(view);
+      schedulePendingJumpFlush();
     }
   };
 
@@ -271,9 +301,15 @@ export function MetadataDialog({
                 issueNumber={issueNumber}
                 canWrite={canWrite}
                 entries={entries}
-                onJumpRef={onBulkTabMount}
+                onJumpRef={onBulkView}
                 onConflicts={(lines) => {
                   setConflictNotice(lines);
+                }}
+                onConflict={(payload) => {
+                  setRefused(payload.refused);
+                  setConflictNotice(
+                    conflictLines(payload.refused, payload.conflicts, entries),
+                  );
                 }}
                 onSaved={() => {
                   setRefused(null);
@@ -288,6 +324,15 @@ export function MetadataDialog({
                 issueNumber={issueNumber}
                 canWrite={canWrite}
                 entries={entries}
+                onConflicts={(lines) => {
+                  setConflictNotice(lines);
+                }}
+                onConflict={(payload) => {
+                  setRefused(payload.refused);
+                  setConflictNotice(
+                    conflictLines(payload.refused, payload.conflicts, entries),
+                  );
+                }}
                 onSaved={() => {
                   setRefused(null);
                   setConflictNotice([]);
@@ -320,6 +365,7 @@ function BulkPanel({
   entries,
   onJumpRef,
   onConflicts,
+  onConflict,
   onSaved,
 }: {
   slug: string;
@@ -328,6 +374,7 @@ function BulkPanel({
   entries: IssueMetadataEntry[];
   onJumpRef: (view: EditorView | null) => void;
   onConflicts: (lines: ConflictLine[]) => void;
+  onConflict: (payload: WriteConflict) => void;
   onSaved: () => void;
 }) {
   return (
@@ -343,10 +390,10 @@ function BulkPanel({
       placeholder="namespace/key = value"
       entries={entries}
       onSaved={onSaved}
-      onParsed={onJumpRef}
-      onWriteError={(error) => {
-        const refusedEntries = error.refused ?? [];
-        onConflicts(conflictLines(refusedEntries, error.conflicts, entries));
+      onView={onJumpRef}
+      onConflict={(payload) => {
+        onConflicts(conflictLines(payload.refused, payload.conflicts, entries));
+        onConflict(payload);
       }}
     />
   );
@@ -357,12 +404,16 @@ function JsonPanel({
   issueNumber,
   canWrite,
   entries,
+  onConflicts,
+  onConflict,
   onSaved,
 }: {
   slug: string;
   issueNumber: number;
   canWrite: boolean;
   entries: IssueMetadataEntry[];
+  onConflicts: (lines: ConflictLine[]) => void;
+  onConflict: (payload: WriteConflict) => void;
   onSaved: () => void;
 }) {
   return (
@@ -378,6 +429,10 @@ function JsonPanel({
       placeholder={'{"namespace": {"key": "value"}}'}
       entries={entries}
       onSaved={onSaved}
+      onConflict={(payload) => {
+        onConflicts(conflictLines(payload.refused, payload.conflicts, entries));
+        onConflict(payload);
+      }}
     />
   );
 }
