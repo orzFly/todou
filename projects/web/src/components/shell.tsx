@@ -218,8 +218,15 @@ export function AppShell({
             <NewIssueButton slug={slug} />
           </div>
         )}
+        {/* The connection banner lives INSIDE the header, not after it: the
+            header is sticky, so a bar after it either scrolls away behind the
+            backdrop-blur or — pinned sticky — lands on the same strip the
+            page's own toolbars pin to and gets covered by them. In here it
+            rides the sticky chrome; the header grows, and every pinned
+            toolbar shifts down with it because they all measure this same
+            element through useHeaderHeight(). */}
+        {notice}
       </header>
-      {notice}
       {/* The app's only Suspense boundary, and it has to live here rather
           than anywhere above: the router builds just one, around the root
           `<Outlet/>` (`Match.js:144`), which sits above this whole shell — so

@@ -61,7 +61,7 @@ interface DraftPage {
  * `ProjectLayout` read is seeded fresh, so the only failure under test is the
  * one the test injects.
  */
-function mountDraftPage(): DraftPage {
+async function mountDraftPage(): Promise<DraftPage> {
   const client = testQueryClient();
   client.setQueryData(meQuery.queryKey, me);
   client.setQueryData(projectsQuery.queryKey, [project]);
@@ -71,7 +71,7 @@ function mountDraftPage(): DraftPage {
   client.setQueryData(membersQuery("p").queryKey, []);
   // Before the render: RouterProvider reads the history's current entry on
   // mount, so this is what decides which route the tree mounts.
-  startAtDraftPage();
+  await startAtDraftPage();
   const mounted = render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
@@ -138,7 +138,7 @@ afterAll(teardownAppRouter);
 
 describe("/api/me failing while a draft is on screen", () => {
   it("keeps the draft and the guard through a warm-state refetch failure", async () => {
-    const view = mountDraftPage();
+    const view = await mountDraftPage();
     await typeDraftTitle("half a thought");
 
     failingSpy("me", 502);
@@ -157,7 +157,7 @@ describe("/api/me failing while a draft is on screen", () => {
   });
 
   it("keeps the draft when ProjectLayout's query refetch-fails", async () => {
-    const view = mountDraftPage();
+    const view = await mountDraftPage();
     await typeDraftTitle("half a thought");
 
     failingSpy("getProject", 502);
@@ -170,7 +170,7 @@ describe("/api/me failing while a draft is on screen", () => {
   });
 
   it("keeps the page and opens the session dialog on 401 with a draft", async () => {
-    const view = mountDraftPage();
+    const view = await mountDraftPage();
     await typeDraftTitle("half a thought");
 
     failingSpy("me", 401);
@@ -184,7 +184,7 @@ describe("/api/me failing while a draft is on screen", () => {
   });
 
   it("does not re-open the dialog on a second 401 after staying", async () => {
-    const view = mountDraftPage();
+    const view = await mountDraftPage();
     await typeDraftTitle("half a thought");
 
     failingSpy("me", 401);
@@ -206,7 +206,7 @@ describe("/api/me failing while a draft is on screen", () => {
   });
 
   it("after staying, a recovered session re-arms the dialog for a later loss", async () => {
-    const view = mountDraftPage();
+    const view = await mountDraftPage();
     await typeDraftTitle("half a thought");
 
     failingSpy("me", 401);
@@ -237,7 +237,7 @@ describe("/api/me failing while a draft is on screen", () => {
   });
 
   it("dissolves the dialog on its own when the session returns untouched", async () => {
-    const view = mountDraftPage();
+    const view = await mountDraftPage();
     await typeDraftTitle("half a thought");
 
     failingSpy("me", 401);
@@ -272,7 +272,7 @@ describe("/api/me failing while a draft is on screen", () => {
     vi.spyOn(api, "me").mockRejectedValue(
       Object.assign(new Error("HTTP 502"), { status: 502 }),
     );
-    startAtDraftPage();
+    await startAtDraftPage();
     const mounted = render(
       <QueryClientProvider client={client}>
         <RouterProvider router={router} />
@@ -289,7 +289,7 @@ describe("/api/me failing while a draft is on screen", () => {
   });
 
   it("still redirects to /login on 401 with nothing unsaved", async () => {
-    const view = mountDraftPage();
+    const view = await mountDraftPage();
     // The title is never touched: no dirty source registers.
 
     failingSpy("me", 401);

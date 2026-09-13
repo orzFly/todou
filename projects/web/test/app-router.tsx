@@ -30,9 +30,25 @@ const originalTitle = document.title;
  * The URL every test starts from: the card's own draft surface, where a
  * subtree swap would destroy real unsaved work. `/` only redirects to
  * `/projects`, whose list page holds no draft at all.
+ *
+ * The navigate promise is deliberately not awaited. The previous test's tree
+ * held the history blocker while it was dirty, and after a tree-crashing test
+ * the singleton router only unwedges through a real navigation — an awaited
+ * navigate can then hang past any timeout. Fire it, let the router settle in
+ * the background, and assert on the page itself arriving: what the test
+ * cares about is the rendered tree, not the promise.
  */
 export function startAtDraftPage() {
-  router.history.replace("/projects/p/issues/new");
+  void router
+    .navigate({
+      to: "/projects/$slug/issues/new",
+      params: { slug: "p" },
+      replace: true,
+      ignoreBlocker: true,
+    })
+    .catch(() => undefined);
+  // One tick so the navigate's history write lands before the next render.
+  return new Promise((resolve) => setTimeout(resolve, 50));
 }
 
 export function renderOnTheAppRouter(client: QueryClient) {
