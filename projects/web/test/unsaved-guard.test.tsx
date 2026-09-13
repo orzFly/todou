@@ -17,7 +17,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import type { Issue, Me, QuestionsComponent } from "@todou/shared";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
   api,
   labelsQuery,
@@ -42,7 +42,11 @@ import {
 } from "../src/lib/unsaved-guard.ts";
 import { Sidebar, TitleBlock } from "../src/pages/issue-detail.tsx";
 import { NewIssuePage } from "../src/pages/new-issue.tsx";
-import { router } from "../src/router.tsx";
+import {
+  renderOnTheAppRouter as renderOnTheAppRouterShared,
+  restoreAppRouterPage,
+  teardownAppRouter,
+} from "./app-router.tsx";
 import { cmSetValue } from "./cm.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
@@ -184,7 +188,9 @@ const link = () => screen.findByText("open the card");
 /**
  * The app's own router, for the one thing a shim cannot reach: it is built on
  * the browser history, and only that implementation installs a `beforeunload`
- * listener (`@tanstack/history`, `onBeforeUnload`).
+ * listener (`@tanstack/history`, `onBeforeUnload`). The fixture lives in
+ * `test/app-router.tsx`, shared with the T-330 suite, which needs the same
+ * listener for the same reason.
  *
  * Both queries are seeded because the listener only answers while the shell is
  * on screen, and the shell is what `AuthedLayout` stops drawing the moment
@@ -193,35 +199,24 @@ const link = () => screen.findByText("open the card");
  * it appeared (T-323). `/` redirects to `/projects`, whose page suspends on
  * `projectsQuery`, and an unseeded throw there reaches the root boundary,
  * which costs the shell the same way.
- *
- * What the restore puts back is the URL, the title the shell stamps, and the
- * `pushState` / `replaceState` pair the browser history patched onto
- * `window.history` when the module that holds the app router was imported.
  */
-function renderOnTheAppRouter() {
-  const { pathname, search, hash } = window.location;
-  const title = document.title;
-  const { pushState, replaceState } = window.history;
+function renderOnTheAppRouterClean() {
   const client = testQueryClient();
   client.setQueryData(meQuery.queryKey, me);
   client.setQueryData(projectsQuery.queryKey, []);
+  const mounted = renderOnTheAppRouterShared(client);
   return {
-    ...render(
-      <QueryClientProvider client={client}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>,
-    ),
-    restore: () => {
-      document.title = title;
-      router.history.destroy();
-      // The URL is a `replace`, never a `push`: the history keeps no entry to
-      // step back onto.
-      router.history.replace(`${pathname}${search}${hash}`);
-      window.history.pushState = pushState;
-      window.history.replaceState = replaceState;
+    ...mounted,
+    // Restores the page after testing-library's own unmount has taken the
+    // guard down, so nothing refuses the URL `replace` the restore needs.
+    unmount: () => {
+      mounted.unmount();
+      restoreAppRouterPage();
     },
   };
 }
+
+afterAll(teardownAppRouter);
 
 /**
  * A promise the test releases by hand: what the guard is asked about is a
@@ -522,6 +517,12 @@ const questionComponent: QuestionsComponent = {
 const optionButton = (label: string) =>
   screen.getByText(label).closest("button") as HTMLButtonElement;
 
+afterEach(() => {
+  // Testing-library's own cleanup has run by now (globals-registered first),
+  // so no guard is mounted to refuse the URL `replace`.
+  restoreAppRouterPage();
+});
+
 describe("leaving a page with unsaved work", () => {
   it("follows a link straight through when nothing is unsaved", async () => {
     renderGuardTree();
@@ -630,7 +631,7 @@ describe("leaving a page with unsaved work", () => {
    * has been watched to fire.
    */
   it("arms the browser's prompt while dirty, and not while clean", async () => {
-    const mounted = renderOnTheAppRouter();
+    const mounted = renderOnTheAppRouterClean();
     // The guard rides inside the shell, so the header standing there is the
     // block being registered.
     await waitFor(() =>
@@ -651,6 +652,6 @@ describe("leaving a page with unsaved work", () => {
     });
     expect(clean.defaultPrevented).toBe(false);
 
-    mounted.restore();
+    mounted.unmount();
   });
 });

@@ -11,6 +11,7 @@ import { useEffect } from "react";
 import { projectQuery } from "@/api/queries.ts";
 import { useRecordProjectVisit } from "@/api/useProjectOrder.ts";
 import { Button } from "@/components/ui/button";
+import { statusOf } from "@/lib/http-status.ts";
 
 // No project-name heading here: the shell's breadcrumb already carries it
 // (T-88; the description stays on the projects overview). Live updates ride
@@ -35,8 +36,16 @@ export function ProjectLayout() {
   });
   const project = useQuery({
     ...projectQuery(slug),
-    throwOnError: (error) =>
-      (error as { status?: number }).status !== 404 || !childOwnsMiss,
+    throwOnError: (error, query) => {
+      // A warm-state failure (data still cached) is no reason to throw: the
+      // page can keep rendering the last good answer while refetches fail,
+      // and throwing here would replace the whole shell — the guard and
+      // every draft under this layout with it — via ProjectRouteError's
+      // non-404 rethrow. The check below is the cold-start question only:
+      // has this query ever answered?
+      if (query.state.data !== undefined) return false;
+      return statusOf(error) !== 404 || !childOwnsMiss;
+    },
   });
   const canonical = project.data?.slug;
 
@@ -66,7 +75,7 @@ export function ProjectLayout() {
  * explain, so it goes back up to the router's own error boundary.
  */
 export function ProjectRouteError({ error }: { error: Error }) {
-  if ((error as { status?: number }).status !== 404) throw error;
+  if (statusOf(error) !== 404) throw error;
   return (
     <div className="rounded-lg border border-dashed p-10 text-center">
       <p className="text-muted-foreground">

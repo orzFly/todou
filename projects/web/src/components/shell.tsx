@@ -34,6 +34,8 @@ import { MD_UP, SM_UP, useMediaQuery } from "@/lib/use-media-query.ts";
 export function AppShell({
   me,
   children,
+  notice,
+  accountUnavailable = false,
 }: {
   /**
    * Absent until `/api/me` answers. The header is rendered anyway (T-265):
@@ -42,6 +44,20 @@ export function AppShell({
    */
   me?: Me;
   children: ReactNode;
+  /**
+   * Rendered between the header and `<main>` by the owner of the failure
+   * that produced it (`AuthedLayout`); passing `undefined` draws nothing.
+   * The shell itself never reads a query to decide this, so mounting it
+   * standalone stays seed-free.
+   */
+  notice?: ReactNode;
+  /**
+   * The account is known to be unreachable (`/api/me` failed cold and is not
+   * going to answer), so the slot holds a static "unavailable" notice instead
+   * of the loading skeleton, which would otherwise spin forever. Same height
+   * as the skeleton, so the header row does not reshuffle.
+   */
+  accountUnavailable?: boolean;
 }) {
   // One user-level stream for every page and every readable project (T-122),
   // and since T-276 one for every tab of the account: the lock and the
@@ -140,13 +156,23 @@ export function AppShell({
             <InboxButton />
             <ThemeMenu />
             {me === undefined ? (
-              /* The account button's own footprint (`size="sm"` is h-7 px-2.5),
-                 so the row does not reshuffle when /api/me lands. No menu
-                 hangs off it: there is no account to act on yet. */
-              <div className="flex h-7 items-center gap-1 px-2.5">
-                <Skeleton className="size-5 rounded-full" />
-                <Skeleton className="h-4 w-16" />
-              </div>
+              accountUnavailable ? (
+                /* No result is coming: say so, in the skeleton's own
+                   footprint, rather than spin. The text is the assertion
+                   contract — a bare div would be indistinguishable from
+                   "nothing was rendered at all". */
+                <span className="text-muted-foreground flex h-7 items-center px-2.5 text-sm">
+                  Account unavailable
+                </span>
+              ) : (
+                /* The account button's own footprint (`size="sm"` is h-7
+                   px-2.5), so the row does not reshuffle when /api/me lands.
+                   No menu hangs off it: there is no account to act on yet. */
+                <div className="flex h-7 items-center gap-1 px-2.5">
+                  <Skeleton className="size-5 rounded-full" />
+                  <Skeleton className="h-4 w-16" />
+                </div>
+              )
             ) : (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -192,6 +218,14 @@ export function AppShell({
             <NewIssueButton slug={slug} />
           </div>
         )}
+        {/* The connection banner lives INSIDE the header, not after it: the
+            header is sticky, so a bar after it either scrolls away behind the
+            backdrop-blur or — pinned sticky — lands on the same strip the
+            page's own toolbars pin to and gets covered by them. In here it
+            rides the sticky chrome; the header grows, and every pinned
+            toolbar shifts down with it because they all measure this same
+            element through useHeaderHeight(). */}
+        {notice}
       </header>
       {/* The app's only Suspense boundary, and it has to live here rather
           than anywhere above: the router builds just one, around the root
