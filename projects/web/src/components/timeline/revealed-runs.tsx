@@ -42,10 +42,40 @@ const NOT_PROVIDED: RevealedRuns = {
 
 const Ctx = createContext<RevealedRuns>(NOT_PROVIDED);
 
-export function RevealedRunsProvider({ children }: { children: ReactNode }) {
+export function RevealedRunsProvider({
+  card,
+  children,
+}: {
+  /** Which card is on screen. Nothing about it enters a run key; it decides
+   *  only when this state folds back. */
+  card: string;
+  children: ReactNode;
+}) {
   const [keys, setKeys] = useState<ReadonlySet<string>>(() => new Set());
   const [all, setAll] = useState(false);
   const [hiddenCount, setHiddenCount] = useState(0);
+
+  // Adjusted during the render that sees the new card, not from an effect:
+  // an effect lets the tree commit once still holding the last card's runs,
+  // which is the leak itself. The children rendered here are the new card's,
+  // so none of them can see the stale set either.
+  //
+  // A `key` would reset the same state without this state variable, but it
+  // wraps the whole left column — the bar, the title, the body, the spec row,
+  // the attachments — and the two children that genuinely need a fresh
+  // instance, `Timeline` and `Composer`, already carry keys of their own.
+  //
+  // Idempotent, which is what Strict Mode's double render asks of it and what
+  // the `Composer` reset (T-317) could not offer: the second pass sees the
+  // same stale `shown`, writes the same values again, and React throws the
+  // first pass away before either reaches the children.
+  const [shown, setShown] = useState(card);
+  if (shown !== card) {
+    setShown(card);
+    setKeys(new Set());
+    setAll(false);
+    setHiddenCount(0);
+  }
 
   const value = useMemo<RevealedRuns>(
     () => ({

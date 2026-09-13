@@ -102,6 +102,10 @@ export function IssueDetailPage() {
   // Only the author or an admin can even reach a deleted card, so anyone
   // seeing this banner may act on it (T-145).
   const trashed = issue.data.deleted_at !== null;
+  // Built from the route params, never from `location`: a `#comment-<id>`
+  // permalink changes the location, and opening the run it names is exactly
+  // what the reveal state is for (T-327).
+  const cardKey = `${slug}/${issueNumber}`;
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_240px]">
@@ -113,7 +117,7 @@ export function IssueDetailPage() {
         it, and its sticky container has to span the whole column. */}
       {/* Above both the bar and the timeline: the bar only mirrors the
         reveal entry the timeline's own section line carries (T-281). */}
-      <RevealedRunsProvider>
+      <RevealedRunsProvider card={cardKey}>
         <div className="min-w-0">
           <FloatingTitleBar
             slug={slug}
@@ -138,7 +142,7 @@ export function IssueDetailPage() {
               // The slug is in the key because that reuse is what makes a
               // cross-project jump destructive rather than a 404. Same remedy
               // and same reason as the `Composer` below.
-              key={`${slug}/${issueNumber}`}
+              key={cardKey}
               slug={slug}
               issueNumber={issueNumber}
               pendingComments={composer.pending.filter((p) => !p.failed)}

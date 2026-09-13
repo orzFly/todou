@@ -138,7 +138,7 @@ afterEach(() => vi.unstubAllGlobals());
 function renderPage(items: TimelineItem[], hash = "") {
   const calls = stubFetch(items);
   const view = renderWithProviders(
-    <RevealedRunsProvider>
+    <RevealedRunsProvider card="p/7">
       <FloatingTitleBar
         slug="p"
         issue={ISSUE}
@@ -384,7 +384,7 @@ describe("a #comment anchor landing in a hidden run", () => {
     }) as typeof fetch);
 
     const view = renderWithProviders(
-      <RevealedRunsProvider>
+      <RevealedRunsProvider card="p/7">
         <Timeline
           slug="p"
           issueNumber={7}
