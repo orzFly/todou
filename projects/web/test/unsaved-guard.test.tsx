@@ -24,6 +24,7 @@ import {
   membersQuery,
   meQuery,
   projectQuery,
+  projectsQuery,
   statusesQuery,
 } from "../src/api/queries.ts";
 import {
@@ -113,10 +114,9 @@ describe("the unsaved-work registry", () => {
  *
  * Its memory history is the only way the in-app half of the guard can be
  * driven. The app's own router carries a browser history, and a click that
- * ends in that router's resolve path sets `window.location`, replacing the
- * `window.history` object the router installed its own `beforeunload`
- * listener on. `beforeunload` is the opposite case and needs the real router —
- * see the last test in this file.
+ * ends in that router's resolve path sets `window.location`. `beforeunload`
+ * is the opposite case and needs the real router — see the last test in this
+ * file.
  */
 function renderGuardTree({ editor }: { editor?: boolean } = {}) {
   const rootRoute = createRootRoute({ component: () => <Outlet /> });
@@ -186,21 +186,28 @@ const link = () => screen.findByText("open the card");
  * the browser history, and only that implementation installs a `beforeunload`
  * listener (`@tanstack/history`, `onBeforeUnload`).
  *
- * It navigates the moment it mounts — `/` is not one of its routes — and that
- * navigation replaces the `window.history` object the listener was installed
- * on, so `destroy` cannot reach it. What the restore puts back is the URL, the
- * title the shell stamps, and the `pushState` / `replaceState` pair the router
- * patched at creation: those still point at the history object the router was
- * built with, which is closed out from under them the moment this test
- * finishes and its window is torn down.
+ * Both queries are seeded because the listener only answers while the shell is
+ * on screen, and the shell is what `AuthedLayout` stops drawing the moment
+ * `/api/me` fails — the suite's offline `fetch` 404s it, so an unseeded mount
+ * replaces the whole tree, guard and history block included, one flush after
+ * it appeared (T-323). `/` redirects to `/projects`, whose page suspends on
+ * `projectsQuery`, and an unseeded throw there reaches the root boundary,
+ * which costs the shell the same way.
+ *
+ * What the restore puts back is the URL, the title the shell stamps, and the
+ * `pushState` / `replaceState` pair the browser history patched onto
+ * `window.history` when the module that holds the app router was imported.
  */
 function renderOnTheAppRouter() {
   const { pathname, search, hash } = window.location;
   const title = document.title;
   const { pushState, replaceState } = window.history;
+  const client = testQueryClient();
+  client.setQueryData(meQuery.queryKey, me);
+  client.setQueryData(projectsQuery.queryKey, []);
   return {
     ...render(
-      <QueryClientProvider client={testQueryClient()}>
+      <QueryClientProvider client={client}>
         <RouterProvider router={router} />
       </QueryClientProvider>,
     ),
@@ -614,29 +621,36 @@ describe("leaving a page with unsaved work", () => {
    *
    * A registered source stands in for the draft boxes: it is the same
    * registry they join, and what the listener consults is the registry, not a
-   * condition it was handed at mount. That the listener is *still installed*
-   * when the event fires is the other half of this test — the router
-   * navigates as it mounts, which is the moment it installs the listener and
-   * replaces the `window.history` object it installed it on, so nothing here
-   * navigates a second time.
+   * condition it was handed at mount.
+   *
+   * The dirty half is asserted first, and only after the shell has been seen
+   * on screen. `onBeforeUnload` leaves the event alone when the history holds
+   * no blocker at all, so "not prevented" is equally what a guard that never
+   * mounted looks like; the clean half only means something once the listener
+   * has been watched to fire.
    */
   it("arms the browser's prompt while dirty, and not while clean", async () => {
     const mounted = renderOnTheAppRouter();
+    // The guard rides inside the shell, so the header standing there is the
+    // block being registered.
+    await waitFor(() =>
+      expect(mounted.container.querySelector("header")).not.toBeNull(),
+    );
 
+    const dirty = registerDirtySource(() => true);
+    const armed = new Event("beforeunload", { cancelable: true });
+    await act(async () => {
+      window.dispatchEvent(armed);
+    });
+    expect(armed.defaultPrevented).toBe(true);
+
+    dirty();
     const clean = new Event("beforeunload", { cancelable: true });
     await act(async () => {
       window.dispatchEvent(clean);
     });
     expect(clean.defaultPrevented).toBe(false);
 
-    const dirty = registerDirtySource(() => true);
-    const event = new Event("beforeunload", { cancelable: true });
-    await act(async () => {
-      window.dispatchEvent(event);
-    });
-    expect(event.defaultPrevented).toBe(true);
-
-    dirty();
     mounted.restore();
   });
 });
