@@ -22,7 +22,10 @@ export function ConnectionBanner({
   return (
     <div
       role="status"
-      className="bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-200"
+      /* Sticky under the header (h-14): the header is sticky too, and a plain
+         static bar here scrolls away behind its backdrop-blur — the warning
+         would vanish exactly when a long form is being filled. */
+      className="sticky top-14 z-30 bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-200"
     >
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-1.5 text-xs">
         <span>

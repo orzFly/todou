@@ -124,6 +124,12 @@ afterEach(() => {
   // Testing-library's own cleanup has run by now (globals-registered first),
   // so no guard is mounted to refuse the URL `replace`.
   restoreAppRouterPage();
+  // The router is a module singleton: a test that drove a match into the
+  // error state leaves it there, and the next test inherits the leftover
+  // match — one regression then fails four tests instead of one. Drop the
+  // match cache so every test starts from an empty slate.
+  router.clearCache();
+  router.invalidate();
 });
 
 afterAll(teardownAppRouter);
@@ -140,6 +146,12 @@ describe("/api/me failing while a draft is on screen", () => {
     // before the fix AuthedLayout replaced the shell (this input with it)
     // with its error branch.
     expectDraftIntact("half a thought");
+    // The warm state's whole point is telling the user: banner up, naming
+    // the failure and offering the manual retry.
+    expect(
+      await screen.findByText(/Couldn't reach the todou server/),
+    ).toBeTruthy();
+    expect(screen.getByText("Retry now")).toBeTruthy();
   });
 
   it("keeps the draft when ProjectLayout's query refetch-fails", async () => {
@@ -191,29 +203,41 @@ describe("/api/me failing while a draft is on screen", () => {
     expectDraftIntact("half a thought");
   });
 
-  it("dissolves the dialog once the session returns", async () => {
+  it("dissolves the dialog on its own once the session returns, and re-arms for a later loss", async () => {
     const view = mountDraftPage();
     await typeDraftTitle("half a thought");
 
     failingSpy("me", 401);
     await refetchFail(view.client, meQuery.queryKey);
-    const dialog = await screen.findByRole("dialog");
-    const stay = [...dialog.querySelectorAll("button")].find((button) =>
-      /stay|keep|本页/i.test(button.textContent ?? ""),
-    );
-    fireEvent.click(stay as HTMLButtonElement);
+    // Dialog is up and stays up while the session stays dead — no click, no
+    // dismiss. (Also guards against a dialog that closes by itself, which a
+    // click-then-assert sequence would never notice.)
+    await screen.findByText("Your session has ended");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(screen.getByRole("dialog")).toBeTruthy();
 
+    // The session returns (re-login in another tab): the dialog dissolves on
+    // its own, with no user action. Deleting the recovery reset breaks this.
     vi.spyOn(api, "me").mockResolvedValue(me);
     await refetchFail(view.client, meQuery.queryKey);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expectDraftIntact("half a thought");
 
-    expect(screen.queryByRole("dialog")).toBeNull();
+    // …and the reset cleared the record: a later 401 announces itself again.
+    failingSpy("me", 401);
+    await refetchFail(view.client, meQuery.queryKey);
+    expect(await screen.findByText("Your session has ended")).toBeTruthy();
     expectDraftIntact("half a thought");
   });
 
   it("shows the in-shell error panel on a cold-start failure", async () => {
-    // No `me` seeded: the app boots straight into the failure.
+    // No `me` seeded: the app boots straight into the failure. Same draft URL
+    // as the rest of the suite — cold start has no draft to lose, but the
+    // answer must hold where the other states do.
     const client = testQueryClient();
-    client.setQueryData(projectsQuery.queryKey, []);
+    client.setQueryData(projectsQuery.queryKey, [project]);
     client.setQueryData(projectQuery("p").queryKey, project);
     client.setQueryData(statusesQuery("p").queryKey, []);
     client.setQueryData(labelsQuery("p").queryKey, []);
@@ -221,6 +245,7 @@ describe("/api/me failing while a draft is on screen", () => {
     vi.spyOn(api, "me").mockRejectedValue(
       Object.assign(new Error("HTTP 502"), { status: 502 }),
     );
+    startAtDraftPage();
     const mounted = render(
       <QueryClientProvider client={client}>
         <RouterProvider router={router} />
