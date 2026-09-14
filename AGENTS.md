@@ -105,8 +105,8 @@ decide where strings, comments, JSX text and regular-expression literals begin a
 `projects/web/src/pages/project-settings.tsx` carries the JSX text `The slug is this project's
 address`. A scanner that reads `'` as a string delimiter consumes from that apostrophe to the next
 one in the file, and further prose apostrophes go on blanking code one span at a time, so that file
-reports 2 call sites where it has 20. Choose the countable target instead of writing the scanner:
-where the shape you care about has an identifier in it, count that.
+reported 2 call sites where it had 20 when this was measured. Choose the countable target instead of
+writing the scanner: where the shape you care about has an identifier in it, count that.
 
 **Publish several counts that must agree.** One number cannot check itself. The census on T-329
 publishes counts that check each other:
@@ -121,7 +121,9 @@ grep -rl 'useMutation(' projects/web/src | wc -l                              # 
 Every `useMutation(` carries exactly one `mutationFn`, which is what makes the first pair equal; the
 remaining `useMutation` occurrences are imports, one per file holding any, which is what makes the
 second pair equal. Write those relationships down next to the commands, because a mismatch then
-names which relationship broke instead of only reporting that something did.
+names which relationship broke instead of only reporting that something did. The counts here are
+from `projects/web` at `bd352a6` and drift with the package; date a published count the same way,
+because what a later reader re-derives has to be comparable against something.
 
 Agreement is not completeness, and the census has to say so. Deleting a whole
 `useMutation({ mutationFn … })` call from a file that still holds another one leaves all four counts
@@ -131,11 +133,11 @@ equalities cannot see beside what they can.
 
 **Break the input before trusting the check.** A guard that cannot fail is not a guard. The census
 attached to T-324 was defended by `len(strip(s)) == len(s)`, and the scanner replaced everything it
-discarded with an equal number of spaces, so the guard held on all 190 files of the package while a
-quarter of the call sites were invisible to the count. Before relying on a check, damage a copy of
-its input on purpose and confirm that the check fails — that is how the blind spot above was found,
-and a check whose blind spot nobody has looked for is a check nobody has tested. This is the same
-mistake as judging a test run by a piped exit code; see "Reading a test run" above.
+discarded with an equal number of spaces, so the guard held on every one of the package's 190 files
+as it then stood, while a quarter of the call sites were invisible to the count. Before relying on a
+check, damage a copy of its input on purpose and confirm that it fails — that is how the blind spot
+above was found, and a check whose blind spot nobody has looked for is a check nobody has tested.
+This is the same mistake as judging a test run by a piped exit code; see "Reading a test run" above.
 
 ## Navigation is links
 
