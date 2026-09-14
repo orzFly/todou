@@ -529,10 +529,20 @@ async function writeMembership(
         continue;
       }
       if (effect.target !== true) {
-        // Collateral is updated, never upserted. Even read under the lock the
-        // row can be gone by now — the reads above and these writes are one
-        // transaction, but the row was deleted before it began — and creating
-        // it again would undo somebody's removal in the name of a clamp.
+        // Collateral is updated, never upserted. The row was there when
+        // `expandCollateral` read it a few statements ago, and it can still be
+        // gone by the time this runs: deleting a child row takes no lock on
+        // the parent, so another transaction is free to remove it inside that
+        // window. Upserting would then recreate it — undoing somebody's
+        // removal in the name of lowering a role.
+        //
+        // **No test covers this line on its own.** The window is too narrow to
+        // open from outside the app, so the criterion that used to guard it
+        // only fails when the collateral set is *also* enumerated before the
+        // lock; under the current shape, changing this back to an upsert keeps
+        // every test green. Do not read that as the branch being unreachable —
+        // it is reachable and unguarded, which is the more dangerous of the
+        // two. See plan.md 3.4b.
         await tx
           .update(projectMembers)
           .set({ role: effect.role })

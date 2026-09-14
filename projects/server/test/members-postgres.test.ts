@@ -278,9 +278,15 @@ describe.skipIf(!PG_URL)("membership writes serialize on the project", () => {
     await holder;
     expect((await demote).status).toBe(204);
 
-    // The clamp must not have recreated it. `onConflictDoUpdate` on a row
-    // that is no longer there inserts, which would undo the removal in the
-    // name of lowering a role.
+    // The clamp must not have recreated it.
+    //
+    // This asserts the end state, and it no longer isolates the `update` that
+    // produces it: with the collateral set enumerated under the lock the
+    // machine is simply absent from it, so the upsert branch never runs and
+    // restoring it leaves this green. What still turns this red is the two
+    // together — pre-lock enumeration and upsert — which is the shape the
+    // resurrection actually had. The `update` itself is unguarded; see the
+    // note on that branch in members.ts.
     const rows = await system
       .select({ userId: projectMembers.userId })
       .from(projectMembers)
