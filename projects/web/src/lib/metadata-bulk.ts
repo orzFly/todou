@@ -14,7 +14,12 @@ export type BulkParse =
   | { ok: true; entries: Map<string, string> }
   | { ok: false; errors: ParseError[] };
 
-const HEREDOC_INTRO = /^<<([A-Za-z0-9_-]+)$/;
+/**
+ * Exported for the editor's highlighter, which cannot reach the shared
+ * traversal from inside a per-line tokenizer and would otherwise keep a
+ * second spelling of the intro to drift out of step with this one.
+ */
+export const HEREDOC_INTRO = /^<<([A-Za-z0-9_-]+)$/;
 
 /**
  * The `${ns}/${key} = ${value}` line format's one free choice: the heredoc
@@ -295,11 +300,19 @@ export function serializeBulk(entries: IssueMetadataEntry[]): string {
 }
 
 function renderValue(value: string): string {
+  // The exclusions are the write side of `walkBulk`'s per-line branches:
+  // surrounding space is trimmed off, the document splits on `\n`, a leading
+  // `<<` reads as a heredoc intro, a leading `"` reads as JSON. Extend one
+  // side without the other and a value the server stores happily renders
+  // into text its own parser rejects. `value !== ""` is not one of them —
+  // it is layout, since an empty value parses back as the empty string
+  // either way.
   const plain =
     value !== "" &&
     !value.includes("\n") &&
     value.trim() === value &&
-    !value.startsWith('"');
+    !value.startsWith('"') &&
+    !value.startsWith("<<");
   if (plain) return value;
   const mark = pickHeredocMark(value);
   return `<<${mark}\n${value}\n${mark}`;

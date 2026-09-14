@@ -1,8 +1,13 @@
-import { highlightingFor, syntaxTree } from "@codemirror/language";
+import {
+  ensureSyntaxTree,
+  highlightingFor,
+  syntaxTree,
+} from "@codemirror/language";
 import type { Extension } from "@codemirror/state";
 import { EditorSelection, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
+import type { IssueMetadataEntry } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import { metadataJsonSupport } from "../src/lib/editor/json-lang.ts";
 import {
@@ -11,7 +16,32 @@ import {
   metadataBulkSupport,
   selectValueOf,
 } from "../src/lib/editor/metadata-bulk-lang.ts";
-import { parseBulk } from "../src/lib/metadata-bulk.ts";
+import {
+  parseBulk,
+  scanBulkEntries,
+  serializeBulk,
+} from "../src/lib/metadata-bulk.ts";
+
+let clock = 0;
+/** A minimal entry with throwaway provenance; the syntax layer never reads it. */
+const entry = (
+  namespace: string,
+  key: string,
+  value: string,
+): IssueMetadataEntry => ({
+  namespace,
+  key,
+  value,
+  updated_at: new Date(1_700_000_000_000 + clock++ * 1_000).toISOString(),
+  updated_by: {
+    id: 1,
+    login: "ci-bridge",
+    display_name: "ci-bridge",
+    kind: "machine",
+    avatar_url: null,
+    owner: null,
+  },
+});
 
 /**
  * Mount a real EditorView with the Bulk language support, the way the
@@ -133,6 +163,276 @@ describe("selectValueOf", () => {
     const { view } = mount("ci/status = passing\ndeploy/host = todou");
     selectValueOf(view, "deploy", "host");
     expect(selectionSlice(view.state)).toBe("todou");
+  });
+
+  it("selects the body of a heredoc entry, not its intro", () => {
+    // Falsifies by: keeping the selection on the first line — the reader
+    // gets `<<EOF2` selected and types the syntax away instead of the value.
+    const doc = serializeBulk([entry("ci", "k", "body\nEOF\nmore")]);
+    expect(doc).toBe("ci/k = <<EOF2\nbody\nEOF\nmore\nEOF2");
+    const { view } = mount(doc);
+    selectValueOf(view, "ci", "k");
+    expect(selectionSlice(view.state)).toBe("body\nEOF\nmore");
+  });
+
+  it("starts the selection below the intro when the value looks like one", () => {
+    // The text assertion alone cannot judge this document: selecting the
+    // intro line and selecting the body both slice out `<<EOF`, so the line
+    // the selection begins on is what tells the value from the syntax.
+    //
+    // Falsifies by: keeping the selection on the first line — the slice
+    // stays `<<EOF` and only the line number moves.
+    const doc = serializeBulk([entry("ci", "k", "<<EOF")]);
+    expect(doc).toBe("ci/k = <<EOF\n<<EOF\nEOF");
+    const { view } = mount(doc);
+    selectValueOf(view, "ci", "k");
+    expect(selectionSlice(view.state)).toBe("<<EOF");
+    const selection = view.state.selection.main;
+    expect(view.state.doc.lineAt(selection.from).number).toBe(2);
+    expect(view.state.doc.lineAt(selection.from).number).not.toBe(
+      view.state.doc.lineAt(doc.indexOf("ci/k")).number,
+    );
+  });
+
+  it("does nothing for a key the traversal cannot find", () => {
+    // Falsifies by: dispatching a selection anyway — an entry inside an
+    // unterminated heredoc's body is not an entry, and moving the caret
+    // there would put the next keystroke inside someone else's value.
+    const { view } = mount("ci/k = <<EOF\ndeploy/host = todou");
+    selectValueOf(view, "deploy", "host");
+    expect(view.state.selection.main.empty).toBe(true);
+    expect(view.state.selection.main.from).toBe(0);
+  });
+});
+
+/** Every node of one type in the tree, in document order. */
+function nodesNamed(
+  state: EditorState,
+  name: string,
+): Array<{ line: number; text: string }> {
+  const found: Array<{ line: number; text: string }> = [];
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (node.name !== name) return;
+      found.push({
+        line: state.doc.lineAt(node.from).number,
+        text: state.sliceDoc(node.from, node.to),
+      });
+    },
+  });
+  return found;
+}
+
+/**
+ * The document shapes the Bulk highlighter has to tell apart. Two of them
+ * carry a heredoc body whose lines read like entries — the case the
+ * highlighter used to colour as if they were.
+ */
+const HIGHLIGHT_SHAPES: Array<{ name: string; doc: string }> = [
+  { name: "single entry", doc: "ci/status = passing" },
+  { name: "two entries", doc: "ci/status = passing\ndeploy/host = todou" },
+  { name: "comment above an entry", doc: "# note\nci/status = passing" },
+  {
+    name: "body line shaped like an entry",
+    doc: "ci/out = <<EOF\nci/fake = 1\nEOF\nci/x = 2",
+  },
+  { name: "value that is itself an intro", doc: "ci/k = <<EOF\n<<EOF\nEOF" },
+  { name: "ordinary body", doc: "ci/out = <<EOF\nbody\nEOF\nci/x = 2" },
+];
+
+/**
+ * Values whose heredoc body holds a line the highlighter would colour if it
+ * placed the body's end anywhere but where the parser does. Each pairs a
+ * line that tempts an early close — identifier-shaped, or spelled like a
+ * mark — with an entry-shaped line behind it, which is the one that shows.
+ */
+const BODIES_WITH_ENTRY_LINES = [
+  "E\nci/fake = 1",
+  "EOF\nci/fake = 1",
+  "EOF2\nci/fake = 1",
+  "ci/fake = 1\nEOF",
+  "<<EOF\nci/fake = 1",
+  "  EOF  \nci/fake = 1",
+  "ci/a = 1\nci/b = 2",
+  "\nci/fake = 1\n",
+];
+
+/** Whether a line would be read as an entry, and so coloured. */
+function entryShaped(line: string): boolean {
+  const equals = line.indexOf("=");
+  if (equals === -1) return false;
+  const left = line.slice(0, equals);
+  const slash = left.indexOf("/");
+  const from = left.length - left.trimStart().length;
+  return (
+    slash > from && equals - (left.length - left.trimEnd().length) > slash + 1
+  );
+}
+
+describe("Bulk tab highlighting", () => {
+  it("colours the namespace of entry lines only, never a heredoc body line", () => {
+    // Falsifies by: measuring the heredoc intro from wherever the tokenizer
+    // stopped instead of from the `=`. The body state is then never
+    // entered and `ci/fake = 1`, a body line, is coloured as an entry.
+    //
+    // The assertion is the whole node array: "some MetadataNamespace node
+    // exists" holds just as well when the body line carries one.
+    const { view } = mount("ci/out = <<EOF\nci/fake = 1\nEOF\nci/x = 2");
+    expect(nodesNamed(view.state, "MetadataNamespace")).toEqual([
+      { line: 1, text: "ci" },
+      { line: 4, text: "ci" },
+    ]);
+  });
+
+  it("emits exactly one key node per entry line, across every shape", () => {
+    // Falsifies by: no `MetadataKey` ever being returned — which is how the
+    // token table and the highlight style came to be dead configuration.
+    //
+    // The assertion is the whole array per shape: "the tree contains a
+    // MetadataKey somewhere" holds when one entry line emits one and every
+    // other entry line emits none.
+    const expected: Record<string, Array<{ line: number; text: string }>> = {
+      "single entry": [{ line: 1, text: "status" }],
+      "two entries": [
+        { line: 1, text: "status" },
+        { line: 2, text: "host" },
+      ],
+      "comment above an entry": [{ line: 2, text: "status" }],
+      "body line shaped like an entry": [
+        { line: 1, text: "out" },
+        { line: 4, text: "x" },
+      ],
+      "value that is itself an intro": [{ line: 1, text: "k" }],
+      "ordinary body": [
+        { line: 1, text: "out" },
+        { line: 4, text: "x" },
+      ],
+    };
+    for (const { name, doc } of HIGHLIGHT_SHAPES) {
+      const { view } = mount(doc);
+      expect(nodesNamed(view.state, "MetadataKey"), name).toEqual(
+        expected[name],
+      );
+    }
+  });
+
+  /**
+   * The price of letting the highlighter keep a recognition of its own.
+   * `StreamLanguage.token` sees one line and a mutable state, never the
+   * document, so it cannot call `scanBulkEntries` the way `selectValueOf`
+   * does — and a second recognition is worth having only while it cannot
+   * drift from the first.
+   *
+   * The reading is indirect: a line counts as inside a body when it carries
+   * none of the three node types. That set also holds the end-mark line,
+   * which is why it is compared against every line a span covers past its
+   * start rather than against the body alone.
+   *
+   * Being indirect, it can only see a body-boundary error on a line that
+   * would otherwise be styled — so the corpus has to contain body lines
+   * shaped like entries, which the alphabet alone never produces (it has no
+   * `/`). `BODIES_WITH_ENTRY_LINES` is that half, and without it this
+   * assertion holds no matter where the highlighter thinks a body ends.
+   *
+   * Falsifies by: closing the body on any identifier-shaped line instead of
+   * the mark itself, or narrowing the intro against `HEREDOC_INTRO`, such
+   * as refusing a digit in the mark. Widening it — a dot in the mark, say —
+   * is invisible here and everywhere else the serializer writes the text,
+   * because the only intros it ever emits are `EOF` and `EOF` plus a digit.
+   */
+  it("agrees with the shared traversal about where every heredoc body is", () => {
+    const alphabet = ["<", '"', "\n", " ", "E", "O", "F"];
+    const values = [""];
+    let level = [""];
+    for (let length = 1; length <= 4; length++) {
+      const next: string[] = [];
+      for (const prefix of level) {
+        for (const character of alphabet) next.push(prefix + character);
+      }
+      values.push(...next);
+      level = next;
+    }
+    expect(values.length).toBe(2801);
+    values.push(...BODIES_WITH_ENTRY_LINES);
+
+    const divergent: string[] = [];
+    let bodyLinesSeen = 0;
+    let styleableBodyLines = 0;
+    for (const value of values) {
+      const doc = serializeBulk([entry("ci", "k", value)]);
+      const state = EditorState.create({
+        doc,
+        extensions: [metadataBulkSupport],
+      });
+      ensureSyntaxTree(state, doc.length, 5000);
+      const styled = new Set<number>();
+      syntaxTree(state).iterate({
+        enter: (node) => {
+          if (
+            node.name === "MetadataNamespace" ||
+            node.name === "MetadataKey" ||
+            node.name === "MetadataComment"
+          ) {
+            styled.add(state.doc.lineAt(node.from).number);
+          }
+        },
+      });
+      const byHighlighter: number[] = [];
+      for (let line = 1; line <= state.doc.lines; line++) {
+        if (!styled.has(line)) byHighlighter.push(line);
+      }
+      const byScanner: number[] = [];
+      for (const span of scanBulkEntries(doc)) {
+        for (let line = span.startLine + 1; line <= span.endLine; line++) {
+          byScanner.push(line);
+          if (entryShaped(state.doc.line(line).text)) styleableBodyLines++;
+        }
+      }
+      bodyLinesSeen += byScanner.length;
+      if (byHighlighter.join(",") !== byScanner.join(",")) {
+        divergent.push(JSON.stringify(value));
+      }
+    }
+    // Without a body line the assertion holds on any corpus of plain
+    // entries, and without a body line the highlighter would style if it
+    // misjudged the boundary, it holds however the boundary is misjudged.
+    expect(bodyLinesSeen).toBeGreaterThan(0);
+    expect(styleableBodyLines).toBeGreaterThan(0);
+    expect(
+      divergent,
+      `${divergent.length} documents were read differently: ${divergent.slice(0, 20).join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("keeps the namespace coloured on a line still being typed", () => {
+    // A line with no `=` is not yet an entry, and the parser calls it an
+    // error — but the colour is what tells someone mid-keystroke that the
+    // namespace half has landed. Falsifies by: requiring an `=` before any
+    // colour at all, which takes the namespace colour away while typing.
+    const { view } = mount("ci/stat");
+    expect(nodesNamed(view.state, "MetadataNamespace")).toEqual([
+      { line: 1, text: "ci" },
+    ]);
+    expect(nodesNamed(view.state, "MetadataKey")).toEqual([]);
+  });
+
+  it("carries both classes through to the rendered lines", () => {
+    // The tree is not the screen: a token can be emitted and still resolve
+    // to no class if the highlight style and the token table disagree about
+    // the tag. Falsifies by: dropping either mapping for `tags.labelName`.
+    const { view } = mount("ci/out = <<EOF\nci/fake = 1\nEOF\nci/x = 2");
+    const namespaceClass = highlightingFor(view.state, [tags.namespace]);
+    const keyClass = highlightingFor(view.state, [tags.labelName]);
+    expect(namespaceClass).not.toBe("");
+    expect(keyClass).not.toBe("");
+    const lines = [...view.contentDOM.querySelectorAll(".cm-line")];
+    expect(lines).toHaveLength(4);
+    expect(lines[0]?.innerHTML).toContain(namespaceClass);
+    expect(lines[0]?.innerHTML).toContain(keyClass);
+    // The body line reads like an entry and must render as plain text.
+    expect(lines[1]?.innerHTML).not.toContain(namespaceClass);
+    expect(lines[1]?.innerHTML).not.toContain(keyClass);
+    expect(lines[3]?.innerHTML).toContain(namespaceClass);
   });
 });
 
@@ -294,6 +594,12 @@ describe("insertion points and separators", () => {
     const { view } = mount("");
     insertKeyInGroup(view, "ci");
     expect(view.state.doc.toString()).toBe("ci/key = value");
+    // Two toolbar actions never share one synchronous turn with the caret
+    // parked in a fresh snippet field, and happy-dom needs that modelled:
+    // it dispatches `selectionchange` inline from the call that moves the
+    // selection, where the DOM spec queues it, so the second dispatch
+    // re-enters CM's update and trips its own guard.
+    view.contentDOM.blur();
     appendNewEntry(view);
     // Second entry on the empty-ish document: separated as a new group.
     expect(view.state.doc.toString()).toBe("ci/key = value\n\nns/key = value");
@@ -547,6 +853,33 @@ describe("insertion points and separators", () => {
     expect(view.state.doc.toString()).toBe(
       "ci/key = value\n\ndeploy/notes = <<EOF\nstill typing\n\nci/x = 0",
     );
+  });
+
+  it("N22: a value that is itself a heredoc intro — new key after the end mark", () => {
+    // A `<<`-leading value only started occupying three lines when the
+    // serializer stopped writing it plainly, so this text had never reached
+    // the insertion point before. The body line is a lookalike intro, which
+    // is what makes it worth a case of its own.
+    //
+    // Falsifies by: locating the group's end with a `ns/` prefix scan
+    // instead of the shared span — the scan stops on the body line and the
+    // new key lands inside the heredoc, taking both the entry count and
+    // `ci/out`'s value with it. The document is built by the serializer, so
+    // the case follows the rendering rather than restating it.
+    const doc = serializeBulk([
+      entry("ci", "note", "plain"),
+      entry("ci", "out", "<<EOF"),
+    ]);
+    expect(doc).toBe("ci/note = plain\nci/out = <<EOF\n<<EOF\nEOF");
+    const { view } = mount(doc);
+    insertKeyInGroup(view, "ci");
+    expect(view.state.doc.toString()).toBe(
+      "ci/note = plain\nci/out = <<EOF\n<<EOF\nEOF\nci/key = value",
+    );
+    expectRoundTrip(doc, (v) => insertKeyInGroup(v, "ci"), {
+      id: "ci/key",
+      value: "value",
+    });
   });
 
   it("N21: appendNewEntry before an unterminated intro that opens the text", () => {

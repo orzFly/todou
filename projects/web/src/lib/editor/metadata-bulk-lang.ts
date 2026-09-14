@@ -12,7 +12,11 @@ import {
 import type { Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
-import { scanBulkEntries, scanBulkStop } from "../metadata-bulk.ts";
+import {
+  HEREDOC_INTRO,
+  scanBulkEntries,
+  scanBulkStop,
+} from "../metadata-bulk.ts";
 
 /**
  * Bulk tab highlighting (design: "Bulk 档"): a deliberately tiny stream
@@ -20,23 +24,56 @@ import { scanBulkEntries, scanBulkStop } from "../metadata-bulk.ts";
  * colour, the key another; values and heredoc bodies stay unstyled, because
  * values are opaque strings and colour there would imply syntax that does
  * not exist.
+ *
+ * The open heredoc is carried as its end mark rather than a flag: the
+ * parser closes on a line spelled exactly like the mark, and a highlighter
+ * that closed on any identifier-shaped line would disagree with it about
+ * where a body ends.
  */
-type BulkState = { inHeredoc: boolean };
+type BulkState = { heredocMark: string | null };
+
+type EntryLineParts = {
+  namespaceFrom: number;
+  namespaceTo: number;
+  /** Absent until an `=` arrives, since that is what delimits the key. */
+  key: { from: number; to: number; valueFrom: number } | null;
+};
+
+/**
+ * Where `ns`, `key` and the value sit in a line, or null when no namespace
+ * is recognisable. The tokenizer resumes part-way through a line at a bare
+ * offset, so the whole layout is recomputed on each call rather than
+ * carried in the state.
+ */
+function entryLineParts(line: string): EntryLineParts | null {
+  const equals = line.indexOf("=");
+  const left = equals === -1 ? line : line.slice(0, equals);
+  const slash = left.indexOf("/");
+  const namespaceFrom = left.length - left.trimStart().length;
+  if (slash <= namespaceFrom) return null;
+  const parts = { namespaceFrom, namespaceTo: slash };
+  if (equals === -1) return { ...parts, key: null };
+  const keyTo = equals - (left.length - left.trimEnd().length);
+  if (keyTo <= slash + 1) return { ...parts, key: null };
+  return {
+    ...parts,
+    key: { from: slash + 1, to: keyTo, valueFrom: equals + 1 },
+  };
+}
 
 const bulkLanguage = StreamLanguage.define<BulkState>({
   name: "metadata-bulk",
-  startState: () => ({ inHeredoc: false }),
+  startState: () => ({ heredocMark: null }),
   tokenTable: {
     MetadataNamespace: tags.namespace,
     MetadataKey: tags.labelName,
     MetadataComment: tags.comment,
   },
   token(stream, state) {
-    if (state.inHeredoc) {
-      // The end mark must sit alone on its line; every body line is
-      // consumed unstyled. A mark line simply ends the heredoc.
-      if (stream.sol() && /^[A-Za-z0-9_-]+$/.test(stream.string)) {
-        state.inHeredoc = false;
+    if (state.heredocMark !== null) {
+      // Column-exact, like the parser: an indented mark is body text.
+      if (stream.sol() && stream.string === state.heredocMark) {
+        state.heredocMark = null;
       }
       stream.skipToEnd();
       return null;
@@ -45,26 +82,37 @@ const bulkLanguage = StreamLanguage.define<BulkState>({
       stream.skipToEnd();
       return "MetadataComment";
     }
-    if (stream.sol()) {
-      const rest = stream.string;
-      const slash = rest.indexOf("/");
-      const eq = rest.indexOf("=");
-      if (slash > 0 && (eq === -1 || slash < eq)) {
-        stream.pos = slash;
-        return "MetadataNamespace";
-      }
+    const parts = entryLineParts(stream.string);
+    if (parts === null) {
       stream.skipToEnd();
       return null;
     }
-    // Right of the `=`: the value, unstyled — including heredoc bodies,
-    // which flip the state once the `<<MARK` intro has been passed.
-    if (state === undefined) return null;
-    const rest = stream.string.slice(stream.pos);
-    if (/^<<[A-Za-z0-9_-]+\s*$/.test(rest.trim()) && stream.pos > 0) {
-      stream.skipToEnd();
-      state.inHeredoc = true;
+    if (stream.pos < parts.namespaceFrom) {
+      stream.pos = parts.namespaceFrom;
       return null;
     }
+    if (stream.pos === parts.namespaceFrom) {
+      stream.pos = parts.namespaceTo;
+      return "MetadataNamespace";
+    }
+    const key = parts.key;
+    if (key === null) {
+      stream.skipToEnd();
+      return null;
+    }
+    if (stream.pos < key.from) {
+      stream.pos = key.from;
+      return null;
+    }
+    if (stream.pos === key.from) {
+      stream.pos = key.to;
+      return "MetadataKey";
+    }
+    // The value, unstyled. The intro is measured from the `=` rather than
+    // from `stream.pos`, which only ever rests on one of the boundaries
+    // above and so always leaves the left side in front of it.
+    const intro = HEREDOC_INTRO.exec(stream.string.slice(key.valueFrom).trim());
+    if (intro !== null) state.heredocMark = intro[1] as string;
     stream.skipToEnd();
     return null;
   },
@@ -248,26 +296,49 @@ export function appendNewEntry(view: EditorView): void {
 /**
  * Select the value of `namespace/key` and scroll it into view — where
  * Browse's pencil icon lands after switching to Bulk.
+ *
+ * For a heredoc entry the selection is the body alone, so that what the
+ * reader sees selected is the value character for character and typing over
+ * it replaces the value rather than the syntax around it. The extent comes
+ * from the shared traversal: this offset decides which text a keystroke
+ * destroys, and a second heredoc detection drifting from the parser would
+ * destroy the wrong text.
  */
 export function selectValueOf(
   view: EditorView,
   namespace: string,
   key: string,
 ): void {
-  const prefix = `${namespace}/${key} = `;
   const text = view.state.doc.toString();
-  const lines = text.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] as string;
-    if (line.startsWith(prefix)) {
-      const lineInfo = view.state.doc.line(i + 1);
-      const from = lineInfo.from + prefix.length;
-      view.dispatch({
-        selection: { anchor: from, head: lineInfo.to },
-        scrollIntoView: true,
-      });
-      view.focus();
-      return;
-    }
-  }
+  const span = scanBulkEntries(text).find(
+    (candidate) => candidate.namespace === namespace && candidate.key === key,
+  );
+  if (span === undefined) return;
+  const selection =
+    span.endLine > span.startLine
+      ? {
+          anchor: view.state.doc.line(span.startLine + 1).from,
+          head: view.state.doc.line(span.endLine - 1).to,
+        }
+      : plainValueRange(view, span.startLine);
+  view.dispatch({ selection, scrollIntoView: true });
+  view.focus();
+}
+
+/**
+ * The value's own offsets on a single-line entry. Read off the `=` and the
+ * surrounding space the parser trims, rather than off the width of a
+ * rendered `ns/key = ` prefix, which a hand-typed line need not match.
+ */
+function plainValueRange(
+  view: EditorView,
+  lineNumber: number,
+): { anchor: number; head: number } {
+  const line = view.state.doc.line(lineNumber);
+  const afterEquals = line.text.indexOf("=") + 1;
+  const rest = line.text.slice(afterEquals);
+  return {
+    anchor: line.from + afterEquals + (rest.length - rest.trimStart().length),
+    head: line.to - (rest.length - rest.trimEnd().length),
+  };
 }

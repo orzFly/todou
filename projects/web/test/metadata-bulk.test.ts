@@ -7,6 +7,7 @@ import {
   serializeBulk,
 } from "../src/lib/metadata-bulk.ts";
 import { precheck } from "../src/lib/metadata-diff.ts";
+import { METADATA_VALUE_CASES } from "./metadata-value-cases.ts";
 
 let clock = 0;
 /** A minimal entry with throwaway provenance; the syntax layer never reads it. */
@@ -172,20 +173,7 @@ describe("serializeBulk / parseBulk round trip", () => {
    * hold for the round trip to fail — fixing only the serializer cannot
    * resurrect a broken parser, which is what makes this test hard to fool.
    */
-  const cases: Array<[string, string]> = [
-    ["empty", ""],
-    ["spaces", "   "],
-    ["padded", "  padded  "],
-    ["multiline", "one\ntwo\nthree"],
-    ["with-EOF-line", "body\nEOF\nmore"],
-    ["with-hash-line", "text\n# not a comment\nmore"],
-    ["with-equals", "a=b=c"],
-    ["leading-quote", '"quoted start'],
-    ["cjk", "值有一行\n两行"],
-    ["exact-limit", "x".repeat(4096)],
-  ];
-
-  for (const [name, value] of cases) {
+  for (const [name, value] of METADATA_VALUE_CASES) {
     it(`round-trips ${name}`, () => {
       // Falsifies by: serializer not using a heredoc for `"`-leading values.
       const text = serializeBulk([entry("ci", "k", value)]);
@@ -200,6 +188,88 @@ describe("serializeBulk / parseBulk round trip", () => {
   it("picks EOF2 when the value itself contains an EOF line", () => {
     // Falsifies by: pickHeredocMark always returning EOF.
     expect(pickHeredocMark("body\nEOF\nmore")).toBe("EOF2");
+  });
+
+  /**
+   * The three texts the round trip above cannot judge. A round trip only
+   * sees values that come back changed, so it is blind in one direction:
+   * routing extra values through a heredoc still reads back verbatim, and
+   * the table stays green while the plain judgement quietly narrows.
+   */
+  it("writes a value shaped like an end mark plainly", () => {
+    // Falsifies by: narrowing the plain judgement — excluding mark-shaped
+    // values sends this one through a heredoc. Every round-trip case,
+    // including the exhaustive scan below, stays green when that happens.
+    expect(serializeBulk([entry("ci", "k", "EOF")])).toBe("ci/k = EOF");
+  });
+
+  it("wraps a `<<`-leading value in a heredoc marked EOF", () => {
+    // Falsifies by: the missing `<<` exclusion — the text comes out as the
+    // single line `ci/k = <<EOF`. It also pins the mark: the body's only
+    // line is `<<EOF`, so `EOF` is free and is what gets picked.
+    expect(serializeBulk([entry("ci", "k", "<<EOF")])).toBe(
+      "ci/k = <<EOF\n<<EOF\nEOF",
+    );
+  });
+
+  it("steps the mark past an EOF line inside a `<<`-leading value", () => {
+    // Falsifies by: mark avoidance going away — the mark returns to `EOF`
+    // and the heredoc closes on the body's second line. This is the one
+    // correct text once the `<<` exclusion and mark avoidance both apply.
+    expect(serializeBulk([entry("ci", "k", "<<EOF\nEOF")])).toBe(
+      "ci/k = <<EOF2\n<<EOF\nEOF\nEOF2",
+    );
+  });
+
+  /**
+   * What this holds: the serializer's plain judgement and the parser's
+   * per-line classification stay one rule. A new prefix branch in
+   * `walkBulk` that nobody excludes on the write side reddens it.
+   *
+   * What it cannot see: the plain judgement narrowing instead of widening —
+   * extra values routed through a heredoc still read back verbatim, so the
+   * three whole-string assertions above carry that half; and the shortcut
+   * that renders a `<<`-leading value with a hardcoded mark, which only the
+   * `heredoc-intro-with-mark-line` case reddens.
+   *
+   * Exhaustive and deterministic rather than random: a fuzz failure CI
+   * cannot reproduce is not a signal. `O` earns its place in the alphabet
+   * because without it the corpus cannot spell an `EOF` line at all — but
+   * only `"EOF"`, `"\nEOF"` and `"EOF\n"` reach mark avoidance here, and of
+   * those only the latter two are rendered as heredocs. Anyone reshaping
+   * the alphabet should know the coverage of that path is that thin.
+   */
+  it("round-trips every value over a small alphabet, exhaustively", () => {
+    const alphabet = ["<", '"', "\n", " ", "E", "O", "F"];
+    const values = [""];
+    let level = [""];
+    for (let length = 1; length <= 4; length++) {
+      const next: string[] = [];
+      for (const prefix of level) {
+        for (const character of alphabet) next.push(prefix + character);
+      }
+      values.push(...next);
+      level = next;
+    }
+    expect(values.length).toBe(2801);
+
+    const failures: string[] = [];
+    for (const value of values) {
+      const result = parseBulk(serializeBulk([entry("ci", "k", value)]));
+      // The defect being scanned for reports `ok: false` rather than
+      // throwing, so the assertion has to read `ok` and the entry itself.
+      if (
+        !result.ok ||
+        result.entries.size !== 1 ||
+        result.entries.get("ci/k") !== value
+      ) {
+        failures.push(JSON.stringify(value));
+      }
+    }
+    expect(
+      failures,
+      `${failures.length} of ${values.length} values did not round-trip: ${failures.slice(0, 20).join(", ")}`,
+    ).toEqual([]);
   });
 
   it("writes groups in server order with a blank line between namespaces", () => {

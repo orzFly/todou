@@ -1,6 +1,7 @@
 import type { IssueMetadataEntry } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import { parseJsonDoc, serializeJsonDoc } from "../src/lib/metadata-json.ts";
+import { METADATA_VALUE_CASES } from "./metadata-value-cases.ts";
 
 let clock = 0;
 const entry = (
@@ -89,20 +90,7 @@ describe("JSON round trip", () => {
    * encoding instead. Falsifies by: serializing without escaping newlines —
    * every multi-line case then fails to parse.
    */
-  const cases: Array<[string, string]> = [
-    ["empty", ""],
-    ["spaces", "   "],
-    ["padded", "  padded  "],
-    ["multiline", "one\ntwo\nthree"],
-    ["with-EOF-line", "body\nEOF\nmore"],
-    ["with-hash-line", "text\n# not a comment\nmore"],
-    ["with-equals", "a=b=c"],
-    ["leading-quote", '"quoted start'],
-    ["cjk", "值有一行\n两行"],
-    ["exact-limit", "x".repeat(4096)],
-  ];
-
-  for (const [name, value] of cases) {
+  for (const [name, value] of METADATA_VALUE_CASES) {
     it(`round-trips ${name}`, () => {
       const text = serializeJsonDoc([entry("ci", "k", value)]);
       expect(parseJsonDoc(text)).toEqual({
