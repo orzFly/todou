@@ -6,6 +6,14 @@ import { api, projectQuery } from "../src/api/queries.ts";
 import { MetadataSection } from "../src/components/issue/metadata-section.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
+/** happy-dom's viewport, which is what its `matchMedia` answers from. U5
+ * walks the wide branch of the key column, so name the width instead of
+ * leaning on happy-dom's 1024px default. */
+const happyDom = globalThis as unknown as {
+  happyDOM: { setViewport: (viewport: { width?: number }) => void };
+};
+happyDom.happyDOM.setViewport({ width: 1024 });
+
 const SLUG = "p";
 const NUMBER = 282;
 

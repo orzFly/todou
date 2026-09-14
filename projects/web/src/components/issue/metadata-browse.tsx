@@ -5,6 +5,7 @@ import { compactAge } from "@/components/issue/metadata-section.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { SM_UP, useMediaQuery } from "@/lib/use-media-query.ts";
 
 /**
  * Whether a value is long enough to fold. Read off the text rather than
@@ -58,12 +59,16 @@ export function MetadataBrowse({
   /** Jump to Bulk with a new-entry snippet at the end. */
   onAdd: () => void;
 }) {
+  const wide = useMediaQuery(SM_UP);
   const longestKey = Math.max(
     8,
     ...groups.flatMap((g) => g.entries.map((e) => e.key.length)),
   );
   // ch units size the column by the text itself, so no measuring pass.
-  const keyColWidth = `${Math.min(longestKey, 40) + 2}ch`;
+  const keyColWidth = `${Math.min(longestKey, wide ? 40 : 16) + 2}ch`;
+  // meta lives on the data row from `sm` up and drops to its own second
+  // row below it, so the writable column count follows the viewport too.
+  const columns = canWrite ? (wide ? 4 : 3) : wide ? 3 : 2;
   const [confirmingNs, setConfirmingNs] = useState<string | null>(null);
 
   return (
@@ -75,13 +80,15 @@ export function MetadataBrowse({
         <colgroup>
           <col style={{ width: keyColWidth }} />
           <col />
-          <col style={{ width: canWrite ? "9.5rem" : "7rem" }} />
+          {wide && <col style={{ width: "11rem" }} />}
+          {canWrite && <col style={{ width: "3.5rem" }} />}
         </colgroup>
         <thead className="sr-only">
           <tr>
             <th scope="col">Key</th>
             <th scope="col">Value</th>
-            <th scope="col">Updated</th>
+            {wide && <th scope="col">Updated</th>}
+            {canWrite && <th scope="col">Actions</th>}
           </tr>
         </thead>
         {groups.map((group) => (
@@ -91,7 +98,7 @@ export function MetadataBrowse({
           >
             <tr>
               <th
-                colSpan={3}
+                colSpan={columns}
                 scope="colgroup"
                 className="pt-3 pb-1 text-left font-mono text-[12.5px] font-semibold"
               >
@@ -127,6 +134,7 @@ export function MetadataBrowse({
                 key={entry.key}
                 entry={entry}
                 canWrite={canWrite}
+                wide={wide}
                 onEdit={() => onEditValue(entry.namespace, entry.key)}
                 onDelete={() => onDeleteKey(entry.namespace, entry.key)}
               />
@@ -177,78 +185,103 @@ export function MetadataBrowse({
 function BrowseRow({
   entry,
   canWrite,
+  wide,
   onEdit,
   onDelete,
 }: {
   entry: IssueMetadataEntry;
   canWrite: boolean;
+  wide: boolean;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const folded = isLong(entry.value) && !expanded;
+  const meta = (
+    <span
+      className="block truncate"
+      title={`${entry.updated_by.display_name} · ${entry.updated_at}`}
+    >
+      {entry.updated_by.display_name} · {compactAge(entry.updated_at)}
+    </span>
+  );
+  const actions = canWrite && (
+    <span className="flex justify-end gap-0.5">
+      <Button
+        size="icon-xs"
+        variant="ghost"
+        onClick={onEdit}
+        aria-label={`Edit ${entry.namespace}/${entry.key} in Bulk`}
+        title="Edit in Bulk"
+      >
+        <PencilIcon />
+      </Button>
+      {/* No confirmation per row: one key/value pair is not a
+          comment, and a confirm per row turns a cleanup into a
+          clicking game. The namespace-level delete does confirm. */}
+      <Button
+        size="icon-xs"
+        variant="ghost"
+        onClick={onDelete}
+        aria-label={`Delete ${entry.namespace}/${entry.key}`}
+      >
+        <Trash2Icon />
+      </Button>
+    </span>
+  );
 
   return (
-    <tr className="align-top">
-      <th
-        scope="row"
-        className="py-1 pr-2 text-left align-top font-mono text-xs font-normal break-all text-muted-foreground"
-      >
-        {entry.key}
-      </th>
-      <td className="py-1 pr-2">
-        {entry.value === "" ? (
-          <Badge variant="outline">empty</Badge>
-        ) : folded ? (
-          <div className="relative">
-            <pre className="font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere] line-clamp-5">
+    <>
+      <tr className="align-top">
+        <th
+          scope="row"
+          className="border-t py-1 pr-2 text-left align-top font-mono text-xs font-normal truncate text-muted-foreground"
+          title={entry.key}
+        >
+          {entry.key}
+        </th>
+        <td className="border-t py-1 pr-2">
+          {entry.value === "" ? (
+            <Badge variant="outline">empty</Badge>
+          ) : folded ? (
+            <div className="relative">
+              <pre className="font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere] line-clamp-5">
+                {entry.value}
+              </pre>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-auto px-1 py-0.5 text-xs"
+                onClick={() => setExpanded(true)}
+              >
+                Show all ({byteLength(entry.value)} B)
+              </Button>
+            </div>
+          ) : (
+            <pre className="font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
               {entry.value}
             </pre>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-auto px-1 py-0.5 text-xs"
-              onClick={() => setExpanded(true)}
-            >
-              Show all ({byteLength(entry.value)} B)
-            </Button>
-          </div>
-        ) : (
-          <pre className="font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
-            {entry.value}
-          </pre>
+          )}
+        </td>
+        {wide && (
+          <td className="border-t py-1 pr-2 text-right text-xs text-muted-foreground">
+            {meta}
+          </td>
         )}
-      </td>
-      <td className="py-1 text-right text-xs text-muted-foreground">
-        <span title={entry.updated_at}>{compactAge(entry.updated_at)}</span>
-        <span className="block truncate">{entry.updated_by.display_name}</span>
         {canWrite && (
-          <span className="flex justify-end gap-0.5">
-            <Button
-              size="sm"
-              variant="ghost"
-              className="size-6 p-0"
-              onClick={onEdit}
-              aria-label={`Edit ${entry.namespace}/${entry.key} in Bulk`}
-              title="Edit in Bulk"
-            >
-              <PencilIcon className="size-3.5" />
-            </Button>
-            {/* No confirmation per row: one key/value pair is not a
-                comment, and a confirm per row turns a cleanup into a
-                clicking game. The namespace-level delete does confirm. */}
-            <Button
-              size="sm"
-              variant="ghost"
-              className="size-6 p-0"
-              onClick={onDelete}
-              aria-label={`Delete ${entry.namespace}/${entry.key}`}
-            >
-              <Trash2Icon className="size-3.5" />
-            </Button>
-          </span>
+          <td className="border-t py-1 text-right align-top">{actions}</td>
         )}
-      </td>
-    </tr>
+      </tr>
+      {!wide && (
+        <tr>
+          <td
+            colSpan={canWrite ? 3 : 2}
+            className="pb-1 text-right text-xs text-muted-foreground"
+          >
+            {meta}
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
