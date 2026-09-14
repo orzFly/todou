@@ -38,8 +38,14 @@ describe("issue updated_at activity policy T-101", () => {
     projectId = (await json(res)).id;
 
     // Spec review needs an actor who is not the pusher.
+    // Owned, because a machine with no owner has no ceiling to judge
+    // its role against and cannot be given one (T-340).
+    const owner = await json(
+      await t.app.request("/api/me", { headers: { cookie } }),
+    );
     const agent = await addUserWithToken(t.ctx, "updated-at-agent", {
       kind: "machine",
+      ownerId: owner.id,
     });
     agentHeaders = agent.headers;
     const member = await t.app.request(

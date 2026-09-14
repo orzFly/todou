@@ -5,6 +5,7 @@ import { resolveGrantTarget } from "../src/lib/grant-target.ts";
 import {
   GrantAccessCard,
   type GrantSearch,
+  grantFailure,
   parseGrantSearch,
   readReason,
 } from "../src/pages/grant-access.tsx";
@@ -409,5 +410,28 @@ describe("the reason the requester attached", () => {
     expect(shown.querySelector("strong")).toBeNull();
     expect(shown.querySelector("a")).toBeNull();
     expect(screen.getByText(/not verified/)).toBeTruthy();
+  });
+});
+
+describe("the refusal Grant can now walk into (T-340)", () => {
+  it("names the project and what to do about it", () => {
+    const message = grantFailure(
+      "acme",
+      new Error(
+        "the owner of this machine, @bob, is not a member of this project — add them first",
+      ),
+    );
+
+    // The server knows the owner but not which project was being written,
+    // and Grant writes several in a row — so the slug has to come back in.
+    expect(message).toContain("acme");
+    expect(message).toContain("@bob");
+    expect(message).toContain("add @bob");
+  });
+
+  it("passes any other failure through, still naming the project", () => {
+    expect(grantFailure("acme", new Error("requires admin role"))).toBe(
+      "acme: requires admin role",
+    );
   });
 });

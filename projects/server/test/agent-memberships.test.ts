@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { projectMembers } from "../src/db/system-schema.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
@@ -76,6 +77,8 @@ describe("agent memberships (T-227)", () => {
   const slugsOf = (rows: { project: { slug: string } }[]) =>
     rows.map((r) => r.project.slug);
   const projectSlugs = (rows: { slug: string }[]) => rows.map((p) => p.slug);
+  const roleBySlug = (rows: { slug: string; my_role?: string }[]) =>
+    Object.fromEntries(rows.map((p) => [p.slug, p.my_role]));
 
   it("lists every membership of every agent I own", async () => {
     const alice = await human("alice-shape");
@@ -111,8 +114,16 @@ describe("agent memberships (T-227)", () => {
     const alice = await human("alice-blind");
     const bob = await human("bob-blind");
     const agent = await createAgent(alice, "blind-bot");
-    await createProject(bob, "bobland");
-    await addMember(bob, "bobland", agent.id, "writer");
+    const project = await createProject(bob, "bobland");
+    // Written straight into the table: the API refuses to put a machine
+    // where its owner holds nothing (T-340), so the only way this row comes
+    // about now is an owner who left or lost their instance-admin flag. That
+    // state still has to list, which is what this covers.
+    await t.ctx.router.system().insert(projectMembers).values({
+      projectId: project.id,
+      userId: agent.id,
+      role: "writer",
+    });
 
     // Alice really cannot read it — the endpoint lists it anyway, because
     // she could enumerate it with a PAT issued to her own agent.
@@ -125,6 +136,25 @@ describe("agent memberships (T-227)", () => {
 
     expect(slugsOf(body.memberships)).toContain("bobland");
     expect(projectSlugs(body.manageable_projects)).not.toContain("bobland");
+  });
+
+  it("refuses to put a machine where its owner holds nothing", async () => {
+    const alice = await human("alice-ceiling");
+    const bob = await human("bob-ceiling");
+    const agent = await createAgent(alice, "ceiling-bot");
+    await createProject(bob, "ceilingland");
+
+    const res = await t.app.request(
+      `/api/projects/ceilingland/members/${agent.id}`,
+      {
+        method: "PUT",
+        headers: sending(bob.headers),
+        body: JSON.stringify({ role: "writer" }),
+      },
+    );
+
+    expect(res.status).toBe(409);
+    expect((await json(res)).error.message).toContain("@alice-ceiling");
   });
 
   it("never leaks another owner's agents", async () => {
@@ -144,24 +174,37 @@ describe("agent memberships (T-227)", () => {
     ).toBe(false);
   });
 
-  it("counts only admin memberships as manageable, and everything for an instance admin", async () => {
+  it("counts any membership as manageable, carrying the role it caps at", async () => {
     const alice = await human("alice-manage");
     const bob = await human("bob-manage");
     await createProject(alice, "manage-mine");
     await createProject(bob, "manage-theirs");
     await addMember(bob, "manage-theirs", alice.id, "writer");
+    await createProject(bob, "manage-hidden");
 
-    const aliceSlugs = projectSlugs(
-      (await memberships(alice.headers)).manageable_projects,
-    );
-    expect(aliceSlugs).toContain("manage-mine");
-    expect(aliceSlugs).not.toContain("manage-theirs");
+    const mine = (await memberships(alice.headers)).manageable_projects;
 
-    const adminSlugs = projectSlugs(
-      (await memberships({ cookie: adminCookie })).manageable_projects,
+    // A writer's project counts now (T-340) — arranging your own machines is
+    // yours at any role — and `my_role` is what caps them there.
+    expect(roleBySlug(mine)).toEqual({
+      "manage-mine": "admin",
+      "manage-theirs": "writer",
+    });
+  });
+
+  it("keeps every project manageable for an instance admin, who holds no row", async () => {
+    const bob = await human("bob-instance");
+    await createProject(bob, "instance-theirs");
+
+    const all = (await memberships({ cookie: adminCookie }))
+      .manageable_projects;
+
+    // The literal reading of "projects I hold a membership row in" would take
+    // this set from every project to none: an instance admin holds none.
+    expect(projectSlugs(all)).toContain("instance-theirs");
+    expect(all.every((p: { my_role?: string }) => p.my_role === "admin")).toBe(
+      true,
     );
-    expect(adminSlugs).toContain("manage-mine");
-    expect(adminSlugs).toContain("manage-theirs");
   });
 
   it("answers a user with no agents with two empty lists", async () => {

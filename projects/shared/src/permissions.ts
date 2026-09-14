@@ -53,6 +53,18 @@ export const CAPABILITIES = [
   { id: "member.set", minRole: "admin", enforce: "gate" },
   { id: "member.remove", minRole: "admin", enforce: "gate" },
 
+  // Arranging your own machines' membership is yours at any role (T-340), so
+  // that a reporter who owns an agent is not left asking an admin to run its
+  // automation. It grants nothing new: the invariant holds a machine at or
+  // below its owner's own role, so a reader can only ever make a reader.
+  //
+  // Deliberately not `ownerOnly` on `member.set`. That flag means "your own
+  // rows", and in this table your own row is your own membership — the one
+  // thing SELF_MEMBERSHIP forbids touching. Two ids put the scope in the
+  // name instead of overloading a word into its opposite.
+  { id: "member.set_own_agent", minRole: "reader", enforce: "gate" },
+  { id: "member.remove_own_agent", minRole: "reader", enforce: "gate" },
+
   // Denying an agent access is a reader's to do (T-280): the requirement is
   // that anyone who can see the project can turn its access links off, and a
   // denial grants nothing — an admin may still add that agent by hand.

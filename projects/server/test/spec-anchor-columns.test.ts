@@ -32,8 +32,14 @@ describe("spec anchor columns (T-142)", () => {
     });
     expect(res.status).toBe(201);
     projectId = (await json(res)).id;
+    // Owned, because a machine with no owner has no ceiling to judge
+    // its role against and cannot be given one (T-340).
+    const owner = await json(
+      await t.app.request("/api/me", { headers: { cookie } }),
+    );
     const agent = await addUserWithToken(t.ctx, "cols-agent", {
       kind: "machine",
+      ownerId: owner.id,
     });
     agentHeaders = agent.headers;
     const member = await t.app.request(

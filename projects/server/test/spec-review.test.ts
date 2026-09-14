@@ -72,8 +72,14 @@ describe("spec review loop T-23", () => {
       body: JSON.stringify({ slug, name: "Spec review" }),
     });
     expect(res.status).toBe(201);
+    // Owned, because a machine with no owner has no ceiling to judge
+    // its role against and cannot be given one (T-340).
+    const owner = await json(
+      await t.app.request("/api/me", { headers: { cookie } }),
+    );
     const agent = await addUserWithToken(t.ctx, "spec-agent", {
       kind: "machine",
+      ownerId: owner.id,
     });
     agentHeaders = agent.headers;
     const member = await t.app.request(

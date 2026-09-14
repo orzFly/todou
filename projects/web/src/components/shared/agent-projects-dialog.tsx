@@ -2,8 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type Agent,
   type AgentMembership,
+  type ManageableProject,
   MemberRole,
-  type ProjectBrief,
+  ROLE_RANK,
 } from "@todou/shared";
 import { PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
@@ -27,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cappedRole } from "@/lib/roles.ts";
 import { cn } from "@/lib/utils";
 
 /** Visual grouping only — the role is also written out in text. */
@@ -179,9 +181,16 @@ function AgentProjectsBody({ agent }: { agent: Agent }) {
     (m) => m.agent_id === agent.id,
   );
   const manageable = memberships.data.manageable_projects;
-  const manageableIds = new Set(manageable.map((p) => p.id));
+  const ceilingOf = new Map(manageable.map((p) => [p.id, p.my_role]));
   const joined = new Set(mine.map((m) => m.project.id));
   const candidates = manageable.filter((p) => !joined.has(p.id));
+  const toAddCeiling = manageable.find((p) => p.slug === toAdd)?.my_role;
+  // `min(writer, my role there)`: a reporter adding their own agent as a
+  // writer would only find out at the 409. A missing `my_role` — a server
+  // from before the field — means no known ceiling, so nothing is offered;
+  // the client parses no schema at runtime, so this branch is the only thing
+  // between an undefined and a ceiling computed from it.
+  const addRole = cappedRole("writer", toAddCeiling);
 
   return (
     <div className="space-y-3">
@@ -195,7 +204,8 @@ function AgentProjectsBody({ agent }: { agent: Agent }) {
             <MembershipRow
               key={m.project.id}
               membership={m}
-              manageable={manageableIds.has(m.project.id)}
+              manageable={ceilingOf.has(m.project.id)}
+              ceiling={ceilingOf.get(m.project.id)}
               onRole={(role) => setRole.mutate({ slug: m.project.slug, role })}
               onRemove={() => remove.mutate(m.project.slug)}
             />
@@ -221,7 +231,7 @@ function AgentProjectsBody({ agent }: { agent: Agent }) {
                     <SelectValue placeholder="Choose a project" />
                   </SelectTrigger>
                   <SelectContent>
-                    {candidates.map((p: ProjectBrief) => (
+                    {candidates.map((p: ManageableProject) => (
                       <SelectItem key={p.id} value={p.slug}>
                         {p.name}
                       </SelectItem>
@@ -232,9 +242,12 @@ function AgentProjectsBody({ agent }: { agent: Agent }) {
                     would otherwise hand out a real grant. */}
                 <Button
                   size="sm"
-                  disabled={toAdd === "" || setRole.isPending}
+                  disabled={
+                    toAdd === "" || addRole === null || setRole.isPending
+                  }
                   onClick={() => {
-                    setRole.mutate({ slug: toAdd, role: "writer" });
+                    if (addRole === null) return;
+                    setRole.mutate({ slug: toAdd, role: addRole });
                     setToAdd("");
                   }}
                 >
@@ -242,7 +255,9 @@ function AgentProjectsBody({ agent }: { agent: Agent }) {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                Added as writer — change the role above afterwards.
+                {addRole === null
+                  ? "Pick a project to see what this agent can be added as."
+                  : `Added as ${addRole} — change the role above afterwards.`}
               </p>
             </>
           )}
@@ -255,15 +270,25 @@ function AgentProjectsBody({ agent }: { agent: Agent }) {
 function MembershipRow({
   membership,
   manageable,
+  ceiling,
   onRole,
   onRemove,
 }: {
   membership: AgentMembership;
   manageable: boolean;
+  /** My role in this project: what the agent's role here may not exceed. */
+  ceiling: MemberRole | undefined;
   onRole: (role: MemberRole) => void;
   onRemove: () => void;
 }) {
   const { project, role } = membership;
+  // The clamp has to land here as well as on Add. Widening `manageable` past
+  // admins means a reader owner now sees their own agent's row — and left
+  // unclamped it would still offer admin, so the ordinary path would walk
+  // into the 409 the ceiling exists to keep off the screen.
+  const overCeiling = (option: MemberRole) =>
+    ceiling === undefined ||
+    (ROLE_RANK[option] > ROLE_RANK[ceiling] && option !== role);
   return (
     <div className="flex items-center gap-2">
       <div className="min-w-0 flex-1">
@@ -276,18 +301,28 @@ function MembershipRow({
         <>
           <Select
             value={role}
+            disabled={ceiling === undefined}
             onValueChange={(next) => onRole(next as MemberRole)}
           >
             <SelectTrigger
               size="sm"
               className="w-28"
               aria-label={`role in ${project.name}`}
+              title={
+                ceiling === undefined
+                  ? undefined
+                  : `At most ${ceiling} — an agent cannot outrank its owner.`
+              }
             >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {MemberRole.options.map((option) => (
-                <SelectItem key={option} value={option}>
+                <SelectItem
+                  key={option}
+                  value={option}
+                  disabled={overCeiling(option)}
+                >
                   {option}
                 </SelectItem>
               ))}

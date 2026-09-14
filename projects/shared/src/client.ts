@@ -48,6 +48,7 @@ import type {
   LabelUpdateInput,
   Me,
   Member,
+  MemberAddInput,
   MemberRole,
   MePrefs,
   MePrefsPatch,
@@ -570,6 +571,8 @@ export class TodouClient {
 
   listMembers = (slug: string) =>
     this.request<Member[]>("GET", `/projects/${slug}/members`);
+  addMember = (slug: string, input: MemberAddInput) =>
+    this.request<Member>("POST", `/projects/${slug}/members`, { json: input });
   setMember = (slug: string, userId: number, role: MemberRole) =>
     this.request<void>("PUT", `/projects/${slug}/members/${userId}`, {
       json: { role },

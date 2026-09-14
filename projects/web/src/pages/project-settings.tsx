@@ -1,4 +1,5 @@
 import {
+  type UseMutationResult,
   useMutation,
   useQueryClient,
   useSuspenseQuery,
@@ -11,6 +12,7 @@ import {
   type Member,
   type MemberRole,
   type ProjectUpdateInput,
+  ROLE_RANK,
   type Status,
   type StatusUpdateInput,
   type TodouError,
@@ -68,6 +70,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { PRESET_COLORS } from "@/lib/labels.ts";
+import { cappedRole } from "@/lib/roles.ts";
 
 /** Exported so a test can hold the picker to the schema's own list. */
 export const ROLES: readonly MemberRole[] = MEMBER_ROLES;
@@ -454,11 +457,35 @@ export function ReferencesSection({ slug }: { slug: string }) {
 const SELF_NOTE =
   "You can't change your own role or remove yourself — ask another admin.";
 
+const ORPHAN_NOTE =
+  "Their owner holds no role here, so there is no ceiling to judge a role " +
+  "against: these can only be removed. They rejoin the list above by " +
+  "themselves once their owner is a member again.";
+
+/**
+ * One owner and the machines of theirs that are in this project. `owner` is
+ * their membership row where they have one; an owner who holds no row still
+ * heads a group, because their machines have to be filed under somebody.
+ */
+type Group = {
+  key: number;
+  owner: Member | null;
+  ownerRef: Member["user"]["owner"] | Member["user"];
+  machines: Member[];
+};
+
+/**
+ * Members as an indented tree: a human, then the machines they own here
+ * beneath them (T-340). The grouping is computed here rather than served,
+ * because `listMembers` already carries every fact it needs — who owns each
+ * machine, and what its owner's role here is.
+ */
 export function MembersSection({ slug }: { slug: string }) {
   const members = useSuspenseQuery(membersQuery(slug));
   const agents = useSuspenseQuery(agentsQuery);
   const me = useSuspenseQuery(meQuery);
   const queryClient = useQueryClient();
+  const [addingPerson, setAddingPerson] = useState(false);
   const invalidate = (slug: string) =>
     queryClient.invalidateQueries({ queryKey: ["members", slug] });
 
@@ -474,8 +501,32 @@ export function MembersSection({ slug }: { slug: string }) {
     onSuccess: (_data, vars) => invalidate(vars.slug),
     onError: (error) => toast.error(error.message),
   });
+  const addPerson = useMutation({
+    mutationFn: (vars: { slug: string; login: string; role: MemberRole }) =>
+      api.addMember(vars.slug, { login: vars.login, role: vars.role }),
+    onSuccess: (_data, vars) => {
+      setAddingPerson(false);
+      invalidate(vars.slug);
+    },
+    onError: (error) => toast.error(error.message),
+  });
 
-  const memberIds = new Set(members.data.map((m) => m.user.id));
+  const rows = members.data;
+  // The same rule `projectRoleOf` applies server-side: an instance admin is
+  // an admin here while holding no membership row, so reading my role off the
+  // table alone would show them the page a stranger gets.
+  const myRole: MemberRole | null = me.data.is_instance_admin
+    ? "admin"
+    : (rows.find((m) => m.user.id === me.data.id)?.role ?? null);
+  const iAmAdmin = myRole === "admin";
+
+  const { groups, orphans } = groupByOwner(rows);
+  const memberIds = new Set(rows.map((m) => m.user.id));
+  // A reporter who adds their agent as a writer would only meet the ceiling
+  // as a 409; offer what they may actually grant instead.
+  const addAgentRole = cappedRole("writer", myRole);
+
+  const rowProps = { slug, me: me.data, iAmAdmin, setRole, remove };
 
   return (
     <section className="space-y-3">
@@ -485,7 +536,7 @@ export function MembersSection({ slug }: { slug: string }) {
           <TableHeader>
             <TableRow>
               <TableHead>User</TableHead>
-              <TableHead className="w-44">
+              <TableHead className="w-52">
                 <div className="flex flex-col items-start">
                   Role
                   <RolePermissionsDialog />
@@ -495,72 +546,428 @@ export function MembersSection({ slug }: { slug: string }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {members.data.map((member: Member) => {
-              const isSelf = member.user.id === me.data.id;
-              return (
-                <TableRow key={member.user.id}>
-                  <TableCell>
-                    <UserChip user={member.user} showLogin />
-                  </TableCell>
-                  <TableCell>
-                    <Select
-                      value={member.role}
-                      disabled={isSelf}
-                      onValueChange={(role) =>
-                        setRole.mutate({
-                          slug,
-                          userId: member.user.id,
-                          role: role as MemberRole,
-                        })
-                      }
-                    >
-                      <SelectTrigger
-                        size="sm"
-                        title={isSelf ? SELF_NOTE : undefined}
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ROLES.map((role) => (
-                          <SelectItem key={role} value={role}>
-                            {role}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`remove ${displayNameOf(member.user)}`}
-                      disabled={isSelf}
-                      title={isSelf ? SELF_NOTE : undefined}
-                      onClick={() =>
-                        remove.mutate({ slug, userId: member.user.id })
-                      }
-                    >
-                      <Trash2Icon className="size-4" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
+            {groups.map((group) => (
+              <GroupRows key={group.key} group={group} {...rowProps} />
+            ))}
           </TableBody>
         </Table>
       </div>
-      {members.data.some((m) => m.user.id === me.data.id) && (
+      {rows.some((m) => m.user.id === me.data.id) && (
         <p className="text-sm text-muted-foreground">{SELF_NOTE}</p>
       )}
-      <AddAgentPicker
-        agents={agents.data}
-        memberIds={memberIds}
-        busy={setRole.isPending}
-        onAdd={(agent) =>
-          setRole.mutate({ slug, userId: agent.id, role: "writer" })
-        }
-      />
+      {!iAmAdmin && (
+        <p className="max-w-xl text-sm text-muted-foreground">
+          You are not an admin here, so only the machines you own can have their
+          role changed or be removed
+          {myRole === null
+            ? "."
+            : `, and none of them can go above your own ${myRole}.`}
+        </p>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <AddAgentPicker
+          agents={agents.data}
+          memberIds={memberIds}
+          busy={setRole.isPending}
+          onAdd={(agent) => {
+            // Null means no role of my own to hand down; the picker is not
+            // offered a write it cannot make.
+            if (addAgentRole === null) return;
+            setRole.mutate({ slug, userId: agent.id, role: addAgentRole });
+          }}
+        />
+        {iAmAdmin && !addingPerson && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setAddingPerson(true)}
+          >
+            <PlusIcon className="size-3.5" /> Add person
+          </Button>
+        )}
+      </div>
+      {iAmAdmin && addingPerson && (
+        <AddPersonForm
+          busy={addPerson.isPending}
+          onCancel={() => setAddingPerson(false)}
+          onAdd={(login, role) => addPerson.mutate({ slug, login, role })}
+        />
+      )}
+      {orphans.length > 0 && (
+        <div className="space-y-2 pt-2">
+          <h3 className="text-sm font-medium">Owner is not a member here</h3>
+          <p className="max-w-xl text-sm text-muted-foreground">
+            {ORPHAN_NOTE}
+          </p>
+          <div className="rounded-lg border border-amber-500/40">
+            <Table>
+              <TableBody>
+                {orphans.map((group) => (
+                  <GroupRows key={group.key} group={group} {...rowProps} />
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
     </section>
+  );
+}
+
+/**
+ * Machines filed under their owner, and the ones whose owner has no role here
+ * split off. The split is `owner_role`, not "is the owner in the list": an
+ * instance admin owns machines in projects they hold no row in, and those are
+ * ordinary rows with an ordinary ceiling.
+ *
+ * A missing `owner_role` — a server from before the field — stays in the main
+ * list rather than being called an orphan, and reads as an unknown ceiling,
+ * which `roleControl` renders read-only.
+ */
+function groupByOwner(rows: Member[]): { groups: Group[]; orphans: Group[] } {
+  const humans = new Map<number, Member>();
+  for (const row of rows) {
+    if (row.user.kind === "human") humans.set(row.user.id, row);
+  }
+  const byOwner = new Map<number, Group>();
+  const orphanOwners = new Set<number>();
+  for (const row of rows) {
+    const owner = row.user.owner;
+    if (row.user.kind !== "machine" || owner === null) continue;
+    let group = byOwner.get(owner.id);
+    if (!group) {
+      group = {
+        key: owner.id,
+        owner: humans.get(owner.id) ?? null,
+        ownerRef: humans.get(owner.id)?.user ?? owner,
+        machines: [],
+      };
+      byOwner.set(owner.id, group);
+    }
+    group.machines.push(row);
+    if (row.owner_role === null) orphanOwners.add(owner.id);
+  }
+  for (const [id, row] of humans) {
+    if (!byOwner.has(id)) {
+      byOwner.set(id, {
+        key: id,
+        owner: row,
+        ownerRef: row.user,
+        machines: [],
+      });
+    }
+  }
+
+  const byName = (a: Group, b: Group) =>
+    nameOf(a.ownerRef).localeCompare(nameOf(b.ownerRef));
+  const all = [...byOwner.values()];
+  for (const group of all) {
+    group.machines.sort((a, b) =>
+      displayNameOf(a.user).localeCompare(displayNameOf(b.user)),
+    );
+  }
+  return {
+    groups: all.filter((g) => !orphanOwners.has(g.key)).sort(byName),
+    orphans: all.filter((g) => orphanOwners.has(g.key)).sort(byName),
+  };
+}
+
+/** An owner reference carries no display name; its login has to stand in. */
+const nameOf = (ref: Group["ownerRef"]): string =>
+  ref === null ? "" : displayNameOf(ref);
+
+type RoleVars = { slug: string; userId: number; role: MemberRole };
+type RemoveVars = { slug: string; userId: number };
+
+/** What every row in either table needs, carried as one bundle. */
+type RowProps = {
+  slug: string;
+  me: { id: number };
+  iAmAdmin: boolean;
+  setRole: UseMutationResult<void, Error, RoleVars, unknown>;
+  remove: UseMutationResult<void, Error, RemoveVars, unknown>;
+};
+
+function GroupRows({
+  group,
+  slug,
+  me,
+  iAmAdmin,
+  setRole,
+  remove,
+}: RowProps & { group: Group }) {
+  const owner = group.owner;
+  return (
+    <>
+      {owner === null ? (
+        <OwnerHeaderRow group={group} />
+      ) : (
+        <MemberRow
+          member={owner}
+          slug={slug}
+          me={me}
+          iAmAdmin={iAmAdmin}
+          setRole={setRole}
+          remove={remove}
+        />
+      )}
+      {group.machines.map((machine) => (
+        <MemberRow
+          key={machine.user.id}
+          member={machine}
+          indented
+          slug={slug}
+          me={me}
+          iAmAdmin={iAmAdmin}
+          setRole={setRole}
+          remove={remove}
+        />
+      ))}
+    </>
+  );
+}
+
+/**
+ * An owner with no membership row of their own. Display only: giving it the
+ * member row's template would put a role control and a remove button on a
+ * membership that does not exist.
+ */
+function OwnerHeaderRow({ group }: { group: Group }) {
+  const ref = group.ownerRef;
+  const login = ref === null ? "?" : ref.login;
+  const orphaned = group.machines.some((m) => m.owner_role === null);
+  return (
+    <TableRow>
+      <TableCell>
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium">{login}</span>
+          <span className="rounded-full border border-amber-500/50 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-400">
+            not a member of this project
+          </span>
+        </span>
+      </TableCell>
+      <TableCell className="text-sm text-muted-foreground">
+        {orphaned ? "—" : "admin"}
+      </TableCell>
+      <TableCell />
+    </TableRow>
+  );
+}
+
+function MemberRow({
+  member,
+  indented = false,
+  slug,
+  me,
+  iAmAdmin,
+  setRole,
+  remove,
+}: RowProps & { member: Member; indented?: boolean }) {
+  const isSelf = member.user.id === me.id;
+  const isMine =
+    member.user.kind === "machine" && member.user.owner?.id === me.id;
+  const mayWrite = isSelf ? false : iAmAdmin || isMine;
+  const name = displayNameOf(member.user);
+
+  return (
+    <TableRow className={indented ? "bg-muted/40" : undefined}>
+      <TableCell className={indented ? "pl-10" : undefined}>
+        <span className="flex items-center gap-2">
+          {indented && (
+            <span
+              className="h-4 w-3 -translate-y-1 rounded-bl border-b border-l border-muted-foreground/40"
+              aria-hidden
+            />
+          )}
+          <UserChip user={member.user} showLogin />
+        </span>
+      </TableCell>
+      <TableCell>
+        <RoleCell
+          member={member}
+          isSelf={isSelf}
+          mayWrite={mayWrite}
+          onPick={(role) =>
+            setRole.mutate({ slug, userId: member.user.id, role })
+          }
+        />
+      </TableCell>
+      <TableCell>
+        {mayWrite ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`remove ${name}`}
+            onClick={() => remove.mutate({ slug, userId: member.user.id })}
+          >
+            <Trash2Icon className="size-4" />
+          </Button>
+        ) : isSelf ? (
+          // A disabled control, not nothing: this one is meaningful to the
+          // person looking at it, it is simply not theirs to press.
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`remove ${name}`}
+            disabled
+            title={SELF_NOTE}
+          >
+            <Trash2Icon className="size-4" />
+          </Button>
+        ) : null}
+      </TableCell>
+    </TableRow>
+  );
+}
+
+/**
+ * Three states, deliberately told apart. A row you may write gets a live
+ * select capped at the owner's role; your own row keeps the control disabled
+ * with the reason on it; a row you hold no authority over becomes plain text,
+ * because a greyed control there only invites "did I misclick?".
+ */
+function RoleCell({
+  member,
+  isSelf,
+  mayWrite,
+  onPick,
+}: {
+  member: Member;
+  isSelf: boolean;
+  mayWrite: boolean;
+  onPick: (role: MemberRole) => void;
+}) {
+  const isMachine = member.user.kind === "machine";
+  const ceiling = isMachine ? member.owner_role : undefined;
+  // Null and undefined both mean "no ceiling to check a role against": the
+  // owner holds nothing here, or the server never said. Either way the role
+  // cannot be written, only the row removed.
+  const locked = isMachine && ceiling == null;
+  const overCeiling =
+    ceiling != null && ROLE_RANK[member.role] > ROLE_RANK[ceiling];
+
+  if (locked) {
+    return (
+      <span
+        className="text-sm text-muted-foreground"
+        title="No ceiling can be worked out for this machine, so its role cannot be changed — only the row removed."
+      >
+        {member.role} <span className="opacity-70">(locked)</span>
+      </span>
+    );
+  }
+  if (!mayWrite && !isSelf) {
+    return <span className="text-sm">{member.role}</span>;
+  }
+
+  const ownerLogin = member.user.owner?.login;
+  const title = isSelf
+    ? SELF_NOTE
+    : ceiling == null
+      ? undefined
+      : `At most ${ceiling} — a machine cannot outrank its owner @${ownerLogin}.`;
+
+  return (
+    <span className="flex flex-col items-start gap-0.5">
+      <Select
+        value={member.role}
+        disabled={isSelf}
+        onValueChange={(role) => onPick(role as MemberRole)}
+      >
+        <SelectTrigger size="sm" title={title}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {ROLES.map((role) => (
+            <SelectItem
+              key={role}
+              value={role}
+              // The stored role stays selectable even when it is already over
+              // the ceiling, or the control would show a role the project
+              // does not hold. Writing it back is the server's to refuse.
+              disabled={
+                ceiling != null &&
+                ROLE_RANK[role] > ROLE_RANK[ceiling] &&
+                role !== member.role
+              }
+            >
+              {role}
+              {ceiling != null && ROLE_RANK[role] > ROLE_RANK[ceiling]
+                ? " — above the owner"
+                : ""}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {overCeiling && (
+        <span className="text-xs text-amber-700 dark:text-amber-400">
+          above @{ownerLogin} — the next change clamps it to {ceiling}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * Add by exact login. No directory, no search box: a picker over every
+ * account on the instance is a different thing to hand a project admin than
+ * the ability to confirm one login they already knew.
+ */
+function AddPersonForm({
+  busy,
+  onAdd,
+  onCancel,
+}: {
+  busy: boolean;
+  onAdd: (login: string, role: MemberRole) => void;
+  onCancel: () => void;
+}) {
+  const [login, setLogin] = useState("");
+  const [role, setRole] = useState<MemberRole>("reporter");
+
+  return (
+    <form
+      className="max-w-xl space-y-2 rounded-lg border p-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (login.trim()) onAdd(login.trim(), role);
+      }}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm text-muted-foreground">@</span>
+        <Input
+          value={login}
+          onChange={(e) => setLogin(e.target.value.trim().toLowerCase())}
+          placeholder="their exact login"
+          aria-label="login to add"
+          className="w-56"
+          autoFocus
+        />
+        <Select value={role} onValueChange={(v) => setRole(v as MemberRole)}>
+          <SelectTrigger size="sm" className="w-32" aria-label="role to add as">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {ROLES.map((option) => (
+              <SelectItem key={option} value={option}>
+                {option}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button type="submit" size="sm" disabled={busy || login.trim() === ""}>
+          {busy ? "Adding…" : "Add"}
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        There is no user directory and no search — you have to know the login.
+        An unknown one comes back as “no such user”, with no suggestion of a
+        near spelling.
+      </p>
+    </form>
   );
 }
 

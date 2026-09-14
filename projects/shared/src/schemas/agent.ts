@@ -34,12 +34,27 @@ export const AgentMembership = z.object({
 });
 export type AgentMembership = z.infer<typeof AgentMembership>;
 
+/**
+ * A project the caller may put their own machines into, with their effective
+ * role there — which is the ceiling any of those machines may be given.
+ *
+ * Optional for the same reason as `Member.owner_role`, and it matters more
+ * here: the client parses no schema at runtime (`client.ts` casts the decoded
+ * JSON), so against a server from before this field neither the types nor the
+ * runtime stops the page computing a ceiling from `undefined`. Missing means
+ * not operable — the safe direction to degrade in.
+ */
+export const ManageableProject = ProjectBrief.extend({
+  my_role: MemberRole.optional(),
+});
+export type ManageableProject = z.infer<typeof ManageableProject>;
+
 export const AgentMemberships = z.object({
   memberships: z.array(AgentMembership),
   /**
-   * The projects the caller administers: both the candidate set for joining
-   * and the test for which of the rows above may be edited.
+   * The projects the caller holds any role in: both the candidate set for
+   * joining and the test for which of the rows above may be edited.
    */
-  manageable_projects: z.array(ProjectBrief),
+  manageable_projects: z.array(ManageableProject),
 });
 export type AgentMemberships = z.infer<typeof AgentMemberships>;

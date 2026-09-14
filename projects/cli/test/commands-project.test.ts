@@ -539,3 +539,81 @@ describe("whoami project source", () => {
     );
   });
 });
+
+describe("project members add (T-340)", () => {
+  const added = {
+    user: {
+      id: 7,
+      login: "newcomer",
+      display_name: "Newcomer",
+      kind: "human",
+      avatar_url: null,
+      owner: null,
+    },
+    role: "reporter",
+    created_at: "2026-01-01T00:00:00.000Z",
+    owner_role: null,
+  };
+  const route: Route = ["POST", "/api/projects/acme/members", added];
+  const postBody = (calls: { init: { method?: string; body?: unknown } }[]) =>
+    JSON.parse(String(calls.find((c) => c.init.method === "POST")?.init.body));
+
+  it("posts the login and role, and says what it did", async () => {
+    const { home, work } = setup();
+    const { fetchImpl, calls } = fakeFetch([route]);
+    const result = await runCli(
+      ["project", "members", "add", "newcomer", "--role", "reporter"],
+      {
+        fetchImpl,
+        env: { ...loggedInEnv(), HOME: home, TODOU_PROJECT: "acme" },
+        cwd: work,
+      },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(postBody(calls)).toEqual({ login: "newcomer", role: "reporter" });
+    expect(result.stdout).toContain("added newcomer as reporter");
+  });
+
+  it("defaults to reader — the role that grants the least", async () => {
+    const { home, work } = setup();
+    const { fetchImpl, calls } = fakeFetch([
+      ["POST", "/api/projects/acme/members", { ...added, role: "reader" }],
+    ]);
+    await runCli(["project", "members", "add", "newcomer"], {
+      fetchImpl,
+      env: { ...loggedInEnv(), HOME: home, TODOU_PROJECT: "acme" },
+      cwd: work,
+    });
+    expect(postBody(calls).role).toBe("reader");
+  });
+
+  it("documents itself under --help", async () => {
+    const { home, work } = setup();
+    const { fetchImpl, calls } = fakeFetch([route]);
+    const result = await runCli(["project", "members", "add", "--help"], {
+      fetchImpl,
+      env: { ...loggedInEnv(), HOME: home },
+      cwd: work,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("todou project members add");
+    expect(result.stdout).toContain("--role");
+    expect(calls).toEqual([]);
+  });
+
+  it("rejects an unknown role before making a request", async () => {
+    const { home, work } = setup();
+    const { fetchImpl, calls } = fakeFetch([route]);
+    const result = await runCli(
+      ["project", "members", "add", "newcomer", "--role", "owner"],
+      {
+        fetchImpl,
+        env: { ...loggedInEnv(), HOME: home, TODOU_PROJECT: "acme" },
+        cwd: work,
+      },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('unknown role "owner"');
+    expect(calls).toEqual([]);
+  });
+});

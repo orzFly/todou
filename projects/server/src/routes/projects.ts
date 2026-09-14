@@ -2,6 +2,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
   AccessDenial,
   Member,
+  MemberAddInput,
   MemberSetInput,
   Project,
   ProjectCreateInput,
@@ -15,7 +16,12 @@ import {
   removeDenial,
   setDenial,
 } from "../services/access-denials.ts";
-import { listMembers, removeMember, setMember } from "../services/members.ts";
+import {
+  addMemberByLogin,
+  listMembers,
+  removeMember,
+  setMember,
+} from "../services/members.ts";
 import {
   createProject,
   deleteProject,
@@ -85,6 +91,14 @@ const listMembersRoute = createRoute({
   responses: {
     200: { description: "Members", ...jsonBody(z.array(Member)) },
   },
+});
+
+const addMemberRoute = createRoute({
+  method: "post",
+  path: "/{slug}/members",
+  summary: `Add a member by their exact login ${roleTag("member.set")}`,
+  request: { params: slugParam, body: jsonBody(MemberAddInput) },
+  responses: { 201: { description: "Member added", ...jsonBody(Member) } },
 });
 
 const setMemberRoute = createRoute({
@@ -196,6 +210,16 @@ export function projectRoutes() {
       ),
       200,
     );
+  });
+
+  app.openapi(addMemberRoute, async (c) => {
+    const member = await addMemberByLogin(
+      c.get("appCtx"),
+      c.get("user"),
+      c.req.valid("param").slug,
+      c.req.valid("json"),
+    );
+    return c.json(member, 201);
   });
 
   app.openapi(setMemberRoute, async (c) => {

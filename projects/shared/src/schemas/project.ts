@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { PREFIX_PATTERN, SLUG_PATTERN } from "../ref-shapes.ts";
 import { Id, Timestamp } from "./common.ts";
-import { UserRef } from "./user.ts";
+import { Login, UserRef } from "./user.ts";
 
 /**
  * What both `getProjectByRef` and `requireProject` throw when the caller has
@@ -131,8 +131,27 @@ export const Member = z.object({
   user: UserRef,
   role: MemberRole,
   created_at: Timestamp,
+  /**
+   * A machine owner's **effective** role here, which is the ceiling on the
+   * machine's own role; always null for a human. Computed server-side the way
+   * `projectRoleOf` computes it, so an instance admin reads as admin rather
+   * than null — that is how the page tells "the owner is an instance admin"
+   * from "the owner really is not in this project" without re-deriving the
+   * rule for itself.
+   *
+   * Optional for the same reason as `Project.viewer_role`: a server from
+   * before this field omits it. A client reads missing as "ceiling unknown",
+   * which is read-only — the safe direction to degrade in.
+   */
+  owner_role: MemberRole.nullable().optional(),
 });
 export type Member = z.infer<typeof Member>;
+
+export const MemberAddInput = z.object({
+  login: Login,
+  role: MemberRole,
+});
+export type MemberAddInput = z.infer<typeof MemberAddInput>;
 
 export const MemberSetInput = z.object({
   role: MemberRole,

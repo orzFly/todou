@@ -275,6 +275,99 @@ describe.each(PLACEMENTS)("projects domain (%s placement)", (placement) => {
     expect(removed.status).toBe(409);
   });
 
+  describe("a machine creating a project brings its owner in (T-340)", () => {
+    /** login → role, because "two rows" is not what the requirement says. */
+    async function rolesIn(s: string): Promise<Record<string, string>> {
+      const res = await t.app.request(`/api/projects/${s}/members`, {
+        headers: { cookie },
+      });
+      expect(res.status).toBe(200);
+      return Object.fromEntries(
+        (await json(res)).map(
+          (m: { user: { login: string }; role: string }) => [
+            m.user.login,
+            m.role,
+          ],
+        ),
+      );
+    }
+
+    async function machineWithOwner(tag: string, opts?: { root?: true }) {
+      const owner = await addUserWithToken(t.ctx, `owner-${tag}`, {
+        instanceAdmin: opts?.root,
+      });
+      const bot = await addUserWithToken(t.ctx, `bot-${tag}`, {
+        kind: "machine",
+        ownerId: owner.user.id,
+      });
+      return { owner, bot };
+    }
+
+    const createAs = (headers: Record<string, string>, s: string) =>
+      t.app.request("/api/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify({ slug: s, name: `Project ${s}` }),
+      });
+
+    it("writes both rows as admin, and nothing else", async () => {
+      const s = slug();
+      const { bot } = await machineWithOwner(s);
+
+      expect((await createAs(bot.headers, s)).status).toBe(201);
+
+      // The whole set, keyed by login: counting two rows would pass just as
+      // happily on two machine rows, or on an owner who came in as a reader.
+      expect(await rolesIn(s)).toEqual({
+        [`bot-${s}`]: "admin",
+        [`owner-${s}`]: "admin",
+      });
+    });
+
+    it("leaves a human creator with the single row they always had", async () => {
+      const s = slug();
+      const alice = await addUserWithToken(t.ctx, `human-${s}`);
+
+      expect((await createAs(alice.headers, s)).status).toBe(201);
+
+      expect(await rolesIn(s)).toEqual({ [`human-${s}`]: "admin" });
+    });
+
+    it("writes the owner's row even when they are an instance admin", async () => {
+      const s = slug();
+      const { bot } = await machineWithOwner(s, { root: true });
+
+      expect((await createAs(bot.headers, s)).status).toBe(201);
+
+      // Their implicit admin is invisible to ensureAdminSurvives, which only
+      // counts rows — so a missing row here has no symptom until the day it
+      // lets the project be emptied of admins.
+      expect(await rolesIn(s)).toEqual({
+        [`bot-${s}`]: "admin",
+        [`owner-${s}`]: "admin",
+      });
+    });
+
+    it("cannot then drop the owner back out", async () => {
+      const s = slug();
+      const { owner, bot } = await machineWithOwner(s);
+      expect((await createAs(bot.headers, s)).status).toBe(201);
+
+      const res = await t.app.request(
+        `/api/projects/${s}/members/${owner.user.id}`,
+        { method: "DELETE", headers: bot.headers },
+      );
+
+      // Removing the owner pulls the machine's own row in as collateral, so
+      // the admin check sees both leaving and refuses the pair outright.
+      expect(res.status).toBe(409);
+      expect(await rolesIn(s)).toEqual({
+        [`bot-${s}`]: "admin",
+        [`owner-${s}`]: "admin",
+      });
+    });
+  });
+
   it("refuses to change your own membership, co-admin or not", async () => {
     const s = slug();
     await createProject(s);

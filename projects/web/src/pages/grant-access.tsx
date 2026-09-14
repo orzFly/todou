@@ -150,6 +150,22 @@ function preselect(
   return agent === undefined ? undefined : { kind: "agent", id: agent.id };
 }
 
+/**
+ * An agent cannot be given a role in a project its owner holds none in
+ * (T-340), which is a refusal Grant can now walk into. The server's message
+ * names the owner but has no idea which project was being written, and Grant
+ * writes several in a row — so the slug has to be put back in, or the reader
+ * is told to add somebody somewhere.
+ */
+export function grantFailure(slug: string, cause: unknown): string {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const owner = /@([a-z0-9][a-z0-9-]*)/.exec(message)?.[1];
+  if (owner !== undefined && message.includes("not a member")) {
+    return `${slug}: add @${owner}, this agent's owner, to ${slug} first — an agent cannot hold a role where its owner holds none.`;
+  }
+  return `${slug}: ${message}`;
+}
+
 export function GrantAccessCard({
   search,
   reason,
@@ -247,7 +263,11 @@ export function GrantAccessCard({
       // through must leave the ones already written in place rather than
       // report a single verdict for the batch.
       for (const row of grantable) {
-        await api.setMember(row.slug, userId, row.role);
+        try {
+          await api.setMember(row.slug, userId, row.role);
+        } catch (cause) {
+          throw new Error(grantFailure(row.slug, cause));
+        }
       }
       return grantable.map((row) => row.slug);
     },
