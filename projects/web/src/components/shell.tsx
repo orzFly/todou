@@ -227,12 +227,12 @@ export function AppShell({
             element through useHeaderHeight(). */}
         {notice}
       </header>
-      {/* The app's only Suspense boundary, and it has to live here rather
-          than anywhere above: the router builds just one, around the root
-          `<Outlet/>` (`Match.js:144`), which sits above this whole shell — so
-          any page's cold `useSuspenseQuery` used to take the header, the nav,
-          the search box and the footer down with it (T-265). Drawn inside
-          `<main>`, it can only ever replace the page. */}
+      {/* Drawn below the chrome on purpose: the router's own boundary wraps
+          the root `<Outlet/>` (`Match.js:144`) above everything here, so a
+          page waiting on a cold `useSuspenseQuery` used to take the whole
+          shell down with it (T-265). Pages draw further boundaries inside
+          this one. Component identity across a card switch comes from keys
+          (`issue-detail.tsx`, T-324). */}
       <main className="mx-auto max-w-6xl px-4 py-6">
         <Suspense fallback={<PagePending />}>{children}</Suspense>
       </main>

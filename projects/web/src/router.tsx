@@ -406,8 +406,8 @@ const routeTree = rootRoute.addChildren([
  * deeper than the one `AppShell` draws inside `<main>` and therefore the one
  * that actually catches — with the route's fallback, not the shell's. Which
  * of the two wins then takes reading the router's source to work out. One
- * boundary plus `staticData.pageSkeleton` leaves exactly one possible
- * behaviour (T-265).
+ * boundary above the page plus `staticData.pageSkeleton` leaves exactly one
+ * possible behaviour (T-265).
  */
 export const router = createRouter({ routeTree });
 
