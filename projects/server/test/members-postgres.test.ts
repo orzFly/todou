@@ -120,6 +120,92 @@ describe.skipIf(!PG_URL)("membership writes serialize on the project", () => {
     expect(rows).toHaveLength(2);
   });
 
+  it("clamps a machine that only became too high while the write waited", async () => {
+    const alice = await addUserWithToken(t.ctx, `${tag}-l-alice`);
+    const bob = await addUserWithToken(t.ctx, `${tag}-l-bob`);
+    const bot = await addUserWithToken(t.ctx, `${tag}-l-bot`, {
+      kind: "machine",
+      ownerId: bob.user.id,
+    });
+    const slug = `${tag}-l`;
+
+    const created = await t.app.request("/api/projects", {
+      method: "POST",
+      headers: sending(alice.headers),
+      body: JSON.stringify({ slug, name: slug }),
+    });
+    expect(created.status).toBe(201);
+    const projectId = (await json(created)).id as number;
+
+    for (const [who, role] of [
+      [bob.user.id, "admin"],
+      // Below what bob is about to be demoted to, so it is not collateral
+      // when the demotion is planned and never enters that set.
+      [bot.user.id, "reader"],
+    ] as const) {
+      const res = await t.app.request(`/api/projects/${slug}/members/${who}`, {
+        method: "PUT",
+        headers: sending(alice.headers),
+        body: JSON.stringify({ role }),
+      });
+      expect(res.status).toBe(204);
+    }
+
+    const system = t.ctx.router.system();
+    let release!: () => void;
+    let acquired!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const locked = new Promise<void>((resolve) => {
+      acquired = resolve;
+    });
+    const holder = system.transaction(async (tx) => {
+      await tx
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .for("update");
+      acquired();
+      await held;
+    });
+    await locked;
+
+    const demote = t.app.request(
+      `/api/projects/${slug}/members/${bob.user.id}`,
+      {
+        method: "PUT",
+        headers: sending(alice.headers),
+        body: JSON.stringify({ role: "reporter" }),
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    // Raised while the demotion waits — legal at this instant, because bob is
+    // still admin. Written on this connection because the API would want the
+    // same lock.
+    await system
+      .update(projectMembers)
+      .set({ role: "admin" })
+      .where(eq(projectMembers.userId, bot.user.id));
+
+    release();
+    await holder;
+    expect((await demote).status).toBe(204);
+
+    // Reading the collateral set before the lock misses this row entirely: it
+    // was under the new role when the set was built, so no later check has
+    // anything to judge, and the machine is left outranking its owner for
+    // good.
+    const rows = await system
+      .select({ userId: projectMembers.userId, role: projectMembers.role })
+      .from(projectMembers)
+      .where(eq(projectMembers.projectId, projectId));
+    const byUser = Object.fromEntries(rows.map((r) => [r.userId, r.role]));
+    expect(byUser[bob.user.id]).toBe("reporter");
+    expect(byUser[bot.user.id]).toBe("reporter");
+  });
+
   it("does not put back a collateral row somebody removed meanwhile", async () => {
     const alice = await addUserWithToken(t.ctx, `${tag}-r-alice`);
     const bob = await addUserWithToken(t.ctx, `${tag}-r-bob`);

@@ -33,21 +33,20 @@ const NO_ADMIN_LEFT = "this would leave the project with no admin at all";
 type Effect = {
   userId: number;
   role: MemberRole | null;
+  kind: "human" | "machine";
   /**
    * The row the request actually named, which is created when it is missing.
-   * Everything else here is collateral — dragged in because the ceiling moved
-   * — and those rows are only ever updated in place. Upserting them would
-   * resurrect a membership somebody removed while this write was being
-   * planned: the plan is read before the lock, so a row it names can be gone
-   * by the time the writes land, and `onConflictDoUpdate` on a missing row
-   * inserts rather than doing nothing.
+   * Everything else here is collateral — dragged in because the owner's role
+   * moved — and those rows are only ever updated in place. Upserting them
+   * would resurrect a membership somebody removed while this write was
+   * waiting: `onConflictDoUpdate` on a missing row inserts rather than doing
+   * nothing.
+   *
+   * Also the only row that drags others along, which is what stops a
+   * collateral clamp from recursing into a second round of collateral.
    */
   target?: true;
-  /**
-   * Whose ceiling this row answers to, set only for machines. Carried on the
-   * effect so the ceiling can be re-checked under the lock without going back
-   * to `users` for rows already resolved.
-   */
+  /** Only for machines: whose ceiling this row answers to. */
   ownerId?: number | null;
 };
 
@@ -256,16 +255,13 @@ export async function removeMember(
   // answering 404 after taking those out would be a refusal that wrote.
   if (held.length === 0) throw new NotFoundError("member not found");
 
-  const effects: Effect[] = [{ userId, role: null, target: true }];
-  if (target.row.kind === "human") {
-    // A machine's membership is held up by its owner's: with the owner gone
-    // there is no ceiling left to judge it against, so the rows go together
-    // rather than leaving orphans nobody asked for.
-    for (const machine of await ownedMachinesIn(system, project.id, userId)) {
-      effects.push({ userId: machine.userId, role: null });
-    }
-  }
-  await writeMembership(ctx, project, effects);
+  // A machine's membership is held up by its owner's: with the owner gone
+  // there is no ceiling left to judge it against, so the rows go together
+  // rather than leaving orphans nobody asked for. Which machines those are is
+  // settled under the lock — see `expandCollateral`.
+  await writeMembership(ctx, project, [
+    { userId, role: null, kind: target.row.kind, target: true },
+  ]);
 }
 
 /**
@@ -342,12 +338,20 @@ export async function addMemberByLogin(
 }
 
 /**
- * The whole set of rows one requested role comes to: the target, plus
- * whatever the ceiling drags along with it. Throws rather than adjusting when
- * the request itself is out of bounds — a role quietly replaced by another is
- * the hardest kind of API behaviour to account for afterwards, and the web
- * page only ever offers legal ones, so the refusal is a guard rail for
- * concurrent edits and direct API calls rather than a normal path.
+ * The row the request named, and a refusal when the request itself is out of
+ * bounds. Refuses rather than adjusting — a role quietly replaced by another
+ * is the hardest kind of API behaviour to account for afterwards, and the web
+ * page only ever offers legal ones, so this is a guard rail for concurrent
+ * edits and direct API calls rather than a normal path.
+ *
+ * Only the named row: what a role change drags along with it is worked out
+ * under the lock, by `expandCollateral`, because a set enumerated out here
+ * is a set that can go stale before it is written.
+ *
+ * This ceiling check is therefore not where the invariant lands — that is
+ * `ensureCeilingsHold`. It is here to produce the error a caller can act on,
+ * naming the owner and the exact ceiling, which the under-lock pass has no
+ * cheap way to phrase.
  */
 async function plan(
   ctx: AppContext,
@@ -356,61 +360,112 @@ async function plan(
   role: MemberRole,
 ): Promise<Effect[]> {
   const system = ctx.router.system();
-  const effects: Effect[] = [
+  if (target.kind !== "machine") {
+    return [{ userId: target.id, role, kind: "human", target: true }];
+  }
+
+  const owner =
+    target.ownerId === null ? null : await userById(system, target.ownerId);
+  if (owner === null) {
+    throw new ConflictError(
+      "this machine has no owner, so it has no ceiling here — it can only be removed",
+    );
+  }
+  const ceiling = await projectRoleOf(ctx, project, owner);
+  if (ceiling === null) {
+    throw new ConflictError(
+      `the owner of this machine, @${owner.login}, is not a member of this project — add them first`,
+    );
+  }
+  if (ROLE_RANK[role] > ROLE_RANK[ceiling]) {
+    throw new ConflictError(
+      `@${owner.login} is ${ceiling} in this project, and a machine cannot outrank its owner`,
+    );
+  }
+  return [
     {
       userId: target.id,
       role,
+      kind: "machine",
+      ownerId: target.ownerId,
       target: true,
-      ...(target.kind === "machine" ? { ownerId: target.ownerId } : {}),
     },
   ];
+}
 
-  if (target.kind === "machine") {
-    const owner =
-      target.ownerId === null ? null : await userById(system, target.ownerId);
-    const ceiling =
-      owner === null ? null : await projectRoleOf(ctx, project, owner);
-    if (ceiling === null) {
-      throw new ConflictError(
-        owner === null
-          ? "this machine has no owner, so it has no ceiling here — it can only be removed"
-          : `the owner of this machine, @${owner.login}, is not a member of this project — add them first`,
-      );
-    }
-    if (ROLE_RANK[role] > ROLE_RANK[ceiling]) {
-      throw new ConflictError(
-        `@${owner?.login} is ${ceiling} in this project, and a machine cannot outrank its owner`,
-      );
-    }
-    return effects;
-  }
+/**
+ * What the named row drags along with it, read under the lock rather than
+ * carried in from planning.
+ *
+ * Enumerating it earlier leaves a hole that has nothing to do with the rows
+ * it names and everything to do with the ones it does not: a machine already
+ * below the owner's new role is not collateral, so it is absent from the set
+ * — and a concurrent write can raise it above that role while this one waits
+ * for the lock. `ensureCeilingsHold` only judges rows the set contains, so
+ * the machine ends up outranking its owner with nothing left to correct it.
+ * Re-reading here is the same move as re-reading the ceiling, applied to the
+ * other half of the question.
+ *
+ * It also picks up a machine that joined while this write waited, which an
+ * owner's removal then takes with it as it should.
+ */
+async function expandCollateral(
+  tx: Db,
+  projectId: number,
+  effects: Effect[],
+): Promise<Effect[]> {
+  const settled = [...effects];
+  const present = new Set(effects.map((e) => e.userId));
 
-  const current = await system
-    .select({ role: projectMembers.role })
-    .from(projectMembers)
-    .where(
-      and(
-        eq(projectMembers.projectId, project.id),
-        eq(projectMembers.userId, target.id),
-      ),
-    );
-  const before = current[0]?.role;
-  // Only a demotion pulls machines down with it. A promotion deliberately
-  // leaves them where they are: the invariant is a ceiling, and lifting it
-  // grants nothing by itself — carrying them up would hand out authority
-  // nobody asked for.
-  if (before !== undefined && ROLE_RANK[role] < ROLE_RANK[before]) {
-    for (const machine of await ownedMachinesIn(
-      system,
-      project.id,
-      target.id,
-    )) {
-      if (ROLE_RANK[machine.role] > ROLE_RANK[role]) {
-        effects.push({ userId: machine.userId, role, ownerId: target.id });
+  for (const effect of effects) {
+    if (effect.kind !== "human" || effect.target !== true) continue;
+    const machines = await ownedMachinesIn(tx, projectId, effect.userId);
+
+    if (effect.role === null) {
+      for (const machine of machines) {
+        if (present.has(machine.userId)) continue;
+        settled.push({
+          userId: machine.userId,
+          role: null,
+          kind: "machine",
+          ownerId: effect.userId,
+        });
+        present.add(machine.userId);
       }
+      continue;
+    }
+
+    const held = await tx
+      .select({ role: projectMembers.role })
+      .from(projectMembers)
+      .where(
+        and(
+          eq(projectMembers.projectId, projectId),
+          eq(projectMembers.userId, effect.userId),
+        ),
+      );
+    const before = held[0]?.role;
+    // Only a demotion pulls machines down, judged against the role the owner
+    // holds right now rather than the one planning saw. A promotion leaves
+    // them where they are: the invariant is a ceiling, and lifting it grants
+    // nothing by itself — carrying them up would hand out authority nobody
+    // asked for.
+    if (before === undefined || ROLE_RANK[effect.role] >= ROLE_RANK[before]) {
+      continue;
+    }
+    for (const machine of machines) {
+      if (present.has(machine.userId)) continue;
+      if (ROLE_RANK[machine.role] <= ROLE_RANK[effect.role]) continue;
+      settled.push({
+        userId: machine.userId,
+        role: effect.role,
+        kind: "machine",
+        ownerId: effect.userId,
+      });
+      present.add(machine.userId);
     }
   }
-  return effects;
+  return settled;
 }
 
 async function userById(system: Db, id: number): Promise<UserRow | null> {
@@ -429,12 +484,15 @@ async function userById(system: Db, id: number): Promise<UserRow | null> {
  * theoretical one where agents write memberships. Membership writes are the
  * only thing that takes this lock, and they are short.
  *
- * Both rules this card adds are re-read here, under the lock, because the
- * effects were planned before it: the surviving admins, and every ceiling the
- * write is about to test itself against. Planning cannot join the transaction
- * — the ceiling's own lookup resolves its connection from the context — so the
- * plan is treated as a proposal and the decisions are taken again on rows this
- * transaction is holding.
+ * Everything the outcome depends on is settled here, under the lock: which
+ * rows come along with the named one, whether any machine would end up above
+ * its owner, and whether an admin is left. What arrives from outside is only
+ * the row the caller asked for.
+ *
+ * That split is the point. Each of those three read before the lock leaves a
+ * different hole, and the one that is easiest to miss is the set itself — a
+ * machine that was legal when the set was built is simply absent from it, so
+ * a later check has nothing to judge.
  *
  * Deadlock-free by shape rather than by counting: this transaction takes
  * exactly one explicit lock, always the same row, always first, and afterwards
@@ -448,15 +506,17 @@ async function writeMembership(
   effects: Effect[],
 ): Promise<void> {
   const system = ctx.router.system();
+  let settled = effects;
   await system.transaction(async (tx) => {
     await tx
       .select({ id: projects.id })
       .from(projects)
       .where(eq(projects.id, project.id))
       .for("update");
-    await ensureAdminSurvives(tx, project.id, effects);
-    await ensureCeilingsHold(tx, project.id, effects);
-    for (const effect of effects) {
+    settled = await expandCollateral(tx, project.id, effects);
+    await ensureAdminSurvives(tx, project.id, settled);
+    await ensureCeilingsHold(tx, project.id, settled);
+    for (const effect of settled) {
       if (effect.role === null) {
         await tx
           .delete(projectMembers)
@@ -469,9 +529,10 @@ async function writeMembership(
         continue;
       }
       if (effect.target !== true) {
-        // Collateral is updated, never upserted. The row was read before the
-        // lock, so it may have been removed since — and creating it again
-        // would undo somebody's removal in the name of clamping a role.
+        // Collateral is updated, never upserted. Even read under the lock the
+        // row can be gone by now — the reads above and these writes are one
+        // transaction, but the row was deleted before it began — and creating
+        // it again would undo somebody's removal in the name of a clamp.
         await tx
           .update(projectMembers)
           .set({ role: effect.role })
@@ -498,7 +559,7 @@ async function writeMembership(
   });
   // One event per affected row rather than one for the target: a client that
   // consumes them row by row would otherwise never hear about the collateral.
-  for (const effect of effects) {
+  for (const effect of settled) {
     ctx.bus.publish(project.id, {
       entity: "member",
       id: effect.userId,
