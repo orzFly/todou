@@ -405,9 +405,11 @@ const routeTree = rootRoute.addChildren([
  * Suspense boundary of its own per route (`Match.js:39`, v1.170.25), nested
  * deeper than the one `AppShell` draws inside `<main>` and therefore the one
  * that actually catches — with the route's fallback, not the shell's. Which
- * of the two wins then takes reading the router's source to work out. One
- * boundary above the page plus `staticData.pageSkeleton` leaves exactly one
- * possible behaviour (T-265).
+ * of the two wins then takes reading the router's source to work out. An
+ * app-drawn boundary above the page (the shell's own, inside `<main>`)
+ * plus `staticData.pageSkeleton` leaves exactly one possible behaviour
+ * (T-265). The router's root-route one (`Match.js:144`) wraps the
+ * `<Outlet/>` and outranks anything declared here.
  */
 export const router = createRouter({ routeTree });
 
