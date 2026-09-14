@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { Agent, Me, Member, MemberRole, UserRef } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentsQuery, api, membersQuery, meQuery } from "../src/api/queries.ts";
@@ -216,10 +222,20 @@ describe("MembersSection from a non-admin's chair", () => {
     expect(container.textContent).toContain("above your own reporter");
   });
 
-  it("offers no Add person, which is an admin's", () => {
-    expect(screen.queryByRole("button", { name: /Add person/ })).toBeNull();
-    renderSection(ROWS, meFrom(ALICE));
-    expect(screen.getByRole("button", { name: /Add person/ })).toBeTruthy();
+  it("offers Add person to an admin and to nobody else", () => {
+    // Both halves read through their own container. Asked of `screen` before
+    // any render, the negative half is put to an empty document — cleanup
+    // has already taken the previous test's tree down — and passes whatever
+    // the component does.
+    const asReporter = renderSection(ROWS, meFrom(BOB));
+    expect(
+      within(asReporter).queryByRole("button", { name: /Add person/ }),
+    ).toBeNull();
+
+    const asAdmin = renderSection(ROWS, meFrom(ALICE));
+    expect(
+      within(asAdmin).getByRole("button", { name: /Add person/ }),
+    ).toBeTruthy();
   });
 
   it("caps the role its dropdown offers at my own", () => {
