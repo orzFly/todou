@@ -30,7 +30,26 @@ const SELF_MEMBERSHIP =
 const NO_ADMIN_LEFT = "this would leave the project with no admin at all";
 
 /** One membership row to write. A null role means delete it. */
-type Effect = { userId: number; role: MemberRole | null };
+type Effect = {
+  userId: number;
+  role: MemberRole | null;
+  /**
+   * The row the request actually named, which is created when it is missing.
+   * Everything else here is collateral — dragged in because the ceiling moved
+   * — and those rows are only ever updated in place. Upserting them would
+   * resurrect a membership somebody removed while this write was being
+   * planned: the plan is read before the lock, so a row it names can be gone
+   * by the time the writes land, and `onConflictDoUpdate` on a missing row
+   * inserts rather than doing nothing.
+   */
+  target?: true;
+  /**
+   * Whose ceiling this row answers to, set only for machines. Carried on the
+   * effect so the ceiling can be re-checked under the lock without going back
+   * to `users` for rows already resolved.
+   */
+  ownerId?: number | null;
+};
 
 /** The target of a membership write, as far as picking the rules goes. */
 type Target = { row: UserRow | null; capability: CapabilityId };
@@ -71,18 +90,25 @@ export async function listMembers(
 }
 
 /**
- * The effective role each of these owners holds here, batched. Resolving the
- * ceiling per row would be an N+1 on a list that always renders in full.
+ * What these users hold here, batched: their membership role where they have
+ * one, and separately whether they are an instance admin. Resolving it per row
+ * would be an N+1 on a list that always renders in full.
+ *
+ * The two are kept apart rather than folded into one role because a caller
+ * re-checking a ceiling mid-write has to know which of the two it is: a
+ * membership role can be overridden by a role this same write is about to
+ * hand out, and an instance admin's implicit admin cannot.
  */
-async function ownerCeilings(
-  system: Db,
+async function rolesHere(
+  db: Db,
   projectId: number,
-  ownerIds: number[],
-): Promise<Map<number, MemberRole>> {
-  const ceilings = new Map<number, MemberRole>();
-  const unique = [...new Set(ownerIds)];
-  if (unique.length === 0) return ceilings;
-  for (const row of await system
+  userIds: number[],
+): Promise<{ member: Map<number, MemberRole>; instanceAdmin: Set<number> }> {
+  const member = new Map<number, MemberRole>();
+  const instanceAdmin = new Set<number>();
+  const unique = [...new Set(userIds)];
+  if (unique.length === 0) return { member, instanceAdmin };
+  for (const row of await db
     .select({ userId: projectMembers.userId, role: projectMembers.role })
     .from(projectMembers)
     .where(
@@ -91,18 +117,31 @@ async function ownerCeilings(
         inArray(projectMembers.userId, unique),
       ),
     )) {
-    ceilings.set(row.userId, row.role);
+    member.set(row.userId, row.role);
   }
-  // The same override `projectRoleOf` applies, and the reason the ceiling is
-  // not simply the membership row: an instance admin is admin everywhere
-  // while holding a row nowhere, so their machines would read as orphans.
-  for (const row of await system
+  for (const row of await db
     .select({ id: users.id })
     .from(users)
     .where(and(inArray(users.id, unique), eq(users.isInstanceAdmin, true)))) {
-    ceilings.set(row.id, "admin");
+    instanceAdmin.add(row.id);
   }
-  return ceilings;
+  return { member, instanceAdmin };
+}
+
+/**
+ * The effective role each of these owners holds here — the ceiling on any
+ * machine of theirs. The instance-admin override is the reason this is not
+ * simply the membership row: an instance admin is admin everywhere while
+ * holding a row nowhere, so their machines would otherwise read as orphans.
+ */
+async function ownerCeilings(
+  db: Db,
+  projectId: number,
+  ownerIds: number[],
+): Promise<Map<number, MemberRole>> {
+  const { member, instanceAdmin } = await rolesHere(db, projectId, ownerIds);
+  for (const id of instanceAdmin) member.set(id, "admin");
+  return member;
 }
 
 /** The membership rows of every machine this human owns in this project. */
@@ -217,7 +256,7 @@ export async function removeMember(
   // answering 404 after taking those out would be a refusal that wrote.
   if (held.length === 0) throw new NotFoundError("member not found");
 
-  const effects: Effect[] = [{ userId, role: null }];
+  const effects: Effect[] = [{ userId, role: null, target: true }];
   if (target.row.kind === "human") {
     // A machine's membership is held up by its owner's: with the owner gone
     // there is no ceiling left to judge it against, so the rows go together
@@ -317,7 +356,14 @@ async function plan(
   role: MemberRole,
 ): Promise<Effect[]> {
   const system = ctx.router.system();
-  const effects: Effect[] = [{ userId: target.id, role }];
+  const effects: Effect[] = [
+    {
+      userId: target.id,
+      role,
+      target: true,
+      ...(target.kind === "machine" ? { ownerId: target.ownerId } : {}),
+    },
+  ];
 
   if (target.kind === "machine") {
     const owner =
@@ -360,7 +406,7 @@ async function plan(
       target.id,
     )) {
       if (ROLE_RANK[machine.role] > ROLE_RANK[role]) {
-        effects.push({ userId: machine.userId, role });
+        effects.push({ userId: machine.userId, role, ownerId: target.id });
       }
     }
   }
@@ -383,12 +429,18 @@ async function userById(system: Db, id: number): Promise<UserRow | null> {
  * theoretical one where agents write memberships. Membership writes are the
  * only thing that takes this lock, and they are short.
  *
- * The effects were planned before the lock, because the ceiling comes from
- * `projectRoleOf`, which resolves its own connection and cannot join this
- * transaction. That costs nothing here: a stale effect list can only name a
- * row that no longer exists (the write becomes a no-op) or miss one that
- * appeared (it is left alone), and the admin count is re-read under the lock
- * either way, so the invariant does not rest on the planning being fresh.
+ * Both rules this card adds are re-read here, under the lock, because the
+ * effects were planned before it: the surviving admins, and every ceiling the
+ * write is about to test itself against. Planning cannot join the transaction
+ * — the ceiling's own lookup resolves its connection from the context — so the
+ * plan is treated as a proposal and the decisions are taken again on rows this
+ * transaction is holding.
+ *
+ * Deadlock-free by shape rather than by counting: this transaction takes
+ * exactly one explicit lock, always the same row, always first, and afterwards
+ * writes only `projectMembers` — which nothing else writes while holding a
+ * lock. An argument from "no other lock site touches these tables" would not
+ * survive the next one being added.
  */
 async function writeMembership(
   ctx: AppContext,
@@ -403,10 +455,26 @@ async function writeMembership(
       .where(eq(projects.id, project.id))
       .for("update");
     await ensureAdminSurvives(tx, project.id, effects);
+    await ensureCeilingsHold(tx, project.id, effects);
     for (const effect of effects) {
       if (effect.role === null) {
         await tx
           .delete(projectMembers)
+          .where(
+            and(
+              eq(projectMembers.projectId, project.id),
+              eq(projectMembers.userId, effect.userId),
+            ),
+          );
+        continue;
+      }
+      if (effect.target !== true) {
+        // Collateral is updated, never upserted. The row was read before the
+        // lock, so it may have been removed since — and creating it again
+        // would undo somebody's removal in the name of clamping a role.
+        await tx
+          .update(projectMembers)
+          .set({ role: effect.role })
           .where(
             and(
               eq(projectMembers.projectId, project.id),
@@ -436,6 +504,65 @@ async function writeMembership(
       id: effect.userId,
       action: effect.role === null ? "deleted" : "updated",
     });
+  }
+}
+
+/**
+ * No machine outranks its owner, judged on the rows this transaction holds
+ * rather than on the ones planning happened to read. The ceiling is looked up
+ * before the lock, so between the two a concurrent write can demote or remove
+ * the owner; without this the machine keeps the role the stale ceiling
+ * allowed, and nothing later goes back to correct it — the invariant would be
+ * broken silently and permanently, which is worse than the refusal.
+ *
+ * The owner's role after this batch, not before it: demoting a human and
+ * clamping their machines is one effect set, and reading the owner's stored
+ * row here would judge the machines against the role the owner is leaving.
+ */
+async function ensureCeilingsHold(
+  tx: Db,
+  projectId: number,
+  effects: Effect[],
+): Promise<void> {
+  const machines = effects.filter(
+    (e): e is Effect & { role: MemberRole } =>
+      e.role !== null && e.ownerId !== undefined,
+  );
+  if (machines.length === 0) return;
+
+  const written = new Map<number, MemberRole>();
+  const removed = new Set<number>();
+  for (const effect of effects) {
+    if (effect.role === null) removed.add(effect.userId);
+    else written.set(effect.userId, effect.role);
+  }
+  const ownerIds = machines
+    .map((e) => e.ownerId)
+    .filter((id): id is number => id != null);
+  const { member, instanceAdmin } = await rolesHere(tx, projectId, ownerIds);
+
+  for (const effect of machines) {
+    const ownerId = effect.ownerId;
+    const ceiling =
+      ownerId == null
+        ? null
+        : // An instance admin's admin is not a membership row, so nothing in
+          // this batch can take it away.
+          instanceAdmin.has(ownerId)
+          ? "admin"
+          : removed.has(ownerId)
+            ? null
+            : (written.get(ownerId) ?? member.get(ownerId) ?? null);
+    if (ceiling === null) {
+      throw new ConflictError(
+        "the owner of this machine is not a member of this project — add them first",
+      );
+    }
+    if (ROLE_RANK[effect.role] > ROLE_RANK[ceiling]) {
+      throw new ConflictError(
+        `the owner is ${ceiling} in this project, and a machine cannot outrank its owner`,
+      );
+    }
   }
 }
 
