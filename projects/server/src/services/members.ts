@@ -9,7 +9,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
-import { projectMembers, users } from "../db/system-schema.ts";
+import { projectMembers, projects, users } from "../db/system-schema.ts";
 import { ConflictError, ForbiddenError, NotFoundError } from "../errors.ts";
 import { type ProjectRow, projectRoleOf, requireCapability } from "./access.ts";
 import { getUserRefs } from "./users.ts";
@@ -372,15 +372,37 @@ async function userById(system: Db, id: number): Promise<UserRow | null> {
   return rows[0] ?? null;
 }
 
-/** Checked whole, then written whole: the check is worth nothing per row. */
+/**
+ * Checked whole, then written whole: the check is worth nothing per row, and
+ * worth nothing outside the transaction that acts on it either.
+ *
+ * The `for update` on the project row is what makes the count the check reads
+ * still true when the writes land. Without it two requests each see the same
+ * two admins, each conclude one of them may go, and between them they take
+ * the last one — the exact failure this card exists to prevent, and not a
+ * theoretical one where agents write memberships. Membership writes are the
+ * only thing that takes this lock, and they are short.
+ *
+ * The effects were planned before the lock, because the ceiling comes from
+ * `projectRoleOf`, which resolves its own connection and cannot join this
+ * transaction. That costs nothing here: a stale effect list can only name a
+ * row that no longer exists (the write becomes a no-op) or miss one that
+ * appeared (it is left alone), and the admin count is re-read under the lock
+ * either way, so the invariant does not rest on the planning being fresh.
+ */
 async function writeMembership(
   ctx: AppContext,
   project: ProjectRow,
   effects: Effect[],
 ): Promise<void> {
   const system = ctx.router.system();
-  await ensureAdminSurvives(system, project.id, effects);
   await system.transaction(async (tx) => {
+    await tx
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.id, project.id))
+      .for("update");
+    await ensureAdminSurvives(tx, project.id, effects);
     for (const effect of effects) {
       if (effect.role === null) {
         await tx
