@@ -47,6 +47,7 @@ import {
   annotationDecorations,
   changeDecorations,
   mergeDecorations,
+  pairedFences,
 } from "@/lib/spec-decorations.ts";
 import type { SpecReviewDraft } from "@/lib/spec-drafts.ts";
 import {
@@ -243,6 +244,10 @@ export function columnsOfSelection(
   };
 }
 
+/** Which side of a diff one of pierre's line rows numbers itself on. */
+const LINE_TYPE_ATTR = "data-line-type";
+const DELETION_LINE_TYPE = "change-deletion";
+
 /**
  * Source-line range for the block a selection endpoint sits in (T-52).
  * pierre renders code blocks inside an open shadow root, so the walk hops
@@ -263,6 +268,13 @@ export function anchorRangeForNode(
       const loc = parseSourceLoc(stamped.getAttribute(SOURCE_LINE_ATTR));
       if (loc === null) return null;
       if (row !== null) {
+        // A deletion row numbers itself on the OLD side, so the current
+        // source has no line for it and `contentStart + rowLine - 1` names
+        // an unrelated one — silently, and plausibly (T-343). The whole
+        // block is the honest answer; the other three line types pierre
+        // emits, `context-expanded` included, all number the new side and
+        // go down the formula below.
+        if (row.getAttribute(LINE_TYPE_ATTR) === DELETION_LINE_TYPE) return loc;
         const contentStart = Number(
           stamped.getAttribute(CODE_CONTENT_START_ATTR),
         );
@@ -464,6 +476,11 @@ export function AnnotatedMarkdown({
         ),
       ),
     [index, baselineIndex, annotations],
+  );
+  const fenceBaselines = useMemo(
+    () =>
+      baselineIndex === null ? undefined : pairedFences(baselineIndex, index),
+    [baselineIndex, index],
   );
   const annotationRanges = useMemo(
     () => annotations.map((a) => ({ start: a.start, end: a.end })),
@@ -683,6 +700,7 @@ export function AnnotatedMarkdown({
         slug={slug}
         issueNumber={issueNumber}
         rehypePlugins={rehypePlugins}
+        fenceBaselines={fenceBaselines}
       >
         {body}
       </MarkdownView>

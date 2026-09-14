@@ -2,16 +2,21 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { render, waitFor } from "@testing-library/react";
 import type { SpecCommentItem } from "@todou/shared";
 import { describe, expect, it, vi } from "vitest";
+import { FENCE_DIFF_CLASS } from "../src/components/shared/markdown-view.tsx";
 import {
   AnnotatedMarkdown,
   type DisplayedAnnotation,
 } from "../src/components/spec/annotated-markdown.tsx";
 import { changedLineRanges } from "../src/lib/spec-changes.ts";
-import { changeDecorations } from "../src/lib/spec-decorations.ts";
+import {
+  changeDecorations,
+  pairedFences,
+} from "../src/lib/spec-decorations.ts";
 import {
   buildSegmentIndex,
   type CellPart,
 } from "../src/lib/spec-source-index.ts";
+import { FENCE_SHAPES } from "./fence-shapes.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 // Same pin as spec-review-web: fences go through pierre's lazy CodeView.
@@ -21,7 +26,19 @@ vi.mock("@pierre/diffs/react", () => ({
       <code>{items.map((item) => item.file.contents).join("\n")}</code>
     </pre>
   ),
-  MultiFileDiff: () => null,
+  // The real one draws per-line rows this environment has no layout for; what
+  // a test here can still pin is which fence was handed which two bodies.
+  MultiFileDiff: ({
+    oldFile,
+    newFile,
+  }: {
+    oldFile: { contents: string };
+    newFile: { contents: string };
+  }) => (
+    <div data-testid="fence-diff" data-old={oldFile.contents}>
+      {newFile.contents}
+    </div>
+  ),
 }));
 
 async function renderDiff(
@@ -874,20 +891,23 @@ describe("the whole document is one alignment (T-211)", () => {
     expect(texts(container, "del.spec-del")).toEqual(["改"]);
   });
 
-  it("leaves an edited fence to the line wash", () => {
-    const decorations = changeDecorations(
-      buildSegmentIndex("```ts\na = 1;\n```\n"),
-      buildSegmentIndex("```ts\na = 2;\n```\n"),
-    );
+  it("keeps an edited fence out of the decorations and pairs it instead", () => {
+    const before = buildSegmentIndex("```ts\na = 1;\n```\n");
+    const after = buildSegmentIndex("```ts\na = 2;\n```\n");
     // A fence is a leaf and pairs with its counterpart, but pierre owns what
     // is inside it (T-31), so the pair is drawn on with nothing at all.
-    expect(decorations).toEqual({
+    expect(changeDecorations(before, after)).toEqual({
       spans: [],
       deletions: [],
       blocks: [],
       tables: [],
       images: [],
     });
+    // The empty object alone proves nothing: a fence's text never enters
+    // `segments`, so any decoration computed for one is dropped in silence
+    // and this passes whether the pair is skipped or not. What the pair does
+    // produce is the baseline body, keyed by the new fence's opening line.
+    expect([...pairedFences(before, after)]).toEqual([[1, "a = 1;"]]);
   });
 
   it("emits one marker and one word pair for T-209's repro", () => {
@@ -902,6 +922,74 @@ describe("the whole document is one alignment (T-211)", () => {
       [true, T209_PARA],
     ]);
     expect(decorations.blocks).toEqual([]);
+  });
+});
+
+describe("which fences were edited in place (T-343)", () => {
+  it.each(FENCE_SHAPES)(
+    "takes the old body of %s with no container prefix on it",
+    (_name, of) => {
+      const fences = pairedFences(
+        buildSegmentIndex(of(["const a = 1;", "const b = 2;"])),
+        buildSegmentIndex(of(["const a = 1;", "const b = 3;"])),
+      );
+      expect([...fences.values()]).toEqual(["const a = 1;\nconst b = 2;"]);
+    },
+  );
+
+  it("leaves out a fence whose frame changed and whose body did not", () => {
+    // Each pair has two different source slices — which is what the
+    // alignment pairs by — and one identical body. Entering any of them
+    // would hand pierre two equal strings, and a hunkless diff with no file
+    // header draws nothing: the code would go missing from the page.
+    const same: Array<[string, string]> = [
+      ["```ts\nconst a = 1;\n```\n", "```typescript\nconst a = 1;\n```\n"],
+      ["```ts\nconst a = 1;\n```\n", "~~~ts\nconst a = 1;\n~~~\n"],
+      ["```ts\nconst a = 1;\n```\n", "> ```ts\n> const a = 1;\n> ```\n"],
+      [
+        "- x\n\n  ```ts\n  const a = 1;\n  ```\n",
+        "1. x\n\n   ```ts\n   const a = 1;\n   ```\n",
+      ],
+    ];
+    for (const [before, after] of same) {
+      expect([
+        ...pairedFences(buildSegmentIndex(before), buildSegmentIndex(after)),
+      ]).toEqual([]);
+    }
+  });
+});
+
+/** Two fences, the first edited in place and the second left alone. */
+const TWO_FENCES = (body: string) =>
+  `intro\n\n\`\`\`ts\n${body}\n\`\`\`\n\nmiddle\n\n\`\`\`ts\nuntouched();\n\`\`\`\n`;
+
+describe("an edited fence renders as pierre's diff (T-343)", () => {
+  it("hands only that fence both bodies, and leaves the other one plain", async () => {
+    const { container } = await renderDiff(
+      TWO_FENCES("a = 1;"),
+      TWO_FENCES("a = 2;"),
+    );
+    const diffs = [...container.querySelectorAll("[data-testid='fence-diff']")];
+    expect(diffs.map((el) => el.getAttribute("data-old"))).toEqual([
+      "a = 1;\n",
+    ]);
+    expect(diffs.map((el) => el.textContent)).toEqual(["a = 2;\n"]);
+    // The untouched fence is still its own contents, through plain CodeView.
+    expect(texts(container, "pre code")).toEqual(["untouched();"]);
+  });
+
+  it("marks that fence's wrapper without costing it its nav stop", async () => {
+    const { container } = await renderDiff(
+      TWO_FENCES("a = 1;"),
+      TWO_FENCES("a = 2;"),
+    );
+    const marked = [...container.querySelectorAll(`.${FENCE_DIFF_CLASS}`)];
+    expect(marked.map((el) => el.getAttribute("data-loc"))).toEqual(["3-5"]);
+    // `.spec-changed` is the ↑↓ navigation's own selector; the CSS drops the
+    // wash off this wrapper but the class has to survive.
+    expect(marked.map((el) => el.classList.contains("spec-changed"))).toEqual([
+      true,
+    ]);
   });
 });
 

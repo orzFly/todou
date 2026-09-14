@@ -568,11 +568,16 @@ function markBlockClass(
  *
  * Two kinds of element are decorated whole instead of entered — code
  * blocks, whose contents belong to pierre, and links, whose contents
- * belong to `IssueLink`. `MarkdownPre` hands its text to pierre's CodeView
- * by concatenating the `<pre>`'s text children (T-31); an injected `<ins>`
- * in there would silently delete code from the display. Both still carry
- * an outer class or wrapper, which is how a mark reaching into either
- * still shows (T-164).
+ * belong to `IssueLink`. Both still carry an outer class or wrapper, which
+ * is how a mark reaching into either still shows (T-164).
+ *
+ * A fence is walled off twice over, and opening either wall alone changes
+ * nothing. Its text never enters `SegmentIndex.text` or `segments` (T-211),
+ * so no decoration is ever computed for one; and `MarkdownPre` builds what it
+ * hands pierre's CodeView out of the `<pre>`'s text children alone, so an
+ * injected `<ins>` takes the code it wraps out of the display with it (T-31).
+ * Which line of a fence moved is answered outside this plugin entirely, by
+ * handing pierre both versions of the body (T-343).
  */
 export function rehypeDecorations(options: Decorations = NO_DECORATIONS) {
   const spans = options.spans;

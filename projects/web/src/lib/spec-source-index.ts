@@ -135,6 +135,24 @@ export type SourceImage = {
   end: number;
 };
 
+/**
+ * A code block's body as mdast decoded it, keyed by the leaf group it owns.
+ *
+ * Kept rather than re-derived, because the rule that looks like it would do —
+ * take `source.slice(start, end)` and drop the first and last line — only
+ * holds for a fence at the top level. Inside a list item every line carries
+ * the item's indent, inside a blockquote every line carries `> `, and an
+ * indented block has no marker lines to drop at all, so its body comes out
+ * empty. `value` is what `MarkdownView` hands pierre for all of them, which
+ * is what makes it the only string two versions of a block can be compared
+ * by (T-343).
+ */
+export type SourceFence = {
+  value: string;
+  /** 1-based source line the block opens on — the `data-loc` start. */
+  line: number;
+};
+
 /** One block of structure, for deciding what counts as "new whole" (T-158). */
 export type SourceBlock = {
   type: SourceBlockType;
@@ -171,6 +189,8 @@ export type SegmentIndex = {
   groupTypes: SourceBlockType[];
   /** Every image, by the leaf group it owns (T-223). */
   images: Map<number, SourceImage>;
+  /** Every code block's body, by the leaf group it owns (T-343). */
+  fences: Map<number, SourceFence>;
 };
 
 function lineStartsOf(source: string): number[] {
@@ -197,6 +217,7 @@ export function buildSegmentIndex(source: string): SegmentIndex {
   const blocks: SourceBlock[] = [];
   const groupTypes: SourceBlockType[] = [];
   const images = new Map<number, SourceImage>();
+  const fences = new Map<number, SourceFence>();
   let text = "";
   let groups = 0;
   let group = -1;
@@ -248,6 +269,7 @@ export function buildSegmentIndex(source: string): SegmentIndex {
       if (block !== undefined) {
         block.firstGroup = own;
         block.lastGroup = own;
+        fences.set(own, { value: node.value, line: block.line });
       }
       return;
     }
@@ -331,6 +353,7 @@ export function buildSegmentIndex(source: string): SegmentIndex {
     blocks,
     groupTypes,
     images,
+    fences,
   };
 }
 

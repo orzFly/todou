@@ -121,6 +121,10 @@ export const PIERRE_HIGHLIGHTER = "shiki-wasm" as const;
 // theme it is rendered under actually changes.
 const SNIPPET_OPTIONS = new Map<SyntaxTheme, CodeViewProps["options"]>();
 const FILE_OPTIONS = new Map<SyntaxTheme, CodeViewProps["options"]>();
+const FENCE_DIFF_OPTIONS = new Map<
+  SyntaxTheme,
+  MultiFileDiffProps<undefined>["options"]
+>();
 
 function snippetOptions(theme: SyntaxTheme): CodeViewProps["options"] {
   const cached = SNIPPET_OPTIONS.get(theme);
@@ -149,6 +153,31 @@ function fileOptions(theme: SyntaxTheme): CodeViewProps["options"] {
     onPostRender: handlePostRender,
   } as const;
   FILE_OPTIONS.set(theme, options);
+  return options;
+}
+
+function fenceDiffOptions(
+  theme: SyntaxTheme,
+): MultiFileDiffProps<undefined>["options"] {
+  const cached = FENCE_DIFF_OPTIONS.get(theme);
+  if (cached) return cached;
+  const options = {
+    theme,
+    themeType: PIERRE_THEME_TYPE,
+    disableFileHeader: true,
+    // Red above green, one column. pierre's default is `split`, which puts
+    // the two sides in separate columns instead of next to each other.
+    diffStyle: "unified",
+    overflow: "wrap",
+    preferredHighlighter: PIERRE_HIGHLIGHTER,
+    // Off — pierre's default — unchanged context collapses to "N unmodified
+    // lines" past a single line of it. That reads well in a whole file's
+    // diff and badly in a fence the reader opened the document to read: a
+    // 34-line block with one edited line came out as 10 rendered lines.
+    expandUnchanged: true,
+    onPostRender: handlePostRender,
+  } as const;
+  FENCE_DIFF_OPTIONS.set(theme, options);
   return options;
 }
 
@@ -287,4 +316,89 @@ export function CodeBlock({
       </Suspense>
     </CodeViewBoundary>
   );
+}
+
+function FenceDiff({
+  filename,
+  before,
+  after,
+}: {
+  filename: string;
+  before: string;
+  after: string;
+}) {
+  const syntaxTheme = useSyntaxTheme();
+  const options = useMemo(() => fenceDiffOptions(syntaxTheme), [syntaxTheme]);
+  // A fence body carries no trailing newline, and pierre answers a last line
+  // that takes part in a change by drawing "No newline at end of file" —
+  // true of the string it was handed, meaningless to a reader of the document.
+  const oldFile = useMemo(
+    () => ({ name: filename, contents: `${before}\n` }),
+    [filename, before],
+  );
+  const newFile = useMemo(
+    () => ({ name: filename, contents: `${after}\n` }),
+    [filename, after],
+  );
+  const [degraded, setDegraded] = useState(false);
+  const filenameRef = useRef(filename);
+  filenameRef.current = filename;
+  const warned = useRef(false);
+  // MultiFileDiff takes no containerRef, so the handler goes on a wrapper of
+  // our own; `handlePostRender` walks up from the failing container to find it.
+  const containerRef = useCallback((node: HTMLDivElement | null) => {
+    if (node === null) return;
+    DEGRADE_HANDLERS.set(node, () => {
+      if (!warned.current) {
+        warned.current = true;
+        console.warn(
+          `syntax highlighting failed for ${filenameRef.current}; showing plain text`,
+        );
+      }
+      setDegraded(true);
+    });
+  }, []);
+  if (degraded) return <PlainCodeFallback contents={after} />;
+  return (
+    <div ref={containerRef}>
+      <CodeViewBoundary contents={after}>
+        <Suspense fallback={<PlainCodeFallback contents={after} />}>
+          <LazyMultiFileDiff
+            oldFile={oldFile}
+            newFile={newFile}
+            options={options}
+          />
+        </Suspense>
+      </CodeViewBoundary>
+    </div>
+  );
+}
+
+/**
+ * One code block shown as the line-level diff between two versions of it:
+ * red for the lines the baseline had, green for the ones that replaced them
+ * (T-343).
+ *
+ * Nothing is injected into the code. pierre is handed both bodies as plain
+ * strings and does its own diffing, highlighting and theming, so T-31's
+ * constraint — a mark reaching inside a fence deletes the code it wraps — is
+ * never engaged.
+ */
+export function CodeDiffBlock({
+  filename,
+  before,
+  after,
+}: {
+  filename: string;
+  before: string;
+  after: string;
+}) {
+  // Identical sides produce zero hunks, and a hunkless diff with no file
+  // header renders nothing at all — the block would vanish from the page.
+  // Branching here rather than inside `FenceDiff` also keeps every hook in
+  // both shapes unconditional.
+  if (before === after) {
+    return <CodeBlock filename={filename} contents={after} />;
+  }
+  return <FenceDiff filename={filename} before={before} after={after} />;
 }

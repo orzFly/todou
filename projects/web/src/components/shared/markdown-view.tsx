@@ -14,7 +14,11 @@ import {
   MarkdownAttachmentImage,
 } from "@/components/issue/attachment-markdown.tsx";
 import { MarkdownLink } from "@/components/shared/issue-link.tsx";
-import { CodeBlock, fenceFilename } from "@/components/shared/pierre.tsx";
+import {
+  CodeBlock,
+  CodeDiffBlock,
+  fenceFilename,
+} from "@/components/shared/pierre.tsx";
 import { isTextEmbedName } from "@/lib/attachment-preview.ts";
 import { parseAttachmentHref } from "@/lib/attachment-refs.ts";
 import {
@@ -27,6 +31,13 @@ import {
   remarkFrontmatterTable,
 } from "@/lib/remark-frontmatter-table.ts";
 import { remarkIssueRefs } from "@/lib/remark-issue-refs.ts";
+
+/**
+ * A fence rendered as a diff of two versions (T-343). It keeps `.spec-changed`
+ * so the ↑↓ navigation still stops on it, and this marks where the block-level
+ * wash is redundant — the diff's own red and green say the same thing per line.
+ */
+export const FENCE_DIFF_CLASS = "spec-fence-diff";
 
 /** The slice of hast react-markdown hands to component overrides. */
 type HastNode = {
@@ -87,29 +98,48 @@ function parseFence(node: unknown): { text: string; tag?: string } | null {
 function MarkdownPre({
   node,
   children,
-  source,
+  fenceBaselines,
   ...props
-}: ComponentProps<"pre"> & { node?: unknown; source: string }) {
+}: ComponentProps<"pre"> & {
+  node?: unknown;
+  fenceBaselines?: Map<number, string>;
+}) {
   const fence = parseFence(node);
   if (fence === null) return <pre {...props}>{children}</pre>;
-  const block = (
-    <CodeBlock filename={fenceFilename(fence.tag)} contents={fence.text} />
-  );
   // The pre → CodeBlock swap must not drop the source-line stamp the spec
   // review view anchors selections to (T-52). A wrapper re-carries it, plus
   // where the code content starts: the stamped range opens on the ```
   // marker for fenced blocks but on the first code line for indented ones.
   const stamp = (props as Record<string, unknown>)[SOURCE_LINE_ATTR];
   const loc = typeof stamp === "string" ? parseSourceLoc(stamp) : null;
+  const filename = fenceFilename(fence.tag);
+  const baseline = loc === null ? undefined : fenceBaselines?.get(loc.start);
+  const block =
+    baseline === undefined ? (
+      <CodeBlock filename={filename} contents={fence.text} />
+    ) : (
+      <CodeDiffBlock filename={filename} before={baseline} after={fence.text} />
+    );
   if (loc === null) return block;
-  const opening = source.split("\n")[loc.start - 1]?.trimStart() ?? "";
-  const fenced = opening.startsWith("```") || opening.startsWith("~~~");
+  // Whether there is a marker line to skip is answered by the line count, not
+  // by reading the opening line: a fence inside a blockquote opens on
+  // "> ```ts", whose `>` survives `trimStart()` and used to read as "not a
+  // fence" — which put the content start on the marker itself and every
+  // anchor in the block one line early (T-343). A nested quote would need two
+  // prefixes stripped, and the next container shape a third; the span never
+  // needs to know what any of them look like.
+  const span = loc.end - loc.start + 1;
+  const contentLines = fence.text === "" ? 0 : fence.text.split("\n").length;
+  const fenced = span - contentLines >= 1;
   const wrapperProps = {
     [SOURCE_LINE_ATTR]: stamp,
     [CODE_CONTENT_START_ATTR]: loc.start + (fenced ? 1 : 0),
     // Decoration classes ride on the <pre> too (T-158: a fence inside a
     // wholly-new range) and would otherwise vanish in the swap.
-    className: props.className,
+    className:
+      baseline === undefined
+        ? props.className
+        : [props.className, FENCE_DIFF_CLASS].filter(Boolean).join(" "),
   };
   return <div {...wrapperProps}>{block}</div>;
 }
@@ -121,6 +151,7 @@ export function MarkdownView({
   embedded = false,
   preview = false,
   rehypePlugins,
+  fenceBaselines,
 }: {
   children: string;
   /** Enables #N → issue link rendering; omit where there is no project. */
@@ -156,6 +187,12 @@ export function MarkdownView({
    * T-23). Pass a stable reference — this goes straight to react-markdown.
    */
   rehypePlugins?: ComponentProps<typeof Markdown>["rehypePlugins"];
+  /**
+   * The baseline body of each code block that was edited in place, by the
+   * source line it opens on (T-343). A fence found here renders as a diff of
+   * the two versions instead of as its own contents.
+   */
+  fenceBaselines?: Map<number, string>;
 }) {
   // The override map must be referentially stable across re-renders: every
   // entry is an anonymous component, and a fresh map makes React treat each
@@ -166,7 +203,9 @@ export function MarkdownView({
   // destroyed the selection it was offering to annotate.
   const components: ComponentProps<typeof Markdown>["components"] = useMemo(
     () => ({
-      pre: (props) => <MarkdownPre {...props} source={children} />,
+      pre: (props) => (
+        <MarkdownPre {...props} fenceBaselines={fenceBaselines} />
+      ),
       ...(slug === undefined
         ? undefined
         : {
@@ -239,7 +278,7 @@ export function MarkdownView({
             },
           }),
     }),
-    [children, slug, issueNumber, embedded],
+    [fenceBaselines, slug, issueNumber, embedded],
   );
 
   const refQuery = useQuery({

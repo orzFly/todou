@@ -1067,6 +1067,17 @@ diffs-container {
       var(--color-emerald-500)
     );
   }
+  /* A fence drawn as a diff says which of its lines moved, in red and green
+     per line, so the wash over the whole of it only muddies that (T-343). The
+     class stays for the ↑/↓ nav; `padding-left` stays so the lines don't
+     shift. Written to miss an annotated block on purpose: both amber signals
+     above lose to a flat `transparent` — the first on specificity, the second
+     on order — and a block both changed and commented on is the commonest
+     one in this view. */
+  .spec-changed.spec-fence-diff:not(.spec-annotated) {
+    background-color: transparent;
+    border-left-color: transparent;
+  }
 
   /* Blocks that are new in their entirety (T-158) — the middle of three
      layers. The 6% wash above says "something here changed"; the 24% marks

@@ -23,6 +23,7 @@ import {
 import { useSpecReviewDrafts } from "../src/lib/spec-drafts.ts";
 import { buildSegmentIndex } from "../src/lib/spec-source-index.ts";
 import { cmGetValue, cmPressKey, cmSetValue } from "./cm.ts";
+import { FENCE_SHAPES } from "./fence-shapes.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 afterEach(() => {
@@ -77,6 +78,48 @@ describe("rehypeSourceLines", () => {
     expect(wrapper).not.toBeNull();
     expect(wrapper?.getAttribute("data-loc-content-start")).toBe("4");
   });
+
+  // Three distinct lines: identical ones would let an off-by-one anchor land
+  // on a neighbour and still read as containing the right code.
+  const CODE_LINES = [
+    "const alpha = 1;",
+    "const bravo = 2;",
+    "const charlie = 3;",
+  ];
+
+  it.each(FENCE_SHAPES)(
+    "anchors every line of %s to the source line that holds it",
+    (_name, of) => {
+      const source = of(CODE_LINES);
+      const view = render(
+        <QueryClientProvider client={testQueryClient()}>
+          <MarkdownView rehypePlugins={[rehypeSourceLines]}>
+            {source}
+          </MarkdownView>
+        </QueryClientProvider>,
+      );
+      const wrapper = view.container.querySelector("[data-loc-content-start]");
+      if (wrapper === null) throw new Error("the fence rendered no wrapper");
+      // pierre's own shape: one row per content line, in a shadow root.
+      const pierreHost = document.createElement("diffs-container");
+      wrapper.append(pierreHost);
+      const shadow = pierreHost.attachShadow({ mode: "open" });
+      shadow.innerHTML = CODE_LINES.map(
+        (line, i) => `<div data-line="${i + 1}"><span>${line}</span></div>`,
+      ).join("");
+      const sourceLines = source.split("\n");
+      CODE_LINES.forEach((line, i) => {
+        const node = shadow.querySelector(
+          `[data-line='${i + 1}'] span`,
+        )?.firstChild;
+        if (!node) throw new Error(`no row for line ${i + 1}`);
+        const range = anchorRangeForNode(node);
+        if (range === null) throw new Error(`no anchor for line ${i + 1}`);
+        expect(sourceLines[range.start - 1]).toContain(line);
+      });
+      view.unmount();
+    },
+  );
 });
 
 describe("anchorRangeForNode", () => {
@@ -111,6 +154,43 @@ describe("anchorRangeForNode", () => {
     expect(inSecondRow && anchorRangeForNode(inSecondRow)).toEqual({
       start: 5,
       end: 5,
+    });
+  });
+
+  it("gives a deletion row the whole block, not a line of the new version", () => {
+    const wrapper = document.createElement("div");
+    wrapper.setAttribute("data-loc", "5-13");
+    wrapper.setAttribute("data-loc-content-start", "6");
+    const pierreHost = document.createElement("diffs-container");
+    wrapper.append(pierreHost);
+    const shadow = pierreHost.attachShadow({ mode: "open" });
+    // A deletion row numbers itself on the OLD side, so `data-line="3"` is
+    // the baseline's third content line. Through the formula it would come
+    // out as source line 8, which here holds an unrelated statement.
+    shadow.innerHTML = `
+      <div data-line="3" data-line-type="change-deletion"><span>return max;</span></div>
+      <div data-line="5" data-line-type="change-addition"><span>return max + 1;</span></div>
+      <div data-line="6" data-line-type="context-expanded"><span>const guard = 0;</span></div>`;
+    const at = (type: string) =>
+      shadow.querySelector(`[data-line-type='${type}'] span`)?.firstChild ??
+      null;
+    const deletion = at("change-deletion");
+    expect(deletion && anchorRangeForNode(deletion)).toEqual({
+      start: 5,
+      end: 13,
+    });
+    // The other three types pierre emits all number the new side, so they
+    // keep the formula. `context-expanded` only appears because the fence
+    // diff asks for `expandUnchanged`, and it is a new-side number too.
+    const addition = at("change-addition");
+    expect(addition && anchorRangeForNode(addition)).toEqual({
+      start: 10,
+      end: 10,
+    });
+    const expanded = at("context-expanded");
+    expect(expanded && anchorRangeForNode(expanded)).toEqual({
+      start: 11,
+      end: 11,
     });
   });
 

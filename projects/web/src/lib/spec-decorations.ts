@@ -302,6 +302,41 @@ function finalOrder(
 }
 
 /**
+ * Which code blocks were edited in place, as the old body each new one
+ * replaced — keyed by the new block's opening source line, which is what
+ * `MarkdownPre` has on hand in the `data-loc` stamp (T-343).
+ *
+ * The inside of a fence still goes to pierre untouched, exactly as T-31
+ * requires: rendering this is handing it two strings, not injecting a mark.
+ * `changeDecorations` therefore keeps skipping a paired fence, and this is the
+ * only thing that looks inside one.
+ *
+ * A pair whose two bodies are equal is left out, and the comparison has to be
+ * the bodies rather than the two source slices the alignment ran on. A fence
+ * that only changed its info string, its `~~~` for ```` ``` ````, or its
+ * indent inside a list item has two different slices and one identical body —
+ * and identical sides make `MultiFileDiff` produce zero hunks, which under
+ * `disableFileHeader: true` renders nothing at all. Entering such a fence here
+ * would delete its code from the page.
+ */
+export function pairedFences(
+  baseline: SegmentIndex,
+  current: SegmentIndex,
+): Map<number, string> {
+  const edited = new Map<number, string>();
+  const alignment = alignGroups(leavesOf(baseline), leavesOf(current));
+  for (const matched of alignment.pairs) {
+    if (matched.old.type !== "code" || matched.new.type !== "code") continue;
+    const old = baseline.fences.get(matched.old.group);
+    const nu = current.fences.get(matched.new.group);
+    if (old === undefined || nu === undefined) continue;
+    if (old.value === nu.value) continue;
+    edited.set(nu.line, old.value);
+  }
+  return edited;
+}
+
+/**
  * Word-level diff of two versions, as decorations on the newer one (T-142).
  * The block-level "changed since vN" wash stays where it is and keeps
  * driving the ↑↓ navigation; this is what tells the reader *which words*
@@ -530,8 +565,9 @@ export function changeDecorations(
   const alignment = alignGroups(leavesOf(baseline), newLeaves);
 
   for (const matched of alignment.pairs) {
-    // pierre owns the inside of a fence (T-31): a paired code block gets the
-    // block-level wash it already has and nothing else.
+    // pierre owns the inside of a fence (T-31): a paired code block gets no
+    // decoration of any kind. What shows the reader which of its lines moved
+    // is `pairedFences` above, which hands pierre the two bodies instead.
     if (matched.old.type === "code" || matched.new.type === "code") continue;
     // Frontmatter comes down this branch too (T-240): its fields are rows and
     // its cells are cells, so which field became which is `table()`'s question
