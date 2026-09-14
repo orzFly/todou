@@ -1,5 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { formatAnchorRange, type SpecReviewVerdict } from "@todou/shared";
+import {
+  formatAnchorRange,
+  type SpecReviewSubmitInput,
+  type SpecReviewVerdict,
+} from "@todou/shared";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
@@ -20,6 +24,56 @@ import type { SpecReviewDraft } from "@/lib/spec-drafts.ts";
 
 const PUSHER_TITLE =
   "You pushed this version — its verdict has to come from someone else";
+
+/**
+ * Everything the submit needs, handed to `mutate()`: targets and payload
+ * ride in the variables so a paused write that outlives the dialog reads
+ * the values from the moment of the click, not from whatever the closures
+ * hold when it resumes.
+ */
+type SubmitVars = {
+  slug: string;
+  issueNumber: number;
+  version: number;
+  verdict: SpecReviewVerdict;
+  body?: string;
+  comments: SpecReviewSubmitInput["comments"];
+};
+
+/**
+ * Pure over its inputs: maps the staged drafts into the request shape. Read
+ * at the `mutate()` call so a paused write carries the payload with it,
+ * rather than mapping `drafts` again when it resumes.
+ */
+function submitComments(
+  drafts: SpecReviewDraft[],
+): SpecReviewSubmitInput["comments"] {
+  return drafts.map((d) => ({
+    // Strict input schema: file-level anchors OMIT the line keys
+    // rather than sending nulls (T-61).
+    anchor: {
+      path: d.anchor.path,
+      version: d.anchor.version,
+      ...(d.anchor.line_start !== null && d.anchor.line_end !== null
+        ? {
+            line_start: d.anchor.line_start,
+            line_end: d.anchor.line_end,
+          }
+        : {}),
+      // Columns follow the same omit-rather-than-null rule (T-142).
+      ...(d.anchor.col_start !== null && d.anchor.col_end !== null
+        ? { col_start: d.anchor.col_start, col_end: d.anchor.col_end }
+        : {}),
+    },
+    body: d.body,
+  }));
+}
+
+/** Empty means absent — the request omits the key rather than sending "". */
+function summaryOf(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
 
 /**
  * The atomic submit at the end of a review: verdict (mandatory), optional
@@ -57,32 +111,14 @@ export function ReviewSubmitDialog({
   // say something instead.
   const saysNothing = summary.trim() === "" && drafts.length === 0;
   const submit = useMutation({
-    mutationFn: (picked: SpecReviewVerdict) =>
-      api.submitSpecReview(slug, issueNumber, {
-        version: currentVersion,
-        verdict: picked,
-        ...(summary.trim() === "" ? {} : { body: summary }),
-        comments: drafts.map((d) => ({
-          // Strict input schema: file-level anchors OMIT the line keys
-          // rather than sending nulls (T-61).
-          anchor: {
-            path: d.anchor.path,
-            version: d.anchor.version,
-            ...(d.anchor.line_start !== null && d.anchor.line_end !== null
-              ? {
-                  line_start: d.anchor.line_start,
-                  line_end: d.anchor.line_end,
-                }
-              : {}),
-            // Columns follow the same omit-rather-than-null rule (T-142).
-            ...(d.anchor.col_start !== null && d.anchor.col_end !== null
-              ? { col_start: d.anchor.col_start, col_end: d.anchor.col_end }
-              : {}),
-          },
-          body: d.body,
-        })),
+    mutationFn: (vars: SubmitVars) =>
+      api.submitSpecReview(vars.slug, vars.issueNumber, {
+        version: vars.version,
+        verdict: vars.verdict,
+        ...(vars.body === undefined ? {} : { body: vars.body }),
+        comments: vars.comments,
       }),
-    onSuccess: (result) => {
+    onSuccess: (result, vars) => {
       toast.success(
         `${
           {
@@ -93,10 +129,10 @@ export function ReviewSubmitDialog({
         } spec v${result.version}`,
       );
       for (const key of [
-        ["spec", slug, issueNumber],
-        ["timeline", slug, issueNumber],
-        ["issue", slug, issueNumber],
-        ["issues", slug],
+        ["spec", vars.slug, vars.issueNumber],
+        ["timeline", vars.slug, vars.issueNumber],
+        ["issue", vars.slug, vars.issueNumber],
+        ["issues", vars.slug],
       ]) {
         queryClient.invalidateQueries({ queryKey: key });
       }
@@ -182,8 +218,16 @@ export function ReviewSubmitDialog({
                 : undefined
             }
             onClick={() => {
+              const body = summaryOf(editor.current?.getValue() ?? "");
               setVerdict("comment");
-              submit.mutate("comment");
+              submit.mutate({
+                slug,
+                issueNumber,
+                version: currentVersion,
+                verdict: "comment",
+                ...(body === undefined ? {} : { body }),
+                comments: submitComments(drafts),
+              });
             }}
           >
             {submit.isPending && verdict === "comment"
@@ -197,8 +241,16 @@ export function ReviewSubmitDialog({
             disabled={submit.isPending || isPusher}
             title={isPusher ? PUSHER_TITLE : undefined}
             onClick={() => {
+              const body = summaryOf(editor.current?.getValue() ?? "");
               setVerdict("request_changes");
-              submit.mutate("request_changes");
+              submit.mutate({
+                slug,
+                issueNumber,
+                version: currentVersion,
+                verdict: "request_changes",
+                ...(body === undefined ? {} : { body }),
+                comments: submitComments(drafts),
+              });
             }}
           >
             {submit.isPending && verdict === "request_changes"
@@ -211,8 +263,16 @@ export function ReviewSubmitDialog({
             disabled={submit.isPending || isPusher}
             title={isPusher ? PUSHER_TITLE : undefined}
             onClick={() => {
+              const body = summaryOf(editor.current?.getValue() ?? "");
               setVerdict("approve");
-              submit.mutate("approve");
+              submit.mutate({
+                slug,
+                issueNumber,
+                version: currentVersion,
+                verdict: "approve",
+                ...(body === undefined ? {} : { body }),
+                comments: submitComments(drafts),
+              });
             }}
           >
             {submit.isPending && verdict === "approve"

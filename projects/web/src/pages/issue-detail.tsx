@@ -196,7 +196,7 @@ export function IssueDetailPage() {
  * thing to do on this page, and the banner is what explains why.
  */
 function TrashBanner({ slug, issue }: { slug: string; issue: Issue }) {
-  const restore = useRestoreIssueMutation(slug);
+  const restore = useRestoreIssueMutation();
   const by = issue.deleted_by ? displayNameOf(issue.deleted_by) : "someone";
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
@@ -216,7 +216,7 @@ function TrashBanner({ slug, issue }: { slug: string; issue: Issue }) {
         variant="outline"
         className="ml-auto"
         disabled={restore.isPending}
-        onClick={() => restore.mutate(issue.number)}
+        onClick={() => restore.mutate({ slug, issueNumber: issue.number })}
       >
         Restore
       </Button>
@@ -505,7 +505,7 @@ export function Sidebar({
   trashed: boolean;
 }) {
   const queryClient = useQueryClient();
-  const statusMutation = useIssueStatusMutation(slug);
+  const statusMutation = useIssueStatusMutation();
   const canCreateLabels = useCanCreateLabels(slug);
   const createLabel = useCreateLabel(slug);
   const patch = useMutation({
@@ -564,6 +564,7 @@ export function Sidebar({
                   key={s.id}
                   onSelect={() =>
                     statusMutation.mutate({
+                      slug,
                       issueNumber: issue.number,
                       status: s,
                     })

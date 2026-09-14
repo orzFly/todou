@@ -39,7 +39,7 @@ type CardDragData = {
 export function BoardPage() {
   const { slug } = useParams({ from: "/authed/projects/$slug" });
   const statuses = useSuspenseQuery(statusesQuery(slug));
-  const move = useBoardMove(slug);
+  const move = useBoardMove();
   const [activeIssue, setActiveIssue] = useState<IssueListItem | null>(null);
   // Require a small drag distance so plain clicks still navigate.
   const sensors = useSensors(
@@ -112,6 +112,7 @@ export function BoardPage() {
     const toStatus = statuses.data.find((s) => s.id === Number(over.id));
     if (!toStatus || toStatus.id === data.fromStatusId) return;
     move.mutate({
+      slug,
       issueNumber: data.issueNumber,
       fromStatusId: data.fromStatusId,
       toStatus,

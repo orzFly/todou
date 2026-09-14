@@ -365,15 +365,17 @@ export function patchCountsMove(
 }
 
 /** Optimistic inline status change from the list/board views. */
-export function useIssueStatusMutation(slug: string) {
+export function useIssueStatusMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { issueNumber: number; status: Status }) =>
-      api.updateIssue(slug, vars.issueNumber, { status_id: vars.status.id }),
+    mutationFn: (vars: { slug: string; issueNumber: number; status: Status }) =>
+      api.updateIssue(vars.slug, vars.issueNumber, {
+        status_id: vars.status.id,
+      }),
     onMutate: async (vars) => {
-      await queryClient.cancelQueries({ queryKey: ["issues", slug] });
+      await queryClient.cancelQueries({ queryKey: ["issues", vars.slug] });
       const snapshots = queryClient.getQueriesData<IssueListPage | IssueCounts>(
-        { queryKey: ["issues", slug] },
+        { queryKey: ["issues", vars.slug] },
       );
       // The pre-move row, from whichever page holds it: its old status
       // drives the counts patch and the source-group removal below.
@@ -424,9 +426,9 @@ export function useIssueStatusMutation(slug: string) {
       toast.error(`Could not move issue: ${error.message}`);
     },
     onSettled: (_data, _error, vars) => {
-      queryClient.invalidateQueries({ queryKey: ["issues", slug] });
+      queryClient.invalidateQueries({ queryKey: ["issues", vars.slug] });
       queryClient.invalidateQueries({
-        queryKey: ["issue", slug, vars.issueNumber],
+        queryKey: ["issue", vars.slug, vars.issueNumber],
       });
     },
   });
@@ -451,24 +453,26 @@ function invalidateAfterTrashMove(
 }
 
 /** Move an issue to the trash (T-145). */
-export function useDeleteIssueMutation(slug: string) {
+export function useDeleteIssueMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (issueNumber: number) => api.deleteIssue(slug, issueNumber),
+    mutationFn: (vars: { slug: string; issueNumber: number }) =>
+      api.deleteIssue(vars.slug, vars.issueNumber),
     onError: (error) => toast.error(`Could not delete issue: ${error.message}`),
-    onSettled: (_data, _error, issueNumber) =>
-      invalidateAfterTrashMove(queryClient, slug, issueNumber),
+    onSettled: (_data, _error, vars) =>
+      invalidateAfterTrashMove(queryClient, vars.slug, vars.issueNumber),
   });
 }
 
-export function useRestoreIssueMutation(slug: string) {
+export function useRestoreIssueMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (issueNumber: number) => api.restoreIssue(slug, issueNumber),
+    mutationFn: (vars: { slug: string; issueNumber: number }) =>
+      api.restoreIssue(vars.slug, vars.issueNumber),
     onError: (error) =>
       toast.error(`Could not restore issue: ${error.message}`),
-    onSettled: (_data, _error, issueNumber) =>
-      invalidateAfterTrashMove(queryClient, slug, issueNumber),
+    onSettled: (_data, _error, vars) =>
+      invalidateAfterTrashMove(queryClient, vars.slug, vars.issueNumber),
   });
 }
 
@@ -496,11 +500,15 @@ export function movePreviewQuery(
 }
 
 /** Move an issue to another project (T-231). */
-export function useMoveIssueMutation(slug: string) {
+export function useMoveIssueMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { issueNumber: number; toProject: string }) =>
-      api.moveIssue(slug, vars.issueNumber, {
+    mutationFn: (vars: {
+      slug: string;
+      issueNumber: number;
+      toProject: string;
+    }) =>
+      api.moveIssue(vars.slug, vars.issueNumber, {
         to_project: vars.toProject,
         dry_run: false,
       }),
@@ -509,7 +517,7 @@ export function useMoveIssueMutation(slug: string) {
       // Both ends move: the card leaves one project's lists and joins the
       // other's, and every <IssueLink> pointing at the old address has to
       // re-resolve before it can find the redirect.
-      invalidateAfterTrashMove(queryClient, slug, vars.issueNumber);
+      invalidateAfterTrashMove(queryClient, vars.slug, vars.issueNumber);
       if (result) {
         invalidateAfterTrashMove(
           queryClient,
@@ -523,17 +531,23 @@ export function useMoveIssueMutation(slug: string) {
 }
 
 /** Optimistic label toggle from the list view. */
-export function useIssueLabelsMutation(slug: string) {
+export function useIssueLabelsMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (vars: { issueNumber: number; labelIds: number[] }) =>
-      api.updateIssue(slug, vars.issueNumber, { label_ids: vars.labelIds }),
+    mutationFn: (vars: {
+      slug: string;
+      issueNumber: number;
+      labelIds: number[];
+    }) =>
+      api.updateIssue(vars.slug, vars.issueNumber, {
+        label_ids: vars.labelIds,
+      }),
     onError: (error) =>
       toast.error(`Could not update labels: ${error.message}`),
     onSettled: (_data, _error, vars) => {
-      queryClient.invalidateQueries({ queryKey: ["issues", slug] });
+      queryClient.invalidateQueries({ queryKey: ["issues", vars.slug] });
       queryClient.invalidateQueries({
-        queryKey: ["issue", slug, vars.issueNumber],
+        queryKey: ["issue", vars.slug, vars.issueNumber],
       });
     },
   });

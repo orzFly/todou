@@ -40,7 +40,7 @@ export function MoveIssueDialog({
   const preview = useQuery(
     movePreviewQuery(slug, issueNumber, target?.slug ?? null),
   );
-  const move = useMoveIssueMutation(slug);
+  const move = useMoveIssueMutation();
 
   const candidates = (projects.data ?? []).filter(
     (project) =>
@@ -60,7 +60,7 @@ export function MoveIssueDialog({
   const confirm = () => {
     if (target === null) return;
     move.mutate(
-      { issueNumber, toProject: target.slug },
+      { slug, issueNumber, toProject: target.slug },
       {
         onSuccess: (result) => {
           close(false);

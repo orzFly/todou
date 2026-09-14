@@ -220,7 +220,7 @@ export function TrashView({
   search: IssueSearch;
 }) {
   const issues = useSuspenseQuery(issuesQuery(slug, search));
-  const restore = useRestoreIssueMutation(slug);
+  const restore = useRestoreIssueMutation();
   const grid = useIssueListGrid();
 
   return (
@@ -266,7 +266,9 @@ export function TrashView({
                     variant="outline"
                     size="xs"
                     disabled={restore.isPending}
-                    onClick={() => restore.mutate(issue.number)}
+                    onClick={() =>
+                      restore.mutate({ slug, issueNumber: issue.number })
+                    }
                   >
                     Restore
                   </Button>
@@ -619,8 +621,8 @@ export function ProjectIssueRows({
   allLabels: Label[];
   onCreateLabel?: (name: string) => Promise<Label>;
 }) {
-  const statusMutation = useIssueStatusMutation(slug);
-  const labelsMutation = useIssueLabelsMutation(slug);
+  const statusMutation = useIssueStatusMutation();
+  const labelsMutation = useIssueLabelsMutation();
   return items.map((issue) => (
     <IssueRow
       key={issue.id}
@@ -632,11 +634,16 @@ export function ProjectIssueRows({
           statuses={statuses}
           allLabels={allLabels}
           onStatus={(status) =>
-            statusMutation.mutate({ issueNumber: issue.number, status })
+            statusMutation.mutate({
+              slug,
+              issueNumber: issue.number,
+              status,
+            })
           }
           onToggleLabel={(label) => {
             const current = issue.labels.map((l) => l.id);
             labelsMutation.mutate({
+              slug,
               issueNumber: issue.number,
               labelIds: current.includes(label.id)
                 ? current.filter((id) => id !== label.id)

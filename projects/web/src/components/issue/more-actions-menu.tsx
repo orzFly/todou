@@ -32,7 +32,7 @@ export function IssueMoreActions({
 }) {
   const navigate = useNavigate();
   const refPrefix = useRefPrefix(slug);
-  const deleteIssue = useDeleteIssueMutation(slug);
+  const deleteIssue = useDeleteIssueMutation();
   const [moving, setMoving] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -113,12 +113,15 @@ export function IssueMoreActions({
         destructive
         pending={deleteIssue.isPending}
         onConfirm={() =>
-          deleteIssue.mutate(issue.number, {
-            // Redirect after a mutation — the page we are standing on is
-            // about to stop being reachable for most viewers.
-            onSuccess: () =>
-              navigate({ to: "/projects/$slug", params: { slug } }),
-          })
+          deleteIssue.mutate(
+            { slug, issueNumber: issue.number },
+            {
+              // Redirect after a mutation — the page we are standing on is
+              // about to stop being reachable for most viewers.
+              onSuccess: () =>
+                navigate({ to: "/projects/$slug", params: { slug } }),
+            },
+          )
         }
       />
     </section>

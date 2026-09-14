@@ -111,21 +111,27 @@ export function SlugSection({ slug }: { slug: string }) {
   const formerSlugs = project.data.former_slugs ?? [];
 
   const rename = useMutation({
-    mutationFn: (reclaim: boolean) =>
-      api.updateProject(slug, {
-        slug: target,
-        ...(reclaim ? { reclaim: true } : {}),
+    mutationFn: (vars: { slug: string; target: string; reclaim: boolean }) =>
+      api.updateProject(vars.slug, {
+        slug: vars.target,
+        ...(vars.reclaim ? { reclaim: true } : {}),
       }),
-    onSuccess: (updated) => {
+    onSuccess: (updated, vars) => {
       setConfirming(false);
       // Every cache key in the app is keyed by slug; none of them are
       // reachable under the new one, so drop the lot rather than remap.
       queryClient.invalidateQueries();
-      navigate({
-        to: "/projects/$slug/settings",
-        params: { slug: updated.slug },
-        replace: true,
-      });
+      // The rename is on the project the write named, but the page may have
+      // been left for another one while the write was paused — yanking the
+      // reader back to `p`'s settings would turn a finished rename into a
+      // navigation bug, so only follow when still standing on it.
+      if (vars.slug === slug) {
+        navigate({
+          to: "/projects/$slug/settings",
+          params: { slug: updated.slug },
+          replace: true,
+        });
+      }
       toast.success(`Renamed to ${updated.slug}`);
     },
     onError: (error) => {
@@ -153,7 +159,7 @@ export function SlugSection({ slug }: { slug: string }) {
           className="flex flex-wrap items-center gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            if (dirty) rename.mutate(false);
+            if (dirty) rename.mutate({ slug, target, reclaim: false });
           }}
         >
           <Input
@@ -185,7 +191,7 @@ export function SlugSection({ slug }: { slug: string }) {
               size="sm"
               variant="destructive"
               disabled={rename.isPending}
-              onClick={() => rename.mutate(true)}
+              onClick={() => rename.mutate({ slug, target, reclaim: true })}
             >
               Take it over anyway
             </Button>
@@ -232,11 +238,14 @@ export function ProjectSection({ slug }: { slug: string }) {
   const dirty = Object.keys(changes).length > 0 && name.trim() !== "";
 
   const save = useMutation({
-    mutationFn: () => api.updateProject(slug, changes),
-    onSuccess: () => {
+    mutationFn: (vars: { slug: string; changes: ProjectUpdateInput }) =>
+      api.updateProject(vars.slug, vars.changes),
+    onSuccess: (_data, vars) => {
       setNameDraft(null);
       setDescriptionDraft(null);
-      queryClient.invalidateQueries({ queryKey: ["project", slug] });
+      queryClient.invalidateQueries({
+        queryKey: ["project", vars.slug],
+      });
       // The name rides along in the header, the switcher and the project list.
       queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
@@ -250,7 +259,7 @@ export function ProjectSection({ slug }: { slug: string }) {
         className="max-w-xl space-y-4"
         onSubmit={(e) => {
           e.preventDefault();
-          if (dirty) save.mutate();
+          if (dirty) save.mutate({ slug, changes });
         }}
       >
         <div className="space-y-2">
@@ -285,39 +294,38 @@ export function ReferencesSection({ slug }: { slug: string }) {
   const [linkPrefix, setLinkPrefix] = useState("");
   const [linkTemplate, setLinkTemplate] = useState("");
   const queryClient = useQueryClient();
-  const invalidate = () =>
+  const invalidate = (slug: string) =>
     queryClient.invalidateQueries({ queryKey: ["reference-config", slug] });
-
   const current = config.data.format.prefix;
   // null = untouched form; the input shows the live value until edited.
   const draft = prefixDraft ?? current ?? "";
   const dirty = prefixDraft !== null && (prefixDraft || null) !== current;
-
   const setFormat = useMutation({
-    mutationFn: () =>
-      api.setReferenceFormat(slug, { prefix: draft.trim() || null }),
-    onSuccess: () => {
+    mutationFn: (vars: { slug: string; prefix: string | null }) =>
+      api.setReferenceFormat(vars.slug, { prefix: vars.prefix }),
+    onSuccess: (_data, vars) => {
       setPrefixDraft(null);
-      invalidate();
+      invalidate(vars.slug);
     },
     onError: (error) => toast.error(error.message),
   });
   const addAutolink = useMutation({
-    mutationFn: () =>
-      api.createAutolink(slug, {
-        prefix: linkPrefix,
-        url_template: linkTemplate,
+    mutationFn: (vars: { slug: string; prefix: string; urlTemplate: string }) =>
+      api.createAutolink(vars.slug, {
+        prefix: vars.prefix,
+        url_template: vars.urlTemplate,
       }),
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       setLinkPrefix("");
       setLinkTemplate("");
-      invalidate();
+      invalidate(vars.slug);
     },
     onError: (error) => toast.error(error.message),
   });
   const removeAutolink = useMutation({
-    mutationFn: (id: number) => api.deleteAutolink(slug, id),
-    onSuccess: invalidate,
+    mutationFn: (vars: { slug: string; id: number }) =>
+      api.deleteAutolink(vars.slug, vars.id),
+    onSuccess: (_data, vars) => invalidate(vars.slug),
     onError: (error) => toast.error(error.message),
   });
 
@@ -335,7 +343,7 @@ export function ReferencesSection({ slug }: { slug: string }) {
           className="flex items-center gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            if (dirty) setFormat.mutate();
+            if (dirty) setFormat.mutate({ slug, prefix: draft.trim() || null });
           }}
         >
           <Input
@@ -389,7 +397,7 @@ export function ReferencesSection({ slug }: { slug: string }) {
                     variant="ghost"
                     size="icon-sm"
                     aria-label={`delete autolink ${rule.prefix}`}
-                    onClick={() => removeAutolink.mutate(rule.id)}
+                    onClick={() => removeAutolink.mutate({ slug, id: rule.id })}
                   >
                     <Trash2Icon className="size-3.5" />
                   </Button>
@@ -412,7 +420,12 @@ export function ReferencesSection({ slug }: { slug: string }) {
           className="flex flex-wrap items-center gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            if (linkPrefix && linkTemplate) addAutolink.mutate();
+            if (linkPrefix && linkTemplate)
+              addAutolink.mutate({
+                slug,
+                prefix: linkPrefix,
+                urlTemplate: linkTemplate,
+              });
           }}
         >
           <Input
@@ -446,18 +459,19 @@ export function MembersSection({ slug }: { slug: string }) {
   const agents = useSuspenseQuery(agentsQuery);
   const me = useSuspenseQuery(meQuery);
   const queryClient = useQueryClient();
-  const invalidate = () =>
+  const invalidate = (slug: string) =>
     queryClient.invalidateQueries({ queryKey: ["members", slug] });
 
   const setRole = useMutation({
-    mutationFn: (vars: { userId: number; role: MemberRole }) =>
-      api.setMember(slug, vars.userId, vars.role),
-    onSuccess: invalidate,
+    mutationFn: (vars: { slug: string; userId: number; role: MemberRole }) =>
+      api.setMember(vars.slug, vars.userId, vars.role),
+    onSuccess: (_data, vars) => invalidate(vars.slug),
     onError: (error) => toast.error(error.message),
   });
   const remove = useMutation({
-    mutationFn: (userId: number) => api.removeMember(slug, userId),
-    onSuccess: invalidate,
+    mutationFn: (vars: { slug: string; userId: number }) =>
+      api.removeMember(vars.slug, vars.userId),
+    onSuccess: (_data, vars) => invalidate(vars.slug),
     onError: (error) => toast.error(error.message),
   });
 
@@ -494,6 +508,7 @@ export function MembersSection({ slug }: { slug: string }) {
                       disabled={isSelf}
                       onValueChange={(role) =>
                         setRole.mutate({
+                          slug,
                           userId: member.user.id,
                           role: role as MemberRole,
                         })
@@ -521,7 +536,9 @@ export function MembersSection({ slug }: { slug: string }) {
                       aria-label={`remove ${displayNameOf(member.user)}`}
                       disabled={isSelf}
                       title={isSelf ? SELF_NOTE : undefined}
-                      onClick={() => remove.mutate(member.user.id)}
+                      onClick={() =>
+                        remove.mutate({ slug, userId: member.user.id })
+                      }
                     >
                       <Trash2Icon className="size-4" />
                     </Button>
@@ -539,7 +556,9 @@ export function MembersSection({ slug }: { slug: string }) {
         agents={agents.data}
         memberIds={memberIds}
         busy={setRole.isPending}
-        onAdd={(agent) => setRole.mutate({ userId: agent.id, role: "writer" })}
+        onAdd={(agent) =>
+          setRole.mutate({ slug, userId: agent.id, role: "writer" })
+        }
       />
     </section>
   );
@@ -556,9 +575,12 @@ export function AccessDenialsSection({ slug }: { slug: string }) {
   const queryClient = useQueryClient();
 
   const allow = useMutation({
-    mutationFn: (userId: number) => api.allowAccess(slug, userId),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["access-denials", slug] }),
+    mutationFn: (vars: { slug: string; userId: number }) =>
+      api.allowAccess(vars.slug, vars.userId),
+    onSuccess: (_data, vars) =>
+      queryClient.invalidateQueries({
+        queryKey: ["access-denials", vars.slug],
+      }),
     onError: (error) => toast.error(error.message),
   });
 
@@ -599,7 +621,9 @@ export function AccessDenialsSection({ slug }: { slug: string }) {
                     size="sm"
                     disabled={allow.isPending}
                     aria-label={`allow ${displayNameOf(denial.user)} to ask again`}
-                    onClick={() => allow.mutate(denial.user.id)}
+                    onClick={() =>
+                      allow.mutate({ slug, userId: denial.user.id })
+                    }
                   >
                     Allow again
                   </Button>
@@ -613,32 +637,43 @@ export function AccessDenialsSection({ slug }: { slug: string }) {
   );
 }
 
-function StatusesSection({ slug }: { slug: string }) {
+export function StatusesSection({ slug }: { slug: string }) {
   const statuses = useSuspenseQuery(statusesQuery(slug));
   const [name, setName] = useState("");
   const [category, setCategory] = useState<"open" | "closed">("open");
   const queryClient = useQueryClient();
-  const invalidate = () =>
+  const invalidate = (slug: string) =>
     queryClient.invalidateQueries({ queryKey: ["statuses", slug] });
-
   const create = useMutation({
-    mutationFn: () =>
-      api.createStatus(slug, { name, category, color: "#6b7280" }),
-    onSuccess: () => {
+    mutationFn: (vars: {
+      slug: string;
+      name: string;
+      category: "open" | "closed";
+    }) =>
+      api.createStatus(vars.slug, {
+        name: vars.name,
+        category: vars.category,
+        color: "#6b7280",
+      }),
+    onSuccess: (_data, vars) => {
       setName("");
-      invalidate();
+      invalidate(vars.slug);
     },
     onError: (error) => toast.error(error.message),
   });
   const patch = useMutation({
-    mutationFn: (vars: { id: number; input: StatusUpdateInput }) =>
-      api.updateStatus(slug, vars.id, vars.input),
-    onSuccess: invalidate,
+    mutationFn: (vars: {
+      slug: string;
+      id: number;
+      input: StatusUpdateInput;
+    }) => api.updateStatus(vars.slug, vars.id, vars.input),
+    onSuccess: (_data, vars) => invalidate(vars.slug),
     onError: (error) => toast.error(error.message),
   });
   const remove = useMutation({
-    mutationFn: (id: number) => api.deleteStatus(slug, id),
-    onSuccess: invalidate,
+    mutationFn: (vars: { slug: string; id: number }) =>
+      api.deleteStatus(vars.slug, vars.id),
+    onSuccess: (_data, vars) => invalidate(vars.slug),
     onError: (error) =>
       toast.error(
         error.message.includes("used by")
@@ -646,13 +681,12 @@ function StatusesSection({ slug }: { slug: string }) {
           : error.message,
       ),
   });
-
   function swap(index: number, direction: -1 | 1) {
     const a = statuses.data[index];
     const b = statuses.data[index + direction];
     if (!a || !b) return;
-    patch.mutate({ id: a.id, input: { position: b.position } });
-    patch.mutate({ id: b.id, input: { position: a.position } });
+    patch.mutate({ slug, id: a.id, input: { position: b.position } });
+    patch.mutate({ slug, id: b.id, input: { position: a.position } });
   }
 
   return (
@@ -678,7 +712,7 @@ function StatusesSection({ slug }: { slug: string }) {
                 name={status.name}
                 color={status.color}
                 onPick={(color) =>
-                  patch.mutate({ id: status.id, input: { color } })
+                  patch.mutate({ slug, id: status.id, input: { color } })
                 }
               />
               <Button
@@ -696,6 +730,7 @@ function StatusesSection({ slug }: { slug: string }) {
                 }
                 onClick={() =>
                   patch.mutate({
+                    slug,
                     id: status.id,
                     input: { is_default: !status.is_default },
                   })
@@ -731,7 +766,7 @@ function StatusesSection({ slug }: { slug: string }) {
                 variant="ghost"
                 size="icon-sm"
                 aria-label={`delete ${status.name}`}
-                onClick={() => remove.mutate(status.id)}
+                onClick={() => remove.mutate({ slug, id: status.id })}
               >
                 <Trash2Icon className="size-4" />
               </Button>
@@ -743,7 +778,7 @@ function StatusesSection({ slug }: { slug: string }) {
         className="flex items-center gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          if (name.trim()) create.mutate();
+          if (name.trim()) create.mutate({ slug, name, category });
         }}
       >
         <Input
@@ -874,36 +909,38 @@ export function LabelsSection({ slug }: { slug: string }) {
     null,
   );
   const queryClient = useQueryClient();
-  const invalidate = () =>
+  const invalidate = (slug: string) =>
     queryClient.invalidateQueries({ queryKey: ["labels", slug] });
 
   const create = useMutation({
-    mutationFn: () => api.createLabel(slug, { name, color }),
-    onSuccess: () => {
+    mutationFn: (vars: { slug: string; name: string; color: string }) =>
+      api.createLabel(vars.slug, { name: vars.name, color: vars.color }),
+    onSuccess: (_data, vars) => {
       setName("");
-      invalidate();
+      invalidate(vars.slug);
     },
     onError: (error) => toast.error(error.message),
   });
   const remove = useMutation({
-    mutationFn: (id: number) => api.deleteLabel(slug, id),
-    onSuccess: invalidate,
+    mutationFn: (vars: { slug: string; id: number }) =>
+      api.deleteLabel(vars.slug, vars.id),
+    onSuccess: (_data, vars) => invalidate(vars.slug),
     onError: (error) => toast.error(error.message),
   });
   const recolor = useMutation({
-    mutationFn: (vars: { id: number; color: string }) =>
-      api.updateLabel(slug, vars.id, { color: vars.color }),
-    onSuccess: invalidate,
+    mutationFn: (vars: { slug: string; id: number; color: string }) =>
+      api.updateLabel(vars.slug, vars.id, { color: vars.color }),
+    onSuccess: (_data, vars) => invalidate(vars.slug),
     onError: (error) => toast.error(error.message),
   });
   const rename = useMutation({
-    mutationFn: (vars: { id: number; name: string }) =>
-      api.updateLabel(slug, vars.id, { name: vars.name }),
-    onSuccess: () => {
+    mutationFn: (vars: { slug: string; id: number; name: string }) =>
+      api.updateLabel(vars.slug, vars.id, { name: vars.name }),
+    onSuccess: (_data, vars) => {
       setEditing(null);
-      invalidate();
+      invalidate(vars.slug);
       // Issue rows and board cards embed label names.
-      queryClient.invalidateQueries({ queryKey: ["issues", slug] });
+      queryClient.invalidateQueries({ queryKey: ["issues", vars.slug] });
     },
     onError: (error) => toast.error(error.message),
   });
@@ -921,7 +958,7 @@ export function LabelsSection({ slug }: { slug: string }) {
                   e.preventDefault();
                   const next = editing.draft.trim();
                   if (next === "" || next === label.name) setEditing(null);
-                  else rename.mutate({ id: label.id, name: next });
+                  else rename.mutate({ slug, id: label.id, name: next });
                 }}
               >
                 <Input
@@ -974,14 +1011,14 @@ export function LabelsSection({ slug }: { slug: string }) {
               name={label.name}
               color={label.color}
               onPick={(picked) =>
-                recolor.mutate({ id: label.id, color: picked })
+                recolor.mutate({ slug, id: label.id, color: picked })
               }
             />
             <Button
               variant="ghost"
               size="icon-sm"
               aria-label={`delete label ${label.name}`}
-              onClick={() => remove.mutate(label.id)}
+              onClick={() => remove.mutate({ slug, id: label.id })}
             >
               <Trash2Icon className="size-3.5" />
             </Button>
@@ -995,7 +1032,7 @@ export function LabelsSection({ slug }: { slug: string }) {
         className="flex items-center gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          if (name.trim()) create.mutate();
+          if (name.trim()) create.mutate({ slug, name, color });
         }}
       >
         <Input

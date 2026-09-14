@@ -45,21 +45,22 @@ export function moveIssue(
   };
 }
 
-export function useBoardMove(slug: string) {
+export function useBoardMove() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (vars: {
+      slug: string;
       issueNumber: number;
       fromStatusId: number;
       toStatus: Status;
     }) =>
-      api.updateIssue(slug, vars.issueNumber, {
+      api.updateIssue(vars.slug, vars.issueNumber, {
         status_id: vars.toStatus.id,
       }),
     onMutate: async (vars) => {
-      await queryClient.cancelQueries({ queryKey: ["issues", slug] });
-      const fromKey = boardColumnQuery(slug, vars.fromStatusId).queryKey;
-      const toKey = boardColumnQuery(slug, vars.toStatus.id).queryKey;
+      await queryClient.cancelQueries({ queryKey: ["issues", vars.slug] });
+      const fromKey = boardColumnQuery(vars.slug, vars.fromStatusId).queryKey;
+      const toKey = boardColumnQuery(vars.slug, vars.toStatus.id).queryKey;
       const snapshot = {
         from: queryClient.getQueryData<IssueListPage>(fromKey),
         to: queryClient.getQueryData<IssueListPage>(toKey),
@@ -82,12 +83,12 @@ export function useBoardMove(slug: string) {
       toast.error(`Could not move issue: ${error.message}`);
     },
     onSettled: (_data, _error, vars) => {
-      queryClient.invalidateQueries({ queryKey: ["issues", slug] });
+      queryClient.invalidateQueries({ queryKey: ["issues", vars.slug] });
       queryClient.invalidateQueries({
-        queryKey: ["issue", slug, vars.issueNumber],
+        queryKey: ["issue", vars.slug, vars.issueNumber],
       });
       queryClient.invalidateQueries({
-        queryKey: ["timeline", slug, vars.issueNumber],
+        queryKey: ["timeline", vars.slug, vars.issueNumber],
       });
     },
   });
