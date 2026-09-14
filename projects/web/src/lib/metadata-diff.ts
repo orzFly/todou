@@ -156,4 +156,62 @@ export function conflictLines(
   return lines;
 }
 
+/**
+ * Parse plus the document-level precheck: the one step both the save path
+ * and the tab-switch gate must agree on before letting anything through.
+ * The per-write entry cap stays out — it bounds one write, not a document.
+ */
+export function readDocument(
+  text: string,
+  parse: (
+    t: string,
+  ) =>
+    | { ok: true; entries: Map<string, string> }
+    | { ok: false; errors: ParseError[] },
+):
+  | { ok: true; doc: Map<string, string> }
+  | { ok: false; errors: ParseError[] } {
+  const parsed = parse(text);
+  if (!parsed.ok) return parsed;
+  const limitErrors = precheck(parsed.entries);
+  if (limitErrors.length > 0) return { ok: false, errors: limitErrors };
+  return { ok: true, doc: parsed.entries };
+}
+
+/**
+ * Fold one succeeded write back into the snapshot it was issued against.
+ * A success is the server telling us exactly what it now stores, so the
+ * next save's `if_match` must be read from here — not from the stale
+ * snapshot, which would 409 on the second save.
+ */
+export function applyWrite(
+  snapshot: Map<string, string>,
+  written: IssueMetadataWriteEntry[],
+): Map<string, string> {
+  const next = new Map(snapshot);
+  for (const entry of written) {
+    const id = `${entry.namespace}/${entry.key}`;
+    if (entry.value === null) next.delete(id);
+    else next.set(id, entry.value);
+  }
+  return next;
+}
+
+/** Flatten a document into `(ns, key)`-ascending rows, for the serializers. */
+export function docRows(
+  doc: Map<string, string>,
+): { namespace: string; key: string; value: string }[] {
+  const rows: { namespace: string; key: string; value: string }[] = [];
+  for (const [id, value] of doc) {
+    const parts = splitEntryId(id);
+    if (parts === null) continue;
+    rows.push({ ...parts, value });
+  }
+  rows.sort(
+    (a, b) =>
+      a.namespace.localeCompare(b.namespace) || a.key.localeCompare(b.key),
+  );
+  return rows;
+}
+
 export { METADATA_ENTRIES_PER_WRITE };

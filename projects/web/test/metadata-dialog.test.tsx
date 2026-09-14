@@ -4,12 +4,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { issueMetadataQuery } from "../src/api/metadata.ts";
 import { api, projectQuery } from "../src/api/queries.ts";
 import { MetadataSection } from "../src/components/issue/metadata-section.tsx";
+import { hasUnsavedWork } from "../src/lib/unsaved-guard.ts";
 import { cmGetValue, cmSetValue } from "./cm.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
+vi.mock("sonner", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+const { toast } = await import("sonner");
+
 const SLUG = "p";
 const NUMBER = 282;
-
 const writer = {
   id: 7,
   login: "bot-one",
@@ -82,6 +88,10 @@ const editorReady = async (): Promise<HTMLElement> => {
 describe("the metadata editor tabs", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    // restoreAllMocks does not clear factory vi.fn()s — without this the
+    // previous test's toast calls land on the next test's account.
+    vi.mocked(toast.success).mockClear();
+    vi.mocked(toast.error).mockClear();
   });
 
   it("opens Bulk with the snapshot serialized into the editor", async () => {
@@ -91,7 +101,9 @@ describe("the metadata editor tabs", () => {
     await openDialog();
     await openTab("Bulk");
     expect(cmGetValue(await editorReady())).toBe(
-      "ci/status = passing\nci/note = hi",
+      // docRows renders the document in (ns, key) order — the same order a
+      // save round-trip produces.
+      "ci/note = hi\nci/status = passing",
     );
   });
 
@@ -232,28 +244,242 @@ describe("the metadata editor tabs", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("drops the draft when switching tabs and back", async () => {
-    // S7. Falsifies by: force-mounting both panels so the draft survives.
+  it("carries a Bulk draft into JSON", async () => {
+    // Replaces T-300's "a switch drops the draft": one document, two
+    // spellings. Falsifies by: dropping the session carry — the JSON tab
+    // would render the server's "plan", and the two serialized texts are
+    // both non-empty and distinct, so toBe cannot pass by accident.
     mount([entry("orch", "phase", "plan")]);
     await openDialog();
     await openTab("Bulk");
-    cmSetValue(await editorReady(), "orch/phase = typed-but-unsaved");
+    cmSetValue(await editorReady(), "orch/phase = impl");
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "JSON" }));
+    await editorReady();
+    expect(cmGetValue(document.body)).toBe(
+      `${JSON.stringify({ orch: { phase: "impl" } }, null, 2)}\n`,
+    );
+  });
+
+  it("carries a JSON draft back into Bulk", async () => {
+    // The reverse pairing — a one-way implementation fails exactly one of
+    // the two carries.
+    mount([entry("orch", "phase", "plan")]);
+    await openDialog();
+    await openTab("JSON");
+    cmSetValue(
+      await editorReady(),
+      '{\n  "orch": {\n    "phase": "impl"\n  }\n}',
+    );
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Bulk" }));
+    await editorReady();
+    expect(cmGetValue(document.body)).toBe("orch/phase = impl");
+  });
+
+  it("normalises order when it carries", async () => {
+    // Falsifies by: carrying raw text instead of re-rendering the document —
+    // the namespaces would stay in the typed order.
+    mount([entry("orch", "x", "1"), entry("ci", "a", "2")]);
+    await openDialog();
+    await openTab("Bulk");
+    cmSetValue(await editorReady(), "orch/x = 1\nci/a = 2");
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "JSON" }));
+    await editorReady();
+    const text = cmGetValue(document.body);
+    expect(text.indexOf('"ci"')).toBeGreaterThan(-1);
+    expect(text.indexOf('"ci"')).toBeLessThan(text.indexOf('"orch"'));
+  });
+
+  it("refuses to leave a tab whose text does not parse", async () => {
+    // The gate's parse half. Falsifies by: removing the gate — the JSON
+    // trigger activates and the broken text disappears. The last two steps
+    // pin the clearing rule: an edit removes the rejection, and the same
+    // switch then goes through.
+    mount([entry("orch", "phase", "plan")]);
+    await openDialog();
+    await openTab("Bulk");
+    cmSetValue(await editorReady(), "Bad = line");
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "JSON" }));
+    await waitFor(() => {
+      expect(
+        screen.getByRole("tab", { name: "JSON" }).getAttribute("aria-selected"),
+      ).toBe("false");
+    });
+    expect(cmGetValue(await editorReady())).toBe("Bad = line");
+    await waitFor(() => {
+      // The rejection names the problem at its line.
+      expect(screen.getByTestId("metadata-editor-tab").textContent).toContain(
+        "line 1",
+      );
+    });
+    // An edit clears the stale rejection (design: the reader acted on it),
+    // and once the text is legal the gate lets the same switch through.
+    cmSetValue(await editorReady(), "orch/phase = impl");
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("metadata-editor-tab").textContent,
+      ).not.toContain("Cannot switch tabs");
+    });
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "JSON" }));
+    await waitFor(() => {
+      expect(
+        screen.getByRole("tab", { name: "JSON" }).getAttribute("aria-selected"),
+      ).toBe("true");
+    });
+  });
+
+  it("refuses to leave when a value is over the size limit", async () => {
+    // The gate's precheck half — the boundary between "validate" and
+    // "parse". Falsifies by: gating on parse only, which accepts the
+    // oversized value and lets the switch through.
+    mount([entry("orch", "phase", "plan")]);
+    await openDialog();
+    await openTab("Bulk");
+    cmSetValue(await editorReady(), `orch/big = ${"x".repeat(4097)}`);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "JSON" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("tab", { name: "JSON" }).getAttribute("aria-selected"),
+      ).toBe("false"),
+    );
+    expect(screen.getByTestId("metadata-editor-tab").textContent).toContain(
+      "4097 bytes",
+    );
+  });
+
+  it("keeps the session snapshot across a tab switch", async () => {
+    // T-300's S2 across tabs. Falsifies by: re-capturing the snapshot at
+    // mount in the target panel — if_match becomes the refetched "spec"
+    // and a save silently overwrites the tool's write.
+    const spy = vi
+      .spyOn(api, "writeIssueMetadata")
+      .mockResolvedValue({ entries: [] });
+    const { client } = mount([entry("orch", "phase", "plan")]);
+    await openDialog();
+    await openTab("Bulk");
+    cmSetValue(await editorReady(), "orch/phase = impl");
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "JSON" }));
+    await editorReady();
+    client.setQueryData(issueMetadataQuery(SLUG, NUMBER).queryKey, {
+      entries: [entry("orch", "phase", "spec")],
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("metadata-counts").textContent).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(spy.mock.calls[0]?.[2]).toEqual({
+      entries: [
+        { namespace: "orch", key: "phase", value: "impl", if_match: "plan" },
+      ],
+    });
+  });
+
+  it("refuses Browse while the document differs from the snapshot", async () => {
+    // The Browse lock. Falsifies by: removing the dirty check — Browse
+    // activates and the panel unmounts, destroying the draft. Every
+    // assertion names a concrete value: "false", mounted, message text.
+    mount([entry("orch", "phase", "plan")]);
+    await openDialog();
+    await openTab("Bulk");
+    cmSetValue(await editorReady(), "orch/phase = impl");
     fireEvent.mouseDown(screen.getByRole("tab", { name: "Browse" }));
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("tab", { name: "Browse" })
+          .getAttribute("aria-selected"),
+      ).toBe("false"),
+    );
+    expect(screen.queryByTestId("metadata-editor-tab")).not.toBeNull();
+    expect(screen.getByTestId("metadata-editor-tab").textContent).toContain(
+      "save or discard",
+    );
+  });
+
+  it("lets Browse back in once the text equals the snapshot again", async () => {
+    // Pairs with the refusal above — without it, an always-refusing gate
+    // would pass that test. Falsifies by: using "typed anything" as the
+    // dirty test — the key was touched and restored, so the lock would
+    // never lift.
+    mount([entry("orch", "phase", "plan")]);
+    await openDialog();
+    await openTab("Bulk");
+    cmSetValue(await editorReady(), "orch/phase = impl");
+    cmSetValue(await editorReady(), "orch/phase = plan");
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Browse" }));
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("tab", { name: "Browse" })
+          .getAttribute("aria-selected"),
+      ).toBe("true"),
+    );
     await waitFor(() =>
       expect(screen.queryByTestId("metadata-editor-tab")).toBeNull(),
     );
-    fireEvent.mouseDown(screen.getByRole("tab", { name: "Bulk" }));
+  });
+
+  it("Discard restores the server's current values and unlocks Browse", async () => {
+    // Falsifies by: not remounting the editor (key unchanged) — CodeEditor
+    // reads initialValue only at mount, so the text would stay "impl".
+    mount([entry("orch", "phase", "plan")]);
+    await openDialog();
+    await openTab("Bulk");
+    cmSetValue(await editorReady(), "orch/phase = impl");
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     await waitFor(async () => {
       expect(await editorReady().then((h) => cmGetValue(h))).toBe(
         "orch/phase = plan",
       );
     });
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Browse" }));
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("tab", { name: "Browse" })
+          .getAttribute("aria-selected"),
+      ).toBe("true"),
+    );
+  });
+
+  it("Discard on a clean document changes nothing", async () => {
+    // Falsifies by: a discard that clears the editor or errors.
+    mount([entry("orch", "phase", "plan")]);
+    await openDialog();
+    await openTab("Bulk");
+    await editorReady();
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(async () => {
+      expect(await editorReady().then((h) => cmGetValue(h))).toBe(
+        "orch/phase = plan",
+      );
+    });
+    expect(screen.getByTestId("metadata-editor-tab").textContent).not.toContain(
+      "line 1",
+    );
+  });
+
+  it("shows Discard only to writers", async () => {
+    // The absence half alone cannot stand — a broken selector would fake
+    // it. The writer pairing proves the selector matches a real button.
+    const { unmount } = mount([entry("orch", "phase", "plan")], "reader");
+    await openDialog();
+    await openTab("JSON");
+    await editorReady();
+    expect(screen.queryByRole("button", { name: "Discard" })).toBeNull();
+    unmount();
+    mount([entry("orch", "phase", "plan")], "writer");
+    await openDialog();
+    await openTab("JSON");
+    expect(screen.getByRole("button", { name: "Discard" })).toBeTruthy();
   });
 });
 
 describe("the metadata dialog shell", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.mocked(toast.success).mockClear();
+    vi.mocked(toast.error).mockClear();
   });
 
   it("counts namespaces and keys separately", async () => {
@@ -313,6 +539,10 @@ describe("the metadata dialog shell", () => {
     // Success clears the notice.
     await waitFor(() =>
       expect(screen.queryByTestId("metadata-conflict")).toBeNull(),
+    );
+    // The retry is a successful write, so it gets the same receipt.
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Saved 1 entry"),
     );
   });
 
@@ -506,5 +736,138 @@ describe("the metadata dialog shell", () => {
     // A beat later: still exactly one attempt.
     await new Promise((r) => setTimeout(r, 50));
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("still counts as unsaved work after the draft moves to JSON", async () => {
+    // The guard must ride the session, not the panel: the JSON editor's
+    // baseline IS the carried draft, so a panel-local dirty check would
+    // report clean exactly when the work is most exposed. Falsifies by:
+    // keeping the old editor-level registration — the middle assertion
+    // returns false after the switch. The assertions mix true and false,
+    // so a constant predicate cannot pass either.
+    mount([entry("orch", "phase", "plan")]);
+    await openDialog();
+    await openTab("Bulk");
+    cmSetValue(await editorReady(), "orch/phase = impl");
+    expect(hasUnsavedWork()).toBe(true);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "JSON" }));
+    await editorReady();
+    expect(hasUnsavedWork()).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(hasUnsavedWork()).toBe(false));
+  });
+
+  it("a second save expects what the first one wrote", async () => {
+    // The snapshot must advance on success. Falsifies by: leaving the
+    // snapshot frozen at session open — the second save goes out with the
+    // first save's predecessor as its expectation and 409s (measured on
+    // the pre-fix tree: comment-4054).
+    const spy = vi
+      .spyOn(api, "writeIssueMetadata")
+      .mockResolvedValue({ entries: [] });
+    mount([entry("orch", "phase", "plan")]);
+    await openDialog();
+    await openTab("Bulk");
+    cmSetValue(await editorReady(), "orch/phase = impl");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+    cmSetValue(await editorReady(), "orch/phase = ship");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+    expect(spy.mock.calls[1]?.[2]).toEqual({
+      entries: [
+        { namespace: "orch", key: "phase", value: "ship", if_match: "impl" },
+      ],
+    });
+  });
+
+  it("a save after a successful retry expects what the retry wrote", async () => {
+    // The retry path must fold the snapshot too — the same defect in a
+    // second place. Falsifies by: folding panel saves but not retries — the
+    // last if_match would still be the pre-conflict value.
+    const conflict = Object.assign(new Error("if_match did not hold"), {
+      status: 409,
+      code: "metadata_precondition",
+      details: {
+        failed: [{ namespace: "orch", key: "phase", current: "spec" }],
+      },
+    });
+    const spy = vi
+      .spyOn(api, "writeIssueMetadata")
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValue({ entries: [] });
+    mount([entry("orch", "phase", "plan")]);
+    await openDialog();
+    await openTab("Bulk");
+    cmSetValue(await editorReady(), "orch/phase = impl");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByTestId("metadata-conflict");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Write over the new value" }),
+    );
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+    cmSetValue(await editorReady(), "orch/phase = ship");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(3));
+    expect(spy.mock.calls[2]?.[2]).toEqual({
+      entries: [
+        // The retry folded "impl" into the snapshot — the value the server
+        // now holds, which is exactly what this save must expect.
+        { namespace: "orch", key: "phase", value: "ship", if_match: "impl" },
+      ],
+    });
+  });
+
+  it("toasts after a Bulk save", async () => {
+    // The toast is the write's receipt. Falsifies by: dropping the toast
+    // call — zero invocations. The exact string also fails a plural slip.
+    const spy = vi
+      .spyOn(api, "writeIssueMetadata")
+      .mockResolvedValue({ entries: [] });
+    mount([entry("orch", "phase", "plan")]);
+    await openDialog();
+    await openTab("Bulk");
+    cmSetValue(await editorReady(), "orch/phase = impl");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Saved 1 entry"),
+    );
+  });
+
+  it("toasts after a Browse delete", async () => {
+    // Every successful write gets a receipt, Browse deletions included.
+    // Falsifies by: toasting only on the panel Save — this path never
+    // touches the panel.
+    const spy = vi
+      .spyOn(api, "writeIssueMetadata")
+      .mockResolvedValue({ entries: [] });
+    mount([entry("orch", "phase", "plan"), entry("orch", "owner", "old")]);
+    await openDialog();
+    fireEvent.click(screen.getByRole("button", { name: "Delete orch/phase" }));
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Saved 1 entry"),
+    );
+  });
+
+  it("does not toast when the save fails", async () => {
+    // The receipt belongs in onSuccess. Falsifies by: toasting in onSettled
+    // — a failure would fire it too. The paired success tests prove the
+    // spy can fire, so the absence here is not a broken selector.
+    vi.spyOn(api, "writeIssueMetadata").mockRejectedValue(
+      new Error("the server is on fire"),
+    );
+    mount([entry("orch", "phase", "plan")]);
+    await openDialog();
+    await openTab("Bulk");
+    cmSetValue(await editorReady(), "orch/phase = impl");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("metadata-editor-tab").textContent).toContain(
+        "the server is on fire",
+      ),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
   });
 });

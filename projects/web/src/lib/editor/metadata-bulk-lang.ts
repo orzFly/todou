@@ -10,6 +10,7 @@ import {
   syntaxHighlighting,
 } from "@codemirror/language";
 import type { Extension } from "@codemirror/state";
+import { Transaction } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import {
@@ -144,7 +145,19 @@ export const metadataBulkSupport: Extension = [
 /** Insert `${ns}/${key} = ${value}` with `ns` already filled. */
 function insertSnippetAt(view: EditorView, template: string, at: number): void {
   snippet(template)(
-    { state: view.state, dispatch: (d) => view.dispatch(d) },
+    {
+      state: view.state,
+      // Our own programmatic write: annotated so the metadata dialog's
+      // provenance judge (docChanged ⇒ reader-edited, unless the
+      // transaction is ours) does not count the inserted placeholder as a
+      // reader keystroke. Typing inside the snippet fields still arrives
+      // as "input" transactions and counts.
+      dispatch: (d) =>
+        view.dispatch({
+          ...d,
+          annotations: [Transaction.userEvent.of("todou.programmatic")],
+        }),
+    },
     null,
     at,
     at,

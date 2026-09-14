@@ -1,4 +1,3 @@
-import type { IssueMetadataEntry } from "@todou/shared";
 import { MetadataKey, MetadataNamespace } from "@todou/shared";
 
 /** One parse-time problem, at the line it was noticed on (1-based). */
@@ -115,7 +114,9 @@ function extractErrorPosition(error: unknown): number | null {
  * is also document order. `JSON.stringify` escapes newlines inside strings,
  * which is what keeps a multi-line value a one-line JSON string.
  */
-export function serializeJsonDoc(entries: IssueMetadataEntry[]): string {
+export function serializeJsonDoc(
+  entries: readonly { namespace: string; key: string; value: string }[],
+): string {
   const doc: Record<string, Record<string, string>> = {};
   for (const entry of entries) {
     let group = doc[entry.namespace];

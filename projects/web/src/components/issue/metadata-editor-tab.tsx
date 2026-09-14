@@ -1,10 +1,7 @@
 import type { Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import type {
-  IssueMetadataEntry,
-  IssueMetadataWriteEntry,
-} from "@todou/shared";
-import { useRef, useState } from "react";
+import type { IssueMetadataWriteEntry } from "@todou/shared";
+import { type RefObject, useState } from "react";
 import {
   conflictsOf,
   type MetadataConflict,
@@ -22,7 +19,6 @@ import {
   type ParseError,
   precheck,
 } from "@/lib/metadata-diff.ts";
-import { useDirtySource } from "@/lib/unsaved-guard.ts";
 
 /** What a 409 hands up to the shell: the refused write and the server's report. */
 export type WriteConflict = {
@@ -32,15 +28,15 @@ export type WriteConflict = {
 
 /**
  * One editable tab of the metadata dialog (Bulk or JSON). The panel is
- * generic — the tab supplies how to turn entries into text (`serialize`)
- * and text back into entries (`parse`), plus the editor's language —
- * because both tabs share the whole save pipeline: parse, precheck, diff
- * against the snapshot, write.
+ * generic — the tab supplies how to turn text back into entries (`parse`)
+ * and the editor's language — because both tabs share the whole save
+ * pipeline: parse, precheck, diff against the snapshot, write.
  *
- * The snapshot is the entries the text was rendered from, captured when the
- * panel mounts. A background refetch does not rewrite the editor once the
- * reader has typed anything — and the expectations a save sends are read
- * from the snapshot, not from whatever the server says now (S2).
+ * The draft and the snapshot no longer live here: the shell owns the edit
+ * session (one document, two spellings) and hands down the text to open
+ * with plus the snapshot the saves must be issued against. The panel only
+ * holds the text between keystrokes, via the editor handle the shell gave
+ * back.
  *
  * Errors split in two: a 409 goes to `onConflict` so the shell can pair the
  * refused entries with the server's report and offer the retry; everything
@@ -53,21 +49,24 @@ export function MetadataEditorTab({
   canWrite,
   readOnly,
   language,
-  serialize,
   parse,
   helpText,
   placeholder,
+  initialText,
+  snapshot,
+  editorRef,
+  gate,
+  onDirty,
+  onDiscard,
   onView,
   onSaved,
   onConflict,
-  entries,
 }: {
   slug: string;
   issueNumber: number;
   canWrite: boolean;
   readOnly: boolean;
   language: Extension;
-  serialize: (entries: IssueMetadataEntry[]) => string;
   parse: (
     text: string,
   ) =>
@@ -75,33 +74,30 @@ export function MetadataEditorTab({
     | { ok: false; errors: ParseError[] };
   helpText: string;
   placeholder?: string;
+  /** The document as rendered for this tab — read once, at mount. */
+  initialText: string;
+  /** The session snapshot saves are issued against; owned by the shell. */
+  snapshot: Map<string, string>;
+  /** The shell reads the current text through this handle (gate, guard). */
+  editorRef: RefObject<CodeEditorHandle | null>;
+  /** The tab-switch gate's rejection, rendered above the panel's own errors. */
+  gate: { message: string; errors: ParseError[] } | null;
+  /** A keystroke landed; the shell clears a stale gate rejection. */
+  onDirty: () => void;
+  /** Drop the draft and reopen the session from the server's current values. */
+  onDiscard: () => void;
   /** The mounted EditorView, once it exists; null after unmount. */
   onView?: (view: EditorView | null) => void;
-  onSaved?: () => void;
+  onSaved?: (written: IssueMetadataWriteEntry[]) => void;
   /** A 409 arrived: the shell renders the conflict notice from it. */
   onConflict?: (payload: WriteConflict) => void;
-  entries: IssueMetadataEntry[];
 }) {
-  const [text, setText] = useState(() => serialize(entries));
-  const dirty = useRef(false);
   const [errors, setErrors] = useState<ParseError[]>([]);
   const [saveError, setSaveError] = useState<string | null>(null);
   const write = useWriteIssueMetadata();
-  const handleRef = useRef<CodeEditorHandle | null>(null);
-
-  // Captured once, at mount: the snapshot is "what was on screen when this
-  // editor opened". A background refetch replaces the server's data but
-  // must not move the expectations this editor will save with — that is
-  // the whole point of capturing them (S2). Unmounting the tab (switching
-  // away) is what legitimately resets it.
-  const snapshot = useRef(
-    new Map(entries.map((e) => [`${e.namespace}/${e.key}`, e.value])),
-  );
-
-  useDirtySource(() => dirty.current);
 
   const doSave = () => {
-    const current = handleRef.current?.getValue() ?? text;
+    const current = editorRef.current?.getValue() ?? initialText;
     const parsed = parse(current);
     if (!parsed.ok) {
       setErrors(parsed.errors);
@@ -112,7 +108,7 @@ export function MetadataEditorTab({
       setErrors(limitErrors);
       return;
     }
-    const diff = diffMetadata(snapshot.current, parsed.entries);
+    const diff = diffMetadata(snapshot, parsed.entries);
     if (diff.length > METADATA_ENTRIES_PER_WRITE) {
       setErrors([
         {
@@ -128,8 +124,7 @@ export function MetadataEditorTab({
       { slug, issueNumber, entries: diff } satisfies MetadataWriteVars,
       {
         onSuccess: () => {
-          dirty.current = false;
-          onSaved?.();
+          onSaved?.(diff);
         },
         onError: (error) => {
           // A 409 is fully explained by the shell's conflict notice, and
@@ -151,6 +146,17 @@ export function MetadataEditorTab({
 
   return (
     <div className="space-y-2" data-testid="metadata-editor-tab">
+      {gate !== null && (
+        <div className="space-y-0.5 rounded-md bg-destructive/10 p-2 text-xs text-destructive">
+          <p>{gate.message}</p>
+          {gate.errors.map((error) => (
+            <p key={`${error.line}:${error.message}`}>
+              {error.line > 0 ? `line ${error.line}: ` : ""}
+              {error.message}
+            </p>
+          ))}
+        </div>
+      )}
       {errors.length > 0 && (
         <div className="space-y-0.5 rounded-md bg-destructive/10 p-2 text-xs text-destructive">
           {errors.map((error) => (
@@ -165,14 +171,13 @@ export function MetadataEditorTab({
         <p className="text-sm text-destructive">{saveError}</p>
       )}
       <CodeEditor
-        ref={handleRef}
-        initialValue={serialize(entries)}
+        ref={editorRef}
+        initialValue={initialText}
         placeholder={placeholder}
         readOnly={readOnly}
         onView={onView}
-        onChange={(value) => {
-          dirty.current = true;
-          setText(value);
+        onChange={() => {
+          onDirty();
         }}
         language={language}
         extensions={EMPTY_EXTENSIONS}
@@ -181,9 +186,14 @@ export function MetadataEditorTab({
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">{helpText}</p>
         {canWrite && (
-          <Button size="sm" onClick={doSave} disabled={write.isPending}>
-            Save
-          </Button>
+          <span className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={onDiscard}>
+              Discard
+            </Button>
+            <Button size="sm" onClick={doSave} disabled={write.isPending}>
+              Save
+            </Button>
+          </span>
         )}
       </div>
     </div>

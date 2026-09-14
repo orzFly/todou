@@ -2,9 +2,12 @@ import type { IssueMetadataEntry } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import type { MetadataConflict } from "../src/api/metadata.ts";
 import {
+  applyWrite,
   conflictLines,
   diffMetadata,
+  docRows,
   precheck,
+  readDocument,
 } from "../src/lib/metadata-diff.ts";
 
 let clock = 0;
@@ -200,5 +203,85 @@ describe("conflictLines", () => {
     ];
     const lines = conflictLines(refusedEntries, [], []);
     expect(lines).toEqual([]);
+  });
+});
+
+describe("applyWrite", () => {
+  it("writes new values, overwrites old ones, and deletes on value null", () => {
+    // Falsifies by: dropping the null branch — the deleted key survives and
+    // the map comparison fails; or by mutating in place — the input-is
+    // -untouched assertion below goes red.
+    const snapshot = mapOf([
+      ["ci/status", "passing"],
+      ["orch/phase", "plan"],
+      ["gone/key", "bye"],
+    ]);
+    const result = applyWrite(snapshot, [
+      { namespace: "ci", key: "status", value: "failing", if_match: "passing" },
+      { namespace: "ci", key: "added", value: "fresh", if_match: null },
+      { namespace: "gone", key: "key", value: null, if_match: "bye" },
+    ]);
+    expect([...result.entries()]).toEqual([
+      ["ci/status", "failing"],
+      ["orch/phase", "plan"],
+      ["ci/added", "fresh"],
+    ]);
+    expect([...snapshot.entries()]).toEqual([
+      ["ci/status", "passing"],
+      ["orch/phase", "plan"],
+      ["gone/key", "bye"],
+    ]);
+  });
+});
+
+describe("docRows", () => {
+  it("flattens the document in (ns, key) ascending order", () => {
+    // Falsifies by: skipping the sort — the rows come back in insertion
+    // order and the whole-array comparison fails on the first element.
+    const doc = mapOf([
+      ["orch/x", "1"],
+      ["ci/b", "2"],
+      ["ci/a", "3"],
+    ]);
+    expect(docRows(doc)).toEqual([
+      { namespace: "ci", key: "a", value: "3" },
+      { namespace: "ci", key: "b", value: "2" },
+      { namespace: "orch", key: "x", value: "1" },
+    ]);
+  });
+});
+
+describe("readDocument", () => {
+  const okParse = (entries: Array<[string, string]>) => () => ({
+    ok: true as const,
+    entries: mapOf(entries),
+  });
+
+  it("returns the parse's errors when the text does not parse", () => {
+    // Falsifies by: swallowing the parse failure — ok would flip to true.
+    const result = readDocument("whatever", () => ({
+      ok: false as const,
+      errors: [{ line: 1, message: "bad line" }],
+    }));
+    expect(result).toEqual({
+      ok: false,
+      errors: [{ line: 1, message: "bad line" }],
+    });
+  });
+
+  it("runs the precheck after a successful parse", () => {
+    // Falsifies by: parsing without prechecking — an over-limit value
+    // would return ok: true, and this assertion fails on ok.
+    const result = readDocument(
+      "ci/big = ...",
+      okParse([["ci/big", "x".repeat(4097)]]),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors).toHaveLength(1);
+  });
+
+  it("returns the document when both steps pass", () => {
+    const result = readDocument("ci/x = 1", okParse([["ci/x", "1"]]));
+    expect(result).toEqual({ ok: true, doc: mapOf([["ci/x", "1"]]) });
   });
 });

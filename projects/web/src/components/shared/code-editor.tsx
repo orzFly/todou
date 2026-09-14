@@ -16,8 +16,21 @@ import { cn } from "@/lib/utils";
 
 export type CodeEditorHandle = {
   getValue: () => string;
+  /**
+   * CAUTION: this dispatch is NOT annotated "todou.programmatic". The
+   * metadata dialog's provenance judge treats any unmarked docChanged as a
+   * reader edit, so calling setValue on that panel's editor would lock its
+   * document (an unparseable render would be held, Discard could not
+   * rescue it). Annotate before extending its use there.
+   */
   setValue: (value: string) => void;
   focus: () => void;
+  /**
+   * True when the document changed through a CM user event (typing, paste,
+   * drop) since mount — provenance, not byte-equality: the editors rewrite
+   * their own docs programmatically, and those writes do not count.
+   */
+  userChanged: () => boolean;
   /**
    * Close an open completion panel, reporting whether there was one. An
    * editor inside a dismissable layer needs this because that layer listens
@@ -174,8 +187,12 @@ export function CodeEditor({
         baseline.current.trim(),
   );
 
+  const userChangedRef = useRef(false);
   useImperativeHandle(ref, () => ({
     getValue: () => view.current?.state.doc.toString() ?? "",
+    // CAUTION (mirrors CodeEditorHandle.setValue): this dispatch is NOT
+    // annotated "todou.programmatic" — the metadata dialog's judge treats
+    // any unmarked docChanged as a reader edit.
     setValue: (value: string) => {
       const current = view.current;
       if (!current) return;
@@ -184,6 +201,9 @@ export function CodeEditor({
       });
     },
     focus: () => view.current?.focus(),
+    // Provenance as in the handle type: user-event transactions mark the
+    // document as reader-touched; the editors' own writes never do.
+    userChanged: () => userChangedRef.current,
     dismissCompletion: () => {
       const current = view.current;
       // "pending" is a query in flight with nothing on screen yet, which is
@@ -231,6 +251,19 @@ export function CodeEditor({
           }),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
+              // Default to "the reader did this": every UI path to a doc
+              // change (typing, paste, drop, delete, and the whole move.*
+              // family — defaultKeymap's line moves and transposes annotate
+              // their transactions) arrives as a user event, and a whitelist
+              // loses a family every time CM adds one. The exception is our
+              // own programmatic writes, which are marked
+              // ("todou.programmatic" — the snippet insertion). Mount-time
+              // \r\n normalization rides in EditorState.create — no
+              // transaction, never judged.
+              const ours = update.transactions.every((t) =>
+                t.isUserEvent("todou.programmatic"),
+              );
+              if (!ours) userChangedRef.current = true;
               handlers.current.onChange?.(update.state.doc.toString());
             }
           }),

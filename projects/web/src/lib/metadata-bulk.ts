@@ -1,4 +1,3 @@
-import type { IssueMetadataEntry } from "@todou/shared";
 import { MetadataKey, MetadataNamespace } from "@todou/shared";
 export type ParseError = { line: number; message: string };
 
@@ -281,7 +280,9 @@ export function parseBulk(text: string): BulkParse {
  * single-line go through a heredoc, whose mark is picked so the body cannot
  * end the heredoc early.
  */
-export function serializeBulk(entries: IssueMetadataEntry[]): string {
+export function serializeBulk(
+  entries: readonly { namespace: string; key: string; value: string }[],
+): string {
   const groups: string[][] = [];
   let current: string[] = [];
   let currentNs: string | null = null;

@@ -1,10 +1,8 @@
 import type { EditorView } from "@codemirror/view";
 import { useQuery } from "@tanstack/react-query";
-import type {
-  IssueMetadataEntry,
-  IssueMetadataWriteEntry,
-} from "@todou/shared";
-import { type RefObject, useRef, useState } from "react";
+import type { IssueMetadataWriteEntry } from "@todou/shared";
+import { type ComponentProps, type RefObject, useRef, useState } from "react";
+import { toast } from "sonner";
 import {
   conflictsOf,
   groupMetadata,
@@ -14,8 +12,8 @@ import {
 } from "@/api/metadata.ts";
 import { useCan } from "@/api/queries.ts";
 import { MetadataBrowse } from "@/components/issue/metadata-browse.tsx";
-import type { WriteConflict } from "@/components/issue/metadata-editor-tab.tsx";
 import { MetadataEditorTab } from "@/components/issue/metadata-editor-tab.tsx";
+import type { CodeEditorHandle } from "@/components/shared/code-editor.tsx";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,21 +30,54 @@ import {
   selectValueOf,
 } from "@/lib/editor/metadata-bulk-lang.ts";
 import { parseBulk, serializeBulk } from "@/lib/metadata-bulk.ts";
-import { type ConflictLine, conflictLines } from "@/lib/metadata-diff.ts";
+import {
+  applyWrite,
+  type ConflictLine,
+  conflictLines,
+  diffMetadata,
+  docRows,
+  type ParseError,
+  readDocument,
+} from "@/lib/metadata-diff.ts";
 import { parseJsonDoc, serializeJsonDoc } from "@/lib/metadata-json.ts";
+import { useDirtySource } from "@/lib/unsaved-guard.ts";
 
 type TabName = "browse" | "bulk" | "json";
+
+type EditSession = {
+  /** The server's shape when the session opened; every if_match reads from here. */
+  snapshot: Map<string, string>;
+  /** The draft carried across tab switches; panels render their text from it. */
+  doc: Map<string, string>;
+  /**
+   * Provenance for the whole session, not one panel: once the reader has
+   * changed the document anywhere in the session, the gate may hold their
+   * unparseable text and Browse may refuse the draft. Lives here because
+   * panels remount on every switch — a per-panel flag would forget an
+   * edit the moment the draft moved to the other tab.
+   */
+  edited: boolean;
+};
+
+/**
+ * The session-bearing props both panel wrappers forward; the wrappers pin
+ * only the tab's syntax.
+ */
+type PanelProps = ComponentProps<typeof MetadataEditorTab>;
+
+const PARSERS = { bulk: parseBulk, json: parseJsonDoc } as const;
 
 const BULK_HELP =
   "One ns/key = value per line · # comments · heredoc <<MARK for multiline";
 const JSON_HELP = "Formatted JSON: one object per namespace, string values.";
 
 /**
- * The whole metadata surface for one card (design: "档位结构"): Browse to
- * read, Bulk and JSON to edit. The three panels are radix Tabs — the
- * non-active panel is not mounted, so switching tabs drops any draft. That
- * is deliberate: Bulk and JSON are two spellings of one document, and two
- * editors holding contradictory drafts is a state nobody can explain.
+ * The whole metadata surface for one card: Browse to read, Bulk and JSON to
+ * edit. The three panels are radix Tabs — the non-active panel is not
+ * mounted. What changed from "a switch drops the draft": the edit session
+ * (snapshot + one parsed document) lives here in the shell, so Bulk and
+ * JSON are two spellings of one draft, and a switch re-renders the document
+ * in the target tab's syntax instead of destroying it.
  */
 export function MetadataDialog({
   slug,
@@ -67,21 +98,74 @@ export function MetadataDialog({
   const entries = metadata.data?.entries ?? [];
   const groups = groupMetadata(entries);
   const [tab, setTab] = useState<TabName>("browse");
+  /** One draft, two spellings: open on leaving Browse, closed on returning. */
+  const [session, setSession] = useState<EditSession | null>(null);
+  /** Bumped on Discard so the panel remounts and re-reads its initial text. */
+  const [sessionSeq, setSessionSeq] = useState(0);
   /** The write a 409 refused, kept so it can be re-sent against what is there now. */
   const [refused, setRefused] = useState<IssueMetadataWriteEntry[] | null>(
     null,
   );
   const [conflictNotice, setConflictNotice] = useState<ConflictLine[]>([]);
+  /** The tab-switch gate's rejection; cleared by an edit, a switch, or a save. */
+  const [gate, setGate] = useState<{
+    message: string;
+    errors: ParseError[];
+  } | null>(null);
   const bulkView = useRef<EditorView | null>(null);
   const pendingJump = useRef<((view: EditorView) => void) | null>(null);
+  const editorRef = useRef<CodeEditorHandle | null>(null);
+  // useDirtySource's effect deps are empty — its closure froze at the first
+  // render — so the session and the active tab are read through refs kept
+  // in step on every render.
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+
+  // The guard must follow the session, not the panel: once the draft rides
+  // a tab switch, the target editor's own baseline IS the draft, and a
+  // panel-local check would call that unsaved work clean.
+  useDirtySource(() => {
+    const s = sessionRef.current;
+    const t = tabRef.current;
+    if (s === null || t === "browse") return false;
+    // Same provenance judge as the gate: editor-internal rewrites (mount
+    // normalization) are not unsaved work, so the flag rides the session
+    // and ORs in the current panel's userChanged().
+    const edited = s.edited || (editorRef.current?.userChanged() ?? false);
+    if (!edited) return false;
+    const read = readDocument(editorRef.current?.getValue() ?? "", PARSERS[t]);
+    return !read.ok || diffMetadata(s.snapshot, read.doc).length > 0;
+  });
 
   const conflicts = conflictsOf(write.error) ?? [];
 
   const reset = () => {
     setRefused(null);
     setConflictNotice([]);
+    setGate(null);
+    setSession(null);
     setTab("browse");
     write.reset();
+  };
+
+  /**
+   * Every successful write lands here — panel saves, Browse deletes, the
+   * 409 retry. Folding the written entries back into the session snapshot
+   * is what lets the next save expect the values this one just put there;
+   * with no session (Browse deletes) there is nothing to fold into.
+   */
+  const onWriteSucceeded = (written: IssueMetadataWriteEntry[]) => {
+    setSession((s) =>
+      s === null ? s : { ...s, snapshot: applyWrite(s.snapshot, written) },
+    );
+    setRefused(null);
+    setConflictNotice([]);
+    setGate(null);
+    toast.success(
+      `Saved ${written.length} ${written.length === 1 ? "entry" : "entries"}`,
+    );
   };
 
   const submit = (writeEntries: IssueMetadataWriteEntry[]) => {
@@ -90,8 +174,7 @@ export function MetadataDialog({
       { slug, issueNumber, entries: writeEntries } satisfies MetadataWriteVars,
       {
         onSuccess: () => {
-          setRefused(null);
-          setConflictNotice([]);
+          onWriteSucceeded(writeEntries);
         },
         onError: (error) => {
           // A refused write is explained by pairing what the user was
@@ -155,9 +238,113 @@ export function MetadataDialog({
     ]);
   };
 
+  /**
+   * A keystroke after a gate rejection means the reader is acting on it;
+   * the ref keeps this from re-rendering on every keystroke when no gate
+   * stands.
+   */
+  const gateRef = useRef(gate);
+  gateRef.current = gate;
+  const clearGate = () => {
+    if (gateRef.current !== null) setGate(null);
+  };
+  /**
+   * The tab-switch gate. The gate holds a reader who changed the text into
+   * something that cannot parse, and holds a dirty document away from
+   * Browse; a document the reader never touched is always allowed to
+   * leave — refusing to render it is not worth trapping someone in a tab
+   * they cannot leave.
+   *
+   * "Changed" is provenance, not byte-equality against what the shell
+   * rendered: CodeMirror rewrites its own text (line-ending normalization
+   * at mount) and each tab spells the document differently, so a
+   * screen-vs-rendered comparison flags work the reader never did. The
+   * judge lives on the session: at every gate evaluation the current
+   * panel's userChanged() is OR-ed in, so an edit stays remembered across
+   * any number of switches — a per-panel flag would forget the draft the
+   * moment it moved tabs.
+   */
+  const onValueChange = (value: string) => {
+    const next = value as TabName;
+    if (session !== null && tab !== "browse") {
+      const read = readDocument(
+        editorRef.current?.getValue() ?? "",
+        PARSERS[tab],
+      );
+      const edited =
+        session.edited || (editorRef.current?.userChanged() ?? false);
+      if (!read.ok && edited) {
+        // The reader changed the text into a state that cannot parse: hold
+        // them here with the reasons. Unedited unparseable text — e.g. a
+        // server-stored value that renders as an unterminated heredoc —
+        // gets no such gate: the escape below keeps the switch alive,
+        // exactly as a pre-gate switch behaved.
+        setGate({
+          message: "Cannot switch tabs while the document has errors.",
+          errors: read.errors,
+        });
+        return;
+      }
+      if (read.ok) {
+        if (next === "browse") {
+          // The Browse lock is also conditional on provenance: a document
+          // the reader never edited cannot hold unsaved work, even when an
+          // editor-internal rewrite (CRLF normalization) makes the parsed
+          // doc differ from the literal snapshot — without this, Discard
+          // could not rescue it either.
+          if (edited && diffMetadata(session.snapshot, read.doc).length > 0) {
+            setGate({
+              message:
+                "Browse cannot show unsaved edits — save or discard them first.",
+              errors: [],
+            });
+            return;
+          }
+          setSession(null);
+        } else {
+          setSession({ ...session, doc: read.doc, edited });
+        }
+      } else if (!edited) {
+        // Unparseable but untouched: the switch is a re-render escape. The
+        // draft is the snapshot — there is nothing else to carry — and the
+        // session stays open in case the reader comes back to edit.
+        setSession({ ...session, doc: session.snapshot });
+      }
+    } else if (next !== "browse") {
+      const base = new Map(
+        entries.map((e) => [`${e.namespace}/${e.key}`, e.value]),
+      );
+      setSession({ snapshot: base, doc: base, edited: false });
+    }
+    setGate(null);
+    write.reset();
+    setConflictNotice([]);
+    setTab(next);
+  };
+
+  /** Drop the draft and reopen the session from what the server has now. */
+  const onDiscard = () => {
+    const base = new Map(
+      entries.map((e) => [`${e.namespace}/${e.key}`, e.value]),
+    );
+    setSession({ snapshot: base, doc: base, edited: false });
+    setSessionSeq((n) => n + 1);
+    setGate(null);
+    setRefused(null);
+    setConflictNotice([]);
+  };
+
+  const openSessionAtBulk = () => {
+    const base = new Map(
+      entries.map((e) => [`${e.namespace}/${e.key}`, e.value]),
+    );
+    setSession({ snapshot: base, doc: base, edited: false });
+  };
+
   const jumpToBulk = (jump: (view: EditorView) => void) => {
     write.reset();
     setConflictNotice([]);
+    openSessionAtBulk();
     setTab("bulk");
     pendingJump.current = jump;
     // A view may already be live (the tab was open before this click);
@@ -228,15 +415,7 @@ export function MetadataDialog({
         </DialogHeader>
 
         <div className="flex items-center justify-between">
-          <Tabs
-            value={tab}
-            onValueChange={(value) => {
-              write.reset();
-              setConflictNotice([]);
-              setTab(value as TabName);
-            }}
-            className="w-full"
-          >
+          <Tabs value={tab} onValueChange={onValueChange} className="w-full">
             <div className="flex items-center justify-between gap-2">
               <TabsList>
                 <TabsTrigger value="browse">Browse</TabsTrigger>
@@ -295,44 +474,62 @@ export function MetadataDialog({
               />
             </TabsContent>
 
-            <TabsContent value="bulk" className="mt-3">
-              <BulkPanel
-                slug={slug}
-                issueNumber={issueNumber}
-                canWrite={canWrite}
-                entries={entries}
-                onJumpRef={onBulkView}
-                onConflict={(payload) => {
-                  setRefused(payload.refused);
-                  setConflictNotice(
-                    conflictLines(payload.refused, payload.conflicts, entries),
-                  );
-                }}
-                onSaved={() => {
-                  setRefused(null);
-                  setConflictNotice([]);
-                }}
-              />
-            </TabsContent>
+            {session !== null && (
+              <>
+                <TabsContent value="bulk" className="mt-3">
+                  <BulkPanel
+                    slug={slug}
+                    issueNumber={issueNumber}
+                    canWrite={canWrite}
+                    key={`bulk-${sessionSeq}`}
+                    initialText={serializeBulk(docRows(session.doc))}
+                    snapshot={session.snapshot}
+                    editorRef={editorRef}
+                    gate={gate}
+                    onDirty={clearGate}
+                    onDiscard={onDiscard}
+                    onView={onBulkView}
+                    onConflict={(payload) => {
+                      setRefused(payload.refused);
+                      setConflictNotice(
+                        conflictLines(
+                          payload.refused,
+                          payload.conflicts,
+                          entries,
+                        ),
+                      );
+                    }}
+                    onSaved={onWriteSucceeded}
+                  />
+                </TabsContent>
 
-            <TabsContent value="json" className="mt-3">
-              <JsonPanel
-                slug={slug}
-                issueNumber={issueNumber}
-                canWrite={canWrite}
-                entries={entries}
-                onConflict={(payload) => {
-                  setRefused(payload.refused);
-                  setConflictNotice(
-                    conflictLines(payload.refused, payload.conflicts, entries),
-                  );
-                }}
-                onSaved={() => {
-                  setRefused(null);
-                  setConflictNotice([]);
-                }}
-              />
-            </TabsContent>
+                <TabsContent value="json" className="mt-3">
+                  <JsonPanel
+                    slug={slug}
+                    issueNumber={issueNumber}
+                    canWrite={canWrite}
+                    key={`json-${sessionSeq}`}
+                    initialText={serializeJsonDoc(docRows(session.doc))}
+                    snapshot={session.snapshot}
+                    editorRef={editorRef}
+                    onDirty={clearGate}
+                    gate={gate}
+                    onDiscard={onDiscard}
+                    onConflict={(payload) => {
+                      setRefused(payload.refused);
+                      setConflictNotice(
+                        conflictLines(
+                          payload.refused,
+                          payload.conflicts,
+                          entries,
+                        ),
+                      );
+                    }}
+                    onSaved={onWriteSucceeded}
+                  />
+                </TabsContent>
+              </>
+            )}
           </Tabs>
         </div>
 
@@ -346,77 +543,40 @@ export function MetadataDialog({
   );
 }
 
-/**
- * The Bulk panel wires the shared editor tab to the bulk syntax, and hands
- * its EditorView up so Browse's jumps can drive the cursor. Parse failures
- * stay in the panel; only a 409 becomes a conflict notice, rendered from
- * the refused entries paired with what the server reported.
- */
-function BulkPanel({
-  slug,
-  issueNumber,
-  canWrite,
-  entries,
-  onJumpRef,
-  onConflict,
-  onSaved,
-}: {
-  slug: string;
-  issueNumber: number;
-  canWrite: boolean;
-  entries: IssueMetadataEntry[];
-  onJumpRef: (view: EditorView | null) => void;
-  onConflict: (payload: WriteConflict) => void;
-  onSaved: () => void;
-}) {
+/** The wrappers pin the tab's syntax and derive readOnly from canWrite. */
+
+function BulkPanel(
+  props: Omit<
+    PanelProps,
+    "language" | "parse" | "helpText" | "placeholder" | "readOnly"
+  >,
+) {
   return (
     <MetadataEditorTab
-      slug={slug}
-      issueNumber={issueNumber}
-      canWrite={canWrite}
-      readOnly={!canWrite}
+      {...props}
+      readOnly={!props.canWrite}
       language={metadataBulkSupport}
-      serialize={serializeBulk}
       parse={parseBulk}
       helpText={BULK_HELP}
       placeholder="namespace/key = value"
-      entries={entries}
-      onSaved={onSaved}
-      onView={onJumpRef}
-      onConflict={onConflict}
     />
   );
 }
 
-function JsonPanel({
-  slug,
-  issueNumber,
-  canWrite,
-  entries,
-  onConflict,
-  onSaved,
-}: {
-  slug: string;
-  issueNumber: number;
-  canWrite: boolean;
-  entries: IssueMetadataEntry[];
-  onConflict: (payload: WriteConflict) => void;
-  onSaved: () => void;
-}) {
+function JsonPanel(
+  props: Omit<
+    PanelProps,
+    "language" | "parse" | "helpText" | "placeholder" | "readOnly"
+  >,
+) {
   return (
     <MetadataEditorTab
-      slug={slug}
-      issueNumber={issueNumber}
-      canWrite={canWrite}
-      readOnly={!canWrite}
+      {...props}
+      readOnly={!props.canWrite}
       language={metadataJsonSupport}
-      serialize={serializeJsonDoc}
       parse={parseJsonDoc}
       helpText={JSON_HELP}
       placeholder={'{"namespace": {"key": "value"}}'}
-      entries={entries}
-      onSaved={onSaved}
-      onConflict={onConflict}
     />
   );
 }
