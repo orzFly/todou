@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseBulk,
   pickHeredocMark,
+  scanBulkEntries,
   serializeBulk,
 } from "../src/lib/metadata-bulk.ts";
 import { precheck } from "../src/lib/metadata-diff.ts";
@@ -120,6 +121,44 @@ describe("parseBulk", () => {
       errors: [{ line: 3, message: expect.stringContaining("line 1") }],
     });
   });
+  it("detects a duplicate across a heredoc entry in both directions", () => {
+    // Falsifies by: letting the heredoc branch skip the shared `seen`
+    // check (the post-refactor bug): heredoc→plain, plain→heredoc and
+    // heredoc→heredoc all parse ok and the loser's value is silently
+    // replaced — exactly what the Save gate must refuse.
+    const heredocFirst = parseBulk("ci/x = <<EOF\na\nEOF\nci/x = 2");
+    expect(heredocFirst).toMatchObject({
+      ok: false,
+      errors: [{ line: 4, message: expect.stringContaining("line 1") }],
+    });
+    const plainFirst = parseBulk("ci/x = 1\nci/x = <<EOF\na\nEOF");
+    expect(plainFirst).toMatchObject({
+      ok: false,
+      errors: [{ line: 2, message: expect.stringContaining("line 1") }],
+    });
+    const heredocTwice = parseBulk(
+      "ci/x = <<EOF\na\nEOF\nci/x = <<EOF\nb\nEOF",
+    );
+    expect(heredocTwice).toMatchObject({
+      ok: false,
+      errors: [{ line: 4, message: expect.stringContaining("line 1") }],
+    });
+  });
+
+  it("cites line 1 for every re-set after a heredoc first assignment", () => {
+    // Falsifies by: the same skipped `seen` registration — a triple with a
+    // heredoc re-set then loses the second error and, worse, the heredoc
+    // re-set slips through as ok.
+    const result = parseBulk("ci/x = 1\nci/x = 2\nci/x = <<EOF\na\nEOF");
+    expect(result).toMatchObject({
+      ok: false,
+      errors: [
+        { line: 2, message: expect.stringContaining("line 1") },
+        { line: 3, message: expect.stringContaining("line 1") },
+      ],
+    });
+  });
+
   it("reads an empty value as the empty string, not a deletion", () => {
     // Falsifies by: treating an empty value as absent.
     const result = parseBulk("ci/x =");
@@ -206,5 +245,103 @@ describe("precheck", () => {
 describe("heredoc mark choice", () => {
   it("stays with EOF for values without one", () => {
     expect(pickHeredocMark("plain value")).toBe("EOF");
+  });
+});
+
+describe("scanBulkEntries", () => {
+  it("gives consecutive single-line entries their exact lines", () => {
+    // S1. Falsifies by: writing endLine as 0-based (one less than the
+    // truth) — every endLine assertion below then misses by one.
+    const spans = scanBulkEntries(
+      "ci/status = passing\nci/cmd = a=b\ndeploy/host = todou",
+    );
+    expect(spans).toEqual([
+      { namespace: "ci", key: "status", startLine: 1, endLine: 1 },
+      { namespace: "ci", key: "cmd", startLine: 2, endLine: 2 },
+      { namespace: "deploy", key: "host", startLine: 3, endLine: 3 },
+    ]);
+  });
+
+  it("spans a heredoc entry through its end-mark line", () => {
+    // S2. Falsifies by: treating the heredoc entry like a single-line one
+    // (endLine = startLine) — the span then ends on the `<<MARK` intro
+    // line and both assertions below fail.
+    const spans = scanBulkEntries("ci/out = <<EOF\nbody line\nEOF\nci/x = 1");
+    expect(spans).toEqual([
+      { namespace: "ci", key: "out", startLine: 1, endLine: 3 },
+      { namespace: "ci", key: "x", startLine: 4, endLine: 4 },
+    ]);
+  });
+
+  it("does not emit spans for heredoc body lines", () => {
+    // S3. Falsifies by: dropping the heredoc state from the scan so the
+    // body line below is re-read as an entry — the extra
+    // `{ ci, fake, … }` span makes the toEqual fail. The heredoc closes on
+    // the first bare `EOF` (line 4's span starts a real entry whose value
+    // is `EOF`); a second bare `EOF` would be a stray line the parser
+    // rejects, so the body may not contain one.
+    const spans = scanBulkEntries(
+      "ci/out = <<EOF\nbody one\nbody two\nEOF\nci/x = 2",
+    );
+    expect(spans).toEqual([
+      { namespace: "ci", key: "out", startLine: 1, endLine: 4 },
+      { namespace: "ci", key: "x", startLine: 5, endLine: 5 },
+    ]);
+  });
+
+  it("does not treat a lookalike entry inside the body as an entry", () => {
+    // S3b. The body line `ci/fake = 1` sits between the intro line and the
+    // end mark. Falsifies by: dropping the heredoc state — the fake line
+    // then yields a span between `out` and `x` and the toEqual fails.
+    const spans = scanBulkEntries("ci/out = <<EOF\nci/fake = 1\nEOF\nci/x = 2");
+    expect(spans).toEqual([
+      { namespace: "ci", key: "out", startLine: 1, endLine: 3 },
+      { namespace: "ci", key: "x", startLine: 4, endLine: 4 },
+    ]);
+  });
+
+  it("keeps original line numbers across blank and comment lines", () => {
+    // S4. Falsifies by: filtering blank/comment lines out before walking —
+    // `ci/x`'s span would then read startLine 2 instead of 4.
+    const spans = scanBulkEntries(
+      "# header\n\nci/status = passing\n\n# note\nci/x = 1",
+    );
+    expect(spans).toEqual([
+      { namespace: "ci", key: "status", startLine: 3, endLine: 3 },
+      { namespace: "ci", key: "x", startLine: 6, endLine: 6 },
+    ]);
+  });
+
+  it("stops at an unterminated heredoc, keeping only earlier spans", () => {
+    // S5. Falsifies by: scanning past an unclosed heredoc — the body's
+    // `ci/x = 1` line would appear as a span after `ci/out`'s. The scan
+    // yields nothing at all here because `ci/out` itself never closes.
+    const spans = scanBulkEntries("ci/x = 0\nci/out = <<WAITING\nci/fake = 1");
+    expect(spans).toEqual([
+      { namespace: "ci", key: "x", startLine: 1, endLine: 1 },
+    ]);
+  });
+
+  it("does not emit spans for rows whose namespace or key is invalid", () => {
+    // S6. Falsifies by: removing the two safeParse checks — the invalid
+    // `CI/X` row becomes a span between the two valid ones and the
+    // toEqual fails.
+    const spans = scanBulkEntries("ci/y = 2\nCI/X = 1\nci/z = 3");
+    expect(spans).toEqual([
+      { namespace: "ci", key: "y", startLine: 1, endLine: 1 },
+      { namespace: "ci", key: "z", startLine: 3, endLine: 3 },
+    ]);
+  });
+
+  it("still yields spans for a duplicate id, which only the parser rejects", () => {
+    // S7. Falsifies by: reusing parseBulk's duplicate rejection inside the
+    // scan — the second `ci/x`'s span vanishes and the editor loses the
+    // group's real end.
+    const spans = scanBulkEntries("ci/x = 1\nci/y = 2\nci/x = 3");
+    expect(spans).toEqual([
+      { namespace: "ci", key: "x", startLine: 1, endLine: 1 },
+      { namespace: "ci", key: "y", startLine: 2, endLine: 2 },
+      { namespace: "ci", key: "x", startLine: 3, endLine: 3 },
+    ]);
   });
 });

@@ -12,6 +12,7 @@ import {
 import type { Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
+import { scanBulkEntries, scanBulkStop } from "../metadata-bulk.ts";
 
 /**
  * Bulk tab highlighting (design: "Bulk 档"): a deliberately tiny stream
@@ -102,15 +103,98 @@ function insertSnippetAt(view: EditorView, template: string, at: number): void {
   );
 }
 
-/** The offset just past the last line of `namespace`'s group, or EOF. */
-function endOfGroup(view: EditorView, namespace: string): number {
-  const doc = view.state.doc;
-  const lines = doc.toString().split("\n");
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i] as string;
-    if (line.startsWith(`${namespace}/`)) return doc.line(i + 1).to;
+/**
+ * Count the newlines immediately before `at`, then pad up to `want`. Only
+ * the run of newlines ending at `at` counts — a longer run earlier in the
+ * text is irrelevant, and a run already longer than `want` is not trimmed;
+ * the separator only ever adds.
+ *
+ * The empty-document guard (`text.length === 0`) is DEFENSIVE: under the
+ * line-start rule in `insertKeyInGroup`/`appendNewEntry` it is
+ * unreachable — a zero-span heredoc-stop takes the template-with-trailing-
+ * separator branch, not this one. Reverting it to the old `at === 0` form
+ * turns no test red. It exists so the contract "an empty document needs no
+ * separator" lives here and not in every caller.
+ */
+function separator(text: string, at: number, want: number): string {
+  if (text.length === 0) return "";
+  let have = 0;
+  while (have < want && at - 1 - have >= 0 && text[at - 1 - have] === "\n") {
+    have++;
   }
-  return doc.length;
+  return "\n".repeat(want - have);
+}
+
+/** True when `at` sits at the very start of a line that has content. */
+function atLineStart(text: string, at: number): boolean {
+  return at === 0 || text[at - 1] === "\n";
+}
+
+/**
+ * The end of `namespace`'s group: the offset at the end of the last line
+ * of the namespace's last complete entry, or null when the namespace has
+ * no complete entry. Scanning stops at an unterminated heredoc, so this
+ * never lands inside one — and the offset this returns is the end of the
+ * *scanned* text when the scan stopped short of `doc.length`, never a
+ * position inside the unparsed tail.
+ */
+function endOfGroup(view: EditorView, namespace: string): number | null {
+  const text = view.state.doc.toString();
+  const spans = scanBulkEntries(text);
+  let endLine: number | null = null;
+  for (const span of spans) {
+    if (span.namespace === namespace) endLine = span.endLine;
+  }
+  if (endLine === null) return null;
+  return view.state.doc.line(endLine).to;
+}
+
+/**
+ * The offset just past the text the scanner could vouch for — `text.length`
+ * when the scan covered the whole text, the end of the last vouched line
+ * when it stopped at an unterminated heredoc. An insertion point is never
+ * placed inside the tail the scanner cannot read.
+ */
+function scanEnd(view: EditorView): number {
+  const text = view.state.doc.toString();
+  const spans = scanBulkEntries(text);
+  if (spans.length === 0) return scanEndWithoutSpans(view, text);
+  const last = spans[spans.length - 1] as { endLine: number };
+  return view.state.doc.line(last.endLine).to;
+}
+
+/**
+ * No complete entry anywhere. The scan either walked the whole text
+ * (empty, comments-only, invalid rows) and the end is `text.length`, or it
+ * stopped at an unterminated heredoc intro line and the end is the
+ * boundary *before* that line — the one position that is not inside the
+ * body the scanner cannot read.
+ */
+function scanEndWithoutSpans(view: EditorView, text: string): number {
+  if (text.length === 0) return 0;
+  const stop = scanBulkStop(text);
+  if (stop === null) return text.length;
+  return view.state.doc.line(stop.line).from;
+}
+
+/**
+ * True when the scan's stopping boundary is the *start* of a line the
+ * scanner could not read past — the intro line of an unterminated heredoc.
+ * The end of a vouched line is never a line start, so this distinguishes
+ * "before unread content" from "after vouched content".
+ */
+function scanStoppedAtLineStart(view: EditorView, at: number): boolean {
+  const text = view.state.doc.toString();
+  if (text.length === 0) return false;
+  if (!atLineStart(text, at)) return false;
+  const line = view.state.doc.lineAt(at);
+  // `at` must open a non-empty line (the unread intro) and must not also
+  // close the previous line — the latter is a vouched line end.
+  return (
+    line.text.length > 0 &&
+    line.from === at &&
+    (at === 0 || view.state.doc.line(line.number - 1).to !== at)
+  );
 }
 
 // Snippet field placeholders, spelled so the linter does not mistake them
@@ -124,11 +208,22 @@ const ENTRY_FIELDS = `\${ns}/\${key} = \${value}`;
  * namespace is already written, so the first snippet field the cursor lands
  * on is the key.
  */
-
 export function insertKeyInGroup(view: EditorView, namespace: string): void {
-  const at = endOfGroup(view, namespace);
-  const sep = at < view.state.doc.length ? "\n" : "";
-  insertSnippetAt(view, `${sep}${namespace}/${KEY_FIELD} = ${VALUE_FIELD}`, at);
+  const text = view.state.doc.toString();
+  const found = endOfGroup(view, namespace);
+  // A namespace with no complete entry is a new group: at the end of the
+  // scanned text, blank-line separated — not glued to a neighbour's value.
+  const at = found ?? scanEnd(view);
+  const template = `${namespace}/${KEY_FIELD} = ${VALUE_FIELD}`;
+  if (found === null && scanStoppedAtLineStart(view, at)) {
+    // The scan stopped at the *start* of an unread line (unterminated
+    // heredoc is the text's first complete-entry candidate): the new group
+    // must sit before that line, so the separation goes after the entry.
+    insertSnippetAt(view, `${template}\n\n`, at);
+  } else {
+    const sep = separator(text, at, found === null ? 2 : 1);
+    insertSnippetAt(view, `${sep}${template}`, at);
+  }
   view.focus();
 }
 
@@ -137,10 +232,16 @@ export function insertKeyInGroup(view: EditorView, namespace: string): void {
  * blank line when anything is there; the first field is the namespace.
  */
 export function appendNewEntry(view: EditorView): void {
-  const doc = view.state.doc;
-  const at = doc.length;
-  const sep = at === 0 ? "" : "\n\n";
-  insertSnippetAt(view, `${sep}${ENTRY_FIELDS}`, at);
+  const text = view.state.doc.toString();
+  const at = scanEnd(view);
+  if (scanStoppedAtLineStart(view, at)) {
+    // Scan stopped at the start of an unread line (unterminated heredoc):
+    // separation goes after the entry, before that line.
+    insertSnippetAt(view, `${ENTRY_FIELDS}\n\n`, at);
+  } else {
+    const sep = separator(text, at, 2);
+    insertSnippetAt(view, `${sep}${ENTRY_FIELDS}`, at);
+  }
   view.focus();
 }
 
