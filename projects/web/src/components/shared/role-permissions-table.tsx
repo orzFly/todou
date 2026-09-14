@@ -92,6 +92,18 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
     caps: ["access_denial.list", "access_denial.set", "access_denial.remove"],
   },
 
+  {
+    group: "Read",
+    // In the Read group because that is what it costs (T-340), the same as the
+    // row above: a machine is held to its owner's own role, so arranging your
+    // own reaches nothing you do not already hold. Grouped by what it costs
+    // rather than by what it resembles — the members row further down is an
+    // admin's, and putting this beside it would draw a reader's permission
+    // inside the Administer block.
+    label: "Add and remove the machines you own here, and set their role",
+    caps: ["member.set_own_agent", "member.remove_own_agent"],
+  },
+
   { group: "Report", label: "Open a new issue", caps: ["issue.create"] },
   { group: "Report", label: "Post a comment", caps: ["comment.create"] },
   {

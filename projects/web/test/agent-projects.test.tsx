@@ -4,6 +4,7 @@ import type {
   Agent,
   AgentMembership,
   AgentMemberships,
+  ManageableProject,
   MemberRole,
   ProjectBrief,
 } from "@todou/shared";
@@ -32,6 +33,16 @@ const BETA: ProjectBrief = { id: 2, slug: "beta", name: "Beta" };
 const GAMMA: ProjectBrief = { id: 3, slug: "gamma", name: "Gamma" };
 // A project the owner is not in — listed, but not editable from here.
 const OUTSIDE: ProjectBrief = { id: 9, slug: "bobland", name: "Bobland" };
+
+/**
+ * A manageable entry carries the ceiling with it (T-340). Spelled at each
+ * call site rather than defaulted, because a fixture that forgets it is the
+ * rolling-release case — and the page is meant to go read-only there.
+ */
+const manageable = (
+  project: ProjectBrief,
+  my_role: MemberRole = "admin",
+): ManageableProject => ({ ...project, my_role });
 
 const membership = (
   project: ProjectBrief,
@@ -80,7 +91,7 @@ describe("agent projects column (T-227)", () => {
         membership(GAMMA, "reader"),
         membership(OUTSIDE, "writer"),
       ],
-      manageable_projects: [ALPHA, BETA, GAMMA],
+      manageable_projects: [ALPHA, BETA, GAMMA].map((p) => manageable(p)),
     });
 
     expect(await screen.findByTitle("Alpha · admin")).toBeTruthy();
@@ -109,7 +120,7 @@ describe("agent projects column (T-227)", () => {
   it("edits only the projects I administer", async () => {
     renderPage({
       memberships: [membership(ALPHA, "writer"), membership(OUTSIDE, "reader")],
-      manageable_projects: [ALPHA, BETA],
+      manageable_projects: [ALPHA, BETA].map((p) => manageable(p)),
     });
     const dialog = await openDialog();
 
@@ -127,7 +138,7 @@ describe("agent projects column (T-227)", () => {
   it("offers only the projects I administer and have not joined", async () => {
     renderPage({
       memberships: [membership(ALPHA, "writer")],
-      manageable_projects: [ALPHA, BETA, GAMMA],
+      manageable_projects: [ALPHA, BETA, GAMMA].map((p) => manageable(p)),
     });
     const dialog = await openDialog();
 
@@ -148,7 +159,7 @@ describe("agent projects column (T-227)", () => {
     const spy = vi.spyOn(api, "setMember").mockResolvedValue(undefined);
     renderPage({
       memberships: [membership(ALPHA, "writer")],
-      manageable_projects: [ALPHA, BETA],
+      manageable_projects: [ALPHA, BETA].map((p) => manageable(p)),
     });
     const dialog = await openDialog();
 
@@ -171,7 +182,7 @@ describe("agent projects column (T-227)", () => {
     const spy = vi.spyOn(api, "setMember").mockResolvedValue(undefined);
     const client = renderPage({
       memberships: [membership(ALPHA, "writer")],
-      manageable_projects: [ALPHA],
+      manageable_projects: [manageable(ALPHA)],
     });
     const invalidate = vi.spyOn(client, "invalidateQueries");
     const dialog = await openDialog();
@@ -192,11 +203,91 @@ describe("agent projects column (T-227)", () => {
     });
   });
 
+  it("adds at my own role when that is below writer", async () => {
+    const spy = vi.spyOn(api, "setMember").mockResolvedValue(undefined);
+    renderPage({
+      memberships: [],
+      manageable_projects: [manageable(BETA, "reporter")],
+    });
+    const dialog = await openDialog();
+
+    fireEvent.keyDown(
+      dialog.getByRole("combobox", { name: "Project to add" }),
+      {
+        key: "B",
+      },
+    );
+    fireEvent.click(dialog.getByRole("button", { name: "Add" }));
+
+    // A reporter owner asking for writer would only find out at the 409.
+    await waitFor(() =>
+      expect(spy).toHaveBeenCalledWith("beta", BOT.id, "reporter"),
+    );
+  });
+
+  it("keeps the roles above my own out of an existing row", async () => {
+    renderPage({
+      memberships: [membership(ALPHA, "reader")],
+      manageable_projects: [manageable(ALPHA, "reader")],
+    });
+    const dialog = await openDialog();
+
+    // The clamp has to reach the joined row too: widening the manageable set
+    // is what first shows a reader their own agent's row, and unclamped it
+    // would still offer admin.
+    fireEvent.keyDown(dialog.getByRole("combobox", { name: "role in Alpha" }), {
+      key: "ArrowDown",
+    });
+    const disabled = Object.fromEntries(
+      screen
+        .getAllByRole("option")
+        .map((o) => [o.textContent, o.getAttribute("aria-disabled")]),
+    );
+    expect(disabled).toMatchObject({
+      admin: "true",
+      writer: "true",
+      reporter: "true",
+      reader: null,
+    });
+  });
+
+  it("goes read-only when the server never said what my role is", async () => {
+    const spy = vi.spyOn(api, "setMember").mockResolvedValue(undefined);
+    renderPage({
+      memberships: [membership(ALPHA, "writer")],
+      // A server from before `my_role`: nothing parses this at runtime, so
+      // the missing field has to be caught by hand or the page computes a
+      // ceiling from undefined.
+      manageable_projects: [ALPHA, BETA] as never,
+    });
+    const dialog = await openDialog();
+
+    expect(
+      (
+        dialog.getByRole("combobox", {
+          name: "role in Alpha",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+
+    fireEvent.keyDown(
+      dialog.getByRole("combobox", { name: "Project to add" }),
+      {
+        key: "B",
+      },
+    );
+    expect(
+      (dialog.getByRole("button", { name: "Add" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it("removes a membership and refreshes both sides", async () => {
     const spy = vi.spyOn(api, "removeMember").mockResolvedValue(undefined);
     const client = renderPage({
       memberships: [membership(ALPHA, "admin")],
-      manageable_projects: [ALPHA],
+      manageable_projects: [manageable(ALPHA)],
     });
     const invalidate = vi.spyOn(client, "invalidateQueries");
     const dialog = await openDialog();

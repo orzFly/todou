@@ -135,11 +135,30 @@ export async function createProject(
         effectiveFrom: row.createdAt,
       });
     }
-    await system.insert(projectMembers).values({
-      projectId: row.id,
-      userId: actor.id,
-      role: "admin",
-    });
+    // A machine creating a project brings its owner in as admin alongside it
+    // (T-340). Creation is the one path that writes a membership row without
+    // going through the ceiling checks, so without this a machine holding a
+    // PAT could make itself an admin of a project its owner has no role in —
+    // the invariant broken at the moment of birth. Writing the owner's row
+    // instead of refusing the create keeps every existing caller working, and
+    // leaves the project with a human admin rather than a lone machine whose
+    // role nobody is left able to change.
+    //
+    // No guard on the actor's kind, deliberately: a machine has always been
+    // able to create projects here, and taking that away belongs to a card
+    // that can go and look at who would break.
+    await system.insert(projectMembers).values(
+      actor.kind === "machine" && actor.ownerId !== null
+        ? [
+            { projectId: row.id, userId: actor.id, role: "admin" as const },
+            {
+              projectId: row.id,
+              userId: actor.ownerId,
+              role: "admin" as const,
+            },
+          ]
+        : [{ projectId: row.id, userId: actor.id, role: "admin" as const }],
+    );
     if (input.ref_prefix != null) {
       await mirrorRefFormat(system, row.id, {
         prefix: input.ref_prefix,

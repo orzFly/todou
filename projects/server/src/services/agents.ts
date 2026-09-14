@@ -3,6 +3,7 @@ import type {
   AgentCreateInput,
   AgentMemberships,
   AgentUpdateInput,
+  ManageableProject,
   MemberRole,
   ProjectBrief,
   TokenCreated,
@@ -268,20 +269,24 @@ export async function listAgentMemberships(
 
   // An instance admin is admin in every project without holding a membership
   // row anywhere (projectRoleOf's rule), so the candidate set is the table.
-  const manageable = actor.isInstanceAdmin
-    ? await system.select().from(projects)
+  // This branch stays whole: reading the widened rule below as "projects I
+  // hold a row in" would take their set from every project to none.
+  //
+  // Everyone else needs only *a* role, not admin (T-340): arranging your own
+  // machines is yours at any role, and the ceiling keeps what you may give
+  // them at or below what you hold. `my_role` is that ceiling.
+  const manageable: ManageableProject[] = actor.isInstanceAdmin
+    ? (await system.select().from(projects)).map((p) => ({
+        ...toBrief(p),
+        my_role: "admin" as const,
+      }))
     : (
         await system
-          .select({ project: projects })
+          .select({ project: projects, role: projectMembers.role })
           .from(projectMembers)
           .innerJoin(projects, eq(projects.id, projectMembers.projectId))
-          .where(
-            and(
-              eq(projectMembers.userId, actor.id),
-              eq(projectMembers.role, "admin"),
-            ),
-          )
-      ).map((r) => r.project);
+          .where(eq(projectMembers.userId, actor.id))
+      ).map((r) => ({ ...toBrief(r.project), my_role: r.role }));
 
   return {
     memberships: rows
@@ -297,8 +302,8 @@ export async function listAgentMemberships(
           roleOrder(a.role) - roleOrder(b.role) ||
           a.project.slug.localeCompare(b.project.slug),
       ),
-    manageable_projects: manageable
-      .map(toBrief)
-      .sort((a, b) => a.slug.localeCompare(b.slug)),
+    manageable_projects: manageable.sort((a, b) =>
+      a.slug.localeCompare(b.slug),
+    ),
   };
 }

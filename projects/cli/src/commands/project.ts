@@ -1,6 +1,11 @@
 import { statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ProjectUpdateInput, TodouClient } from "@todou/shared";
+import {
+  MEMBER_ROLES,
+  MemberRole,
+  type ProjectUpdateInput,
+  type TodouClient,
+} from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { stringify } from "smol-toml";
 import { ApiCommand, type CliContext, ProjectCommand } from "../api-command.ts";
@@ -83,6 +88,52 @@ export class ProjectMembersCommand extends ProjectCommand {
       const count = `${members.length} ${plural(members.length, "member")}`;
       return `${rows}\n${paint("dim", count)}`;
     });
+  }
+}
+
+export class ProjectMembersAddCommand extends ProjectCommand {
+  static paths = [["project", "members", "add"]];
+  static usage = Command.Usage({
+    description: "Add someone to a project by their exact login",
+    details:
+      "The login has to be exact. There is no user directory and no search " +
+      "— an unknown login comes back as `no such user` with no suggestion " +
+      "of a near spelling, and only a project's admins may ask at all.\n\n" +
+      "This adds; it never rewrites. Somebody already in the project comes " +
+      "back as `already a member`, so a role change stays a separate, " +
+      "deliberate act.\n\n" +
+      "A machine login works too, and is the only way to put an agent you " +
+      "do not own into a project. It is still held to its owner's role " +
+      "here, and refused when the owner has none.",
+    examples: [
+      [
+        "Add a person as a reporter",
+        "$0 project members add newcomer --role reporter -p todou",
+      ],
+    ],
+  });
+
+  login = Option.String();
+  role = Option.String("--role", "reader", {
+    description: "admin, writer, reporter or reader (default: reader)",
+  });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const role = MemberRole.safeParse(this.role);
+    if (!role.success) {
+      throw new CliError(
+        `unknown role "${this.role}" — use one of ${MEMBER_ROLES.join(", ")}`,
+      );
+    }
+    const member = await client.addMember(this.requireProject(), {
+      login: this.login,
+      role: role.data,
+    });
+    const paint = makePainter(this.context.stdout, this.context.env);
+    this.output(
+      member,
+      () => `added ${member.user.login} as ${paint("bold", member.role)}`,
+    );
   }
 }
 
