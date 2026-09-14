@@ -93,6 +93,50 @@ scratch directory and on the tracker; it never enters the repository, not even a
 - After verifying in a real browser, close the tabs and kill the dev servers you started — leaked
   Chromium profiles and occupied ports are the other agents' next environment failure.
 
+## Attaching a census to a report
+
+A report that states a count — "79 call sites, 2 of them matching" — is worth what the next reader
+can re-derive, so attach the command that produced it. These rules decide whether that command is
+worth attaching.
+
+**Count an identifier, not punctuation.** `grep -rn 'mutationFn' projects/web/src` returns the same
+number whatever syntax surrounds the matches. A count of `.mutate(` does not: something has to
+decide where strings, comments, JSX text and regular-expression literals begin and end.
+`projects/web/src/pages/project-settings.tsx` carries the JSX text `The slug is this project's
+address`. A scanner that reads `'` as a string delimiter consumes from that apostrophe to the next
+one in the file, and further prose apostrophes go on blanking code one span at a time, so that file
+reports 2 call sites where it has 20. Choose the countable target instead of writing the scanner:
+where the shape you care about has an identifier in it, count that.
+
+**Publish several counts that must agree.** One number cannot check itself. The census on T-329
+publishes counts that check each other:
+
+```bash
+grep -rn 'useMutation(' projects/web/src | wc -l                              # 61
+grep -rn 'mutationFn' projects/web/src | wc -l                                # 61
+grep -rnE 'useMutation\b' projects/web/src | grep -v 'useMutation(' | wc -l   # 22
+grep -rl 'useMutation(' projects/web/src | wc -l                              # 22
+```
+
+Every `useMutation(` carries exactly one `mutationFn`, which is what makes the first pair equal; the
+remaining `useMutation` occurrences are imports, one per file holding any, which is what makes the
+second pair equal. Write those relationships down next to the commands, because a mismatch then
+names which relationship broke instead of only reporting that something did.
+
+Agreement is not completeness, and the census has to say so. Deleting a whole
+`useMutation({ mutationFn … })` call from a file that still holds another one leaves all four counts
+agreeing with the package one call site lighter: the deletion takes one occurrence from each side of
+the first pair, and the file still holds a call, so the second pair does not move. Publish what the
+equalities cannot see beside what they can.
+
+**Break the input before trusting the check.** A guard that cannot fail is not a guard. The census
+attached to T-324 was defended by `len(strip(s)) == len(s)`, and the scanner replaced everything it
+discarded with an equal number of spaces, so the guard held on all 190 files of the package while a
+quarter of the call sites were invisible to the count. Before relying on a check, damage a copy of
+its input on purpose and confirm that the check fails — that is how the blind spot above was found,
+and a check whose blind spot nobody has looked for is a check nobody has tested. This is the same
+mistake as judging a test run by a piped exit code; see "Reading a test run" above.
+
 ## Navigation is links
 
 Anything whose job is to take the user somewhere else must be a real link — `<a href>`, or the
