@@ -15,9 +15,9 @@ there and are not repeated here. `<proj>` comes from the host project's config.
 
 ## Steps
 
-1. Run `todou agent can-i-follow` and do what it says. **Do not move the card.** The sister skills
-   open with In Progress because they are development; compacting is not, and the card may be sitting
-   on Done.
+1. Run `todou agent can-i-follow` and do what it says. **Do not take the card** — neither the status
+   nor the assignee. The sister skills open with In Progress because they are development;
+   compacting is not, and the card may be sitting on Done, or held by an agent still working on it.
 2. Read the card with the one command below.
 3. Rule a ledger: one line per unit of discussion, one verdict each.
 4. Post the summary comment — if the ledger found anything to write.
@@ -194,7 +194,7 @@ reason.
   and the evidence they handed over — and nothing covers it, so the summary goes to a comment rather
   than into it; a title naming a symptom is not rewritten because the cause was later found.
   `/todou-cli`'s "Filing a card" governs the moment a card is opened, this skill the discussion after.
-- **The status is not touched.**
+- **The status and the assignee are not touched.**
 - **No spec is pushed and none is edited.** This skill reads specs. How a spec should be written
   belongs to the skills that write them; the only question asked here is whether the discussion's
   conclusions are recorded somewhere.

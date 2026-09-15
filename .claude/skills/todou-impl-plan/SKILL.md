@@ -15,8 +15,8 @@ Execute a plan that lives as an approved spec set on a todou issue. Read `/todou
    check has nothing to wake it.
 2. `todou spec pull <n> <dir> -p <proj>` into a scratch directory made with `mktemp -d`. Read
    whichever exist: `proposal.md` (requirements), `design.md`, `api.md`, `plan.md` (the steps).
-3. Move the card to In Progress, then run `todou agent can-i-follow` and do what it says. Follow
-   `plan.md`; with several steps, track them in a task list.
+3. Take the card (`/todou-cli`, "Taking a card"), then run `todou agent can-i-follow` and do what it
+   says. Follow `plan.md`; with several steps, track them in a task list.
 4. Verify against the plan's acceptance criteria, commit on your branch without merging, move the
    card to Ready to Ship, post a summary comment, report in the terminal.
 

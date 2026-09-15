@@ -265,10 +265,33 @@ Backlog → Todo → Next → In Progress → Ready to Ship → Shipped → Done
 New projects are seeded with all of these; `todou status init -p <proj>` adds the missing ones to an
 older project in canonical order.
 
-- Worker agents move a card to In Progress when starting, and to Ready to Ship when development is
+- Worker agents take a card (below) when starting, and move it to Ready to Ship when development is
   complete (commits on their own branch, not merged), with a summary comment.
 - The orchestrator moves cards to Shipped after merge and deploy.
 - Only the user moves a card to Done, after verifying. Never do this on the user's behalf.
+
+### Taking a card
+
+Starting work is one write, status and assignee together:
+
+```bash
+todou issue edit <n> -p <proj> --status "In Progress" --add-assignee @me
+```
+
+**The assignee says that a card is held, never by whom.** Every agent on a machine authenticates as
+one machine account, so yours and another agent's are the same login; only the `assigned` event
+carries the session that wrote it (`issue events <n> --type assigned`). That is enough, because the
+orchestrator never assigns itself — an assignee at all means held, by an agent or by the user. Read
+it back from `issue view --brief`, from the `issue list` column that appears once any card in the
+project has one, or from `issue list -a @me`.
+
+It is a marker, not a lock: `--add-assignee @me` on a card another agent already took returns
+`updated` and writes no event, so it neither fails nor warns. What keeps two agents off one card is
+the orchestrator declining to dispatch a card that has an assignee, not this write.
+
+The assignee comes off when the agent holding the card is retired, which is the orchestrator's step.
+A card stays assigned across Ready to Ship and through the merge, and a planning agent's card keeps
+its assignee through the hand-off to the implementation agent that replaces it.
 
 ## Asking the user questions
 

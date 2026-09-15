@@ -12,9 +12,9 @@ gate, and what a spec document may and may not contain, are in its "Spec documen
 
 ## Steps
 
-1. Move the card to In Progress, then run `todou agent can-i-follow` and do what it says. Explore the
-   code. Unresolved design details become native questions on the card (`comment add --questions` +
-   `question wait`, see `/todou-cli`), never guesses.
+1. Take the card (`/todou-cli`, "Taking a card"), then run `todou agent can-i-follow` and do what it
+   says. Explore the code. Unresolved design details become native questions on the card
+   (`comment add --questions` + `question wait`, see `/todou-cli`), never guesses.
 2. Write the documents below in a scratch directory made with `mktemp -d`.
 3. Self-check: remove placeholders, resolve contradictions, rewrite requirements that can be read two
    ways, confirm the scope fits.

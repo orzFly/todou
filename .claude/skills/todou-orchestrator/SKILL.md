@@ -56,9 +56,9 @@ restart from the printed cursor.
 | Event | Reaction |
 |---|---|
 | User opens a card | Triage it now (below). Opening a card is not a go signal |
-| User moves a card to Next | Dispatch a worker |
+| User moves a card to Next | Dispatch a worker, unless the card already has an assignee |
 | User comments on a card | Owning worker alive: nothing, its own watch delivered it. Otherwise file a follow-up card or handle it yourself |
-| A worker comments, asks or pushes a spec | Nothing (`While a worker is alive`) |
+| A worker takes a card, comments, asks or pushes a spec | Nothing (`While a worker is alive`) |
 | A worker moves its card to Ready to Ship | Queue it for the next merge batch |
 | Informational comment | Nothing; the comment is the record |
 
@@ -114,6 +114,12 @@ session block already out; a model or cap that changed since the last one reprin
   through agent memory.
 - Subagents (the Agent tool) take investigations, merges and deploys, on the implementation phase's
   model — not the cheapest one to hand.
+- A card with an assignee is held: leave it where it is and say so instead of dispatching. Nobody
+  assigns except to take a card (`/todou-cli`, "Taking a card"), so the holder is a live agent or the
+  user, and either way a second agent on it is the conflict you exist to prevent. You never assign —
+  not to reserve a card, not to record who did the work — because an assignee you wrote would hold
+  the card against the fleet with nobody behind it. Triage is unaffected; a label never collides with
+  who is working.
 
 The task brief carries only what is specific to this task: the skill to run on the first line, the
 card number, and the conflict fences (what every other in-flight agent is touching, so changes stay
@@ -138,11 +144,16 @@ reaches Shipped and the agent is retired.
 
 ## Retiring an agent
 
-Retiring is prompting `/exit` and then closing the tab: the sequence is in `references/herdr.md`,
-what the exit does to the worktree in `references/claude.md`. The judgement is when, not how.
+Retiring is prompting `/exit`, taking the card's assignee off, and closing the tab: the sequence is
+in `references/herdr.md`, what the exit does to the worktree in `references/claude.md`. The judgement
+is when, not how.
 
 - `/exit` a worker only after its branch is merged, because unmerged commits go with the worktree.
   If unmerged work must survive, merge first or leave the tab alone.
+- `todou issue edit <n> -p <proj> --remove-assignee @me` is yours because the agent is being closed
+  down and cannot do it, and a card left assigned after its agent is gone is held against nobody.
+  Where the card changes hands instead — a planning agent retired so an implementation agent can take
+  the same card — leave the assignee where it is.
 - The cleanup follows the session's own change record, not git state, so commits injected from
   outside the session are destroyed silently. Never stash your own work inside an agent's worktree.
 - Confirm the tab's label before closing it; a mistyped id kills an unrelated agent.
@@ -181,7 +192,9 @@ subagent and check the results.
 Run this when a network failure cuts agents off mid-stream, and whenever the user's prompt says
 REFRESH:
 
-1. Take a fleet snapshot, then read the tail of every idle agent (`references/herdr.md`).
+1. Take a fleet snapshot, then read the tail of every idle agent (`references/herdr.md`). Check it
+   against `todou issue list -p <proj> -a @me`, the cards the fleet holds: one held with no agent
+   behind it is a dead agent's card, and after a crash that is the only trace the agent left.
 2. An agent whose output ends in an `Interrupted` marker (`references/claude.md`) was cut off, not
    stopped. Prompt it: "That interruption was a network failure, not a human abort. Continue from
    where you were cut off (…)".
@@ -191,7 +204,8 @@ REFRESH:
 
 ## While a worker is alive
 
-A dispatched card is its worker's until the worker is retired.
+A dispatched card is its worker's until the worker is retired, and the card's assignee is where that
+shows on the tracker instead of only in your head.
 
 - **Do not reproduce its output.** Comments, questions, specs and numbers are on the card and the
   user reads them there. Answer when asked; unasked, say nothing.
