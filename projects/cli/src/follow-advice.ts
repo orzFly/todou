@@ -32,13 +32,18 @@ export type FollowAdvice = {
  * at a socket nobody holds. hub earns its mention as where that job is read,
  * not as the way to start it.
  *
+ * omp's entry carries two parameters where Claude Code's carries one, because
+ * `async` on its own does not outlive omp's own deadline: measured at 300
+ * seconds by default, and it ends the command with no signal it can catch, so
+ * the job that dies cannot even report where it stopped.
+ *
  * Only the two harnesses todou has measured have an entry. For the rest the
  * sentences below simply make no claim, because a guess here would be read as
  * an instruction.
  */
 const BACKGROUNDED: Record<"claude-code" | "omp", string> = {
   "claude-code": "started as a background task (run in background = true)",
-  omp: "started with the bash tool's `async: true` (`hub` is where you see how that job is doing)",
+  omp: "started with the bash tool's `async: true` and `timeout: 0` (`hub` is where you see how that job is doing)",
 };
 
 /**
@@ -74,12 +79,19 @@ const UNKNOWN_FALLBACK = "If you cannot, use poll mode.";
 /** Any other harness, and no harness: todou cannot answer for it. */
 const UNKNOWN_HARNESS = streamOrPoll(UNKNOWN_LEAD, UNKNOWN_FALLBACK);
 
+/**
+ * Its own paragraph rather than more of the clause above, because the deadline
+ * is the bash tool's and not the watch's: an agent that reads it as advice about
+ * watching leaves every other long wait to be killed at five minutes.
+ */
+const OMP_DEADLINE =
+  "`timeout: 0` is what keeps that job alive: the bash tool's deadline defaults to 300 seconds and ends the command with no signal it can catch, so a watch that reaches it stops without printing the cursor a restart would resume from, and whatever arrived in between is never read. Every todou command that has to outlive a single tool call takes the same parameter — `spec push --wait`, `spec wait`, `question wait`, and any watch run with `--forever`.";
+
 /** The same question, with omp's own way of keeping the command running. */
-const OMP_STREAM = streamOrPoll(
-  UNKNOWN_LEAD,
-  UNKNOWN_FALLBACK,
-  BACKGROUNDED.omp,
-);
+const OMP_STREAM = [
+  ...streamOrPoll(UNKNOWN_LEAD, UNKNOWN_FALLBACK, BACKGROUNDED.omp),
+  OMP_DEADLINE,
+];
 
 const CLOSING =
   "Whichever mode you use, the watch carries spec and question activity too: a review verdict and a question answer each arrive on it as their own line, so you do not need a separate `spec wait` or `question wait` running beside it.";
@@ -97,6 +109,7 @@ function udsParagraphs(harness: "claude-code" | "omp"): string[] {
   return [
     `running under ${HARNESS_LABELS[harness]}, and \`--follow=uds\` is available.`,
     `Use it with \`todou watch\` or \`todou issue watch\`, ${BACKGROUNDED[harness]}. If you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.`,
+    ...(harness === "omp" ? [OMP_DEADLINE] : []),
     CLOSING,
   ];
 }

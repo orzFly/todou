@@ -105,6 +105,21 @@ printing one batch and exiting. Run one as a background task and the session
 is told when something happens, rather than having to re-open the watch each
 time — or forgetting to.
 
+Give that background job `timeout: 0`. The deadline belongs to omp's bash
+tool rather than to todou: it defaults to 300 seconds and ends the command
+with no signal it can catch, so a watch that reaches it stops without
+printing the cursor a restart would resume from, and whatever arrived in
+between is never read. Every todou command that has to outlive a single tool
+call takes the same parameter — `spec push --wait`, `spec wait`,
+`question wait`, and any watch run with `--forever`.
+
+A batch that arrives cuts into the turn the session is running rather than
+waiting for that turn to end. omp makes room for it by backgrounding the
+foreground bash command early — it reports
+`Backgrounded early to handle an incoming message` when it does — and that
+command goes on running. How often this happens is set by the batching
+window, `--debounce`, which is 60 seconds by default here.
+
 `todou agent can-i-follow` reports whether this session can, and names
 `todou integration install omp` when the extension is what is missing. It
 talks to no server and resolves no project, so it answers at any point in a

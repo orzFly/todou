@@ -195,9 +195,12 @@ export default function todou(pi: Pi): void {
           display: true,
           attribution: "user",
         },
-        // `priority: "next"` on the wire: a batch of tracker activity is news
-        // for the next turn, not an interruption of this one.
-        { deliverAs: "nextTurn", triggerTurn: true },
+        // A batch has to be read in the turn it arrives in rather than wait for
+        // that turn to end, so it cuts into the running one: omp makes room by
+        // backgrounding the foreground bash command early, and that command
+        // goes on running. `triggerTurn` answers the other question, whether an
+        // idle session starts a turn at all.
+        { deliverAs: "steer", triggerTurn: true },
       );
       return true;
     } catch {

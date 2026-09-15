@@ -83,8 +83,8 @@ const authFrame = (token: string) => JSON.stringify({ type: "auth", token });
 type Handler = (event: unknown, ctx: unknown) => void;
 
 type Booted = {
-  /** Every message the extension handed the agent. */
-  sent: Array<{ content: string }>;
+  /** Every message the extension handed the agent, with the tier it asked for. */
+  sent: Array<{ content: string; deliverAs?: string }>;
   socket: string;
   /** Where the extension keeps its own socket, for a receipt address. */
   dir: string;
@@ -108,14 +108,17 @@ function boot(name: string): Booted {
   // skips the claim entirely — and every case here runs under the same pid.
   delete process.env.TODOU_OMP_STATE;
 
-  const sent: Array<{ content: string }> = [];
+  const sent: Array<{ content: string; deliverAs?: string }> = [];
   const handlers: Record<string, Handler[]> = {};
   const pi = {
     on(event: string, handler: Handler) {
       handlers[event] = [...(handlers[event] ?? []), handler];
     },
-    sendMessage(message: { content: string }) {
-      sent.push(message);
+    sendMessage(
+      message: { content: string },
+      options?: { deliverAs?: string },
+    ) {
+      sent.push({ ...message, deliverAs: options?.deliverAs });
     },
   };
   todou(pi as never);
@@ -349,6 +352,9 @@ describe("a push the gate already stopped", () => {
       `${authFrame(token)}\n${userFrame({ content: "carried" }).line}\n`,
     ]);
     expect(sent.map((message) => message.content)).toEqual(["carried"]);
+    // The tier decides when the agent reads it, and both tiers put the same
+    // text in the session log: only `steer` cuts into the running turn.
+    expect(sent.map((message) => message.deliverAs)).toEqual(["steer"]);
   });
 
   /*

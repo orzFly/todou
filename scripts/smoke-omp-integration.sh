@@ -138,11 +138,32 @@ PROBE
 # The sender, which is the CLI's own — a hand-written frame would prove only
 # that the extension parses hand-written frames.
 cat > "$WORK/push.mts" <<'PUSH'
+import { readFileSync } from "node:fs";
 import { openPeerPush } from "../../projects/cli/src/peer-push.ts";
 
 const [target, body] = process.argv.slice(2);
+
+/**
+ * The token the session published, out of the record beside the socket, which
+ * is where a real watch reads it. omp refuses a `user` frame that opens with
+ * no auth line, so a probe that sends none measures the refusal and never the
+ * delivery. A socket with no record leaves it unset — the unreachable case.
+ */
+function token(socket: string): string | undefined {
+  try {
+    const record: unknown = JSON.parse(
+      readFileSync(socket.replace(/\.sock$/, ".json"), "utf8"),
+    );
+    const value = (record as { token?: unknown }).token;
+    return typeof value === "string" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const push = await openPeerPush<string>({
   target: target as string,
+  token: token(target as string),
   fromName: "todou-watch-smoke",
   render: (items) => items.join("\n"),
 });
@@ -380,6 +401,17 @@ if wanted 4; then
         ok "the pushed text is in omp's session log"
       else
         bad "nothing carrying $MARK reached the session log"
+      fi
+      # The tier, which the check above cannot see: `nextTurn` and `steer` both
+      # land the text in the log, and only `steer` cuts into the `sleep 25`
+      # this pushed into, which is what makes omp print this. The string is
+      # omp's own, so a failure here is a reason to measure omp's tiers again
+      # rather than to drop the assertion.
+      EARLY="Backgrounded early to handle an incoming message"
+      if grep -rqF "$EARLY" "$HOME_DIR/.omp/agent/sessions" 2>/dev/null; then
+        ok "the push cut into the running turn"
+      else
+        bad "no sign the push interrupted the turn; the tier reads as nextTurn"
       fi
     fi
   fi

@@ -24,10 +24,13 @@ const UNKNOWN_HARNESS = [
 
 /** The same question put to omp, which is told how to background the watch. */
 const ASYNC =
-  "started with the bash tool's `async: true` (`hub` is where you see how that job is doing)";
+  "started with the bash tool's `async: true` and `timeout: 0` (`hub` is where you see how that job is doing)";
+const OMP_DEADLINE =
+  "`timeout: 0` is what keeps that job alive: the bash tool's deadline defaults to 300 seconds and ends the command with no signal it can catch, so a watch that reaches it stops without printing the cursor a restart would resume from, and whatever arrived in between is never read. Every todou command that has to outlive a single tool call takes the same parameter — `spec push --wait`, `spec wait`, `question wait`, and any watch run with `--forever`.";
 const OMP_STREAM = [
   `If you can watch a stream continuously and be woken by what it writes, try \`--follow=stdout\` with \`todou watch\` or \`todou issue watch\`, ${ASYNC}, and if you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.`,
   `If you cannot, use poll mode. ${STREAM_OR_POLL_TAIL}`,
+  OMP_DEADLINE,
 ];
 
 const CLOSING =
@@ -95,6 +98,7 @@ describe("followAdvice", () => {
       paragraphs: [
         "running under omp, and `--follow=uds` is available.",
         `Use it with \`todou watch\` or \`todou issue watch\`, ${ASYNC}. If you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.`,
+        OMP_DEADLINE,
         CLOSING,
       ],
     });
@@ -160,6 +164,10 @@ describe("followAdvice", () => {
     }).paragraphs.join("\n");
     expect(omp).toContain("async: true");
     expect(omp).not.toContain("run in background");
+    // The deadline is omp's bash tool's, and the paragraph about it has to
+    // reach every omp situation without leaking into a harness whose
+    // background task has no such parameter.
+    expect(omp).toContain("timeout: 0");
 
     const cc = followAdvice({
       harness: "claude-code",
@@ -168,6 +176,7 @@ describe("followAdvice", () => {
     }).paragraphs.join("\n");
     expect(cc).toContain("run in background");
     expect(cc).not.toContain("async");
+    expect(cc).not.toContain("timeout: 0");
   });
 
   it("says what it does not know about another harness, by name", () => {
