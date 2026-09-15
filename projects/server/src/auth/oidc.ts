@@ -2,7 +2,7 @@ import type { Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import * as oidc from "openid-client";
 import type { AppContext } from "../bootstrap.ts";
-import type { Config } from "../config.ts";
+import { CLIENT_AUTH_METHODS, type Config } from "../config.ts";
 import { DomainError } from "../errors.ts";
 import { requestOrigin } from "../http/proxy.ts";
 import { cookieSecure } from "./cookies.ts";
@@ -82,6 +82,47 @@ export function needsInsecureTransport(as: oidc.ServerMetadata): boolean {
   ].some((value) => value?.startsWith("http://") === true);
 }
 
+/** Neither is handed the secret: with no argument they read `client_secret`
+ *  off the client metadata at request time, and that metadata is already
+ *  todou's to give. Passing it would keep a second copy of the secret.
+ *
+ *  The price is that openid-client memoises both secret-less forms into one
+ *  WeakMap keyed by the client metadata object, so the first method to reach
+ *  a given client answers for the other one too. Safe here because a
+ *  Configuration pins one client object to one config and one server
+ *  metadata, which negotiate the same method every request — but driving
+ *  both methods through a single client object will not work. */
+const CLIENT_AUTH_IMPLS: Record<
+  (typeof CLIENT_AUTH_METHODS)[number],
+  oidc.ClientAuth
+> = {
+  client_secret_post: oidc.ClientSecretPost(),
+  client_secret_basic: oidc.ClientSecretBasic(),
+};
+
+/**
+ * Picks the client authentication method per request, because `ClientAuth`
+ * is handed the server metadata it has to negotiate against — so nothing
+ * here has to wait for discovery or rebuild a Configuration.
+ *
+ * A declaration naming none of the methods todou implements does not veto:
+ * this card exists because those declarations disagree with what the IdP
+ * accepts, in both directions, and an IdP that declares only
+ * `private_key_jwt` while accepting post logs in today.
+ */
+export function clientAuthFor(cfg: Config["auth"]["oidc"]): oidc.ClientAuth {
+  return (as, client, body, headers) => {
+    const declared = as.token_endpoint_auth_methods_supported ?? [];
+    const method =
+      cfg.token_endpoint_auth_method ??
+      // Not `CLIENT_AUTH_METHODS.includes(x)`: `as const` narrows that
+      // argument to the two literals, and `declared` is a string[].
+      CLIENT_AUTH_METHODS.find((candidate) => declared.includes(candidate)) ??
+      CLIENT_AUTH_METHODS[0];
+    CLIENT_AUTH_IMPLS[method](as, client, body, headers);
+  };
+}
+
 /**
  * Discovery is lazy and cached per loaded config: doing it at boot would
  * chain todou's startup to the IdP being up, and self-hosted boxes
@@ -99,7 +140,7 @@ function getIdp(config: Config): Promise<oidc.Configuration> {
         new URL(issuer),
         cfg.client_id as string,
         { client_secret: cfg.client_secret },
-        undefined,
+        clientAuthFor(cfg),
         // An http:// issuer is the deployer's explicit choice (intranet
         // IdPs, the test stub); openid-client refuses it by default.
         issuer.startsWith("http://")
@@ -121,6 +162,7 @@ function getIdp(config: Config): Promise<oidc.Configuration> {
           patched,
           cfg.client_id as string,
           { client_secret: cfg.client_secret },
+          clientAuthFor(cfg),
         );
         // A constructed Configuration always starts out TLS-only, whatever
         // discovery was told, so the allowance is re-applied here.

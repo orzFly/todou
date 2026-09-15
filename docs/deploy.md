@@ -631,6 +631,50 @@ is userinfo — with the reason in the server log. Falling back would make
 every login pay an internal timeout first, and would hide a wrong
 address indefinitely behind a deployment that looks healthy.
 
+Proving todou is the client it claims to be happens once per login, on
+the token endpoint. By default the method comes from what discovery
+declared in `token_endpoint_auth_methods_supported`: `client_secret_post`
+when the list offers it, `client_secret_basic` when that is the only one
+of the two offered, and `client_secret_post` when the IdP declares
+nothing or declares only methods todou does not implement. A declaration
+todou cannot read is never a refusal to log in.
+
+Some IdPs declare one method and accept another. Override the
+negotiation for those:
+
+```toml
+[auth.oidc]
+issuer = "https://auth.example.com"
+client_id = "todou"
+client_secret = "…"
+
+# This IdP declares support for post and accepts only basic.
+token_endpoint_auth_method = "client_secret_basic"
+```
+
+The values are `client_secret_post` and `client_secret_basic` — what the
+`client_secret` that oidc mode requires can support. The env equivalent
+is `TODOU_AUTH_OIDC_TOKEN_ENDPOINT_AUTH_METHOD`, and the value is checked
+at startup like the addresses above, so a misspelling is a boot error.
+The key is named after the field in your IdP's *client* settings, not
+after the server-side `…_methods_supported` list it overrides; whatever
+that field is set to is what belongs here.
+
+**Upgrading:** a deployment whose IdP declares only `client_secret_basic`
+while accepting only post logs in today and stops after this version,
+because the declaration is now believed. Add
+`token_endpoint_auth_method = "client_secret_post"` to restore it.
+Nothing can catch this at startup — the declaration is todou's only
+information about the IdP, and it is the thing that is wrong.
+
+A method the IdP rejects fails the login with `exchange_failed`, the
+server log carrying the IdP's 401 `invalid_client`. A wrong
+`client_secret` looks exactly the same, because that is all the IdP
+says. todou does not retry with the other method: a 401 does not
+distinguish the two causes, and retrying would leave a misconfigured
+deployment looking healthy while every failed login paid for two round
+trips.
+
 ### Migrating from `single` mode
 
 The builtin account holds your history, and nothing adopts it

@@ -9,6 +9,16 @@ import { compileTrustedProxies, type TrustedPeerCheck } from "./http/proxy.ts";
 
 export { ConfigError };
 
+/** Client authentication methods todou implements, in the order negotiation
+ *  prefers them: a declaration naming both lands on post, which is what
+ *  openid-client has always sent. Implementing a new method means adding it
+ *  here, so the configurable values and the negotiation candidates can never
+ *  drift apart. */
+export const CLIENT_AUTH_METHODS = [
+  "client_secret_post",
+  "client_secret_basic",
+] as const;
+
 const ConfigSchema = z.object({
   auth: z
     .object({
@@ -34,6 +44,9 @@ const ConfigSchema = z.object({
           token_endpoint: z.string().optional(),
           userinfo_endpoint: z.string().optional(),
           jwks_uri: z.string().optional(),
+          // Overrides what the IdP's metadata declares, which can disagree
+          // with what it accepts in either direction.
+          token_endpoint_auth_method: z.enum(CLIENT_AUTH_METHODS).optional(),
         })
         .prefault({}),
       forward: z
@@ -278,6 +291,10 @@ const ENV_MAP: Array<[string, string[]]> = [
   ["TODOU_AUTH_OIDC_TOKEN_ENDPOINT", ["auth", "oidc", "token_endpoint"]],
   ["TODOU_AUTH_OIDC_USERINFO_ENDPOINT", ["auth", "oidc", "userinfo_endpoint"]],
   ["TODOU_AUTH_OIDC_JWKS_URI", ["auth", "oidc", "jwks_uri"]],
+  [
+    "TODOU_AUTH_OIDC_TOKEN_ENDPOINT_AUTH_METHOD",
+    ["auth", "oidc", "token_endpoint_auth_method"],
+  ],
   ["TODOU_AUTH_FORWARD_USER_HEADER", ["auth", "forward", "user_header"]],
   ["TODOU_AUTH_FORWARD_NAME_HEADER", ["auth", "forward", "name_header"]],
   ["TODOU_AUTH_FORWARD_EMAIL_HEADER", ["auth", "forward", "email_header"]],

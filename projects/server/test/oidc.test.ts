@@ -41,6 +41,9 @@ afterAll(async () => {
 beforeEach(() => {
   idp.failTokenEndpoint = false;
   idp.failOnPublic = [];
+  idp.lastTokenAuth = null;
+  idp.tokenAuthMethodsSupported = null;
+  idp.requireTokenAuth = undefined;
   idp.subject = "stub-sub";
   idp.idTokenClaims = { preferred_username: "alice", name: "Alice Weber" };
   idp.userinfoClaims = {};
@@ -351,6 +354,129 @@ describe("oidc internal endpoint overrides", () => {
       const { callback } = await loginThrough(t);
       expect(callback.status).toBe(302);
       expect(callback.headers.get("location")).toBe("/projects");
+    } finally {
+      await t.cleanup();
+    }
+  });
+});
+
+/** Own app per case, for the same reason as the overrides above. */
+describe("oidc client authentication method", () => {
+  function oidcApp(...extraOidc: string[]) {
+    return makeTestApp("shared", {
+      extraToml: [
+        "[auth]",
+        'mode = "oidc"',
+        "[auth.oidc]",
+        `issuer = "${idp.origin}"`,
+        `client_id = "${CLIENT_ID}"`,
+        'client_secret = "test-secret"',
+        ...extraOidc,
+      ].join("\n"),
+    });
+  }
+
+  async function loginThrough(t: TestApp) {
+    const start = await t.app.request("/api/auth/login?redirect=/projects");
+    const flow = new URL(start.headers.get("location") ?? "");
+    const cookie = (start.headers.get("set-cookie") ?? "").split(
+      ";",
+    )[0] as string;
+    const callback = await t.app.request(
+      `/api/auth/callback?code=stub-code&state=${encodeURIComponent(
+        flow.searchParams.get("state") ?? "",
+      )}`,
+      { headers: { cookie } },
+    );
+    return { callback };
+  }
+
+  async function expectLoggedIn(t: TestApp) {
+    const { callback } = await loginThrough(t);
+    expect(callback.status).toBe(302);
+    expect(callback.headers.get("location")).toBe("/projects");
+    const me = await t.app.request("/api/me", {
+      headers: { cookie: sessionCookieOf(callback) },
+    });
+    expect(me.status).toBe(200);
+    expect((await json(me)).login).toBe("alice");
+  }
+
+  // The reported IdP: declares post, accepts only basic.
+  function declaresPostAcceptsBasic() {
+    idp.tokenAuthMethodsSupported = ["client_secret_post"];
+    idp.requireTokenAuth = "client_secret_basic";
+  }
+
+  it("fails the login when the declaration is the one that is wrong", async () => {
+    declaresPostAcceptsBasic();
+    const t = await oidcApp();
+    try {
+      const { callback } = await loginThrough(t);
+      expect(callback.headers.get("location")).toBe(
+        "/login?error=exchange_failed",
+      );
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("completes that same login with the method configured", async () => {
+    declaresPostAcceptsBasic();
+    const t = await oidcApp(
+      'token_endpoint_auth_method = "client_secret_basic"',
+    );
+    try {
+      await expectLoggedIn(t);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("still sends post when the IdP declares nothing", async () => {
+    const t = await oidcApp();
+    try {
+      await expectLoggedIn(t);
+      expect(idp.lastTokenAuth).toBe("post");
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("sends basic when that is all the IdP declares", async () => {
+    idp.tokenAuthMethodsSupported = ["client_secret_basic"];
+    idp.requireTokenAuth = "client_secret_basic";
+    const t = await oidcApp();
+    try {
+      await expectLoggedIn(t);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("prefers post when the IdP declares both", async () => {
+    idp.tokenAuthMethodsSupported = [
+      "client_secret_basic",
+      "client_secret_post",
+    ];
+    idp.requireTokenAuth = "client_secret_post";
+    const t = await oidcApp();
+    try {
+      await expectLoggedIn(t);
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("carries the configured method onto the rebuilt internal Configuration", async () => {
+    declaresPostAcceptsBasic();
+    idp.failOnPublic = ["/token", "/userinfo", "/jwks"];
+    const t = await oidcApp(
+      `internal_origin = "${idp.internalOrigin}"`,
+      'token_endpoint_auth_method = "client_secret_basic"',
+    );
+    try {
+      await expectLoggedIn(t);
     } finally {
       await t.cleanup();
     }

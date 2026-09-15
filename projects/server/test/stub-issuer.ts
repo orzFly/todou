@@ -26,6 +26,13 @@ export type StubIssuer = {
   /** Paths answered with 500 on the public port while the internal port
    *  keeps serving them — the breakage an internal address routes around. */
   failOnPublic: string[];
+  /** Where the last token request carried its client credentials. */
+  lastTokenAuth: "basic" | "post" | "both" | "none" | null;
+  /** Methods the discovery document declares; `null` omits the key, which is
+   *  both the existing cases' shape and the "nothing declared" input. */
+  tokenAuthMethodsSupported: string[] | null;
+  /** Set to accept only this one, answering 401 invalid_client otherwise. */
+  requireTokenAuth?: "client_secret_basic" | "client_secret_post";
   subject: string;
   close: () => Promise<void>;
 };
@@ -43,6 +50,8 @@ export async function startStubIssuer(clientId: string): Promise<StubIssuer> {
     userinfoClaims: {},
     failTokenEndpoint: false,
     failOnPublic: [],
+    lastTokenAuth: null,
+    tokenAuthMethodsSupported: null,
     subject: "stub-sub",
   };
 
@@ -79,12 +88,45 @@ export async function startStubIssuer(clientId: string): Promise<StubIssuer> {
             subject_types_supported: ["public"],
             id_token_signing_alg_values_supported: ["RS256"],
             code_challenge_methods_supported: ["S256"],
+            ...(stub.tokenAuthMethodsSupported === null
+              ? {}
+              : {
+                  token_endpoint_auth_methods_supported:
+                    stub.tokenAuthMethodsSupported,
+                }),
           });
         case "/jwks":
           return send(200, { keys: [jwk] });
         case "/token": {
           if (stub.failTokenEndpoint) {
             return send(500, { error: "server_error" });
+          }
+          let raw = "";
+          for await (const chunk of req) raw += String(chunk);
+          const form = new URLSearchParams(raw);
+          // Both body keys count, not client_secret alone: the report's
+          // fourth line is basic carrying a bare client_id in the body, and
+          // reading only client_secret would record that as plain basic.
+          // oauth4webapi's own token body is grant_type, code, redirect_uri
+          // and code_verifier, so neither key arrives any other way.
+          const inHeader =
+            req.headers.authorization?.startsWith("Basic ") === true;
+          const inBody = form.has("client_id") || form.has("client_secret");
+          stub.lastTokenAuth = inHeader
+            ? inBody
+              ? "both"
+              : "basic"
+            : inBody
+              ? "post"
+              : "none";
+          if (
+            stub.requireTokenAuth !== undefined &&
+            stub.lastTokenAuth !==
+              (stub.requireTokenAuth === "client_secret_basic"
+                ? "basic"
+                : "post")
+          ) {
+            return send(401, { error: "invalid_client" });
           }
           const now = Math.floor(Date.now() / 1000);
           const idToken = await new SignJWT({

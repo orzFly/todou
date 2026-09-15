@@ -224,6 +224,59 @@ describe("loadConfig", () => {
     expect(config.auth.oidc.jwks_uri).toBe("http://from-env.internal:9090/j");
   });
 
+  it("leaves auth.oidc.token_endpoint_auth_method unset by default", () => {
+    const config = loadConfig({ tomlSource: "", env: {} });
+    expect(config.auth.oidc.token_endpoint_auth_method).toBeUndefined();
+  });
+
+  it("accepts both client authentication methods todou implements", () => {
+    for (const method of ["client_secret_basic", "client_secret_post"]) {
+      const config = loadConfig({
+        tomlSource: `[auth.oidc]\ntoken_endpoint_auth_method = "${method}"`,
+        env: {},
+      });
+      expect(config.auth.oidc.token_endpoint_auth_method).toBe(method);
+    }
+  });
+
+  it("rejects a client authentication method todou does not implement", () => {
+    let thrown: unknown;
+    try {
+      loadConfig({
+        tomlSource:
+          '[auth.oidc]\ntoken_endpoint_auth_method = "client_secret_jwt"',
+        env: {},
+      });
+    } catch (cause) {
+      thrown = cause;
+    }
+    expect(thrown).toBeInstanceOf(ConfigError);
+    const message = String(thrown);
+    expect(message).toContain("token_endpoint_auth_method");
+    // Without this half the assertion also passes against z.string().
+    expect(message).toContain("client_secret_basic");
+  });
+
+  it("lets TODOU_AUTH_OIDC_TOKEN_ENDPOINT_AUTH_METHOD win over TOML", () => {
+    const config = loadConfig({
+      tomlSource: [
+        "[auth.oidc]",
+        'token_endpoint = "http://from-toml.internal:8080/token"',
+        'token_endpoint_auth_method = "client_secret_post"',
+      ].join("\n"),
+      env: {
+        TODOU_AUTH_OIDC_TOKEN_ENDPOINT_AUTH_METHOD: "client_secret_basic",
+      },
+    });
+    expect(config.auth.oidc.token_endpoint_auth_method).toBe(
+      "client_secret_basic",
+    );
+    // One env name is a prefix of the other; neither may land on the other.
+    expect(config.auth.oidc.token_endpoint).toBe(
+      "http://from-toml.internal:8080/token",
+    );
+  });
+
   it("defaults trusted_proxies to loopback and splits the ENV form", () => {
     const config = loadConfig({ tomlSource: "", env: {} });
     expect(config.http.trusted_proxies).toEqual(["127.0.0.1/32", "::1/128"]);

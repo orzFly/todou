@@ -2,6 +2,7 @@ import type * as oidc from "openid-client";
 import { describe, expect, it } from "vitest";
 import {
   applyInternalEndpoints,
+  clientAuthFor,
   needsInsecureTransport,
 } from "../src/auth/oidc.ts";
 import type { Config } from "../src/config.ts";
@@ -119,5 +120,80 @@ describe("needsInsecureTransport", () => {
         authorization_endpoint: "http://auth.example.com/realms/x/authorize",
       }),
     ).toBe(true);
+  });
+});
+
+describe("clientAuthFor", () => {
+  function authenticate(
+    cfg: Partial<Config["auth"]["oidc"]>,
+    declared: string[] | undefined,
+  ): { body: URLSearchParams; headers: Headers } {
+    const body = new URLSearchParams();
+    const headers = new Headers();
+    // A fresh client per call, and not a shared one: openid-client's
+    // secret-less ClientSecretPost/ClientSecretBasic memoise into one
+    // WeakMap keyed by this object, so whichever method reached a given
+    // client first would answer for the other one here. Real deployments
+    // negotiate one method per Configuration, which is why this only bites
+    // a test that drives both through the same object. Nothing here needs
+    // escaping, so the expected header can stay a literal: the
+    // form-urlencode-then-base64 is oauth4webapi's, not ours to test.
+    const client: oidc.ClientMetadata = {
+      client_id: "cid",
+      client_secret: "s",
+    };
+    clientAuthFor(oidcConfig(cfg))(
+      { ...PUBLISHED, token_endpoint_auth_methods_supported: declared },
+      client,
+      body,
+      headers,
+    );
+    return { body, headers };
+  }
+
+  function expectBasic({ body, headers }: ReturnType<typeof authenticate>) {
+    expect(headers.get("authorization")).toBe(`Basic ${btoa("cid:s")}`);
+    // The shape the report measured as a 401 is basic *plus* a body
+    // client_id, and the call site alone does not rule it out.
+    expect(body.has("client_id")).toBe(false);
+    expect(body.has("client_secret")).toBe(false);
+  }
+
+  function expectPost({ body, headers }: ReturnType<typeof authenticate>) {
+    expect(body.get("client_id")).toBe("cid");
+    expect(body.get("client_secret")).toBe("s");
+    expect(headers.has("authorization")).toBe(false);
+  }
+
+  it("prefers post when the IdP declares both", () => {
+    expectPost(authenticate({}, ["client_secret_basic", "client_secret_post"]));
+  });
+
+  it("uses basic when that is all the IdP declares", () => {
+    expectBasic(authenticate({}, ["client_secret_basic"]));
+  });
+
+  it("falls back to post when the IdP declares nothing", () => {
+    expectPost(authenticate({}, undefined));
+  });
+
+  it("falls back to post rather than vetoing an unimplemented declaration", () => {
+    expectPost(authenticate({}, ["private_key_jwt"]));
+  });
+
+  it("lets the configured method beat a declaration of post", () => {
+    expectBasic(
+      authenticate({ token_endpoint_auth_method: "client_secret_basic" }, [
+        "client_secret_post",
+      ]),
+    );
+  });
+
+  it("lets the configured method beat a declaration of basic", () => {
+    expectPost(
+      authenticate({ token_endpoint_auth_method: "client_secret_post" }, [
+        "client_secret_basic",
+      ]),
+    );
   });
 });
