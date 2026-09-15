@@ -1,0 +1,16 @@
+todou v0.5.0
+
+A card carries machine-written metadata now — namespaced, compare-and-set,
+searchable with metadata: — and a settled discussion can be hidden behind
+a counted placeholder, which declines the questions and resolves the
+annotations it buries. A project you cannot read hands you a link to ask
+for access, and an owner arranges their own machines' membership up to
+their own role without being an admin. The page asks for far less: one
+event stream per account, change events carrying the reader's own row,
+and an inbox read in one pass per database.
+
+Breaking for scripts: a watch prints a block per entry with the comment's
+body whole, and --summary takes only the = form. Three additive
+migrations run on first start and nothing has to be run by hand. Move the
+server and the CLI together — a 0.4.x CLI reads a hidden comment as an
+empty one.
