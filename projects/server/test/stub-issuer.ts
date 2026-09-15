@@ -1,4 +1,9 @@
-import { createServer, type Server } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 
 /**
@@ -6,13 +11,21 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose";
  * discovery, jwks, token, and userinfo. Claims are mutable per test.
  */
 export type StubIssuer = {
+  /** The address discovery publishes and the ID token's `iss` — the public
+   *  one, in the shape a real deployment has. */
   origin: string;
+  /** A second listener over the same handler and signing key, named by
+   *  nothing the discovery document publishes. */
+  internalOrigin: string;
   /** Claims embedded in the next ID token (sub is always present). */
   idTokenClaims: Record<string, unknown>;
   /** Claims served by the userinfo endpoint (merged over { sub }). */
   userinfoClaims: Record<string, unknown>;
   /** When true, the token endpoint answers 500. */
   failTokenEndpoint: boolean;
+  /** Paths answered with 500 on the public port while the internal port
+   *  keeps serving them — the breakage an internal address routes around. */
+  failOnPublic: string[];
   subject: string;
   close: () => Promise<void>;
 };
@@ -25,21 +38,34 @@ export async function startStubIssuer(clientId: string): Promise<StubIssuer> {
     alg: "RS256",
   };
 
-  const stub: Omit<StubIssuer, "close" | "origin"> = {
+  const stub: Omit<StubIssuer, "close" | "origin" | "internalOrigin"> = {
     idTokenClaims: {},
     userinfoClaims: {},
     failTokenEndpoint: false,
+    failOnPublic: [],
     subject: "stub-sub",
   };
 
   let origin = "";
-  const server: Server = createServer((req, res) => {
+  let publicPort = 0;
+  const handler = (req: IncomingMessage, res: ServerResponse) => {
     void (async () => {
       const url = new URL(req.url ?? "/", origin);
       const send = (status: number, body: unknown) => {
         res.writeHead(status, { "content-type": "application/json" });
         res.end(JSON.stringify(body));
       };
+
+      // Discovery is exempt: a deployment reads that document over the public
+      // address too, so breaking it would break every case rather than the
+      // server-to-server leg under test.
+      if (
+        req.socket.localPort === publicPort &&
+        url.pathname !== "/.well-known/openid-configuration" &&
+        stub.failOnPublic.includes(url.pathname)
+      ) {
+        return send(500, { error: "server_error" });
+      }
 
       switch (url.pathname) {
         case "/.well-known/openid-configuration":
@@ -86,20 +112,36 @@ export async function startStubIssuer(clientId: string): Promise<StubIssuer> {
     })().catch((cause) => {
       res.writeHead(500).end(String(cause));
     });
-  });
+  };
 
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (address === null || typeof address === "string") {
-    throw new Error("stub issuer failed to bind a port");
-  }
-  origin = `http://127.0.0.1:${address.port}`;
+  const server: Server = createServer(handler);
+  const internalServer: Server = createServer(handler);
+
+  const listen = async (s: Server): Promise<number> => {
+    await new Promise<void>((resolve) => s.listen(0, "127.0.0.1", resolve));
+    const address = s.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("stub issuer failed to bind a port");
+    }
+    return address.port;
+  };
+
+  publicPort = await listen(server);
+  origin = `http://127.0.0.1:${publicPort}`;
+  const internalOrigin = `http://127.0.0.1:${await listen(internalServer)}`;
 
   return Object.assign(stub, {
     origin,
-    close: () =>
-      new Promise<void>((resolve, reject) =>
-        server.close((err) => (err ? reject(err) : resolve())),
-      ),
+    internalOrigin,
+    close: async (): Promise<void> => {
+      await Promise.all(
+        [server, internalServer].map(
+          (s) =>
+            new Promise<void>((resolve, reject) =>
+              s.close((err) => (err ? reject(err) : resolve())),
+            ),
+        ),
+      );
+    },
   });
 }

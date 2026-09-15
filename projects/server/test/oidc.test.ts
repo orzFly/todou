@@ -40,6 +40,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   idp.failTokenEndpoint = false;
+  idp.failOnPublic = [];
   idp.subject = "stub-sub";
   idp.idTokenClaims = { preferred_username: "alice", name: "Alice Weber" };
   idp.userinfoClaims = {};
@@ -232,6 +233,126 @@ describe("oidc provisioning denials", () => {
       expect((await json(res)).error.code).toBe("wrong_auth_mode");
     } finally {
       await single.cleanup();
+    }
+  });
+});
+
+/**
+ * Every case here builds its own app: getIdp caches discovery per loaded
+ * config and openid-client caches the JWKS after one success, so a shared
+ * instance would answer from the public port's earlier success.
+ */
+describe("oidc internal endpoint overrides", () => {
+  function oidcApp(...extraOidc: string[]) {
+    return makeTestApp("shared", {
+      extraToml: [
+        "[auth]",
+        'mode = "oidc"',
+        "[auth.oidc]",
+        `issuer = "${idp.origin}"`,
+        `client_id = "${CLIENT_ID}"`,
+        'client_secret = "test-secret"',
+        ...extraOidc,
+      ].join("\n"),
+    });
+  }
+
+  async function loginThrough(t: TestApp) {
+    const start = await t.app.request("/api/auth/login?redirect=/projects");
+    const flow = new URL(start.headers.get("location") ?? "");
+    const cookie = (start.headers.get("set-cookie") ?? "").split(
+      ";",
+    )[0] as string;
+    const callback = await t.app.request(
+      `/api/auth/callback?code=stub-code&state=${encodeURIComponent(
+        flow.searchParams.get("state") ?? "",
+      )}`,
+      { headers: { cookie } },
+    );
+    return { flow, callback };
+  }
+
+  it("fails the login when the public endpoints break and nothing is overridden", async () => {
+    idp.failOnPublic = ["/token", "/userinfo", "/jwks"];
+    const t = await oidcApp();
+    try {
+      const { callback } = await loginThrough(t);
+      expect(callback.headers.get("location")).toBe(
+        "/login?error=exchange_failed",
+      );
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("completes the same login through internal_origin", async () => {
+    idp.failOnPublic = ["/token", "/userinfo", "/jwks"];
+    const t = await oidcApp(`internal_origin = "${idp.internalOrigin}"`);
+    try {
+      const { callback } = await loginThrough(t);
+      expect(callback.status).toBe(302);
+      expect(callback.headers.get("location")).toBe("/projects");
+
+      const session = sessionCookieOf(callback);
+      const me = await t.app.request("/api/me", {
+        headers: { cookie: session },
+      });
+      expect(me.status).toBe(200);
+      expect((await json(me)).login).toBe("alice");
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("still sends the browser to the public authorization endpoint", async () => {
+    idp.failOnPublic = ["/token", "/userinfo", "/jwks"];
+    const t = await oidcApp(`internal_origin = "${idp.internalOrigin}"`);
+    try {
+      const { flow } = await loginThrough(t);
+      expect(flow.origin).toBe(idp.origin);
+      expect(flow.pathname).toBe("/authorize");
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("routes the code exchange through a single token_endpoint override", async () => {
+    idp.failOnPublic = ["/token"];
+    const t = await oidcApp(`token_endpoint = "${idp.internalOrigin}/token"`);
+    try {
+      const { callback } = await loginThrough(t);
+      expect(callback.status).toBe(302);
+      expect(callback.headers.get("location")).toBe("/projects");
+    } finally {
+      await t.cleanup();
+    }
+  });
+
+  it("routes the userinfo fallback through a single userinfo_endpoint override", async () => {
+    idp.failOnPublic = ["/userinfo"];
+    idp.subject = "userinfo-internal-sub";
+    idp.idTokenClaims = {};
+    idp.userinfoClaims = { preferred_username: "carol" };
+
+    const withoutOverride = await oidcApp();
+    try {
+      const { callback } = await loginThrough(withoutOverride);
+      expect(callback.headers.get("location")).toBe(
+        "/login?error=claim_missing",
+      );
+    } finally {
+      await withoutOverride.cleanup();
+    }
+
+    const t = await oidcApp(
+      `userinfo_endpoint = "${idp.internalOrigin}/userinfo"`,
+    );
+    try {
+      const { callback } = await loginThrough(t);
+      expect(callback.status).toBe(302);
+      expect(callback.headers.get("location")).toBe("/projects");
+    } finally {
+      await t.cleanup();
     }
   });
 });

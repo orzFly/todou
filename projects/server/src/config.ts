@@ -23,6 +23,17 @@ const ConfigSchema = z.object({
           scopes: z.string().default("openid profile email"),
           login_claim: z.string().default("preferred_username"),
           auto_create: flexibleBool.default(true),
+          // Only the endpoints this server dials itself may move to a
+          // cluster-internal address: the browser cannot reach one, and
+          // `issuer` is compared verbatim against the ID token's `iss`.
+          // Paths stay as discovery published them, so an IdP upgrade that
+          // moves them does not strand the setting.
+          internal_origin: z.string().optional(),
+          // Escape hatch for deployments whose internal paths differ from
+          // the published ones; each wins over internal_origin.
+          token_endpoint: z.string().optional(),
+          userinfo_endpoint: z.string().optional(),
+          jwks_uri: z.string().optional(),
         })
         .prefault({}),
       forward: z
@@ -200,6 +211,40 @@ export function compileUrlTemplate(
   return resolve;
 }
 
+function bareOrigin(value: string, key: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new ConfigError(`${key} must be an http(s) origin`);
+  }
+  if (
+    !/^https?:$/.test(parsed.protocol) ||
+    parsed.pathname !== "/" ||
+    parsed.search !== "" ||
+    parsed.hash !== "" ||
+    parsed.username !== "" ||
+    parsed.password !== ""
+  ) {
+    throw new ConfigError(
+      `${key} must be a bare http(s) origin (no path, query, or credentials)`,
+    );
+  }
+  return parsed.origin;
+}
+
+function absoluteHttpUrl(value: string, key: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new ConfigError(`${key} must be an absolute http(s) URL`);
+  }
+  if (!/^https?:$/.test(parsed.protocol)) {
+    throw new ConfigError(`${key} must be an absolute http(s) URL`);
+  }
+}
+
 /** ENV names → config paths. ENV always wins over TOML. */
 const ENV_MAP: Array<[string, string[]]> = [
   ["TODOU_AUTH_MODE", ["auth", "mode"]],
@@ -229,6 +274,10 @@ const ENV_MAP: Array<[string, string[]]> = [
   ["TODOU_AUTH_OIDC_SCOPES", ["auth", "oidc", "scopes"]],
   ["TODOU_AUTH_OIDC_LOGIN_CLAIM", ["auth", "oidc", "login_claim"]],
   ["TODOU_AUTH_OIDC_AUTO_CREATE", ["auth", "oidc", "auto_create"]],
+  ["TODOU_AUTH_OIDC_INTERNAL_ORIGIN", ["auth", "oidc", "internal_origin"]],
+  ["TODOU_AUTH_OIDC_TOKEN_ENDPOINT", ["auth", "oidc", "token_endpoint"]],
+  ["TODOU_AUTH_OIDC_USERINFO_ENDPOINT", ["auth", "oidc", "userinfo_endpoint"]],
+  ["TODOU_AUTH_OIDC_JWKS_URI", ["auth", "oidc", "jwks_uri"]],
   ["TODOU_AUTH_FORWARD_USER_HEADER", ["auth", "forward", "user_header"]],
   ["TODOU_AUTH_FORWARD_NAME_HEADER", ["auth", "forward", "name_header"]],
   ["TODOU_AUTH_FORWARD_EMAIL_HEADER", ["auth", "forward", "email_header"]],
@@ -308,25 +357,27 @@ export function loadConfig(options?: {
     );
   }
   if (config.http.public_origin !== undefined) {
-    let parsed: URL;
-    try {
-      parsed = new URL(config.http.public_origin);
-    } catch {
-      throw new ConfigError("http.public_origin must be an http(s) origin");
-    }
-    if (
-      !/^https?:$/.test(parsed.protocol) ||
-      parsed.pathname !== "/" ||
-      parsed.search !== "" ||
-      parsed.hash !== "" ||
-      parsed.username !== "" ||
-      parsed.password !== ""
-    ) {
-      throw new ConfigError(
-        "http.public_origin must be a bare http(s) origin (no path, query, or credentials)",
-      );
-    }
-    config.http.public_origin = parsed.origin;
+    config.http.public_origin = bareOrigin(
+      config.http.public_origin,
+      "http.public_origin",
+    );
+  }
+  // Unconditional, like public_origin: whether a value parses has nothing to
+  // do with which auth mode happens to be running.
+  const oidc = config.auth.oidc;
+  if (oidc.internal_origin !== undefined) {
+    oidc.internal_origin = bareOrigin(
+      oidc.internal_origin,
+      "auth.oidc.internal_origin",
+    );
+  }
+  for (const key of [
+    "token_endpoint",
+    "userinfo_endpoint",
+    "jwks_uri",
+  ] as const) {
+    const value = oidc[key];
+    if (value !== undefined) absoluteHttpUrl(value, `auth.oidc.${key}`);
   }
   if (!isValidDbUrl(config.database.system)) {
     throw new ConfigError(

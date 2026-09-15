@@ -32,6 +32,56 @@ export function safeRedirect(value: unknown): string {
 
 const discoveries = new WeakMap<Config, Promise<oidc.Configuration>>();
 
+/** The endpoints this server dials itself — the ones a deployer may rebase
+ *  onto an internal address. `authorization_endpoint` is the browser's, and
+ *  `issuer` is an identity compared against the ID token's `iss`. */
+const INTERNAL_ENDPOINT_KEYS = [
+  "token_endpoint",
+  "userinfo_endpoint",
+  "jwks_uri",
+] as const;
+
+/**
+ * Exported to be tested on its own: the stub issuer speaks only plaintext
+ * http, so the combination this exists for — an https issuer reached over a
+ * plaintext internal address — has no end-to-end case.
+ */
+export function applyInternalEndpoints(
+  as: oidc.ServerMetadata,
+  cfg: Config["auth"]["oidc"],
+): oidc.ServerMetadata {
+  const overrides: Partial<
+    Record<(typeof INTERNAL_ENDPOINT_KEYS)[number], string>
+  > = {};
+  for (const key of INTERNAL_ENDPOINT_KEYS) {
+    const exact = cfg[key];
+    if (exact !== undefined) {
+      overrides[key] = exact;
+      continue;
+    }
+    // An endpoint discovery never published stays unpublished: inventing one
+    // would claim a capability the IdP did not.
+    const published = as[key];
+    if (cfg.internal_origin === undefined || published === undefined) continue;
+    const rebased = new URL(cfg.internal_origin);
+    const original = new URL(published);
+    rebased.pathname = original.pathname;
+    rebased.search = original.search;
+    overrides[key] = rebased.toString();
+  }
+  return { ...as, ...overrides };
+}
+
+/** Whether any address this config will dial is plaintext http. */
+export function needsInsecureTransport(as: oidc.ServerMetadata): boolean {
+  return [
+    as.issuer,
+    // Counted too: buildAuthorizationUrl consults the same switch.
+    as.authorization_endpoint,
+    ...INTERNAL_ENDPOINT_KEYS.map((key) => as[key]),
+  ].some((value) => value?.startsWith("http://") === true);
+}
+
 /**
  * Discovery is lazy and cached per loaded config: doing it at boot would
  * chain todou's startup to the IdP being up, and self-hosted boxes
@@ -56,6 +106,29 @@ function getIdp(config: Config): Promise<oidc.Configuration> {
           ? { execute: [oidc.allowInsecureRequests] }
           : undefined,
       )
+      // Before the .catch, so an IdP publishing an address that will not
+      // parse lands in the existing oidc_unavailable path.
+      .then((fromDiscovery) => {
+        const overridden =
+          cfg.internal_origin !== undefined ||
+          INTERNAL_ENDPOINT_KEYS.some((key) => cfg[key] !== undefined);
+        if (!overridden) return fromDiscovery;
+        const patched = applyInternalEndpoints(
+          fromDiscovery.serverMetadata(),
+          cfg,
+        );
+        const rebuilt = new oidc.Configuration(
+          patched,
+          cfg.client_id as string,
+          { client_secret: cfg.client_secret },
+        );
+        // A constructed Configuration always starts out TLS-only, whatever
+        // discovery was told, so the allowance is re-applied here.
+        if (needsInsecureTransport(patched)) {
+          oidc.allowInsecureRequests(rebuilt);
+        }
+        return rebuilt;
+      })
       .catch((cause) => {
         discoveries.delete(config);
         throw new DomainError(

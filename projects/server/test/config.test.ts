@@ -155,6 +155,75 @@ describe("loadConfig", () => {
     }
   });
 
+  it("leaves the oidc internal address overrides unset by default", () => {
+    const config = loadConfig({ tomlSource: "", env: {} });
+    expect(config.auth.oidc.internal_origin).toBeUndefined();
+    expect(config.auth.oidc.token_endpoint).toBeUndefined();
+    expect(config.auth.oidc.userinfo_endpoint).toBeUndefined();
+    expect(config.auth.oidc.jwks_uri).toBeUndefined();
+  });
+
+  it("normalises auth.oidc.internal_origin and rejects non-origin shapes", () => {
+    const config = loadConfig({
+      tomlSource: '[auth.oidc]\ninternal_origin = "http://idp.internal:8080/"',
+      env: {},
+    });
+    expect(config.auth.oidc.internal_origin).toBe("http://idp.internal:8080");
+    for (const bad of [
+      "idp.internal",
+      "ftp://idp.internal",
+      "http://idp.internal:8080/realms/x",
+      "http://idp.internal:8080/?x=1",
+      "http://user:pw@idp.internal:8080",
+    ]) {
+      expect(() =>
+        loadConfig({
+          tomlSource: `[auth.oidc]\ninternal_origin = "${bad}"`,
+          env: {},
+        }),
+      ).toThrow(/internal_origin/);
+    }
+  });
+
+  it("rejects single oidc endpoint overrides that are not http(s) URLs", () => {
+    for (const key of ["token_endpoint", "userinfo_endpoint", "jwks_uri"]) {
+      expect(() =>
+        loadConfig({
+          tomlSource: `[auth.oidc]\n${key} = "idp.internal/token"`,
+          env: {},
+        }),
+      ).toThrow(new RegExp(key));
+    }
+  });
+
+  it("lets TODOU_AUTH_OIDC_* env win for the internal address overrides", () => {
+    const config = loadConfig({
+      tomlSource: [
+        "[auth.oidc]",
+        'internal_origin = "http://from-toml.internal:8080"',
+        'token_endpoint = "http://from-toml.internal:8080/token"',
+        'userinfo_endpoint = "http://from-toml.internal:8080/userinfo"',
+        'jwks_uri = "http://from-toml.internal:8080/jwks"',
+      ].join("\n"),
+      env: {
+        TODOU_AUTH_OIDC_INTERNAL_ORIGIN: "http://from-env.internal:9090",
+        TODOU_AUTH_OIDC_TOKEN_ENDPOINT: "http://from-env.internal:9090/t",
+        TODOU_AUTH_OIDC_USERINFO_ENDPOINT: "http://from-env.internal:9090/u",
+        TODOU_AUTH_OIDC_JWKS_URI: "http://from-env.internal:9090/j",
+      },
+    });
+    expect(config.auth.oidc.internal_origin).toBe(
+      "http://from-env.internal:9090",
+    );
+    expect(config.auth.oidc.token_endpoint).toBe(
+      "http://from-env.internal:9090/t",
+    );
+    expect(config.auth.oidc.userinfo_endpoint).toBe(
+      "http://from-env.internal:9090/u",
+    );
+    expect(config.auth.oidc.jwks_uri).toBe("http://from-env.internal:9090/j");
+  });
+
   it("defaults trusted_proxies to loopback and splits the ENV form", () => {
     const config = loadConfig({ tomlSource: "", env: {} });
     expect(config.http.trusted_proxies).toEqual(["127.0.0.1/32", "::1/128"]);

@@ -590,6 +590,47 @@ the username as the login; a taken login (human or machine alike) gets
 a random `-xxxx` suffix instead. The first created human becomes
 instance admin.
 
+Discovery publishes one set of addresses, but two different parties
+dial them. The browser is sent to `authorization_endpoint`, and
+`issuer` stops being an address once discovery is done — it is the
+identity compared verbatim against the ID token's `iss`. The other
+three, `token_endpoint`, `userinfo_endpoint` and `jwks_uri`, are dialled
+by the todou server itself, and that traffic can be pointed somewhere
+shorter than the public load balancers:
+
+```toml
+[auth.oidc]
+issuer = "https://auth.example.com"   # stays public: browsers, and `iss`
+
+# Rebases only the addresses the server dials. Paths stay as discovery
+# published them, so an IdP upgrade that moves them changes nothing here.
+internal_origin = "http://keycloak.identity.svc:8080"
+
+# Where an internal path differs from the published one, write the whole
+# URL. Each of these wins over internal_origin.
+# token_endpoint = "http://keycloak.identity.svc:8080/realms/x/token"
+# userinfo_endpoint = "…"
+# jwks_uri = "…"
+```
+
+All four are optional, take `TODOU_AUTH_OIDC_*` env equivalents
+(`…_INTERNAL_ORIGIN`, `…_TOKEN_ENDPOINT`, `…_USERINFO_ENDPOINT`,
+`…_JWKS_URI`), and are validated at startup, so a malformed value is a
+boot error instead of a surprise at someone's first login:
+`internal_origin` must be a bare origin (no path, query or credentials),
+the single-endpoint keys absolute http(s) URLs. An https `issuer`
+reached over a plaintext-http internal address is supported.
+
+The discovery document itself is still fetched over the public issuer.
+It is read once per process, and `openid-client` requires the `issuer`
+inside it to equal the URL it came from.
+
+There is no fallback to the public address. An unreachable internal
+address fails the login — `exchange_failed`, or `claim_missing` when it
+is userinfo — with the reason in the server log. Falling back would make
+every login pay an internal timeout first, and would hide a wrong
+address indefinitely behind a deployment that looks healthy.
+
 ### Migrating from `single` mode
 
 The builtin account holds your history, and nothing adopts it
