@@ -166,6 +166,12 @@ git push origin v0.4.x      # you do this one; the script's push comes last
   `0.4.1` straight off `master` is right whenever no `0.5` work has started.
 - **Push the line to `origin` before the first cut.** Until it is there, the
   sync check reports `HEAD is not origin/v0.4.x — pull or push first`.
+- **The notes come back to `master` once the cut is done.** Cherry-pick the
+  commit carrying `docs/releases/vX.Y.Z.md` and its `.tag.txt`, so one branch
+  holds the whole release history and a reader looking for a version's notes
+  has one place to look. Leave the `chore(release):` commit on the line: it
+  sets the five manifests to the patch version, while `master`'s are rewritten
+  by its own next `release.sh` run and checked against that tag by CI.
 
 CI needs nothing: `release.yaml` and `docker.yaml` trigger on `v*` tags from
 any branch. The script pushes the line to the mirror alongside the tag, so
@@ -180,6 +186,7 @@ the commits behind a release stay reachable there by branch too.
 | Approve them (spec review) | the user — a precondition for tagging |
 | Merge to `master`, push, run `scripts/release.sh` | the orchestrator, in the main checkout |
 | Open a release line and cherry-pick onto it | the orchestrator, in a worktree on the line |
+| Cherry-pick a line's release notes back to `master` | the orchestrator, after the cut |
 | Artifacts, GitHub release, images | CI |
 | Deploy, CLI distribution | operators, per `docs/deploy.md` |
 
