@@ -1,7 +1,6 @@
 import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import type { Issue, Status } from "@todou/shared";
-import { CheckIcon } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -11,6 +10,7 @@ import {
   statusesQuery,
   useCan,
 } from "@/api/queries.ts";
+import { AssigneePicker } from "@/components/issue/assignee-picker.tsx";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
 import {
   LabelPicker,
@@ -27,18 +27,12 @@ import {
   MarkdownEditor,
   type MarkdownEditorHandle,
 } from "@/components/shared/markdown-editor.tsx";
-import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
+import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   useCommandRegistry,
   withAttachmentMarkers,
 } from "@/components/timeline/composer.tsx";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -353,42 +347,22 @@ export function NewIssuePage() {
                   <UserChip key={member.user.id} user={member.user} />
                 ))}
             </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
+            <AssigneePicker
+              members={members.data}
+              selectedIds={assigneeIds}
+              onToggle={(userId) =>
+                setAssigneeIds((prev) =>
+                  prev.includes(userId)
+                    ? prev.filter((id) => id !== userId)
+                    : [...prev, userId],
+                )
+              }
+              trigger={
                 <Button variant="outline" size="sm">
                   Edit assignees
                 </Button>
-              </DropdownMenuTrigger>
-              {/* Name plus login needs more room than the trigger's width,
-                which is what the menu defaults to. */}
-              <DropdownMenuContent className="w-auto">
-                {members.data.map((member) => (
-                  <DropdownMenuItem
-                    key={member.user.id}
-                    onSelect={(e) => {
-                      e.preventDefault();
-                      setAssigneeIds((prev) =>
-                        prev.includes(member.user.id)
-                          ? prev.filter((id) => id !== member.user.id)
-                          : [...prev, member.user.id],
-                      );
-                    }}
-                  >
-                    <span className="w-4">
-                      {assigneeIds.includes(member.user.id) && (
-                        <CheckIcon className="size-4" />
-                      )}
-                    </span>
-                    <span className="whitespace-nowrap">
-                      {displayNameOf(member.user)}
-                    </span>
-                    <span className="whitespace-nowrap text-muted-foreground">
-                      @{member.user.login}
-                    </span>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+              }
+            />
           </section>
         </aside>
       )}

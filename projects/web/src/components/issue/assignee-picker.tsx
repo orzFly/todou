@@ -1,0 +1,72 @@
+import type { Member } from "@todou/shared";
+import { CheckIcon } from "lucide-react";
+import type { ReactNode } from "react";
+import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+/**
+ * The Edit assignees menu, shared by the card page and the new-card page so
+ * the two cannot drift apart. `selectedIds` rather than the assignees
+ * themselves: one caller holds `issue.assignees`, the other only ids.
+ */
+export function AssigneePicker({
+  members,
+  selectedIds,
+  onToggle,
+  trigger,
+  defaultOpen = false,
+}: {
+  members: Member[];
+  selectedIds: number[];
+  onToggle: (userId: number) => void;
+  trigger: ReactNode;
+  /** Test-only, as on LabelPicker. */
+  defaultOpen?: boolean;
+}) {
+  return (
+    <DropdownMenu defaultOpen={defaultOpen}>
+      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+      {/* Name plus login needs more room than the trigger's width, which
+          is what the menu defaults to. */}
+      <DropdownMenuContent className="w-auto">
+        {members.map((member) => {
+          const active = selectedIds.includes(member.user.id);
+          return (
+            <DropdownMenuItem
+              key={member.user.id}
+              // Radix keyboard typeahead reads textContent, where the initials
+              // fallback appears only for users with no avatar — which letter
+              // jumps to a row would otherwise depend on who uploaded one.
+              textValue={`${displayNameOf(member.user)} @${member.user.login}`}
+              onSelect={(e) => {
+                // Assigning several people in a row beats closing after each.
+                e.preventDefault();
+                onToggle(member.user.id);
+              }}
+            >
+              <span className="w-4">
+                {active && <CheckIcon className="size-4" />}
+              </span>
+              {/* Decorative: the initials fallback would otherwise be read out
+                  glued to the name this row already carries. The badge keeps
+                  its own label — humans and agents are mixed in here, and it
+                  is the only thing telling them apart. */}
+              <UserAvatar user={member.user} badge aria-hidden />
+              <span className="whitespace-nowrap">
+                {displayNameOf(member.user)}
+              </span>
+              <span className="whitespace-nowrap text-muted-foreground">
+                @{member.user.login}
+              </span>
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

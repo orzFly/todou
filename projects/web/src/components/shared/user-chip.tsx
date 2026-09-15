@@ -1,4 +1,4 @@
-import type { UserRef } from "@todou/shared";
+import type { UserKind, UserRef } from "@todou/shared";
 import { BotIcon } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -37,17 +37,39 @@ export function initialsOf(displayName: string): string {
 export function UserAvatar({
   user,
   className,
+  badge = false,
   ...props
 }: {
-  user: { display_name?: string; login: string; avatar_url?: string | null };
+  user: {
+    display_name?: string;
+    login: string;
+    avatar_url?: string | null;
+    kind?: UserKind;
+  };
+  /**
+   * Mark machine users with the bot badge. Off by default: a list that holds
+   * nothing but agents gains no information from it (T-236).
+   */
+  badge?: boolean;
 } & React.ComponentProps<typeof Avatar>) {
-  return (
+  const avatar = (
     <Avatar className={cn("size-5", className)} {...props}>
       {user.avatar_url && <AvatarImage src={user.avatar_url} alt="" />}
       <AvatarFallback className="text-[10px]">
         {initialsOf(displayNameOf(user))}
       </AvatarFallback>
     </Avatar>
+  );
+
+  if (!badge || user.kind !== "machine") return avatar;
+  return (
+    <span className="relative inline-flex">
+      {avatar}
+      <BotIcon
+        aria-label="agent"
+        className="absolute -right-1.5 -bottom-1 size-3 rounded-full bg-background text-muted-foreground"
+      />
+    </span>
   );
 }
 
@@ -69,15 +91,7 @@ export function UserChip({
 }) {
   const chip = (
     <span className="inline-flex shrink-0 items-center gap-1.5">
-      <span className="relative inline-flex">
-        <UserAvatar user={user} />
-        {user.kind === "machine" && (
-          <BotIcon
-            aria-label="agent"
-            className="absolute -right-1.5 -bottom-1 size-3 rounded-full bg-background text-muted-foreground"
-          />
-        )}
-      </span>
+      <UserAvatar user={user} badge />
       {!compact && (
         <span className={cn("text-sm whitespace-nowrap", nameClassName)}>
           {displayNameOf(user)}

@@ -4,7 +4,7 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
-import { formatRef, type Issue, type Status } from "@todou/shared";
+import { formatRef, type Issue, type Member, type Status } from "@todou/shared";
 import { CheckIcon, PencilIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -22,6 +22,7 @@ import {
   statusesQuery,
 } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
+import { AssigneePicker } from "@/components/issue/assignee-picker.tsx";
 import { AttachmentList } from "@/components/issue/attachment-list.tsx";
 import { FloatingTitleBar } from "@/components/issue/floating-title-bar.tsx";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
@@ -498,9 +499,7 @@ export function Sidebar({
   issue: Issue;
   statuses: Status[];
   allLabels: Array<{ id: number; name: string; color: string }>;
-  members: Array<{
-    user: { id: number; login: string; display_name: string };
-  }>;
+  members: Member[];
   canDelete: boolean;
   trashed: boolean;
 }) {
@@ -623,47 +622,24 @@ export function Sidebar({
           ))}
         </div>
         {!trashed && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+          <AssigneePicker
+            members={members}
+            selectedIds={issue.assignees.map((a) => a.id)}
+            onToggle={(userId) => {
+              const current = issue.assignees.map((a) => a.id);
+              patch.mutate({
+                ...patchTarget,
+                assignee_ids: current.includes(userId)
+                  ? current.filter((id) => id !== userId)
+                  : [...current, userId],
+              });
+            }}
+            trigger={
               <Button variant="outline" size="sm">
                 Edit assignees
               </Button>
-            </DropdownMenuTrigger>
-            {/* Name plus login needs more room than the trigger's width, which
-                is what the menu defaults to. */}
-            <DropdownMenuContent className="w-auto">
-              {members.map((member) => {
-                const active = issue.assignees.some(
-                  (a) => a.id === member.user.id,
-                );
-                return (
-                  <DropdownMenuItem
-                    key={member.user.id}
-                    onSelect={(e) => {
-                      e.preventDefault();
-                      const current = issue.assignees.map((a) => a.id);
-                      patch.mutate({
-                        ...patchTarget,
-                        assignee_ids: active
-                          ? current.filter((id) => id !== member.user.id)
-                          : [...current, member.user.id],
-                      });
-                    }}
-                  >
-                    <span className="w-4">
-                      {active && <CheckIcon className="size-4" />}
-                    </span>
-                    <span className="whitespace-nowrap">
-                      {displayNameOf(member.user)}
-                    </span>
-                    <span className="whitespace-nowrap text-muted-foreground">
-                      @{member.user.login}
-                    </span>
-                  </DropdownMenuItem>
-                );
-              })}
-            </DropdownMenuContent>
-          </DropdownMenu>
+            }
+          />
         )}
       </section>
 
