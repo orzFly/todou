@@ -8,8 +8,10 @@ import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
 
-/** effective_from and created_at are both now(); keep them apart so a
- *  hold always strictly precedes the content written under it. */
+/** ref_formats and slug_history both stamp effective_from with now(), and
+ *  the intervals the directory derives from them cannot represent a tie.
+ *  Insurance rather than a fix for an observed failure: an API round trip
+ *  already costs milliseconds, so a tie is out of reach without it too. */
 const settle = () => new Promise((r) => setTimeout(r, 5));
 
 const SRC = "xref-src";

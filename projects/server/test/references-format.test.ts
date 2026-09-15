@@ -4,7 +4,7 @@ import { makeTestApp, type TestApp } from "./helpers.ts";
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
 
-describe("time-cutoff reference recording", () => {
+describe("reference recording across a format switch", () => {
   let t: TestApp;
   let cookie: string;
 
@@ -14,7 +14,7 @@ describe("time-cutoff reference recording", () => {
     const res = await t.app.request("/api/projects", {
       method: "POST",
       headers: { "content-type": "application/json", cookie },
-      body: JSON.stringify({ slug: "cutoff", name: "Cutoff" }),
+      body: JSON.stringify({ slug: "refformat", name: "Reference format" }),
     });
     expect(res.status).toBe(201);
   });
@@ -24,7 +24,7 @@ describe("time-cutoff reference recording", () => {
   });
 
   const api = (path: string, init?: RequestInit) =>
-    t.app.request(`/api/projects/cutoff${path}`, {
+    t.app.request(`/api/projects/refformat${path}`, {
       ...init,
       headers: {
         "content-type": "application/json",
@@ -51,7 +51,7 @@ describe("time-cutoff reference recording", () => {
     return page.items;
   }
 
-  it("anchors parsing to content created_at across a format switch", async () => {
+  it("reads every submission under the format in force when it is submitted", async () => {
     const target = await createIssue("target");
     const other = await createIssue("other");
 

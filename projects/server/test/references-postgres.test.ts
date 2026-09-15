@@ -5,16 +5,19 @@ import { makeTestApp, type TestApp } from "./helpers.ts";
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
 
 /**
- * The T-80 time-cutoff compares content.created_at against
- * ref_formats.effective_from. PGlite's clock only produces millisecond
- * timestamps, while real postgres stores microseconds in both columns —
- * so sub-millisecond orderings between a switch and adjacent writes only
- * exist here. Runs only when TODOU_TEST_POSTGRES_URL points at a live
- * server (see issue-list-postgres.test.ts).
+ * The reference-format HTTP surface against a real postgres: setting the
+ * format, reading the config back, and the system-side mirror the reference
+ * directory is built from. Every other suite driving those endpoints meets
+ * PGlite only, so the SQL, the indexes and the timestamp round-trip here are
+ * the server's rather than the WASM bundle's — that difference, not
+ * timestamp precision, is what this gate buys. The one comparison where
+ * microsecond precision lands on both sides is the T-266 rewrite's, and
+ * refs-migrate.test.ts covers it. Runs only when TODOU_TEST_POSTGRES_URL
+ * points at a live server (see issue-list-postgres.test.ts).
  */
 const PG_URL = process.env.TODOU_TEST_POSTGRES_URL;
 
-describe.skipIf(!PG_URL)("reference cutoff on real postgres", () => {
+describe.skipIf(!PG_URL)("reference format on real postgres", () => {
   let t: TestApp;
   let cookie: string;
   const slug = `refs-pg-${Date.now().toString(36)}`;
@@ -35,7 +38,7 @@ describe.skipIf(!PG_URL)("reference cutoff on real postgres", () => {
     const res = await t.app.request("/api/projects", {
       method: "POST",
       headers: { "content-type": "application/json", cookie },
-      body: JSON.stringify({ slug, name: "Reference cutoff (postgres)" }),
+      body: JSON.stringify({ slug, name: "Reference format (postgres)" }),
     });
     expect(res.status).toBe(201);
   });
@@ -63,12 +66,12 @@ describe.skipIf(!PG_URL)("reference cutoff on real postgres", () => {
     return page.items.length;
   }
 
-  it("keeps microsecond-adjacent writes on the correct side of a switch", async () => {
+  it("keeps back-to-back writes on the correct side of a switch", async () => {
     const target = await createIssue("target");
 
-    // Writes packed as tightly as the API allows around the switch:
-    // with microsecond precision every row still lands strictly before
-    // or after effective_from, and parsing must agree with that order.
+    // Writes packed as tightly as the API allows around the switch, so
+    // nothing but the switch separates them: each has to resolve under the
+    // format in force when it was submitted, never under its neighbour's.
     const before = await createIssue("before", `pre #${target.number}`);
     const put = await api("/references/format", {
       method: "PUT",
@@ -86,8 +89,8 @@ describe.skipIf(!PG_URL)("reference cutoff on real postgres", () => {
     // pre-#N and post-T-N each recorded exactly once; post-#N never.
     expect(await referencedCount(target.number)).toBe(2);
 
-    // Round-trip: flip back and forth rapidly; content written between
-    // two switches microseconds apart still parses under its own slice.
+    // The format is a current value, not a one-way move: going back to #
+    // has to restore # parsing for whatever is written next.
     await api("/references/format", {
       method: "PUT",
       body: JSON.stringify({ prefix: null }),
@@ -103,9 +106,12 @@ describe.skipIf(!PG_URL)("reference cutoff on real postgres", () => {
     const tag = slug.slice("refs-pg-".length).toUpperCase();
     const prefixes = [`P${tag}`, `Q${tag}`, `R${tag}`];
 
-    // Four switches as fast as the API allows: on real postgres each one
-    // gets its own microsecond, so the mirror must carry four rows and
-    // the holds derived from them must stay a single ordered chain.
+    // Four switches as fast as the API allows, with none of the settle()
+    // spacing the PGlite suites use: the mirror must carry every row and
+    // the holds derived from them stay a single ordered chain. What keeps
+    // that reachable is that a round trip costs milliseconds — two switches
+    // inside one millisecond would collapse a hold to an empty interval and
+    // holdsOf (reference-directory.ts) would drop it.
     for (const prefix of [...prefixes, null]) {
       const res = await api("/references/format", {
         method: "PUT",
