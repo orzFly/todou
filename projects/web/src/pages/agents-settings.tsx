@@ -67,10 +67,6 @@ export function AgentsSettingsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">Agents</h1>
-          <p className="text-sm text-muted-foreground">
-            Machine users you own. They authenticate with personal access tokens
-            and act like regular members in projects.
-          </p>
         </div>
         <CreateAgentDialog />
       </div>
@@ -360,12 +356,9 @@ function CreateAgentDialog() {
           <PlusIcon /> New agent
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>New agent</DialogTitle>
-          <DialogDescription>
-            Creates a machine user owned by you.
-          </DialogDescription>
         </DialogHeader>
         <form
           className="space-y-4"
@@ -457,12 +450,9 @@ export function AgentTokensDialog({ agent }: { agent: Agent }) {
           <KeyIcon className="size-3.5" /> Tokens
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-2xl" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>Tokens for {agent.login}</DialogTitle>
-          <DialogDescription>
-            New tokens are shown exactly once — copy them before closing.
-          </DialogDescription>
         </DialogHeader>
 
         {tokens.isPending ? (

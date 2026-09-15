@@ -205,10 +205,10 @@ function SyntaxHelp() {
   return (
     <div className="space-y-4 rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
       <p>
-        Type in the box above. Terms are ANDed and each one matches anywhere
-        inside the text, so <code>搜索</code> finds it in the middle of a
-        sentence and <code>WordDiff</code> finds <code>coalescedWordDiff</code>.
-        Quote a phrase to keep it together.
+        Terms are ANDed and each one matches anywhere inside the text, so{" "}
+        <code>搜索</code> finds it in the middle of a sentence and{" "}
+        <code>WordDiff</code> finds <code>coalescedWordDiff</code>. Quote a
+        phrase to keep it together.
       </p>
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
         {SYNTAX.map(([syntax, means]) => (

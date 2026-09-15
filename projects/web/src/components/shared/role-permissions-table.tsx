@@ -271,9 +271,8 @@ export function RolePermissionsDialog() {
         <DialogHeader>
           <DialogTitle>What each role can do</DialogTitle>
           <DialogDescription>
-            Roles are cumulative — each one can do everything to its left. Rows
-            marked * only apply to what you posted yourself; a project admin may
-            act on anyone's.
+            Rows marked * only apply to what you posted yourself; a project
+            admin may act on anyone's.
           </DialogDescription>
         </DialogHeader>
         <div className="max-h-[60vh] overflow-y-auto">

@@ -231,8 +231,8 @@ export function TrashView({
           Trash
         </h2>
         <p className="text-sm text-muted-foreground">
-          Deleted issues, newest first. Restoring brings a card back with
-          everything on it; numbers are never reused.
+          Restoring brings a card back with everything on it; numbers are never
+          reused.
         </p>
         <Button variant="ghost" size="sm" asChild className="ml-auto">
           <Link to="/projects/$slug" params={{ slug }} search={{}}>

@@ -19,7 +19,6 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -62,8 +61,8 @@ export function TokensSettingsPage() {
       <div>
         <h1 className="text-xl font-semibold">Personal access tokens</h1>
         <p className="text-sm text-muted-foreground">
-          Tokens act as you over the REST API (`Authorization: Bearer …`) — for
-          the CLI, scripts, and anything else that can't use a browser session.
+          Tokens act as you over the REST API — for the CLI, scripts, and
+          anything else that can't use a browser session.
         </p>
       </div>
 
@@ -97,12 +96,9 @@ export function TokensSettingsPage() {
           if (!open) setCreated(null);
         }}
       >
-        <DialogContent>
+        <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>Token created</DialogTitle>
-            <DialogDescription>
-              Shown exactly once — copy it before closing.
-            </DialogDescription>
           </DialogHeader>
           {created && <TokenReveal token={created} />}
         </DialogContent>

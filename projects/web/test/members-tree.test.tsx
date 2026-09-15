@@ -210,16 +210,9 @@ describe("MembersSection from a non-admin's chair", () => {
     const container = renderSection(ROWS, meFrom(BOB));
 
     // The other half of the pair above: this control is meaningful to me,
-    // it is simply not mine to press, so it stays with the reason on it.
+    // it is simply not mine to press, so it stays.
     expect(roleSelect(container, "bob")?.disabled).toBe(true);
     expect(removeButton(container, "bob")?.disabled).toBe(true);
-  });
-
-  it("says why, naming the role its machines are held to", () => {
-    const container = renderSection(ROWS, meFrom(BOB));
-
-    expect(container.textContent).toContain("You are not an admin here");
-    expect(container.textContent).toContain("above your own reporter");
   });
 
   it("offers Add person to an admin and to nobody else", () => {

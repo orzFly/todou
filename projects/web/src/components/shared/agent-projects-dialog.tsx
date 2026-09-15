@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -80,13 +79,9 @@ export function AgentProjectsCell({ agent }: { agent: Agent }) {
           )}
         </button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>Projects for {agent.login}</DialogTitle>
-          <DialogDescription>
-            Roles apply immediately. Only projects you administer can be
-            changed.
-          </DialogDescription>
         </DialogHeader>
         <AgentProjectsBody agent={agent} />
       </DialogContent>

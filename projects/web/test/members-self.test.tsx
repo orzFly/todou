@@ -31,8 +31,6 @@ const MEMBERS: Member[] = [
   { user: BOB, role: "admin", created_at: "2026-01-02T00:00:00.000Z" },
 ];
 
-const STRANGER: Me = { ...ME, id: 999, login: "carol", display_name: "carol" };
-
 function renderSection(me: Me) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -107,14 +105,5 @@ describe("MembersSection on your own row", () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(calls.filter((c) => c.url.includes("/members/100"))).toEqual([]);
-  });
-
-  it("explains itself only to someone the table actually lists", () => {
-    expect(renderSection(ME).container.textContent).toContain(
-      "ask another admin",
-    );
-    expect(renderSection(STRANGER).container.textContent).not.toContain(
-      "ask another admin",
-    );
   });
 });

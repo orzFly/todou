@@ -48,7 +48,7 @@ describe("AccessDenialsSection", () => {
     expect(view.container.textContent).toContain("bot-one");
     expect(view.container.textContent).toContain("alice");
     // The one thing a reader of this page could get wrong: it is not a block.
-    expect(view.container.textContent).toContain("an admin can still add them");
+    expect(view.container.textContent).toContain("admin can still add them");
   });
 
   it("undoes one with a DELETE and refetches the list", async () => {

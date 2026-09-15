@@ -152,10 +152,7 @@ export function SlugSection({ slug }: { slug: string }) {
       <h2 className="text-lg font-semibold">Slug</h2>
       <div className="max-w-xl space-y-3 rounded-lg border border-destructive/40 p-4">
         <p className="text-sm text-muted-foreground">
-          The slug is this project's address: it is in every URL, in the
-          attachment links pasted into old comments, and in the{" "}
-          <code>project link</code> binding on each machine running the CLI.
-          Renaming keeps the old one working — it redirects here until some
+          Renaming keeps the old slug working — it redirects here until some
           other project takes it over.
         </p>
         <form
@@ -338,9 +335,8 @@ export function ReferencesSection({ slug }: { slug: string }) {
       <div className="space-y-2">
         <h3 className="text-sm font-medium">Issue reference format</h3>
         <p className="text-sm text-muted-foreground">
-          How this project's issues are written and displayed. Existing text is
-          safe: content keeps parsing under the format that was active when it
-          was written.
+          References already written keep pointing where they did — this only
+          changes how new ones are read.
         </p>
         <form
           className="flex items-center gap-2"
@@ -368,16 +364,10 @@ export function ReferencesSection({ slug }: { slug: string }) {
             {setFormat.isPending ? "Saving…" : "Save"}
           </Button>
         </form>
-        <p className="text-xs text-muted-foreground">
-          Empty = the built-in <code>#76</code> form. A prefix like{" "}
-          <code>T</code> switches new writing to <code>T-76</code>.
-        </p>
       </div>
       <div className="space-y-2">
         <h3 className="text-sm font-medium">Autolinks</h3>
         <p className="text-sm text-muted-foreground">
-          Prefix + number tokens that link out to an external tracker, e.g.{" "}
-          <code>#</code> → GitHub issues once the internal format is prefixed.
           Rendering only — no reference events.
         </p>
         <Table>
@@ -454,13 +444,8 @@ export function ReferencesSection({ slug }: { slug: string }) {
   );
 }
 
-const SELF_NOTE =
-  "You can't change your own role or remove yourself — ask another admin.";
-
 const ORPHAN_NOTE =
-  "Their owner holds no role here, so there is no ceiling to judge a role " +
-  "against: these can only be removed. They rejoin the list above by " +
-  "themselves once their owner is a member again.";
+  "They rejoin the list above by themselves once their owner is a member again.";
 
 /**
  * One owner and the machines of theirs that are in this project. `owner` is
@@ -552,18 +537,6 @@ export function MembersSection({ slug }: { slug: string }) {
           </TableBody>
         </Table>
       </div>
-      {rows.some((m) => m.user.id === me.data.id) && (
-        <p className="text-sm text-muted-foreground">{SELF_NOTE}</p>
-      )}
-      {!iAmAdmin && (
-        <p className="max-w-xl text-sm text-muted-foreground">
-          You are not an admin here, so only the machines you own can have their
-          role changed or be removed
-          {myRole === null
-            ? "."
-            : `, and none of them can go above your own ${myRole}.`}
-        </p>
-      )}
       <div className="flex flex-wrap items-center gap-2">
         <AddAgentPicker
           agents={agents.data}
@@ -810,7 +783,6 @@ function MemberRow({
             size="icon-sm"
             aria-label={`remove ${name}`}
             disabled
-            title={SELF_NOTE}
           >
             <Trash2Icon className="size-4" />
           </Button>
@@ -822,8 +794,8 @@ function MemberRow({
 
 /**
  * Three states, deliberately told apart. A row you may write gets a live
- * select capped at the owner's role; your own row keeps the control disabled
- * with the reason on it; a row you hold no authority over becomes plain text,
+ * select capped at the owner's role; your own row keeps the control disabled;
+ * a row you hold no authority over becomes plain text,
  * because a greyed control there only invites "did I misclick?".
  */
 function RoleCell({
@@ -861,9 +833,8 @@ function RoleCell({
   }
 
   const ownerLogin = member.user.owner?.login;
-  const title = isSelf
-    ? SELF_NOTE
-    : ceiling == null
+  const title =
+    isSelf || ceiling == null
       ? undefined
       : `At most ${ceiling} — a machine cannot outrank its owner @${ownerLogin}.`;
 
@@ -962,11 +933,6 @@ function AddPersonForm({
           Cancel
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">
-        There is no user directory and no search — you have to know the login.
-        An unknown one comes back as “no such user”, with no suggestion of a
-        near spelling.
-      </p>
     </form>
   );
 }
@@ -997,8 +963,7 @@ export function AccessDenialsSection({ slug }: { slug: string }) {
     <section className="space-y-3">
       <h2 className="text-lg font-semibold">Declined access requests</h2>
       <p className="max-w-xl text-sm text-muted-foreground">
-        These agents are no longer offered a link asking for access here. It
-        blocks nothing else — an admin can still add them above.
+        An admin can still add them above; nothing else is blocked.
       </p>
       <div className="rounded-lg border">
         <Table>

@@ -168,6 +168,60 @@ Two consequences worth spelling out:
 redirecting after a mutation, cancel-and-discard, keyboard handlers on a composite widget, and
 filter controls that rewrite the current page's own search params.
 
+## Interface text says what the screen cannot
+
+Every sentence rendered to a user has to pass one question, asked against the screen it sits on:
+
+> The thing this says — if the user never reads it and just clicks, how soon do they find out?
+> **Straight away → delete it. Only once something has gone wrong → keep it.**
+
+A greyed control, a live preview, a placeholder, a table, a button label, a heading and the URL bar
+have all finished speaking before the user reaches the paragraph underneath. A sentence that
+translates one of them back into prose is not a courtesy; it is a line the reader has to spend
+before they can tell whether anything on this screen is worth reading. Screens where most of the
+text is skippable teach people to skip the text, and the one sentence that had to be read goes with
+it.
+
+Five shapes account for nearly all of it:
+
+- **Restating control state.** The control is greyed, read-only, absent, or there is no Save button
+  at all. That *is* the explanation.
+- **Restating what the screen already demonstrates.** A live preview, a placeholder, a table, a
+  heading — and then a sentence saying the same thing in words.
+- **Defining a term** that anyone who reached this page already knows: a slug appears in URLs, a
+  token authenticates an API call.
+- **Saying it twice.** Stating the positive and then the negative ("turning this on does X; turning
+  it off stops X"), or repeating one fact in two places on one screen.
+- **Predicting an error the user is about to see anyway.** Let them read the real message.
+
+Where one paragraph mixes a sentence that earns its place with one that does not, keep only the
+part that earns it. Do not keep a definition as a run-up to the point — what remains may be half a
+sentence, and that half was the whole value.
+
+**Two steps, and the order matters: decide whether to keep it, then go back to the code and confirm
+that what you kept is still true.** The question above judges only whether the user already knows;
+it cannot judge whether the sentence is correct, and the two are independent. A stale explanation is
+worse than a redundant one — redundancy wastes a line, while a stale line sends the reader toward
+behaviour that no longer exists. Text that has sat on a screen for a year is exactly the text most
+likely to describe a mechanism we have since replaced.
+
+What earns its place, all of it on the far side of "only once something has gone wrong":
+
+- Consequences that are irreversible or costly — an old address still resolving after a move, no
+  trash to recover a deleted comment, a token shown once, claiming a slug redirecting somebody
+  else's links here.
+- Rules with no trace on the screen — a status cannot be deleted while issues still use it, you
+  cannot approve a spec version you pushed yourself.
+- Operations with no discoverability — dragging across line numbers to comment on a range, an
+  avatar box accepting a paste.
+- Empty states and error messages, which appear exactly when there is nothing else on screen to
+  read.
+- Constraints stated before the fact, such as which characters a login may use, where otherwise the
+  user meets the browser's default validation message once and learns nothing from it.
+
+This governs user-facing copy. Code comments are a different question with its own rules, and
+server error messages, CLI output and `docs/` are outside it.
+
 ## Environment
 
 - Ignore `.envrc`, `.mise.toml`, and similar environment manager configs. Do not run `direnv`, `mise`, or equivalent commands.

@@ -199,10 +199,7 @@ function CreateProjectDialog() {
               </span>
             </div>
             <p className="text-xs text-muted-foreground">
-              Empty = the built-in <code>#1</code> form. A prefix like{" "}
-              <code>T</code> writes this project's issues as <code>T-1</code>.
-              Changeable later in Settings; existing text keeps parsing under
-              the format that was active when it was written.
+              Changeable later in Settings.
             </p>
           </div>
           <DialogFooter>
