@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { extractIssueRefs } from "../src/services/references.ts";
 import {
   addUserWithToken,
   makeTestApp,
@@ -9,34 +8,6 @@ import {
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
-
-describe("extractIssueRefs", () => {
-  it("finds #N references and dedupes", () => {
-    expect(extractIssueRefs("see #12, #3 and again #12")).toEqual([12, 3]);
-  });
-  it("ignores anchors inside words", () => {
-    expect(extractIssueRefs("channel#4chat")).toEqual([]);
-  });
-  it("matches at start of text", () => {
-    expect(extractIssueRefs("#7 first")).toEqual([7]);
-  });
-  it("ignores refs inside fenced code blocks", () => {
-    expect(
-      extractIssueRefs("before #1\n```\ninside #2\n```\nafter #3"),
-    ).toEqual([1, 3]);
-  });
-  it("ignores refs inside tilde fences and unclosed fences", () => {
-    expect(extractIssueRefs("~~~txt\n#4\n~~~\n#5")).toEqual([5]);
-    expect(extractIssueRefs("```\n#6 never closed")).toEqual([]);
-  });
-  it("requires the closing fence to be at least as long", () => {
-    expect(extractIssueRefs("````\n```\nstill code #8\n````\n#9")).toEqual([9]);
-  });
-  it("ignores refs inside inline code", () => {
-    expect(extractIssueRefs("fix `#10` but keep #11")).toEqual([11]);
-    expect(extractIssueRefs("``a `#12` b`` and #13")).toEqual([13]);
-  });
-});
 
 describe.each(PLACEMENTS)("issues domain (%s placement)", (placement) => {
   let t: TestApp;

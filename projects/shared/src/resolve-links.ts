@@ -22,11 +22,9 @@ import { SLUG_PATTERN } from "./ref-shapes.ts";
 const blank = (segment: string): string => segment.replace(/[^\n]/g, " ");
 
 /**
- * `stripMarkdownCode` with the offsets kept: every character a code region
- * covers becomes a space, newlines included in place, so a scan of the mask
- * yields spans that index straight back into the original string. That is the
- * whole difference — the server's stripper drops fenced lines outright and
- * folds an inline span into a single space, which moves every offset after it.
+ * Every character a code region covers becomes a space, newlines included in
+ * place, so a scan of the mask yields spans that index straight back into the
+ * original string — which is why this masks rather than deletes.
  *
  * Widening is safe and narrowing is not, so the inline pass runs over the
  * already-blanked fences: a backtick run that now pairs across one only ever

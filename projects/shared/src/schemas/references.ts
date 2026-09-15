@@ -131,20 +131,3 @@ export function refToken(prefix: string | null): string {
 export function formatRef(prefix: string | null, number: number): string {
   return `${refToken(prefix)}${number}`;
 }
-
-/**
- * The internal format in force at `at`: the newest history entry with
- * effective_from <= at, `#` before the first entry. Content created in
- * the same instant as a switch reads the new format (>= comparison).
- */
-export function refPrefixAt(
-  history: RefFormatChange[],
-  at: string,
-): string | null {
-  const time = Date.parse(at);
-  let prefix: string | null = null;
-  for (const change of history) {
-    if (Date.parse(change.effective_from) <= time) prefix = change.prefix;
-  }
-  return prefix;
-}

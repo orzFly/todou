@@ -303,9 +303,8 @@ export type ParsedDraft = {
 };
 
 /**
- * Which lines a fenced code block covers. Same line-based rule as the
- * server's `stripMarkdownCode`, for the same reason: 4-space code blocks
- * cannot be told from list continuations without a full markdown parse.
+ * Which lines a fenced code block covers. Line-based on purpose: 4-space code
+ * blocks cannot be told from list continuations without a full markdown parse.
  */
 function fencedLines(lines: string[]): boolean[] {
   const inCode = lines.map(() => false);

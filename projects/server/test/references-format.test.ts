@@ -1,33 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { extractIssueRefs } from "../src/services/references.ts";
 import { makeTestApp, type TestApp } from "./helpers.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-side response poking
 const json = (res: Response): Promise<any> => res.json() as Promise<any>;
-
-describe("extractIssueRefs formats", () => {
-  it("keeps the historical # behaviour when prefix is null", () => {
-    expect(extractIssueRefs("see #12 and #13, not #12 again")).toEqual([
-      12, 13,
-    ]);
-    expect(extractIssueRefs("`#12` and\n```\n#13\n```\nstay code")).toEqual([]);
-  });
-
-  it("matches PREFIX-N with hyphen-aware boundaries", () => {
-    expect(extractIssueRefs("fixes T-76, see T-9", "T")).toEqual([76, 9]);
-    // A hyphenated word in front is not a reference.
-    expect(extractIssueRefs("SOME-T-76", "T")).toEqual([]);
-    expect(extractIssueRefs("xT-76", "T")).toEqual([]);
-    // Under a prefixed format, bare #N no longer parses internally...
-    expect(extractIssueRefs("see #12", "T")).toEqual([]);
-    // ...and prefixed refs don't parse under "#".
-    expect(extractIssueRefs("fixes T-76", null)).toEqual([]);
-    // Case-sensitive; digits bounded at 9.
-    expect(extractIssueRefs("t-76", "T")).toEqual([]);
-    expect(extractIssueRefs("T-1234567890", "T")).toEqual([]);
-    expect(extractIssueRefs("FOOBAR-8?", "FOOBAR")).toEqual([8]);
-  });
-});
 
 describe("time-cutoff reference recording", () => {
   let t: TestApp;

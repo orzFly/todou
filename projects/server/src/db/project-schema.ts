@@ -62,9 +62,9 @@ export const projectMeta = pgTable("project_meta", {
 });
 
 // Append-only internal reference-format history (T-80). NULL prefix = "#N".
-// The format in force for a piece of content is the newest row with
-// effective_from <= content.created_at — history, not a single value, so
-// legacy text keeps parsing under the format it was written in.
+// A history rather than one prefix because a slug-qualified ref may spell a
+// prefix the project only used to write (T-214), and the one-off T-266
+// rewrite reads legacy text under the format in force when it was written.
 export const refFormats = pgTable(
   "ref_formats",
   {
