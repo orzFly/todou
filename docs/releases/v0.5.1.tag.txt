@@ -1,0 +1,13 @@
+todou v0.5.1
+
+An IdP that accepts only client_secret_basic could not be logged into:
+todou sent client_secret_post on every code exchange and never read
+token_endpoint_auth_methods_supported. The method is negotiated per
+request now, and auth.oidc.token_endpoint_auth_method overrides the
+negotiation. Web screens drop prose restating a control, a placeholder
+or a heading, one line of which was false.
+
+Server only, no migration, CLI untouched. One class of oidc deployment
+stops logging in: an IdP declaring only client_secret_basic while
+accepting only post. Set token_endpoint_auth_method to
+client_secret_post; nothing catches this at startup.
