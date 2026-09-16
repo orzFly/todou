@@ -45,7 +45,7 @@ import {
 import { projects } from "../db/system-schema.ts";
 import { type ProjectRow, projectRoleOf, routeInfoOf } from "./access.ts";
 import type { ReferenceInputs } from "./cross-references.ts";
-import { refPrefixAt } from "./references.ts";
+import { currentRefPrefix } from "./references.ts";
 import { type Address, aliasOf, currentAddressOf } from "./relocation.ts";
 import { live, referenceable } from "./trash.ts";
 
@@ -68,7 +68,6 @@ export type ResolveResult = {
 function anchorConfig(
   inputs: ReferenceInputs,
   internalPrefix: string | null,
-  at: Date,
 ): ScanConfig {
   return {
     internalPrefix,
@@ -77,7 +76,6 @@ function anchorConfig(
       slugs: inputs.slugs,
       directory: inputs.directory,
       slugEntries: inputs.slugEntries,
-      at: at.toISOString(),
     },
   };
 }
@@ -303,7 +301,6 @@ export async function resolveContent(args: {
   self: ReferenceTarget | null;
 }): Promise<ResolveResult> {
   const { ctx, db, project, actor, inputs, text, self } = args;
-  const at = new Date();
   const resolved = await resolveText(
     {
       ctx,
@@ -315,7 +312,7 @@ export async function resolveContent(args: {
       origin: ctx.config.http.public_origin,
     },
     text,
-    anchorConfig(inputs, await refPrefixAt(db, project.id, at), at),
+    anchorConfig(inputs, await currentRefPrefix(db, project.id)),
   );
 
   const local: number[] = [];
@@ -434,12 +431,7 @@ class Resolver {
     const cross = this.config.cross;
     if (cross?.slugEntries === undefined) return slug;
     return (
-      resolveSlugAt(
-        cross.slugEntries,
-        cross.slugs,
-        slug,
-        cross.at ?? new Date().toISOString(),
-      ) ?? slug
+      resolveSlugAt(cross.slugEntries, cross.slugs, slug, cross.at) ?? slug
     );
   }
 

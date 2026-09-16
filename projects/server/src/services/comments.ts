@@ -31,7 +31,7 @@ import {
   canonicalizeComponent,
   questionCount,
 } from "./questions.ts";
-import { refPrefixAt } from "./references.ts";
+import { currentRefPrefix } from "./references.ts";
 import { throwIfCommentAliased } from "./relocation.ts";
 import {
   recordCrossReferences,
@@ -323,7 +323,7 @@ export async function locateComment(
   assertIssueReadable(row, actor, role);
   // The ref is a label for the reader, so it is spelled in the format in
   // force now — not the one the comment was written under (T-80).
-  const prefix = await refPrefixAt(db, project.id, new Date());
+  const prefix = await currentRefPrefix(db, project.id);
   return {
     issue_number: row.number,
     issue_ref: formatRef(prefix, row.number),

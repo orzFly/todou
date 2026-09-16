@@ -50,7 +50,6 @@ export async function resolveRefLocator(
     directory.entries,
     directory.contested,
     locator.prefix,
-    new Date().toISOString(),
   );
   if (holder === null) throw new NotFoundError();
   const named = (await findProjectByRef(ctx, holder))?.project;

@@ -62,7 +62,12 @@ export type CrossRefInput = {
   directory?: PrefixDirectory;
   /** Absent = `slugs` alone decides a qualified form, as before T-156. */
   slugEntries?: readonly SlugClaim[];
-  /** When the content was written; omitted reads as now. */
+  /**
+   * When the content was written. Omitted = now, which is answered by the
+   * still-open holds alone rather than by this process's clock: the
+   * interval bounds are stamped by several databases, so no local reading
+   * of "now" is comparable to all of them (T-360).
+   */
   at?: string;
 };
 
@@ -246,20 +251,23 @@ export function parseRefLocator(value: string): RefLocator | null {
 }
 
 /**
- * The project holding `prefix` at `at`, or null when nobody or several do.
- * Ambiguity resolves to plain text on purpose: any tie-break would be a
- * guess, and the qualified form is always available to say it exactly.
+ * The project holding `prefix` at `at`, or now when `at` is omitted; null
+ * when nobody or several do. Ambiguity resolves to plain text on purpose:
+ * any tie-break would be a guess, and the qualified form is always
+ * available to say it exactly.
  */
 export function resolveClaim(
   entries: readonly PrefixClaim[],
   contested: readonly ContestedPrefix[],
   prefix: string,
-  at: string,
+  at?: string,
 ): string | null {
-  const time = Date.parse(at);
-  if (Number.isNaN(time)) return null;
+  const time = at === undefined ? null : Date.parse(at);
+  if (time !== null && Number.isNaN(time)) return null;
   const covers = (from: string, to: string | null): boolean =>
-    Date.parse(from) <= time && (to === null || time < Date.parse(to));
+    time === null
+      ? to === null
+      : Date.parse(from) <= time && (to === null || time < Date.parse(to));
   if (contested.some((c) => c.prefix === prefix && covers(c.from, c.to))) {
     return null;
   }
@@ -273,8 +281,9 @@ export function resolveClaim(
  * The project a qualified `slug#N` names, given who held that slug when the
  * content was written (T-156). Three tiers, in order:
  *
- * 1. **The holder at `at`** — a renamed-away slug keeps pointing at what it
- *    meant when it was typed, which is the whole reason the history exists.
+ * 1. **The holder at `at`**, or the one still holding it when `at` is
+ *    omitted — a renamed-away slug keeps pointing at what it meant when it
+ *    was typed, which is the whole reason the history exists.
  * 2. **The current holder** — content dated before the project existed still
  *    resolves, the pre-T-156 behaviour this must not regress.
  * 3. **The last holder** — a slug nobody holds now still resolves to whoever
@@ -288,17 +297,22 @@ export function resolveSlugAt(
   entries: readonly SlugClaim[],
   slugs: readonly string[],
   slug: string,
-  at: string,
+  at?: string,
 ): string | null {
-  const time = Date.parse(at);
   const held = entries.filter((entry) => entry.slug === slug);
-  if (!Number.isNaN(time)) {
-    const covering = held.find(
-      (entry) =>
-        Date.parse(entry.from) <= time &&
-        (entry.to === null || time < Date.parse(entry.to)),
-    );
-    if (covering !== undefined) return covering.canonical;
+  if (at === undefined) {
+    const open = held.find((entry) => entry.to === null);
+    if (open !== undefined) return open.canonical;
+  } else {
+    const time = Date.parse(at);
+    if (!Number.isNaN(time)) {
+      const covering = held.find(
+        (entry) =>
+          Date.parse(entry.from) <= time &&
+          (entry.to === null || time < Date.parse(entry.to)),
+      );
+      if (covering !== undefined) return covering.canonical;
+    }
   }
   if (slugs.includes(slug)) return slug;
   let latest: SlugClaim | null = null;
@@ -347,7 +361,7 @@ function claimAt(
               cross.slugEntries,
               cross.slugs,
               qualified.slug,
-              cross.at ?? new Date().toISOString(),
+              cross.at,
             );
       if (canonical === null) {
         return { token: null, end: qualified.end };
@@ -424,7 +438,7 @@ function claimAt(
         cross.directory.entries,
         cross.directory.contested,
         bare.prefix,
-        cross.at ?? new Date().toISOString(),
+        cross.at,
       );
       if (slug !== null) {
         const comment = commentSuffixAt(text, bare.end);

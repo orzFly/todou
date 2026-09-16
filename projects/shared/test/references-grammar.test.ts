@@ -334,6 +334,26 @@ describe("resolveClaim", () => {
     expect(resolveClaim(entries, [], "T", "2025-12-31T23:59:59Z")).toBeNull();
   });
 
+  it("reads an omitted time off the open holds alone (T-360)", () => {
+    // Stamped by a database clock running ahead of this process: the hold
+    // is in force whatever `new Date()` here would have said.
+    const ahead = [
+      { prefix: "T", slug: "todou", from: "2099-01-01T00:00:00Z", to: null },
+    ];
+    expect(resolveClaim(ahead, [], "T")).toBe("todou");
+    expect(resolveClaim(entries, [], "T")).toBe("mirror");
+    expect(
+      resolveClaim(
+        [{ prefix: "T", slug: "todou", from: SINCE, to: AFTER }],
+        [],
+        "T",
+      ),
+    ).toBeNull();
+    expect(
+      resolveClaim(ahead, [{ prefix: "T", from: SINCE, to: null }], "T"),
+    ).toBeNull();
+  });
+
   it("declines overlapping and contested windows", () => {
     const overlap = [
       { prefix: "T", slug: "todou", from: SINCE, to: null },
@@ -456,6 +476,13 @@ describe("resolveSlugAt", () => {
     );
     expect(resolveSlugAt(SLUG_ENTRIES, [], "oldname", AFTER)).toBe("todou");
     expect(resolveSlugAt(SLUG_ENTRIES, [], "nowhere", AFTER)).toBeNull();
+  });
+
+  it("reads an omitted time off the open holds alone (T-360)", () => {
+    expect(resolveSlugAt(SLUG_ENTRIES, ["todou", "handover"], "handover")).toBe(
+      "handover",
+    );
+    expect(resolveSlugAt(SLUG_ENTRIES, [], "oldname")).toBe("todou");
   });
 
   it("still resolves a live slug when the timestamp is unusable", () => {

@@ -181,10 +181,5 @@ async function holderOfPrefix(
   prefix: string,
 ): Promise<string | null> {
   const directory = await globalPrefixDirectory(ctx);
-  return resolveClaim(
-    directory.entries,
-    directory.contested,
-    prefix,
-    new Date().toISOString(),
-  );
+  return resolveClaim(directory.entries, directory.contested, prefix);
 }
