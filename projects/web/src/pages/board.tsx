@@ -306,8 +306,12 @@ export function BoardCardContent({
           belongs to the unread marker above (T-46, T-77). */}
       {showMeta && (
         /* Clipped, not wrapped: everything on this row is a nowrap chip that
-           reads worse broken mid-token than cut at the card edge (T-303). */
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 overflow-hidden">
+           reads worse broken mid-token than cut at the card edge (T-303).
+           `overflow-hidden` clips at the padding box, so `pb-1` moves the
+           lower clip edge down by the distance UserAvatar's bot badge extends
+           below the avatar (`-bottom-1` there). `-mb-1` takes those 4px back
+           out of the parent's flow, so the card height is unchanged (T-361). */
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 overflow-hidden pb-1 -mb-1">
           {placement === "after" && (
             <span className="text-xs text-muted-foreground">{ref}</span>
           )}
@@ -318,7 +322,18 @@ export function BoardCardContent({
             <SpecReviewBadge version={issue.spec_version} />
           )}
           <LabelChips labels={issue.labels} />
-          <span className="ml-auto flex gap-1">
+          {/* `pr-1.5` equals the distance the bot badge extends past its
+              avatar (`-right-1.5` on UserAvatar), so `ml-auto` stops the last
+              avatar 6px earlier and the badge stays inside the clip. Applied
+              only when there are assignees, because on an empty span those
+              6px still count as width and can push a label chip onto the
+              next line (T-361). */}
+          <span
+            className={cn(
+              "ml-auto flex gap-1",
+              issue.assignees.length > 0 && "pr-1.5",
+            )}
+          >
             {issue.assignees.map((user) => (
               <UserChip key={user.id} user={user} compact />
             ))}

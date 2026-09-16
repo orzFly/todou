@@ -345,6 +345,42 @@ describe("board contains long tokens (T-303)", () => {
   });
 });
 
+/**
+ * As in the block above, happy-dom can only pin the classes down. The geometry
+ * they produce was measured in a browser: before the fix the badge was clipped
+ * by 6.00px on the right and 2.77px at the bottom, and both read 0.00
+ * afterwards (T-361).
+ */
+describe("board reserves room for the bot badge (T-361)", () => {
+  const agent = {
+    id: 2,
+    login: "claude-agent",
+    display_name: "Claude Agent",
+    kind: "machine" as const,
+    avatar_url: null,
+    owner: { id: 1, login: "user" },
+  };
+
+  it("pads the meta row and the assignee cell around the badge's overhang", async () => {
+    const view = renderWithProviders(
+      <BoardCardContent slug="p" issue={{ ...issue(0), assignees: [agent] }} />,
+    );
+    await view.findByText("issue 1");
+    const meta = view.container.querySelector(".mt-1\\.5") as Element;
+    expect(meta.className).toContain("pb-1");
+    expect(meta.querySelector(".ml-auto")?.className).toContain("pr-1.5");
+  });
+
+  it("leaves the empty assignee cell at zero width", async () => {
+    const view = renderWithProviders(
+      <BoardCardContent slug="p" issue={issue(2)} />,
+    );
+    await view.findByText("issue 1");
+    const meta = view.container.querySelector(".mt-1\\.5") as Element;
+    expect(meta.querySelector(".ml-auto")?.className).not.toContain("pr-1.5");
+  });
+});
+
 describe("BoardCardContent spec badge (T-53)", () => {
   it("shows the awaiting-review badge for an unreviewed spec", async () => {
     const view = renderWithProviders(

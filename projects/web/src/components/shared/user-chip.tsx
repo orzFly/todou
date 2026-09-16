@@ -65,6 +65,11 @@ export function UserAvatar({
   );
 
   if (!badge || user.kind !== "machine") return avatar;
+  // The badge is absolutely positioned, so these two offsets put it 6px past
+  // the right edge and 4px past the bottom edge of the chip's own box, and
+  // that overhang is not part of any element's width. A container that clips
+  // has to reserve the space itself, or the badge gets cut. The board's meta
+  // row reserves it from these same two numbers, in board.tsx (T-361).
   return (
     <span className="relative inline-flex align-middle">
       {avatar}
