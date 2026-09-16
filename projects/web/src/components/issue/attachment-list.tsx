@@ -211,7 +211,14 @@ export function AttachmentRichLink({
     <>
       <a
         href={attachment ? attachmentAnchorHref(attachment) : href}
-        className="inline-flex items-center gap-1"
+        // Laid out inline the icon is an atomic box the line breaker may
+        // break after, stranding it at the end of a line with its label on
+        // the next. The boundary between the two belongs to this element's
+        // white-space, so holding it here forbids that break; breaks inside
+        // the label belong to the span below, which still allows them.
+        // A word joiner does not work: Chrome honours neither WJ nor NBSP
+        // against an atomic inline's break opportunity (measured, T-359).
+        className="whitespace-nowrap"
         onClick={(e) => {
           if (previewKind(target) !== null && isPlainLeftClick(e)) {
             e.preventDefault();
@@ -225,8 +232,10 @@ export function AttachmentRichLink({
           }
         }}
       >
-        <Icon className="size-3.5 shrink-0" />
-        {children ?? attachment?.filename ?? fallbackName}
+        <Icon className="mr-1 inline size-3.5 align-middle" />
+        <span className="whitespace-normal">
+          {children ?? attachment?.filename ?? fallbackName}
+        </span>
       </a>
       <AttachmentViewerDialog
         state={viewer}

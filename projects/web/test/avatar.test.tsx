@@ -60,6 +60,18 @@ describe("UserChip names (T-149)", () => {
     );
     expect(getByText("spud")).toBeTruthy();
   });
+
+  // happy-dom lays nothing out, so this cannot see the alignment itself —
+  // only that the two classes carrying it are still on the elements. What
+  // they buy is measured in a real browser (T-359).
+  it("lays the chip out inline and centres the avatar on the line (T-359)", () => {
+    const { container, getByText } = render(<UserChip user={human} />);
+    const root = getByText("Spud Farmer").parentElement;
+    expect(root?.className).toContain("inline-block");
+
+    const avatarBox = container.querySelector("[data-slot=avatar]");
+    expect(avatarBox?.className).toContain("align-middle");
+  });
 });
 
 describe("UserChip avatars", () => {

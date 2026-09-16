@@ -190,9 +190,7 @@ export function renderEvent(
           <>
             {`${verb} `}
             {user ? (
-              <span className="inline-flex align-middle">
-                <UserChip user={user} nameClassName={IN_SENTENCE} />
-              </span>
+              <UserChip user={user} nameClassName={IN_SENTENCE} />
             ) : (
               <span className={IN_SENTENCE}>{text}</span>
             )}

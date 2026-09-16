@@ -142,7 +142,12 @@ const richLink = async (
   view: ReturnType<typeof render>,
 ): Promise<HTMLAnchorElement> =>
   waitFor(() => {
-    const el = view.container.querySelector("a.inline-flex");
+    // The icon is what marks an upgraded link; the plain fallback has none.
+    // Keyed off the anchor's display until T-359 laid it out inline.
+    const el =
+      [...view.container.querySelectorAll("a")].find(
+        (a) => a.querySelector("svg") !== null,
+      ) ?? null;
     expect(el).not.toBeNull();
     return el as HTMLAnchorElement;
   });

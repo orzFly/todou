@@ -53,7 +53,10 @@ export function UserAvatar({
   badge?: boolean;
 } & React.ComponentProps<typeof Avatar>) {
   const avatar = (
-    <Avatar className={cn("size-5", className)} {...props}>
+    <Avatar
+      className={cn("inline-flex size-5 align-middle", className)}
+      {...props}
+    >
       {user.avatar_url && <AvatarImage src={user.avatar_url} alt="" />}
       <AvatarFallback className="text-[10px]">
         {initialsOf(displayNameOf(user))}
@@ -63,7 +66,7 @@ export function UserAvatar({
 
   if (!badge || user.kind !== "machine") return avatar;
   return (
-    <span className="relative inline-flex">
+    <span className="relative inline-flex align-middle">
       {avatar}
       <BotIcon
         aria-label="agent"
@@ -89,16 +92,22 @@ export function UserChip({
   showLogin?: boolean;
   nameClassName?: string;
 }) {
+  // Not a flex container, because one takes its baseline from its first flex
+  // item — here the avatar. Showing an image that box has no text baseline to
+  // give, so the chip sat on the line's own baseline and carried the name 5px
+  // above the sentence around it, then jumped the moment the image replaced
+  // the initials, which do have one. For the same reason UserAvatar's
+  // `align-middle` only bites out here: a flex item would ignore it.
   const chip = (
-    <span className="inline-flex shrink-0 items-center gap-1.5">
+    <span className="inline-block shrink-0 whitespace-nowrap">
       <UserAvatar user={user} badge />
       {!compact && (
-        <span className={cn("text-sm whitespace-nowrap", nameClassName)}>
+        <span className={cn("ml-1.5 text-sm", nameClassName)}>
           {displayNameOf(user)}
         </span>
       )}
       {!compact && showLogin && (
-        <span className="text-muted-foreground text-sm whitespace-nowrap">
+        <span className="ml-1.5 text-muted-foreground text-sm">
           @{user.login}
         </span>
       )}

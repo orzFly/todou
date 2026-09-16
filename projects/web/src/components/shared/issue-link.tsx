@@ -123,13 +123,13 @@ export function IssueLink({
           {item.status.category === "closed" ? (
             <CircleSlashIcon
               aria-hidden
-              className="mr-0.5 inline size-3.5 align-[-0.185em]"
+              className="mr-0.5 inline size-3.5 align-middle"
               style={{ color: item.status.color }}
             />
           ) : (
             <CircleDotIcon
               aria-hidden
-              className="mr-0.5 inline size-3.5 align-[-0.185em]"
+              className="mr-0.5 inline size-3.5 align-middle"
               style={{ color: item.status.color }}
             />
           )}
