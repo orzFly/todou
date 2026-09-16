@@ -54,7 +54,11 @@ describe("RevisionHistory · load failure (T-376)", () => {
     );
 
     fireEvent.click(await screen.findByText("(edited)"));
-    expect(await screen.findByText(/Failed to load history/)).toBeTruthy();
+    expect(
+      (await screen.findByText(/Failed to load history/)).closest(
+        '[role="status"]',
+      )?.className,
+    ).toContain("text-xs");
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     // The refetch re-issues this section's own fetch — one more call, and
     // the recovered list renders the revision's author.

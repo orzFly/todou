@@ -9,8 +9,13 @@ import { cn } from "@/lib/utils";
  * ConnectionBanner, which is server-gone-but-cache-serves and heals — so the
  * exit has to be a control, not a promise.
  *
- * `size` is the proportional escape hatch for `text-xs` surfaces; `className`
- * merges last so callers can adjust font size and margins on the line.
+ * `size` scales the whole block — message line and button together — because
+ * the two `text-xs` surfaces it exists for (questions card, revision
+ * history) sit in 16px contexts where an inherited size would strand the
+ * message at body scale next to a proportioned button; `sm` stays
+ * inheriting, which is what the twelve `text-sm` ancestors already provide
+ * (and what inbox's body-scale line has always been). `className` merges
+ * last for margins and one-off adjustments.
  */
 export function LoadFailure({
   message,
@@ -32,6 +37,7 @@ export function LoadFailure({
       role="status"
       className={cn(
         "text-destructive flex flex-wrap items-baseline gap-x-2 gap-y-1",
+        size === "xs" ? "text-xs" : null,
         className,
       )}
     >

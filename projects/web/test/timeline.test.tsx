@@ -615,14 +615,24 @@ describe("timeline load failure (T-376)", () => {
     let failing = true;
     const calls = stubTimeline(() =>
       failing
-        ? Response.json({ error: "timeline unavailable" }, { status: 500 })
+        ? // The server's error envelope, not a bare string: the client
+          // reads body.error.message, and a string here would fall through
+          // to the HTTP status as the message.
+          Response.json(
+            {
+              error: { code: "internal", message: "timeline unavailable" },
+            },
+            { status: 500 },
+          )
         : Response.json(aPage([7, 8])),
     );
     const { findByText, findByRole, queryByText } = renderWithRouter(
       <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
       testQueryClient(),
     );
-    expect(await findByText("Failed to load timeline: 500")).toBeTruthy();
+    expect(
+      await findByText("Failed to load timeline: timeline unavailable"),
+    ).toBeTruthy();
     failing = false;
     fireEvent.click(await findByRole("button", { name: "Retry" }));
     await findByText("c7");
@@ -638,7 +648,12 @@ describe("timeline load failure (T-376)", () => {
     const calls = stubTimeline(
       () => Response.json(healthyTail),
       () =>
-        Promise.resolve(Response.json({ error: "head gone" }, { status: 500 })),
+        Promise.resolve(
+          Response.json(
+            { error: { code: "internal", message: "head gone" } },
+            { status: 500 },
+          ),
+        ),
     );
     const { findByText, findByRole } = renderWithRouter(
       <Timeline slug="p" issueNumber={19} pendingComments={[]} />,

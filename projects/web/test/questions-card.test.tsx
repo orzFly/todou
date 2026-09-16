@@ -691,7 +691,11 @@ describe("QuestionsCard when /questions fails (T-376)", () => {
     failed = true;
     const view = renderCard();
 
-    expect(await view.findByText("Failed to load answer status.")).toBeTruthy();
+    expect(
+      (await view.findByText("Failed to load answer status.")).closest(
+        '[role="status"]',
+      )?.className,
+    ).toContain("text-xs");
     expect(view.getByRole("button", { name: "Retry" })).toBeTruthy();
     // The query is still enabled here (the verdict is unknown), so the
     // retry is a real refetch, not a disabled control.
