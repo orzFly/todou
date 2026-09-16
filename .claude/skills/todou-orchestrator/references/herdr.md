@@ -15,9 +15,9 @@ herdr agent prompt <name>-<N> "<task brief>" --wait --timeout 43200000   # run_i
 ```
 
 `tab create` prints the `<pane_id>` that `agent start` needs, and `--no-focus` leaves your own tab in
-front. Everything after `--` belongs to the agent being launched, not to herdr; for `--kind claude`
-those flags are in `claude.md`. The prompt runs in the background, where the 12h
-`--timeout 43200000` is a ceiling, not an expectation.
+front. Everything after `--` belongs to the agent being launched rather than to herdr; for
+`--kind claude` those flags are in `claude.md`. The prompt runs in the background, where the 12h
+`--timeout 43200000` is an upper bound.
 
 ## Waiting on an agent
 

@@ -15,7 +15,7 @@ gate, and what a spec document may and may not contain, are in its "Spec documen
 1. Take the card (`/todou-cli`, "Taking a card"), then run `todou agent can-i-follow` and do what it
    says. Explore the code. Unresolved design details become native questions on the card
    (`comment add --questions` + `question wait`, see `/todou-cli`), never guesses.
-2. Write the documents below in a scratch directory made with `mktemp -d`.
+2. Write the documents below into a scratch directory (`mktemp -d`).
 3. Self-check: remove placeholders, resolve contradictions, rewrite requirements that can be read two
    ways, confirm the scope fits.
 4. Push with `todou spec push <n> <dir> -p <proj> --message "plan v1" --wait` and act on the outcome.
@@ -33,6 +33,5 @@ gate, and what a spec document may and may not contain, are in its "Spec documen
 
 ## After approval
 
-Stop and report in the terminal. Implementation is dispatched separately, normally to a fresh agent
-running `/todou-impl-plan`, unless your brief says to continue yourself. Everything the implementer
-needs is already on the tracker.
+Implementation is dispatched separately, normally to a fresh agent running `/todou-impl-plan`, unless
+your brief says to continue yourself. Everything the implementer needs is already on the tracker.

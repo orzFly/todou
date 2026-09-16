@@ -13,8 +13,8 @@ Execute a plan that lives as an approved spec set on a todou issue. Read `/todou
    not, run `todou spec wait <n> -p <proj>` and follow the review loop of `/todou-plan`; do not
    implement an unapproved plan, and do not plan to check `spec status` later, because a deferred
    check has nothing to wake it.
-2. `todou spec pull <n> <dir> -p <proj>` into a scratch directory made with `mktemp -d`. Read
-   whichever exist: `proposal.md` (requirements), `design.md`, `api.md`, `plan.md` (the steps).
+2. `todou spec pull <n> <dir> -p <proj>` into a scratch directory (`mktemp -d`). Read whichever
+   exist: `proposal.md` (requirements), `design.md`, `api.md`, `plan.md` (the steps).
 3. Take the card (`/todou-cli`, "Taking a card"), then run `todou agent can-i-follow` and do what it
    says. Follow `plan.md`; with several steps, track them in a task list.
 4. Verify against the plan's acceptance criteria, commit on your branch without merging, move the

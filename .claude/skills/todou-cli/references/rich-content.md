@@ -15,8 +15,6 @@ file holds the shapes. These features do not change the length rules either.
   `attach download -p <proj> <n> <id|name>` addresses, by id or by exact filename when unambiguous.
   Without `-o` the file lands in the current directory under its own name and never overwrites;
   `-o <dir>` writes into that directory, `-o <file>` writes exactly there, `-o -` streams to stdout.
-- To inspect the configuration (which server, which profile, why this project), run
-  `todou config show`. It answers offline and logged out, and prints no token value.
 
 ## Permalinks
 
@@ -24,16 +22,3 @@ Every timestamp is a link to that one entry (`#comment-<id>`, `#event-<id>`). Pa
 reader to a specific comment or event, and paste one into `todou comment view <url-with-fragment>` to
 read that comment without taking the link apart. The ids come from `comment list` and `issue events`,
 which is also where a body too long for a watch line is read in full.
-
-## Issue refs
-
-Every command that knows an issue number prints it spelled: the first line of `issue view`
-(`--brief` shows just that), the start of every `issue list` row, the start of every watch line, and
-the echo of `comment add`. Fenced and inline code are exempt from ref parsing, so a ref can be quoted
-without creating a link.
-
-- A ref notifies the card it points at, so do not enumerate incidental cards: "rebased onto latest
-  master" says more than a list of the cards the branch passed.
-- Every `<number>` positional accepts `<proj>/16`, `"#16"`, the project's own form (`T-16`), a full
-  issue URL, or the address a stored reference is written with (`/projects/7/issues/16`). Input
-  accepts any spelling; output uses the project's.

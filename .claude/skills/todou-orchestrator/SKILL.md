@@ -27,18 +27,18 @@ cap      <n>
 The block comes out before any dispatch. Ahead of it you may run only the reads that fill it in —
 `todou config show`, `todou agent can-i-follow`, the card, `herdr agent list`; `herdr tab create`,
 `herdr agent start`, `herdr agent prompt`, the background `todou watch` and every write to the
-tracker wait until it is out. Emit it as text ahead of those tool calls: the user's chance to
-correct a wrong model or cap lasts until the first agent starts on it. A value that changes
-mid-session reprints the block, ahead of the first dispatch that uses it.
+tracker wait until it is out. The user's chance to correct a wrong model or cap lasts until the first
+agent starts on it. A value that changes mid-session reprints the block, ahead of the first dispatch
+that uses it.
 
-`project` is looked up, not recalled: `todou config show` prints the project the CLI resolves for the
-repository you are in, usually through its git binding, and only when nothing is bound does the slug
-come from the host project's CLAUDE.md or memory. Each phase's row holds the `--kind` and `--model`
-you will pass to `herdr agent start`, and the two rows are independent. Your own harness is not
-reported, because it decides nothing about the agents you launch. Models and cap come from the user,
-said aloud or standing in memory; when nothing was said, apply the defaults in `Dispatching` below
-and mark the value as a default, so a wrong assumption costs one line to correct instead of a whole
-task. Report the model id you will actually pass, not the rule that picked it.
+`project` is looked up rather than recalled: `todou config show` prints the project the CLI resolves
+for the repository you are in, usually through its git binding, and only when nothing is bound does
+the slug come from the host project's CLAUDE.md or memory. Each phase's row holds the `--kind` and
+`--model` you will pass to `herdr agent start`; the two rows are independent, and your own harness is
+not reported because it decides nothing about the agents you launch. Models and cap come from the
+user, said aloud or standing in memory; when nothing was said, apply the defaults in `Dispatching`
+below and mark the value as a default. Report the model id you will actually pass, not the rule that
+picked it.
 
 ## The background watch
 
@@ -49,13 +49,12 @@ todou watch -p <proj> --since <cursor> --debounce 60 --forever
 ```
 
 Before you start it, run `todou agent can-i-follow` and do what it says. Run it without `--json`: the
-line format carries each comment's opening, which is what you act on. Exit codes, heartbeats and
-restarting a killed watch from the same cursor are as `/todou-cli` describes; after handling a batch,
-restart from the printed cursor.
+line format carries each comment's opening, which is what you act on. A killed watch restarts from
+the same cursor (`/todou-cli`); after handling a batch, restart from the printed cursor.
 
 | Event | Reaction |
 |---|---|
-| User opens a card | Triage it now (below). Opening a card is not a go signal |
+| User opens a card | Triage it now (below). Opening a card is no go signal |
 | User moves a card to Next | Dispatch a worker, unless the card already has an assignee |
 | User comments on a card | Owning worker alive: nothing, its own watch delivered it. Otherwise file a follow-up card or handle it yourself |
 | A worker takes a card, comments, asks or pushes a spec | Nothing (`While a worker is alive`) |
@@ -105,13 +104,12 @@ session block already out; a model or cap that changed since the last one reprin
 
 - Every agent gets its own worktree; the brief says nothing about worktrees.
 - Models follow the phase, and which model serves which phase is a per-session decision — the user's
-  standing instruction, or yours at dispatch; naming one here would be wrong within days. Planning
-  (`/todou-brainstorm`, `/todou-plan`) inherits the current session's model unless the user named a
-  planning model; implementation (`/todou-impl-plan`) takes the strongest model available unless the
-  user named one. A card that needs a design therefore takes two agents: the planning brief says to
-  stop when the plan is approved, and that agent is retired before a fresh one is dispatched on the
-  same card with `/todou-impl-plan`. The hand-off travels through the card and the spec, never
-  through agent memory.
+  standing instruction, or yours at dispatch. Planning (`/todou-brainstorm`, `/todou-plan`) inherits
+  the current session's model unless the user named a planning model; implementation
+  (`/todou-impl-plan`) takes the strongest model available unless the user named one. A card that
+  needs a design therefore takes two agents: the planning brief says to stop when the plan is
+  approved, and that agent is retired before a fresh one is dispatched on the same card with
+  `/todou-impl-plan`. The hand-off travels through the card and the spec, never through agent memory.
 - Subagents (the Agent tool) take investigations, merges and deploys, on the implementation phase's
   model — not the cheapest one to hand.
 - A card with an assignee is held: leave it where it is and say so instead of dispatching. Nobody
@@ -129,14 +127,22 @@ and in `/todou-cli`. Your reading of the problem, your suspicion about the cause
 design stay out of it as well, because a worker reads the brief as instructions; post such thoughts
 as a comment on the card, where the user can overrule them.
 
+**A fence marks a collision, never a budget.** It names the files another live agent holds; it does
+not ask for a smaller diff. Whatever the card reasonably needs — touching a shared module, fixing the
+helper the change depends on, renaming through every call site, adding the tests that prove it — is
+done in full, and an agent that trims its work to keep the file count down has delivered half a card.
+Where the honest scope runs into a fence, that is a dispatch conflict for you to resolve: reorder the
+cards, wait for the other agent, or merge its branch first. Draw a fence around what is actually
+contested and nothing more, and say in the brief that the fence is the only limit on scope.
+
 Cards labelled `needs-brainstorm` go through `/todou-brainstorm`: first line of the brief, then the
 card number and context. That skill owns the dialogue and hands off to `/todou-plan`. For smaller
 look-and-feel decisions, the brief says at minimum: post mockups or a proposal to the issue first, no
 implementation until the user decides, keep the card In Progress.
 
-Every task gets a fresh agent; do not reuse one. A `--wait` timeout is not a failure: read the
-agent's state before concluding anything from one, and never prompt a working agent — if it is
-working, re-attach. A long `working` is worth no more than its tail says (`references/herdr.md`).
+Every task gets a fresh agent; do not reuse one. A `--wait` timeout is no failure: read the agent's
+state before concluding anything from one, and never prompt a working agent — if it is working,
+re-attach. A long `working` is worth no more than its tail says (`references/herdr.md`).
 
 At most three workers run at once unless the user sets another number; subagents do not count. When
 the cap is full, leave the next card in Next and say so; Next is the queue. A slot frees when its card
@@ -211,7 +217,7 @@ shows on the tracker instead of only in your head.
   user reads them there. Answer when asked; unasked, say nothing.
 - **Do not carry messages to it.** Its own `issue watch` already delivered what the user wrote there.
 - **Do not act on its card** — not the follow-up card it was asked to open, not its title, not a
-  comment in its place. Two hands reaching for one card race by construction: the duplicate you
+  comment in its place. Two agents reaching for one card race by construction: the duplicate you
   would search for does not exist yet when you look, so only not reaching closes the window.
 
 Intervene for a conflict (two agents in the same files, two cards on the same work, a merge that will

@@ -11,8 +11,7 @@ herdr agent start <name>-<N> --kind claude --pane <pane_id> -- --worktree --mode
 ```
 
 - `--worktree` gives the agent its own git worktree, created and cleaned up by its own session.
-- `--model` always ends in the context-window suffix `[1m]`. Which model serves which phase is
-  settled at dispatch and is never written down here.
+- `--model` always ends in the context-window suffix `[1m]`.
 
 ## Running a brief through a skill
 

@@ -1,6 +1,6 @@
 ---
 name: todou-brainstorm
-description: Interactively brainstorm a design/approach with the user on a todou issue — turn ideas into fully formed designs through natural collaborative dialogue, with the whole exchange recorded on the tracker and the user answering from the web UI. Use before starting any design-heavy card.
+description: Interactively brainstorm a design with the user on a todou issue — turn ideas into fully formed designs through collaborative dialogue, with the whole exchange recorded on the tracker and the user answering from the web UI. Use before starting any design-heavy card.
 disable-model-invocation: true
 ---
 
@@ -13,9 +13,9 @@ spec document may and may not contain, follow its "Spec documents" section.
 
 <HARD-GATE>
 Write no code, scaffold nothing and invoke no implementation skill until the user has approved the
-design at the review gate. This holds for cards that look too simple to need a design. Unexamined
-assumptions cost the most on simple cards, so the design may be a few sentences, and it is still
-pushed as a spec and approved.
+design at the review gate. This holds for cards that look too simple to need a design: unexamined
+assumptions cost the most there. The design may be a few sentences, and it is still pushed as a spec
+and approved.
 </HARD-GATE>
 
 ## Steps
@@ -25,7 +25,7 @@ pushed as a spec and approved.
    and its discussion.
 2. Ask clarifying questions on the issue: purpose, constraints, success criteria. Build a mockup or
    demo when a question is easier to answer from a picture (see Visual material).
-3. Write the design to a scratch directory made with `mktemp -d`. The approaches you weighed and your
+3. Write the design into a scratch directory (`mktemp -d`). The approaches you weighed and your
    recommendation go into the document, never into a comment.
 4. Self-review the documents, then push with `todou spec push <n> <dir> -p <proj> --message
    "brainstorm v1" --wait` and act on the outcome.
@@ -43,8 +43,8 @@ pushed as a spec and approved.
   belong in the spec. Put a choice on the card only when it is the user's to make and fits a
   multiple-choice question.
 - Follow the existing structure and patterns. Where existing code has problems that affect the work,
-  include targeted improvements in the design. When you notice a refactor that would help but is not
-  required, ask the user with a native question; the decision is theirs.
+  include targeted improvements in the design; where a refactor would help but is not required, ask
+  the user with a native question and let them decide.
 - Write the spec as soon as you understand what you are building. Do not summarize the design in a
   comment first and ask whether to write it up: the user would read the same text twice, and a comment
   has neither inline annotations nor a diff against the previous version.
@@ -64,7 +64,7 @@ be read two ways.
 
 ## Hand-off
 
-Invoke `/todou-plan`. Whether the same agent continues past the plan is decided by the orchestrator,
+Invoke `/todou-plan`. Whether the same agent continues past the plan is the orchestrator's decision,
 so leave everything you produced on the tracker: mockups attached, conclusions in the spec.
 
 ## Visual material
