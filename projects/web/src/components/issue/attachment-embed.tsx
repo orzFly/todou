@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { attachmentsQuery, attachmentTextQuery } from "@/api/attachments.ts";
 import { AttachmentRichLink } from "@/components/issue/attachment-list.tsx";
 import { DocumentCard } from "@/components/shared/document-card.tsx";
+import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import {
   formatSize,
   isMarkdownDocument,
@@ -71,7 +72,12 @@ function LoadedEmbed({
         href={attachmentAnchorHref(attachment)}
         meta={formatSize(attachment.size)}
       >
-        Failed to load: {text.error.message}
+        <LoadFailure
+          message="Failed to load."
+          detail={text.error.message}
+          onRetry={() => text.refetch()}
+          retrying={text.isFetching}
+        />
       </EmbedShell>
     );
   }

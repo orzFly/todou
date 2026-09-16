@@ -1,5 +1,6 @@
 import type { IssueMetadataEntry } from "@todou/shared";
 import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import type { ReactNode } from "react";
 import { useState } from "react";
 import { compactAge } from "@/components/issue/metadata-section.tsx";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +37,7 @@ function byteLength(value: string): number {
 export function MetadataBrowse({
   groups,
   canWrite,
+  failure,
   onAddKey,
   onDeleteNamespace,
   onEditValue,
@@ -48,7 +50,9 @@ export function MetadataBrowse({
     entries: IssueMetadataEntry[];
   }[];
   canWrite: boolean;
-  /** Jump to Bulk with a new-key snippet in this group. */
+  /** The dialog's failure block. Given, it replaces the empty-card sentence
+   * — an empty table is only "nothing written" once the query said so. */
+  failure?: ReactNode;
   onAddKey: (namespace: string) => void;
   /** Bulk-delete every key in the group. */
   onDeleteNamespace: (namespace: string) => void;
@@ -143,11 +147,12 @@ export function MetadataBrowse({
         ))}
       </table>
 
-      {groups.length === 0 && (
-        <p className="text-sm text-muted-foreground">
-          Nothing has been written on this card.
-        </p>
-      )}
+      {groups.length === 0 &&
+        (failure ?? (
+          <p className="text-sm text-muted-foreground">
+            Nothing has been written on this card.
+          </p>
+        ))}
 
       {canWrite && (
         <Button

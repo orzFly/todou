@@ -20,6 +20,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import { questionsQuery } from "@/api/questions.ts";
+import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { MarkdownEditor } from "@/components/shared/markdown-editor.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -190,9 +191,13 @@ export function QuestionsCard({
         />
       ))}
       {status.isError ? (
-        <p className="text-xs text-destructive" title={status.error.message}>
-          Failed to load answer status — retrying may help.
-        </p>
+        <LoadFailure
+          message="Failed to load answer status."
+          detail={status.error.message}
+          onRetry={() => status.refetch()}
+          retrying={status.isFetching}
+          size="xs"
+        />
       ) : (
         <Skeleton className="h-4 w-40" />
       )}

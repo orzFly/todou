@@ -3,6 +3,7 @@ import type { IssueMetadataEntry, MemberRole, Project } from "@todou/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { issueMetadataQuery } from "../src/api/metadata.ts";
 import { api, projectQuery } from "../src/api/queries.ts";
+import { MetadataDialog } from "../src/components/issue/metadata-dialog.tsx";
 import { MetadataSection } from "../src/components/issue/metadata-section.tsx";
 import { hasUnsavedWork } from "../src/lib/unsaved-guard.ts";
 import { cmGetValue, cmSetValue } from "./cm.ts";
@@ -869,5 +870,70 @@ describe("the metadata dialog shell", () => {
       ),
     );
     expect(toast.success).not.toHaveBeenCalled();
+  });
+});
+
+describe("the metadata dialog when /metadata fails (T-376)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** The sidebar withholds `metadata-open` while the query fails, so the
+   * dialog is mounted directly — the same component the trigger opens,
+   * and the same query the section observes. */
+  function mountOpenDialogFailing() {
+    const get = vi
+      .spyOn(api, "getIssueMetadata")
+      .mockRejectedValue(new Error("metadata unreachable"));
+    const client = testQueryClient();
+    client.setQueryData(projectQuery(SLUG).queryKey, project("writer"));
+    renderWithProviders(
+      <MetadataDialog
+        slug={SLUG}
+        issueNumber={NUMBER}
+        open={true}
+        onOpenChange={() => {}}
+      />,
+      client,
+    );
+    return get;
+  }
+
+  it("says nothing it cannot know: no counts, no empty-card sentence, Add stays", async () => {
+    mountOpenDialogFailing();
+    // A failed read produced no numbers and established no emptiness.
+    expect(await screen.findByText("Failed to load metadata.")).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.queryByTestId("metadata-counts")).toBeNull(),
+    );
+    expect(
+      screen.queryByText("Nothing has been written on this card."),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    // Bulk/JSON stay writable: an empty editor is a draft, not a claim,
+    // and a blind new-key write is fenced by if_match on the server.
+    expect(screen.getByRole("button", { name: "Add" })).toBeTruthy();
+  });
+
+  it("turns both assertions back into facts when Retry succeeds", async () => {
+    const get = mountOpenDialogFailing();
+    await screen.findByText("Failed to load metadata.");
+    get.mockResolvedValue({
+      entries: [entry("ci", "run", "green"), entry("orch", "phase", "plan")],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    // Real counts for a real read...
+    expect(screen.getByTestId("metadata-counts").textContent).toContain(
+      "2 namespaces",
+    );
+    expect(screen.getByTestId("metadata-counts").textContent).toContain(
+      "2 keys",
+    );
+    // ...and Browse renders the entries instead of either sentence.
+    expect(screen.getByTestId("metadata-group-ci").textContent).toContain(
+      "green",
+    );
+    expect(screen.queryByText("Failed to load metadata.")).toBeNull();
   });
 });

@@ -14,6 +14,7 @@ import { useCan } from "@/api/queries.ts";
 import { MetadataBrowse } from "@/components/issue/metadata-browse.tsx";
 import { MetadataEditorTab } from "@/components/issue/metadata-editor-tab.tsx";
 import type { CodeEditorHandle } from "@/components/shared/code-editor.tsx";
+import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -388,7 +389,10 @@ export function MetadataDialog({
 
   const nsCount = groups.length;
   const keyCount = entries.length;
-
+  // A failed read establishes nothing: the counts are numbers the query
+  // never produced, and the empty-card sentence is a claim it never made.
+  // Same query as the sidebar, so one Retry turns both faces back over.
+  const failed = metadata.isError && entries.length === 0;
   return (
     <Dialog
       open={open}
@@ -422,13 +426,15 @@ export function MetadataDialog({
                 <TabsTrigger value="bulk">Bulk</TabsTrigger>
                 <TabsTrigger value="json">JSON</TabsTrigger>
               </TabsList>
-              <span
-                className="text-xs text-muted-foreground"
-                data-testid="metadata-counts"
-              >
-                {nsCount} {nsCount === 1 ? "namespace" : "namespaces"} ·{" "}
-                {keyCount} {keyCount === 1 ? "key" : "keys"}
-              </span>
+              {failed ? null : (
+                <span
+                  className="text-xs text-muted-foreground"
+                  data-testid="metadata-counts"
+                >
+                  {nsCount} {nsCount === 1 ? "namespace" : "namespaces"} ·{" "}
+                  {keyCount} {keyCount === 1 ? "key" : "keys"}
+                </span>
+              )}
             </div>
 
             {conflictNotice.length > 0 && (
@@ -462,6 +468,16 @@ export function MetadataDialog({
               <MetadataBrowse
                 groups={groups}
                 canWrite={canWrite}
+                failure={
+                  failed ? (
+                    <LoadFailure
+                      message="Failed to load metadata."
+                      detail={metadata.error.message}
+                      onRetry={() => metadata.refetch()}
+                      retrying={metadata.isFetching}
+                    />
+                  ) : undefined
+                }
                 onAddKey={(namespace) =>
                   jumpToBulk((view) => insertKeyInGroup(view, namespace))
                 }

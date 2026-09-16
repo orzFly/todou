@@ -24,6 +24,7 @@ import {
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { hasQualifier } from "@/components/search/suggestions.ts";
 import { SearchHighlight } from "@/components/search-highlight.tsx";
+import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import { cn } from "@/lib/utils";
@@ -110,7 +111,14 @@ export function SearchResults({
           <Skeleton className="h-20 w-full" />
         </div>
       ) : results.isError ? (
-        <Empty>Search failed: {results.error.message}</Empty>
+        <Empty>
+          <LoadFailure
+            message={`Search failed: ${results.error.message}`}
+            detail={results.error.message}
+            onRetry={() => results.refetch()}
+            retrying={results.isFetching}
+          />
+        </Empty>
       ) : results.data.items.length === 0 ? (
         <Empty>
           Nothing matched. Trashed cards, and every spec version but the newest,

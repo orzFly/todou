@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { agentsQuery, api } from "@/api/queries.ts";
 import { AgentProjectsCell } from "@/components/shared/agent-projects-dialog.tsx";
 import { AvatarEditor } from "@/components/shared/avatar-editor.tsx";
+import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import {
   expiresAtFrom,
   TokenExpirySelect,
@@ -458,9 +459,14 @@ export function AgentTokensDialog({ agent }: { agent: Agent }) {
         {tokens.isPending ? (
           <p className="py-3 text-sm text-muted-foreground">loading…</p>
         ) : tokens.isError ? (
-          <p className="py-3 text-sm text-destructive">
-            {tokens.error.message}
-          </p>
+          <div className="py-3">
+            <LoadFailure
+              message={tokens.error.message}
+              detail={tokens.error.message}
+              onRetry={() => tokens.refetch()}
+              retrying={tokens.isFetching}
+            />
+          </div>
         ) : (
           <TokenTable
             tokens={tokens.data}

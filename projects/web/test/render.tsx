@@ -80,3 +80,7 @@ export function renderWithProviders(
     </QueryClientProvider>,
   );
 }
+
+// Leaves that need neither router nor query cache mount through the plain
+// testing-library render; re-exported here so tests keep one import site.
+export { render } from "@testing-library/react";

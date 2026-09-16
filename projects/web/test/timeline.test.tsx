@@ -1,5 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render as renderBare, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render as renderBare,
+  waitFor,
+} from "@testing-library/react";
 import type {
   Label,
   QuestionsComponent,
@@ -548,5 +552,108 @@ describe("timeline answers reach the question card (T-365)", () => {
     // loaded window is the whole proof, no /questions request needed.
     await findByText("answered by");
     expect(gets.filter((g) => g.includes("/questions"))).toEqual([]);
+  });
+});
+
+describe("timeline load failure (T-376)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** A fetch stub where the initial tail request (`?last=1`) goes to
+   * `tailPage` and every other timeline GET goes to `headPage`. `calls`
+   * records each timeline GET with its query string, so a test can tell
+   * the two halves apart. */
+  const aPage = (ids: number[]): TimelinePage => ({
+    items: ids.map((id) => ({
+      type: "comment",
+      id,
+      author: user,
+      body: `c${id}`,
+      component: null,
+      created_at: "2026-08-11T00:00:00Z",
+      edited_at: null,
+      resolved_at: null,
+      hidden_at: null,
+      agent_context: null,
+    })),
+    prev_cursor: null,
+    next_cursor: null,
+    total_count: ids.length,
+  });
+  function stubTimeline(
+    tailPage: () => Response | Promise<Response>,
+    headPage: () => Response | Promise<Response> = () =>
+      Response.json(aPage([1])),
+  ) {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method === "GET" && /\/projects\/p\/issues\/19\/timeline/.test(url)) {
+        calls.push(url);
+        return url.includes("last=1") ? tailPage() : headPage();
+      }
+      if (method === "GET" && url.includes("/references/config")) {
+        return Response.json(DEFAULT_REFERENCE_CONFIG);
+      }
+      if (method === "GET" && url.includes("/reference-directory")) {
+        return Response.json(null);
+      }
+      if (method === "GET" && url.includes("/questions")) {
+        return Response.json({ items: [], open: 0 });
+      }
+      if (method === "GET") {
+        return Response.json([]);
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    return calls;
+  }
+
+  it("offers Retry and recovers the timeline when it succeeds", async () => {
+    let failing = true;
+    const calls = stubTimeline(() =>
+      failing
+        ? Response.json({ error: "timeline unavailable" }, { status: 500 })
+        : Response.json(aPage([7, 8])),
+    );
+    const { findByText, findByRole, queryByText } = renderWithRouter(
+      <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
+      testQueryClient(),
+    );
+    expect(await findByText("Failed to load timeline.")).toBeTruthy();
+    failing = false;
+    fireEvent.click(await findByRole("button", { name: "Retry" }));
+    await findByText("c7");
+    expect(queryByText("Failed to load timeline.")).toBeNull();
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("refetches only the failed half when tail is healthy and head is not", async () => {
+    // Tail succeeds but reports an older start, which enables the head
+    // query; the head fetch then 500s. Retry must re-issue the head
+    // request only — the tail's own GET must not repeat.
+    const healthyTail = { ...aPage([8]), prev_cursor: "P1" };
+    const calls = stubTimeline(
+      () => Response.json(healthyTail),
+      () =>
+        Promise.resolve(Response.json({ error: "head gone" }, { status: 500 })),
+    );
+    const { findByText, findByRole } = renderWithRouter(
+      <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
+      testQueryClient(),
+    );
+    await findByText("Failed to load timeline.");
+    const tailCallsBefore = calls.filter((u) => u.includes("last=1")).length;
+    fireEvent.click(await findByRole("button", { name: "Retry" }));
+    // The retried head fetch resolves 500 again; wait for it to land so
+    // the call count is settled before comparing.
+    await waitFor(() =>
+      expect(calls.filter((u) => !u.includes("last=1")).length).toBe(2),
+    );
+    expect(calls.filter((u) => u.includes("last=1"))).toHaveLength(
+      tailCallsBefore,
+    );
   });
 });

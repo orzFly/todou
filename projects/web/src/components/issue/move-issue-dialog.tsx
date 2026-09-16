@@ -5,6 +5,7 @@ import { useState } from "react";
 import { movePreviewQuery, useMoveIssueMutation } from "@/api/issues.ts";
 import { projectsQuery } from "@/api/queries.ts";
 import { ProjectPicker } from "@/components/project-picker.tsx";
+import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -103,9 +104,12 @@ export function MoveIssueDialog({
               <p className="text-muted-foreground">Checking what changes…</p>
             )}
             {preview.isError && (
-              <p className="text-destructive">
-                {(preview.error as Error).message}
-              </p>
+              <LoadFailure
+                message={(preview.error as Error).message}
+                detail={(preview.error as Error).message}
+                onRetry={() => preview.refetch()}
+                retrying={preview.isFetching}
+              />
             )}
             {preview.data && <Mapping preview={preview.data} />}
           </div>

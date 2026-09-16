@@ -7,7 +7,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
 import {
@@ -142,5 +142,20 @@ describe("LoginPage per auth mode", () => {
     const view = renderLogin(clientWithMode("forward"), "/login");
     await view.findByText(/identity header/);
     expect(assign).not.toHaveBeenCalled();
+  });
+});
+
+describe("LoginPage when the mode query itself fails (T-376)", () => {
+  it("offers the unified Retry control and re-issues the read", async () => {
+    const mode = vi
+      .spyOn(api, "authMode")
+      .mockRejectedValueOnce(new Error("server unreachable"));
+    const view = renderLogin(testQueryClient(), "/login");
+
+    expect(await view.findByText(/Could not reach the server/)).toBeTruthy();
+    mode.mockResolvedValueOnce({ mode: "forward" });
+    fireEvent.click(view.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(mode).toHaveBeenCalledTimes(2));
+    await view.findByText(/identity header/);
   });
 });

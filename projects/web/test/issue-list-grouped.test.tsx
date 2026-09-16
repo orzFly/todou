@@ -175,3 +175,63 @@ describe("GroupedIssueList", () => {
     expect(await findByText(/地里很干净/)).toBeTruthy();
   });
 });
+
+describe("GroupedIssueList · group load failure (T-376)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("retries only the group that failed", async () => {
+    // Ship's first page 500s; Todo serves. Retry must re-issue exactly
+    // the Ship query — the paired Todo request count proves the other
+    // group's query was not refetched with it.
+    const gets: string[] = [];
+    let shipFailing = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), "http://test");
+        gets.push(url.searchParams.get("status") ?? "");
+        if (url.searchParams.get("status") === "5" && shipFailing) {
+          return new Response("{}", { status: 500 });
+        }
+        const cursor = url.searchParams.get("cursor") ?? "";
+        const pages: Record<string, Record<string, IssueListPageData>> = {
+          "5": {
+            "": { items: [item(51, "ship one", ship)], next_cursor: null },
+          },
+          "2": {
+            "": { items: [item(21, "todo one", todo)], next_cursor: null },
+          },
+        };
+        const page = pages[url.searchParams.get("status") ?? ""]?.[cursor];
+        return page
+          ? new Response(JSON.stringify(page), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            })
+          : new Response("{}", { status: 404 });
+      }),
+    );
+
+    const view = renderWithProviders(
+      <GroupedIssueList
+        slug="p"
+        statuses={statuses}
+        counts={{ open: 3, closed: 1, by_status: { "2": 1, "5": 2 } }}
+        allLabels={[]}
+        search={{}}
+      />,
+    );
+    await view.findByText(/Could not load this group/);
+    await view.findByText("todo one");
+    const todoCallsBefore = gets.filter((s) => s === "2").length;
+
+    shipFailing = false;
+    fireEvent.click(view.getByRole("button", { name: "Retry" }));
+    await view.findByText("ship one");
+    // The failed group's query re-issued; the healthy group's did not.
+    expect(gets.filter((s) => s === "5").length).toBe(2);
+    expect(gets.filter((s) => s === "2")).toHaveLength(todoCallsBefore);
+  });
+});
