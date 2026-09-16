@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MD_UP, SM_UP, useMediaQuery } from "@/lib/use-media-query.ts";
+import { cn } from "@/lib/utils";
 
 export function AppShell({
   me,
@@ -81,8 +82,9 @@ export function AppShell({
   const authMode = useQuery(authModeQuery);
   const canLogout = authMode.data?.mode !== "forward";
 
-  // Board owns the viewport height; anything appended below it would add a
-  // scrollbar to a page designed not to scroll.
+  // This route takes `<main>` as a flex child of a viewport-tall root, so the
+  // space under the header is what flex leaves rather than a constant that can
+  // disagree with it; the version footer stays unrendered for the same reason.
   const fillsViewport = useMatches({
     select: (matches) => matches.some((m) => m.staticData.fillsViewport),
   });
@@ -104,7 +106,12 @@ export function AppShell({
   });
 
   return (
-    <div className="min-h-dvh bg-background">
+    <div
+      className={cn(
+        "bg-background",
+        fillsViewport ? "flex h-dvh flex-col" : "min-h-dvh",
+      )}
+    >
       <UnsavedChangesGuard />
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
         {/* `relative` is the anchor the collapsed search expands against. */}
@@ -233,7 +240,14 @@ export function AppShell({
           shell down with it (T-265). Pages draw further boundaries inside
           this one. Component identity across a card switch comes from keys
           (`issue-detail.tsx`, T-324). */}
-      <main className="mx-auto max-w-6xl px-4 py-6">
+      <main
+        className={cn(
+          "px-4 pt-6",
+          fillsViewport
+            ? "flex min-h-0 flex-1 flex-col pb-4"
+            : "mx-auto max-w-6xl pb-6",
+        )}
+      >
         <Suspense fallback={<PagePending />}>{children}</Suspense>
       </main>
       {!fillsViewport && <VersionFooter />}

@@ -260,8 +260,10 @@ const projectIndexRoute = createRoute({
 
 declare module "@tanstack/react-router" {
   interface StaticDataRouteOption {
-    /** The page owns the full viewport height; the shell must not append
-     * flow content (the version footer) below it. */
+    /** The page is handed `<main>` as a flex box holding the height left
+     * under the header and the full width, instead of the centred max-width
+     * column; the shell appends no flow content (the version footer) below
+     * it. */
     fillsViewport?: boolean;
     /** This route's own boundary answers when the project lookup misses: a
      * card's old address outlives the reader's access to the project that

@@ -13,7 +13,7 @@ import {
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import { formatRef, type IssueListItem, type Status } from "@todou/shared";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { boardColumnQuery, useBoardMove } from "@/api/board.ts";
 import { useRefPlacement } from "@/api/prefs.ts";
 import { statusesQuery } from "@/api/queries.ts";
@@ -71,33 +71,6 @@ export function BoardPage() {
     };
   }, []);
 
-  // Size the canvas to the viewport space below it so the page itself never
-  // scrolls and each column scrolls on its own. The offset above the canvas
-  // (the app header) isn't knowable in CSS, so measure it.
-  const canvasRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const fitCanvas = () => {
-      const top = canvas.getBoundingClientRect().top;
-      // Floor so a cramped window degrades to a scrolling page instead of
-      // crushing the columns to nothing.
-      const height = Math.max(window.innerHeight - top, 240);
-      canvas.style.height = `${height}px`;
-    };
-    fitCanvas();
-    window.addEventListener("resize", fitCanvas);
-    // Re-measure when content above the canvas reflows (e.g. the mobile
-    // header nav wrapping differently). Writing the same height back does
-    // not re-trigger the observer, so this settles instead of looping.
-    const observer = new ResizeObserver(fitCanvas);
-    observer.observe(document.body);
-    return () => {
-      window.removeEventListener("resize", fitCanvas);
-      observer.disconnect();
-    };
-  }, []);
-
   function onDragStart(event: DragStartEvent) {
     dragHappened.current = true;
     const data = event.active.data.current as CardDragData | undefined;
@@ -127,21 +100,17 @@ export function BoardPage() {
       onDragEnd={onDragEnd}
       onDragCancel={() => setActiveIssue(null)}
     >
-      {/* Negative horizontal margins escape the shell's centered max-w
-          container so the multi-column board can use the full viewport
-          width; -mb-6 swallows the shell's bottom padding so the measured
-          height lands exactly on the viewport edge. */}
-      <div
-        ref={canvasRef}
-        className="mx-[calc(50%-50vw)] -mb-6 flex flex-col gap-4 px-4 pb-4"
-      >
+      <div className="flex min-h-0 flex-1 flex-col gap-4">
         {/* The board has no filter toolbar to hang this off, so it gets a
             row of its own — project-scoped, like the list's copy, because
             the endpoint sweeps a project and not a column (T-100). */}
         <div className="flex shrink-0 justify-end">
           <MarkAllReadButton slug={slug} scopeName="this project" />
         </div>
-        <div className="flex min-h-0 flex-1 gap-4 overflow-x-auto">
+        {/* 240px is the floor a cramped window degrades against: this row
+            bursts the canvas and overflows visibly, so the page scrolls
+            instead of the columns being crushed to nothing. */}
+        <div className="flex min-h-60 flex-1 gap-4 overflow-x-auto">
           {statuses.data.map((status) => (
             <BoardColumn key={status.id} slug={slug} status={status} />
           ))}
