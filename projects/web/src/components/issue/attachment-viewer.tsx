@@ -11,6 +11,7 @@ import {
 import { useState } from "react";
 import { attachmentTextQuery } from "@/api/attachments.ts";
 import { DocumentView } from "@/components/shared/document-card.tsx";
+import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -47,9 +48,15 @@ function TextPane({
   }
   if (text.isError) {
     return (
-      <p className="py-8 text-center text-sm text-destructive">
-        Failed to load {target.filename}: {text.error.message}
-      </p>
+      <div className="py-8 text-center">
+        <LoadFailure
+          message={`Failed to load ${target.filename}: ${text.error.message}`}
+          detail={text.error.message}
+          onRetry={() => text.refetch()}
+          retrying={text.isFetching}
+          className="justify-center"
+        />
+      </div>
     );
   }
   return (

@@ -117,6 +117,37 @@ describe("agent projects column (T-227)", () => {
     expect(screen.getByText("@probe-bot")).toBeTruthy();
   });
 
+  it("collects the dialog's retry into the unified control (T-376)", async () => {
+    // The column's dash stays as it is (its message lives on the title);
+    // Column mount and the dialog body's error-retryOnMount both read this;
+    // every call rejects until Retry, so the failure line is stable.
+    const memberships = vi
+      .spyOn(api, "listAgentMemberships")
+      .mockRejectedValue(new Error("upstream is down"));
+    const client = testQueryClient();
+    client.setQueryData(agentsQuery.queryKey, [BOT]);
+    renderWithProviders(<AgentsSettingsPage />, client);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Manage probe-bot's projects",
+      }),
+    );
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(await dialog.findByText("upstream is down")).toBeTruthy();
+    memberships.mockResolvedValueOnce({
+      memberships: [],
+      manageable_projects: [],
+    });
+    fireEvent.click(dialog.getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(memberships.mock.calls.length).toBeGreaterThanOrEqual(3),
+    );
+    // Recovered: the dialog's own empty-membership state.
+    await dialog.findByText("Not a member of any project yet.");
+    expect(dialog.queryByText("upstream is down")).toBeNull();
+  });
+
   it("edits only the projects I administer", async () => {
     renderPage({
       memberships: [membership(ALPHA, "writer"), membership(OUTSIDE, "reader")],

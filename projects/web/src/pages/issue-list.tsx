@@ -56,6 +56,7 @@ import {
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { IssueListBodySkeleton } from "@/components/page-skeleton.tsx";
 import { ProjectMuteButton } from "@/components/project-mute-button.tsx";
+import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useHeaderHeight } from "@/lib/use-header-height.ts";
@@ -485,16 +486,13 @@ function IssueGroup({
           </li>
         )}
         {group.isError && (
-          <li
-            className={cn(
-              ISSUE_LIST_ROW,
-              "flex items-center justify-between gap-2 p-3 text-sm text-muted-foreground",
-            )}
-          >
-            Could not load this group: {group.error.message}
-            <Button variant="outline" size="sm" onClick={() => group.refetch()}>
-              Retry
-            </Button>
+          <li className={cn(ISSUE_LIST_ROW, "p-3 text-sm")}>
+            <LoadFailure
+              message={`Could not load this group: ${group.error.message}`}
+              detail={group.error.message}
+              onRetry={() => group.refetch()}
+              retrying={group.isFetching}
+            />
           </li>
         )}
         <ProjectIssueRows

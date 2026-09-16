@@ -667,3 +667,46 @@ describe("QuestionsCard while the verdict is unknown (T-365)", () => {
     await view.findByText("answered by");
   });
 });
+
+describe("QuestionsCard when /questions fails (T-376)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("re-asks /questions when Retry is clicked, and settles on the answer", async () => {
+    const gets: string[] = [];
+    let failed = false;
+    vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method === "GET" && url.includes("/questions")) {
+        gets.push(url);
+        if (failed) {
+          // The shared client reads body.error.message; a bare string
+          // would degrade the message to the HTTP status.
+          return Response.json(
+            { error: { code: "internal", message: "questions gone" } },
+            { status: 500 },
+          );
+        }
+        return Response.json({ items: [item(answered, component)], open: 0 });
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+    failed = true;
+    const view = renderCard();
+
+    expect(
+      (await view.findByText("Failed to load answer status.")).closest(
+        '[role="status"]',
+      )?.className,
+    ).toContain("text-xs");
+    expect(view.getByRole("button", { name: "Retry" })).toBeTruthy();
+    // The query is still enabled here (the verdict is unknown), so the
+    // retry is a real refetch, not a disabled control.
+    failed = false;
+    fireEvent.click(view.getByRole("button", { name: "Retry" }));
+    await view.findByText("answered by");
+    expect(gets.length).toBeGreaterThanOrEqual(2);
+  });
+});

@@ -10,6 +10,7 @@ import { PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { agentMembershipsQuery, api } from "@/api/queries.ts";
+import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -159,16 +160,12 @@ function AgentProjectsBody({ agent }: { agent: Agent }) {
   }
   if (memberships.isError) {
     return (
-      <div className="space-y-2">
-        <p className="text-sm text-destructive">{memberships.error.message}</p>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => memberships.refetch()}
-        >
-          Retry
-        </Button>
-      </div>
+      <LoadFailure
+        message={memberships.error.message}
+        detail={memberships.error.message}
+        onRetry={() => memberships.refetch()}
+        retrying={memberships.isFetching}
+      />
     );
   }
 

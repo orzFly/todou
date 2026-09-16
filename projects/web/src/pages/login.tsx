@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { api, authModeQuery } from "@/api/queries.ts";
+import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -89,12 +90,13 @@ export function LoginPage() {
             🥔
           </span>
           {mode.isError ? (
-            <>
-              <p className="text-center text-sm text-destructive">
-                Could not reach the server: {mode.error.message}
-              </p>
-              <Button onClick={() => mode.refetch()}>Try again</Button>
-            </>
+            <LoadFailure
+              message={`Could not reach the server: ${mode.error.message}`}
+              detail={mode.error.message}
+              onRetry={() => mode.refetch()}
+              retrying={mode.isFetching}
+              className="justify-center"
+            />
           ) : modeName === "forward" ? (
             <p className="text-center text-sm text-destructive">
               The reverse proxy did not send an identity header. Check the

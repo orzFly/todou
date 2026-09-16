@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { Revision, RevisionPage } from "@todou/shared";
 import { Suspense, useMemo, useState } from "react";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
+import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import {
   LazyMultiFileDiff,
   PIERRE_HIGHLIGHTER,
@@ -72,9 +73,15 @@ export function RevisionHistory({
               Loading history…
             </p>
           ) : history.isError ? (
-            <p className="px-2 py-1.5 text-xs text-destructive">
-              Failed to load history: {history.error.message}
-            </p>
+            <div className="px-2 py-1.5">
+              <LoadFailure
+                message={`Failed to load history: ${history.error.message}`}
+                detail={history.error.message}
+                onRetry={() => history.refetch()}
+                retrying={history.isFetching}
+                size="xs"
+              />
+            </div>
           ) : history.data.items.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-muted-foreground italic">
               This edit history predates tracking.

@@ -121,6 +121,70 @@ describe("the metadata sidebar while /metadata is in flight (T-365)", () => {
   });
 });
 
+describe("the metadata sidebar when /metadata fails (T-376)", () => {
+  const mountFailed = (role: MemberRole) => {
+    const get = vi
+      .spyOn(api, "getIssueMetadata")
+      .mockRejectedValue(new Error("metadata unreachable"));
+    const client = testQueryClient();
+    client.setQueryData(projectQuery(SLUG).queryKey, project(role));
+    renderWithProviders(
+      <MetadataSection slug={SLUG} issueNumber={NUMBER} />,
+      client,
+    );
+    return get;
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("gives a writer the failure line and a retry, not a blind write entry", async () => {
+    mountFailed("writer");
+    expect(await screen.findByText("Failed to load metadata.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    // The entry rule does not come back on failure: opening the dialog
+    // would assert nothing has been written, which a failed read has not
+    // established. This is the assertion the card body used to demand in
+    // reverse; proposal.md replaces it with the retry contract below.
+    expect(screen.queryByTestId("metadata-open")).toBeNull();
+    expect(screen.getByTestId("metadata-sidebar").textContent).not.toContain(
+      "—",
+    );
+  });
+
+  it("recovers the section, and with it the write entry, when Retry succeeds", async () => {
+    const get = mountFailed("writer");
+    await screen.findByText("Failed to load metadata.");
+    get.mockResolvedValue({
+      entries: [entry("ci", "run", "green")],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    // Only this query refetched: one more call on getIssueMetadata, and
+    // the namespace line plus metadata-open return with the success.
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByTestId("metadata-open").textContent).toContain("ci"),
+    );
+    expect(screen.queryByText("Failed to load metadata.")).toBeNull();
+  });
+
+  it("shows a reader the same failure, with no dash", async () => {
+    mountFailed("reader");
+    expect(await screen.findByText("Failed to load metadata.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(screen.getByTestId("metadata-sidebar").textContent).not.toContain(
+      "—",
+    );
+  });
+
+  it("no longer says retrying may help", async () => {
+    mountFailed("reader");
+    await screen.findByText("Failed to load metadata.");
+    expect(document.body.textContent ?? "").not.toContain("retrying may help");
+  });
+});
+
 describe("the metadata sidebar summary", () => {
   it("gives each namespace its name, its size and its newest write", async () => {
     mount([

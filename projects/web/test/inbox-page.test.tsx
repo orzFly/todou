@@ -169,3 +169,33 @@ describe("InboxPage", () => {
     expect(await view.findByText(/more unread than shown/)).toBeTruthy();
   });
 });
+
+describe("InboxPage · load failure (T-376)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("collects the retry into the unified control and recovers", async () => {
+    const get = vi
+      .spyOn(api, "getInbox")
+      .mockRejectedValueOnce(new Error("inbox feed gone"));
+    vi.spyOn(api, "getMyPrefs").mockResolvedValue({
+      show_weak_unread: true,
+      ref_placement_list: "before",
+      ref_placement_board: "own_line",
+      ref_placement_detail: "before",
+      ref_placement_reference: "before",
+    });
+    const view = renderWithProviders(<InboxPage />);
+
+    expect(await view.findByText(/Could not load the inbox/)).toBeTruthy();
+    expect(view.getByRole("button", { name: "Retry" })).toBeTruthy();
+    // The old control was underlined text; its label is gone for good.
+    expect(view.queryByText("Try again")).toBeNull();
+
+    get.mockResolvedValueOnce({ items: [], truncated: false });
+    fireEvent.click(view.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    await view.findByText("收件箱清空了 🥔");
+  });
+});

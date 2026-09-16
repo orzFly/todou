@@ -1,8 +1,11 @@
-import { fireEvent, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { Agent } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { agentsQuery } from "../src/api/queries.ts";
-import { AgentsSettingsPage } from "../src/pages/agents-settings.tsx";
+import { agentsQuery, api } from "../src/api/queries.ts";
+import {
+  AgentsSettingsPage,
+  AgentTokensDialog,
+} from "../src/pages/agents-settings.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 afterEach(() => vi.restoreAllMocks());
@@ -104,5 +107,28 @@ describe("agents settings page (T-205)", () => {
     expect(await view.findByText(/No agents yet/)).toBeTruthy();
     expect(view.queryByText(/^Active /)).toBeNull();
     expect(view.queryByText(/^Deactivated /)).toBeNull();
+  });
+});
+
+describe("agent tokens dialog · load failure (T-376)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("offers Retry and lists tokens once the read succeeds", async () => {
+    const spy = vi
+      .spyOn(api, "listAgentTokens")
+      .mockRejectedValueOnce(new Error("token store unreachable"));
+    const client = testQueryClient();
+    renderWithProviders(<AgentTokensDialog agent={PROBE} />, client);
+    fireEvent.click(await screen.findByRole("button", { name: /Tokens/ }));
+    expect(await screen.findByText("token store unreachable")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+
+    spy.mockResolvedValueOnce([]);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+    // An empty token table renders the table itself, not the failure line.
+    await waitFor(() =>
+      expect(screen.queryByText("token store unreachable")).toBeNull(),
+    );
   });
 });

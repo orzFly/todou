@@ -7,7 +7,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   Autolink,
   IssueListItem,
@@ -20,6 +20,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
 import { recentOpenIssuesQuery } from "../src/api/issues.ts";
 import {
+  api,
   labelsQuery,
   membersQuery,
   projectQuery,
@@ -1079,6 +1080,29 @@ describe("the results page · qualifiers", () => {
     );
     await utils.findByText(/Nothing matched/);
     expect(utils.queryByText("全文搜索")).toBeNull();
+  });
+});
+
+describe("the results page · load failure (T-376)", () => {
+  it("offers Retry and recovers with a fresh search alone", async () => {
+    const params = { q: "全文搜索" };
+    const spy = vi
+      .spyOn(api, "search")
+      .mockRejectedValueOnce(new Error("index rebuilding"));
+    const client = seedJumpContext(testQueryClient());
+    renderWithProviders(<SearchResults slug="todou" search={params} />, client);
+
+    expect(await screen.findByText(/Search failed:/)).toBeTruthy();
+    spy.mockResolvedValueOnce({
+      diagnostics: [],
+      items: [hit()],
+      has_more: false,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("1 hit");
+    // The recovered list renders the hit; nothing else on the page had
+    // to reload for that to happen (the one spy counts the requests).
+    expect(screen.queryByText(/Search failed:/)).toBeNull();
   });
 });
 

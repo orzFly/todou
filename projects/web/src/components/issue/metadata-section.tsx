@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { groupMetadata, issueMetadataQuery } from "@/api/metadata.ts";
 import { useCan } from "@/api/queries.ts";
 import { MetadataDialog } from "@/components/issue/metadata-dialog.tsx";
+import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
@@ -63,9 +64,16 @@ export function MetadataSection({
       {!metadata.isSuccess && !metadata.isError ? (
         <Skeleton className="h-4 w-16" data-testid="metadata-loading" />
       ) : metadata.isError && groups.length === 0 ? (
-        <p className="text-sm text-destructive" title={metadata.error.message}>
-          Failed to load metadata — retrying may help.
-        </p>
+        // The exit for a state that will not heal itself: refetch this one
+        // query, and the entry rule below comes back on its own. A writer
+        // does not get `metadata-open` here — writing past a failed read is
+        // a blind write, and the reader re-establishes the read first.
+        <LoadFailure
+          message="Failed to load metadata."
+          detail={metadata.error.message}
+          onRetry={() => metadata.refetch()}
+          retrying={metadata.isFetching}
+        />
       ) : empty && !canWrite ? (
         <p className="text-sm text-muted-foreground">—</p>
       ) : (

@@ -18,6 +18,7 @@ import {
   useTimelineHead,
   useTimelineTail,
 } from "@/api/timeline.ts";
+import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import {
   CommentItem,
   type Viewer,
@@ -287,8 +288,18 @@ export function Timeline({
   }
   if (tail.isError || head.isError) {
     return (
-      <div className="rounded-lg border border-destructive/40 p-4 text-sm text-destructive">
-        Failed to load timeline: {(tail.error ?? head.error)?.message}
+      <div className="rounded-lg border border-destructive/40 p-4 text-sm">
+        <LoadFailure
+          message={`Failed to load timeline: ${(tail.error ?? head.error)?.message}`}
+          detail={(tail.error ?? head.error)?.message}
+          onRetry={() => {
+            // Only the failed half: refetching a healthy query would
+            // flash its content away for nothing.
+            if (tail.isError) void tail.refetch();
+            if (head.isError) void head.refetch();
+          }}
+          retrying={tail.isFetching || head.isFetching}
+        />
       </div>
     );
   }

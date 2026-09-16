@@ -6,6 +6,7 @@ import { groupInboxItems, type InboxGroup, inboxQuery } from "@/api/inbox.ts";
 import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
+import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -50,16 +51,13 @@ export function InboxPage() {
   if (inbox.isError) {
     return (
       <div className="rounded-lg border border-dashed p-10 text-center">
-        <p className="text-destructive">
-          Could not load the inbox: {inbox.error.message}
-        </p>
-        <button
-          type="button"
-          className="mt-3 text-sm text-muted-foreground underline-offset-4 hover:underline"
-          onClick={() => inbox.refetch()}
-        >
-          Try again
-        </button>
+        <LoadFailure
+          message={`Could not load the inbox: ${inbox.error.message}`}
+          detail={inbox.error.message}
+          onRetry={() => inbox.refetch()}
+          retrying={inbox.isFetching}
+          className="justify-center"
+        />
       </div>
     );
   }
