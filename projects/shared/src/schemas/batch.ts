@@ -29,3 +29,27 @@ export const BatchResult = z.object({
   responses: z.array(BatchItemResult),
 });
 export type BatchResult = z.infer<typeof BatchResult>;
+
+// The streaming shape of POST /api/batch (T-368): negotiated via
+// `Accept: text/event-stream`, one frame per sub-request as it completes
+// rather than one envelope after all of them. These names describe the
+// batch gateway's wire format, not the project change feed, which is why
+// they live here and not in events.ts.
+export const SSE_BATCH_ITEM_EVENT = "item";
+export const SSE_BATCH_DONE_EVENT = "done";
+
+/**
+ * One completed sub-request. `index` maps the result back to its request:
+ * frames arrive in completion order, not request order, so position in the
+ * stream means nothing.
+ */
+export const BatchStreamItem = BatchItemResult.extend({
+  index: z.number().int().nonnegative(),
+});
+export type BatchStreamItem = z.infer<typeof BatchStreamItem>;
+
+/** Trailer frame: how many `item` frames the stream carried in total. */
+export const BatchStreamDone = z.object({
+  count: z.number().int().nonnegative(),
+});
+export type BatchStreamDone = z.infer<typeof BatchStreamDone>;

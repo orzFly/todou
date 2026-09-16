@@ -258,28 +258,29 @@ describe("TodouClient", () => {
   });
 });
 
-describe("TodouClient batching (T-91)", () => {
-  const envelopeFetch = () => {
-    const calls: Captured[] = [];
-    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
-      calls.push({ url: String(url), init: init ?? {} });
-      const { requests } = JSON.parse(String(init?.body)) as {
-        requests: Array<{ url: string }>;
-      };
-      return Response.json({
-        responses: requests.map((r) =>
-          r.url === "/missing"
-            ? {
-                status: 404,
-                body: { error: { code: "not_found", message: "nope" } },
-              }
-            : { status: 200, body: { echo: r.url } },
-        ),
-      });
-    }) as typeof fetch;
-    return { fetch: fetchImpl, calls };
-  };
+/** A batch-answering fetch that echoes URLs, 404s on /missing (T-91 suite). */
+const envelopeFetch = () => {
+  const calls: Captured[] = [];
+  const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+    calls.push({ url: String(url), init: init ?? {} });
+    const { requests } = JSON.parse(String(init?.body)) as {
+      requests: Array<{ url: string }>;
+    };
+    return Response.json({
+      responses: requests.map((r) =>
+        r.url === "/missing"
+          ? {
+              status: 404,
+              body: { error: { code: "not_found", message: "nope" } },
+            }
+          : { status: 200, body: { echo: r.url } },
+      ),
+    });
+  }) as typeof fetch;
+  return { fetch: fetchImpl, calls };
+};
 
+describe("TodouClient batching (T-91)", () => {
   it("coalesces same-tick GETs into one envelope, positionally", async () => {
     const { fetch, calls } = envelopeFetch();
     const client = new TodouClient({ fetch, batch: true });
@@ -372,6 +373,181 @@ describe("TodouClient batching (T-91)", () => {
       // A second queued GET is what pushes the pair into an envelope.
       client.request("GET", "/me").catch(() => undefined),
     ]);
+  });
+});
+
+describe("TodouClient batch streaming (T-368)", () => {
+  /**
+   * A fetch answering the batch POST with an SSE stream the test writes
+   * frame by frame. `write` enqueues a raw chunk, `finish` closes.
+   */
+  function streamFetch() {
+    const calls: Captured[] = [];
+    const encoder = new TextEncoder();
+    let source: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const stream = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        source = controller;
+      },
+    });
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      return new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }) as typeof fetch;
+    const write = (chunk: string): void => {
+      if (source === undefined) throw new Error("stream not started");
+      // A real fetch body carries bytes, so the harness encodes.
+      source.enqueue(encoder.encode(chunk));
+    };
+    const close = (): void => {
+      source?.close();
+    };
+    return { fetch: fetchImpl, calls, write, close };
+  }
+
+  const flushTick = (): Promise<void> =>
+    // Executor form, not withResolvers: this package's lib target predates
+    // es2024 and the change is confined to this one helper.
+    new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+
+  it("settles waiters as item frames arrive, in arrival order", async () => {
+    const { fetch, calls, write } = streamFetch();
+    const client = new TodouClient({ fetch, batch: true });
+
+    // Enqueue order fixes chunk positions: two=0, one=1.
+    const two = client.request("GET", "/two");
+    const one = client.request("GET", "/one");
+    // The flush runs on the macrotask timer; await that timer's own signal:
+    // the batch POST is the only thing scheduled on it.
+    await flushTick();
+    const headers = (calls[0]?.init?.headers ?? {}) as Record<string, string>;
+    expect(headers.accept).toBe("text/event-stream");
+
+    // index 1 arrives first and settles its waiter before the stream ends —
+    // a hold-everything-until-done implementation hangs this await.
+    write('event: item\ndata: {"index":1,"status":200,"body":{"n":2}}\n\n');
+    await expect(one).resolves.toEqual({ n: 2 });
+
+    write('event: item\ndata: {"index":0,"status":200,"body":{"n":1}}\n\n');
+    write('event: done\ndata: {"count":2}\n\n');
+    await expect(two).resolves.toEqual({ n: 1 });
+  });
+
+  it("maps failed item frames to the same TodouError shape", async () => {
+    const { fetch, write } = streamFetch();
+    const client = new TodouClient({ fetch, batch: true });
+    const missing = client.request("GET", "/missing");
+    client.request("GET", "/me").catch(() => undefined);
+    await flushTick();
+    write(
+      'event: item\ndata: {"index":0,"status":404,"body":{"error":{"code":"not_found","message":"nope"}}}\n\n',
+    );
+    write('event: done\ndata: {"count":2}\n\n');
+    const error = (await missing.catch((e: unknown) => e)) as TodouError;
+    expect(error).toBeInstanceOf(TodouError);
+    expect(error.status).toBe(404);
+    expect(error.code).toBe("not_found");
+  });
+
+  it("maps a 301 item with moved_to to MovedError", async () => {
+    const { fetch, write } = streamFetch();
+    const client = new TodouClient({ fetch, batch: true });
+    const moved = client.request("GET", "/projects/a/issues/1");
+    client.request("GET", "/me").catch(() => undefined);
+    await flushTick();
+    write(
+      'event: item\ndata: {"index":0,"status":301,"body":{"moved_to":{"slug":"b","number":45}}}\n\n',
+    );
+    write('event: done\ndata: {"count":2}\n\n');
+    const error = (await moved.catch((e: unknown) => e)) as MovedError;
+    expect(error).toBeInstanceOf(MovedError);
+    expect(error.movedTo).toEqual({ slug: "b", number: 45 });
+  });
+
+  it("rejects waiters the stream never settles as batch_mismatch", async () => {
+    const { fetch, write, close } = streamFetch();
+    const client = new TodouClient({ fetch, batch: true });
+    const one = client.request("GET", "/one");
+    const two = client.request("GET", "/two");
+    await flushTick();
+    // Truncated: index 0 never arrives and there is no done frame.
+    write('event: item\ndata: {"index":1,"status":200,"body":{"n":2}}\n\n');
+    await expect(two).resolves.toEqual({ n: 2 });
+    close();
+    const error = (await one.catch((e: unknown) => e)) as TodouError;
+    expect(error).toBeInstanceOf(TodouError);
+    expect(error.code).toBe("batch_mismatch");
+  });
+
+  it("rejects waiters when the stream errors mid-flight", async () => {
+    const encoder = new TextEncoder();
+    let source: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const stream = new ReadableStream<Uint8Array>({
+      start: (c) => {
+        source = c;
+      },
+    });
+    const fetchImpl = (async () =>
+      new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      })) as typeof fetch;
+    const client = new TodouClient({ fetch: fetchImpl, batch: true });
+    const one = client.request("GET", "/one");
+    const two = client.request("GET", "/two");
+    await flushTick();
+    if (source === undefined) throw new Error("stream not started");
+    source.enqueue(
+      encoder.encode(
+        'event: item\ndata: {"index":1,"status":200,"body":{"n":2}}\n\n',
+      ),
+    );
+    await expect(two).resolves.toEqual({ n: 2 });
+    // A reset connection instead of a clean end: the read rejects, and the
+    // unsatisfied waiter must be rejected too — not left pending forever.
+    source.error(new Error("connection reset"));
+    const error = (await one.catch((e: unknown) => e)) as TodouError;
+    expect(error).toBeInstanceOf(TodouError);
+    expect(error.code).toBe("batch_mismatch");
+  });
+
+  it("rejects waiters when a 200 claims JSON but is not the envelope", async () => {
+    const fetchImpl = (async () =>
+      new Response("<html>login page</html>", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+    const client = new TodouClient({ fetch: fetchImpl, batch: true });
+    const results = await Promise.allSettled([
+      client.request("GET", "/one"),
+      client.request("GET", "/two"),
+    ]);
+    // Pre-fix this hung forever: the json() rejection escaped the
+    // fire-and-forget flush and neither waiter ever settled.
+    for (const r of results) {
+      expect(r.status).toBe("rejected");
+      if (r.status === "rejected") {
+        expect((r.reason as TodouError).code).toBe("batch_mismatch");
+      }
+    }
+  });
+
+  it("still reads the JSON envelope when the server answers JSON", async () => {
+    const { fetch, calls } = envelopeFetch();
+    const client = new TodouClient({ fetch, batch: true });
+    const [a, b] = await Promise.all([
+      client.request("GET", "/me"),
+      client.request("GET", "/projects"),
+    ]);
+    expect(a).toEqual({ echo: "/me" });
+    expect(b).toEqual({ echo: "/projects" });
+    const headers = (calls[0]?.init?.headers ?? {}) as Record<string, string>;
+    expect(headers.accept).toBe("text/event-stream");
   });
 });
 

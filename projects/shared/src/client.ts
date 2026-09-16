@@ -82,6 +82,7 @@ import type {
   TokenListItem,
   VersionInfo,
 } from "./index.ts";
+import { type BatchStreamItem, SSE_BATCH_ITEM_EVENT } from "./schemas/batch.ts";
 // Imported from their own modules rather than the barrel: these are values,
 // and the barrel re-exports this file.
 import {
@@ -344,13 +345,24 @@ export class TodouClient {
    * is the point: a consumer that needs raw bytes still never has to
    * assemble a request, and therefore never has to get hold of the token
    * (T-176). Never batched — an envelope carries parsed bodies only.
+   * `init.headers` adds per-call request headers (the batch channel's
+   * `accept: text/event-stream`, negotiated on the response's
+   * Content-Type); the two protected headers stay non-overridable.
    */
   async requestRaw(
     method: string,
     path: string,
-    init?: { json?: unknown; form?: FormData; query?: Query },
+    init?: {
+      json?: unknown;
+      form?: FormData;
+      query?: Query;
+      headers?: Record<string, string>;
+    },
   ): Promise<Response> {
-    const headers: Record<string, string> = { ...this.#headers };
+    const headers: Record<string, string> = {
+      ...this.#headers,
+      ...init?.headers,
+    };
     if (this.#token) headers.authorization = `Bearer ${this.#token}`;
     let body: string | FormData | undefined;
     if (init?.json !== undefined) {
@@ -435,10 +447,14 @@ export class TodouClient {
   }
 
   async #sendBatchChunk(chunk: BatchWaiter[]): Promise<void> {
-    let envelope: { responses: Array<{ status: number; body: unknown }> };
+    let res: Response;
     try {
-      envelope = await this.#send("POST", "/batch", {
+      // The accept header is a negotiation, not a demand: a server without
+      // the stream answers with the JSON envelope, and the response's
+      // Content-Type decides which reading applies.
+      res = await this.requestRaw("POST", "/batch", {
         json: { requests: chunk.map(({ url }) => ({ url })) },
+        headers: { accept: "text/event-stream" },
       });
     } catch (error) {
       // 404/405 = a server predating the gateway: remember, fall back to
@@ -456,18 +472,67 @@ export class TodouClient {
       for (const item of chunk) item.reject(error);
       return;
     }
-    chunk.forEach((item, i) => {
-      const result = envelope.responses[i];
-      if (result === undefined) {
-        item.reject(
-          new TodouError(502, "batch_mismatch", "missing batch response"),
-        );
-      } else if (result.status >= 200 && result.status < 300) {
-        item.resolve(result.status === 204 ? undefined : result.body);
+
+    // A waiter is settled exactly once: duplicate or out-of-range indices in
+    // a stream (or missing entries in an envelope) leave the rest for the
+    // shared mismatch rejection below.
+    const settled = new Set<number>();
+    const settle = (index: number, status: number, body: unknown): void => {
+      const item = chunk[index];
+      if (item === undefined || settled.has(index)) return;
+      settled.add(index);
+      if (status >= 200 && status < 300) {
+        item.resolve(status === 204 ? undefined : body);
       } else {
-        item.reject(errorFromBody(result.status, result.body, item.url));
+        item.reject(errorFromBody(status, body, item.url));
       }
-    });
+    };
+
+    // Read errors (a reset connection, a malformed frame, a 200 that is not
+    // the envelope) must reject the unsatisfied waiters rather than escape:
+    // the flush is fire-and-forget, so an exception here would otherwise
+    // strand every pending caller in this chunk — and every later chunk.
+    try {
+      if (res.headers.get("content-type")?.includes("text/event-stream")) {
+        // item frames settle waiters as they arrive; the done frame is
+        // skipped — a truncated stream is reported through the same
+        // missing-waiter path as a short envelope, so its count is
+        // informational on the wire, nothing the client needs to track.
+        const reader = res.body?.getReader();
+        if (reader === undefined) throw new Error("stream without a body");
+        const text = new TextDecoder();
+        const decoder = new SseDecoder();
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          for (const frame of decoder.push(
+            text.decode(value, { stream: true }),
+          )) {
+            if (frame.event !== SSE_BATCH_ITEM_EVENT) continue;
+            const item = JSON.parse(frame.data) as BatchStreamItem;
+            settle(item.index, item.status, item.body);
+          }
+        }
+      } else {
+        const envelope = (await res.json()) as {
+          responses: Array<{ status: number; body: unknown }>;
+        };
+        envelope.responses.forEach((result, i) => {
+          settle(i, result.status, result.body);
+        });
+      }
+    } catch {
+      // Fall through to the mismatch rejection: an unreadable body is
+      // indistinguishable from a truncated stream, and the waiters must
+      // not outlive the exchange.
+    }
+
+    for (const [i, item] of chunk.entries()) {
+      if (settled.has(i)) continue;
+      item.reject(
+        new TodouError(502, "batch_mismatch", "missing batch response"),
+      );
+    }
   }
 
   version = () => this.request<VersionInfo>("GET", "/version");
