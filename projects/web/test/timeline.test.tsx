@@ -622,11 +622,11 @@ describe("timeline load failure (T-376)", () => {
       <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
       testQueryClient(),
     );
-    expect(await findByText("Failed to load timeline.")).toBeTruthy();
+    expect(await findByText("Failed to load timeline: 500")).toBeTruthy();
     failing = false;
     fireEvent.click(await findByRole("button", { name: "Retry" }));
     await findByText("c7");
-    expect(queryByText("Failed to load timeline.")).toBeNull();
+    expect(queryByText(/Failed to load timeline/)).toBeNull();
     expect(calls.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -644,7 +644,7 @@ describe("timeline load failure (T-376)", () => {
       <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
       testQueryClient(),
     );
-    await findByText("Failed to load timeline.");
+    await findByText(/Failed to load timeline: /);
     const tailCallsBefore = calls.filter((u) => u.includes("last=1")).length;
     fireEvent.click(await findByRole("button", { name: "Retry" }));
     // The retried head fetch resolves 500 again; wait for it to land so

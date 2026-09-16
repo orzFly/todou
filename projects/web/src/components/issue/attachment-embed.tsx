@@ -73,7 +73,7 @@ function LoadedEmbed({
         meta={formatSize(attachment.size)}
       >
         <LoadFailure
-          message="Failed to load."
+          message={`Failed to load: ${text.error.message}`}
           detail={text.error.message}
           onRetry={() => text.refetch()}
           retrying={text.isFetching}

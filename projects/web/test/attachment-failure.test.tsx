@@ -89,7 +89,7 @@ describe("the embedded document when its text fails to load (T-376)", () => {
       client(),
     );
 
-    expect(await view.findByText("Failed to load.")).toBeTruthy();
+    expect(await view.findByText(/Failed to load: /)).toBeTruthy();
     expect(view.container.textContent).not.toContain("hello from notes.txt");
     succeed();
     fireEvent.click(view.getByRole("button", { name: "Retry" }));
@@ -124,7 +124,7 @@ describe("the attachment viewer's text pane when loading fails (T-376)", () => {
       client(),
     );
 
-    expect(await view.findByText("Failed to load notes.txt.")).toBeTruthy();
+    expect(await view.findByText(/Failed to load notes.txt: /)).toBeTruthy();
     succeed();
     fireEvent.click(view.getByRole("button", { name: "Retry" }));
     await waitFor(() =>

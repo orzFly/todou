@@ -290,7 +290,7 @@ export function Timeline({
     return (
       <div className="rounded-lg border border-destructive/40 p-4 text-sm">
         <LoadFailure
-          message="Failed to load timeline."
+          message={`Failed to load timeline: ${(tail.error ?? head.error)?.message}`}
           detail={(tail.error ?? head.error)?.message}
           onRetry={() => {
             // Only the failed half: refetching a healthy query would

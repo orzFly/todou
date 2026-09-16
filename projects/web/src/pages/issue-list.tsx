@@ -486,7 +486,7 @@ function IssueGroup({
           </li>
         )}
         {group.isError && (
-          <li className={cn(ISSUE_LIST_ROW, "p-3")}>
+          <li className={cn(ISSUE_LIST_ROW, "p-3 text-sm")}>
             <LoadFailure
               message={`Could not load this group: ${group.error.message}`}
               detail={group.error.message}

@@ -50,7 +50,7 @@ function TextPane({
     return (
       <div className="py-8 text-center">
         <LoadFailure
-          message={`Failed to load ${target.filename}.`}
+          message={`Failed to load ${target.filename}: ${text.error.message}`}
           detail={text.error.message}
           onRetry={() => text.refetch()}
           retrying={text.isFetching}
