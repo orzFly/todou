@@ -1,4 +1,4 @@
-import type { BulkReadInput, IssueReadInput } from "@todou/shared";
+import type { BulkReadInput, IssueReadInput, MuteReason } from "@todou/shared";
 import { and, eq, gt, inArray, max, ne, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import type { UserRow } from "../auth/pat.ts";
@@ -22,6 +22,7 @@ import {
   crossRefVisibleCondition,
   type VisibleProjects,
 } from "./cross-references.ts";
+import { type MuteContext, silenced } from "./mutes.ts";
 import { live } from "./trash.ts";
 
 /**
@@ -129,6 +130,13 @@ export function frontierJoin(userId: number, projectId: PgColumn) {
  * `projectIds` is a set because the inbox asks about every project sharing one
  * database in a single pass (T-278). Callers looking at one project pass
  * `[project.id]`; issue ids are unique per database, so nothing crosses.
+ *
+ * `silenced` (T-372) is a separate layer on top: the unread verdicts above
+ * are untouched, and the map only says which of these cards the mute gate
+ * currently holds quiet — `unread` staying truthful underneath is what makes
+ * "how much piled up while muted" answerable later. `latestForeign` comes
+ * off the same three scans: max comment date, the top post's date, max
+ * visible-event date — no extra pass.
  */
 export async function unreadIssueState(
   db: Db,
@@ -136,18 +144,29 @@ export async function unreadIssueState(
   userId: number,
   issueIds: number[],
   visible: VisibleProjects,
-): Promise<{ unread: Set<number>; counts: Map<number, number> }> {
+  mutes: MuteContext,
+): Promise<{
+  unread: Set<number>;
+  counts: Map<number, number>;
+  silenced: Map<number, MuteReason>;
+}> {
   // Runs even for an empty issue set: creating the frontier is this call's
   // side effect on a project the user has now looked at (T-151), and the
   // joins below have nothing to read without it.
   const frontiers = await ensureFrontiers(db, projectIds, userId);
-  if (issueIds.length === 0) return { unread: new Set(), counts: new Map() };
+  if (issueIds.length === 0) {
+    return { unread: new Set(), counts: new Map(), silenced: new Map() };
+  }
 
   // The per-issue threshold lives in SQL so the count and the boolean come
   // from one comparison — comparing driver Dates in JS would truncate the
   // stored microseconds and let the two drift on sub-millisecond activity.
   const commentCounts = await db
-    .select({ issueId: comments.issueId, n: sql<number>`count(*)` })
+    .select({
+      issueId: comments.issueId,
+      n: sql<number>`count(*)`,
+      latest: max(comments.createdAt),
+    })
     .from(comments)
     .leftJoin(
       issueReads,
@@ -166,13 +185,19 @@ export async function unreadIssueState(
     )
     .groupBy(comments.issueId);
   const counts = new Map(commentCounts.map((r) => [r.issueId, Number(r.n)]));
+  // The muted gate's `latestForeign` takes the newest *unread* comment — the
+  // same threshold the count just used, grouped for free.
+  const commentLatest = new Map<number, Date>();
+  for (const r of commentCounts) {
+    if (r.latest !== null) commentLatest.set(r.issueId, r.latest);
+  }
 
   // The top post, on the same threshold and by the same reasoning — a card
   // is one row, not a group, so it contributes at most 1. Only `created_at`
   // is read: editing a body is a revision event, not a fresh first comment,
   // and must not relight a card the reader has already been through.
   const freshIssues = await db
-    .select({ issueId: issues.id })
+    .select({ issueId: issues.id, createdAt: issues.createdAt })
     .from(issues)
     .leftJoin(
       issueReads,
@@ -187,8 +212,12 @@ export async function unreadIssueState(
         sql`${issues.createdAt} > coalesce(${issueReads.lastSeenAt}, ${readFrontiers.frontierAt})`,
       ),
     );
-  for (const { issueId } of freshIssues) {
+  for (const { issueId, createdAt } of freshIssues) {
     counts.set(issueId, (counts.get(issueId) ?? 0) + 1);
+    const prev = commentLatest.get(issueId);
+    if (prev === undefined || createdAt > prev) {
+      commentLatest.set(issueId, createdAt);
+    }
   }
 
   // `projectId` comes back so the read-position fallback below knows whose
@@ -216,12 +245,29 @@ export async function unreadIssueState(
 
   const unread = new Set(counts.keys());
 
-  const latestForeign = new Map<number, { at: Date; projectId: number }>();
+  // The read-position fallback now runs for every card that got an event
+  // row, not only the ones still pending an unread verdict: the mute gate
+  // needs `latestForeign` even on cards the count already called unread.
+  // The issue_reads query pays for that only where it matters — its id list
+  // widens beyond event-holding unread candidates by exactly the cards
+  // carrying an `until_activity` mute; a reader with none of those spends
+  // no extra query at all.
+  const eventLatest = new Map<number, Date>();
+  const eventProject = new Map<number, number>();
+  const fallbackIds = new Set<number>();
   for (const { issueId, projectId, latest } of latestEvents) {
-    if (latest === null || unread.has(issueId)) continue;
-    latestForeign.set(issueId, { at: latest, projectId });
+    if (latest === null) continue;
+    eventLatest.set(issueId, latest);
+    eventProject.set(issueId, projectId);
+    if (!unread.has(issueId)) fallbackIds.add(issueId);
   }
-  if (latestForeign.size > 0) {
+  for (const [issueId, mute] of mutes.issueMutes) {
+    if (mute.mode === "until_activity" && eventLatest.has(issueId)) {
+      fallbackIds.add(issueId);
+    }
+  }
+  const lastSeen = new Map<number, Date>();
+  if (fallbackIds.size > 0) {
     const readRows = await db
       .select({
         issueId: issueReads.issueId,
@@ -231,16 +277,50 @@ export async function unreadIssueState(
       .where(
         and(
           eq(issueReads.userId, userId),
-          inArray(issueReads.issueId, [...latestForeign.keys()]),
+          inArray(issueReads.issueId, [...fallbackIds]),
         ),
       );
-    const lastSeen = new Map(readRows.map((r) => [r.issueId, r.lastSeenAt]));
-    for (const [issueId, { at, projectId }] of latestForeign) {
-      const threshold = lastSeen.get(issueId) ?? frontiers.get(projectId);
-      if (threshold !== undefined && at > threshold) unread.add(issueId);
+    for (const r of readRows) lastSeen.set(r.issueId, r.lastSeenAt);
+  }
+  for (const issueId of fallbackIds) {
+    const at = eventLatest.get(issueId);
+    const projectId = eventProject.get(issueId);
+    if (at === undefined || projectId === undefined) continue;
+    const threshold = lastSeen.get(issueId) ?? frontiers.get(projectId);
+    if (threshold !== undefined && at > threshold) unread.add(issueId);
+  }
+
+  // The gate itself. A card can only be silenced by its own mute row or by
+  // its project being muted, so the per-card work runs over the mute rows
+  // and the muted projects' cards, never the whole page — a reader with no
+  // mutes computes nothing here. `latestForeign` is whichever of the three
+  // scans saw the newest foreign activity above the reader's threshold;
+  // undefined means none did, which `until_activity` reads as "still quiet".
+  const silencedOut = new Map<number, MuteReason>();
+  const latestForeignOf = (issueId: number): Date | undefined => {
+    const comment = commentLatest.get(issueId);
+    const event = eventLatest.get(issueId);
+    if (comment === undefined) return event;
+    if (event === undefined || comment >= event) return comment;
+    return event;
+  };
+  if (mutes.mutedProjects.size > 0 || mutes.issueMutes.size > 0) {
+    // Card->project pairs for the page, read once: a project mute reaches
+    // every card of the project, including ones no event row mentions.
+    const rows = await db
+      .select({ id: issues.id, projectId: issues.projectId })
+      .from(issues)
+      .where(inArray(issues.id, issueIds));
+    for (const { id, projectId } of rows) {
+      const reason = silenced(
+        mutes.issueMutes.get(id),
+        mutes.mutedProjects.has(projectId),
+        latestForeignOf(id),
+      );
+      if (reason !== null) silencedOut.set(id, reason);
     }
   }
-  return { unread, counts };
+  return { unread, counts, silenced: silencedOut };
 }
 
 /**

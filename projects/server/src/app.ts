@@ -30,6 +30,7 @@ import { issueRoutes } from "./routes/issues.ts";
 import { labelRoutes } from "./routes/labels.ts";
 import { meRoutes } from "./routes/me.ts";
 import { metadataRoutes } from "./routes/metadata.ts";
+import { muteRoutes } from "./routes/mutes.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { referenceRoutes } from "./routes/references.ts";
 import { searchRoutes } from "./routes/search.ts";
@@ -161,6 +162,7 @@ export function createApp(ctx: AppContext) {
   api.route("/", activityRoutes());
   api.route("/", meRoutes());
   api.route("/", inboxRoutes());
+  api.route("/", muteRoutes());
   api.route("/", userRoutes());
   api.route("/agents", agentRoutes());
   api.route("/projects", projectRoutes());

@@ -48,6 +48,7 @@ export const CAPABILITIES = [
   { id: "project.stream", minRole: "reader", enforce: "gate" },
   { id: "project.update", minRole: "admin", enforce: "gate" },
   { id: "project.delete", minRole: "admin", enforce: "gate" },
+  { id: "project.mute", minRole: "reader", enforce: "gate" },
 
   { id: "member.list", minRole: "reader", enforce: "gate" },
   { id: "member.set", minRole: "admin", enforce: "gate" },
@@ -79,6 +80,7 @@ export const CAPABILITIES = [
   { id: "issue.count", minRole: "reader", enforce: "gate" },
   { id: "issue.read", minRole: "reader", enforce: "addressed" },
   { id: "issue.mark_read", minRole: "reader", enforce: "gate" },
+  { id: "issue.mute", minRole: "reader", enforce: "gate" },
   { id: "issue.create", minRole: "reporter", enforce: "gate" },
   // `PATCH issue` carries five fields behind one gate, so it takes two
   // entries: `issue.update` opens the endpoint, `issue.triage` is what the

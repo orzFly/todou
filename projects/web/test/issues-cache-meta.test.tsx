@@ -65,6 +65,7 @@ const item = (number: number, statusId: number): IssueListItem => ({
   deleted_by: null,
   unread: false,
   unread_comments: 0,
+  muted: null,
   moves: [],
 });
 
@@ -128,6 +129,7 @@ function stubServer(): string[] {
       });
     }
     if (path === "/api/me/prefs") return jsonOf({});
+    if (path === "/api/me/mutes") return jsonOf({ issues: [], projects: [] });
     if (path === "/api/me") {
       return jsonOf({
         id: 1,

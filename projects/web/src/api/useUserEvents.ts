@@ -305,6 +305,11 @@ export function meInvalidations(event: MeEvent): Invalidation[] {
     case "prefs":
       // show_weak_unread decides which rows /me/inbox returns at all.
       return [refetch(["inbox"]), refetch(["me-prefs"])];
+    case "mutes":
+      // A mute moves rows in and out of /me/inbox and repaints the unread
+      // dots in the lists; mutesQuery is the stored setting the controls
+      // read. Same coarse-grained set reads_swept uses.
+      return [refetch(["mutes"]), refetch(["inbox"]), refetch(["issues"])];
   }
 }
 

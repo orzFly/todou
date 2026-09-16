@@ -333,6 +333,7 @@ describe("copyIssueTree", () => {
       "issue_events",
       "issue_labels",
       "issue_metadata",
+      "issue_mutes",
       "issue_reads",
       "pending_uploads",
       "revisions",
@@ -341,7 +342,7 @@ describe("copyIssueTree", () => {
     ]);
     expect(
       ISSUE_CHILD_TABLES.filter((entry) => !entry.copied).map((e) => e.name),
-    ).toEqual(["issue_reads", "pending_uploads"]);
+    ).toEqual(["issue_reads", "issue_mutes", "pending_uploads"]);
   });
 
   it("covers every table the schema hangs off an issue", () => {

@@ -8,6 +8,7 @@ import {
   issueEvents,
   issueLabels,
   issueMetadata,
+  issueMutes,
   issueReads,
   issues,
   pendingUploads,
@@ -142,6 +143,15 @@ export const ISSUE_CHILD_TABLES: ReadonlyArray<{
     copied: false,
     clearSource: (db, id) =>
       db.delete(issueReads).where(eq(issueReads.issueId, id)),
+  },
+  {
+    // A mute is the reader's own relation to this card in this project
+    // (T-372); like the read position above, it does not follow a move —
+    // but the source row must go so the tombstone holds nothing.
+    name: "issue_mutes",
+    copied: false,
+    clearSource: (db, id) =>
+      db.delete(issueMutes).where(eq(issueMutes.issueId, id)),
   },
   {
     name: "pending_uploads",

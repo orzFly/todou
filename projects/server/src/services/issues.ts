@@ -65,6 +65,7 @@ import {
 } from "./cursor.ts";
 import { toLabel } from "./labels.ts";
 import { metadataEntriesByIssue, metadataRowsFor } from "./metadata.ts";
+import { loadMuteContext } from "./mutes.ts";
 import { unreadIssueState } from "./reads.ts";
 import {
   recordCrossReferences,
@@ -148,6 +149,7 @@ export function toIssue(bundle: IssueBundle): Issue {
     // Per-viewer fields; only listIssues overrides them (T-46, T-77).
     unread: false,
     unread_comments: 0,
+    muted: null,
     deleted_at: bundle.row.deletedAt?.toISOString() ?? null,
     deleted_by: bundle.deletedBy,
     moves: bundle.moves,
@@ -778,18 +780,28 @@ export async function listIssues(
   const bundles = await bundleIssues(ctx, db, [project.id], page, actor, {
     metadata: query.metadata,
   });
-  const { unread, counts } = await unreadIssueState(
+  const visible = await visibleProjects(ctx, actor);
+  const mutes = await loadMuteContext(
+    ctx.router.system(),
+    db,
+    actor.id,
+    [project.id],
+    page.map((r) => r.id),
+  );
+  const { unread, counts, silenced } = await unreadIssueState(
     db,
     [project.id],
     actor.id,
     page.map((r) => r.id),
-    await visibleProjects(ctx, actor),
+    visible,
+    mutes,
   );
   return {
     items: bundles.map((b) => ({
       ...toIssue(b),
       unread: unread.has(b.row.id),
       unread_comments: counts.get(b.row.id) ?? 0,
+      muted: silenced.get(b.row.id) ?? null,
     })),
     next_cursor,
   };

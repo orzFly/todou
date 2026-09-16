@@ -321,6 +321,14 @@ describe("meInvalidations (T-275)", () => {
       { key: ["me-prefs"], scope: "refetch" },
     ]);
   });
+
+  it("refetches mutes, the inbox and every list on a mute change", () => {
+    expect(meInvalidations({ kind: "mutes" })).toEqual([
+      { key: ["mutes"], scope: "refetch" },
+      { key: ["inbox"], scope: "refetch" },
+      { key: ["issues"], scope: "refetch" },
+    ]);
+  });
 });
 
 describe("coalesceBatch (T-275)", () => {

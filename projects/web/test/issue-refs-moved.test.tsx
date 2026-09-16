@@ -47,6 +47,7 @@ const issue = (
   spec_unresolved_comments: 0,
   unread: false,
   unread_comments: 0,
+  muted: null,
   deleted_at: null,
   deleted_by: null,
   moves: [],

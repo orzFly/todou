@@ -509,3 +509,23 @@ export const readFrontiers = pgTable(
     uniqueIndex("read_frontiers_project_user_idx").on(t.projectId, t.userId),
   ],
 );
+
+// Per-user mutes (T-372): the read-side gate's stored setting. A mute is the
+// reader's own relation to this card in this project — never denormalized,
+// never announced on the timeline, and not carried across a move (see
+// ISSUE_CHILD_TABLES). `muted_at` is the boundary `until_activity` compares
+// against; re-muting pushes it forward.
+export const issueMutes = pgTable(
+  "issue_mutes",
+  {
+    id: id(),
+    projectId: projectId(),
+    issueId: bigint("issue_id", { mode: "number" })
+      .notNull()
+      .references(() => issues.id, { onDelete: "cascade" }),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    mode: text("mode", { enum: ["forever", "until_activity"] }).notNull(),
+    mutedAt: timestamp("muted_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [uniqueIndex("issue_mutes_issue_user_idx").on(t.issueId, t.userId)],
+);

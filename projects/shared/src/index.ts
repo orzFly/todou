@@ -27,6 +27,7 @@ export * from "./schemas/inbox.ts";
 export * from "./schemas/issue.ts";
 export * from "./schemas/metadata.ts";
 export * from "./schemas/move.ts";
+export * from "./schemas/mute.ts";
 export * from "./schemas/prefs.ts";
 export * from "./schemas/project.ts";
 export * from "./schemas/references.ts";

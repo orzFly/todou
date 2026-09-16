@@ -70,6 +70,7 @@ export async function notifyIssueRead(
       project: project.slug,
       issue_number: issueNumber,
       inbox_row: await inboxRowState(
+        ctx.router.system(),
         db,
         project,
         actor,
@@ -115,4 +116,17 @@ export function notifyPrefsChanged(
 ): void {
   if (!ctx.bus.hasMeSubscriber(actor.id)) return;
   ctx.bus.publishMe(actor.id, { kind: "prefs", origin });
+}
+
+/**
+ * A mute moved in or out. Reaches as far as prefs do: /me/inbox rows,
+ * unread markers in every list, and the stored settings the controls read.
+ */
+export function notifyMutesChanged(
+  ctx: AppContext,
+  actor: UserRow,
+  origin: string | undefined,
+): void {
+  if (!ctx.bus.hasMeSubscriber(actor.id)) return;
+  ctx.bus.publishMe(actor.id, { kind: "mutes", origin });
 }

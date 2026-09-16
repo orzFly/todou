@@ -25,6 +25,7 @@ import {
 import { LabelChips } from "@/components/issue/label-chip.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
+import { ProjectMuteButton } from "@/components/project-mute-button.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -106,6 +107,7 @@ export function BoardPage() {
             the endpoint sweeps a project and not a column (T-100). */}
         <div className="flex shrink-0 justify-end">
           <MarkAllReadButton slug={slug} scopeName="this project" />
+          <ProjectMuteButton slug={slug} />
         </div>
         {/* 240px is the floor a cramped window degrades against: this row
             bursts the canvas and overflows visibly, so the page scrolls
@@ -246,6 +248,7 @@ export function BoardCardContent({
             number={issue.number}
             unread={issue.unread}
             unreadComments={issue.unread_comments}
+            muted={issue.muted}
           />
         </span>
       )}

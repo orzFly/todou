@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Cursor, Id, Timestamp } from "./common.ts";
 import { IssueMetadataEntry, MetadataNamespaceSelector } from "./metadata.ts";
+import { MuteReason } from "./mute.ts";
 import { Label, ProjectSlug, Status, StatusCategory } from "./project.ts";
 import { UserRef } from "./user.ts";
 
@@ -65,6 +66,13 @@ export const Issue = z.object({
    * the default 0. Defaults on parse so clients tolerate older servers.
    */
   unread_comments: z.number().int().nonnegative().default(0),
+  /**
+   * 此刻这张卡对该读者是否被静音，以及静音从哪来（T-372）。
+   * `until_activity` 的卡一旦有了 mute 之后的新动静就报 null——它已经
+   * 重新响了。与 `unread` 一样只有列表响应会算它，别的路径取默认值。
+   * 有默认值，所以旧服务器的响应照样解析得动。
+   */
+  muted: MuteReason.nullable().default(null),
   /**
    * Trash state (T-145): when the card is in the trash, when it went in and
    * who put it there. Only ever non-null on a read path the viewer may see

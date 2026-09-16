@@ -47,6 +47,7 @@ function makeItem(
     deleted_by: null,
     unread: true,
     unread_comments: 1,
+    muted: null,
     moves: [],
     project: { slug, name: `Project ${slug}` },
     last_activity_at: "2026-01-02T00:00:00Z",
@@ -79,10 +80,12 @@ describe("InboxPage", () => {
         makeItem("greenhouse", 42, {
           open_questions: 1,
           unread_comments: 3,
+          muted: null,
         }),
         makeItem("potato-field", 18, {
           unread: false,
           unread_comments: 0,
+          muted: null,
           pending_spec_review: true,
           spec_version: 2,
           spec_review_status: "unreviewed",

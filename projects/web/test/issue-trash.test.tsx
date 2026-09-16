@@ -60,6 +60,7 @@ const item = (
   deleted_by: null,
   unread: false,
   unread_comments: 0,
+  muted: null,
   moves: [],
   ...overrides,
 });
