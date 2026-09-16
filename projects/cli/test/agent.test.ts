@@ -1,4 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -165,5 +171,60 @@ describe("agent opt-out-uds / opt-in-uds", () => {
     await runCli(["agent", "opt-in-uds"], { env });
     expect(loadCliConfig(env)).toEqual(seeded);
     expect(readFileSync(configPath(env), "utf8")).not.toContain("[agent]");
+  });
+});
+
+describe("agent opt-in against a fragment's opt-out (T-366)", () => {
+  const SOCKET_ENV = {
+    CLAUDECODE: "1",
+    CLAUDE_CODE_MESSAGING_SOCKET: "/run/cc-socks/4242.sock",
+  };
+
+  it("writes an explicit true that outranks the fragment's false", async () => {
+    const env = { XDG_CONFIG_HOME: join(dir, "frag-optout") };
+    mkdirSync(join(dir, "frag-optout", "todou"), { recursive: true });
+    writeFileSync(
+      join(dir, "frag-optout", "todou", "config.frag.toml"),
+      "[agent]\nfollow_uds = false\n",
+    );
+
+    // The fragment opts out on its own.
+    expect(await canIFollow({ ...env, ...SOCKET_ENV })).toBe(
+      expected({
+        harness: "claude-code",
+        socket: "/run/cc-socks/4242.sock",
+        optedOut: true,
+      }),
+    );
+
+    const back = await runCli(["agent", "opt-in-uds"], { env });
+    expect(back.exitCode).toBe(0);
+    expect(back.stdout).toContain("--follow=uds advised again");
+    expect(back.stdout).toContain("still says follow_uds = false");
+    expect(readFileSync(configPath(env), "utf8")).toContain(
+      "follow_uds = true",
+    );
+    expect(await canIFollow({ ...env, ...SOCKET_ENV })).toBe(
+      expected({
+        harness: "claude-code",
+        socket: "/run/cc-socks/4242.sock",
+        optedOut: false,
+      }),
+    );
+  });
+
+  it("opt-out judged on the merged view still lands in config.toml", async () => {
+    const env = { XDG_CONFIG_HOME: join(dir, "frag-then-own") };
+    mkdirSync(join(dir, "frag-then-own", "todou"), { recursive: true });
+    writeFileSync(
+      join(dir, "frag-then-own", "todou", "config.frag.toml"),
+      '[servers."http://stub.test"]\ntoken = "todou_pat_frag"\n',
+    );
+    const out = await runCli(["agent", "opt-out-uds"], { env });
+    expect(out.exitCode).toBe(0);
+    // The fragment's server entry was not flattened into config.toml.
+    const written = readFileSync(configPath(env), "utf8");
+    expect(written).not.toContain("stub.test");
+    expect(written).toContain("follow_uds = false");
   });
 });

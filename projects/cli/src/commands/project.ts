@@ -9,7 +9,7 @@ import {
 import { Command, Option } from "clipanion";
 import { stringify } from "smol-toml";
 import { ApiCommand, type CliContext, ProjectCommand } from "../api-command.ts";
-import { loadCliConfig, saveCliConfig } from "../config.ts";
+import { configPath, loadCliConfigSet, saveCliConfig } from "../config.ts";
 import { gitRemoteUrl, gitToplevel } from "../context.ts";
 import {
   DIR_CONFIG_NAMES,
@@ -253,22 +253,43 @@ export class ProjectLinkCommand extends ApiCommand {
     const slug = (await client.getProject(this.slug)).slug;
 
     if (!useLocal) {
-      const config = loadCliConfig(this.context.env);
-      config.bindings = config.bindings.filter((b) => b.remote !== remote);
-      config.bindings.push({
-        remote: remote as string,
-        server,
-        project: slug,
-      });
-      saveCliConfig(config, this.context.env);
+      const { own, files } = loadCliConfigSet(this.context.env);
+      // The binding is written to `config.toml` alone; with fragments in
+      // play the merged view's bindings belong to several files at once.
+      const previous = own.bindings.filter((b) => b.remote !== remote);
+      own.bindings = [
+        ...previous,
+        { remote: remote as string, server, project: slug },
+      ];
+      saveCliConfig(own, this.context.env);
       this.note(`linked ${remote} → ${server} · ${slug}`);
+      // Concat-plus-later-wins means this file's binding outranks a
+      // fragment's; say so, or a stale binding in a fragment reads as if
+      // the link did not take.
+      const fragment = [...files]
+        .reverse()
+        .find(
+          (f) =>
+            f.path !== configPath(this.context.env) &&
+            Array.isArray(f.doc.bindings) &&
+            (f.doc.bindings as Array<{ remote?: string }>).some(
+              (b) => b.remote === remote,
+            ),
+        );
+      if (fragment) {
+        this.note(
+          `note: ${fragment.path} also binds ${remote}; the new binding in ${configPath(this.context.env)} takes effect`,
+        );
+      }
       return;
     }
 
     const cwd = this.context.cwd;
     const file = dirConfigFileIn(linkTarget(cwd));
     // A full rewrite: the only legal keys are these two, so anything else
-    // in the file was already being ignored on read.
+    // in the file was already being ignored on read. The server is written
+    // as the origin — a name is this machine's user config, and this file
+    // may be committed and travel to a machine that never defined it.
     writeFileSync(file, `${stringify({ server, project: slug })}\n`);
     this.note(`linked ${displayPath(file, cwd)} → ${server} · ${slug}`);
     this.note(
@@ -357,7 +378,6 @@ export class ProjectUnlinkCommand extends Command<CliContext> {
         throw new CliError(`no directory config at ${target}`);
       }
     }
-
     const remote = gitRemoteUrl(cwd);
     const checked = `checked ${CONFIG_VARIANT} and ${PLAIN_VARIANT} at ${target}, and the user-config bindings`;
     if (!remote) {
@@ -368,17 +388,53 @@ export class ProjectUnlinkCommand extends Command<CliContext> {
           : checked,
       );
     }
-    const config = loadCliConfig(this.context.env);
-    const remaining = config.bindings.filter((b) => b.remote !== remote);
-    if (remaining.length === config.bindings.length) {
+    const { own, files } = loadCliConfigSet(this.context.env);
+    const remaining = own.bindings.filter((b) => b.remote !== remote);
+    if (remaining.length === own.bindings.length) {
+      // The binding may still exist — in a fragment this command must not
+      // touch. "no binding for <remote>" would be a lie there; the file
+      // that holds it is the fact the reader needs.
+      const fragment = [...files]
+        .reverse()
+        .find(
+          (f) =>
+            f.path !== configPath(this.context.env) &&
+            Array.isArray(f.doc.bindings) &&
+            (f.doc.bindings as Array<{ remote?: string }>).some(
+              (b) => b.remote === remote,
+            ),
+        );
+      if (fragment) {
+        throw new CliError(
+          `binding for ${remote} comes from ${fragment.path}`,
+          `delete it there — this command only writes ${configPath(this.context.env)}`,
+        );
+      }
       throw new CliError(
         `no binding for ${remote}`,
         this.global ? undefined : checked,
       );
     }
-    config.bindings = remaining;
-    saveCliConfig(config, this.context.env);
+    own.bindings = remaining;
+    saveCliConfig(own, this.context.env);
     this.context.stderr.write(`unlinked ${remote}\n`);
+    // Concat order put config.toml last, so removing its binding hands the
+    // remote back to whatever a fragment still holds — say so. Judged on
+    // the files themselves: `config` and `own` come from two separate zod
+    // parses, so object identity between them never holds.
+    const stillBound = files.some(
+      (f) =>
+        f.path !== configPath(this.context.env) &&
+        Array.isArray(f.doc.bindings) &&
+        (f.doc.bindings as Array<{ remote?: string }>).some(
+          (b) => b.remote === remote,
+        ),
+    );
+    if (stillBound) {
+      this.context.stderr.write(
+        `note: a binding for ${remote} remains in a config fragment and takes effect now\n`,
+      );
+    }
     return 0;
   }
 }

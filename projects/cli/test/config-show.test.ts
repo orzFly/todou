@@ -12,6 +12,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import type { ConfigReport } from "../src/commands/config.ts";
 import type { CliConfig } from "../src/config.ts";
 import { configPath, saveCliConfig } from "../src/config.ts";
+import { displayPath } from "../src/dir-config.ts";
 import { runCli } from "./harness.ts";
 
 /**
@@ -140,17 +141,21 @@ describe("config show", () => {
       ].join("\n"),
     );
 
-    // Same job, same rule: `toEqual`, never `toMatchObject`.
+    // Same job, same rule: `toEqual`, never `toMatchObject` — widened for
+    // the new fields the report carries since names and fragments (T-366).
     expect(report).toEqual({
       version: "0.0.0-test",
       config_path: configPath(env),
       config_exists: true,
+      config_files: [configPath(env)],
       dir_config: null,
       git_remote: null,
       context: {
         server: "https://todou.example",
         server_source: "default_server",
         server_instead_of: null,
+        server_name: null,
+        server_unknown_name: false,
         token_source: "default",
         token_profile: null,
         project: null,
@@ -160,6 +165,7 @@ describe("config show", () => {
         {
           origin: "https://staging.example",
           active: false,
+          name: null,
           default_token: false,
           profiles: ["bot-one"],
           instead_of: [],
@@ -167,6 +173,7 @@ describe("config show", () => {
         {
           origin: "https://todou.example",
           active: true,
+          name: null,
           default_token: true,
           profiles: ["claude-code", "harness"],
           instead_of: [],
@@ -207,6 +214,8 @@ describe("config show", () => {
       server: "https://todou.example",
       server_source: "default_server",
       server_instead_of: null,
+      server_name: null,
+      server_unknown_name: false,
       token_source: "env-token",
       token_profile: null,
       project: null,
@@ -266,6 +275,7 @@ describe("config show", () => {
         remote,
         server: "https://todou.example",
         project: "bound",
+        source: configPath(env),
         active: true,
       },
     ]);
@@ -305,6 +315,7 @@ describe("config show", () => {
       {
         origin: "https://todou.example",
         active: true,
+        name: null,
         default_token: true,
         profiles: [],
         instead_of: [],
@@ -339,6 +350,8 @@ describe("config show", () => {
       server: null,
       server_source: null,
       server_instead_of: null,
+      server_name: null,
+      server_unknown_name: false,
       token_source: null,
       token_profile: null,
       project: null,
@@ -430,5 +443,280 @@ describe("the hint that replaces reading config.toml by hand", () => {
     });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("todou config show");
+  });
+});
+
+describe("config show with names and fragments (T-366)", () => {
+  /** A raw fragment file next to the seeded config.toml. */
+  function writeFragment(
+    env: Record<string, string>,
+    name: string,
+    body: string,
+  ) {
+    mkdirSync(join(String(env.XDG_CONFIG_HOME), "todou"), {
+      recursive: true,
+    });
+    writeFileSync(join(String(env.XDG_CONFIG_HOME), "todou", name), body);
+  }
+
+  const NAMED: CliConfig = {
+    // A name in default_server: the very spelling `via name` reports.
+    default_server: "work",
+    servers: {
+      "http://198.51.100.7/todou": {
+        name: "work",
+        token: SENTINELS.default,
+        tokens: {},
+        instead_of: [],
+      },
+      "https://staging.example": {
+        name: "home",
+        tokens: { "bot-one": SENTINELS.other },
+        instead_of: [],
+      },
+    },
+    bindings: [],
+  };
+
+  it("renders the name on server lines and via name on the context line", async () => {
+    const env = seed("named", NAMED);
+    const { human, report } = await show({ env });
+
+    expect(human).toContain(
+      "* http://198.51.100.7/todou — name: work · default token: set · profiles: none",
+    );
+    expect(human).toContain(
+      "  https://staging.example — name: home · default token: none · profiles: bot-one",
+    );
+    expect(human).toContain(
+      "  server: http://198.51.100.7/todou (default_server, via name work)",
+    );
+    expect(report.context.server_name).toBe("work");
+    expect(report.servers.map((s) => s.name)).toEqual(["work", "home"]);
+  });
+
+  it("lists every file in merge order and marks the write target", async () => {
+    const env = seed("fragments", TWO_SERVERS);
+    writeFragment(
+      env,
+      "config.10-work.toml",
+      '[servers."http://198.51.100.7/todou"]\nname = "work"\n',
+    );
+    writeFragment(
+      env,
+      "config.20-home.toml",
+      '[servers."https://staging.example"]\nname = "home"\n',
+    );
+    const { human, report } = await show({ env });
+
+    expect(human).toContain("user config:");
+    expect(human).toContain(
+      `  ${join(String(env.XDG_CONFIG_HOME), "todou", "config.10-work.toml")}`,
+    );
+    expect(human).toContain(
+      `  ${join(String(env.XDG_CONFIG_HOME), "todou", "config.20-home.toml")}`,
+    );
+    expect(human).toContain(`  ${configPath(env)} (write target)`);
+    expect(report.config_files).toEqual([
+      join(String(env.XDG_CONFIG_HOME), "todou", "config.10-work.toml"),
+      join(String(env.XDG_CONFIG_HOME), "todou", "config.20-home.toml"),
+      configPath(env),
+    ]);
+  });
+
+  it("names the fragment a binding came from on the binding line", async () => {
+    const remote = "git@git.example:org/repo.git";
+    const env = seed("frag-binding", TWO_SERVERS);
+    const fragment = join(
+      String(env.XDG_CONFIG_HOME),
+      "todou",
+      "config.work.toml",
+    );
+    writeFragment(
+      env,
+      "config.work.toml",
+      [
+        "[[bindings]]",
+        `remote = "${remote}"`,
+        'server = "https://staging.example"',
+        'project = "from-frag"',
+        "",
+      ].join("\n"),
+    );
+    const cwd = makeRepo("frag-bound", remote);
+    const { human, report } = await show({ env, cwd });
+
+    expect(human).toContain(
+      `* ${remote} → https://staging.example · project from-frag · from ${displayPath(fragment, cwd)}`,
+    );
+    expect(report.bindings).toEqual([
+      {
+        remote,
+        server: "https://staging.example",
+        project: "from-frag",
+        source: fragment,
+        active: true,
+      },
+    ]);
+  });
+
+  it("prints the whole report around an unknown server name", async () => {
+    // A name deleted from the config but still sitting in default_server:
+    // the state that most needs this command, which must not fail on it.
+    const env = {
+      XDG_CONFIG_HOME: join(dir, "unknown-name"),
+      TODOU_SERVER: "wrok",
+    };
+    mkdirSync(join(dir, "unknown-name", "todou"), { recursive: true });
+    writeFileSync(
+      configPath(env),
+      [
+        '[servers."http://198.51.100.7/todou"]',
+        'name = "work"',
+        `token = "${SENTINELS.default}"`,
+        "",
+      ].join("\n"),
+    );
+    const { human, report } = await show({ env });
+
+    expect(human).toContain("  server: wrok (TODOU_SERVER)");
+    expect(human).toContain(
+      "unknown server name: wrok is not a URL and matches no name above",
+    );
+    expect(human).toContain("servers:");
+    expect(human).toContain(
+      "http://198.51.100.7/todou — name: work · default token: set",
+    );
+    expect(report.context.server_unknown_name).toBe(true);
+    expect(report.context.server_name).toBeNull();
+  });
+
+  it("a real command fails readably on an unknown name", async () => {
+    const env = {
+      XDG_CONFIG_HOME: join(dir, "unknown-name-cmd"),
+      TODOU_SERVER: "wrok",
+    };
+    mkdirSync(join(dir, "unknown-name-cmd", "todou"), { recursive: true });
+    writeFileSync(
+      configPath(env),
+      [
+        '[servers."http://198.51.100.7/todou"]',
+        'name = "work"',
+        `token = "${SENTINELS.default}"`,
+        "",
+      ].join("\n"),
+    );
+    const result = await runCli(["whoami"], { env });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('unknown server "wrok"');
+    expect(result.stderr).toContain("known names: work");
+    assertNoSentinels(result.stdout + result.stderr);
+  });
+});
+
+describe("config show fragment fidelity (T-366 review)", () => {
+  /** A raw fragment next to whatever else the case seeds. */
+  function writeFragment(
+    env: Record<string, string>,
+    name: string,
+    body: string,
+  ) {
+    mkdirSync(join(String(env.XDG_CONFIG_HOME), "todou"), {
+      recursive: true,
+    });
+    writeFileSync(join(String(env.XDG_CONFIG_HOME), "todou", name), body);
+  }
+
+  it("lists a fragment when config.toml does not exist at all", async () => {
+    const env = { XDG_CONFIG_HOME: join(dir, "frag-only") };
+    const fragment = join(
+      String(env.XDG_CONFIG_HOME),
+      "todou",
+      "config.10-work.toml",
+    );
+    writeFragment(
+      env,
+      "config.10-work.toml",
+      [
+        '[servers."http://198.51.100.7/todou"]',
+        'name = "work"',
+        `token = "${SENTINELS.default}"`,
+        "",
+      ].join("\n"),
+    );
+    const { human, report } = await show({ env });
+
+    // The whole config comes from that one fragment; the header must say
+    // so instead of a single "config.toml (not found)" line.
+    expect(human).toContain("user config:");
+    expect(human).toContain(`  ${fragment}`);
+    expect(human).toContain(`  ${configPath(env)} (write target, not found)`);
+    expect(human).not.toMatch(/user config: \S+ \(not found\)/);
+    // config_files carries what was actually read; the missing write
+    // target is a rendered line, not a phantom file.
+    expect(report.config_files).toEqual([fragment]);
+  });
+
+  it("attributes each duplicate-remote row to its own file, stars the winner", async () => {
+    const remote = "git@git.example:org/repo.git";
+    const env = { XDG_CONFIG_HOME: join(dir, "dup-remote") };
+    const fragment = join(
+      String(env.XDG_CONFIG_HOME),
+      "todou",
+      "config.work.toml",
+    );
+    writeFragment(
+      env,
+      "config.work.toml",
+      [
+        "[[bindings]]",
+        `remote = "${remote}"`,
+        'server = "https://todou.example"',
+        'project = "from-frag"',
+        "",
+      ].join("\n"),
+    );
+    writeFragment(
+      env,
+      "config.toml",
+      [
+        "[[bindings]]",
+        `remote = "${remote}"`,
+        'server = "https://todou.example"',
+        'project = "from-own"',
+        "",
+      ].join("\n"),
+    );
+    const cwd = makeRepo("dup-bound", remote);
+    const { human, report } = await show({ env, cwd });
+
+    expect(human).toContain(
+      `  ${remote} → https://todou.example · project from-frag · from ${displayPath(fragment, cwd)}`,
+    );
+    expect(human).toContain(
+      `* ${remote} → https://todou.example · project from-own`,
+    );
+    // Exactly one starred binding row: the merged winner, not every row
+    // that happens to share the remote.
+    expect(
+      human.split("\n").filter((l) => l.startsWith("* ") && l.includes("→"))
+        .length,
+    ).toBe(1);
+    expect(report.bindings).toEqual([
+      {
+        remote,
+        server: "https://todou.example",
+        project: "from-frag",
+        source: fragment,
+        active: false,
+      },
+      {
+        remote,
+        server: "https://todou.example",
+        project: "from-own",
+        source: configPath(env),
+        active: true,
+      },
+    ]);
   });
 });

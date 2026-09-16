@@ -4,6 +4,7 @@ import type { CliConfig, Env } from "../config.ts";
 import {
   configPath,
   loadCliConfig,
+  loadCliConfigSet,
   saveCliConfig,
   tildePath,
 } from "../config.ts";
@@ -86,14 +87,17 @@ export class AgentOptOutUdsCommand extends Command<CliContext> {
   async execute(): Promise<number | undefined> {
     try {
       const env = this.context.env;
-      const config = loadCliConfig(env);
+      // Judged on the merged view — a fragment's opt-out counts — while
+      // the write lands in `config.toml` alone.
+      const { config, own } = loadCliConfigSet(env);
       if (optedOut(config)) {
         this.context.stdout.write(
           `--follow=uds was already opted out · ${whereItLives(env)}\n`,
         );
         return 0;
       }
-      saveCliConfig({ ...config, agent: { follow_uds: false } }, env);
+      own.agent = { follow_uds: false };
+      saveCliConfig(own, env);
       this.context.stdout.write(
         `--follow=uds opted out · ${whereItLives(env)}\n` +
           "`todou agent can-i-follow` will stop offering it; " +
@@ -120,20 +124,35 @@ export class AgentOptInUdsCommand extends Command<CliContext> {
   async execute(): Promise<number | undefined> {
     try {
       const env = this.context.env;
-      const config = loadCliConfig(env);
+      const { config, own, files } = loadCliConfigSet(env);
       if (config.agent === undefined) {
         this.context.stdout.write(
           `--follow=uds was already advised · ${whereItLives(env)}\n`,
         );
         return 0;
       }
-      // Removed rather than set to `true`: `saveCliConfig` rewrites the whole
-      // document, and an `[agent]` section left behind saying the default is
-      // one more thing for the next reader to wonder about.
-      const { agent: _removed, ...rest } = config;
-      saveCliConfig(rest, env);
+      // A fragment's `false` cannot be deleted from here; only an explicit
+      // `true` in config.toml outranks it. Absent any fragment, the key is
+      // removed rather than set — `saveCliConfig` rewrites the whole
+      // document, and an `[agent]` section left behind saying the default
+      // is one more thing for the next reader to wonder about.
+      const fragmentOptOut = files.some(
+        (f) =>
+          f.path !== configPath(env) &&
+          (f.doc.agent as { follow_uds?: unknown } | undefined)?.follow_uds ===
+            false,
+      );
+      if (fragmentOptOut) {
+        own.agent = { follow_uds: true };
+      } else {
+        delete own.agent;
+      }
+      saveCliConfig(own, env);
       this.context.stdout.write(
-        `--follow=uds advised again · ${whereItLives(env)}\n`,
+        `--follow=uds advised again · ${whereItLives(env)}\n` +
+          (fragmentOptOut
+            ? `note: a config fragment still says follow_uds = false; ${whereItLives(env)} now overrides it\n`
+            : ""),
       );
       return 0;
     } catch (error) {

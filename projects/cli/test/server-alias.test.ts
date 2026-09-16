@@ -5,9 +5,12 @@ import {
   type AliasRow,
   baseRemainder,
   buildAliasTable,
+  buildNameTable,
   coveringBase,
   localizeIssueUrl,
+  resolveServerInput,
   rewriteServer,
+  unknownServerError,
 } from "../src/server-alias.ts";
 
 const API = "http://gateway.test/todou";
@@ -287,5 +290,97 @@ describe("localizeIssueUrl", () => {
         "https://public.test/s",
       ]),
     ).toBe("/projects/p/issues/1");
+  });
+});
+
+describe("names (T-366)", () => {
+  const config: CliConfig = {
+    default_server: "http://gateway.test/todou",
+    servers: {
+      "http://gateway.test/todou": {
+        name: "work",
+        tokens: {},
+        instead_of: ["https://todou.example"],
+      },
+      "https://home.example": { name: "home", tokens: {}, instead_of: [] },
+    },
+    bindings: [],
+  };
+
+  it("buildNameTable maps each name to its owning origin", () => {
+    expect(buildNameTable(config)).toEqual(
+      new Map([
+        ["work", ["http://gateway.test/todou"]],
+        ["home", ["https://home.example"]],
+      ]),
+    );
+  });
+
+  it("resolves a name to its origin and reports viaName", () => {
+    expect(
+      resolveServerInput("work", {
+        names: buildNameTable(config),
+        aliases: buildAliasTable(config),
+      }),
+    ).toEqual({ server: "http://gateway.test/todou", viaName: "work" });
+  });
+
+  it("never consults the name table for a URL input", () => {
+    const names = new Map([["todou.example", ["https://attacker.test"]]]);
+    expect(
+      resolveServerInput("https://todou.example", { names, aliases: [] }),
+    ).toEqual({ server: "https://todou.example" });
+  });
+
+  it("returns an unknown name unchanged instead of throwing", () => {
+    expect(
+      resolveServerInput("wrok", {
+        names: buildNameTable(config),
+        aliases: buildAliasTable(config),
+      }),
+    ).toEqual({ server: "wrok" });
+  });
+
+  it("throws on a duplicated name only when that name is used", () => {
+    const dup: CliConfig = {
+      ...config,
+      servers: {
+        ...config.servers,
+        "https://other.example": { name: "work", tokens: {}, instead_of: [] },
+      },
+    };
+    const names = buildNameTable(dup);
+    expect(names.get("work")).toEqual([
+      "http://gateway.test/todou",
+      "https://other.example",
+    ]);
+    expect(() => resolveServerInput("work", { names, aliases: [] })).toThrow(
+      CliError,
+    );
+    // An untouched name still resolves; nothing else fails.
+    expect(resolveServerInput("home", { names, aliases: [] })).toEqual({
+      server: "https://home.example",
+      viaName: "home",
+    });
+  });
+
+  it("name matching is case-sensitive", () => {
+    const names = buildNameTable(config);
+    expect(resolveServerInput("Work", { names, aliases: [] })).toEqual({
+      server: "Work",
+    });
+  });
+
+  it("unknownServerError lists the known names", () => {
+    const error = unknownServerError("wrok", buildNameTable(config));
+    expect(error).toBeInstanceOf(CliError);
+    expect(error.message).toBe('unknown server "wrok"');
+    expect(error.hint).toContain("work, home");
+    expect(error.hint).toContain("full origin");
+  });
+
+  it("unknownServerError says so when no names exist at all", () => {
+    const error = unknownServerError("wrok", new Map());
+    expect(error.hint).toContain("no server names are configured");
   });
 });

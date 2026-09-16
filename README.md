@@ -129,6 +129,22 @@ todou login https://todou.example --no-browser
 #   [servers."http://198.51.100.7/todou"]
 #   instead_of = ["https://todou.example"]
 
+# Two servers in one CLI? Give each a short name — then --server work,
+# TODOU_SERVER=work, default_server = "work" and `todou login work` all
+# take it (names are case-sensitive; anything http(s):// stays a URL):
+#   [servers."https://todou.example"]
+#   name = "work"
+#
+# Splitting credentials across machines? Files named config.*.toml beside
+# config.toml are read in filename order and deep-merged, with config.toml
+# last — so it always wins and is the only file the CLI ever writes back.
+# Tables merge key by key; arrays replace whole, except `bindings`, which
+# concatenate (later entries for the same remote win).
+#
+# Hand-written things — names, comments — therefore live safest in a
+# fragment: the CLI never rewrites those, while any `todou login` rewrites
+# config.toml from scratch and drops its comments.
+
 # Bind this git repository to a server/project (stored in the user
 # config, not the repo), then work from anywhere inside it:
 todou project link my-project

@@ -9,7 +9,13 @@ import {
 import { Command, Option } from "clipanion";
 import type { CliContext } from "../api-command.ts";
 import { systemClock } from "../clock.ts";
-import { loadCliConfig, normalizeServer, saveCliConfig } from "../config.ts";
+import {
+  configPath,
+  loadCliConfigSet,
+  normalizeServer,
+  saveCliConfig,
+  tildePath,
+} from "../config.ts";
 import { CliError, reportError } from "../errors.ts";
 import { detectAgentContext } from "../harness/index.ts";
 import {
@@ -19,7 +25,12 @@ import {
   waitForCallback,
 } from "../login-flow.ts";
 import { fetchWebOrigin } from "../resolve.ts";
-import { buildAliasTable, rewriteServer } from "../server-alias.ts";
+import {
+  buildAliasTable,
+  buildNameTable,
+  resolveServerInput,
+  unknownServerError,
+} from "../server-alias.ts";
 
 export class LoginCommand extends Command<CliContext> {
   static paths = [["login"]];
@@ -54,7 +65,11 @@ export class LoginCommand extends Command<CliContext> {
   async execute(): Promise<number | undefined> {
     try {
       const env = this.context.env;
-      const config = loadCliConfig(env);
+      // Judged on the merged view, written to `config.toml` alone: a
+      // fragment's profiles must not be flattened into the write target.
+      const { config, own, files } = loadCliConfigSet(env);
+      const names = buildNameTable(config);
+      const aliases = buildAliasTable(config);
       const given = this.server ?? config.default_server;
       if (!given) {
         throw new CliError(
@@ -62,14 +77,20 @@ export class LoginCommand extends Command<CliContext> {
           "usage: todou login <origin>, e.g. todou login https://todou.example",
         );
       }
-      // A token belongs on the entry the CLI will actually use, and the
-      // address a person logs in at may be an alias of it (T-311) — the
-      // public hostname, say, while requests go to the proxy. On a config
-      // with no aliases yet — every first login — the table is empty and
-      // this is inert.
-      const origin = normalizeServer(
-        rewriteServer(given, buildAliasTable(config)).server,
-      );
+      // A token belongs on the entry the CLI will actually use. The address
+      // a person logs in at may be an alias of it (T-311) — the public
+      // hostname, say, while requests go to the proxy — or a name (T-366).
+      // A name or alias resolves onto a key that is a URL by construction
+      // or not at all; an input that resolved by neither route must still
+      // be a URL, and the entry it lands on must be one too — a key that
+      // is not a URL cannot hold a reachable origin.
+      const resolved = resolveServerInput(given, { names, aliases });
+      if (resolved.viaName === undefined && resolved.from === undefined) {
+        if (!/^https?:\/\//.test(resolved.server)) {
+          throw unknownServerError(given, names);
+        }
+      }
+      const origin = normalizeServer(resolved.server);
       if (!/^https?:\/\//.test(origin)) {
         throw new CliError(`server must be an http(s) origin, got "${origin}"`);
       }
@@ -127,20 +148,41 @@ export class LoginCommand extends Command<CliContext> {
       });
       const me = await client.me();
 
-      const entry = config.servers[origin] ?? { tokens: {} };
+      const entry = own.servers[origin] ?? { tokens: {} };
       if (this.profile) {
         entry.tokens = { ...entry.tokens, [this.profile]: token };
       } else {
         entry.token = token;
       }
-      config.servers[origin] = entry;
-      config.default_server = origin;
-      saveCliConfig(config, env);
+      own.servers[origin] = entry;
+      own.default_server = origin;
+      saveCliConfig(own, env);
       this.context.stderr.write(
         `logged in to ${origin} as ${me.login}${
           this.profile ? ` (profile "${this.profile}")` : ""
         }\n`,
       );
+      // A fragment holding the default token for this server keeps doing so
+      // in the file, but stops being what a command uses — worth one line
+      // so nobody wonders which of the two is live. Sought in the
+      // fragments themselves: the merged view's token is whichever file
+      // won, which says nothing about what the others still hold.
+      if (this.profile === undefined) {
+        const fragment = [...files]
+          .reverse()
+          .find(
+            (f) =>
+              f.path !== configPath(env) &&
+              (
+                f.doc.servers as Record<string, { token?: string }> | undefined
+              )?.[origin]?.token !== undefined,
+          );
+        if (fragment) {
+          this.context.stderr.write(
+            `note: ${fragment.path} also stores a default token for ${origin}; ${tildePath(configPath(env), env)} wins from now on\n`,
+          );
+        }
+      }
       return 0;
     } catch (error) {
       return reportError(error, this.context.stderr, this.server);

@@ -137,3 +137,66 @@ export function localizeIssueUrl(raw: string, bases: string[]): string | null {
   const base = coveringBase(raw, bases);
   return base === null ? null : baseRemainder(raw, base);
 }
+
+/** Name → the origins that carry it, so a duplicate is recognizable. */
+export function buildNameTable(config: CliConfig): Map<string, string[]> {
+  const names = new Map<string, string[]>();
+  for (const [origin, entry] of Object.entries(config.servers)) {
+    if (entry.name === undefined) continue;
+    const owners = names.get(entry.name) ?? [];
+    owners.push(normalizeServer(origin));
+    names.set(entry.name, owners);
+  }
+  return names;
+}
+
+/**
+ * A server input as the base it names — by `instead_of` when it is a URL
+ * (the rule `login` already validated with), by the name table when it is
+ * not (T-366). A name that matches nothing returns the input unchanged
+ * rather than throwing: the comparison callers (`dirConfig.server`,
+ * `binding.server`) must read a miss as "no match", exactly as they do
+ * for a server URL that matches nothing.
+ *
+ * Only a name that is actually used and maps to several origins throws,
+ * mirroring how `rewriteServer` treats a contradicting `instead_of`: a
+ * duplicate nobody reached must not fail every command.
+ */
+export function resolveServerInput(
+  given: string,
+  options: { names: Map<string, string[]>; aliases: AliasRow[] },
+): { server: string; viaName?: string; from?: string } {
+  if (/^https?:\/\//.test(given)) {
+    const rewritten = rewriteServer(given, options.aliases);
+    return {
+      server: rewritten.server,
+      ...(rewritten.from === undefined ? {} : { from: rewritten.from }),
+    };
+  }
+  const owners = options.names.get(given);
+  if (owners === undefined) return { server: given };
+  if (owners.length > 1) {
+    throw new CliError(
+      `name "${given}" is used by ${owners.join(" and ")} — one name, one server`,
+      "fix `name` in your config so each name belongs to one server",
+    );
+  }
+  return { server: owners[0] as string, viaName: given };
+}
+
+/**
+ * The readable failure for a server input that is neither a URL nor a
+ * known name. Today such an input rides into `baseUrl` and dies in fetch.
+ */
+export function unknownServerError(
+  given: string,
+  names: Map<string, string[]>,
+): CliError {
+  const known = [...names.keys()];
+  return new CliError(
+    `unknown server "${given}"`,
+    known.length === 0
+      ? 'no server names are configured; pass a full origin (https://…), or name one under [servers."<origin>"] first'
+      : `known names: ${known.join(", ")} — or pass a full origin (https://…)`,
+  );
+}
