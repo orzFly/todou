@@ -556,4 +556,23 @@ describe("QuestionsCard (answered)", () => {
     await view.findByText("answered by");
     expect(view.queryByText("show option descriptions")).toBeNull();
   });
+
+  it("lets the footer wrap, and pins what must not be split", async () => {
+    stubFetch(answered);
+    const view = renderCard();
+
+    // happy-dom has no layout engine and measures every box at zero, so what
+    // is asserted here is the mechanism; the widths it produces are measured
+    // in a browser and recorded on T-362's spec.
+    const meta = await view.findByText("answered by");
+    const row = meta.parentElement as HTMLElement;
+    expect([...row.classList]).toContain("flex-wrap");
+    expect([...meta.classList]).toContain("flex-wrap");
+    expect([...(meta.lastElementChild as HTMLElement).classList]).toContain(
+      "whitespace-nowrap",
+    );
+    expect([...(meta.querySelector("svg") as SVGElement).classList]).toContain(
+      "shrink-0",
+    );
+  });
 });

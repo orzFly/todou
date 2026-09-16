@@ -141,11 +141,16 @@ export function QuestionsCard({
             showDescriptions={showDescriptions}
           />
         ))}
-        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-          <span className="flex items-center gap-2">
-            <CheckIcon className="size-3.5 text-green-600" />
+        {/*
+          The toggle beside this group is a `Button` — `shrink-0 whitespace-nowrap`
+          in its base class. Unwrapped, a narrow viewport takes every missing pixel
+          out of this group alone, crushing it and still overflowing sideways (T-362).
+        */}
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <CheckIcon className="size-3.5 shrink-0 text-green-600" />
             answered by <UserChip user={answer.actor} compact />
-            <span title={answer.created_at}>
+            <span className="whitespace-nowrap" title={answer.created_at}>
               {new Date(answer.created_at).toLocaleString()}
             </span>
           </span>
@@ -239,16 +244,13 @@ function AnswerForm({
 
   return (
     <div className="mt-1 space-y-4 rounded-md border border-amber-500/60 bg-amber-500/5 p-3">
-      <div className="flex items-center justify-between">
+      <div className="flex">
         <Badge
           variant="outline"
           className="border-amber-500/60 text-amber-700 dark:text-amber-400"
         >
           awaiting answer
         </Badge>
-        <span className="text-xs text-muted-foreground">
-          one submission answers everything · final
-        </span>
       </div>
       {component.questions.map((q) => (
         <QuestionForm
