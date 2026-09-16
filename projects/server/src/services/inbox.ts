@@ -279,6 +279,8 @@ export async function groupInbox(
     ids,
     visible,
     mutes,
+    // The rows just read carry their own project ids.
+    new Map(rows.map((r) => [r.id, r.projectId])),
   );
   // Current version's author, for the "waiting for MY review" exclusion —
   // issues.spec_version is the denormalized current number (T-23).
@@ -478,6 +480,7 @@ export async function inboxRowState(
     [row.id],
     visible,
     mutes,
+    new Map([[row.id, project.id]]),
   );
 
   let specAuthorId: number | null = null;

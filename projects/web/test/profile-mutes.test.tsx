@@ -34,7 +34,7 @@ describe("profile settings Muted section (T-372)", () => {
   it("renders both lists and unmutes the project from its row", async () => {
     const unmuteProject = vi
       .spyOn(api, "unmuteProject")
-      .mockResolvedValue(undefined as unknown as void);
+      .mockResolvedValue(undefined);
 
     mount(full);
     expect(await screen.findByText("Quiet Project")).toBeTruthy();
@@ -49,7 +49,7 @@ describe("profile settings Muted section (T-372)", () => {
   it("unmutes the card from its row", async () => {
     const unmuteIssue = vi
       .spyOn(api, "unmuteIssue")
-      .mockResolvedValue(undefined as unknown as void);
+      .mockResolvedValue(undefined);
 
     mount(full);
     await screen.findByText(/noisy card/);

@@ -1,5 +1,5 @@
 import type { MuteList, MuteReason } from "@todou/shared";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
@@ -257,20 +257,22 @@ export async function listMutes(
   );
   const projectById = new Map(scope.map((p) => [p.id, p]));
 
-  const projectRows: { projectId: number; mutedAt: Date }[] = [];
-  for (const id of mutedProjects) {
-    const rows = await ctx.router
-      .system()
-      .select({
-        projectId: projectMutes.projectId,
-        mutedAt: projectMutes.mutedAt,
-      })
-      .from(projectMutes)
-      .where(
-        and(eq(projectMutes.userId, actor.id), eq(projectMutes.projectId, id)),
-      );
-    projectRows.push(...rows);
-  }
+  const projectRows =
+    mutedProjects.size === 0
+      ? []
+      : await ctx.router
+          .system()
+          .select({
+            projectId: projectMutes.projectId,
+            mutedAt: projectMutes.mutedAt,
+          })
+          .from(projectMutes)
+          .where(
+            and(
+              eq(projectMutes.userId, actor.id),
+              inArray(projectMutes.projectId, [...mutedProjects]),
+            ),
+          );
 
   const groups = new Map<string, ProjectRow[]>();
   for (const project of scope) {
@@ -300,6 +302,11 @@ export async function listMutes(
             issueMutes.projectId,
             group.map((p) => p.id),
           ),
+          // Trash holds no live address to show and Unmute would 404 on
+          // it (the writes require `live`): list only what the reader can
+          // still act on. The row survives the soft delete and comes back
+          // with a restore.
+          isNull(issues.deletedAt),
         ),
       );
     for (const r of rows) {

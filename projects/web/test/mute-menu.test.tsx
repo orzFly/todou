@@ -67,9 +67,7 @@ describe("MuteMenu (T-372)", () => {
     ).toBeTruthy();
   });
   it("picks until_activity when quiet-until-new-activity is chosen", async () => {
-    const mute = vi
-      .spyOn(api, "muteIssue")
-      .mockResolvedValue(undefined as unknown as void);
+    const mute = vi.spyOn(api, "muteIssue").mockResolvedValue(undefined);
     await mount(list(null));
     fireEvent.click(entry(/Quiet until new activity/));
     await waitFor(() =>
@@ -78,9 +76,7 @@ describe("MuteMenu (T-372)", () => {
   });
 
   it("picks forever when quiet-until-unmuted is chosen", async () => {
-    const mute = vi
-      .spyOn(api, "muteIssue")
-      .mockResolvedValue(undefined as unknown as void);
+    const mute = vi.spyOn(api, "muteIssue").mockResolvedValue(undefined);
     await mount(list(null));
     fireEvent.click(entry(/Quiet until unmuted/));
     await waitFor(() =>
@@ -89,9 +85,7 @@ describe("MuteMenu (T-372)", () => {
   });
 
   it("clears the row when notify is chosen", async () => {
-    const unmute = vi
-      .spyOn(api, "unmuteIssue")
-      .mockResolvedValue(undefined as unknown as void);
+    const unmute = vi.spyOn(api, "unmuteIssue").mockResolvedValue(undefined);
     await mount(list("forever"));
     fireEvent.click(entry(/Notify on new activity/));
     await waitFor(() => expect(unmute).toHaveBeenCalledWith("p", 7));

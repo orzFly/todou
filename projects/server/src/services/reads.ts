@@ -145,6 +145,7 @@ export async function unreadIssueState(
   issueIds: number[],
   visible: VisibleProjects,
   mutes: MuteContext,
+  issueProjects: Map<number, number>,
 ): Promise<{
   unread: Set<number>;
   counts: Map<number, number>;
@@ -296,22 +297,36 @@ export async function unreadIssueState(
   // mutes computes nothing here. `latestForeign` is whichever of the three
   // scans saw the newest foreign activity above the reader's threshold;
   // undefined means none did, which `until_activity` reads as "still quiet".
+  // The event branch must apply the same per-issue threshold the unread
+  // fallback just used: the scan only filtered by the project frontier, so
+  // an event older than the reader's own position would otherwise hold an
+  // `until_activity` card lit after they read the relit part (design.md:
+  // "读完重新点亮的部分后，卡又归于安静").
   const silencedOut = new Map<number, MuteReason>();
   const latestForeignOf = (issueId: number): Date | undefined => {
     const comment = commentLatest.get(issueId);
-    const event = eventLatest.get(issueId);
+    const raw = eventLatest.get(issueId);
+    const projectId = eventProject.get(issueId);
+    const threshold =
+      raw === undefined || projectId === undefined
+        ? undefined
+        : (lastSeen.get(issueId) ?? frontiers.get(projectId));
+    const event =
+      raw !== undefined && threshold !== undefined && raw <= threshold
+        ? undefined
+        : raw;
     if (comment === undefined) return event;
     if (event === undefined || comment >= event) return comment;
     return event;
   };
   if (mutes.mutedProjects.size > 0 || mutes.issueMutes.size > 0) {
-    // Card->project pairs for the page, read once: a project mute reaches
-    // every card of the project, including ones no event row mentions.
-    const rows = await db
-      .select({ id: issues.id, projectId: issues.projectId })
-      .from(issues)
-      .where(inArray(issues.id, issueIds));
-    for (const { id, projectId } of rows) {
+    // The caller already knows which project each row belongs to — a page
+    // built from project rows, a group of them, or the one card an SSE
+    // judgement is about — so the gate buys its card→project pairs for
+    // free instead of a third query.
+    for (const id of issueIds) {
+      const projectId = issueProjects.get(id);
+      if (projectId === undefined) continue;
       const reason = silenced(
         mutes.issueMutes.get(id),
         mutes.mutedProjects.has(projectId),

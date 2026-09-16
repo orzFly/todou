@@ -795,6 +795,8 @@ export async function listIssues(
     page.map((r) => r.id),
     visible,
     mutes,
+    // One project's page: every row maps to it.
+    new Map(page.map((r) => [r.id, project.id])),
   );
   return {
     items: bundles.map((b) => ({

@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { IssueMuteMode, MuteList } from "@todou/shared";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
@@ -15,20 +15,10 @@ export const mutesQuery = {
 } as const;
 
 /**
- * The setting one card carries, looked up out of the cached list. Defensive
- * about the payload's shape: a list page renders under this before the
- * fetch resolves and any structural default must read as "nothing muted".
+ * The setting one card carries, looked up out of the cached list.
  */
 export function muteOf(
-  mutes:
-    | {
-        issues?: {
-          project: { slug: string };
-          number: number;
-          mode: IssueMuteMode;
-        }[];
-      }
-    | undefined,
+  mutes: MuteList | undefined,
   slug: string,
   number: number,
 ): IssueMuteMode | undefined {

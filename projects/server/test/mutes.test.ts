@@ -278,6 +278,21 @@ describe("mutes T-372", () => {
     await pushSpec(PA, s, bob.headers, "v2");
     await settle();
     expect(await inInbox(PA, s)).toBe(true);
+
+    // Reading the relit part quiets the card again (design.md): the v2
+    // event is now below the reader's position, so the gate re-engages —
+    // an event-only relight must not stick an until_activity card in the
+    // inbox forever.
+    const read = await t.app.request(`/api/projects/${PA}/issues/${s}/read`, {
+      method: "PUT",
+      headers: headers(),
+      body: "{}",
+    });
+    expect(read.status).toBe(204);
+    await settle();
+    const quiet = await listItem(PA, s);
+    expect(quiet?.muted).toBe("until_activity");
+    expect(await inInbox(PA, s)).toBe(false);
   });
 
   it("project mute silences every card of the project and nobody else's", async () => {
