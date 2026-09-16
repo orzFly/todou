@@ -54,9 +54,13 @@ export class AgentCanIFollowCommand extends Command<CliContext> {
       // which ancestor published a record, so a test can only state a
       // situation by handing this command a process tree of its own.
       const tree = this.context.processTree;
+      // Read once, read whole: the socket and the tool list come out of the
+      // same lookup, and two lookups could straddle an extension update.
+      const messaging = harnessMessaging(env, tree);
       const advice = followAdvice({
         harness: detectHarnessId(env, tree),
-        socket: harnessMessaging(env, tree).socket,
+        socket: messaging.socket,
+        tools: messaging.tools ?? [],
         optedOut: optedOut(loadCliConfig(env)),
       });
       this.context.stdout.write(`${advice.paragraphs.join("\n\n")}\n`);

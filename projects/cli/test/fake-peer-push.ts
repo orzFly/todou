@@ -48,7 +48,11 @@ export function fakePeerPush(
 
   async function open<T>(o: PeerPushOptions<T>): Promise<PeerPush<T>> {
     if (opts.failOpen) throw opts.failOpen;
-    state.fromName = o.fromName;
+    // The fake only ever stands in for the Claude Code receiver: it is the
+    // one with a display name to record and a mode to attest. omp pushes go
+    // bare and have nothing for this fake to observe.
+    const claudeCode = o.receiver === "omp" ? undefined : o;
+    state.fromName = claudeCode?.fromName;
     const clock = o.clock ?? systemClock;
     const windowMs = o.receiptWindowMs ?? 30_000;
     const held: Array<{
@@ -64,7 +68,7 @@ export function fakePeerPush(
     };
     return {
       send: async (items, since, cursor) => {
-        const mode = o.fromMode?.();
+        const mode = claudeCode?.fromMode?.();
         pushes.push({
           body: o.render(items, since, cursor),
           since,

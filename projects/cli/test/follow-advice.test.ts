@@ -258,3 +258,77 @@ describe("followAdvice", () => {
     expect(text).not.toContain("--follow=uds");
   });
 });
+
+/** The four paragraphs of the omp-with-tool answer, pinned whole. */
+const OMP_TOOL = [
+  "running under omp, and the todou extension registers a `todou_watch` tool. It is mounted as a device rather than listed among your tools: write a call's JSON arguments to `xd://todou_watch` to run it, and read `xd://todou_watch` for its full documentation.",
+  '`{"action": "start", "issue": "T-16"}` follows one card; `{"action": "start"}` follows every card of a project. `{"action": "list"}` reports what is running, and `{"action": "stop", "id": "w1"}` ends one. `project` and `server` are optional — left out, each is resolved from the directory omp is running in, and a directory that settles neither fails the call rather than guessing. If you are working on a card, start a watch on that card now, so comments from other agents and from the user reach you while you are working.',
+  "The watch carries spec and question activity too: a review verdict and a question answer each arrive on it as their own line, so you do not need a separate `spec wait` or `question wait` running beside it.",
+  "When you do run one of those on its own — `spec push --wait`, `spec wait`, `question wait` — give the bash tool `timeout: 0`. Its deadline defaults to 300 seconds and ends the command with no signal it can catch, so the command stops without printing the cursor a restart would resume from, and whatever arrived in between is never read.",
+];
+
+describe("followAdvice with the extension's tool present", () => {
+  it("answers with the tool's four paragraphs, pinned sentence by sentence", () => {
+    expect(
+      followAdvice({
+        harness: "omp",
+        socket: SOCKET,
+        tools: ["todou_watch"],
+        optedOut: false,
+      }),
+    ).toEqual({
+      situation: "omp-tool",
+      harness: "omp",
+      paragraphs: OMP_TOOL,
+    });
+  });
+
+  it("mentions no other way to follow, in any of the four paragraphs", () => {
+    // The promise this situation makes: the tool is the way. A `--follow`
+    // or a `poll` in these paragraphs would offer a second one, and the
+    // review that fixed them to four paragraphs did so against exactly
+    // that. `timeout: 0` stays — it is about the other waits, not this one.
+    const text = OMP_TOOL.join("\n");
+    expect(text).not.toContain("--follow");
+    expect(text).not.toContain("stdout");
+    expect(text).not.toContain("poll");
+  });
+
+  it("keeps the uds answer where no tools were published", () => {
+    // An extension one version behind publishes no tools: the tool genuinely
+    // is not there in that session, so the old advice stays.
+    expect(
+      followAdvice({ harness: "omp", socket: SOCKET, optedOut: false }),
+    ).toEqual({
+      situation: "uds",
+      harness: "omp",
+      paragraphs: [
+        "running under omp, and `--follow=uds` is available.",
+        `Use it with \`todou watch\` or \`todou issue watch\`, ${ASYNC}. If you are working on a card, start an issue watch on that card now, so comments from other agents and from the user reach you while you are working.`,
+        OMP_DEADLINE,
+        CLOSING,
+      ],
+    });
+    expect(
+      followAdvice({
+        harness: "omp",
+        socket: SOCKET,
+        tools: ["some_other_tool"],
+        optedOut: false,
+      }).situation,
+    ).toBe("uds");
+  });
+
+  it("lets the opt-out win over the tool", () => {
+    // The tool pushes over the same channel the opt-out refuses, so it
+    // follows the channel down rather than around it.
+    expect(
+      followAdvice({
+        harness: "omp",
+        socket: SOCKET,
+        tools: ["todou_watch"],
+        optedOut: true,
+      }).situation,
+    ).toBe("uds-opted-out");
+  });
+});

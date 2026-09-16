@@ -105,13 +105,65 @@ printing one batch and exiting. Run one as a background task and the session
 is told when something happens, rather than having to re-open the watch each
 time — or forgetting to.
 
-Give that background job `timeout: 0`. The deadline belongs to omp's bash
-tool rather than to todou: it defaults to 300 seconds and ends the command
-with no signal it can catch, so a watch that reaches it stops without
-printing the cursor a restart would resume from, and whatever arrived in
-between is never read. Every todou command that has to outlive a single tool
-call takes the same parameter — `spec push --wait`, `spec wait`,
-`question wait`, and any watch run with `--forever`.
+`--follow=stdout` (or a bare `--follow`) is the transport for everything else.
+The transport is never inferred from the environment: a supervisor that runs a
+command and reads its output is started *by* the session and has the same
+variables set, so guessing would send exactly the batches that belong on
+stdout down the push channel instead.
+
+## `todou_watch`: the tool the extension registers
+
+The extension also registers a `todou_watch` tool the model can call, which
+runs those watches as children of omp itself — no bash job to keep alive. It
+is mounted as a device rather than listed among the session's tools, because
+its `loadMode` is omp's default `discoverable`: the session reads its full
+documentation from `xd://todou_watch` and runs it by writing a call's JSON
+arguments to `xd://todou_watch`. In a session with `tools.xdev` turned off
+every tool is a top-level tool instead, and writing to `xd://` answers
+`xd:// is not mounted in this session.` — that sentence names the next step
+itself, so nothing here branches on it.
+
+Three actions: `{"action": "start", "issue": "T-16"}` follows one card,
+`{"action": "start"}` follows every card of a project, `{"action": "list"}`
+reports what is running, and `{"action": "stop", "id": "w1"}` ends one.
+`project` and `server` are optional and resolved from the directory omp is
+running in when left out; a directory that settles neither fails the call
+rather than guessing. `since` resumes from a cursor an earlier command
+printed.
+
+The tool finds the CLI on PATH — the PATH of the shell omp was started from,
+inherited — and `TODOU_BIN` overrides that. Nothing is recorded at install
+time: the shell `todou integration install omp` runs in has a different PATH
+from the one omp later inherits, so an install-time check would name the
+wrong one.
+
+### `/todou` and the widget
+
+The user sees one line in omp's interface — `todou watch - todou, T-16, T-18`
+— naming what is being followed right now, with more folded into an
+`and <n> more` tail past four. `/todou` says the same in a notification and
+is how the user stops them: `/todou stop` ends every watch, `/todou stop w1`
+ends one.
+
+Stopping from `/todou` notifies the agent — one message naming every watch
+that ended, what each had not handed over, and the cursor to resume from.
+The same message arrives when a watch dies on its own; a watch the model
+stopped through the tool says nothing, because that call's return already
+did.
+
+`todou agent can-i-follow` reports whether this session can, and where the
+extension's tool is present its answer is the tool. It talks to no server
+and resolves no project, so it answers at any point in a session, including
+one that starts with the tracker down.
+
+Give a command that has to outlive a single tool call `timeout: 0` when it
+runs as a bash job — `spec push --wait`, `spec wait`, `question wait`. The
+deadline belongs to omp's bash tool rather than to todou: it defaults to 300
+seconds and ends the command with no signal it can catch, so a command that
+reaches it stops without printing the cursor a restart would resume from,
+and whatever arrived in between is never read. A watch started through
+`todou_watch` is not under that deadline; these days it is the way to run
+one.
 
 A batch that arrives cuts into the turn the session is running rather than
 waiting for that turn to end. omp makes room for it by backgrounding the
@@ -120,20 +172,9 @@ foreground bash command early — it reports
 command goes on running. How often this happens is set by the batching
 window, `--debounce`, which is 60 seconds by default here.
 
-`todou agent can-i-follow` reports whether this session can, and names
-`todou integration install omp` when the extension is what is missing. It
-talks to no server and resolves no project, so it answers at any point in a
-session, including one that starts with the tracker down.
-
-`--follow=stdout` (or a bare `--follow`) is the transport for everything else.
-The transport is never inferred from the environment: a supervisor that runs a
-command and reads its output is started *by* the session and has the same
-variables set, so guessing would send exactly the batches that belong on
-stdout down the push channel instead.
-
 Delivery guarantees, the degradation when a push cannot be confirmed, and
 `todou agent opt-out-uds` are as [docs/claude-code.md](claude-code.md)
-describes them, with two differences.
+describes them, with the differences below.
 
 An omp session is not asked to approve a push, so the "held for approval"
 outcome does not arise. And where Claude Code tolerates a missing or wrong
@@ -146,6 +187,13 @@ to, so two sessions exchanging receipts cannot ping-pong. A connection that
 opens with a *wrong* token is closed with no receipt at all, which is what
 Claude Code does on the platform where it checks: holding the wrong
 credential is a fact about the sender, not something this side confirms.
+
+The other difference is the envelope. Claude Code's receiver reads a
+`<cross-session-message>` wrapper off every pushed body and re-serializes
+its attributes to decide whether to believe them; omp's extension hands the
+body to the session as it stands, so a todou pushing to omp writes no
+envelope at all. What survives either way is the frame's `from` — the reply
+address a receipt travels back over.
 
 ## Where the metadata comes from
 

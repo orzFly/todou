@@ -330,6 +330,79 @@ describe("issue watch --follow=uds (T-254)", () => {
   });
 });
 
+describe("issue watch announces what it follows (T-357)", () => {
+  // The omp extension's start grace reads this line off the child's stderr:
+  // it cannot resolve the project's own ref spelling itself, so the CLI —
+  // which just did — says it. One line per watch, on uds only.
+  const argv = [
+    "--since",
+    "c0",
+    "--follow=uds",
+    "--interval",
+    "2",
+    "--timeout",
+    "300",
+  ];
+  const uds = async (extra: [string, unknown][] = []) => {
+    const clock = virtualClock();
+    const push = fakePeerPush();
+    const { fetchImpl } = timelineRoutes(
+      [...batch([comment(9, clock.iso())], "c1"), quiet, quiet],
+      extra,
+    );
+    const result = await runCli(["issue", "watch", "3", ...argv], {
+      fetchImpl,
+      env: udsEnv,
+      clock,
+      openPeerPush: push.open,
+    });
+    expect(result.exitCode).toBe(1);
+    return result;
+  };
+
+  it("says the project's own ref spelling on uds", async () => {
+    const result = await uds([
+      [
+        "/api/projects/todou/references/config",
+        { format: { prefix: "T", history: [] }, autolinks: [] },
+      ],
+    ]);
+    expect(result.stderr).toContain("--follow=uds following T-3");
+  });
+
+  it("says slug/number where the project has no ref prefix", async () => {
+    const result = await uds();
+    expect(result.stderr).toContain("--follow=uds following todou/3");
+  });
+
+  it("says nothing of it on stdout mode, where the header says it", async () => {
+    const clock = virtualClock();
+    const { fetchImpl } = timelineRoutes([
+      ...batch([comment(9, clock.iso())], "c1"),
+      quiet,
+    ]);
+    const result = await runCli(
+      [
+        "issue",
+        "watch",
+        "3",
+        "--since",
+        "c0",
+        "--follow=stdout",
+        "--interval",
+        "2",
+        "--timeout",
+        "300",
+      ],
+      { fetchImpl, env: loggedInEnv("todou"), clock },
+    );
+    // Standing mode, stopped by the script running out: one batch, then the
+    // fatal drain every such case ends on.
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).not.toContain("following");
+  });
+});
+
 describe("issue watch --follow argument handling (T-254)", () => {
   it("refuses uds with no socket before resolving the issue", async () => {
     // `issue watch` opens with a network round trip to resolve the ref, and

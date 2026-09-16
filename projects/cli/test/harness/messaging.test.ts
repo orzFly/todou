@@ -18,14 +18,14 @@ const OMP = "/run/omp-socks/7331.sock";
 const read = (env: Record<string, string>) => harnessMessaging(env, NO_TREE);
 
 describe("harnessMessaging", () => {
-  it("reads Claude Code's pair under Claude Code", () => {
+  it("reads Claude Code's pair under Claude Code, named as its receiver", () => {
     expect(
       read({
         CLAUDECODE: "1",
         CLAUDE_CODE_MESSAGING_SOCKET: CC,
         CLAUDE_CODE_MESSAGING_TOKEN: "cc-token",
       }),
-    ).toEqual({ socket: CC, token: "cc-token" });
+    ).toEqual({ socket: CC, token: "cc-token", peer: "claude-code" });
   });
 
   it("keeps reading them with no harness detected at all", () => {
@@ -34,10 +34,11 @@ describe("harnessMessaging", () => {
     expect(read({ CLAUDE_CODE_MESSAGING_SOCKET: CC })).toEqual({
       socket: CC,
       token: undefined,
+      peer: "claude-code",
     });
   });
 
-  it("reads todou's own pair under omp", () => {
+  it("reads todou's own pair under omp, named as its receiver", () => {
     expect(
       read({
         OMPCODE: "1",
@@ -45,7 +46,7 @@ describe("harnessMessaging", () => {
         TODOU_MESSAGING_SOCKET: OMP,
         TODOU_MESSAGING_TOKEN: "omp-token",
       }),
-    ).toEqual({ socket: OMP, token: "omp-token" });
+    ).toEqual({ socket: OMP, token: "omp-token", peer: "omp" });
   });
 
   /**
@@ -128,7 +129,11 @@ describe("harnessMessaging under omp, with nothing in the environment", () => {
     ...extra,
   });
 
-  const channel = { socket: "/run/user/1000/todou-omp/9.sock", token: "t0ken" };
+  const channel = {
+    socket: "/run/user/1000/todou-omp/9.sock",
+    token: "t0ken",
+    peer: "omp",
+  } as const;
 
   it("takes the channel an ancestor published", () => {
     const { env, io } = environment({
@@ -164,6 +169,65 @@ describe("harnessMessaging under omp, with nothing in the environment", () => {
         { ...env, TODOU_MESSAGING_SOCKET: OMP, TODOU_MESSAGING_TOKEN: "env" },
         io,
       ),
-    ).toEqual({ socket: OMP, token: "env" });
+    ).toEqual({ socket: OMP, token: "env", peer: "omp" });
+  });
+});
+
+describe("harnessMessaging reads the extension's tools (T-357)", () => {
+  const read = (env: Record<string, string>) => harnessMessaging(env, NO_TREE);
+
+  it("takes them from the variable the bash tool carries", () => {
+    expect(
+      read({
+        OMPCODE: "1",
+        CLAUDECODE: "1",
+        TODOU_MESSAGING_SOCKET: OMP,
+        TODOU_OMP_TOOLS: "todou_watch",
+      }).tools,
+    ).toEqual(["todou_watch"]);
+    // A comma list is the one shape `claim()` writes and this must split.
+    expect(
+      read({
+        OMPCODE: "1",
+        CLAUDECODE: "1",
+        TODOU_MESSAGING_SOCKET: OMP,
+        TODOU_OMP_TOOLS: "a,b",
+      }).tools,
+    ).toEqual(["a", "b"]);
+  });
+
+  it("takes them from a record an ancestor published", () => {
+    const runtime = scratchDir("todou-msg-tools-");
+    const dir = join(runtime, "todou-omp");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, `${process.pid}.json`),
+      JSON.stringify({
+        v: 1,
+        pid: process.pid,
+        agent: "omp",
+        session_id: "01900000-0000-7000-8000-000000000001",
+        socket: "/run/user/1000/todou-omp/9.sock",
+        token: "t0ken",
+        tools: ["todou_watch"],
+        updated_at: "2026-09-12T02:49:21.732Z",
+      }),
+    );
+    expect(
+      harnessMessaging(
+        { OMPCODE: "1", CLAUDECODE: "1", XDG_RUNTIME_DIR: runtime },
+        procTree([{ pid: process.pid, ppid: 1, argv: ["omp"] }]),
+      ).tools,
+    ).toEqual(["todou_watch"]);
+  });
+
+  it("reads no tools where the record or variable named none", () => {
+    expect(
+      read({
+        OMPCODE: "1",
+        CLAUDECODE: "1",
+        TODOU_MESSAGING_SOCKET: OMP,
+      }).tools,
+    ).toBeUndefined();
   });
 });

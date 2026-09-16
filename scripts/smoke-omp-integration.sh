@@ -17,6 +17,9 @@
 # here talks to a tracker: the detector is called directly and the push is sent
 # with the CLI's own `openPeerPush`, so no server and no token are involved.
 #
+# Check 8 reads `xd://todou_watch` inside the session, which needs an omp new
+# enough to mount extension tools as devices (v18.1.21 was measured).
+#
 # Everything lands under a scratch HOME and a scratch XDG_RUNTIME_DIR, so a run
 # cannot touch the extension you actually have installed.
 set -uo pipefail
@@ -577,6 +580,28 @@ BLIND
       fi
     else
       bad "the probe produced nothing; see $WORK/blind.err and $WORK/blind.omp.log"
+    fi
+  fi
+fi
+
+# 8 — the watch tool the extension registers (T-357). The unit tests drive a
+#     fake `pi`; whether omp really mounts a `discoverable` extension tool
+#     under `xd://` is omp's half, and this is the only check that exercises
+#     it. The model has to read the device itself — telling it to run a
+#     shell command would reach the shell's `read` builtin instead, which is
+#     exactly what the first version of this check did.
+if wanted 8; then
+  step "8. the todou_watch tool is mounted under xd://"
+  if need_model; then
+    omp_env omp -p --auto-approve --no-title --cwd "$PROJECT" \
+      --model "$TODOU_SMOKE_OMP_MODEL" \
+      "Do not run a shell command. Use your own read tool on the internal URL xd://todou_watch and paste everything it returns." \
+      > "$WORK/tool.omp.log" 2>&1
+    if grep -q "todou_watch" "$WORK/tool.omp.log" &&
+      grep -q "type Args" "$WORK/tool.omp.log"; then
+      ok "xd://todou_watch answers with the tool's documentation"
+    else
+      bad "the device did not answer; see $WORK/tool.omp.log"
     fi
   fi
 fi

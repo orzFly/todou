@@ -22,6 +22,8 @@
  *  2. Listens for `todou watch --follow=uds`, speaking the same wire protocol
  *     Claude Code's messaging socket does, and hands each batch to the agent.
  */
+
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -55,6 +57,14 @@ const STATE_VERSION = 1;
  */
 const MAX_PAYLOAD_CHARS = 1_048_576;
 
+/**
+ * The tool this extension registers, published so `todou agent can-i-follow`
+ * can tell an agent it exists. The name lives again in
+ * `src/follow-advice.ts` (`OMP_WATCH_TOOL`) because this file may import
+ * nothing from `src/`; a test pins the two spellings together.
+ */
+const TOOL_NAME = "todou_watch";
+
 /** Enough that guessing it is not a way in; the socket's mode is the fence. */
 const TOKEN_BYTES = 24;
 
@@ -69,12 +79,22 @@ type Pi = {
     },
     options: { deliverAs: string; triggerTurn: boolean },
   ): void;
+  registerTool(tool: RegisteredTool): void;
+  registerCommand(name: string, command: RegisteredCommand): void;
+  /** omp hangs arktype on the context; extensions cannot import it. */
+  arktype: (definition: unknown) => unknown;
 };
 
 type PiContext = {
   sessionManager?: {
     getSessionId?: () => unknown;
     getSessionFile?: () => unknown;
+  };
+  cwd?: string;
+  hasUI?: boolean;
+  ui?: {
+    setWidget?(key: string, lines?: string[]): void;
+    notify?(text: string, level: string): void;
   };
 };
 
@@ -86,6 +106,43 @@ type Frame = {
   msg_id?: unknown;
   message?: { content?: unknown };
 };
+
+/** A tool `pi.registerTool` takes, as far as this defines one. */
+type RegisteredTool = {
+  name: string;
+  label: string;
+  description: string;
+  parameters: unknown;
+  execute: (
+    toolCallId: string,
+    args: unknown,
+    signal: unknown,
+    onUpdate: unknown,
+    ctx: PiContext,
+  ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+};
+
+/** A command `pi.registerCommand` takes, as far as this defines one. */
+type RegisteredCommand = {
+  description: string;
+  run: (ctx: PiContext, args: string[]) => void | Promise<void>;
+  getArgumentCompletions?: (
+    input: string,
+  ) => Array<{ label: string; description: string }>;
+};
+
+/**
+ * One arktype field with its `.describe` text, through the builder the host
+ * hands over — the only source of arktype an extension has.
+ */
+function described(
+  arktype: (definition: unknown) => unknown,
+  definition: string,
+  text: string,
+): unknown {
+  const built = arktype(definition) as { describe?: (d: string) => unknown };
+  return built.describe === undefined ? built : built.describe(text);
+}
 
 export default function todou(pi: Pi): void {
   /**
@@ -173,23 +230,25 @@ export default function todou(pi: Pi): void {
         ...(socketPath === undefined || token === undefined
           ? {}
           : { socket: socketPath, token }),
+        // What this session can do beyond push, so advice can name it. Same
+        // optionality as the channel: an older reader ignores the field, and
+        // a record without it is an older extension's.
+        tools: [TOOL_NAME],
         updated_at: new Date().toISOString(),
       })}\n`,
       { mode: 0o600 },
     );
     renameSync(temp, statePath);
   }
-
   /** Hands one push to the agent; false when it could not be delivered. */
   function deliver(content: string): boolean {
     if (closed) return false;
     try {
       pi.sendMessage(
         {
-          // The envelope arrives already wrapped and goes on untouched: it
-          // carries the `from` and `from-name` the agent reads to know who is
-          // talking to it, and the sender compares its own serialization of
-          // those attributes byte for byte.
+          // The body arrives as the sender rendered it and goes on
+          // untouched: an omp receiver never parses an envelope out of it,
+          // and the batch's own first line already names the command.
           customType: "todou",
           content,
           display: true,
@@ -395,12 +454,442 @@ export default function todou(pi: Pi): void {
     process.env.TODOU_OMP_STATE = state;
     process.env.TODOU_MESSAGING_SOCKET = socket;
     process.env.TODOU_MESSAGING_TOKEN = token;
+    // The bash tool's cheap copy of the record's `tools` line, exactly as
+    // the pair above is: one export instead of a record read.
+    process.env.TODOU_OMP_TOOLS = TOOL_NAME;
     owner = true;
     publish(ctx);
     listen();
   }
 
+  // ------------------------------------------------------------------
+  // todou_watch (T-357): the watch tool this extension registers.
+  // ------------------------------------------------------------------
+
+  /**
+   * How long after spawn a watch counts as started: an exit inside the
+   * window is a failure with the child's stderr to show, and surviving it
+   * is success. Read on every call rather than captured at import — a
+   * module-level constant would be fixed before a test could shrink it.
+   */
+  function startGraceMs(): number {
+    return Number(process.env.TODOU_WATCH_START_GRACE_MS) || 3000;
+  }
+
+  /**
+   * Tail-capture bounds, in characters. stdout is large because it holds
+   * the unconfirmed batches a uds watch prints only at its exit; both keep
+   * the tail rather than the head because `cursor:` is the last line, and
+   * losing the start of an old batch costs less than losing the cursor a
+   * restart would resume from.
+   */
+  const CAPTURE_STDOUT = 65_536;
+  const CAPTURE_STDERR = 8_192;
+
+  /** One watch: the process, what was asked of it, what it left behind. */
+  type Watch = {
+    id: string;
+    /** The request itself, minus defaults — the reuse key. */
+    key: string;
+    /** What the model passed, for the widget's fallback spelling. */
+    args: { issue?: unknown; project?: unknown };
+    argv: string[];
+    cwd: string;
+    child: ChildProcess;
+    startedAt: number;
+    stdout: string;
+    stderr: string;
+    /** The exit code once it is known; `null` while the process lives. */
+    exit: number | null;
+    /** Who stopped it, when something did; `null` while it runs on. */
+    stoppedBy: "tool" | "command" | "shutdown" | null;
+    /**
+     * The watches this one was stopped together with, when `/todou stop`
+     * took a set: the one message for them waits for the last of the set.
+     */
+    stopGroup: Watch[] | null;
+  };
+
+  const watches = new Map<string, Watch>();
+  let nextId = 1;
+
+  /**
+   * The ctx a repaint needs, stored from session_start/agent_start: an exit
+   * event arrives with no context of its own, and the stored reference stays
+   * current because the host writes `ui` and `hasUI` onto the same object
+   * it handed over.
+   */
+  let uiContext: PiContext | undefined;
+
+  /** The todou this tool runs: `TODOU_BIN`, else whatever PATH resolves. */
+  function binary(): string {
+    return process.env.TODOU_BIN || "todou";
+  }
+
+  /** The argv one start request turns into. */
+  function argvFor(args: {
+    issue?: unknown;
+    project?: unknown;
+    server?: unknown;
+    since?: unknown;
+    debounce?: unknown;
+  }): string[] {
+    const argv = args.issue === undefined ? ["watch"] : ["issue", "watch"];
+    if (args.issue !== undefined) argv.push(String(args.issue));
+    argv.push("--follow=uds");
+    for (const option of [
+      ["-p", args.project],
+      ["--server", args.server],
+      ["--since", args.since],
+      ["--debounce", args.debounce],
+    ] as const) {
+      if (option[1] !== undefined && option[1] !== null) {
+        argv.push(option[0], String(option[1]));
+      }
+    }
+    return argv;
+  }
+
+  /**
+   * The child's environment: ours plus the four that make the child a todou
+   * under this omp. `OMPCODE` above all — the harness detector reads that
+   * variable alone, and this process's own environment may lack it, which
+   * would send the child's pushes at a Claude Code session that never
+   * waited for them.
+   */
+  function childEnv(): NodeJS.ProcessEnv {
+    return {
+      ...process.env,
+      OMPCODE: "1",
+      ...(statePath === undefined ? {} : { TODOU_OMP_STATE: statePath }),
+      ...(socketPath === undefined
+        ? {}
+        : { TODOU_MESSAGING_SOCKET: socketPath }),
+      ...(token === undefined ? {} : { TODOU_MESSAGING_TOKEN: token }),
+    };
+  }
+
+  /** The reuse key: the request itself, plus the cwd it resolves against. */
+  function keyFor(
+    args: { issue?: unknown; project?: unknown; server?: unknown },
+    cwd: string,
+  ): string {
+    return JSON.stringify([
+      args.issue ?? null,
+      args.project ?? null,
+      args.server ?? null,
+      cwd,
+    ]);
+  }
+
+  /** The `the command` of every text below, spaced as one line. */
+  function commandOf(watch: Watch): string {
+    return `${binary()} ${watch.argv.join(" ")}`;
+  }
+
+  /** How long a watch ran, rounded to the unit that fits. */
+  function elapsedOf(watch: Watch): string {
+    const ms = Date.now() - watch.startedAt;
+    return ms < 60_000
+      ? `${Math.max(1, Math.round(ms / 1000))}s`
+      : `${Math.round(ms / 60_000)}m`;
+  }
+
+  /**
+   * What this watch follows, in the spelling the CLI printed — or, from an
+   * older CLI that prints nothing, the nearest thing the model passed.
+   */
+  function followingOf(watch: Watch): string {
+    const found = /^--follow=uds following (.+)$/m.exec(watch.stderr);
+    if (found?.[1] !== undefined) return found[1];
+    if (typeof watch.args.issue === "string" && watch.args.issue !== "") {
+      return watch.args.issue;
+    }
+    if (typeof watch.args.project === "string" && watch.args.project !== "") {
+      return watch.args.project;
+    }
+    return "?";
+  }
+
+  /** The one-line widget: what is being followed now, or nothing at all. */
+  function paintWidget(): void {
+    try {
+      if (uiContext?.hasUI !== true) return;
+      const setWidget = uiContext.ui?.setWidget;
+      if (setWidget === undefined) return;
+      const live = [...watches.values()].filter((watch) => watch.exit === null);
+      if (live.length === 0) {
+        setWidget("todou");
+        return;
+      }
+      const names = live.map((watch) => followingOf(watch));
+      const shown = names.slice(0, 4).join(", ");
+      setWidget("todou", [
+        names.length <= 4
+          ? `todou watch - ${shown}`
+          : `todou watch - ${shown} and ${names.length - 4} more`,
+      ]);
+    } catch {
+      // A wrong guess about the UI costs a missing line, not a session;
+      // the watches themselves are the point.
+    }
+  }
+
+  /**
+   * The message a watch that ended on its own owes the session: what it
+   * had not handed over, and the cursor to resume from.
+   */
+  function endedText(watch: Watch): string {
+    const head = `todou_watch ${watch.id} ended — ${commandOf(watch)} exited ${watch.exit} after ${elapsedOf(watch)}.`;
+    const parts = [head];
+    if (watch.stdout !== "") {
+      parts.push("What it had not handed over, and the cursor to resume from:");
+      parts.push("```");
+      parts.push(watch.stdout);
+      parts.push("```");
+    }
+    if (watch.stderr !== "") {
+      parts.push("Its last output on stderr:");
+      parts.push("```");
+      parts.push(watch.stderr);
+      parts.push("```");
+    }
+    return parts.join("\n\n");
+  }
+
+  /**
+   * The message for watches the user stopped from `/todou` — one message
+   * however many ended, because the receiving side charges each message a
+   * fixed cost, the same reason a watch batches its entries.
+   */
+  function userStoppedText(all: Watch[]): string {
+    const lines = all.map(
+      (watch) =>
+        `${watch.id}  ${followingOf(watch).padEnd(6)} ${commandOf(watch)}  ran ${elapsedOf(watch)}`,
+    );
+    const held = all
+      .map(
+        (watch) =>
+          `${watch.id}:\n${watch.stdout === "" ? "(nothing was waiting)" : watch.stdout}`,
+      )
+      .join("\n\n");
+    return [
+      `The user stopped ${all.length} todou watch(es) from /todou. You were not asked, so this is the notification: nothing is following those cards or projects any more.`,
+      "",
+      "```",
+      ...lines,
+      "```",
+      "What each had not handed over, and the cursor to resume from:",
+      "",
+      "```",
+      held,
+      "```",
+    ].join("\n");
+  }
+
+  /**
+   * Sends the one message for a `/todou stop` set, from whichever exit
+   * landed last. It cannot be sent from the command itself: a watch
+   * SIGTERMed by `stop()` prints its held batches and its cursor only as
+   * it dies, so the message has to be built from output that each exit
+   * event has by then captured.
+   */
+  function deliverStoppedByCommand(all: Watch[]): void {
+    const settled = all.filter((watch) => watch.exit !== null);
+    if (settled.length < all.length) return;
+    deliver(userStoppedText(settled));
+  }
+
+  /** Stop one watch: record who, signal, and escalate if it lingers. */
+  function stop(watch: Watch, by: "tool" | "command" | "shutdown"): void {
+    if (watch.exit !== null) return;
+    watch.stoppedBy = by;
+    try {
+      watch.child.kill("SIGTERM");
+    } catch {
+      // Already gone; the exit event will record it.
+    }
+    if (watch.child.pid !== undefined) {
+      const pid = watch.child.pid;
+      setTimeout(() => {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // It died of the TERM; nothing to escalate.
+        }
+      }, 1000).unref();
+    }
+  }
+
+  /** The tool's `list`: processes, with what became of them. */
+  function listText(): string {
+    if (watches.size === 0) {
+      return 'no watches in this session. `{"action": "start", "issue": "T-16"}` starts one.';
+    }
+    const lines = [...watches.values()].map((watch) => {
+      const pid = watch.exit === null ? `pid ${watch.child.pid}  ` : "";
+      return [
+        watch.id.padEnd(3),
+        followingOf(watch).padEnd(6),
+        watch.exit === null
+          ? `running ${elapsedOf(watch)}`
+          : `exited ${watch.exit}, ${elapsedOf(watch)} ago`,
+        `${pid}${commandOf(watch)}`,
+        `in ${watch.cwd}`,
+      ]
+        .join("  ")
+        .replace(/\s+$/, "");
+    });
+    return [
+      `${watches.size} ${watches.size === 1 ? "watch" : "watches"} in this session:`,
+      "",
+      "```",
+      ...lines,
+      "```",
+      "These are processes, not tracker positions: a watch pushing over this channel writes nothing until it ends, so there is no cursor to report here.",
+    ].join("\n");
+  }
+
+  /** Start one watch, or report why that is not happening. */
+  async function startWatch(
+    args: {
+      issue?: unknown;
+      project?: unknown;
+      server?: unknown;
+      since?: unknown;
+      debounce?: unknown;
+    },
+    ctx: PiContext,
+  ): Promise<string> {
+    const cwd = typeof ctx.cwd === "string" && ctx.cwd !== "" ? ctx.cwd : ".";
+    const key = keyFor(args, cwd);
+    for (const watch of watches.values()) {
+      if (watch.key === key && watch.exit === null) {
+        return [
+          `${watch.id} is already following this — ${commandOf(watch)} (pid ${watch.child.pid}, running ${elapsedOf(watch)})`,
+          "",
+          "Nothing was started. Stop it first if you want to restart it with different arguments.",
+        ].join("\n");
+      }
+    }
+    const id = `w${nextId}`;
+    nextId += 1;
+    const argv = argvFor(args);
+    let child: ChildProcess;
+    try {
+      child = spawn(binary(), argv, {
+        stdio: ["ignore", "pipe", "pipe"],
+        cwd,
+        env: childEnv(),
+      });
+    } catch (error) {
+      return couldNotStart(argv, cwd, error);
+    }
+    const watch: Watch = {
+      id,
+      key,
+      args: { issue: args.issue, project: args.project },
+      argv,
+      cwd,
+      child,
+      startedAt: Date.now(),
+      stdout: "",
+      stderr: "",
+      exit: null,
+      stoppedBy: null,
+      stopGroup: null,
+    };
+    watches.set(id, watch);
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      watch.stdout = (watch.stdout + chunk).slice(-CAPTURE_STDOUT);
+    });
+    child.stderr?.on("data", (chunk: string) => {
+      watch.stderr = (watch.stderr + chunk).slice(-CAPTURE_STDERR);
+    });
+    const ended = new Promise<void>((resolve) => {
+      child.on("exit", (code) => {
+        watch.exit = code ?? -1;
+        resolve();
+      });
+      child.on("error", () => {
+        watch.exit = -1;
+        resolve();
+      });
+    });
+    // Exit beats the timer: a child that died in milliseconds has its own
+    // stderr to show and never needed the grace period to say so.
+    await Promise.race([
+      ended,
+      new Promise<void>((resolve) =>
+        setTimeout(resolve, startGraceMs()).unref(),
+      ),
+    ]);
+    if (watch.exit === -1 && watch.stderr === "" && watch.stdout === "") {
+      // spawn's ENOENT arrives here rather than in the throw: the message
+      // the model needs is the one about PATH and TODOU_BIN.
+      return couldNotStart(argv, cwd, undefined);
+    }
+    if (watch.exit !== null) {
+      return [
+        `could not start — ${commandOf(watch)} exited ${watch.exit} after ${elapsedOf(watch)}, in ${watch.cwd}`,
+        "",
+        watch.stderr,
+      ]
+        .join("\n")
+        .replace(/\s+$/, "");
+    }
+    // `exit`, and it has to stay `exit`: `deliverStoppedByCommand` decides
+    // whether a group is complete by reading `watch.exit`, which is set
+    // above on this same event. Moving only the delivery to `close` — the
+    // event that drains stdio, and the tempting one for that reason — puts
+    // every member's `exit` before any member's `close`, so a stop-all
+    // where the children die together has each `close` find the group
+    // complete and push the message again. The four-member case in
+    // `omp-extension.test.ts` is what holds this: it fails every run on an
+    // idle machine, and only sometimes on a loaded one, because load is
+    // what pairs a child's own two events back up.
+    watch.child.on("exit", (code) => {
+      // The second registration, for the real end of a watch that outlived
+      // its grace: repaint, then decide what the session is told. A tool's
+      // own stop and the session ending are the two silences; everything
+      // else is said here — not in `stop()` — because this is the moment
+      // the child's last output exists to say it with.
+      watch.exit = code ?? -1;
+      paintWidget();
+      if (watch.stoppedBy === "tool" || watch.stoppedBy === "shutdown") {
+        return;
+      }
+      if (watch.stoppedBy === "command") {
+        deliverStoppedByCommand(watch.stopGroup ?? [watch]);
+        return;
+      }
+      deliver(endedText(watch));
+    });
+    paintWidget();
+    return [
+      `started ${watch.id} — ${commandOf(watch)} (pid ${watch.child.pid}, in ${watch.cwd})`,
+      "",
+      `Activity will arrive as a message. \`{"action": "stop", "id": "${watch.id}"}\` ends it; it also ends with this session.`,
+    ].join("\n");
+  }
+
+  /** The two start failures that are not the child's own stderr. */
+  function couldNotStart(argv: string[], cwd: string, error: unknown): string {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "ENOENT" || error === undefined) {
+      return [
+        `could not start — \`${binary()}\` is not on PATH in this omp session. omp inherits the PATH of the shell it was started from, so either start omp from a shell where \`${binary()}\` resolves, or export \`TODOU_BIN=<path to ${binary()}>\` before starting it.`,
+      ].join("\n");
+    }
+    return [
+      `could not start — ${binary()} ${argv.join(" ")} in ${cwd}: ${String(error)}`,
+    ].join("\n");
+  }
+
   pi.on("session_start", (_event, ctx) => {
+    uiContext = ctx;
     try {
       if (owner) {
         publish(ctx);
@@ -429,6 +918,7 @@ export default function todou(pi: Pi): void {
   // without another session_start, and a turn is the moment the answer is
   // about to be asked for.
   pi.on("agent_start", (_event, ctx) => {
+    uiContext = ctx;
     try {
       if (owner) publish(ctx);
     } catch {
@@ -438,9 +928,235 @@ export default function todou(pi: Pi): void {
 
   pi.on("session_shutdown", () => {
     try {
+      // No message for these: the session reading it is ending. What each
+      // watch had not handed over goes with it — the same loss a bash
+      // background job takes when omp is killed, and the reason a cursor
+      // worth resuming from is printed by `list`'s records too.
+      for (const watch of watches.values()) stop(watch, "shutdown");
       if (owner) shutdown();
     } catch {
       // Leaves a stale record, which the reader rejects on the dead pid.
     }
+  });
+
+  pi.registerCommand("todou", {
+    description: "what todou is following in this session, and how to stop it",
+    async run(ctx, args) {
+      try {
+        if (args[0] === "stop") {
+          const live = [...watches.values()].filter(
+            (watch) => watch.exit === null,
+          );
+          if (args[1] !== undefined) {
+            const watch = watches.get(args[1]);
+            if (watch === undefined || watch.exit !== null) {
+              ctx.ui?.notify?.(
+                `no watch called "${args[1]}". /todou lists them.`,
+                "info",
+              );
+              return;
+            }
+            // The notification is the exit handler's to send, not this
+            // one's: only once the child has died does its stdout hold
+            // what it had not handed over. Grouped with itself, so the
+            // handler sees "all settled" on that one exit.
+            watch.stopGroup = watch.stopGroup ?? [watch];
+            stop(watch, "command");
+            ctx.ui?.notify?.(`stopping ${watch.id}.`, "info");
+            return;
+          }
+          if (live.length === 0) {
+            ctx.ui?.notify?.("nothing to stop.", "info");
+            return;
+          }
+          // One message for all of them, sent by whichever exit lands
+          // last — the receiving side charges each message a fixed cost,
+          // which is the same reason a watch batches its entries, and no
+          // child's held output exists before its own exit.
+          // Write-once: a second stop inside the death window must not
+          // re-group watches that are already waiting on this set, or an
+          // early exit's "not all settled" can outlive the set it checked.
+          for (const watch of live) {
+            watch.stopGroup = watch.stopGroup ?? live;
+          }
+          for (const watch of live) stop(watch, "command");
+          // True now, which is the point: the exits carry the message, and
+          // this copy is design §5.9's, restored after the round that
+          // removed it for saying something no path delivered.
+          ctx.ui?.notify?.(
+            `stopped ${live.length} watches. The agent has been told.`,
+            "info",
+          );
+          paintWidget();
+          return;
+        }
+        const live = [...watches.values()].filter(
+          (watch) => watch.exit === null,
+        );
+        if (live.length === 0) {
+          ctx.ui?.notify?.(
+            "todou is not following anything in this session. The agent starts a watch with its todou_watch tool.",
+            "info",
+          );
+          return;
+        }
+        const summary = live
+          .map((watch) => `${watch.id} ${followingOf(watch)}`)
+          .join(", ");
+        ctx.ui?.notify?.(
+          `following ${live.length} — ${summary}. /todou stop ends all of them, /todou stop ${live[0]?.id ?? ""} just that one.`,
+          "info",
+        );
+      } catch {
+        // As ever: this must not take the session down.
+      }
+    },
+    getArgumentCompletions(input) {
+      return "stop".startsWith(input)
+        ? [{ label: "stop", description: "stop every watch, or one by id" }]
+        : [];
+    },
+  });
+
+  // No `loadMode`: the default is `discoverable`, which mounts the tool as
+  // `xd://todou_watch` — absent from the tool list, present for `read` and
+  // `write` (design.md §1). Every string below is reviewed copy (§5).
+  pi.registerTool({
+    name: TOOL_NAME,
+    label: "todou watch",
+    description: [
+      "Follow a todou tracker card, or a whole project, from this omp session. Activity arrives as a message in your session as it happens, so you do not have to re-open a watch, or remember to.",
+      "",
+      "```",
+      '{"action": "start", "issue": "T-16"}   follow one card',
+      '{"action": "start"}                    follow every card of a project',
+      '{"action": "list"}                     what is running right now',
+      '{"action": "stop", "id": "w1"}         end one',
+      "```",
+      "",
+      "`issue` takes any spelling todou accepts — `T-16`, `16`, `proj/16`, or a full URL. Left out, the watch covers the whole project.",
+      "",
+      "`project` and `server` are optional. Left out, each is resolved from the directory this omp session is running in, exactly as every other todou command resolves it; `todou config show` prints what that directory settles. A directory that settles neither fails the call and says so — nothing here guesses. `project` also takes a comma-separated list, which follows several projects as one stream.",
+      "",
+      '`since` resumes from a cursor an earlier command printed, and is how a watch started after a `spec push` or a `comment add` catches the answer to it. Without it the watch starts at "now" and anything already on the card is skipped.',
+      "",
+      "`debounce` is the batching window in seconds. It defaults to 60, and `0` delivers each entry as it lands.",
+      "",
+      "The same arguments twice do not start a second watch: the second call returns the first one's id. But two calls that differ only in whether `project` was spelled out count as two watches even when they resolve to the same project — this tool does not resolve them, the todou CLI does, inside the child process, and nothing here can see that the two agreed.",
+      "",
+      "A watch that ends for any reason other than `stop` delivers what it had not handed over, and the cursor to resume from, as a message. Every watch ends with this omp session.",
+    ].join("\n"),
+    // arktype's object form takes a definition per key and no description
+    // element — `["string", "…"]` is a load error (measured, v18.1.21) —
+    // so each field is built, described, and composed in one expression.
+    parameters: (pi.arktype as unknown as (definition: unknown) => unknown)({
+      action: described(
+        pi.arktype,
+        "string",
+        "start a watch, stop one, or list what is running",
+      ),
+      "issue?": described(
+        pi.arktype,
+        "string",
+        'the card to follow — "T-16", "16", "proj/16", or a full URL. Leave it out to follow the whole project',
+      ),
+      "project?": described(
+        pi.arktype,
+        "string",
+        "project slug, or a comma-separated list of them. Left out, it is resolved from the directory omp is running in",
+      ),
+      "server?": described(
+        pi.arktype,
+        "string",
+        "server origin. Left out, it is resolved the same way",
+      ),
+      "since?": described(
+        pi.arktype,
+        "string",
+        'cursor to resume from. Without it the watch starts at "now"',
+      ),
+      "debounce?": described(
+        pi.arktype,
+        "string",
+        "batching window in seconds; 60 by default, 0 delivers each entry as it lands",
+      ),
+      "id?": described(
+        pi.arktype,
+        "string",
+        "which watch to stop, from a start or a list",
+      ),
+    }),
+    async execute(_toolCallId, argsRaw, _signal, _onUpdate, ctx) {
+      try {
+        const args =
+          typeof argsRaw === "object" && argsRaw !== null
+            ? (argsRaw as Record<string, unknown>)
+            : {};
+        if (args.action === "list") {
+          return { content: [{ type: "text", text: listText() }] };
+        }
+        if (args.action === "stop") {
+          if (typeof args.id !== "string" || args.id === "") {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: 'stop needs an id — `{"action": "list"}` shows them.',
+                },
+              ],
+            };
+          }
+          const watch = watches.get(args.id);
+          if (watch === undefined) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `no watch called "${args.id}" in this session — \`{"action": "list"}\` shows them.`,
+                },
+              ],
+            };
+          }
+          if (watch.exit !== null) {
+            watches.delete(args.id);
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `${args.id} had already ended (exit ${watch.exit}). Its record is gone now.`,
+                },
+              ],
+            };
+          }
+          stop(watch, "tool");
+          return {
+            content: [
+              {
+                type: "text",
+                text: `stopped ${watch.id} — ${commandOf(watch)}, after ${elapsedOf(watch)}`,
+              },
+            ],
+          };
+        }
+        if (args.action === "start") {
+          const text = await startWatch(args, ctx);
+          return { content: [{ type: "text", text }] };
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: `unknown action "${String(args.action)}" — start, stop, or list.`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            { type: "text", text: `todou_watch failed: ${String(error)}` },
+          ],
+        };
+      }
+    },
   });
 }

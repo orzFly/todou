@@ -89,6 +89,42 @@ describe("agent can-i-follow", () => {
   });
 });
 
+describe("agent can-i-follow under omp with the tool", () => {
+  it("answers with the tool's paragraphs when the extension published it", async () => {
+    const stdout = await canIFollow({
+      OMPCODE: "1",
+      CLAUDECODE: "1",
+      TODOU_MESSAGING_SOCKET: SOCKET,
+      TODOU_OMP_TOOLS: "todou_watch",
+    });
+    expect(stdout).toBe(
+      expected({
+        harness: "omp",
+        socket: SOCKET,
+        tools: ["todou_watch"],
+        optedOut: false,
+      }),
+    );
+    expect(stdout).toContain("xd://todou_watch");
+  });
+
+  it("keeps the plain uds answer with the variable absent", async () => {
+    const stdout = await canIFollow({
+      OMPCODE: "1",
+      CLAUDECODE: "1",
+      TODOU_MESSAGING_SOCKET: SOCKET,
+    });
+    expect(stdout).toBe(
+      expected({
+        harness: "omp",
+        socket: SOCKET,
+        optedOut: false,
+      }),
+    );
+    expect(stdout).not.toContain("xd://todou_watch");
+  });
+});
+
 describe("agent opt-out-uds / opt-in-uds", () => {
   it("writes the switch, stops the advice, and takes it back", async () => {
     const env = { XDG_CONFIG_HOME: join(dir, "round-trip") };

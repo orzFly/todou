@@ -3,6 +3,7 @@ import type { Clock } from "./clock.ts";
 import { CliError } from "./errors.ts";
 import type { makePainter } from "./format.ts";
 import { detectPermissionMode } from "./harness/claude-code.ts";
+import type { HarnessMessaging } from "./harness/messaging.ts";
 import { openPeerPush, type PeerPush } from "./peer-push.ts";
 import { describeError } from "./watch-loop.ts";
 
@@ -245,6 +246,12 @@ export async function openFollow<T>(opts: {
   label: string;
   /** What this watch is on, for the sender's display name. */
   subject: string;
+  /**
+   * What this watch is following, in the project's own spelling — its slug,
+   * or a card's ref — announced on stderr for a receiver that cannot work
+   * the spelling out itself (T-357).
+   */
+  following: string;
   baseline: string | undefined;
   intervalSec: number;
   wait: ((maxMs: number) => Promise<void>) | undefined;
@@ -258,9 +265,13 @@ export async function openFollow<T>(opts: {
     since: string | undefined,
     cursor: string | undefined,
   ) => void;
-  socket: string | undefined;
-  /** CLAUDE_CODE_MESSAGING_TOKEN, for the push's auth line (T-255). */
-  token: string | undefined;
+  /**
+   * Where a push delivers and what it authenticates with, plus which side is
+   * receiving — read once here rather than as loose fields at every caller,
+   * so a field added to the channel (this card adds two) lands everywhere at
+   * once.
+   */
+  messaging: HarnessMessaging;
   /**
    * Asked again for every push, never captured: a standing watch outlives
    * the session id it started under, and a `/clear` retires that id without
@@ -290,24 +301,35 @@ export async function openFollow<T>(opts: {
   let opened: PeerPush<T> | null = null;
   if (opts.transport === "uds") {
     const open = opts.open ?? openPeerPush;
+    // omp's receiver reads the body as-is, so it takes no envelope and has
+    // no `fromName` to pass; the union on `PeerPushOptions` makes the same
+    // decision at the type level.
+    const receiver =
+      opts.messaging.peer === "omp"
+        ? ({ receiver: "omp" } as const)
+        : ({
+            receiver: "claude-code",
+            fromName: `${FROM_PREFIX}-${opts.subject}`,
+            // Attested only where the transcript is unambiguous: an
+            // unattested message is held only if the target session is in
+            // bypass, while a wrongly attested one is held outright. A
+            // function because the claim is about the sender at the moment
+            // each frame goes out, and a standing watch outlives that
+            // moment.
+            fromMode: attestedMode({
+              session: opts.session,
+              home: opts.home,
+              note: opts.note,
+            }),
+          } as const);
     try {
       opened = await open<T>({
         // `followTransport` refuses an unset socket before any I/O.
-        target: opts.socket as string,
-        token: opts.token,
+        target: opts.messaging.socket as string,
+        token: opts.messaging.token,
         note: opts.note,
         clock: opts.clock,
-        fromName: `${FROM_PREFIX}-${opts.subject}`,
-        // Attested only where the transcript is unambiguous: an
-        // unattested message is held only if the target session is in
-        // bypass, while a wrongly attested one is held outright. A function
-        // because the claim is about the sender at the moment each frame
-        // goes out, and a standing watch outlives that moment.
-        fromMode: attestedMode({
-          session: opts.session,
-          home: opts.home,
-          note: opts.note,
-        }),
+        ...receiver,
         render: (items, since, cursor) =>
           [
             `${opts.label} — ${items.length} new ${items.length === 1 ? "entry" : "entries"}`,
@@ -321,6 +343,11 @@ export async function openFollow<T>(opts: {
       );
       return oneShot;
     }
+    // Only on this transport: a stdout batch already opens with `label`,
+    // which names the command, and saying it twice is the one repetition
+    // this stream has no room for. Read by the omp extension's start
+    // grace, which cannot work the project's own spelling out itself.
+    opts.note(`--follow=uds following ${opts.following}`);
   }
 
   const push = opened;

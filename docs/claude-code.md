@@ -115,7 +115,10 @@ The sender's display name states which watch a message came from:
 `todou-watch-all` under `--all-projects`) and `todou-watch-<slug>-<number>`
 for a single card. It is a display label only — the receiving side's
 admission check never reads it — but a session holding one project watch and
-three card watches would otherwise show the same sender five times.
+three card watches would otherwise show the same sender five times. This
+name is Claude Code's side of the envelope; a todou pushing to omp sends no
+envelope, and each batch's own first line — `todou issue watch T-16 -p todou
+— 3 new entries` — is what names the sender there.
 
 Whether the push is delivered is decided by the receiving session's
 admission check, in this order. An explicit `crossSessionInbound` setting

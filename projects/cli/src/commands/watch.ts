@@ -518,14 +518,14 @@ export class WatchCommand extends ProjectCommand {
         transport: opts.transport,
         label: `todou watch -p ${project}`,
         subject: project,
+        following: project,
         baseline,
         intervalSec,
         wait: opts.wait,
         render: (items, since, cursor) =>
           renderHuman(items, since, cursor, plain),
         emit,
-        socket: opts.messaging.socket,
-        token: opts.messaging.token,
+        messaging: opts.messaging,
         session: () => this.ownSession(),
         home: this.context.home,
         clock: this.clock,
@@ -675,14 +675,14 @@ export class WatchCommand extends ProjectCommand {
       // The slug list is already de-duplicated, and joining it whole rather
       // than truncating keeps six watched projects merely long-named.
       subject: slugs === null ? "all" : slugs.join("-"),
+      following: slugs === null ? "all-projects" : slugs.join(","),
       baseline,
       intervalSec,
       wait: opts.wait,
       render: (items, since, cursor) =>
         renderHuman(items, since, cursor, plain),
       emit,
-      socket: opts.messaging.socket,
-      token: opts.messaging.token,
+      messaging: opts.messaging,
       session: () => this.ownSession(),
       home: this.context.home,
       clock: this.clock,
