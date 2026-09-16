@@ -840,7 +840,11 @@ export default function todou(pi: Pi): void {
         .join("\n")
         .replace(/\s+$/, "");
     }
-    watch.child.on("exit", (code) => {
+    // `close`, not `exit`: the notification is built from the child's last
+    // output, and `close` is the event that guarantees stdio is drained —
+    // `exit` can fire while a final `cursor:` line is still in the pipe.
+    // (The code rides along: `close` receives it after `exit` did.)
+    watch.child.on("close", (code) => {
       // The second registration, for the real end of a watch that outlived
       // its grace: repaint, then decide what the session is told. A tool's
       // own stop and the session ending are the two silences; everything
@@ -950,7 +954,7 @@ export default function todou(pi: Pi): void {
             // one's: only once the child has died does its stdout hold
             // what it had not handed over. Grouped with itself, so the
             // handler sees "all settled" on that one exit.
-            watch.stopGroup = [watch];
+            watch.stopGroup = watch.stopGroup ?? [watch];
             stop(watch, "command");
             ctx.ui?.notify?.(`stopping ${watch.id}.`, "info");
             return;
@@ -963,9 +967,20 @@ export default function todou(pi: Pi): void {
           // last — the receiving side charges each message a fixed cost,
           // which is the same reason a watch batches its entries, and no
           // child's held output exists before its own exit.
-          for (const watch of live) watch.stopGroup = live;
+          // Write-once: a second stop inside the death window must not
+          // re-group watches that are already waiting on this set, or an
+          // early exit's "not all settled" can outlive the set it checked.
+          for (const watch of live) {
+            watch.stopGroup = watch.stopGroup ?? live;
+          }
           for (const watch of live) stop(watch, "command");
-          ctx.ui?.notify?.(`stopped ${live.length} watches.`, "info");
+          // True now, which is the point: the exits carry the message, and
+          // this copy is design §5.9's, restored after the round that
+          // removed it for saying something no path delivered.
+          ctx.ui?.notify?.(
+            `stopped ${live.length} watches. The agent has been told.`,
+            "info",
+          );
           paintWidget();
           return;
         }

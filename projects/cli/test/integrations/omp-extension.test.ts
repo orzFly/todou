@@ -791,7 +791,47 @@ describe("the todou_watch tool (T-357)", () => {
     expect(sent[0]?.content).toContain("w2");
     expect(sent[0]?.content).toContain("cursor: c-all");
     expect(sent[0]?.content).not.toContain("(nothing was waiting)");
-    expect(notify[0]).toContain("stopped 2 watches");
+    // §5.9's second half, pinned: the exits deliver the message, so the
+    // claim is true — the round that removed it here was over-broad.
+    expect(notify[0]).toContain("stopped 2 watches. The agent has been told.");
+  });
+
+  it("keeps a half-dead group's cursor when stop lands again", async () => {
+    // The reviewer's exact window: stop-all, w1 dies, then a second stop
+    // recomputes `live` to the still-living w2 alone. Without the
+    // write-once group, w2's reassignment leaves w1's exit — already run
+    // against a two-member group that never settled — with nobody to
+    // report its cursor. The two children take their pace from the issue
+    // they are started with, so the fast one is the fast one by request,
+    // not by filesystem race.
+    const { bin, pids } = fakeTodou(
+      "stagger",
+      'case "$*" in\n' +
+        "*T-16*) trap 'echo \"cursor: c-fast\"; exit 0' TERM ;;\n" +
+        "*) trap 'echo \"cursor: c-slow\"; sleep 0.3; exit 0' TERM ;;\n" +
+        "esac\n" +
+        // 0.05 rather than the other fakes' 1: a shell runs a trap only once
+        // the foreground command has returned, so the sleep is also how late
+        // a TERM may land — and the window this case aims at is 200ms wide.
+        "while true; do sleep 0.05; done",
+    );
+    process.env.TODOU_BIN = bin;
+    const { run, runCommand, sent } = bootWatch("stagger");
+    await run({ action: "start", issue: "T-16" });
+    await run({ action: "start", issue: "T-18" });
+    await runCommand(["stop"], { hasUI: false });
+    // 200ms: the fast child is dead, the slow one is inside its 0.3s trap.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    // The second stop, in the reviewer's window.
+    await runCommand(["stop"], { hasUI: false });
+    await gone(pids);
+    // Both cursors, one message: the guard kept w2's group at the original
+    // pair, so w1's exit had a settled set to report.
+    await sentCount({ sent }, 1);
+    expect(sent.length).toBe(1);
+    expect(sent[0]?.content).toContain("cursor: c-fast");
+    expect(sent[0]?.content).toContain("cursor: c-slow");
+    expect(sent[0]?.content).not.toContain("(nothing was waiting)");
   });
 
   it("notifies for a single-id stop too, cursor included", async () => {
