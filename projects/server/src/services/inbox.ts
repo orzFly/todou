@@ -4,6 +4,7 @@ import type {
   InboxQuery,
   InboxRowState,
   MePrefs,
+  MuteReason,
 } from "@todou/shared";
 import { and, eq, gt, inArray, isNotNull, max, ne, or, sql } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
@@ -31,6 +32,7 @@ import {
   visibleProjects,
 } from "./cross-references.ts";
 import { bundleIssues, type IssueBundle, toIssue } from "./issues.ts";
+import { loadIssueMutes, loadMuteContext, loadMutedProjects } from "./mutes.ts";
 import { readPrefs } from "./prefs.ts";
 import { ensureFrontiers, frontierJoin, unreadIssueState } from "./reads.ts";
 import { live } from "./trash.ts";
@@ -70,6 +72,8 @@ export function inboxKeepCheck(input: {
   openQuestions: number;
   userId: number;
   showWeakUnread: boolean;
+  /** Why the mute gate holds this card quiet, when it does (T-372). */
+  silenced: MuteReason | null;
 }): { keep: boolean; pendingSpecReview: boolean; openQuestions: number } {
   // Closing an issue retires both pending reasons (T-111), so a closed
   // issue only survives on unread activity of its own — a new foreign
@@ -82,6 +86,11 @@ export function inboxKeepCheck(input: {
     input.specAuthorId !== input.userId;
   const openQuestions = input.isClosed ? 0 : input.openQuestions;
   const result = { pendingSpecReview, openQuestions };
+
+  // The mute gate goes first and answers nothing but the verdict: the
+  // reasons above still come back out, because the callers report them
+  // (T-372's unread stays truthful under a mute; so do these).
+  if (input.silenced !== null) return { keep: false, ...result };
 
   // Candidates are a slight superset (e.g. an unreviewed spec the caller
   // pushed themself); only issues with a live reason stay.
@@ -129,6 +138,8 @@ export async function groupInbox(
   showWeakUnread: boolean,
   includeEventScan: boolean,
   visible: VisibleProjects,
+  /** Read once by `getInbox` and handed to every group (T-372). */
+  mutedProjects: Set<number>,
 ): Promise<GroupSlice> {
   const userId = actor.id;
   const projectIds = projects.map((p) => p.id);
@@ -258,14 +269,19 @@ export async function groupInbox(
     .from(issues)
     .where(and(inArray(issues.id, ids), live));
   const bundles = await bundleIssues(ctx, db, projectIds, rows, actor);
-  const { unread, counts } = await unreadIssueState(
+  // The project half arrived from getInbox (one system-db read for all
+  // groups); only the per-issue rows are this group's to fetch.
+  const mutes = await loadIssueMutes(db, userId, ids, mutedProjects);
+  const { unread, counts, silenced } = await unreadIssueState(
     db,
     projectIds,
     userId,
     ids,
     visible,
+    mutes,
+    // The rows just read carry their own project ids.
+    new Map(rows.map((r) => [r.id, r.projectId])),
   );
-
   // Current version's author, for the "waiting for MY review" exclusion —
   // issues.spec_version is the denormalized current number (T-23).
   const specAuthors = new Map<number, { authorId: number; createdAt: Date }>();
@@ -331,6 +347,7 @@ export async function groupInbox(
       openQuestions: row.openQuestions,
       userId,
       showWeakUnread,
+      silenced: silenced.get(row.id) ?? null,
     });
     if (!keep) continue;
     kept.push({
@@ -418,6 +435,7 @@ export async function groupInbox(
  * invalidate on.
  */
 export async function inboxRowState(
+  systemDb: Db,
   db: Db,
   project: ProjectRow,
   actor: UserRow,
@@ -448,12 +466,21 @@ export async function inboxRowState(
   const row = rows[0];
   if (!row) return null;
 
-  const { unread, counts } = await unreadIssueState(
+  const mutes = await loadMuteContext(
+    systemDb,
+    db,
+    actor.id,
+    [project.id],
+    [row.id],
+  );
+  const { unread, counts, silenced } = await unreadIssueState(
     db,
     [project.id],
     actor.id,
     [row.id],
     visible,
+    mutes,
+    new Map([[row.id, project.id]]),
   );
 
   let specAuthorId: number | null = null;
@@ -478,6 +505,7 @@ export async function inboxRowState(
     openQuestions: row.openQuestions,
     userId: actor.id,
     showWeakUnread: prefs.show_weak_unread,
+    silenced: silenced.get(row.id) ?? null,
   });
   if (!keep) return null;
 
@@ -581,6 +609,14 @@ export async function getInbox(
     else groups.set(url, { route, projects: [project] });
   }
 
+  // Read once here rather than per group: a project mute lives in the
+  // system db, and every group needs the same answer (T-372).
+  const mutedProjects = await loadMutedProjects(
+    ctx.router.system(),
+    actor.id,
+    scope.map((p) => p.id),
+  );
+
   const slices = await inFlight(
     ctx.config.database.projects.max_open,
     [...groups.values()].map((group) => async (): Promise<GroupSlice> => {
@@ -602,6 +638,7 @@ export async function getInbox(
         // test/inbox.test.ts is the guard that turns red instead.
         prefs.show_weak_unread,
         visible,
+        mutedProjects,
       );
     }),
   );

@@ -47,10 +47,12 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
     caps: [
       "project.read",
       "project.stream",
+      "project.mute",
       "issue.list",
       "issue.count",
       "issue.read",
       "issue.mark_read",
+      "issue.mute",
       "timeline.read",
       "activity.read",
       "inbox.read",

@@ -574,7 +574,15 @@ describe("cross-project inbox T-97", () => {
       for (const n of numbers) {
         out[n] = {
           list: listFingerprint(page, n),
-          single: await inboxRowState(db, project, bob.user, n, prefs, visible),
+          single: await inboxRowState(
+            t.ctx.router.system(),
+            db,
+            project,
+            bob.user,
+            n,
+            prefs,
+            visible,
+          ),
         };
       }
       return out;
@@ -809,7 +817,15 @@ describe("cross-project inbox T-97", () => {
       const prefs = await readPrefs(t.ctx.router.system(), bob.user.id);
       const visible = await visibleProjects(t.ctx, bob.user);
       expect(
-        await inboxRowState(db, project, bob.user, 999_999, prefs, visible),
+        await inboxRowState(
+          t.ctx.router.system(),
+          db,
+          project,
+          bob.user,
+          999_999,
+          prefs,
+          visible,
+        ),
       ).toBeNull();
     });
   });
@@ -842,6 +858,7 @@ describe("cross-project inbox T-97", () => {
         false,
         includeEventScan,
         visible,
+        new Set<number>(),
       );
     }
 

@@ -200,6 +200,7 @@ function streamChanges(
         const prefs = await readPrefs(ctx.router.system(), user.id);
         const db = await ctx.router.forProject(routeInfoOf(project));
         return await inboxRowState(
+          ctx.router.system(),
           db,
           project,
           user,

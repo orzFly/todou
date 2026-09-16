@@ -34,6 +34,7 @@ import {
 import { MarkReadOnView } from "@/components/issue/mark-read-on-view.tsx";
 import { MetadataSection } from "@/components/issue/metadata-section.tsx";
 import { IssueMoreActions } from "@/components/issue/more-actions-menu.tsx";
+import { MuteMenu } from "@/components/issue/mute-menu.tsx";
 import {
   SpecEntryRow,
   SpecSidebarSection,
@@ -645,6 +646,8 @@ export function Sidebar({
 
       {/* Placement per the T-63 verdict: after Assignees, verdict-free. */}
       <SpecSidebarSection slug={slug} issueNumber={issue.number} />
+
+      <MuteMenu slug={slug} issueNumber={issue.number} />
 
       <MetadataSection slug={slug} issueNumber={issue.number} />
 

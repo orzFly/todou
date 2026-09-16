@@ -119,6 +119,7 @@ export function IssueRow({
           number={issue.number}
           unread={issue.unread}
           unreadComments={issue.unread_comments}
+          muted={issue.muted}
         />
       </span>
       {refLeads && (

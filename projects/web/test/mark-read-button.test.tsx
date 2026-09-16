@@ -175,6 +175,7 @@ describe("clearUnread", () => {
     deleted_by: null,
     unread: true,
     unread_comments: unreadComments,
+    muted: null,
     moves: [],
   });
 

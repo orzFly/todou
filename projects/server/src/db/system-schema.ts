@@ -137,6 +137,26 @@ export const projects = pgTable(
   (t) => [uniqueIndex("projects_slug_idx").on(t.slug)],
 );
 
+// A user's muted projects (T-372), by id rather than slug so a rename —
+// which leaves the old address routing through slug_history — does not
+// silently unmute. Lives in the system db beside user_prefs (not inside its
+// jsonb: `||` shallow-merge would lose an array field to concurrent writes)
+// so /me/inbox can read every project's mute in one query.
+export const projectMutes = pgTable(
+  "project_mutes",
+  {
+    id: id(),
+    projectId: bigint("project_id", { mode: "number" })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    mutedAt: timestamp("muted_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    uniqueIndex("project_mutes_project_user_idx").on(t.projectId, t.userId),
+  ],
+);
+
 // Mirror of every project's ref_formats history (T-150). Resolving a bare
 // `PREFIX-N` written in project A means asking who held that prefix at that
 // instant across ALL projects — a question the per-project tables cannot

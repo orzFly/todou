@@ -40,6 +40,7 @@ import type {
   IssueMetadataList,
   IssueMetadataNamespaceList,
   IssueMetadataWriteInput,
+  IssueMuteInput,
   IssueQuestions,
   IssueReadInput,
   IssueUpdateInput,
@@ -54,6 +55,7 @@ import type {
   MePrefsPatch,
   MetadataNamespaceSelector,
   MeUpdateInput,
+  MuteList,
   Project,
   ProjectCreateInput,
   ProjectUpdateInput,
@@ -766,6 +768,18 @@ export class TodouClient {
     this.request<void>("PUT", `/projects/${slug}/issues/${number}/read`, {
       json: input,
     });
+
+  muteIssue = (slug: string, number: number, input: IssueMuteInput) =>
+    this.request<void>("PUT", `/projects/${slug}/issues/${number}/mute`, {
+      json: input,
+    });
+  unmuteIssue = (slug: string, number: number) =>
+    this.request<void>("DELETE", `/projects/${slug}/issues/${number}/mute`);
+  muteProject = (slug: string) =>
+    this.request<void>("PUT", `/projects/${slug}/mute`);
+  unmuteProject = (slug: string) =>
+    this.request<void>("DELETE", `/projects/${slug}/mute`);
+  getMutes = () => this.request<MuteList>("GET", "/me/mutes");
 
   // — search —
   search = (slug: string, query: Query) =>

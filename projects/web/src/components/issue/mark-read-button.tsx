@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import type { MuteReason } from "@todou/shared";
 import { CheckIcon } from "lucide-react";
 import { useState } from "react";
 import { prefsQuery } from "@/api/prefs.ts";
@@ -22,11 +23,13 @@ export function MarkReadButton({
   number,
   unread,
   unreadComments,
+  muted = null,
 }: {
   slug: string;
   number: number;
   unread: boolean;
   unreadComments: number;
+  muted?: MuteReason | null;
 }) {
   const [marked, setMarked] = useState(false);
   const { mutate } = useMarkReadAction();
@@ -58,7 +61,11 @@ export function MarkReadButton({
       }}
     >
       <span className="inline-flex group-hover:hidden group-focus-visible:hidden">
-        <UnreadMarker unread={unread} unreadComments={unreadComments} />
+        <UnreadMarker
+          unread={unread}
+          unreadComments={unreadComments}
+          muted={muted}
+        />
       </span>
       <CheckIcon className="hidden size-3.5 group-hover:block group-focus-visible:block" />
     </button>

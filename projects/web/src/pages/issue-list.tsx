@@ -55,6 +55,7 @@ import {
 } from "@/components/issue/label-picker.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { IssueListBodySkeleton } from "@/components/page-skeleton.tsx";
+import { ProjectMuteButton } from "@/components/project-mute-button.tsx";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useHeaderHeight } from "@/lib/use-header-height.ts";
@@ -160,6 +161,7 @@ function ProjectIssueListPage({
           scopeName="this project"
           className="ml-auto"
         />
+        <ProjectMuteButton slug={slug} />
         {/* Admin-only, because only they see the whole project's trash. An
             author with deleted cards of their own reaches the same view by
             URL or through `todou issue list --deleted`. */}

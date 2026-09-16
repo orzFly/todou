@@ -235,5 +235,6 @@ export const MeEvent = z.discriminatedUnion("kind", [
     origin: Origin,
   }),
   z.object({ kind: z.literal("prefs"), origin: Origin }),
+  z.object({ kind: z.literal("mutes"), origin: Origin }),
 ]);
 export type MeEvent = z.infer<typeof MeEvent>;
