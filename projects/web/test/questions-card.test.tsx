@@ -313,6 +313,46 @@ describe("QuestionsCard (unanswered)", () => {
     expect(declineBtn.className).toContain("select-text");
   });
 
+  it("gives all four row states a hover, none of them while submitting", async () => {
+    stubFetch();
+    const view = renderCard();
+    await view.findByText("awaiting answer");
+
+    const declineButton = () =>
+      view
+        .getAllByText("Decline to answer")[0]
+        ?.closest("button") as HTMLButtonElement;
+
+    const unselected = optionButton(view, "New entity").className;
+    expect(unselected).toContain("enabled:hover:border-foreground/40");
+    expect(unselected).toContain("enabled:hover:bg-foreground/6");
+
+    fireEvent.click(optionButton(view, "New entity"));
+    const selected = optionButton(view, "New entity").className;
+    expect(selected).toContain("enabled:hover:bg-primary/20");
+    // The border is what marks a row selected; hover deepens the fill instead,
+    // so that hovering never reads as a change of state.
+    expect(selected).not.toContain("hover:border-foreground");
+
+    const undeclared = declineButton().className;
+    expect(undeclared).toContain("enabled:hover:border-foreground/40");
+    expect(undeclared).toContain("enabled:hover:bg-foreground/6");
+
+    // Exclusive with the selection above, which is why `selected` is read first.
+    fireEvent.click(declineButton());
+    const declared = declineButton().className;
+    expect(declared).toContain("enabled:hover:bg-destructive/20");
+    expect(declared).not.toContain("hover:border-destructive");
+
+    // `:hover` matches a disabled button too, so a hover colour that is not
+    // behind `enabled:` keeps lighting the row while the answer is in flight.
+    // The lookbehind is the whole assertion: `enabled:hover:bg-` contains
+    // `hover:bg-`, so a plain substring test here could never fail.
+    for (const className of [unselected, selected, undeclared, declared]) {
+      expect(className).not.toMatch(/(?<!enabled:)hover:bg-/);
+    }
+  });
+
   it("does not toggle an option when the click ends a selection in the row", async () => {
     stubFetch();
     const view = renderCard();

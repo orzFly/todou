@@ -361,8 +361,8 @@ function QuestionForm({
               aria-pressed={active}
               className={`flex w-full items-start gap-2 rounded-md border px-2 py-1.5 text-left text-sm transition-colors select-text ${
                 active
-                  ? "border-primary bg-primary/10"
-                  : "border-transparent hover:bg-muted/60"
+                  ? "border-primary bg-primary/10 enabled:hover:bg-primary/20"
+                  : "border-transparent enabled:hover:border-foreground/40 enabled:hover:bg-foreground/6"
               }`}
             >
               <span className="mt-0.5 shrink-0 text-muted-foreground">
@@ -399,8 +399,8 @@ function QuestionForm({
           aria-pressed={draft.declined}
           className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left text-sm transition-colors select-text ${
             draft.declined
-              ? "border-destructive/60 bg-destructive/10"
-              : "border-transparent text-muted-foreground hover:bg-muted/60"
+              ? "border-destructive/60 bg-destructive/10 enabled:hover:bg-destructive/20"
+              : "border-transparent text-muted-foreground enabled:hover:border-foreground/40 enabled:hover:bg-foreground/6"
           }`}
         >
           <CircleSlashIcon
