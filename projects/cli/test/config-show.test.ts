@@ -309,6 +309,7 @@ describe("config show", () => {
       "  git@git.example:org/other.git → https://todou.example · project other",
     );
     expect(human).toContain("  project: none");
+    expect(report.git_remote).toBe(remote);
     expect(report.bindings[0]?.active).toBe(false);
     expect(report.servers).toEqual([
       {
