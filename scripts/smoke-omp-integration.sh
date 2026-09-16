@@ -19,6 +19,9 @@
 #
 # Check 8 reads `xd://todou_watch` inside the session, which needs an omp new
 # enough to mount extension tools as devices (v18.1.21 was measured).
+#
+# Everything lands under a scratch HOME and a scratch XDG_RUNTIME_DIR, so a run
+# cannot touch the extension you actually have installed.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ROOT="$PWD"

@@ -503,6 +503,11 @@ export default function todou(pi: Pi): void {
     exit: number | null;
     /** Who stopped it, when something did; `null` while it runs on. */
     stoppedBy: "tool" | "command" | "shutdown" | null;
+    /**
+     * The watches this one was stopped together with, when `/todou stop`
+     * took a set: the one message for them waits for the last of the set.
+     */
+    stopGroup: Watch[] | null;
   };
 
   const watches = new Map<string, Watch>();
@@ -634,7 +639,7 @@ export default function todou(pi: Pi): void {
    * The message a watch that ended on its own owes the session: what it
    * had not handed over, and the cursor to resume from.
    */
-  function announceExit(watch: Watch): void {
+  function endedText(watch: Watch): string {
     const head = `todou_watch ${watch.id} ended — ${commandOf(watch)} exited ${watch.exit} after ${elapsedOf(watch)}.`;
     const parts = [head];
     if (watch.stdout !== "") {
@@ -649,7 +654,50 @@ export default function todou(pi: Pi): void {
       parts.push(watch.stderr);
       parts.push("```");
     }
-    deliver(parts.join("\n\n"));
+    return parts.join("\n\n");
+  }
+
+  /**
+   * The message for watches the user stopped from `/todou` — one message
+   * however many ended, because the receiving side charges each message a
+   * fixed cost, the same reason a watch batches its entries.
+   */
+  function userStoppedText(all: Watch[]): string {
+    const lines = all.map(
+      (watch) =>
+        `${watch.id}  ${followingOf(watch).padEnd(6)} ${commandOf(watch)}  ran ${elapsedOf(watch)}`,
+    );
+    const held = all
+      .map(
+        (watch) =>
+          `${watch.id}:\n${watch.stdout === "" ? "(nothing was waiting)" : watch.stdout}`,
+      )
+      .join("\n\n");
+    return [
+      `The user stopped ${all.length} todou watch(es) from /todou. You were not asked, so this is the notification: nothing is following those cards or projects any more.`,
+      "",
+      "```",
+      ...lines,
+      "```",
+      "What each had not handed over, and the cursor to resume from:",
+      "",
+      "```",
+      held,
+      "```",
+    ].join("\n");
+  }
+
+  /**
+   * Sends the one message for a `/todou stop` set, from whichever exit
+   * landed last. It cannot be sent from the command itself: a watch
+   * SIGTERMed by `stop()` prints its held batches and its cursor only as
+   * it dies, so the message has to be built from output that each exit
+   * event has by then captured.
+   */
+  function deliverStoppedByCommand(all: Watch[]): void {
+    const settled = all.filter((watch) => watch.exit !== null);
+    if (settled.length < all.length) return;
+    deliver(userStoppedText(settled));
   }
 
   /** Stop one watch: record who, signal, and escalate if it lingers. */
@@ -749,6 +797,7 @@ export default function todou(pi: Pi): void {
       stderr: "",
       exit: null,
       stoppedBy: null,
+      stopGroup: null,
     };
     watches.set(id, watch);
     child.stdout?.setEncoding("utf8");
@@ -793,10 +842,20 @@ export default function todou(pi: Pi): void {
     }
     watch.child.on("exit", (code) => {
       // The second registration, for the real end of a watch that outlived
-      // its grace: repaint, then decide whether the session is told.
+      // its grace: repaint, then decide what the session is told. A tool's
+      // own stop and the session ending are the two silences; everything
+      // else is said here — not in `stop()` — because this is the moment
+      // the child's last output exists to say it with.
       watch.exit = code ?? -1;
       paintWidget();
-      if (watch.stoppedBy === null) announceExit(watch);
+      if (watch.stoppedBy === "tool" || watch.stoppedBy === "shutdown") {
+        return;
+      }
+      if (watch.stoppedBy === "command") {
+        deliverStoppedByCommand(watch.stopGroup ?? [watch]);
+        return;
+      }
+      deliver(endedText(watch));
     });
     paintWidget();
     return [
@@ -887,49 +946,26 @@ export default function todou(pi: Pi): void {
               );
               return;
             }
+            // The notification is the exit handler's to send, not this
+            // one's: only once the child has died does its stdout hold
+            // what it had not handed over. Grouped with itself, so the
+            // handler sees "all settled" on that one exit.
+            watch.stopGroup = [watch];
             stop(watch, "command");
-            ctx.ui?.notify?.(
-              `stopping ${watch.id}. The agent has been told.`,
-              "info",
-            );
+            ctx.ui?.notify?.(`stopping ${watch.id}.`, "info");
             return;
           }
           if (live.length === 0) {
             ctx.ui?.notify?.("nothing to stop.", "info");
             return;
           }
-          // One message for all of them: the receiving side charges each
-          // message a fixed cost, which is the same reason a watch batches
-          // its entries.
-          const lines = live.map(
-            (watch) =>
-              `${watch.id}  ${followingOf(watch).padEnd(6)} ${commandOf(watch)}  ran ${elapsedOf(watch)}`,
-          );
-          const held = live
-            .map(
-              (watch) =>
-                `${watch.id}:\n${watch.stdout === "" ? "(nothing was waiting)" : watch.stdout}`,
-            )
-            .join("\n\n");
+          // One message for all of them, sent by whichever exit lands
+          // last — the receiving side charges each message a fixed cost,
+          // which is the same reason a watch batches its entries, and no
+          // child's held output exists before its own exit.
+          for (const watch of live) watch.stopGroup = live;
           for (const watch of live) stop(watch, "command");
-          deliver(
-            [
-              `The user stopped ${live.length} todou watch(es) from /todou. You were not asked, so this is the notification: nothing is following those cards or projects any more.`,
-              "",
-              "```",
-              ...lines,
-              "```",
-              "What each had not handed over, and the cursor to resume from:",
-              "",
-              "```",
-              held,
-              "```",
-            ].join("\n"),
-          );
-          ctx.ui?.notify?.(
-            `stopped ${live.length} watches. The agent has been told.`,
-            "info",
-          );
+          ctx.ui?.notify?.(`stopped ${live.length} watches.`, "info");
           paintWidget();
           return;
         }

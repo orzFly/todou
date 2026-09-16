@@ -766,7 +766,13 @@ describe("the todou_watch tool (T-357)", () => {
   });
 
   it("stops everything from /todou stop and pushes one message", async () => {
-    const { bin, pids } = fakeTodou("command", "exec sleep 30");
+    // The cursor is the point: a watch SIGTERMed by the stop prints its
+    // held batches and its `cursor:` line only as it dies, so the message
+    // must be built after the exits, not when the command runs.
+    const { bin, pids } = fakeTodou(
+      "command",
+      "trap 'echo \"cursor: c-all\" ; exit 0' TERM\nwhile true; do sleep 1; done",
+    );
     process.env.TODOU_BIN = bin;
     const { run, runCommand, sent } = bootWatch("command");
     await run({ action: "start", issue: "T-16" });
@@ -777,12 +783,41 @@ describe("the todou_watch tool (T-357)", () => {
       ui: { notify: (t: string) => notify.push(t) },
     });
     await gone(pids);
+    await sentCount({ sent }, 1);
     // One message for both, ids in it: each message is a fixed cost to the
     // receiving turn, which is the same reason a watch batches entries.
     expect(sent.length).toBe(1);
     expect(sent[0]?.content).toContain("w1");
     expect(sent[0]?.content).toContain("w2");
+    expect(sent[0]?.content).toContain("cursor: c-all");
+    expect(sent[0]?.content).not.toContain("(nothing was waiting)");
     expect(notify[0]).toContain("stopped 2 watches");
+  });
+
+  it("notifies for a single-id stop too, cursor included", async () => {
+    // The path a bare `/todou stop` never exercises: one id, one exit, and
+    // a message the command itself used to claim it had sent.
+    const { bin, pids } = fakeTodou(
+      "command-one",
+      "trap 'echo \"cursor: c-one\" ; exit 0' TERM\nwhile true; do sleep 1; done",
+    );
+    process.env.TODOU_BIN = bin;
+    const { run, runCommand, sent } = bootWatch("command-one");
+    await run({ action: "start", issue: "T-16" });
+    const notify: string[] = [];
+    await runCommand(["stop", "w1"], {
+      hasUI: false,
+      ui: { notify: (t: string) => notify.push(t) },
+    });
+    await gone(pids);
+    await sentCount({ sent }, 1);
+    expect(sent[0]?.content).toContain("The user stopped 1");
+    expect(sent[0]?.content).toContain("w1");
+    expect(sent[0]?.content).toContain("cursor: c-one");
+    // What the UI says has to be something that happened: the message is
+    // the exit handler's, so the notify claims nothing about it.
+    expect(notify[0]).toContain("stopping w1");
+    expect(notify[0]).not.toContain("has been told");
   });
 
   it("paints one widget line, folding the fifth into and n more", async () => {
