@@ -160,6 +160,13 @@ export const InboxRowState = z.object({
   unread_comments: z.number().int().nonnegative(),
   pending_spec_review: z.boolean(),
   open_questions: z.number().int().nonnegative(),
+  /**
+   * The mention half of the row's attention state, same field name as
+   * InboxItem carries — see `mentions_you` there. Defaulted the same way so
+   * an older server's fingerprint still parses (and merely compares unequal
+   * on this field, costing one refetch).
+   */
+  mentions_you: z.boolean().default(false),
 });
 export type InboxRowState = z.infer<typeof InboxRowState>;
 

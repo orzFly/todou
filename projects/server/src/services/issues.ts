@@ -69,6 +69,7 @@ import { loadMuteContext } from "./mutes.ts";
 import { unreadIssueState } from "./reads.ts";
 import {
   recordCrossReferences,
+  recordIssueMentions,
   recordLocalReferences,
   resolveContent,
 } from "./resolve-pass.ts";
@@ -549,6 +550,14 @@ export async function createIssue(
       { issueNumber: number },
       resolved.local,
       agentContext,
+    );
+    await recordIssueMentions(
+      tx,
+      project,
+      actor.id,
+      issue.id,
+      undefined,
+      resolved.mentions,
     );
     for (const ref of refs) {
       events.push({
@@ -1101,6 +1110,14 @@ export async function updateIssue(
         { issueNumber: number },
         resolved.local,
         agentContext,
+      );
+      await recordIssueMentions(
+        tx,
+        project,
+        actor.id,
+        before.id,
+        undefined,
+        resolved.mentions,
       );
       for (const ref of refs) {
         events.push({

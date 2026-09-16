@@ -35,6 +35,13 @@ export const InboxItem = IssueListItem.extend({
    * from spec_review_status — the pusher exclusion needs the server.
    */
   pending_spec_review: z.boolean(),
+  /**
+   * Someone @-mentioned the caller on this row and they have not read
+   * past it. Not a comment count: an edit that adds a mention lights this
+   * without touching `unread_comments`. Defaulted so an older server's
+   * response still parses.
+   */
+  mentions_you: z.boolean().default(false),
 });
 export type InboxItem = z.infer<typeof InboxItem>;
 

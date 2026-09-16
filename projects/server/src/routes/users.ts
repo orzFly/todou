@@ -1,7 +1,28 @@
 import { Readable } from "node:stream";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
+import { PublicUser } from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
 import { openAvatar } from "../services/profile.ts";
+import { getPublicUser } from "../services/users.ts";
+
+const userRoute = createRoute({
+  method: "get",
+  path: "/users/{ref}",
+  summary:
+    "One account's public identity. {ref} is an id when all digits, a login " +
+    "otherwise. Visible when the caller shares a project with them, is " +
+    "them, or is an instance admin; everyone else gets the same 404 an " +
+    "unknown login gets.",
+  request: {
+    params: z.object({ ref: z.string().min(1).max(64) }),
+  },
+  responses: {
+    200: {
+      description: "The account",
+      content: { "application/json": { schema: PublicUser } },
+    },
+  },
+});
 
 const avatarRoute = createRoute({
   method: "get",
@@ -15,6 +36,14 @@ const avatarRoute = createRoute({
 
 export function userRoutes() {
   const app = new OpenAPIHono<AppEnv>();
+
+  app.openapi(userRoute, async (c) => {
+    const user = c.get("user");
+    return c.json(
+      await getPublicUser(c.get("appCtx"), user, c.req.valid("param").ref),
+      200,
+    );
+  });
 
   app.openapi(avatarRoute, async (c) => {
     const { id } = c.req.valid("param");

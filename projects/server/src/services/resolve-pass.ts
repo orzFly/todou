@@ -32,7 +32,7 @@ import {
   scanReferenceTokens,
   spliceResolved,
 } from "@todou/shared";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext, DbContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
@@ -40,9 +40,10 @@ import {
   attachments,
   comments,
   issueEvents,
+  issueMentions,
   issues,
 } from "../db/project-schema.ts";
-import { projects } from "../db/system-schema.ts";
+import { projectMembers, projects, users } from "../db/system-schema.ts";
 import { type ProjectRow, projectRoleOf, routeInfoOf } from "./access.ts";
 import type { ReferenceInputs } from "./cross-references.ts";
 import { currentRefPrefix } from "./references.ts";
@@ -62,6 +63,12 @@ export type ResolveResult = {
   local: number[];
   /** Cards elsewhere: recorded after the commit, best effort. */
   cross: ReferenceTarget[];
+  /**
+   * Users this content @-mentioned, minus the author. The rows land in the
+   * writing transaction alongside `local`'s events; an author mentioning
+   * themselves is a link, never a notification.
+   */
+  mentions: number[];
 };
 
 /** The grammar as this project's numbering sees it right now. */
@@ -72,6 +79,7 @@ function anchorConfig(
   return {
     internalPrefix,
     autolinks: inputs.autolinks,
+    mentions: true,
     cross: {
       slugs: inputs.slugs,
       directory: inputs.directory,
@@ -101,7 +109,9 @@ type CandidateTarget =
       id: number;
       variant: "download" | "view";
       name: string | null;
-    };
+    }
+  /** An `@login`: the target must be a member of this project. */
+  | { kind: "mention"; login: string };
 
 type Candidate = {
   start: number;
@@ -114,7 +124,9 @@ type Candidate = {
   target: CandidateTarget;
 };
 
-function pointerOf(target: LinkTarget): ProjectPointer {
+function pointerOf(
+  target: Extract<LinkTarget, { kind: "issue" | "attachment" }>,
+): ProjectPointer {
   return target.project.kind === "id"
     ? { kind: "id", id: target.project.id }
     : { kind: "slug", slug: target.project.slug };
@@ -139,6 +151,14 @@ function candidateOfToken(token: ReferenceToken): Candidate | null {
       },
     };
   }
+  if (token.type === "mention") {
+    return {
+      start: token.start,
+      end: token.end,
+      asTyped: token.text,
+      target: { kind: "mention", login: token.login },
+    };
+  }
   if (token.type === "comment") {
     return {
       start: token.start,
@@ -157,12 +177,17 @@ function candidateOfLink(link: MarkdownLink): Candidate | null {
   if (target === null) return null;
   // Already anchored on an id, which is the form this pass produces. Leaving
   // it alone is what makes a second pass over stored text a no-op — and what
-  // keeps a later move from being written into the text again.
-  if (target.project.kind === "id") return null;
-  const project = pointerOf(target);
+  // keeps a later move from being written into the text again. A user link
+  // is no different: `/users/12` stays, `/users/alice` is re-anchored.
+  if (target.kind !== "user" && target.project.kind === "id") return null;
   const base = link.bare
     ? { start: link.start, end: link.end, asTyped: link.href }
     : { start: link.hrefStart, end: link.hrefEnd, asTyped: null };
+  if (target.kind === "user") {
+    if (target.user.kind === "id") return null;
+    return { ...base, target: { kind: "mention", login: target.user.login } };
+  }
+  const project = pointerOf(target);
   return {
     ...base,
     target:
@@ -221,6 +246,8 @@ export type ResolvedText = {
   storedText: string;
   /** Cards named, at their current addresses, de-duplicated. */
   cards: ReferenceTarget[];
+  /** Users @-mentioned, de-duplicated. */
+  mentions: number[];
   /** Candidates left exactly as written, for a dry run to report. */
   unresolved: string[];
 };
@@ -245,7 +272,7 @@ export async function resolveText(
     if (candidate !== null) candidates.push(candidate);
   }
   if (candidates.length === 0) {
-    return { storedText: text, cards: [], unresolved: [] };
+    return { storedText: text, cards: [], mentions: [], unresolved: [] };
   }
 
   const resolver = new Resolver(world, config);
@@ -272,6 +299,7 @@ export async function resolveText(
   return {
     storedText: spliceResolved(text, edits),
     cards: [...cards.values()],
+    mentions: [...new Set(resolver.mentioned)],
     unresolved,
   };
 }
@@ -329,7 +357,8 @@ export async function resolveContent(args: {
     if (card.projectId === project.id) local.push(card.number);
     else cross.push(card);
   }
-  return { storedText: resolved.storedText, local, cross };
+  const mentions = resolved.mentions.filter((id) => id !== actor.id);
+  return { storedText: resolved.storedText, local, cross, mentions };
 }
 
 /** What a candidate turned out to name, and the card an event owes. */
@@ -394,6 +423,10 @@ class Resolver {
   private readonly projectByRef = new Map<string, ProjectRow | null>();
   private readonly readable = new Map<number, boolean>();
   private readonly issueLive = new Map<string, boolean>();
+  /** logins asked of `world.here`'s member list, → user id or null. */
+  private readonly memberByLogin = new Map<string, number | null>();
+  /** User ids this pass's mentions resolved to, in encounter order. */
+  readonly mentioned: number[] = [];
 
   private readonly ctx: DbContext;
   private readonly db: Db;
@@ -438,10 +471,47 @@ class Resolver {
   async resolve(target: CandidateTarget): Promise<Resolution | null> {
     if (target.kind === "loose-comment")
       return this.looseComment(target.commentId);
+    if (target.kind === "mention") return this.mention(target.login);
     const named = await this.projectOf(target.project);
     if (named === null) return null;
     if (target.kind === "attachment") return this.attachment(named, target);
     return this.issue(named, target.number, target.commentId);
+  }
+
+  /**
+   * An `@login`, resolved against this project's members. The rule is one
+   * sentence: whoever the completion list would offer, an `@` may name —
+   * `project_members` here, now. Not a member (never was, or left) resolves
+   * to nothing and stays exactly as typed, the same degradation an
+   * unreadable card reference takes.
+   *
+   * Resolved ids accumulate on the resolver so `resolveText` can dedupe and
+   * hand them to its caller.
+   */
+  private async mention(login: string): Promise<Resolution | null> {
+    const cached = this.memberByLogin.get(login);
+    if (cached !== undefined) {
+      if (cached === null) return null;
+      this.mentioned.push(cached);
+      return { target: { kind: "user", userId: cached }, card: null };
+    }
+    const rows = await this.ctx.router
+      .system()
+      .select({ id: users.id })
+      .from(users)
+      .innerJoin(
+        projectMembers,
+        and(
+          eq(projectMembers.projectId, this.project.id),
+          eq(projectMembers.userId, users.id),
+        ),
+      )
+      .where(eq(users.login, login));
+    const id = rows[0]?.id ?? null;
+    this.memberByLogin.set(login, id);
+    if (id === null) return null;
+    this.mentioned.push(id);
+    return { target: { kind: "user", userId: id }, card: null };
   }
 
   /** The project a pointer names, or null when nothing here answers to it. */
@@ -679,6 +749,56 @@ export async function recordLocalReferences(
     source,
     targets,
     agentContext,
+  );
+}
+
+/**
+ * Write one `issue_mentions` row per newly-mentioned user, in the same
+ * transaction as the content write that produced them.
+ *
+ * `issueId` is the internal row id, which every caller already holds. A
+ * comment's mentions carry its id; a body's carry null.
+ *
+ * Deduplication is read-then-insert rather than a unique index, the same
+ * choice `insertReferenceEvents` makes: every save replays the whole set, so
+ * an edit that keeps a mention must not write it twice — and a nullable
+ * `comment_id` would need `NULLS NOT DISTINCT` to be a unique key at all.
+ *
+ * Append-only: removing an `@` from the text leaves the row, exactly as a
+ * removed reference keeps its event — an already-delivered nudge is never
+ * un-delivered.
+ */
+export async function recordIssueMentions(
+  tx: Db,
+  project: ProjectRow,
+  actorId: number,
+  issueId: number,
+  commentId: number | undefined,
+  userIds: number[],
+): Promise<void> {
+  if (userIds.length === 0) return;
+  const existing = await tx
+    .select({ userId: issueMentions.userId })
+    .from(issueMentions)
+    .where(
+      and(
+        eq(issueMentions.issueId, issueId),
+        commentId === undefined
+          ? isNull(issueMentions.commentId)
+          : eq(issueMentions.commentId, commentId),
+      ),
+    );
+  const seen = new Set(existing.map((row) => row.userId));
+  const fresh = userIds.filter((id) => !seen.has(id));
+  if (fresh.length === 0) return;
+  await tx.insert(issueMentions).values(
+    fresh.map((userId) => ({
+      projectId: project.id,
+      issueId,
+      commentId: commentId ?? null,
+      userId,
+      actorId,
+    })),
   );
 }
 

@@ -48,6 +48,7 @@ import { ProjectSettingsPage } from "@/pages/project-settings.tsx";
 import { ProjectsPage } from "@/pages/projects.tsx";
 import { SearchPage } from "@/pages/search.tsx";
 import { TokensSettingsPage } from "@/pages/tokens-settings.tsx";
+import { UserProfilePage, UserRedirectPage } from "@/pages/user-profile.tsx";
 
 const rootRoute = createRootRoute({
   component: () => (
@@ -339,6 +340,24 @@ const inboxRoute = createRoute({
   component: InboxPage,
 });
 
+// One path, two spellings: `$ref` all-digits is the permanent id form
+// stored text links on, anything else is a login. The page component
+// dispatches; the id half redirects to the login half after one lookup.
+const userRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/users/$ref",
+  component: UserPage,
+});
+
+function UserPage() {
+  const { ref } = userRoute.useParams();
+  return /^\d{1,15}$/.test(ref) ? (
+    <UserRedirectPage ref={ref} />
+  ) : (
+    <UserProfilePage ref={ref} />
+  );
+}
+
 const profileSettingsRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/settings/profile",
@@ -398,6 +417,7 @@ const routeTree = rootRoute.addChildren([
     tokensSettingsRoute,
     cliAuthRoute,
     grantAccessRoute,
+    userRoute,
   ]),
 ]);
 

@@ -313,12 +313,18 @@ export function MarkdownView({
       return base as ComponentProps<typeof Markdown>["remarkPlugins"];
     const directory = directoryQuery.data;
     const readable = readableQuery.data;
-    const config = refConfigFor(
-      refQuery.data,
-      directory == null || readable === undefined
-        ? undefined
-        : { slugs: readable.map((p) => p.slug), directory },
-    );
+    const config = {
+      ...refConfigFor(
+        refQuery.data,
+        directory == null || readable === undefined
+          ? undefined
+          : { slugs: readable.map((p) => p.slug), directory },
+      ),
+      // The editor preview shows a draft's @mentions as chips before the
+      // resolve pass anchors them; reading mode never sees a mention token,
+      // because a stored one is already a link.
+      mentions: preview,
+    };
     return [
       ...base,
       [remarkIssueRefs, config, { autolinksOnly: !preview }],

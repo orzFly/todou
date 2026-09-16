@@ -11,6 +11,9 @@
  */
 
 import {
+  LOGIN_BODY_CLASS,
+  LOGIN_HEAD_CLASS,
+  MAX_LOGIN_LENGTH,
   MAX_PREFIX_LENGTH,
   PREFIX_BODY_CLASS,
   PREFIX_HEAD_CLASS,
@@ -76,6 +79,13 @@ export type ScanConfig = {
   internalPrefix: string | null;
   autolinks?: readonly AutolinkRule[];
   cross?: CrossRefInput;
+  /**
+   * Produce `mention` tokens for `@login`. Off by default: the token stream
+   * has consumers that must stay byte-identical — ref-jump's "the whole
+   * query is one reference" would change its mind about `@alice` — and only
+   * the resolve pass and the editor preview want the new token.
+   */
+  mentions?: boolean;
 };
 
 type Span = { start: number; end: number; text: string };
@@ -90,7 +100,12 @@ export type ReferenceToken =
       commentId?: number;
     })
   | (Span & { type: "comment"; commentId: number })
-  | (Span & { type: "autolink"; href: string });
+  | (Span & { type: "autolink"; href: string })
+  | (Span & {
+      type: "mention";
+      /** The login, folded to lowercase — the canonical spelling. */
+      login: string;
+    });
 
 const WORD = /\w/;
 const DIGIT = /[0-9]/;
@@ -98,6 +113,8 @@ const SLUG_HEAD = new RegExp(SLUG_HEAD_CLASS);
 const SLUG_BODY = new RegExp(SLUG_BODY_CLASS);
 const PREFIX_HEAD = new RegExp(PREFIX_HEAD_CLASS);
 const PREFIX_BODY = new RegExp(PREFIX_BODY_CLASS);
+const LOGIN_HEAD = new RegExp(LOGIN_HEAD_CLASS, "i");
+const LOGIN_BODY = new RegExp(LOGIN_BODY_CLASS, "i");
 const MAX_PREFIX = MAX_PREFIX_LENGTH;
 const COMMENT_TOKEN = "#comment-";
 
@@ -133,6 +150,35 @@ function runOf(text: string, at: number, pattern: RegExp): number {
   let end = at;
   while (end < text.length && pattern.test(text[end] as string)) end++;
   return end;
+}
+
+/**
+ * `@login` where a login is `Login`'s own shape, case-insensitively: the
+ * token folds to lowercase, the way `claimAt` folds a slug's case for the
+ * same reason — the login is a lookup key, not a display string.
+ *
+ * The right edge rejects the shapes `@` must not eat: a `/` (npm scope,
+ * `@todou/shared`), a second `@` (`@a@b`), and a `.` followed by a word
+ * character (`@example.com` mid-sentence, or `@alice.example`). A trailing
+ * `.` before whitespace or the end — "ping @alice." — is a sentence, not a
+ * domain, and survives.
+ */
+function mentionAt(text: string, at: number): { end: number } | null {
+  if (!boundaryOk(text, at, false)) return null;
+  let end = at + 1;
+  if (end >= text.length || !LOGIN_HEAD.test(text[end] as string)) return null;
+  end++;
+  while (end < text.length && LOGIN_BODY.test(text[end] as string)) end++;
+  if (end - at - 1 > MAX_LOGIN_LENGTH) return null;
+  const next = text[end];
+  if (next === "/" || next === "@") return null;
+  if (
+    next === "." &&
+    end + 1 < text.length &&
+    WORD.test(text[end + 1] as string)
+  )
+    return null;
+  return { end };
 }
 
 function literalRefAt(
@@ -346,6 +392,22 @@ function claimAt(
   config: ScanConfig,
   cross: CrossRefInput | null,
 ): Claim | null {
+  // `@login` first: it starts with a character no other token does, so the
+  // branch can only ever cost the one comparison that fails it.
+  if (config.mentions === true && text[at] === "@") {
+    const mention = mentionAt(text, at);
+    if (mention !== null) {
+      return {
+        token: {
+          type: "mention",
+          login: text.slice(at + 1, mention.end).toLowerCase(),
+          ...span(text, at, mention.end),
+        },
+        end: mention.end,
+      };
+    }
+  }
+
   if (cross !== null) {
     const qualified = qualifiedRefAt(text, at);
     if (qualified !== null && boundaryOk(text, at, true)) {

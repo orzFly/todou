@@ -544,3 +544,81 @@ describe("parseRefLocator (T-214)", () => {
     expect(parseRefLocator(value)).toBeNull();
   });
 });
+
+describe("mention tokens (@login)", () => {
+  const MENTIONS: ScanConfig = { internalPrefix: null, mentions: true };
+
+  it("stay dark without the flag: the token stream is byte-identical", () => {
+    expect(scanReferenceTokens("hi @alice", { internalPrefix: null })).toEqual([
+      { type: "text", start: 0, end: 9, text: "hi @alice" },
+    ]);
+  });
+
+  it("produce one mention token, login folded to lowercase", () => {
+    expect(scanReferenceTokens("hi @alice", MENTIONS)).toEqual([
+      { type: "text", start: 0, end: 3, text: "hi " },
+      { type: "mention", login: "alice", start: 3, end: 9, text: "@alice" },
+    ]);
+    expect(scanReferenceTokens("@alice-bot and @a1", MENTIONS)).toEqual([
+      {
+        type: "mention",
+        login: "alice-bot",
+        start: 0,
+        end: 10,
+        text: "@alice-bot",
+      },
+      { type: "text", start: 10, end: 15, text: " and " },
+      { type: "mention", login: "a1", start: 15, end: 18, text: "@a1" },
+    ]);
+  });
+
+  it("keeps the typed case in text, folds the login", () => {
+    expect(scanReferenceTokens("@Alice", MENTIONS)).toEqual([
+      { type: "mention", login: "alice", start: 0, end: 6, text: "@Alice" },
+    ]);
+  });
+
+  it("rejects email, npm scope, doubled @, and a leading domain", () => {
+    expect(scanReferenceTokens("noreply@example.com", MENTIONS)).toEqual([
+      { type: "text", start: 0, end: 19, text: "noreply@example.com" },
+    ]);
+    expect(scanReferenceTokens("see @todou/shared", MENTIONS)).toEqual([
+      { type: "text", start: 0, end: 17, text: "see @todou/shared" },
+    ]);
+    expect(scanReferenceTokens("@a@b", MENTIONS)).toEqual([
+      { type: "text", start: 0, end: 4, text: "@a@b" },
+    ]);
+    expect(scanReferenceTokens("@example.com", MENTIONS)).toEqual([
+      { type: "text", start: 0, end: 12, text: "@example.com" },
+    ]);
+  });
+
+  it("survives a sentence-final period and an apostrophe", () => {
+    expect(scanReferenceTokens("ping @alice.", MENTIONS)).toEqual([
+      { type: "text", start: 0, end: 5, text: "ping " },
+      { type: "mention", login: "alice", start: 5, end: 11, text: "@alice" },
+      { type: "text", start: 11, end: 12, text: "." },
+    ]);
+    expect(scanReferenceTokens("@alice's turn", MENTIONS)).toEqual([
+      { type: "mention", login: "alice", start: 0, end: 6, text: "@alice" },
+      { type: "text", start: 6, end: 13, text: "'s turn" },
+    ]);
+  });
+
+  it("refuses a login past Login's own cap", () => {
+    const long = `@${"a".repeat(65)}`;
+    expect(scanReferenceTokens(long, MENTIONS)).toEqual([
+      { type: "text", start: 0, end: long.length, text: long },
+    ]);
+    const edge = `@${"a".repeat(64)}`;
+    expect(scanReferenceTokens(edge, MENTIONS)).toEqual([
+      {
+        type: "mention",
+        login: edge.slice(1),
+        start: 0,
+        end: edge.length,
+        text: edge,
+      },
+    ]);
+  });
+});

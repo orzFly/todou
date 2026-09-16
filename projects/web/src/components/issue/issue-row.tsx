@@ -10,6 +10,7 @@ import type { ReactNode } from "react";
 import { useRefPlacement } from "@/api/prefs.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import {
+  MentionBadge,
   QuestionBadge,
   SpecReviewBadge,
 } from "@/components/issue/attention-badge.tsx";
@@ -87,6 +88,7 @@ export function IssueRow({
   slug,
   issue,
   specAwaitingReview = issue.spec_review_status === "unreviewed",
+  mentionsYou = false,
   trailing,
   meta,
 }: {
@@ -98,6 +100,8 @@ export function IssueRow({
    * viewer pushed themselves — not derivable from `spec_review_status`.
    */
   specAwaitingReview?: boolean;
+  /** The viewer was @-mentioned on this card (T-373). */
+  mentionsYou?: boolean;
   trailing?: ReactNode;
   meta?: ReactNode;
 }) {
@@ -153,6 +157,7 @@ export function IssueRow({
         {specAwaitingReview && (
           <SpecReviewBadge version={issue.spec_version} className="shrink-0" />
         )}
+        {mentionsYou && <MentionBadge className="shrink-0" />}
         {trailing}
       </div>
       {meta && (

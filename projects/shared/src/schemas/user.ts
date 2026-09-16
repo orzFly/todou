@@ -15,6 +15,16 @@ export const Login = z
   .regex(/^[a-z0-9][a-z0-9-]*$/, "lowercase letters, digits, and dashes")
   .refine((v) => !RESERVED_LOGINS.has(v), "this login is reserved");
 
+/**
+ * The login an account may be created as or renamed to. Narrower than what
+ * routes read: an all-digit login would make `/users/123` mean two things at
+ * once, and the id-anchored link form rests on it meaning one (the same
+ * trade `ProjectSlugInput` makes).
+ */
+export const LoginInput = Login.refine((v) => !/^\d+$/.test(v), {
+  error: "lowercase letters, digits, and dashes; not all digits",
+});
+
 /** Compact user reference embedded in issues, comments, events, chips. */
 export const UserRef = z.object({
   id: Id,
@@ -43,12 +53,20 @@ export const Me = User;
 export type Me = z.infer<typeof Me>;
 
 /**
+ * Another account's public identity (GET /api/users/{ref}): what a mention
+ * chip or a user page may show. Deliberately narrower than `User` — `email`
+ * and `is_instance_admin` belong to `/api/me` and the admin surfaces only.
+ */
+export const PublicUser = UserRef.extend({ created_at: Timestamp });
+export type PublicUser = z.infer<typeof PublicUser>;
+
+/**
  * Self-service profile edit. Machine users may rename their display name
  * but not their login — that stays with the owner (see AgentUpdateInput).
  */
 export const MeUpdateInput = z.object({
   display_name: z.string().trim().min(1).max(200).optional(),
-  login: Login.optional(),
+  login: LoginInput.optional(),
 });
 export type MeUpdateInput = z.infer<typeof MeUpdateInput>;
 

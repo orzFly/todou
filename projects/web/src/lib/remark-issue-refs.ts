@@ -62,6 +62,8 @@ export function refHref(segment: RefSegment): string {
         : `#xref-${segment.slug}/${segment.number}/comment-${segment.commentId}`;
     case "comment":
       return `#xref-comment-${segment.commentId}`;
+    case "mention":
+      return `#mention-${segment.login}`;
     default:
       return "";
   }

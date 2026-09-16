@@ -259,6 +259,7 @@ export async function executeCommands(
         actorId: actor.id,
         body: resolved.storedText,
         localRefs: resolved.local,
+        mentions: resolved.mentions,
         agentContext,
       });
       comment = result.comment;

@@ -41,7 +41,8 @@ export type RefSegment =
       text: string;
     }
   | { type: "comment"; commentId: number; text: string }
-  | { type: "ext"; href: string; text: string };
+  | { type: "ext"; href: string; text: string }
+  | { type: "mention"; login: string; text: string };
 
 /** Split plain text into literal runs, references, and autolinks. */
 export function splitIssueRefs(
@@ -77,6 +78,8 @@ export function splitIssueRefs(
       });
     } else if (token.type === "autolink") {
       out.push({ type: "ext", href: token.href, text: token.text });
+    } else if (token.type === "mention") {
+      out.push({ type: "mention", login: token.login, text: token.text });
     } else {
       out.push({ type: "text", value: token.text });
     }

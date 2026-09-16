@@ -7,6 +7,7 @@ import type { Db } from "../db/driver.ts";
 import {
   comments,
   issueEvents,
+  issueMentions,
   issueReads,
   issues,
   readFrontiers,
@@ -150,13 +151,20 @@ export async function unreadIssueState(
   unread: Set<number>;
   counts: Map<number, number>;
   silenced: Map<number, MuteReason>;
+  /** Cards carrying a mention of the reader past their threshold (T-373). */
+  mentioned: Set<number>;
 }> {
   // Runs even for an empty issue set: creating the frontier is this call's
   // side effect on a project the user has now looked at (T-151), and the
   // joins below have nothing to read without it.
   const frontiers = await ensureFrontiers(db, projectIds, userId);
   if (issueIds.length === 0) {
-    return { unread: new Set(), counts: new Map(), silenced: new Map() };
+    return {
+      unread: new Set(),
+      counts: new Map(),
+      silenced: new Map(),
+      mentioned: new Set(),
+    };
   }
 
   // The per-issue threshold lives in SQL so the count and the boolean come
@@ -335,7 +343,37 @@ export async function unreadIssueState(
       if (reason !== null) silencedOut.set(id, reason);
     }
   }
-  return { unread, counts, silenced: silencedOut };
+  // The mention scan (T-373): a mention is a third, harder grade of unread
+  // — it survives `show_weak_unread` and the mute gate, because being
+  // named is not "event-only news" the reader opted out of. The one case no
+  // existing scan covers: an EDIT that adds an @ produces no new comment
+  // and no event, only a row here.
+  // The threshold is the same coalesce the comment count uses, as a join —
+  // never a bound JS Date, for the µs-precision reason `frontierJoin`
+  // records. A muted card's mention still lands in `mentioned` (unread
+  // stays truthful under a mute; the inbox decides what to do with it).
+  const mentionRows = await db
+    .select({ issueId: issueMentions.issueId })
+    .from(issueMentions)
+    .leftJoin(
+      issueReads,
+      and(
+        eq(issueReads.issueId, issueMentions.issueId),
+        eq(issueReads.userId, userId),
+      ),
+    )
+    .leftJoin(readFrontiers, frontierJoin(userId, issueMentions.projectId))
+    .where(
+      and(
+        inArray(issueMentions.issueId, issueIds),
+        eq(issueMentions.userId, userId),
+        ne(issueMentions.actorId, userId),
+        sql`${issueMentions.createdAt} > coalesce(${issueReads.lastSeenAt}, ${readFrontiers.frontierAt})`,
+      ),
+    );
+  const mentioned = new Set(mentionRows.map((r) => r.issueId));
+  for (const id of mentioned) unread.add(id);
+  return { unread, counts, silenced: silencedOut, mentioned };
 }
 
 /**

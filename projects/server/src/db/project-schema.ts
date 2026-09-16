@@ -529,3 +529,34 @@ export const issueMutes = pgTable(
   },
   (t) => [uniqueIndex("issue_mutes_issue_user_idx").on(t.issueId, t.userId)],
 );
+
+// Who was @-mentioned where, and by whom (T-373). The link in the text is
+// for rendering; this row is the answer to "who was mentioned, when" — the
+// question unread and the inbox ask in SQL, over a threshold, without
+// rescanning every body. Append-only by design: editing a mention away does
+// not un-notify, exactly like `referenced` events, which is what keeps a
+// re-save from notifying twice. Not carried across a move (see
+// ISSUE_CHILD_TABLES).
+export const issueMentions = pgTable(
+  "issue_mentions",
+  {
+    id: id(),
+    projectId: projectId(),
+    issueId: bigint("issue_id", { mode: "number" })
+      .notNull()
+      .references(() => issues.id, { onDelete: "cascade" }),
+    // Null = the mention sits in the card's body rather than a comment.
+    commentId: bigint("comment_id", { mode: "number" }).references(
+      () => comments.id,
+      { onDelete: "cascade" },
+    ),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    actorId: bigint("actor_id", { mode: "number" }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // The unread scan's shape: one reader's mentions, newest first.
+    index("issue_mentions_user_created_idx").on(t.userId, t.createdAt),
+    index("issue_mentions_issue_idx").on(t.issueId),
+  ],
+);

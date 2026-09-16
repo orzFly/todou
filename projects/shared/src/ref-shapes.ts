@@ -17,6 +17,15 @@ export const PREFIX_BODY_CLASS = "[A-Z0-9_]";
 /** Longest prefix accepted, head included — so the body repeats one less. */
 export const MAX_PREFIX_LENGTH = 20;
 
+export const LOGIN_HEAD_CLASS = "[a-z0-9]";
+export const LOGIN_BODY_CLASS = "[a-z0-9-]";
+
+/** Longest login accepted (Login's own cap), `@` excluded. */
+export const MAX_LOGIN_LENGTH = 64;
+
+/** Unanchored, uncaptured; an anchor or a boundary is the caller's to add. */
+export const LOGIN_PATTERN = `${LOGIN_HEAD_CLASS}${LOGIN_BODY_CLASS}*`;
+
 /** Unanchored, uncaptured; an anchor or a boundary is the caller's to add. */
 export const SLUG_PATTERN = `${SLUG_HEAD_CLASS}${SLUG_BODY_CLASS}*`;
 export const PREFIX_PATTERN = `${PREFIX_HEAD_CLASS}${PREFIX_BODY_CLASS}{0,${MAX_PREFIX_LENGTH - 1}}`;

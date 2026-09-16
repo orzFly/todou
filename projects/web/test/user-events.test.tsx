@@ -54,6 +54,7 @@ const fingerprint = (over: Partial<InboxRowState> = {}): InboxRowState => ({
   unread_comments: 2,
   pending_spec_review: false,
   open_questions: 0,
+  mentions_you: false,
   ...over,
 });
 

@@ -59,6 +59,7 @@ import type {
   Project,
   ProjectCreateInput,
   ProjectUpdateInput,
+  PublicUser,
   ReferenceConfig,
   ReferenceDirectory,
   RefFormatSetInput,
@@ -633,6 +634,13 @@ export class TodouClient {
     this.request<Project>("GET", `/projects/${slug}`);
   updateProject = (slug: string, input: ProjectUpdateInput) =>
     this.request<Project>("PATCH", `/projects/${slug}`, { json: input });
+
+  /**
+   * One account's public identity. `ref` is a user id when all digits, a
+   * login otherwise — the same rule `/api/users/{ref}` reads.
+   */
+  getUser = (ref: string | number) =>
+    this.request<PublicUser>("GET", `/users/${ref}`);
   deleteProject = (slug: string) =>
     this.request<void>("DELETE", `/projects/${slug}`);
 

@@ -29,6 +29,7 @@ import {
   type MarkdownEditorHandle,
 } from "@/components/shared/markdown-editor.tsx";
 import { Button } from "@/components/ui/button";
+import { mentionCompletionSource } from "@/lib/editor/mention-completion.ts";
 import {
   completionWith,
   refCompletionSource,
@@ -323,6 +324,7 @@ export function Composer({
     () => [
       completionWith([
         refCompletionSource(slug, queryClient),
+        mentionCompletionSource(slug, queryClient),
         commandCompletionSource(() => registryRef.current),
       ]),
       commandDecoration(() => registryRef.current),
