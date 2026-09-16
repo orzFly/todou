@@ -796,6 +796,34 @@ describe("the todou_watch tool (T-357)", () => {
     expect(notify[0]).toContain("stopped 2 watches. The agent has been told.");
   });
 
+  it("pushes one message when the whole group dies at once", async () => {
+    // The timing the case above cannot see: its fake sleeps in one-second
+    // steps, which spreads two deaths a second apart, and a real todou's
+    // TERM cleanup is short enough that a stop-all kills both in the same
+    // instant. `exec` puts the signal on the sleep itself, the shortest
+    // death this suite can stage. What it guards is that the group's
+    // last-one-out check and the delivery read the same event: a check
+    // reading one event from a callback on another sees "all settled"
+    // once per member, and a stop then costs the receiving turn as many
+    // messages as it stopped watches.
+    const { bin, pids } = fakeTodou("together", "exec sleep 30");
+    process.env.TODOU_BIN = bin;
+    const { run, runCommand, sent } = bootWatch("together");
+    await run({ action: "start", issue: "T-16" });
+    await run({ action: "start", issue: "T-18" });
+    await runCommand(["stop"], { hasUI: false });
+    await gone(pids);
+    await sentCount({ sent }, 1);
+    // The duplicate is a late arrival rather than a missing one, and
+    // `sentCount` returns on the first message — so the count is read a
+    // beat after the last child was reaped, or the second one lands
+    // outside the window and the case passes on a bug.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(sent.length).toBe(1);
+    expect(sent[0]?.content).toContain("w1");
+    expect(sent[0]?.content).toContain("w2");
+  });
+
   it("keeps a half-dead group's cursor when stop lands again", async () => {
     // The reviewer's exact window: stop-all, w1 dies, then a second stop
     // recomputes `live` to the still-living w2 alone. Without the

@@ -840,11 +840,14 @@ export default function todou(pi: Pi): void {
         .join("\n")
         .replace(/\s+$/, "");
     }
-    // `close`, not `exit`: the notification is built from the child's last
-    // output, and `close` is the event that guarantees stdio is drained —
-    // `exit` can fire while a final `cursor:` line is still in the pipe.
-    // (The code rides along: `close` receives it after `exit` did.)
-    watch.child.on("close", (code) => {
+    // `exit`, and it has to stay `exit`: `deliverStoppedByCommand` decides
+    // whether a group is complete by reading `watch.exit`, which is set
+    // above on this same event. Moving only the delivery to `close` — the
+    // event that drains stdio, and the tempting one for that reason — puts
+    // every member's `exit` before any member's `close`, so a stop-all
+    // where the children die together has each `close` find the group
+    // complete and push the message again. Measured at 12 runs out of 12.
+    watch.child.on("exit", (code) => {
       // The second registration, for the real end of a watch that outlived
       // its grace: repaint, then decide what the session is told. A tool's
       // own stop and the session ending are the two silences; everything
