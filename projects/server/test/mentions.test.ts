@@ -278,15 +278,34 @@ describe("mentions T-373", () => {
       mentions_you: boolean;
     }>;
     expect(before.find((i) => i.number === n2)?.mentions_you).toBe(true);
-    await t.app.request(`/api/projects/${P}/issues/${n2}`, {
+    const trashed = await t.app.request(`/api/projects/${P}/issues/${n2}`, {
       method: "DELETE",
       headers: headers(),
     });
+    expect(trashed.status).toBe(204);
     const inboxAfter = await t.app.request("/api/me/inbox", {
       headers: { ...bob.headers },
     });
     const after = (await json(inboxAfter)).items as Array<{ number: number }>;
     expect(after.find((i) => i.number === n2)).toBeUndefined();
+    // The rows themselves are untouched: `deleted_at` is a soft delete, so
+    // the `issue_id` cascade never fires. Asserted rather than assumed,
+    // because it is the half the restore below depends on.
+    expect((await rowsOf(n2)).map((r) => r.userId)).toEqual([bob.user.id]);
+
+    const restored = await t.app.request(
+      `/api/projects/${P}/issues/${n2}/restore`,
+      { method: "POST", headers: headers() },
+    );
+    expect(restored.status).toBe(200);
+    const inboxBack = await t.app.request("/api/me/inbox", {
+      headers: { ...bob.headers },
+    });
+    const back = (await json(inboxBack)).items as Array<{
+      number: number;
+      mentions_you: boolean;
+    }>;
+    expect(back.find((i) => i.number === n2)?.mentions_you).toBe(true);
   });
 
   it("records body mentions with a null comment_id", async () => {
