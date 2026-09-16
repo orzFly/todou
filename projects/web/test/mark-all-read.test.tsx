@@ -52,6 +52,7 @@ const listItem = (
   updated_at: "2026-08-12T00:00:00Z",
   body_edited_at: null,
   open_questions: 0,
+  spec_version: null,
   spec_review_status: null,
   spec_unresolved_comments: 0,
   deleted_at: null,

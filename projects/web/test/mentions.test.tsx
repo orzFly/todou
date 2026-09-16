@@ -6,7 +6,7 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { render, waitFor } from "@testing-library/react";
-import type { IssueListItem, Member } from "@todou/shared";
+import type { Member } from "@todou/shared";
 import type { ReactElement } from "react";
 import { describe, expect, it } from "vitest";
 import { membersQuery } from "../src/api/queries.ts";
@@ -86,44 +86,6 @@ function renderWithProviders(ui: ReactElement, client: QueryClient) {
     </QueryClientProvider>,
   );
 }
-
-const refItem = (number: number): IssueListItem => ({
-  id: number,
-  number,
-  title: `issue ${number}`,
-  status: {
-    id: 1,
-    name: "Todo",
-    category: "open",
-    color: "#6b7280",
-    position: 0,
-    is_default: true,
-  },
-  author: {
-    id: 1,
-    login: "user",
-    display_name: "User",
-    kind: "human",
-    avatar_url: null,
-    owner: null,
-  },
-  assignees: [],
-  labels: [],
-  created_at: "2026-01-01T00:00:00.000Z",
-  updated_at: "2026-01-01T00:00:00.000Z",
-  body_edited_at: null,
-  open_questions: 0,
-  spec_version: null,
-  spec_review_status: null,
-  spec_unresolved_comments: 0,
-  deleted_at: null,
-  deleted_by: null,
-  unread: false,
-  unread_comments: 0,
-  muted: null,
-  moves: [],
-});
-void refItem;
 
 describe("stored mentions render (T-373)", () => {
   it("shows the member's current login, linked to their page", async () => {

@@ -509,6 +509,15 @@ describe("cross-project inbox T-97", () => {
       expect(member.status).toBe(204);
       // Mints bob's frontier before any fixture exists.
       await items("", bob.headers);
+      // These fixtures are judged through BOB's eyes, and the point of the
+      // first two is that a mention survives his weak-unread toggle — so
+      // his toggle has to actually be off, not sitting on the default.
+      const weak = await t.app.request("/api/me/prefs", {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...bob.headers },
+        body: JSON.stringify({ show_weak_unread: false }),
+      });
+      expect(weak.status).toBe(200);
       await settle();
     });
 
@@ -584,6 +593,15 @@ describe("cross-project inbox T-97", () => {
       const row = rowOf(page, PM, n);
       expect(row).toBeDefined();
       expect(row?.mentions_you).toBe(true);
+    });
+
+    afterAll(async () => {
+      // Hand bob's toggle back: later describes read his real prefs.
+      await t.app.request("/api/me/prefs", {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...bob.headers },
+        body: JSON.stringify({ show_weak_unread: true }),
+      });
     });
 
     /** markRead scoped to this describe's helper shape. */

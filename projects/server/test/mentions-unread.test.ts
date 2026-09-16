@@ -14,6 +14,7 @@ describe("mention unread T-373", () => {
   let t: TestApp;
   let cookie: string;
   let bob: Awaited<ReturnType<typeof addUserWithToken>>;
+  let carol: Awaited<ReturnType<typeof addUserWithToken>>;
   const headers = () => ({ "content-type": "application/json", cookie });
 
   async function createIssue(title: string): Promise<number> {
@@ -60,17 +61,21 @@ describe("mention unread T-373", () => {
     expect(res.status).toBe(200);
   }
 
-  /** The row bob sees for one card, on the issue list. */
-  async function listItem(
+  /** The row one reader sees for one card, on the issue list. */
+  async function listItemAs(
+    who: Record<string, string>,
     number: number,
   ): Promise<{ unread: boolean; unread_comments: number } | null> {
     const res = await t.app.request(
       `/api/projects/${P}/issues?numbers=${number}`,
-      { headers: { ...bob.headers } },
+      { headers: { ...who } },
     );
     expect(res.status).toBe(200);
     return (await json(res)).items[0] ?? null;
   }
+
+  /** The row bob sees — the reader every other fixture is about. */
+  const listItem = (number: number) => listItemAs(bob.headers, number);
 
   async function markReadAs(who: Record<string, string>, number: number) {
     await settle();
@@ -95,20 +100,28 @@ describe("mention unread T-373", () => {
     });
     expect(created.status).toBe(201);
     bob = await addUserWithToken(t.ctx, "unread-bob");
-    const member = await t.app.request(
-      `/api/projects/${P}/members/${bob.user.id}`,
-      {
-        method: "PUT",
-        headers: headers(),
-        body: JSON.stringify({ role: "writer" }),
-      },
-    );
-    expect(member.status).toBe(204);
-    // Mints bob's frontier before any fixture exists.
-    const warm = await t.app.request("/api/me/inbox", {
-      headers: { ...bob.headers },
-    });
-    expect(warm.status).toBe(200);
+    // A third member who is mentioned NOWHERE: her row is the control the
+    // "another reader" test needs.
+    carol = await addUserWithToken(t.ctx, "unread-carol");
+    for (const user of [bob, carol]) {
+      const member = await t.app.request(
+        `/api/projects/${P}/members/${user.user.id}`,
+        {
+          method: "PUT",
+          headers: headers(),
+          body: JSON.stringify({ role: "writer" }),
+        },
+      );
+      expect(member.status).toBe(204);
+    }
+    // Mints both frontiers before any fixture exists: history older than
+    // this moment never counts as unread for either of them.
+    for (const user of [bob, carol]) {
+      const warm = await t.app.request("/api/me/inbox", {
+        headers: { ...user.headers },
+      });
+      expect(warm.status).toBe(200);
+    }
     await settle();
   });
 
@@ -132,18 +145,27 @@ describe("mention unread T-373", () => {
     // A mention is not a comment: the count stays at zero.
     expect(after?.unread_comments).toBe(0);
   });
-
-  it("another reader's state is untouched", async () => {
-    const n = await createIssue("others card");
-    const c = await comment(headers(), n, "for @unread-bob");
-    await settle();
-    const mine = await t.app.request(`/api/projects/${P}/issues?numbers=${n}`, {
-      headers: headers(),
+  it("a reader who was not mentioned stays quiet", async () => {
+    // Carol's own card, so the top post is hers; alice's comment is read
+    // below. What remains is the EDIT — no new comment, no event — which
+    // can only be news through a mention, and carol was not mentioned.
+    const res = await t.app.request(`/api/projects/${P}/issues`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...carol.headers },
+      body: JSON.stringify({ title: "carol's card" }),
     });
-    expect(((await json(mine)).items[0] as { unread: boolean }).unread).toBe(
-      false,
-    );
-    void c;
+    expect(res.status).toBe(201);
+    const n = (await json(res)).number as number;
+    const c = await comment(headers(), n, "plain words, no ping");
+    await settle();
+    await markReadAs(carol.headers, n);
+    expect((await listItemAs(carol.headers, n))?.unread).toBe(false);
+
+    await editComment(headers(), n, c.id, "edited to ping @unread-bob");
+    await settle();
+    expect((await listItemAs(carol.headers, n))?.unread).toBe(false);
+    // And the mentioned reader did light up.
+    expect((await listItemAs(bob.headers, n))?.unread).toBe(true);
   });
 
   it("a self-mention does not light the card", async () => {

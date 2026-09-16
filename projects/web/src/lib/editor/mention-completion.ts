@@ -33,8 +33,10 @@ export function mentionTriggerAt(
   const match = /@([a-z0-9-]*)$/i.exec(text);
   if (match === null) return null;
   // `at` points at the `@` itself, so accepting replaces the whole token.
-  // A word character or `-` before the `@` (an email, a npm scope) is not
-  // a mention being typed; the grammar's own left boundary, applied here.
+  // The panel refuses a `-` before the `@` too (npm scope, hyphenated
+  // word) — deliberately stricter than the server grammar, whose left
+  // boundary only rejects `\w`: a hand-typed `x-@alice` still resolves on
+  // submit; the panel just declines to guess mid-word.
   const at = match.index;
   if (at > 0 && /[\w-]/.test(text[at - 1] as string)) return null;
   return { at, query: match[1] ?? "" };

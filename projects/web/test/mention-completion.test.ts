@@ -2,13 +2,22 @@ import { CompletionContext } from "@codemirror/autocomplete";
 import { EditorState } from "@codemirror/state";
 import { QueryClient } from "@tanstack/react-query";
 import type { Member } from "@todou/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { membersQuery } from "../src/api/queries.ts";
 import {
   mentionCompletionSource,
   mentionTriggerAt,
   rankMembers,
 } from "../src/lib/editor/mention-completion.ts";
+
+const syntaxTreeMock = vi.hoisted(() => vi.fn());
+// Only `syntaxTree` is faked: a bare doc carries no language, so the real
+// one answers an empty tree and `inCodeContext` could never say true. The
+// rest of the module stays genuine, so an import added later still works.
+vi.mock("@codemirror/language", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@codemirror/language")>()),
+  syntaxTree: syntaxTreeMock,
+}));
 
 const member = (
   id: number,
@@ -86,6 +95,25 @@ const completeAt = (client: QueryClient, doc: string, pos = doc.length) =>
     client,
   )(new CompletionContext(EditorState.create({ doc }), pos, false));
 
+/** syntaxTree's answers: prose by default, code when asked for it. */
+const proseTree = { resolveInner: () => ({ name: "Paragraph", parent: null }) };
+const codeTree = {
+  resolveInner: () => ({
+    name: "FencedCode",
+    parent: { name: "Document", parent: null },
+  }),
+};
+syntaxTreeMock.mockReturnValue(proseTree);
+
+/** A doc whose syntaxTree resolves into code — the source must reject. */
+const completeInCode = (client: QueryClient, doc: string) => {
+  syntaxTreeMock.mockReturnValueOnce(codeTree);
+  return mentionCompletionSource(
+    "a",
+    client,
+  )(new CompletionContext(EditorState.create({ doc }), doc.length, false));
+};
+
 describe("mentionCompletionSource", () => {
   it("offers matching members with @login labels", async () => {
     const result = await completeAt(seededClient(), "ping @al");
@@ -121,5 +149,19 @@ describe("mentionCompletionSource", () => {
 
   it("yields nothing rather than an empty panel", async () => {
     expect(await completeAt(seededClient(), "ping @zz")).toBeNull();
+  });
+
+  it("stays shut when the caret is in code", async () => {
+    expect(await completeInCode(seededClient(), "ping @al")).toBeNull();
+  });
+
+  it("reads no cache at all when there is no @", async () => {
+    // Falsified by hoisting the `fetchQuery` above the guards — NOT by
+    // deleting the `includes("@")` line, which `mentionTriggerAt` rejects
+    // the same prose one line later. Read it as "the fetch stays last".
+    const client = seededClient();
+    const spy = vi.spyOn(client, "fetchQuery");
+    expect(await completeAt(client, "plain prose, no at sign")).toBeNull();
+    expect(spy).not.toHaveBeenCalled();
   });
 });
