@@ -388,7 +388,7 @@ export class ProjectUnlinkCommand extends Command<CliContext> {
           : checked,
       );
     }
-    const { config, own, files } = loadCliConfigSet(this.context.env);
+    const { own, files } = loadCliConfigSet(this.context.env);
     const remaining = own.bindings.filter((b) => b.remote !== remote);
     if (remaining.length === own.bindings.length) {
       // The binding may still exist — in a fragment this command must not
@@ -419,10 +419,17 @@ export class ProjectUnlinkCommand extends Command<CliContext> {
     saveCliConfig(own, this.context.env);
     this.context.stderr.write(`unlinked ${remote}\n`);
     // Concat order put config.toml last, so removing its binding hands the
-    // remote back to whatever a fragment still holds — say so.
-    const stillBound = config.bindings
-      .filter((b) => b.remote === remote)
-      .some((b) => !own.bindings.includes(b));
+    // remote back to whatever a fragment still holds — say so. Judged on
+    // the files themselves: `config` and `own` come from two separate zod
+    // parses, so object identity between them never holds.
+    const stillBound = files.some(
+      (f) =>
+        f.path !== configPath(this.context.env) &&
+        Array.isArray(f.doc.bindings) &&
+        (f.doc.bindings as Array<{ remote?: string }>).some(
+          (b) => b.remote === remote,
+        ),
+    );
     if (stillBound) {
       this.context.stderr.write(
         `note: a binding for ${remote} remains in a config fragment and takes effect now\n`,

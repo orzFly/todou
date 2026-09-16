@@ -391,6 +391,39 @@ describe("project unlink → user-config binding (T-366 fragments)", () => {
   });
 });
 
+describe("project unlink without fragments (T-366 review)", () => {
+  const remote = "git@example.com:me/repo.git";
+  it("prints no fragment note when config.toml is the only file", async () => {
+    // `config` and `own` come from two separate zod parses; judging the
+    // note by object identity between them printed it on every unlink.
+    for (const suffix of ["", "--global"]) {
+      const { home, work, xdg } = setup();
+      const repo = join(work, "repo");
+      makeRepo(repo, [["origin", remote]]);
+      mkdirSync(join(xdg, "todou"), { recursive: true });
+      writeFileSync(
+        join(xdg, "todou", "config.toml"),
+        [
+          "[[bindings]]",
+          `remote = "${remote}"`,
+          'server = "https://todou.example"',
+          'project = "todou"',
+          "",
+        ].join("\n"),
+      );
+      const args = ["project", "unlink"];
+      if (suffix) args.push(suffix);
+      const result = await runCli(args, {
+        env: { HOME: home, XDG_CONFIG_HOME: xdg },
+        cwd: repo,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toContain(`unlinked ${remote}`);
+      expect(result.stderr).not.toContain("remains in a config fragment");
+    }
+  });
+});
+
 describe("project edit", () => {
   const patched: Route = [
     "PATCH",

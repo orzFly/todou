@@ -3,6 +3,7 @@ import type { CliContext } from "../api-command.ts";
 import type { CliConfig, Env } from "../config.ts";
 import {
   configPath,
+  loadCliConfig,
   loadCliConfigSet,
   saveCliConfig,
   tildePath,
@@ -56,7 +57,7 @@ export class AgentCanIFollowCommand extends Command<CliContext> {
       const advice = followAdvice({
         harness: detectHarnessId(env, tree),
         socket: harnessMessaging(env, tree).socket,
-        optedOut: optedOut(loadCliConfigSet(env).config),
+        optedOut: optedOut(loadCliConfig(env)),
       });
       this.context.stdout.write(`${advice.paragraphs.join("\n\n")}\n`);
       return 0;

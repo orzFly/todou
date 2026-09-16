@@ -502,6 +502,87 @@ describe("todou login with names and fragments (T-366)", () => {
   });
 });
 
+describe("todou login fragment-token note (T-366 review)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "todou-login-note-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("notes the fragment's token even when config.toml already has one", async () => {
+    const { fetchImpl } = fakeFetch([["GET", "/api/me", me], bareVersion]);
+    const env = { XDG_CONFIG_HOME: join(dir, "both-tokens") };
+    mkdirSync(join(dir, "both-tokens", "todou"), { recursive: true });
+    writeFileSync(
+      join(dir, "both-tokens", "todou", "config.10-work.toml"),
+      [
+        '[servers."http://stub.test"]',
+        'name = "work"',
+        'token = "todou_pat_old_default"',
+        'tokens = { "claude-code" = "todou_pat_frag_cc" }',
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(dir, "both-tokens", "todou", "config.toml"),
+      ['[servers."http://stub.test"]', 'token = "todou_pat_own_old"', ""].join(
+        "\n",
+      ),
+    );
+
+    const result = await runCli(["login", "work", "--manual"], {
+      fetchImpl,
+      env,
+      stdinText: "todou_pat_new\n",
+    });
+    expect(result.exitCode).toBe(0);
+    // The fragment still stores its own default token for this server;
+    // the note must fire on that, not on which file won the merge.
+    expect(result.stderr).toContain(
+      `note: ${join(dir, "both-tokens", "todou", "config.10-work.toml")} also stores a default token for http://stub.test`,
+    );
+    const written = readFileSync(configPath(env), "utf8");
+    expect(written).toContain("todou_pat_new");
+    expect(written).not.toContain("todou_pat_frag_cc");
+  });
+
+  it("notes nothing when no fragment holds a token for the server", async () => {
+    const { fetchImpl } = fakeFetch([["GET", "/api/me", me], bareVersion]);
+    const env = { XDG_CONFIG_HOME: join(dir, "no-frag-token") };
+    mkdirSync(join(dir, "no-frag-token", "todou"), { recursive: true });
+    writeFileSync(
+      join(dir, "no-frag-token", "todou", "config.toml"),
+      '[servers."http://stub.test"]\ntoken = "todou_pat_old"\n',
+    );
+    const result = await runCli(["login", "http://stub.test", "--manual"], {
+      fetchImpl,
+      env,
+      stdinText: "todou_pat_new\n",
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).not.toContain("also stores a default token");
+  });
+
+  it("rejects an entry whose key is not a URL reached via instead_of", async () => {
+    // A table key that is not an origin cannot hold a reachable server;
+    // login must not write a token under it no matter how it was reached.
+    const env = { XDG_CONFIG_HOME: join(dir, "non-url-key") };
+    mkdirSync(join(dir, "non-url-key", "todou"), { recursive: true });
+    writeFileSync(
+      join(dir, "non-url-key", "todou", "config.toml"),
+      [
+        '[servers."internal-name"]',
+        'instead_of = ["http://stub.test"]',
+        "",
+      ].join("\n"),
+    );
+    const result = await runCli(["login", "http://stub.test", "--manual"], {
+      env,
+      stdinText: "todou_pat_new\n",
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("http(s) origin");
+    expect(loadCliConfig(env).servers["internal-name"]?.token).toBeUndefined();
+  });
+});
+
 describe("todou login (browser flow)", () => {
   const dir = mkdtempSync(join(tmpdir(), "todou-login-browser-"));
   afterAll(() => rmSync(dir, { recursive: true, force: true }));

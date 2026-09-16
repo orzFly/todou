@@ -107,16 +107,30 @@ export function buildConfigReport(input: {
   const { version, config, files, ctx, env } = input;
   const path = configPath(env);
   // Which file a merged binding came from: the last document (merge
-  // order, later wins) carrying a binding with this remote.
-  const sourceOf = (remote: string): string => {
+  // order, later wins) carrying that exact binding — the whole row, not
+  // the remote, or two files' rows for one remote would all claim the
+  // winner's file.
+  const sourceOf = (binding: {
+    remote: string;
+    server: string;
+    project: string;
+  }): string => {
     for (const file of [...files].reverse()) {
       const bindings = file.doc.bindings;
       if (!Array.isArray(bindings)) continue;
-      if (
-        (bindings as Array<{ remote?: string }>).some(
-          (b) => b.remote === remote,
-        )
-      ) {
+      const found = (
+        bindings as Array<{
+          remote?: string;
+          server?: string;
+          project?: string;
+        }>
+      ).find(
+        (b) =>
+          b.remote === binding.remote &&
+          b.server === binding.server &&
+          b.project === binding.project,
+      );
+      if (found !== undefined) {
         return file.path;
       }
     }
@@ -164,8 +178,16 @@ export function buildConfigReport(input: {
       remote: binding.remote,
       server: binding.server,
       project: binding.project,
-      source: sourceOf(binding.remote),
-      active: binding.remote === ctx.remoteUrl,
+      source: sourceOf(binding),
+      // The same remote may appear in several files; the star marks the
+      // row resolveContext would actually pick — the last one — so a
+      // superseded row cannot also claim to be the match.
+      active:
+        binding.remote === ctx.remoteUrl &&
+        binding ===
+          (ctx.remoteUrl === null
+            ? undefined
+            : config.bindings.filter((b) => b.remote === ctx.remoteUrl).at(-1)),
     })),
     agent: { follow_uds: config.agent?.follow_uds ?? true },
   };
@@ -350,27 +372,35 @@ export function renderConfigReport(
 
 /**
  * The one line that stays byte-identical when only `config.toml` exists;
- * with fragments read, it becomes the ordered list a merge question
- * needs, with the write target marked.
+ * with any other file read, it becomes the ordered list a merge question
+ * needs, with the write target marked. "Any other file" is the trigger,
+ * not "more than one": a fragment with no config.toml at all is the
+ * report's whole subject, and a single-line "config.toml (not found)"
+ * would hide it.
  */
 function userConfigLines(report: ConfigReport, env: Env): string[] {
-  if (report.config_files.length <= 1) {
+  if (report.config_files.every((p) => p === report.config_path)) {
     return [
       `user config: ${tildePath(report.config_path, env)}` +
         (report.config_exists ? "" : " (not found)"),
     ];
   }
-  return [
-    "user config:",
-    ...report.config_files.map(
-      (path) =>
-        `  ${tildePath(path, env)}${
-          path === report.config_path ? " (write target)" : ""
-        }`,
-    ),
-  ];
+  const rows = report.config_files.map(
+    (path) =>
+      `  ${tildePath(path, env)}${
+        path === report.config_path ? " (write target)" : ""
+      }`,
+  );
+  // The write target is listed even when it does not exist yet: it is
+  // where the next write lands, and "not found" is a fact worth showing
+  // beside the files that did load.
+  if (!report.config_files.includes(report.config_path)) {
+    rows.push(
+      `  ${tildePath(report.config_path, env)} (write target, not found)`,
+    );
+  }
+  return ["user config:", ...rows];
 }
-
 /**
  * Purely local, so it answers in the two states `whoami` cannot reach: no
  * server resolved, and no token stored. Hence a plain Command — ApiCommand

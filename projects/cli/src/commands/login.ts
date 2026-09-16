@@ -80,6 +80,10 @@ export class LoginCommand extends Command<CliContext> {
       // A token belongs on the entry the CLI will actually use. The address
       // a person logs in at may be an alias of it (T-311) — the public
       // hostname, say, while requests go to the proxy — or a name (T-366).
+      // A name or alias resolves onto a key that is a URL by construction
+      // or not at all; an input that resolved by neither route must still
+      // be a URL, and the entry it lands on must be one too — a key that
+      // is not a URL cannot hold a reachable origin.
       const resolved = resolveServerInput(given, { names, aliases });
       if (resolved.viaName === undefined && resolved.from === undefined) {
         if (!/^https?:\/\//.test(resolved.server)) {
@@ -87,6 +91,9 @@ export class LoginCommand extends Command<CliContext> {
         }
       }
       const origin = normalizeServer(resolved.server);
+      if (!/^https?:\/\//.test(origin)) {
+        throw new CliError(`server must be an http(s) origin, got "${origin}"`);
+      }
       if (this.profile === "default") {
         throw new CliError(
           '"default" is reserved for the default token',
@@ -157,19 +164,20 @@ export class LoginCommand extends Command<CliContext> {
       );
       // A fragment holding the default token for this server keeps doing so
       // in the file, but stops being what a command uses — worth one line
-      // so nobody wonders which of the two is live.
-      const fragmentToken =
-        this.profile === undefined ? config.servers[origin]?.token : undefined;
-      if (fragmentToken !== undefined && fragmentToken !== token) {
+      // so nobody wonders which of the two is live. Sought in the
+      // fragments themselves: the merged view's token is whichever file
+      // won, which says nothing about what the others still hold.
+      if (this.profile === undefined) {
         const fragment = [...files]
           .reverse()
           .find(
             (f) =>
+              f.path !== configPath(env) &&
               (
                 f.doc.servers as Record<string, { token?: string }> | undefined
-              )?.[origin]?.token === fragmentToken,
+              )?.[origin]?.token !== undefined,
           );
-        if (fragment && fragment.path !== configPath(env)) {
+        if (fragment) {
           this.context.stderr.write(
             `note: ${fragment.path} also stores a default token for ${origin}; ${tildePath(configPath(env), env)} wins from now on\n`,
           );
