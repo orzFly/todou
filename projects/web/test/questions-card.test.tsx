@@ -682,7 +682,12 @@ describe("QuestionsCard when /questions fails (T-376)", () => {
       if (method === "GET" && url.includes("/questions")) {
         gets.push(url);
         if (failed) {
-          return Response.json({ error: "questions gone" }, { status: 500 });
+          // The shared client reads body.error.message; a bare string
+          // would degrade the message to the HTTP status.
+          return Response.json(
+            { error: { code: "internal", message: "questions gone" } },
+            { status: 500 },
+          );
         }
         return Response.json({ items: [item(answered, component)], open: 0 });
       }

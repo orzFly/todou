@@ -59,7 +59,9 @@ const textFetch = (text: string) => {
   vi.stubGlobal("fetch", async (input: unknown) => {
     gets.push(String(input));
     if (failed) {
-      return Response.json({ error: "text unavailable" }, { status: 500 });
+      // No error body: attachmentTextQuery never reads one — it throws
+      // `download failed (HTTP …)` off the status itself.
+      return new Response(null, { status: 500 });
     }
     return Response.json(text);
   });
