@@ -846,7 +846,10 @@ export default function todou(pi: Pi): void {
     // event that drains stdio, and the tempting one for that reason — puts
     // every member's `exit` before any member's `close`, so a stop-all
     // where the children die together has each `close` find the group
-    // complete and push the message again. Measured at 12 runs out of 12.
+    // complete and push the message again. The four-member case in
+    // `omp-extension.test.ts` is what holds this: it fails every run on an
+    // idle machine, and only sometimes on a loaded one, because load is
+    // what pairs a child's own two events back up.
     watch.child.on("exit", (code) => {
       // The second registration, for the real end of a watch that outlived
       // its grace: repaint, then decide what the session is told. A tool's

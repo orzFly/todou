@@ -809,19 +809,27 @@ describe("the todou_watch tool (T-357)", () => {
     const { bin, pids } = fakeTodou("together", "exec sleep 30");
     process.env.TODOU_BIN = bin;
     const { run, runCommand, sent } = bootWatch("together");
+    // Four members, not two. The fault needs every `exit` to land before
+    // every `close`, and a loaded event loop — the whole file running,
+    // which is how CI runs it — pairs a child's own two events up often
+    // enough that two members let the duplicate through 8 runs in 10.
+    // Four fail every run, and by three messages rather than one.
     await run({ action: "start", issue: "T-16" });
     await run({ action: "start", issue: "T-18" });
+    await run({ action: "start", issue: "T-20" });
+    await run({ action: "start", issue: "T-22" });
     await runCommand(["stop"], { hasUI: false });
     await gone(pids);
     await sentCount({ sent }, 1);
     // The duplicate is a late arrival rather than a missing one, and
     // `sentCount` returns on the first message — so the count is read a
-    // beat after the last child was reaped, or the second one lands
-    // outside the window and the case passes on a bug.
+    // beat after the last child was reaped, or the others land outside
+    // the window and the case passes on a bug.
     await new Promise((resolve) => setTimeout(resolve, 250));
     expect(sent.length).toBe(1);
-    expect(sent[0]?.content).toContain("w1");
-    expect(sent[0]?.content).toContain("w2");
+    for (const id of ["w1", "w2", "w3", "w4"]) {
+      expect(sent[0]?.content).toContain(id);
+    }
   });
 
   it("keeps a half-dead group's cursor when stop lands again", async () => {
