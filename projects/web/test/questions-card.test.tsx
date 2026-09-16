@@ -158,6 +158,46 @@ function stubFetch(
   return posts;
 }
 
+function deferred() {
+  let resolve!: (value: unknown) => void;
+  const promise = new Promise((r: (value: unknown) => void) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+/**
+ * Route-table fetch stub whose GET and POST answers the test settles by
+ * hand: a slow `/questions` or a slow POST is a promise resolved when the
+ * screen should change, and `gets` records every `/questions` GET so a
+ * test can assert one was never sent.
+ */
+function deferredFetch(comp: QuestionsComponent = component) {
+  const posts: unknown[] = [];
+  const gets: string[] = [];
+  const get = deferred();
+  const post = deferred();
+  vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (method === "GET" && url.includes("/questions")) {
+      gets.push(url);
+      const answer = await get.promise;
+      return Response.json({
+        items: [item(answer, comp)],
+        open: answer ? 0 : 2,
+      });
+    }
+    if (method === "POST" && url.includes("/comments/42/answers")) {
+      posts.push(JSON.parse(String(init?.body)));
+      const event = await post.promise;
+      return Response.json(event, { status: 201 });
+    }
+    throw new Error(`unexpected fetch: ${method} ${url}`);
+  });
+  return { posts, gets, resolveGet: get.resolve, resolvePost: post.resolve };
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   // A range left standing would trip the next test's click guard.
@@ -574,5 +614,56 @@ describe("QuestionsCard (answered)", () => {
     expect([...(meta.querySelector("svg") as SVGElement).classList]).toContain(
       "shrink-0",
     );
+  });
+});
+
+describe("QuestionsCard while the verdict is unknown (T-365)", () => {
+  it("says nothing while /questions is still in flight", async () => {
+    const stub = deferredFetch();
+    const view = renderCard();
+
+    // Neutral state: the questions are readable, but no "awaiting answer"
+    // invitation and no submit — the answer status is not established yet.
+    await view.findByText("Where does the payload live?");
+    expect(view.queryByText("awaiting answer")).toBeNull();
+    expect(view.queryByText("Submit answers")).toBeNull();
+
+    await act(async () => stub.resolveGet(answered));
+    await view.findByText("answered by");
+  });
+
+  it("keeps a just-submitted answer while /questions catches up", async () => {
+    const stub = deferredFetch();
+    const view = renderCard();
+    await view.findByText("Where does the payload live?");
+    await act(async () => stub.resolveGet(null));
+    await view.findByText("awaiting answer");
+
+    fireEvent.click(optionButton(view, "Inline"));
+    fireEvent.click(optionButton(view, "dev"));
+    const submit = await view.findByText("Submit answers");
+    await waitFor(() =>
+      expect((submit.closest("button") as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
+    fireEvent.click(submit);
+    await act(async () =>
+      stub.resolvePost({
+        type: "event",
+        id: 7,
+        event_type: "question_answered",
+        actor: user,
+        payload: { comment_id: 42, answers: answered.answers },
+        created_at: "2026-08-12T01:00:00Z",
+        agent_context: null,
+      }),
+    );
+
+    // /questions has not delivered the invalidated data yet (its promise
+    // resolves to the old unanswered state); the POST's own event must hold
+    // the answered screen until it does.
+    expect(view.queryByText("Submit answers")).toBeNull();
+    await view.findByText("answered by");
   });
 });

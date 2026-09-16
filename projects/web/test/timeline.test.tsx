@@ -2,13 +2,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render as renderBare, waitFor } from "@testing-library/react";
 import type {
   Label,
+  QuestionsComponent,
   Status,
+  TimelineComment,
   TimelineEvent,
   TimelinePage,
   UserRef,
 } from "@todou/shared";
+import { DEFAULT_REFERENCE_CONFIG } from "@todou/shared";
 import type { ReactElement } from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { refConfigFor } from "../src/api/references.ts";
 import {
   flattenTimeline,
@@ -24,6 +27,7 @@ import {
   EventRow,
   renderEvent,
 } from "../src/components/timeline/event-row.tsx";
+import { Timeline } from "../src/components/timeline/timeline.tsx";
 import {
   NO_ENTITIES,
   resolveLabel,
@@ -62,6 +66,22 @@ const bot: UserRef = {
   avatar_url: null,
   owner: { id: 1, login: "user" },
 };
+
+const questionComment = (
+  id: number,
+  comp: QuestionsComponent,
+): TimelineComment => ({
+  type: "comment",
+  id,
+  author: user,
+  body: `c${id}`,
+  component: comp,
+  created_at: "2026-08-11T00:00:00Z",
+  edited_at: null,
+  resolved_at: null,
+  hidden_at: null,
+  agent_context: null,
+});
 
 const eventOf = (
   event_type: TimelineEvent["event_type"],
@@ -451,5 +471,82 @@ describe("timeline entities render like the rest of the app (T-171)", () => {
     const before = await findByText("old");
     expect(before.className).toContain("line-through");
     expect((await findByText("new")).className).toContain("font-medium");
+  });
+});
+
+describe("timeline answers reach the question card (T-365)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("renders an answered footer without asking /questions", async () => {
+    const comp: QuestionsComponent = {
+      type: "questions",
+      questions: [
+        {
+          key: "q1",
+          multiple: false,
+          question: "Ship it?",
+          options: [{ label: "yes" }, { label: "no" }],
+        },
+      ],
+    };
+    const event = {
+      type: "event",
+      id: 9,
+      event_type: "question_answered",
+      actor: user,
+      payload: {
+        comment_id: 42,
+        answers: [
+          {
+            key: "q1",
+            selected: [{ index: 0, label: "yes" }],
+            other: null,
+            declined: false,
+          },
+        ],
+      },
+      created_at: "2026-08-11T00:00:00Z",
+      agent_context: null,
+    } as const;
+    const page: TimelinePage = {
+      items: [questionComment(42, comp), event],
+      prev_cursor: null,
+      next_cursor: null,
+      total_count: 2,
+    };
+    const gets: string[] = [];
+    vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method === "GET" && /\/projects\/p\/issues\/19\/timeline/.test(url)) {
+        return Response.json(page);
+      }
+      if (method === "GET" && url.includes("/references/config")) {
+        return Response.json(DEFAULT_REFERENCE_CONFIG);
+      }
+      if (method === "GET" && url.includes("/reference-directory")) {
+        return Response.json(null);
+      }
+      if (method === "GET" && url.includes("/questions")) {
+        gets.push(`${method} ${url}`);
+        return Response.json({ items: [], open: 0 });
+      }
+      if (method === "GET") {
+        return Response.json([]);
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+
+    const { findByText } = renderWithRouter(
+      <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
+      testQueryClient(),
+    );
+
+    // First paint already carries the verdict — the timeline event in the
+    // loaded window is the whole proof, no /questions request needed.
+    await findByText("answered by");
+    expect(gets.filter((g) => g.includes("/questions"))).toEqual([]);
   });
 });

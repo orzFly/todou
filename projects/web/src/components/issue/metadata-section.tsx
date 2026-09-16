@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { groupMetadata, issueMetadataQuery } from "@/api/metadata.ts";
 import { useCan } from "@/api/queries.ts";
 import { MetadataDialog } from "@/components/issue/metadata-dialog.tsx";
+import { Skeleton } from "@/components/ui/skeleton";
 
 /**
  * A compact age, because the sidebar column is 240px wide and a locale
@@ -49,16 +50,23 @@ export function MetadataSection({
   const metadata = useQuery(issueMetadataQuery(slug, issueNumber));
   const canWrite = useCan(slug, "metadata.write");
   const groups = groupMetadata(metadata.data?.entries ?? []);
-  // A reader looking at an empty card has nothing to open the dialog for; a
-  // writer does, and the dialog is where every write lives.
-  const empty = groups.length === 0;
+  // `—` on this surface means "this card has none", so it renders only
+  // once the query has said so — while in flight the section waits, and
+  // a failure says itself instead (T-365).
+  const empty = metadata.isSuccess && groups.length === 0;
 
   return (
     <section className="space-y-2" data-testid="metadata-sidebar">
       <h3 className="text-xs font-medium text-muted-foreground uppercase">
         Metadata
       </h3>
-      {empty && !canWrite ? (
+      {!metadata.isSuccess && !metadata.isError ? (
+        <Skeleton className="h-4 w-16" data-testid="metadata-loading" />
+      ) : metadata.isError && groups.length === 0 ? (
+        <p className="text-sm text-destructive" title={metadata.error.message}>
+          Failed to load metadata — retrying may help.
+        </p>
+      ) : empty && !canWrite ? (
         <p className="text-sm text-muted-foreground">—</p>
       ) : (
         <button

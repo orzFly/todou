@@ -1,10 +1,12 @@
 import { useRouterState } from "@tanstack/react-router";
 import type { TimelineComment, TimelineItem } from "@todou/shared";
+import { answersByComment } from "@todou/shared";
 import { ArrowDownIcon } from "lucide-react";
 import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -31,6 +33,7 @@ import {
 import { HiddenBlock } from "@/components/timeline/hidden-block.tsx";
 import { useRevealedRuns } from "@/components/timeline/revealed-runs.tsx";
 import { SpecVersionCard } from "@/components/timeline/spec-version-card.tsx";
+import { TimelineAnswersProvider } from "@/components/timeline/timeline-answers.tsx";
 import { useTimelineAnchor } from "@/components/timeline/use-timeline-anchor.ts";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -90,6 +93,20 @@ export function Timeline({
     reportHidden(stillHidden);
   }, [stillHidden, reportHidden]);
 
+  // The map is the answers the loaded items carry — `above` and `below`
+  // merged, not the rendered units, so a comment inside a folded run finds
+  // its event once expanded. Keyed on the pages (stable between renders),
+  // never on the arrays `mergeFolded` rebuilds every render.
+  const answers = useMemo(
+    () =>
+      answersByComment([
+        ...(headEnabled ? (head.data?.pages ?? []) : []).flatMap(
+          (p) => p.items,
+        ),
+        ...(tail.data?.pages ?? []).flatMap((p) => p.items),
+      ]),
+    [headEnabled, head.data, tail.data],
+  );
   // Bottom of the document, not of the list: the composer is sticky, and
   // the document end sits below its in-flow position — so this lands with
   // the last item fully visible above the composer.
@@ -279,48 +296,50 @@ export function Timeline({
   return (
     // Native scroll anchoring would fight the manual insert compensation
     // above, adjusting the viewport a second time for the same insertion.
-    <div className="[overflow-anchor:none]" data-testid="timeline-scroll">
-      {headEnabled && head.isPending && (
-        <div className="space-y-3 pb-2">
-          <Skeleton className="h-16 w-full" />
-          <Skeleton className="h-16 w-full" />
-        </div>
-      )}
-      {unitsAbove.map(renderUnit)}
-      {remaining > 0 && (
-        <div ref={blockRef} className="pb-2">
-          <FoldBlock
-            remaining={remaining}
-            loading={head.isFetchingNextPage}
-            onLoadMore={onLoadMore}
-          />
-        </div>
-      )}
-      {unitsBelow.map(renderUnit)}
-      {pendingComments.map((pending) => (
-        <div key={`pending-${pending.key}`} className="pb-2">
-          <CommentItem
-            slug={slug}
-            issueNumber={issueNumber}
-            comment={pending.comment}
-            pending
-          />
-        </div>
-      ))}
-      {newBelow && (
-        <div className="sticky bottom-36 z-10 flex h-0 items-end justify-center">
-          <Button
-            size="sm"
-            className="shadow-lg"
-            onClick={() => {
-              scrollToBottom();
-              setNewBelow(false);
-            }}
-          >
-            <ArrowDownIcon className="size-4" /> 新消息
-          </Button>
-        </div>
-      )}
-    </div>
+    <TimelineAnswersProvider answers={answers}>
+      <div className="[overflow-anchor:none]" data-testid="timeline-scroll">
+        {headEnabled && head.isPending && (
+          <div className="space-y-3 pb-2">
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+          </div>
+        )}
+        {unitsAbove.map(renderUnit)}
+        {remaining > 0 && (
+          <div ref={blockRef} className="pb-2">
+            <FoldBlock
+              remaining={remaining}
+              loading={head.isFetchingNextPage}
+              onLoadMore={onLoadMore}
+            />
+          </div>
+        )}
+        {unitsBelow.map(renderUnit)}
+        {pendingComments.map((pending) => (
+          <div key={`pending-${pending.key}`} className="pb-2">
+            <CommentItem
+              slug={slug}
+              issueNumber={issueNumber}
+              comment={pending.comment}
+              pending
+            />
+          </div>
+        ))}
+        {newBelow && (
+          <div className="sticky bottom-36 z-10 flex h-0 items-end justify-center">
+            <Button
+              size="sm"
+              className="shadow-lg"
+              onClick={() => {
+                scrollToBottom();
+                setNewBelow(false);
+              }}
+            >
+              <ArrowDownIcon className="size-4" /> 新消息
+            </Button>
+          </div>
+        )}
+      </div>
+    </TimelineAnswersProvider>
   );
 }

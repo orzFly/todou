@@ -1,4 +1,4 @@
-import { QuestionAnsweredPayload } from "./schemas/component.ts";
+import { answersByComment } from "./question-answers.ts";
 import type { TimelineComment, TimelineItem } from "./schemas/timeline.ts";
 
 /**
@@ -173,13 +173,5 @@ function keptTail(comments: TimelineComment[], keepLast: number): Set<number> {
 }
 
 function answeredIds(items: TimelineItem[]): Set<number> {
-  const answered = new Set<number>();
-  for (const item of items) {
-    if (item.type !== "event" || item.event_type !== "question_answered") {
-      continue;
-    }
-    const parsed = QuestionAnsweredPayload.safeParse(item.payload);
-    if (parsed.success) answered.add(parsed.data.comment_id);
-  }
-  return answered;
+  return new Set(answersByComment(items).keys());
 }

@@ -1,6 +1,6 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import type { IssueMetadataEntry, MemberRole, Project } from "@todou/shared";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { issueMetadataQuery } from "../src/api/metadata.ts";
 import { api, projectQuery } from "../src/api/queries.ts";
 import { MetadataSection } from "../src/components/issue/metadata-section.tsx";
@@ -72,6 +72,54 @@ const openDialog = async () => {
   await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
   return trigger;
 };
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise((r: (value: T) => void) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+describe("the metadata sidebar while /metadata is in flight (T-365)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+  it("shows neither the dash nor the lines until the query settles", async () => {
+    const metadata = deferred<{ entries: IssueMetadataEntry[] }>();
+    vi.spyOn(api, "getIssueMetadata").mockReturnValue(metadata.promise);
+    const client = testQueryClient();
+    client.setQueryData(projectQuery(SLUG).queryKey, project("reader"));
+    renderWithProviders(
+      <MetadataSection slug={SLUG} issueNumber={NUMBER} />,
+      client,
+    );
+
+    // `—` means "this card has no metadata"; while the query is in flight
+    // that claim is not established, so the dash must not be on screen.
+    const section = await screen.findByTestId("metadata-sidebar");
+    expect(section.textContent).not.toContain("—");
+
+    await act(async () => metadata.resolve({ entries: [] }));
+    await waitFor(() =>
+      expect(screen.getByTestId("metadata-sidebar").textContent).toContain("—"),
+    );
+
+    // And with entries, the lines replace the dash.
+    vi.spyOn(api, "getIssueMetadata").mockResolvedValue({
+      entries: [entry("ci", "run", "green")],
+    });
+    client.invalidateQueries({
+      queryKey: issueMetadataQuery(SLUG, NUMBER).queryKey,
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("metadata-sidebar").textContent).not.toContain(
+        "—",
+      ),
+    );
+    expect(screen.getByTestId("metadata-open").textContent).toContain("ci");
+  });
+});
 
 describe("the metadata sidebar summary", () => {
   it("gives each namespace its name, its size and its newest write", async () => {

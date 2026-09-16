@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  AnsweredComment,
   Question,
   QuestionAnswer,
   QuestionAnswerInput,
   QuestionsComponent,
 } from "@todou/shared";
+import { answerRecordOf } from "@todou/shared";
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -22,8 +24,10 @@ import { MarkdownEditor } from "@/components/shared/markdown-editor.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import type { Target } from "@/components/timeline/comment-item.tsx";
+import { useTimelineAnswer } from "@/components/timeline/timeline-answers.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
 
@@ -107,6 +111,12 @@ function InlineMarkdown({
 /**
  * The interactive tail of a question comment (T-19). One submission covers
  * every question and is final — answered cards render read-only.
+ *
+ * The answer comes from three sources in order (T-365): the loaded
+ * timeline's `question_answered` event, this mount's own submission, and
+ * only then `/questions`. A card none of them settles yet renders the
+ * neutral state — "unknown" is not "unanswered", and the amber form
+ * asserts the latter.
  */
 export function QuestionsCard({
   slug,
@@ -120,67 +130,136 @@ export function QuestionsCard({
   component: QuestionsComponent;
   /** The question comment's created_at (T-80 time cutoff). */
 }) {
-  const status = useQuery(questionsQuery(slug, issueNumber));
-  const [showDescriptions, setShowDescriptions] = useState(false);
-  const answer =
-    status.data?.items.find((i) => i.comment_id === commentId)?.answer ?? null;
+  const fromTimeline = useTimelineAnswer(commentId);
+  const [submitted, setSubmitted] = useState<AnsweredComment | null>(null);
+  const established = fromTimeline ?? submitted;
+  const status = useQuery({
+    ...questionsQuery(slug, issueNumber),
+    // Sent only when the timeline and this mount's own submission both
+    // prove nothing — commonly the answer is already in the loaded window,
+    // and then this request never goes out.
+    enabled: established === null,
+  });
+  const answered =
+    established ??
+    status.data?.items.find((i) => i.comment_id === commentId)?.answer ??
+    null;
 
-  if (answer) {
+  if (answered) {
     const hasDescriptions = component.questions.some((q) =>
       q.options.some((o) => o.description !== undefined),
     );
+    // The /questions item carries the comment id outside the answer shape;
+    // the other two sources carry it inside. Same five fields either way.
     return (
-      <div className="mt-1 space-y-3 rounded-md border bg-muted/20 p-3">
-        {component.questions.map((q) => (
-          <AnsweredQuestion
-            key={q.key}
-            slug={slug}
-            issueNumber={issueNumber}
-            question={q}
-            record={answer.answers.find((a) => a.key === q.key)}
-            showDescriptions={showDescriptions}
-          />
-        ))}
-        {/*
-          The toggle beside this group is a `Button` — `shrink-0 whitespace-nowrap`
-          in its base class. Unwrapped, a narrow viewport takes every missing pixel
-          out of this group alone, crushing it and still overflowing sideways (T-362).
-        */}
-        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <CheckIcon className="size-3.5 shrink-0 text-green-600" />
-            answered by <UserChip user={answer.actor} compact />
-            <span className="whitespace-nowrap" title={answer.created_at}>
-              {new Date(answer.created_at).toLocaleString()}
-            </span>
-          </span>
-          {hasDescriptions && (
-            <Button
-              variant="ghost"
-              size="xs"
-              aria-expanded={showDescriptions}
-              onClick={() => setShowDescriptions((v) => !v)}
-            >
-              {showDescriptions ? <ChevronUpIcon /> : <ChevronDownIcon />}
-              {showDescriptions
-                ? "hide option descriptions"
-                : "show option descriptions"}
-            </Button>
-          )}
-        </div>
-      </div>
+      <AnsweredCard
+        slug={slug}
+        issueNumber={issueNumber}
+        component={component}
+        answer={established ?? { comment_id: commentId, ...answered }}
+        hasDescriptions={hasDescriptions}
+      />
     );
   }
+  if (status.isSuccess) {
+    return (
+      <AnswerForm
+        slug={slug}
+        issueNumber={issueNumber}
+        commentId={commentId}
+        component={component}
+        onAnswered={(record) => {
+          if (record.comment_id === commentId) setSubmitted(record);
+        }}
+      />
+    );
+  }
+  // Neutral: the verdict is not established. The answered card's grey frame
+  // and its read-only rows say exactly that much and nothing more; the
+  // footer slot — the one cell whose content the verdict decides — waits
+  // as a skeleton, or names the failure when /questions failed.
   return (
-    <AnswerForm
-      slug={slug}
-      issueNumber={issueNumber}
-      commentId={commentId}
-      component={component}
-      // Answer state may still be loading; blocking submit (not input) is
-      // enough — the POST is atomic and conflicts loudly on a double-answer.
-      ready={status.isSuccess}
-    />
+    <div className="mt-1 space-y-3 rounded-md border bg-muted/20 p-3">
+      {component.questions.map((q) => (
+        <AnsweredQuestion
+          key={q.key}
+          slug={slug}
+          issueNumber={issueNumber}
+          question={q}
+          known={false}
+        />
+      ))}
+      {status.isError ? (
+        <p className="text-xs text-destructive" title={status.error.message}>
+          Failed to load answer status — retrying may help.
+        </p>
+      ) : (
+        <Skeleton className="h-4 w-40" />
+      )}
+    </div>
+  );
+}
+
+function AnsweredCard({
+  slug,
+  issueNumber,
+  component,
+  answer,
+  hasDescriptions,
+}: {
+  slug: string;
+  issueNumber: number;
+  component: QuestionsComponent;
+  /**
+   * The established verdict: `AnsweredComment` from the timeline and this
+   * mount's own submission, the `/questions` item's `answer` shape from
+   * the request — field-for-field the same.
+   */
+  answer: AnsweredComment;
+  hasDescriptions: boolean;
+}) {
+  const [showDescriptions, setShowDescriptions] = useState(false);
+  return (
+    <div className="mt-1 space-y-3 rounded-md border bg-muted/20 p-3">
+      {component.questions.map((q) => (
+        <AnsweredQuestion
+          key={q.key}
+          slug={slug}
+          issueNumber={issueNumber}
+          question={q}
+          record={answer.answers.find((a) => a.key === q.key)}
+          showDescriptions={showDescriptions}
+          known
+        />
+      ))}
+      {/*
+        The toggle beside this group is a `Button` — `shrink-0 whitespace-nowrap`
+        in its base class. Unwrapped, a narrow viewport takes every missing pixel
+        out of this group alone, crushing it and still overflowing sideways (T-362).
+      */}
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <CheckIcon className="size-3.5 shrink-0 text-green-600" />
+          answered by <UserChip user={answer.actor} compact />
+          <span className="whitespace-nowrap" title={answer.created_at}>
+            {new Date(answer.created_at).toLocaleString()}
+          </span>
+        </span>
+        {hasDescriptions && (
+          <Button
+            variant="ghost"
+            size="xs"
+            aria-expanded={showDescriptions}
+            onClick={() => setShowDescriptions((v) => !v)}
+          >
+            {showDescriptions ? <ChevronUpIcon /> : <ChevronDownIcon />}
+            {showDescriptions
+              ? "hide option descriptions"
+              : "show option descriptions"}
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -189,13 +268,14 @@ function AnswerForm({
   issueNumber,
   commentId,
   component,
-  ready,
+  onAnswered,
 }: {
   slug: string;
   issueNumber: number;
   commentId: number;
   component: QuestionsComponent;
-  ready: boolean;
+  /** Fed the POST's own event, so the answered screen is immediate. */
+  onAnswered: (record: AnsweredComment) => void;
 }) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>(() =>
     Object.fromEntries(component.questions.map((q) => [q.key, emptyDraft()])),
@@ -213,7 +293,9 @@ function AnswerForm({
       api.submitAnswers(vars.slug, vars.issueNumber, vars.commentId, {
         answers: vars.answers,
       }),
-    onSuccess: (_result, vars) => {
+    onSuccess: (result, vars) => {
+      const record = answerRecordOf(result);
+      if (record !== null) onAnswered(record);
       for (const key of [
         ["questions", vars.slug, vars.issueNumber],
         ["timeline", vars.slug, vars.issueNumber],
@@ -261,11 +343,11 @@ function AnswerForm({
           draft={drafts[q.key] ?? emptyDraft()}
           disabled={submit.isPending}
           onChange={(update) => patch(q.key, update)}
-          // The three conditions the submit button carries, written again
+          // The two conditions the submit button carries, written again
           // here: a disabled button cannot intercept a keystroke, and this
           // submission is final — a card's questions can be answered once.
           onSubmit={() => {
-            if (!ready || !complete || submit.isPending) return;
+            if (!complete || submit.isPending) return;
             submit.mutate({ ...target, answers: answersOf(drafts, component) });
           }}
         />
@@ -273,7 +355,7 @@ function AnswerForm({
       <div className="flex justify-end">
         <Button
           size="sm"
-          disabled={!ready || !complete || submit.isPending}
+          disabled={!complete || submit.isPending}
           onClick={() =>
             submit.mutate({ ...target, answers: answersOf(drafts, component) })
           }
@@ -431,20 +513,26 @@ function QuestionForm({
   );
 }
 
+/**
+ * One question rendered read-only. `known` is false while the verdict is
+ * still unestablished (T-365): no row is marked picked or dimmed, and the
+ * icon column stays empty — the row asserts nothing either way.
+ */
 function AnsweredQuestion({
   slug,
   issueNumber,
   question,
   record,
-  showDescriptions,
+  showDescriptions = false,
+  known,
 }: {
   slug: string;
   issueNumber: number;
   question: Question;
-  record: QuestionAnswer | undefined;
-  /** Question text is created with the comment... */
-  /** ...but the free-text "other" is written when answered. */
-  showDescriptions: boolean;
+  record?: QuestionAnswer;
+  showDescriptions?: boolean;
+  /** Whether the answer this row renders is established. */
+  known: boolean;
 }) {
   const chosen = new Set(record?.selected.map((s) => s.index) ?? []);
   return (
@@ -470,11 +558,17 @@ function AnsweredQuestion({
             <div
               key={option.label}
               className={`flex items-start gap-2 rounded-md px-2 py-1 text-sm ${
-                active ? "bg-primary/10" : "text-muted-foreground/70"
+                known
+                  ? active
+                    ? "bg-primary/10"
+                    : "text-muted-foreground/70"
+                  : ""
               }`}
             >
               <span className="mt-0.5 w-4 shrink-0">
-                {active && <CheckIcon className="size-4 text-primary" />}
+                {known && active && (
+                  <CheckIcon className="size-4 text-primary" />
+                )}
               </span>
               <div className="min-w-0 flex-1 space-y-0.5">
                 <InlineMarkdown slug={slug} issueNumber={issueNumber}>
