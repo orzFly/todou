@@ -1002,6 +1002,34 @@ describe("the session omp publishes for itself", () => {
     });
   });
 
+  describe("the tool names the record carries", () => {
+    const read = (tools: unknown) =>
+      readOmpStateAt(
+        writeState(process.pid, { ...state(process.pid, SID), tools }),
+      );
+
+    it("reads a list of names", () => {
+      expect(read(["todou_watch"])?.tools).toEqual(["todou_watch"]);
+    });
+
+    it("reads nothing where the record carries none", () => {
+      expect(read(undefined)?.tools).toBeUndefined();
+    });
+
+    it.each([
+      ["not an array", "todou_watch"],
+      ["an entry that is not a string", ["todou_watch", 3]],
+      ["a name with a character a tool may not carry", ["Todou Watch"]],
+      ["a name past 64 characters", ["t".repeat(65)]],
+      [
+        "more names than any real extension registers",
+        Array.from({ length: 17 }, (_, i) => `t${i}`),
+      ],
+    ])("drops the whole field on %s", (_n, tools) => {
+      expect(read(tools)?.tools).toBeUndefined();
+    });
+  });
+
   describe("falls back to the scan rather than believe a bad record", () => {
     /* A recorded session for the scan to find, so a fallback is visible as
        an answer rather than as the agent-only degradation. */

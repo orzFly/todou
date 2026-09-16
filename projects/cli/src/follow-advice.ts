@@ -1,10 +1,18 @@
 import type { HarnessId } from "@todou/shared";
 import { HARNESS_LABELS } from "./harness/index.ts";
 
-/** Which of the six answers this environment gets. */
+/**
+ * The watch tool the omp extension registers. Spelled again inside
+ * `integrations/omp/extension.ts` (`TOOL_NAME`), which cannot import from
+ * here; a test pins the two spellings together.
+ */
+export const OMP_WATCH_TOOL = "todou_watch";
+
+/** Which of the seven answers this environment gets. */
 export type FollowSituation =
   | "uds"
   | "uds-opted-out"
+  | "omp-tool"
   | "claude-code-no-peer"
   | "omp-no-peer"
   | "known-harness"
@@ -87,6 +95,27 @@ const UNKNOWN_HARNESS = streamOrPoll(UNKNOWN_LEAD, UNKNOWN_FALLBACK);
 const OMP_DEADLINE =
   "`timeout: 0` is what keeps that job alive: the bash tool's deadline defaults to 300 seconds and ends the command with no signal it can catch, so a watch that reaches it stops without printing the cursor a restart would resume from, and whatever arrived in between is never read. Every todou command that has to outlive a single tool call takes the same parameter — `spec push --wait`, `spec wait`, `question wait`, and any watch run with `--forever`.";
 
+/**
+ * The tool carries the wait, so these two say what the tool's own prose
+ * does not: that spec and question answers ride on it, and what to do on
+ * the occasions something is still run alone. Not `CLOSING`, whose
+ * "whichever mode you use" describes a choice this situation no longer
+ * offers.
+ */
+const TOOL_CARRIES =
+  "The watch carries spec and question activity too: a review verdict and a question answer each arrive on it as their own line, so you do not need a separate `spec wait` or `question wait` running beside it.";
+const TOOL_ALONE =
+  "When you do run one of those on its own — `spec push --wait`, `spec wait`, `question wait` — give the bash tool `timeout: 0`. Its deadline defaults to 300 seconds and ends the command with no signal it can catch, so the command stops without printing the cursor a restart would resume from, and whatever arrived in between is never read.";
+
+/** The omp answer where the extension's tool is present (T-357). */
+function ompToolParagraphs(): string[] {
+  return [
+    `running under omp, and the todou extension registers a \`${OMP_WATCH_TOOL}\` tool. It is mounted as a device rather than listed among your tools: write a call's JSON arguments to \`xd://${OMP_WATCH_TOOL}\` to run it, and read \`xd://${OMP_WATCH_TOOL}\` for its full documentation.`,
+    '`{"action": "start", "issue": "T-16"}` follows one card; `{"action": "start"}` follows every card of a project. `{"action": "list"}` reports what is running, and `{"action": "stop", "id": "w1"}` ends one. `project` and `server` are optional — left out, each is resolved from the directory omp is running in, and a directory that settles neither fails the call rather than guessing. If you are working on a card, start a watch on that card now, so comments from other agents and from the user reach you while you are working.',
+    TOOL_CARRIES,
+    TOOL_ALONE,
+  ];
+}
 /** The same question, with omp's own way of keeping the command running. */
 const OMP_STREAM = [
   ...streamOrPoll(UNKNOWN_LEAD, UNKNOWN_FALLBACK, BACKGROUNDED.omp),
@@ -132,9 +161,15 @@ function udsParagraphs(harness: "claude-code" | "omp"): string[] {
 export function followAdvice(input: {
   harness: HarnessId | null;
   socket: string | undefined;
+  /**
+   * The tool names the omp extension published, if any. An extension that
+   * has not been restarted after an update publishes the old list, and the
+   * advice follows it — the tool genuinely is not there in that session.
+   */
+  tools?: readonly string[];
   optedOut: boolean;
 }): FollowAdvice {
-  const { harness, socket, optedOut } = input;
+  const { harness, socket, tools, optedOut } = input;
   const advice = (situation: FollowSituation, paragraphs: string[]) => ({
     situation,
     harness,
@@ -186,6 +221,12 @@ export function followAdvice(input: {
         ...OMP_STREAM,
         CLOSING,
       ]);
+    }
+    // After the opt-out, not before it: opting out says "do not push into
+    // this session", and the tool pushes over the same channel — so it goes
+    // with the channel rather than around it.
+    if (tools?.includes(OMP_WATCH_TOOL)) {
+      return advice("omp-tool", ompToolParagraphs());
     }
     return advice("uds", udsParagraphs("omp"));
   }

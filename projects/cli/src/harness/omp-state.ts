@@ -21,6 +21,14 @@ export type OmpState = {
    */
   agent?: string;
   /**
+   * The tool names the extension registers, when the record carries a list
+   * this side is willing to pass on.
+   *
+   * All or nothing, like the channel pair: one bad entry would be a tool an
+   * agent is told exists and cannot call, so the field is dropped whole.
+   */
+  tools?: readonly string[];
+  /**
    * Where the extension's push socket listens, and what it authenticates with.
    *
    * Both or neither, always: a socket without its token is a channel nothing
@@ -40,6 +48,9 @@ const VERSION = 1;
  * frame; it is not meant to pin down a format the writer may still change.
  */
 const MAX_TOKEN_CHARS = 512;
+
+/** A tool name this side is willing to pass on, with its own length bound. */
+const TOOL_NAME = /^[a-z0-9_]{1,64}$/;
 
 /** It ends up in a URL — the same guard the claude-code detector applies. */
 const SESSION_ID = /^[0-9a-zA-Z-]+$/;
@@ -94,6 +105,7 @@ export function readOmpStateAt(path: string): OmpState | undefined {
     agent?: unknown;
     session_id?: unknown;
     session_file?: unknown;
+    tools?: unknown;
     socket?: unknown;
     token?: unknown;
   };
@@ -119,6 +131,7 @@ export function readOmpStateAt(path: string): OmpState | undefined {
     return undefined;
   }
   const sessionFile = record.session_file;
+  const tools = toolNames(record);
   return {
     sessionId,
     // Absent is a session with no model rather than a reason to reject the
@@ -136,6 +149,10 @@ export function readOmpStateAt(path: string): OmpState | undefined {
     // to reject the id — it is what every omp running the version before this
     // one publishes, and its session is still worth knowing.
     ...channel(record),
+    // Same again: an extension that registers no tools — including every
+    // one before this field existed — keeps its channel and its id, and
+    // callers read "no tools" the way they already read "no channel".
+    ...(tools === undefined ? {} : { tools }),
   };
 }
 
@@ -168,6 +185,25 @@ function channel(record: {
     return undefined;
   }
   return { socket, token };
+}
+
+/**
+ * The tool names a record carries, or nothing.
+ *
+ * The same trade as `channel()`: rather than carry a string of unknown
+ * provenance into advice an agent acts on, a field that fails any bound — a
+ * name that is not one, or a list longer than any real extension registers —
+ * reads as absent, which is the state every older extension is in anyway.
+ */
+function toolNames(record: { tools?: unknown }): readonly string[] | undefined {
+  const tools = record.tools;
+  if (!Array.isArray(tools) || tools.length === 0 || tools.length > 16) {
+    return undefined;
+  }
+  if (tools.some((name) => typeof name !== "string" || !TOOL_NAME.test(name))) {
+    return undefined;
+  }
+  return tools;
 }
 
 /**
