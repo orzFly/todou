@@ -624,6 +624,45 @@ describe("watch --follow=uds sender name (T-254)", () => {
   });
 });
 
+describe("watch announces what it follows (T-357)", () => {
+  const udsEnv = {
+    ...loggedInEnv(),
+    CLAUDE_CODE_MESSAGING_SOCKET: "/run/cc-socks/4242.sock",
+  };
+
+  it("says the project slug on uds, and all-projects where it is", async () => {
+    // The label of a stdout batch names the command, so this line exists
+    // only where there is no other statement of what the watch is on.
+    const slug = async (argv: string[]) => {
+      const clock = virtualClock();
+      const push = fakePeerPush();
+      const sse: SseStub = sseStub();
+      const { fetchImpl } = fakeFetch([
+        ["GET", "/api/me", me],
+        ["GET", "/api/events", () => sse.reply()],
+        ["GET", "/api/activity", () => FATAL],
+      ]);
+      const result = await runCli(["watch", ...argv, "--since", "a0"], {
+        fetchImpl,
+        env: udsEnv,
+        clock,
+        openPeerPush: push.open,
+      });
+      expect(result.exitCode).toBe(1);
+      return result.stderr;
+    };
+    expect(await slug(["-p", "todou", "--follow=uds"])).toContain(
+      "--follow=uds following todou",
+    );
+    expect(await slug(["--all-projects", "--follow=uds"])).toContain(
+      "--follow=uds following all-projects",
+    );
+    expect(await slug(["-p", "aa,bb", "--follow=uds"])).toContain(
+      "--follow=uds following aa,bb",
+    );
+  });
+});
+
 describe("watch --follow argument handling (T-252)", () => {
   it("refuses uds with no socket in the environment, before any request", async () => {
     const { fetchImpl, calls } = fakeFetch([["GET", "/api/me", me]]);

@@ -14,7 +14,30 @@ import { ancestorPids, type ProcessTreeIo } from "./process-tree.ts";
 export type HarnessMessaging = {
   socket?: string;
   token?: string;
+  /** Which side is receiving, deciding whether a push wraps an envelope. */
+  peer?: "claude-code" | "omp";
+  /**
+   * The tool names the omp extension registered, when it published any.
+   * Advice reads them to know the watch tool is available (T-357).
+   */
+  tools?: readonly string[];
 };
+
+/**
+ * `TODOU_OMP_TOOLS` as the bash tool's environment carries it: one
+ * comma-separated line, cheaper for `claim()` to export than a record write
+ * and split here. Empty entries drop out; an empty result is no tools at
+ * all, which is what an older extension publishes by omitting the variable.
+ */
+function toolsFromEnv(env: { TODOU_OMP_TOOLS?: string }): {
+  tools?: readonly string[];
+} {
+  const names = (env.TODOU_OMP_TOOLS ?? "")
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => name !== "");
+  return names.length === 0 ? {} : { tools: names };
+}
 
 /**
  * The messaging endpoint of the harness this command is running under.
@@ -56,6 +79,8 @@ export function harnessMessaging(
         return {
           socket: env.TODOU_MESSAGING_SOCKET,
           token: env.TODOU_MESSAGING_TOKEN,
+          peer: "omp",
+          ...toolsFromEnv(env),
         };
       }
       // Every other context omp spawns — the `!` shell, both eval runtimes —
@@ -71,13 +96,19 @@ export function harnessMessaging(
       const state = publishedState(env, () => ancestorPids(io));
       return state?.socket === undefined
         ? {}
-        : { socket: state.socket, token: state.token };
+        : {
+            socket: state.socket,
+            token: state.token,
+            peer: "omp",
+            ...(state.tools === undefined ? {} : { tools: state.tools }),
+          };
     }
     case "claude-code":
     case null:
       return {
         socket: env.CLAUDE_CODE_MESSAGING_SOCKET,
         token: env.CLAUDE_CODE_MESSAGING_TOKEN,
+        peer: "claude-code",
       };
     default:
       // codex, pi, hermes: none of them publishes anything to push into, and

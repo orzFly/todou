@@ -1154,28 +1154,29 @@ export class IssueWatchCommand extends ProjectCommand {
           intervalSec,
           clock: this.clock,
         });
+    // The ref a header and a following line share: prefix-less projects
+    // spell a card `<slug>/<number>` rather than an ambiguous `#N`.
+    const issueRef =
+      refPrefix === null
+        ? `${project}/${number}`
+        : formatRef(refPrefix, number);
     try {
       const follow = await openFollow<TimelineItem>({
         transport,
-        // A prefix-less project spells this `<slug>/<number>` rather than
-        // an ambiguous `#N`: the header is there to be re-run by hand, and
-        // that form names no project and needs quoting to survive a shell.
-        label: `todou issue watch ${
-          refPrefix === null
-            ? `${project}/${number}`
-            : formatRef(refPrefix, number)
-        }`,
+        // The header is there to be re-run by hand, and that form names no
+        // project and needs quoting to survive a shell.
+        label: `todou issue watch ${issueRef}`,
         // An identifier, not a ref: `slug-number` is already unique and
         // short, and the ref spelling has a job of its own in the label.
         subject: `${project}-${number}`,
+        following: issueRef,
         baseline,
         intervalSec,
         wait: nudges?.wait,
         render: (items, since, cursor) =>
           renderHuman(items, since, cursor, plain),
         emit,
-        socket: messaging.socket,
-        token: messaging.token,
+        messaging,
         session: () => this.ownSession(),
         home: this.context.home,
         clock: this.clock,

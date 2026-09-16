@@ -127,6 +127,10 @@ export type PeerPush<T> = {
  * on any difference — so the attribute order, the single space between
  * attributes, and the newline on each side of the body are all load-bearing
  * rather than cosmetic.
+ *
+ * This is the Claude Code side's contract only. An omp receiver hands
+ * `frame.message.content` to the session untouched and never parses the
+ * envelope, so `send` skips it there entirely (see `PeerPushReceiver`).
  */
 export function wrapEnvelope(opts: {
   from: string;
@@ -142,6 +146,28 @@ export function wrapEnvelope(opts: {
   return `<cross-session-message ${attrs.join(" ")}>\n${opts.body}\n</cross-session-message>`;
 }
 
+/**
+ * What kind of session is on the other end. The omp receiver reads the body
+ * as-is, so the envelope is a Claude Code side's contract and asking for a
+ * `fromName` to put inside it there would be a silently ignored field — the
+ * union keeps such an option from being passed at all.
+ */
+type PeerPushReceiver =
+  | {
+      /** Which side is receiving, decided by the harness detector. */
+      receiver?: "claude-code";
+      /** Display label on the receiving side; never part of its admission check. */
+      fromName: string;
+      /**
+       * Attested permission mode, where it can be read without guessing.
+       * Called once per push rather than read once per channel, because the
+       * attestation is a claim about the sender at the moment its frame goes
+       * out and a resident watch outlives the mode it opened in.
+       */
+      fromMode?: () => "bypass" | "prompting" | undefined;
+    }
+  | { receiver: "omp" };
+
 export type PeerPushOptions<T> = {
   /** The target session's socket, from CLAUDE_CODE_MESSAGING_SOCKET. */
   target: string;
@@ -151,33 +177,25 @@ export type PeerPushOptions<T> = {
     since: string | undefined,
     cursor: string | undefined,
   ) => string;
-  /** Display label on the receiving side; never part of its admission check. */
-  fromName: string;
-  /**
-   * Attested permission mode, where it can be read without guessing. Called
-   * once per push rather than read once per channel, because the attestation
-   * is a claim about the sender at the moment its frame goes out and a
-   * resident watch outlives the mode it opened in.
-   */
-  fromMode?: () => "bypass" | "prompting" | undefined;
-  clock?: Clock;
-  receiptWindowMs?: number;
-  /**
-   * The session's CLAUDE_CODE_MESSAGING_TOKEN, absent on Claude Code before
-   * v2.1.228. It is a credential: no diagnostic on any path here may print
-   * the payload or this value, which is why the failure paths describe the
-   * error alone and never what was written.
-   */
-  token?: string;
-  /** Test seam for the platform branches; production reads process.platform. */
-  platform?: NodeJS.Platform;
-  /** One diagnostic line at open time; only the Windows branch uses it. */
-  note?: (message: string) => void;
-  /** Test seam; production leaves it unset and a real socket is dialled. */
-  dial?: (target: string, payload: string) => Promise<void>;
-  /** Test seam for the signal path; production re-raises on this process. */
-  raise?: (signal: NodeJS.Signals) => void;
-};
+} & PeerPushReceiver & {
+    clock?: Clock;
+    receiptWindowMs?: number;
+    /**
+     * The session's CLAUDE_CODE_MESSAGING_TOKEN, absent on Claude Code before
+     * v2.1.228. It is a credential: no diagnostic on any path here may print
+     * the payload or this value, which is why the failure paths describe the
+     * error alone and never what was written.
+     */
+    token?: string;
+    /** Test seam for the platform branches; production reads process.platform. */
+    platform?: NodeJS.Platform;
+    /** One diagnostic line at open time; only the Windows branch uses it. */
+    note?: (message: string) => void;
+    /** Test seam; production leaves it unset and a real socket is dialled. */
+    dial?: (target: string, payload: string) => Promise<void>;
+    /** Test seam for the signal path; production re-raises on this process. */
+    raise?: (signal: NodeJS.Signals) => void;
+  };
 
 /**
  * The files this channel owns, matched by the pid they are named after.
@@ -503,10 +521,12 @@ export async function openPeerPush<T>(
             };
       awaiting = batch;
       const msgId = randomUUID();
-      // Once per push rather than once per `build`: `build` runs a second
-      // time on the oversize path below, and a batch's two renderings must
-      // not be able to disagree about who sent them.
-      const fromMode = opts.fromMode?.();
+      // Asked here rather than inside `build`, which runs a second time on
+      // the oversize path below: a batch's two renderings must not be able
+      // to disagree about who sent them. Only the Claude Code receiver has
+      // the field at all — the union leaves omp callers nowhere to pass one.
+      const claudeCode = opts.receiver === "omp" ? undefined : opts;
+      const fromMode = claudeCode?.fromMode?.();
       const build = (body: string) =>
         JSON.stringify({
           type: "user",
@@ -517,12 +537,19 @@ export async function openPeerPush<T>(
           msg_id: msgId,
           message: {
             role: "user",
-            content: wrapEnvelope({
-              from,
-              fromName: opts.fromName,
-              fromMode,
-              body,
-            }),
+            // omp's receiver hands this string to the session as it stands,
+            // so an envelope there would be two lines of noise in every
+            // batch; the envelope is the Claude Code side's admission
+            // contract, not this protocol's.
+            content:
+              claudeCode === undefined
+                ? body
+                : wrapEnvelope({
+                    from,
+                    fromName: claudeCode.fromName,
+                    fromMode,
+                    body,
+                  }),
           },
         });
       let payload = `${auth}${build(
