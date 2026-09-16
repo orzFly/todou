@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { afterAll, describe, expect, it } from "vitest";
+import { loadCliConfig } from "../src/config.ts";
 import { fakeFetch, loggedInEnv, type Route, runCli } from "./harness.ts";
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), "todou-cli-cmdproj-")));
@@ -283,6 +284,110 @@ describe("project unlink → directory config", () => {
     });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("nothing to unlink here");
+  });
+});
+
+describe("project unlink → user-config binding (T-366 fragments)", () => {
+  const remote = "git@example.com:me/repo.git";
+
+  function seedBinding(name: string, files: Array<[string, string]>) {
+    const { home, work, xdg } = setup();
+    const repo = join(work, "repo");
+    makeRepo(repo, [["origin", remote]]);
+    mkdirSync(join(xdg, "todou"), { recursive: true });
+    for (const [file, body] of files) {
+      writeFileSync(join(xdg, "todou", file), body);
+    }
+    return { name, home, repo, xdg };
+  }
+
+  const bindingToml = (server: string, project: string) =>
+    [
+      "[[bindings]]",
+      `remote = "${remote}"`,
+      `server = "${server}"`,
+      `project = "${project}"`,
+      "",
+    ].join("\n");
+
+  it("refuses to delete a binding that lives in a fragment, naming it", async () => {
+    const { home, repo, xdg } = seedBinding("frag-only", [
+      ["config.work.toml", bindingToml("https://todou.example", "todou")],
+    ]);
+    const result = await runCli(["project", "unlink", "--global"], {
+      env: { HOME: home, XDG_CONFIG_HOME: xdg },
+      cwd: repo,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      `binding for ${remote} comes from ${join(xdg, "todou", "config.work.toml")}`,
+    );
+    expect(result.stderr).toContain("delete it there");
+    // The fragment is untouched.
+    expect(readToml(join(xdg, "todou", "config.work.toml")).bindings).toEqual([
+      { remote, server: "https://todou.example", project: "todou" },
+    ]);
+  });
+
+  it("with both sides present, deletes config.toml's and says the fragment wins", async () => {
+    const { home, repo, xdg } = seedBinding("both", [
+      ["config.work.toml", bindingToml("https://todou.example", "from-frag")],
+      ["config.toml", bindingToml("http://stub.test", "from-own")],
+    ]);
+    const result = await runCli(["project", "unlink"], {
+      env: { HOME: home, XDG_CONFIG_HOME: xdg },
+      cwd: repo,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain(`unlinked ${remote}`);
+    expect(result.stderr).toContain(
+      "remains in a config fragment and takes effect now",
+    );
+    expect(readToml(join(xdg, "todou", "config.toml")).bindings).toEqual([]);
+    expect(
+      readToml(join(xdg, "todou", "config.work.toml")).bindings,
+    ).toHaveLength(1);
+    // And the merged view after: the fragment's binding is back in force.
+    const merged = loadCliConfig({ XDG_CONFIG_HOME: xdg });
+    expect(merged.bindings).toEqual([
+      { remote, server: "https://todou.example", project: "from-frag" },
+    ]);
+  });
+
+  it("notes the fragment a link outranks", async () => {
+    const { home, work, xdg } = setup();
+    const repo = join(work, "repo");
+    makeRepo(repo, [["origin", remote]]);
+    mkdirSync(join(xdg, "todou"), { recursive: true });
+    writeFileSync(
+      join(xdg, "todou", "config.work.toml"),
+      bindingToml("https://staging.example", "stale"),
+    );
+    const { fetchImpl } = fakeFetch([acme]);
+    const result = await runCli(["project", "link", "acme"], {
+      fetchImpl,
+      env: {
+        ...loggedInEnv(),
+        HOME: home,
+        XDG_CONFIG_HOME: xdg,
+      },
+      cwd: repo,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain(
+      `note: ${join(xdg, "todou", "config.work.toml")} also binds ${remote}`,
+    );
+    // config.toml keeps only its own binding; the fragment's survives.
+    expect(readToml(join(xdg, "todou", "config.toml")).bindings).toEqual([
+      { remote, server: "http://stub.test", project: "acme" },
+    ]);
+    expect(
+      readToml(join(xdg, "todou", "config.work.toml")).bindings,
+    ).toHaveLength(1);
+    const merged = loadCliConfig({ XDG_CONFIG_HOME: xdg });
+    expect(
+      merged.bindings.filter((b) => b.remote === remote).at(-1)?.project,
+    ).toBe("acme");
   });
 });
 

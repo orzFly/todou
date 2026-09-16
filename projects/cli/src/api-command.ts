@@ -39,8 +39,10 @@ import {
 import {
   type AliasRow,
   buildAliasTable,
+  buildNameTable,
   coveringBase,
   localizeIssueUrl,
+  unknownServerError,
 } from "./server-alias.ts";
 import type { SessionSource } from "./watch-loop.ts";
 
@@ -184,13 +186,21 @@ export abstract class ApiCommand extends Command<CliContext> {
             "run `todou config show` to see what is configured",
         );
       }
+      // Raised here rather than in resolveContext so `config show`, a
+      // plain Command, still prints the full report naming the input.
+      if (this.ctx.serverUnknownName) {
+        throw unknownServerError(this.ctx.server, buildNameTable(this.config));
+      }
       if (!this.ctx.token) {
         // Both hints name `config show` because these two failures are
         // exactly when someone reaches for config.toml by hand, and a token
         // read out of that file is a leak with nothing left to buy (T-185).
+        // The entry's name, when it has one, is how a person spells it —
+        // and `todou login` takes names too (T-366).
+        const said = this.nameOfServer(this.ctx.server) ?? this.ctx.server;
         throw new CliError(
-          `not logged in to ${this.ctx.server}`,
-          `run \`todou login ${this.ctx.server}\` or set TODOU_TOKEN; ` +
+          `not logged in to ${said}`,
+          `run \`todou login ${said}\` or set TODOU_TOKEN; ` +
             "run `todou config show` to see what is configured",
         );
       }
@@ -296,6 +306,11 @@ export abstract class ApiCommand extends Command<CliContext> {
     this.context.stdout.write(
       `${records.map((record) => JSON.stringify(record)).join("\n")}\n`,
     );
+  }
+
+  /** The entry's `name` for this origin, when it has one (T-366). */
+  protected nameOfServer(origin: string): string | undefined {
+    return this.config.servers[origin]?.name;
   }
 
   protected note(line: string): void {
@@ -570,9 +585,12 @@ export abstract class ProjectCommand extends ApiCommand {
     ];
     const covered = coveringBase(raw, bases);
     if (covered !== null) {
+      // One `--server` away — spelled the way a person spells it, which
+      // is the entry's name when it has one (T-366).
+      const said = this.nameOfServer(covered) ?? covered;
       return new CliError(
         `"${raw}" points at ${covered}, which is configured but not active`,
-        `run it with --server ${covered}`,
+        `run it with --server ${said}`,
       );
     }
     const origin = new URL(raw).origin;
@@ -582,7 +600,7 @@ export abstract class ProjectCommand extends ApiCommand {
       `"${raw}" points at ${origin}, but this CLI talks to ${active}`,
       `if they are the same deployment, add it under [servers."${active}"] in ${path}:\n` +
         `  instead_of = ["${origin}"]\n` +
-        `otherwise pass --server to switch servers, or reference the issue as <project>/<number>`,
+        "otherwise pass --server to switch servers, or reference the issue as <project>/<number>",
     );
   }
 

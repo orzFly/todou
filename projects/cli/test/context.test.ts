@@ -93,6 +93,7 @@ describe("resolveContext", () => {
       binding: config.bindings[0],
       dirConfig: null,
       remoteUrl: "git@example.com:me/repo.git",
+      serverUnknownName: false,
     });
   });
 
@@ -433,5 +434,157 @@ describe("resolveContext with a directory config", () => {
     });
     expect(ctx.project).toBe("dirproj");
     expect(ctx.projectSource).toBe("dir-config");
+  });
+});
+
+describe("resolveContext with names (T-366)", () => {
+  const named: CliConfig = {
+    default_server: "work",
+    servers: {
+      "http://gateway.test/todou": {
+        name: "work",
+        token: "todou_pat_work",
+        tokens: {},
+        instead_of: ["https://todou.example"],
+      },
+    },
+    bindings: [
+      {
+        remote: "git@example.com:me/repo.git",
+        server: "work",
+        project: "todou",
+      },
+    ],
+  };
+
+  const resolve = (over: {
+    flags?: { server?: string };
+    env?: Record<string, string>;
+    remoteUrl?: string | null;
+    dirConfig?: { path: string; project: string; server?: string } | null;
+    config?: CliConfig;
+  }) =>
+    resolveContext({
+      flags: over.flags ?? {},
+      env: over.env ?? {},
+      config: over.config ?? named,
+      remoteUrl: over.remoteUrl ?? null,
+      dirConfig: over.dirConfig ?? null,
+    });
+
+  it("takes a name from --server, token picked from the named entry", () => {
+    const ctx = resolve({ flags: { server: "work" } });
+    expect(ctx.server).toBe("http://gateway.test/todou");
+    expect(ctx.serverName).toBe("work");
+    expect(ctx.serverSource).toBe("flag");
+    expect(ctx.token).toBe("todou_pat_work");
+    expect(ctx.serverUnknownName).toBe(false);
+  });
+
+  it("takes a name from TODOU_SERVER", () => {
+    const ctx = resolve({ env: { TODOU_SERVER: "work" } });
+    expect(ctx.server).toBe("http://gateway.test/todou");
+    expect(ctx.serverName).toBe("work");
+    expect(ctx.serverSource).toBe("env");
+  });
+
+  it("takes a name from default_server", () => {
+    const ctx = resolve({});
+    expect(ctx.server).toBe("http://gateway.test/todou");
+    expect(ctx.serverSource).toBe("default_server");
+    expect(ctx.serverName).toBe("work");
+  });
+
+  it("takes a name from a binding", () => {
+    const ctx = resolve({ remoteUrl: "git@example.com:me/repo.git" });
+    expect(ctx.server).toBe("http://gateway.test/todou");
+    expect(ctx.serverSource).toBe("binding");
+    expect(ctx.project).toBe("todou");
+    expect(ctx.projectSource).toBe("binding");
+  });
+
+  it("takes a name from a directory config", () => {
+    const ctx = resolve({
+      dirConfig: {
+        path: "/work/scratch/.todou.toml",
+        project: "dirproj",
+        server: "work",
+      },
+    });
+    expect(ctx.server).toBe("http://gateway.test/todou");
+    expect(ctx.serverSource).toBe("dir-config");
+    expect(ctx.project).toBe("dirproj");
+  });
+
+  it("a name resolving through an URL alias keeps both clauses", () => {
+    // "work" names the proxy base; the alias reports the public address
+    // the input spelled. Both facts belong to the winning input.
+    const ctx = resolve({ flags: { server: "https://todou.example" } });
+    expect(ctx.server).toBe("http://gateway.test/todou");
+    expect(ctx.serverInsteadOf).toBe("https://todou.example");
+    expect(ctx.serverName).toBeUndefined();
+  });
+
+  it("flags an unknown name without throwing", () => {
+    const ctx = resolve({ flags: { server: "wrok" } });
+    expect(ctx.server).toBe("wrok");
+    expect(ctx.serverUnknownName).toBe(true);
+    expect(ctx.serverSource).toBe("flag");
+  });
+
+  it("a binding naming a deleted server is a miss, not an error", () => {
+    const ctx = resolve({
+      flags: { server: "https://elsewhere.example" },
+      remoteUrl: "git@example.com:me/repo.git",
+    });
+    expect(ctx.server).toBe("https://elsewhere.example");
+    expect(ctx.project).toBeUndefined();
+    expect(ctx.projectSource).toBeNull();
+  });
+
+  it("binding lookup takes the last match for a remote", () => {
+    const config: CliConfig = {
+      ...named,
+      bindings: [
+        {
+          remote: "git@example.com:me/repo.git",
+          server: "http://old.example",
+          project: "old",
+        },
+        {
+          remote: "git@example.com:me/repo.git",
+          server: "http://gateway.test/todou",
+          project: "new",
+        },
+      ],
+    };
+    const ctx = resolve({
+      config,
+      remoteUrl: "git@example.com:me/repo.git",
+    });
+    expect(ctx.binding?.project).toBe("new");
+    expect(ctx.project).toBe("new");
+  });
+
+  it("a duplicated name fails only the command that uses it", () => {
+    const dup: CliConfig = {
+      ...named,
+      servers: {
+        ...named.servers,
+        "https://home.example": {
+          name: "work",
+          tokens: {},
+          instead_of: [],
+        },
+      },
+      default_server: "http://gateway.test/todou",
+    };
+    expect(() => resolve({ flags: { server: "work" }, config: dup })).toThrow(
+      /one name, one server/,
+    );
+    // default_server spells an origin here, so the duplicate in the file
+    // does not fail a command that never typed the name.
+    const ctx = resolve({ config: dup });
+    expect(ctx.server).toBe("http://gateway.test/todou");
   });
 });

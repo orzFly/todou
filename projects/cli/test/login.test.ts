@@ -1,8 +1,14 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { loadCliConfig, saveCliConfig } from "../src/config.ts";
+import { configPath, loadCliConfig, saveCliConfig } from "../src/config.ts";
 import { CliError } from "../src/errors.ts";
 import { browserCommand, waitForCallback } from "../src/login-flow.ts";
 import {
@@ -211,12 +217,14 @@ describe("todou login --manual", () => {
     expect(result.stderr).toContain("no server given");
   });
 
-  it("rejects a non-http origin", async () => {
+  it("rejects a scheme no server could have", async () => {
+    // ftp:// is neither http(s) — the URL rule — nor a name the charset
+    // allows, so the readable unknown-name failure answers.
     const result = await runCli(["login", "ftp://x", "--manual"], {
       env: { XDG_CONFIG_HOME: join(dir, "badorigin") },
     });
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("http(s) origin");
+    expect(result.stderr).toContain('unknown server "ftp://x"');
   });
 
   it("stores the token on the entry an alias names", async () => {
@@ -411,6 +419,86 @@ describe("todou login --no-browser (device flow)", () => {
       "this server does not support --no-browser login",
     );
     expect(result.stderr).toContain("--manual");
+  });
+});
+
+describe("todou login with names and fragments (T-366)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "todou-login-named-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  function fragment(
+    env: Record<string, string | undefined>,
+    name: string,
+    body: string,
+  ) {
+    mkdirSync(join(String(env.XDG_CONFIG_HOME), "todou"), {
+      recursive: true,
+    });
+    writeFileSync(join(String(env.XDG_CONFIG_HOME), "todou", name), body);
+  }
+
+  it("logs in by name and writes only the new token to config.toml", async () => {
+    const { fetchImpl } = fakeFetch([["GET", "/api/me", me], bareVersion]);
+    const env = { XDG_CONFIG_HOME: join(dir, "by-name") };
+    fragment(
+      env,
+      "config.work.toml",
+      [
+        '[servers."http://stub.test"]',
+        'name = "work"',
+        'token = "todou_pat_fragment_default"',
+        'tokens = { "claude-code" = "todou_pat_frag_cc" }',
+        'instead_of = ["https://public.test"]',
+        "",
+      ].join("\n"),
+    );
+
+    const result = await runCli(["login", "work", "--manual"], {
+      fetchImpl,
+      env,
+      stdinText: "todou_pat_new\n",
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain("logged in to http://stub.test as claude");
+    // The fragment's default token is about to be outranked — say so.
+    expect(result.stderr).toContain(
+      "also stores a default token for http://stub.test",
+    );
+
+    // config.toml carries only the new default token; the fragment's
+    // profiles were not copied in, and still merge in on read.
+    const written = readFileSync(configPath(env), "utf8");
+    expect(written).toContain("todou_pat_new");
+    expect(written).not.toContain("todou_pat_frag_cc");
+    expect(written).not.toContain('name = "work"');
+    const loaded = loadCliConfig(env);
+    expect(loaded.servers["http://stub.test"]?.tokens).toEqual({
+      "claude-code": "todou_pat_frag_cc",
+    });
+    expect(loaded.servers["http://stub.test"]?.token).toBe("todou_pat_new");
+    expect(loaded.default_server).toBe("http://stub.test");
+  });
+
+  it("an unknown name reports the known ones instead of an origin complaint", async () => {
+    const env = { XDG_CONFIG_HOME: join(dir, "unknown") };
+    fragment(
+      env,
+      "config.toml",
+      [
+        '[servers."http://stub.test"]',
+        'name = "work"',
+        'token = "todou_pat_x"',
+        "",
+      ].join("\n"),
+    );
+    const result = await runCli(["login", "wrok", "--manual"], {
+      env,
+      stdinText: "todou_pat_new\n",
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('unknown server "wrok"');
+    expect(result.stderr).toContain("work");
+    expect(result.stderr).not.toContain("http(s) origin");
   });
 });
 

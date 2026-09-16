@@ -8,10 +8,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ConfigError } from "@todou/shared/config";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   configPath,
+  discoverConfigFiles,
   loadCliConfig,
+  loadCliConfigSet,
   normalizeServer,
   saveCliConfig,
 } from "../src/config.ts";
@@ -161,5 +164,215 @@ describe("normalizeServer", () => {
     expect(normalizeServer("http://localhost:8637")).toBe(
       "http://localhost:8637",
     );
+  });
+});
+
+describe("discoverConfigFiles", () => {
+  it("lists fragments sorted, then config.toml appended last", () => {
+    const env = envFor("discover");
+    const dir = join(env.XDG_CONFIG_HOME, "todou");
+    mkdirSync(dir, { recursive: true });
+    for (const name of [
+      "config.b.toml",
+      "config.10-work.toml",
+      "config.a.toml",
+      "config.toml",
+    ]) {
+      writeFileSync(join(dir, name), "# fragment\n");
+    }
+    expect(discoverConfigFiles(env)).toEqual([
+      join(dir, "config.10-work.toml"),
+      join(dir, "config.a.toml"),
+      join(dir, "config.b.toml"),
+      join(dir, "config.toml"),
+    ]);
+  });
+
+  it("ignores lookalikes, and a directory named config.x.toml", () => {
+    const env = envFor("discover-lookalikes");
+    const dir = join(env.XDG_CONFIG_HOME, "todou");
+    mkdirSync(join(dir, "config.x.toml"), { recursive: true });
+    for (const name of [
+      "config.toml.bak",
+      "configx.toml",
+      "config..toml",
+      "other.toml",
+    ]) {
+      writeFileSync(join(dir, name), "# no\n");
+    }
+    expect(discoverConfigFiles(env)).toEqual([join(dir, "config.toml")]);
+  });
+
+  it("returns only config.toml when the directory does not exist", () => {
+    const env = envFor("discover-absent");
+    expect(discoverConfigFiles(env)).toEqual([configPath(env)]);
+  });
+});
+
+describe("loadCliConfigSet", () => {
+  function fragment(
+    env: Record<string, string | undefined>,
+    name: string,
+    body: string,
+  ) {
+    const dir = join(String(env.XDG_CONFIG_HOME), "todou");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, name), body);
+  }
+
+  it("later fragments win, and config.toml wins over both", () => {
+    const env = envFor("merge-order");
+    fragment(env, "config.a.toml", 'default_server = "https://a.example"\n');
+    fragment(env, "config.b.toml", 'default_server = "https://b.example"\n');
+    fragment(env, "config.toml", 'default_server = "https://own.example"\n');
+    const { config, own } = loadCliConfigSet(env);
+    expect(config.default_server).toBe("https://own.example");
+    expect(own.default_server).toBe("https://own.example");
+  });
+
+  it("merges token profiles of the same server across files", () => {
+    const env = envFor("merge-profiles");
+    fragment(
+      env,
+      "config.work.toml",
+      [
+        '[servers."http://198.51.100.7/todou"]',
+        'name = "work"',
+        'tokens = { "claude-code" = "todou_pat_a" }',
+        "",
+      ].join("\n"),
+    );
+    fragment(
+      env,
+      "config.toml",
+      [
+        '[servers."http://198.51.100.7/todou"]',
+        'instead_of = ["https://todou.example"]',
+        "",
+      ].join("\n"),
+    );
+    const { config, own } = loadCliConfigSet(env);
+    const entry = config.servers["http://198.51.100.7/todou"];
+    // Both survive: single validation on the merged raw documents, where
+    // per-file zod defaults would have wiped one side with `= []`/`{}`.
+    expect(entry).toEqual({
+      name: "work",
+      tokens: { "claude-code": "todou_pat_a" },
+      instead_of: ["https://todou.example"],
+    });
+    expect(own.servers["http://198.51.100.7/todou"]).toEqual({
+      tokens: {},
+      instead_of: ["https://todou.example"],
+    });
+  });
+
+  it("concatenates bindings across files, later entries winning the lookup", () => {
+    const env = envFor("merge-bindings");
+    const remote = "git@example.com:me/repo.git";
+    fragment(
+      env,
+      "config.frag.toml",
+      [
+        "[[bindings]]",
+        `remote = "${remote}"`,
+        'server = "https://frag.example"',
+        'project = "from-frag"',
+        "",
+        "[[bindings]]",
+        'remote = "git@example.com:me/other.git"',
+        'server = "https://frag.example"',
+        'project = "other"',
+        "",
+      ].join("\n"),
+    );
+    fragment(
+      env,
+      "config.toml",
+      [
+        "[[bindings]]",
+        `remote = "${remote}"`,
+        'server = "https://own.example"',
+        'project = "from-own"',
+        "",
+      ].join("\n"),
+    );
+    const { config } = loadCliConfigSet(env);
+    expect(config.bindings).toEqual([
+      { remote, server: "https://frag.example", project: "from-frag" },
+      {
+        remote: "git@example.com:me/other.git",
+        server: "https://frag.example",
+        project: "other",
+      },
+      { remote, server: "https://own.example", project: "from-own" },
+    ]);
+    const last = config.bindings.filter((b) => b.remote === remote).at(-1);
+    expect(last?.project).toBe("from-own");
+  });
+
+  it("replaces arrays like instead_of whole", () => {
+    const env = envFor("merge-replace-arrays");
+    fragment(
+      env,
+      "config.a.toml",
+      [
+        '[servers."http://198.51.100.7/todou"]',
+        'instead_of = ["https://one.example", "https://two.example"]',
+        "",
+      ].join("\n"),
+    );
+    fragment(
+      env,
+      "config.toml",
+      [
+        '[servers."http://198.51.100.7/todou"]',
+        'instead_of = ["https://three.example"]',
+        "",
+      ].join("\n"),
+    );
+    const { config } = loadCliConfigSet(env);
+    expect(config.servers["http://198.51.100.7/todou"]?.instead_of).toEqual([
+      "https://three.example",
+    ]);
+  });
+
+  it("a broken fragment fails the load naming that file", () => {
+    const env = envFor("broken-fragment");
+    fragment(env, "config.bad.toml", "name = [broken\n");
+    expect(() => loadCliConfigSet(env)).toThrow(/config\.bad\.toml/);
+  });
+
+  it("a broken config.toml fails the load instead of reading as empty", () => {
+    // Today `optional: true` swallows a syntax error, and every command
+    // then reports "no server configured" without a word about why.
+    const env = envFor("broken-own");
+    fragment(env, "config.toml", "name = [broken\n");
+    expect(() => loadCliConfig(env)).toThrow(/config\.toml/);
+  });
+
+  it("no file at all is the empty config, as today", () => {
+    const { config, own, files } = loadCliConfigSet(envFor("merge-empty"));
+    expect(config).toEqual({ servers: {}, bindings: [] });
+    expect(own).toEqual({ servers: {}, bindings: [] });
+    expect(files).toEqual([]);
+  });
+
+  it("rejects a server name with characters a URL could need", () => {
+    const env = envFor("bad-name");
+    fragment(
+      env,
+      "config.toml",
+      ['[servers."https://todou.example"]', 'name = "not:a name"', ""].join(
+        "\n",
+      ),
+    );
+    expect(() => loadCliConfig(env)).toThrow(ConfigError);
+    const env2 = envFor("bad-name-2");
+    fragment(
+      env2,
+      "config.toml",
+      ['[servers."https://todou.example"]', 'name = "/etc"', ""].join("\n"),
+    );
+    expect(() => loadCliConfig(env2)).toThrow(ConfigError);
   });
 });

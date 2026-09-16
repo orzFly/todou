@@ -4,7 +4,11 @@ import { normalizeServer } from "./config.ts";
 import type { DirConfig } from "./dir-config.ts";
 import { CliError } from "./errors.ts";
 import { detectHarnessId } from "./harness/index.ts";
-import { buildAliasTable, rewriteServer } from "./server-alias.ts";
+import {
+  buildAliasTable,
+  buildNameTable,
+  resolveServerInput,
+} from "./server-alias.ts";
 
 function git(cwd: string, args: string[]): string | null {
   const res = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
@@ -63,6 +67,10 @@ export type ResolvedContext = {
   serverSource: ServerSource | null;
   /** The alias `server` was rewritten from, for `config show`. */
   serverInsteadOf?: string;
+  /** The name `server` was resolved from, when the winning input used one. */
+  serverName?: string;
+  /** The winning input was neither a URL nor a known name (T-366). */
+  serverUnknownName: boolean;
   token?: string;
   tokenSource: TokenSource | null;
   /** Profile name when tokenSource is a profile (incl. both auto rules). */
@@ -151,31 +159,38 @@ export function resolveContext(input: {
   dirConfig: DirConfig | null;
 }): ResolvedContext {
   const { flags, env, config, remoteUrl, dirConfig } = input;
+  // Last match wins, aligning the lookup with merge order ("later wins"):
+  // config.toml sits after every fragment, so its binding outranks a
+  // fragment's for the same remote.
   const binding = remoteUrl
-    ? (config.bindings.find((b) => b.remote === remoteUrl) ?? null)
+    ? (config.bindings.filter((b) => b.remote === remoteUrl).at(-1) ?? null)
     : null;
 
-  // A server input is a URL, and a URL may be written at an alias — the
-  // public address when the CLI reaches the deployment through a proxy
-  // (T-311). Resolving it here, before anything downstream looks at it, is
-  // what makes the token lookup find the entry that holds the token and the
-  // local-project comparisons below compare like with like.
+  // A server input is a URL — which may be written at an alias, the public
+  // address when the CLI reaches the deployment through a proxy (T-311) —
+  // or a short name (T-366). Resolving here, before anything downstream
+  // looks at it, is what makes the token lookup find the entry that holds
+  // the token and the local-project comparisons below compare like with like.
   const table = buildAliasTable(config);
+  const names = buildNameTable(config);
 
   /**
-   * A server input as the base it names, alias resolved and normalized.
-   * Only the input that wins is ever rewritten through here, so a
-   * contradiction between two aliases nobody reached cannot fail a command
-   * that never used them.
+   * A server input as the base it names, alias or name resolved and
+   * normalized. Only the input that wins is ever resolved through here,
+   * so a contradiction between two names nobody reached cannot fail a
+   * command that never used them — and the comparison calls below stay
+   * non-throwing: an input resolving to nothing reads as "no match", the
+   * same as a server URL that matches nothing today.
    */
   const asBase = (
     origin: string | undefined,
-  ): { server: string; from?: string } | undefined => {
+  ): { server: string; viaName?: string; from?: string } | undefined => {
     if (origin === undefined) return undefined;
-    const rewritten = rewriteServer(origin, table);
+    const resolved = resolveServerInput(origin, { names, aliases: table });
     return {
-      server: normalizeServer(rewritten.server),
-      ...(rewritten.from === undefined ? {} : { from: rewritten.from }),
+      server: normalizeServer(resolved.server),
+      ...(resolved.viaName === undefined ? {} : { viaName: resolved.viaName }),
+      ...(resolved.from === undefined ? {} : { from: resolved.from }),
     };
   };
 
@@ -184,12 +199,21 @@ export function resolveContext(input: {
   // so a file without a server key falls through to default_server, not to
   // the binding's server.
   const localServer = dirConfig ? dirConfig.server : binding?.server;
-  const chosen = asBase(
-    flags.server || env.TODOU_SERVER || localServer || config.default_server,
-  );
+  const winning =
+    flags.server || env.TODOU_SERVER || localServer || config.default_server;
+  const chosen = asBase(winning);
   const server = chosen?.server;
-  /** The alias `server` was rewritten from; absent when none matched. */
+  /** The alias or name `server` was resolved from; absent when neither. */
   const serverInsteadOf = chosen?.from;
+  const serverName = chosen?.viaName;
+  // A winning input that resolved to neither a URL nor a known name: the
+  // error is raised by `ApiCommand.execute`, not here, so `config show`
+  // can still print the whole report around it (T-366).
+  const serverUnknownName =
+    chosen !== undefined &&
+    chosen.viaName === undefined &&
+    chosen.from === undefined &&
+    !/^https?:\/\//.test(chosen.server);
   // Mirrors the chain above, falsy-for-falsy, so `config show` reports the
   // step that actually won rather than a second opinion about it (T-185).
   // Judged on the raw values: a rewrite never empties an input, so which
@@ -215,7 +239,7 @@ export function resolveContext(input: {
   // --server/TODOU_SERVER points elsewhere, silently reusing the slug
   // could hit an unrelated project that happens to share it. A file
   // without a server key floats onto whatever server is active. Both sides
-  // are rewritten: a `.todou.toml` naming the public address pins its
+  // are resolved: a `.todou.toml` naming the public address pins its
   // project to the deployment the CLI actually talks to, rather than
   // having it dropped on a machine that reaches the same server elsewhere.
   const localProject = dirConfig
@@ -241,8 +265,10 @@ export function resolveContext(input: {
     server,
     serverSource,
     // Absent rather than undefined-valued, so a whole-object comparison in
-    // a test still means "no alias was involved".
+    // a test still means "no alias or name was involved".
     ...(serverInsteadOf === undefined ? {} : { serverInsteadOf }),
+    ...(serverName === undefined ? {} : { serverName }),
+    serverUnknownName,
     ...picked,
     project,
     projectSource,
