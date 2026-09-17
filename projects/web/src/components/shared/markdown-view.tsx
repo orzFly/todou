@@ -31,6 +31,10 @@ import {
   remarkFrontmatterTable,
 } from "@/lib/remark-frontmatter-table.ts";
 import { remarkIssueRefs } from "@/lib/remark-issue-refs.ts";
+import {
+  REF_REPEAT_ATTR,
+  remarkRefOccurrences,
+} from "@/lib/remark-ref-occurrences.ts";
 
 /**
  * A fence rendered as a diff of two versions (T-343). It keeps `.spec-changed`
@@ -252,7 +256,10 @@ export function MarkdownView({
                   />
                 );
               }
-              return <MarkdownLink slug={slug} {...props} />;
+              const repeat =
+                (props as Record<string, unknown>)[REF_REPEAT_ATTR] !==
+                undefined;
+              return <MarkdownLink slug={slug} repeat={repeat} {...props} />;
             },
             img: (
               props: ComponentProps<"img"> & { node?: unknown },
@@ -328,6 +335,9 @@ export function MarkdownView({
     return [
       ...base,
       [remarkIssueRefs, config, { autolinksOnly: !preview }],
+      // After the tokenizer: the links it just created are half of what gets
+      // counted.
+      remarkRefOccurrences,
     ] as ComponentProps<typeof Markdown>["remarkPlugins"];
   }, [slug, preview, refQuery.data, directoryQuery.data, readableQuery.data]);
 

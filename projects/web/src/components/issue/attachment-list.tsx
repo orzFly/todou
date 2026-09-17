@@ -9,11 +9,18 @@ import {
 } from "lucide-react";
 import { type MouseEvent, type ReactNode, useState } from "react";
 import { attachmentsQuery } from "@/api/attachments.ts";
+import { useBoxedRefLinks } from "@/api/prefs.ts";
 import {
   AttachmentViewerDialog,
   type ViewerState,
   viewerStateFor,
 } from "@/components/issue/attachment-viewer.tsx";
+import {
+  RICH_CHIP_ICON,
+  RICH_CHIP_LABEL,
+  RICH_CHIP_SKIN,
+  RICH_CHIP_STRUCTURE,
+} from "@/components/shared/rich-chip.ts";
 import {
   formatSize,
   isHtmlDocument,
@@ -200,6 +207,7 @@ export function AttachmentRichLink({
 }) {
   const attachments = useQuery(attachmentsQuery(slug, issueNumber));
   const [viewer, setViewer] = useState<ViewerState | null>(null);
+  const boxed = useBoxedRefLinks();
   const attachment = attachments.data?.find((a) => a.id === attachmentId);
   const target: PreviewTarget = attachment ?? {
     filename: fallbackName,
@@ -211,14 +219,10 @@ export function AttachmentRichLink({
     <>
       <a
         href={attachment ? attachmentAnchorHref(attachment) : href}
-        // Laid out inline the icon is an atomic box the line breaker may
-        // break after, stranding it at the end of a line with its label on
-        // the next. The boundary between the two belongs to this element's
-        // white-space, so holding it here forbids that break; breaks inside
-        // the label belong to the span below, which still allows them.
-        // A word joiner does not work: Chrome honours neither WJ nor NBSP
-        // against an atomic inline's break opportunity (measured, T-359).
-        className="whitespace-nowrap"
+        className={cn(
+          RICH_CHIP_STRUCTURE,
+          boxed ? RICH_CHIP_SKIN : "hover:underline",
+        )}
         onClick={(e) => {
           if (previewKind(target) !== null && isPlainLeftClick(e)) {
             e.preventDefault();
@@ -232,8 +236,8 @@ export function AttachmentRichLink({
           }
         }}
       >
-        <Icon className="mr-1 inline size-3.5 align-middle" />
-        <span className="whitespace-normal">
+        <Icon className={RICH_CHIP_ICON} />
+        <span className={RICH_CHIP_LABEL}>
           {children ?? attachment?.filename ?? fallbackName}
         </span>
       </a>

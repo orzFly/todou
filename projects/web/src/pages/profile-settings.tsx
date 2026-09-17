@@ -14,7 +14,14 @@ import type {
 import { useState } from "react";
 import { toast } from "sonner";
 import { mutesQuery, useUnmuteIssue, useUnmuteProject } from "@/api/mutes.ts";
-import { prefsQuery, usePatchPrefs, useRefPlacement } from "@/api/prefs.ts";
+import {
+  prefsQuery,
+  useBoxedRefLinks,
+  usePatchPrefs,
+  useRefPlacement,
+  useShowRepeatedRefTitle,
+  useTruncateRefTitle,
+} from "@/api/prefs.ts";
 import { api, meQuery } from "@/api/queries.ts";
 import { AvatarEditor } from "@/components/shared/avatar-editor.tsx";
 import { Button } from "@/components/ui/button";
@@ -127,6 +134,7 @@ export function ProfileSettingsPage() {
       <UnreadIndicatorsSection />
       <MutedSection />
       <DisplaySection />
+      <BodyReferencesSection />
     </div>
   );
 }
@@ -314,6 +322,86 @@ function DisplaySection() {
         options={FLAT_PLACEMENTS}
         disabled={pending}
         onChange={(value) => patch.mutate({ ref_placement_reference: value })}
+      />
+    </div>
+  );
+}
+
+/** How a rich reference is drawn inside a description or a comment (T-371). */
+function BodyReferencesSection() {
+  const prefs = useQuery(prefsQuery);
+  const patch = usePatchPrefs();
+  const pending = prefs.isPending;
+  const boxed = useBoxedRefLinks();
+  const truncate = useTruncateRefTitle();
+  const repeated = useShowRepeatedRefTitle();
+
+  return (
+    <div className="space-y-4 border-t pt-6">
+      <div className="space-y-1">
+        <h2 className="font-medium">References in text</h2>
+        <p className="text-sm text-muted-foreground">
+          These reach references inside descriptions and comments. Timeline rows
+          keep their own look whatever is set here.
+        </p>
+      </div>
+      <ToggleRow
+        id="boxed-ref-links"
+        label="Bordered references"
+        checked={boxed}
+        disabled={pending}
+        onChange={(checked) => patch.mutate({ boxed_ref_links: checked })}
+      />
+      <ToggleRow
+        id="truncate-ref-title"
+        label="Shorten long titles"
+        description="The issue number and “comment by …” are never shortened."
+        checked={truncate}
+        disabled={pending}
+        onChange={(checked) => patch.mutate({ truncate_ref_title: checked })}
+      />
+      <ToggleRow
+        id="show-repeated-ref-title"
+        label="Title on every mention"
+        description="A mention that loses its title keeps the number and “comment by …”."
+        checked={repeated}
+        disabled={pending}
+        onChange={(checked) =>
+          patch.mutate({ show_repeated_ref_title: checked })
+        }
+      />
+    </div>
+  );
+}
+
+function ToggleRow({
+  id,
+  label,
+  description,
+  checked,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  description?: string;
+  checked: boolean;
+  disabled: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div className="space-y-1">
+        <Label htmlFor={id}>{label}</Label>
+        {description && (
+          <p className="text-sm text-muted-foreground">{description}</p>
+        )}
+      </div>
+      <Switch
+        id={id}
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={onChange}
       />
     </div>
   );

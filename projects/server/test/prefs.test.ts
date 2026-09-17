@@ -13,6 +13,9 @@ const DEFAULTS = {
   ref_placement_board: "own_line",
   ref_placement_detail: "before",
   ref_placement_reference: "before",
+  boxed_ref_links: true,
+  truncate_ref_title: true,
+  show_repeated_ref_title: false,
 };
 
 describe("user preferences", () => {
@@ -154,6 +157,18 @@ describe("user preferences", () => {
     const res = await getPrefs();
     expect(res.status).toBe(200);
     expect(await json(res)).toEqual(DEFAULTS);
+  });
+
+  it("gives a row written before T-371 the three markdown-reference defaults", async () => {
+    // What every row stored before this build looks like: one key, and no
+    // trace of the three that decide how a reference renders in a body.
+    await storeBlob({ show_weak_unread: false });
+
+    const prefs = await json(await getPrefs());
+    expect(prefs.boxed_ref_links).toBe(true);
+    expect(prefs.truncate_ref_title).toBe(true);
+    expect(prefs.show_repeated_ref_title).toBe(false);
+    expect(prefs).toEqual({ ...DEFAULTS, show_weak_unread: false });
   });
 
   it("fills every key from an empty stored blob", async () => {

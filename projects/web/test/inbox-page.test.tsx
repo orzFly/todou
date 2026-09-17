@@ -65,6 +65,9 @@ function mockInbox(page: InboxPageData) {
     ref_placement_board: "own_line",
     ref_placement_detail: "before",
     ref_placement_reference: "before",
+    boxed_ref_links: true,
+    truncate_ref_title: true,
+    show_repeated_ref_title: false,
   });
 }
 
@@ -200,6 +203,9 @@ describe("InboxPage · load failure (T-376)", () => {
       ref_placement_board: "own_line",
       ref_placement_detail: "before",
       ref_placement_reference: "before",
+      boxed_ref_links: true,
+      truncate_ref_title: true,
+      show_repeated_ref_title: false,
     });
     const view = renderWithProviders(<InboxPage />);
 

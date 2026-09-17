@@ -45,6 +45,18 @@ export const MePrefs = z.strictObject({
   ref_placement_board: BoardRefPlacement.default("own_line"),
   ref_placement_detail: RefPlacement.default("before"),
   ref_placement_reference: RefPlacement.default("before"),
+  /*
+   * How rich references render inside markdown bodies (T-371). Display-only,
+   * same as the placements above.
+   *
+   * All three are scoped to markdown: timeline event rows read none of them,
+   * so a reference in an "referenced by …" line looks the same whatever these
+   * say. The boundary is the point — #359 measured that row's geometry, and
+   * these keys must not be able to reopen it.
+   */
+  boxed_ref_links: z.boolean().default(true),
+  truncate_ref_title: z.boolean().default(true),
+  show_repeated_ref_title: z.boolean().default(false),
 });
 export type MePrefs = z.infer<typeof MePrefs>;
 
@@ -59,5 +71,8 @@ export const MePrefsPatch = z.strictObject({
   ref_placement_board: BoardRefPlacement.optional(),
   ref_placement_detail: RefPlacement.optional(),
   ref_placement_reference: RefPlacement.optional(),
+  boxed_ref_links: z.boolean().optional(),
+  truncate_ref_title: z.boolean().optional(),
+  show_repeated_ref_title: z.boolean().optional(),
 });
 export type MePrefsPatch = z.infer<typeof MePrefsPatch>;

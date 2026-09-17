@@ -8,13 +8,31 @@ import {
   commentRefQuery,
   issueRefQuery,
 } from "@/api/issue-refs.ts";
-import { useRefPlacement } from "@/api/prefs.ts";
+import {
+  useBoxedRefLinks,
+  useRefPlacement,
+  useShowRepeatedRefTitle,
+  useTruncateRefTitle,
+} from "@/api/prefs.ts";
 import { projectsQuery } from "@/api/queries.ts";
 import { referenceConfigQuery } from "@/api/references.ts";
+import {
+  CommentHoverCard,
+  useCanHoverComment,
+} from "@/components/shared/comment-hover-card.tsx";
 import { MentionLink } from "@/components/shared/mention-link.tsx";
+import {
+  RICH_CHIP_FIXED,
+  RICH_CHIP_ICON,
+  RICH_CHIP_LABEL,
+  RICH_CHIP_SKIN,
+  RICH_CHIP_STRUCTURE,
+  RICH_CHIP_TITLE_CAP,
+} from "@/components/shared/rich-chip.ts";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import { qualifiedRefSpelling } from "@/lib/issue-refs.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
+import { cn } from "@/lib/utils.ts";
 
 /**
  * GitHub-style rich issue reference: status icon, title and muted ref once
@@ -43,6 +61,8 @@ export function IssueLink({
   pageSlug,
   asWritten = false,
   fallback,
+  inBody = false,
+  repeat = false,
 }: {
   slug: string;
   number: number;
@@ -56,6 +76,16 @@ export function IssueLink({
   asWritten?: boolean;
   /** Literal text to show when the ref resolves to nothing; defaults to the spelling. */
   fallback?: string;
+  /**
+   * Render as a chip: the markdown renderer's form, where the reader's
+   * preferences may add a border and a title cap. Off everywhere else, so a
+   * timeline event row keeps the inline anchor T-359 measured — the default
+   * is what makes that the quiet outcome of forgetting rather than a
+   * regression nobody asked for.
+   */
+  inBody?: boolean;
+  /** This document has already named the card; the title may be dropped. */
+  repeat?: boolean;
 }) {
   const ref = useQuery(issueRefQuery(slug, number));
   // Where the card is NOW. A stored link is anchored on an address that
@@ -72,6 +102,10 @@ export function IssueLink({
     enabled: commentId !== undefined,
   });
   const refLeads = useRefPlacement("reference") === "before";
+  const boxed = useBoxedRefLinks() && inBody;
+  const capTitle = useTruncateRefTitle() && inBody;
+  const dropTitle = !useShowRepeatedRefTitle() && repeat;
+  const canHover = useCanHoverComment();
   const prefix = config.data?.format.prefix ?? null;
   const crossProject = shownSlug !== pageSlug;
   const spelled = crossProject
@@ -99,7 +133,14 @@ export function IssueLink({
   const trailing = [refLeads && item ? null : spelled, commentNote]
     .filter((part) => part !== null)
     .join(" ");
-  return (
+  const iconClass = inBody
+    ? RICH_CHIP_ICON
+    : "mr-0.5 inline size-3.5 align-middle";
+  // The preview is already paid for: rendering "comment by X" fetched the
+  // whole comment, body included, so hovering asks the server nothing.
+  const hovered =
+    commentId !== undefined && canHover ? (comment.data ?? null) : null;
+  const link = (
     <Link
       to="/projects/$slug/issues/$number"
       params={{ slug: toSlug, number: String(toNumber) }}
@@ -110,7 +151,15 @@ export function IssueLink({
       data-issue-link={shownNumber}
       data-issue-project={crossProject ? shownSlug : undefined}
       data-comment-link={commentId}
-      className="font-medium hover:underline"
+      className={
+        inBody
+          ? cn(
+              "font-medium",
+              RICH_CHIP_STRUCTURE,
+              boxed ? RICH_CHIP_SKIN : "hover:underline",
+            )
+          : "font-medium hover:underline"
+      }
       title={
         item
           ? refLeads
@@ -124,31 +173,56 @@ export function IssueLink({
           {item.status.category === "closed" ? (
             <CircleSlashIcon
               aria-hidden
-              className="mr-0.5 inline size-3.5 align-middle"
+              className={iconClass}
               style={{ color: item.status.color }}
             />
           ) : (
             <CircleDotIcon
               aria-hidden
-              className="mr-0.5 inline size-3.5 align-middle"
+              className={iconClass}
               style={{ color: item.status.color }}
             />
           )}
           {refLeads && (
-            <span className="font-normal text-muted-foreground">
-              {spelled}{" "}
+            <span
+              className={cn(
+                "font-normal text-muted-foreground",
+                inBody && RICH_CHIP_FIXED,
+              )}
+            >
+              {spelled}
+              {inBody ? null : " "}
             </span>
           )}
-          {item.title}
+          {dropTitle ? null : inBody ? (
+            <span
+              className={cn(RICH_CHIP_LABEL, capTitle && RICH_CHIP_TITLE_CAP)}
+            >
+              {item.title}
+            </span>
+          ) : (
+            item.title
+          )}
         </>
       )}
       {trailing !== "" && (
-        <span className="font-normal text-muted-foreground">
-          {item ? " " : ""}
+        <span
+          className={cn(
+            "font-normal text-muted-foreground",
+            inBody && RICH_CHIP_FIXED,
+          )}
+        >
+          {inBody ? null : item ? " " : ""}
           {trailing}
         </span>
       )}
     </Link>
+  );
+  if (hovered === null) return link;
+  return (
+    <CommentHoverCard slug={toSlug} issueNumber={toNumber} comment={hovered}>
+      {link}
+    </CommentHoverCard>
   );
 }
 
@@ -162,6 +236,7 @@ function CommentLink({
   pageSlug = slug,
   commentId,
   fallback,
+  repeat = false,
 }: {
   /** Where the id is looked up: the project the text was written in. */
   slug: string;
@@ -169,6 +244,7 @@ function CommentLink({
   pageSlug?: string;
   commentId: number;
   fallback: string;
+  repeat?: boolean;
 }) {
   const located = useQuery(commentLocationQuery(slug, commentId));
   if (!located.data) return <>{fallback}</>;
@@ -183,6 +259,8 @@ function CommentLink({
       commentId={located.data.comment.id}
       pageSlug={pageSlug}
       fallback={fallback}
+      inBody
+      repeat={repeat}
     />
   );
 }
@@ -259,8 +337,9 @@ const numberOr = (raw: string | undefined): number | undefined =>
 export function MarkdownLink({
   slug,
   node,
+  repeat = false,
   ...props
-}: AnchorProps & { slug: string }) {
+}: AnchorProps & { slug: string; repeat?: boolean }) {
   const child = node?.children?.length === 1 ? node.children[0] : undefined;
   // The written token, so an unresolvable ref falls back to exactly what
   // its author typed rather than to a spelling they never used.
@@ -276,6 +355,8 @@ export function MarkdownLink({
         commentId={stored.commentId}
         pageSlug={slug}
         fallback={written}
+        inBody
+        repeat={repeat}
       />
     );
   }
@@ -289,6 +370,8 @@ export function MarkdownLink({
         commentId={numberOr(refMatch[2])}
         pageSlug={slug}
         fallback={written}
+        inBody
+        repeat={repeat}
       />
     );
   }
@@ -301,6 +384,8 @@ export function MarkdownLink({
         commentId={numberOr(xrefMatch[3])}
         pageSlug={slug}
         fallback={written}
+        inBody
+        repeat={repeat}
       />
     );
   }
@@ -312,6 +397,7 @@ export function MarkdownLink({
         pageSlug={slug}
         commentId={Number(commentMatch[1])}
         fallback={written ?? props.href ?? ""}
+        repeat={repeat}
       />
     );
   }

@@ -1,0 +1,187 @@
+import type { QueryClient } from "@tanstack/react-query";
+import { waitFor } from "@testing-library/react";
+import type {
+  IssueListItem,
+  MePrefs,
+  ReferenceConfig,
+  TimelineEvent,
+} from "@todou/shared";
+import { describe, expect, it } from "vitest";
+import { issueRefQuery } from "../src/api/issue-refs.ts";
+import { prefsQuery } from "../src/api/prefs.ts";
+import { referenceConfigQuery } from "../src/api/references.ts";
+import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
+import {
+  RICH_CHIP_LABEL,
+  RICH_CHIP_SKIN,
+  RICH_CHIP_STRUCTURE,
+  RICH_CHIP_TITLE_CAP,
+} from "../src/components/shared/rich-chip.ts";
+import { EventRow } from "../src/components/timeline/event-row.tsx";
+import { renderWithProviders, testQueryClient } from "./render.tsx";
+
+const author = {
+  id: 1,
+  login: "alice",
+  display_name: "Alice",
+  kind: "human" as const,
+  avatar_url: null,
+  owner: null,
+};
+
+const LONG =
+  "A deliberately very long English issue title, far past any cap a body would put on it";
+
+const refItem = (number: number, title: string): IssueListItem => ({
+  id: number,
+  number,
+  title,
+  status: {
+    id: 1,
+    name: "Todo",
+    category: "open",
+    color: "#6b7280",
+    position: 0,
+    is_default: true,
+  },
+  author,
+  assignees: [],
+  labels: [],
+  created_at: "2026-08-12T00:00:00Z",
+  updated_at: "2026-08-12T00:00:00Z",
+  body_edited_at: null,
+  open_questions: 0,
+  spec_version: null,
+  spec_review_status: null,
+  spec_unresolved_comments: 0,
+  deleted_at: null,
+  deleted_by: null,
+  unread: false,
+  unread_comments: 0,
+  muted: null,
+  moves: [],
+});
+
+const config: ReferenceConfig = {
+  format: { prefix: "T", history: [] },
+  autolinks: [],
+};
+
+const PREFS: MePrefs = {
+  show_weak_unread: true,
+  ref_placement_list: "before",
+  ref_placement_board: "own_line",
+  ref_placement_detail: "before",
+  ref_placement_reference: "before",
+  boxed_ref_links: true,
+  truncate_ref_title: true,
+  show_repeated_ref_title: false,
+};
+
+function seeded(overrides: Partial<MePrefs> = {}): QueryClient {
+  const client = testQueryClient();
+  client.setQueryData(referenceConfigQuery("todou").queryKey, config);
+  client.setQueryData(issueRefQuery("todou", 7).queryKey, refItem(7, LONG));
+  client.setQueryData(prefsQuery.queryKey, { ...PREFS, ...overrides });
+  return client;
+}
+
+const inBody = (prefs: Partial<MePrefs> = {}) =>
+  renderWithProviders(
+    <MarkdownView slug="todou">
+      {"see [T-7](/projects/todou/issues/7)"}
+    </MarkdownView>,
+    seeded(prefs),
+  );
+
+const linkIn = (root: ParentNode) =>
+  waitFor(() => {
+    const el = root.querySelector("a[data-issue-link='7']");
+    expect(el).not.toBeNull();
+    return el as HTMLAnchorElement;
+  });
+
+const titleSpan = (link: Element) =>
+  [...link.children].find((child) =>
+    (child.getAttribute("class") ?? "").includes("truncate"),
+  );
+
+describe("reference title cap (T-371)", () => {
+  it("caps the title span and still offers the whole title on hover", async () => {
+    const link = await linkIn(inBody().container);
+    const span = titleSpan(link);
+
+    expect(span?.getAttribute("class")).toContain(RICH_CHIP_TITLE_CAP);
+    expect(span?.textContent).toBe(LONG);
+    expect(link.getAttribute("title")).toBe(`T-7 ${LONG} (Todo)`);
+  });
+
+  it("drops the cap when the reader turns it off, keeping the title attribute", async () => {
+    const link = await linkIn(inBody({ truncate_ref_title: false }).container);
+    const span = titleSpan(link);
+
+    expect(span?.getAttribute("class")).not.toContain(RICH_CHIP_TITLE_CAP);
+    // Still a flex child that may shrink: "off" means no cap of its own, not
+    // that a narrow viewport stops cutting it.
+    expect(span?.getAttribute("class")).toContain("min-w-0");
+    expect(link.getAttribute("title")).toBe(`T-7 ${LONG} (Todo)`);
+  });
+
+  it("caps independently of the border", async () => {
+    const link = await linkIn(inBody({ boxed_ref_links: false }).container);
+
+    expect(titleSpan(link)?.getAttribute("class")).toContain(
+      RICH_CHIP_TITLE_CAP,
+    );
+    for (const skin of RICH_CHIP_SKIN.split(" ")) {
+      expect(link.className.split(" ")).not.toContain(skin);
+    }
+  });
+});
+
+describe("the chip stops at the body (T-371)", () => {
+  const event: TimelineEvent = {
+    type: "event",
+    id: 1,
+    event_type: "referenced",
+    actor: author,
+    agent_context: null,
+    payload: { by_issue: 7 },
+    created_at: "2026-08-12T00:00:00Z",
+  };
+
+  // Every class the chip is built from, whichever preference put it there.
+  const CHIP_CLASSES = [
+    ...RICH_CHIP_STRUCTURE.split(" "),
+    ...RICH_CHIP_SKIN.split(" "),
+    ...RICH_CHIP_LABEL.split(" "),
+    RICH_CHIP_TITLE_CAP,
+  ];
+
+  for (const prefs of [
+    {},
+    { boxed_ref_links: false },
+    { truncate_ref_title: false },
+    { boxed_ref_links: false, truncate_ref_title: false },
+    { show_repeated_ref_title: true },
+  ]) {
+    it(`leaves an event row's reference plain under ${JSON.stringify(prefs)}`, async () => {
+      const view = renderWithProviders(
+        <EventRow event={event} slug="todou" />,
+        seeded(prefs),
+      );
+      const link = await linkIn(view.container);
+
+      expect(link.className).toBe("font-medium hover:underline");
+      for (const el of [link, ...link.querySelectorAll("*")]) {
+        const classes = (el.getAttribute("class") ?? "").split(" ");
+        for (const chip of CHIP_CLASSES) {
+          expect(classes).not.toContain(chip);
+        }
+      }
+      // The title rides as a bare text node, exactly as before T-371.
+      expect(titleSpan(link)).toBeUndefined();
+      expect(link.textContent).toContain(LONG);
+    });
+  }
+});

@@ -467,6 +467,9 @@ describe("IssueLink ref placement (T-153, T-157)", () => {
       ref_placement_board: "own_line",
       ref_placement_detail: "after",
       ref_placement_reference: reference,
+      boxed_ref_links: true,
+      truncate_ref_title: true,
+      show_repeated_ref_title: false,
     } satisfies MePrefs);
     return client;
   };

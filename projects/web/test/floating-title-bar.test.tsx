@@ -90,6 +90,9 @@ function seededClient(
     ref_placement_board: "own_line",
     ref_placement_detail: detail,
     ref_placement_reference: "after",
+    boxed_ref_links: true,
+    truncate_ref_title: true,
+    show_repeated_ref_title: false,
   } satisfies MePrefs);
   return client;
 }

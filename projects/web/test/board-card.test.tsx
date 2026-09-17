@@ -159,6 +159,9 @@ describe("BoardCardContent ref placement (T-153, T-157)", () => {
       ref_placement_board: board,
       ref_placement_detail: "before",
       ref_placement_reference: "before",
+      boxed_ref_links: true,
+      truncate_ref_title: true,
+      show_repeated_ref_title: false,
     } satisfies MePrefs);
     return c;
   };

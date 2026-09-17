@@ -37,6 +37,31 @@ export function useRefPlacement<S extends RefSurface>(
   return (prefs ?? PREF_DEFAULTS)[`ref_placement_${surface}`];
 }
 
+/** The keys that decide how a reference renders inside a body (T-371). */
+type BodyRefPref = {
+  [K in keyof MePrefs]: MePrefs[K] extends boolean ? K : never;
+}[keyof MePrefs];
+
+function useBodyRefPref(key: BodyRefPref): boolean {
+  const prefs = useQuery(prefsQuery).data;
+  return (prefs ?? PREF_DEFAULTS)[key];
+}
+
+/** Whether a markdown body draws its rich references as bordered chips. */
+export function useBoxedRefLinks(): boolean {
+  return useBodyRefPref("boxed_ref_links");
+}
+
+/** Whether an over-long reference title is cut to the chip's width cap. */
+export function useTruncateRefTitle(): boolean {
+  return useBodyRefPref("truncate_ref_title");
+}
+
+/** Whether a card named twice in one body carries its title both times. */
+export function useShowRepeatedRefTitle(): boolean {
+  return useBodyRefPref("show_repeated_ref_title");
+}
+
 /**
  * Optimistic preference patch (T-97): the toggle flips instantly, and the
  * inbox is invalidated alongside because the server filters weak-unread
