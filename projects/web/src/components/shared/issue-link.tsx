@@ -16,10 +16,9 @@ import {
 } from "@/api/prefs.ts";
 import { projectsQuery } from "@/api/queries.ts";
 import { referenceConfigQuery } from "@/api/references.ts";
-import {
-  CommentHoverCard,
-  useCanHoverComment,
-} from "@/components/shared/comment-hover-card.tsx";
+import { CommentHoverCard } from "@/components/shared/comment-hover-card.tsx";
+import { useCanHoverPreview } from "@/components/shared/hover-preview.ts";
+import { IssueHoverCard } from "@/components/shared/issue-hover-card.tsx";
 import { MentionLink } from "@/components/shared/mention-link.tsx";
 import {
   RICH_CHIP_FIXED,
@@ -33,6 +32,13 @@ import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import { qualifiedRefSpelling } from "@/lib/issue-refs.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import { cn } from "@/lib/utils.ts";
+
+/**
+ * What a reference to the card being read says instead of a ref and a title.
+ * It sits in the same muted slot as the ref and "comment by …" — all three
+ * are one quiet remark about the target.
+ */
+const CURRENT_NOTE = "current";
 
 /**
  * GitHub-style rich issue reference: status icon, title and muted ref once
@@ -59,6 +65,7 @@ export function IssueLink({
   number,
   commentId,
   pageSlug,
+  pageNumber,
   asWritten = false,
   fallback,
   inBody = false,
@@ -73,6 +80,14 @@ export function IssueLink({
    * silently inherit "wherever this was written is home".
    */
   pageSlug: string | undefined;
+  /**
+   * The card the reader is on, with `pageSlug` the address of the page
+   * itself. A reference that resolves to it names what is already on the
+   * screen: it reads "current" instead of a ref and a title, and it opens no
+   * preview. Omitted where a surface cannot say which card is being read,
+   * which is what keeps "current" out of it.
+   */
+  pageNumber?: number;
   asWritten?: boolean;
   /** Literal text to show when the ref resolves to nothing; defaults to the spelling. */
   fallback?: string;
@@ -104,13 +119,26 @@ export function IssueLink({
   const refLeads = useRefPlacement("reference") === "before";
   const boxed = useBoxedRefLinks() && inBody;
   const capTitle = useTruncateRefTitle() && inBody;
-  const dropTitle = !useShowRepeatedRefTitle() && repeat;
-  const canHover = useCanHoverComment();
+  const showRepeatedTitle = useShowRepeatedRefTitle();
+  const dropTitle = !showRepeatedTitle && repeat;
+  const canHover = useCanHoverPreview();
   const prefix = config.data?.format.prefix ?? null;
   const crossProject = shownSlug !== pageSlug;
   const spelled = crossProject
     ? qualifiedRefSpelling(shownSlug, prefix, shownNumber)
     : formatRef(prefix, shownNumber);
+  // Where the card is NOW, not the address the reference was written with: a
+  // reference to an old address that redirects here is, to the reader, this
+  // very card.
+  const onPageCard =
+    pageNumber !== undefined && toSlug === pageSlug && toNumber === pageNumber;
+  // Two rules read `onPageCard` at different thresholds, on purpose. Writing
+  // "current" is the reader's own preference — they asked for a mention that
+  // repeats a card to keep its title, and this is the same trade. Opening no
+  // preview is not a preference: the card is the page, so there is nothing a
+  // preview could show that is not already on the screen, whichever way the
+  // toggle is set.
+  const asCurrent = onPageCard && !showRepeatedTitle;
 
   // Across projects a failed lookup degrades exactly like a miss: a link
   // the viewer cannot follow would announce that the project exists
@@ -125,14 +153,24 @@ export function IssueLink({
     commentId === undefined
       ? null
       : comment.data
-        ? `· comment by ${displayNameOf(comment.data.author)}`
-        : "· comment";
+        ? `comment by ${displayNameOf(comment.data.author)}`
+        : "comment";
+  // The muted tail, assembled rather than concatenated: the `·` belongs to
+  // the join, not to the note it used to be welded to. A reference to the
+  // card being read drops everything in front of that note, and a separator
+  // carried by the note itself would then lead the whole chip.
+  const tail: string[] = [];
   // Leading the title, the ref has already been spelled once; repeating it
-  // after would read as two refs. What trails is then the comment note alone,
-  // and with no comment there is nothing left to render.
-  const trailing = [refLeads && item ? null : spelled, commentNote]
-    .filter((part) => part !== null)
-    .join(" ");
+  // after would read as two refs. "current" replaces it outright.
+  if (!asCurrent && !(refLeads && item)) tail.push(spelled);
+  if (asCurrent && commentNote === null) tail.push(CURRENT_NOTE);
+  if (commentNote !== null) {
+    const precededByTitle = item !== undefined && !asCurrent && !dropTitle;
+    const precededByRef = item !== undefined && !asCurrent && refLeads;
+    const preceded = tail.length > 0 || precededByTitle || precededByRef;
+    tail.push(preceded ? `· ${commentNote}` : commentNote);
+  }
+  const trailing = tail.join(" ");
   const iconClass = inBody
     ? RICH_CHIP_ICON
     : "mr-0.5 inline size-3.5 align-middle";
@@ -140,6 +178,15 @@ export function IssueLink({
   // whole comment, body included, so hovering asks the server nothing.
   const hovered =
     commentId !== undefined && canHover ? (comment.data ?? null) : null;
+  // Everything else gets the card's own preview. Deliberately not waiting for
+  // the lookup: every term here is known at first render, so the anchor is one
+  // DOM node from then on. Gating on `item` instead would swap the whole
+  // element the moment the batch lands — React reconciles by type, and a bare
+  // <Link> and a wrapped one are two of them — which collapses a selection
+  // spanning it (T-60) for a wrapper the reader cannot see. What waits for the
+  // lookup is the card's contents, which IssueHoverCard withholds until then;
+  // a ref that resolves to nothing has returned plain text above.
+  const previewable = commentId === undefined && canHover && !onPageCard;
   const link = (
     <Link
       to="/projects/$slug/issues/$number"
@@ -183,7 +230,7 @@ export function IssueLink({
               style={{ color: item.status.color }}
             />
           )}
-          {refLeads && (
+          {refLeads && !asCurrent && (
             <span
               className={cn(
                 "font-normal text-muted-foreground",
@@ -194,7 +241,7 @@ export function IssueLink({
               {inBody ? null : " "}
             </span>
           )}
-          {dropTitle ? null : inBody ? (
+          {dropTitle || asCurrent ? null : inBody ? (
             <span
               className={cn(RICH_CHIP_LABEL, capTitle && RICH_CHIP_TITLE_CAP)}
             >
@@ -218,12 +265,26 @@ export function IssueLink({
       )}
     </Link>
   );
-  if (hovered === null) return link;
-  return (
-    <CommentHoverCard slug={toSlug} issueNumber={toNumber} comment={hovered}>
-      {link}
-    </CommentHoverCard>
-  );
+  if (hovered !== null) {
+    return (
+      <CommentHoverCard slug={toSlug} issueNumber={toNumber} comment={hovered}>
+        {link}
+      </CommentHoverCard>
+    );
+  }
+  if (previewable) {
+    return (
+      <IssueHoverCard
+        slug={toSlug}
+        number={toNumber}
+        spelled={spelled}
+        item={item}
+      >
+        {link}
+      </IssueHoverCard>
+    );
+  }
+  return link;
 }
 
 /**
@@ -234,6 +295,7 @@ export function IssueLink({
 function CommentLink({
   slug,
   pageSlug = slug,
+  pageNumber,
   commentId,
   fallback,
   repeat = false,
@@ -242,6 +304,7 @@ function CommentLink({
   slug: string;
   /** Where it is being read, which decides how the ref is spelled. */
   pageSlug?: string;
+  pageNumber?: number;
   commentId: number;
   fallback: string;
   repeat?: boolean;
@@ -258,6 +321,7 @@ function CommentLink({
       number={located.data.issue_number}
       commentId={located.data.comment.id}
       pageSlug={pageSlug}
+      pageNumber={pageNumber}
       fallback={fallback}
       inBody
       repeat={repeat}
@@ -336,10 +400,16 @@ const numberOr = (raw: string | undefined): number | undefined =>
  */
 export function MarkdownLink({
   slug,
+  pageNumber,
   node,
   repeat = false,
   ...props
-}: AnchorProps & { slug: string; repeat?: boolean }) {
+}: AnchorProps & {
+  slug: string;
+  /** The card this document is being read on; see IssueLink's own prop. */
+  pageNumber?: number;
+  repeat?: boolean;
+}) {
   const child = node?.children?.length === 1 ? node.children[0] : undefined;
   // The written token, so an unresolvable ref falls back to exactly what
   // its author typed rather than to a spelling they never used.
@@ -354,6 +424,7 @@ export function MarkdownLink({
         number={stored.number}
         commentId={stored.commentId}
         pageSlug={slug}
+        pageNumber={pageNumber}
         fallback={written}
         inBody
         repeat={repeat}
@@ -369,6 +440,7 @@ export function MarkdownLink({
         number={Number(refMatch[1])}
         commentId={numberOr(refMatch[2])}
         pageSlug={slug}
+        pageNumber={pageNumber}
         fallback={written}
         inBody
         repeat={repeat}
@@ -383,6 +455,7 @@ export function MarkdownLink({
         number={Number(xrefMatch[2])}
         commentId={numberOr(xrefMatch[3])}
         pageSlug={slug}
+        pageNumber={pageNumber}
         fallback={written}
         inBody
         repeat={repeat}
@@ -395,6 +468,7 @@ export function MarkdownLink({
       <CommentLink
         slug={home}
         pageSlug={slug}
+        pageNumber={pageNumber}
         commentId={Number(commentMatch[1])}
         fallback={written ?? props.href ?? ""}
         repeat={repeat}

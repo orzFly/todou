@@ -1,6 +1,11 @@
 import { Link } from "@tanstack/react-router";
 import { isHidden, type TimelineComment } from "@todou/shared";
-import { createContext, type ReactNode, useContext } from "react";
+import type { ReactNode } from "react";
+import {
+  CLOSE_DELAY_MS,
+  HoverDepth,
+  OPEN_DELAY_MS,
+} from "@/components/shared/hover-preview.ts";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
@@ -9,17 +14,6 @@ import {
   HoverCardTrigger,
 } from "@/components/ui/hover-card.tsx";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
-
-/**
- * How many hover cards deep this subtree already is. The preview renders the
- * comment through the same MarkdownView, so its own comment links would
- * become triggers and nest without end.
- */
-const HoverDepth = createContext(0);
-
-/** Long enough that a pointer crossing a link on its way elsewhere is quiet. */
-const OPEN_DELAY_MS = 400;
-const CLOSE_DELAY_MS = 150;
 
 export function CommentHoverCard({
   slug,
@@ -69,9 +63,4 @@ export function CommentHoverCard({
       </HoverCardContent>
     </HoverCard>
   );
-}
-
-/** False inside a hover card's own preview, where a second one may not open. */
-export function useCanHoverComment(): boolean {
-  return useContext(HoverDepth) === 0;
 }

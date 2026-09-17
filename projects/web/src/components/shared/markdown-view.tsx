@@ -261,7 +261,22 @@ export function MarkdownView({
               const repeat =
                 (props as Record<string, unknown>)[REF_REPEAT_ATTR] !==
                 undefined;
-              return <MarkdownLink slug={slug} repeat={repeat} {...props} />;
+              // `issueNumber` doubles as "the card being read", which is what
+              // lets a reference to it render as "current". Every surface
+              // that passes one today — the issue body, a comment, a document
+              // card, the spec annotation view — is reading that very card,
+              // so the two coincide. A surface that ever passes an issue
+              // number it is NOT on would silently point this rule at the
+              // wrong card; give it its own prop rather than widening this
+              // one.
+              return (
+                <MarkdownLink
+                  slug={slug}
+                  pageNumber={issueNumber}
+                  repeat={repeat}
+                  {...props}
+                />
+              );
             },
             img: (
               props: ComponentProps<"img"> & { node?: unknown },

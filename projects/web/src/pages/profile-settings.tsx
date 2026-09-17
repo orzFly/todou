@@ -366,7 +366,7 @@ function BodyReferencesSection() {
       <ToggleRow
         id="show-repeated-ref-title"
         label="Title on every mention"
-        description="A mention that loses its title keeps the number and “comment by …”."
+        description="A mention that loses its title keeps the number and “comment by …”. One that points at the card you are reading says “current” instead."
         checked={repeated}
         disabled={pending}
         onChange={(checked) =>

@@ -7,7 +7,11 @@ import type {
   TimelineComment,
 } from "@todou/shared";
 import { describe, expect, it } from "vitest";
-import { commentRefQuery, issueRefQuery } from "../src/api/issue-refs.ts";
+import {
+  commentRefQuery,
+  issueRefQuery,
+  type ResolvedIssueRef,
+} from "../src/api/issue-refs.ts";
 import { prefsQuery } from "../src/api/prefs.ts";
 import { referenceConfigQuery } from "../src/api/references.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
@@ -211,5 +215,108 @@ describe("repeated references in one document (T-371)", () => {
     });
     expect(titlesOfSeven(view.container)).toEqual(["Target"]);
     expect(view.container.querySelector("code")?.textContent).toBe("T-7");
+  });
+});
+
+/** The one link pointing at card 7, once the batched lookup has landed. */
+const linkToSeven = (root: ParentNode) =>
+  waitFor(() => {
+    const el = root.querySelector("a[data-issue-link='7']");
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  });
+
+describe("a reference to the card being read (T-408)", () => {
+  it("reads 'current' instead of a ref and a title", async () => {
+    const view = renderWithProviders(
+      <MarkdownView slug="todou" issueNumber={7}>
+        {"see [T-7](/projects/todou/issues/7)"}
+      </MarkdownView>,
+      seeded(),
+    );
+    const link = await linkToSeven(view.container);
+    expect(link.textContent).toBe("current");
+    expect(titlesOfSeven(view.container)).toEqual([""]);
+    expect(view.container.textContent).not.toContain("T-7");
+    // Losing the visible ref must not cost the tooltip its full spelling.
+    expect(link.getAttribute("title")).toBe("T-7 Target (Todo)");
+  });
+
+  it("draws the title and the ref when the reader asks for every title", async () => {
+    const view = renderWithProviders(
+      <MarkdownView slug="todou" issueNumber={7}>
+        {"see [T-7](/projects/todou/issues/7)"}
+      </MarkdownView>,
+      seeded({ show_repeated_ref_title: true }),
+    );
+    const link = await linkToSeven(view.container);
+    expect(link.textContent).toContain("Target");
+    expect(link.textContent).toContain("T-7");
+    expect(link.textContent).not.toContain("current");
+  });
+
+  it("leaves another card in the same document alone", async () => {
+    const view = renderWithProviders(
+      <MarkdownView slug="todou" issueNumber={7}>
+        {"[T-7](/projects/todou/issues/7) then [T-8](/projects/todou/issues/8)"}
+      </MarkdownView>,
+      seeded(),
+    );
+    const other = await waitFor(() => {
+      const el = view.container.querySelector("a[data-issue-link='8']");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    expect(other.textContent).toContain("Other");
+    expect(other.textContent).toContain("T-8");
+    expect(other.textContent).not.toContain("current");
+  });
+
+  it("keeps 'comment by X' and drops the separator that led it", async () => {
+    const view = renderWithProviders(
+      <MarkdownView slug="todou" issueNumber={7}>
+        {"see [T-7#comment-42](/projects/todou/issues/7#comment-42)"}
+      </MarkdownView>,
+      seeded(),
+    );
+    const link = await waitFor(() => {
+      const el = view.container.querySelector("a[data-comment-link='42']");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    expect(link.textContent).toBe("comment by Alice");
+    expect(link.textContent).not.toContain("T-7");
+    expect(link.textContent?.startsWith("·")).toBe(false);
+  });
+
+  it("stays out of a document that never said which card it is on", async () => {
+    const view = renderWithProviders(
+      <MarkdownView slug="todou">
+        {"see [T-7](/projects/todou/issues/7)"}
+      </MarkdownView>,
+      seeded(),
+    );
+    const link = await linkToSeven(view.container);
+    expect(link.textContent).toContain("Target");
+    expect(link.textContent).toContain("T-7");
+    expect(link.textContent).not.toContain("current");
+  });
+
+  it("follows a reference written at the address this card moved from", async () => {
+    const client = seeded();
+    const moved: ResolvedIssueRef = {
+      ...refItem(7, "Target"),
+      at: { slug: "todou", number: 7 },
+    };
+    client.setQueryData(issueRefQuery("todou", 9).queryKey, moved);
+    const view = renderWithProviders(
+      <MarkdownView slug="todou" issueNumber={7}>
+        {"see [T-9](/projects/todou/issues/9)"}
+      </MarkdownView>,
+      client,
+    );
+    const link = await linkToSeven(view.container);
+    expect(link.textContent).toBe("current");
+    expect(view.container.textContent).not.toContain("T-9");
   });
 });
