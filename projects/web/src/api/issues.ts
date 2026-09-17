@@ -47,6 +47,21 @@ export const issueSearchSchema = z.object({
 });
 export type IssueSearch = z.infer<typeof issueSearchSchema>;
 
+/**
+ * What a new issue is being opened to quote — the address only. The text
+ * itself can be long, and putting a body someone else wrote in the address
+ * bar would carry it into history, referrers and shared links; the page
+ * fetches it from here instead, which also survives a reload.
+ */
+export const newIssueSearchSchema = z.object({
+  /** The quoted content's project, which need not be the new card's. */
+  quote_project: textParam.optional(),
+  quote_issue: z.coerce.number().int().positive().optional(),
+  /** Absent means the issue body itself is what is quoted. */
+  quote_comment: z.coerce.number().int().positive().optional(),
+});
+export type NewIssueSearch = z.infer<typeof newIssueSearchSchema>;
+
 /** GitHub-like defaults: open issues, most recently updated first. */
 export function effectiveCategory(
   search: IssueSearch,

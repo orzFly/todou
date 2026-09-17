@@ -28,6 +28,7 @@ import {
   MarkdownEditor,
   type MarkdownEditorHandle,
 } from "@/components/shared/markdown-editor.tsx";
+import { useQuoteSink } from "@/components/timeline/quote-reply.tsx";
 import { Button } from "@/components/ui/button";
 import { mentionCompletionSource } from "@/lib/editor/mention-completion.ts";
 import {
@@ -38,6 +39,7 @@ import {
   commandCompletionSource,
   commandDecoration,
 } from "@/lib/editor/slash-commands.ts";
+import { blockquote } from "@/lib/quote-markdown.ts";
 import {
   buildCommandRegistry,
   type CommandRegistry,
@@ -314,6 +316,22 @@ export function Composer({
   const staging = useStagedFiles();
   const queryClient = useQueryClient();
   const registry = useCommandRegistry(slug, "comment");
+
+  useQuoteSink((markdown) => {
+    const handle = editor.current;
+    if (handle === null) return;
+    const current = handle.getValue();
+    // A blank line on each side, topped up rather than added blindly: without
+    // the one above, a quote landing straight after a paragraph reads as a
+    // lazy continuation of it, and without the one below whatever the reader
+    // types next joins the quote.
+    const trailing = (/\n*$/.exec(current)?.[0] ?? "").length;
+    const lead = current === "" ? "" : "\n".repeat(Math.max(0, 2 - trailing));
+    handle.append(`${lead}${blockquote(markdown)}\n\n`);
+    // Radix hands focus back to the menu trigger as it closes, and a
+    // synchronous focus here loses to that restore.
+    requestAnimationFrame(() => handle.focus());
+  });
 
   // The extensions must keep one identity for the editor's lifetime: the
   // compartment reconfigures on a new one, which would close an open panel.
