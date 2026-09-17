@@ -13,7 +13,7 @@ are in `references/` next to this file.
 
 ```bash
 todou search <terms…> -p <proj> [--in issues,comments,specs] [--status X] [--limit N]  # references/search.md
-todou issue list -p <proj> [--open|--closed|--status X,Y|--unread|-q text]
+todou issue list -p <proj> [--open|--closed|--status X,Y|--unread|--blocked|--unblocked|-q text]
 todou issue view 16 -p <proj>
 todou issue view 16 --brief
 todou issue view 12 15 23 --brief             # several cards at once
@@ -25,6 +25,8 @@ todou issue edit 16 --status "In Progress"    # status/title/labels/assignees
 todou issue edit 12 15 23 --status Next       # one set of flags, every card; checked before it writes
 todou issue transfer 16 --to <slug> [--dry-run] [-y]
 todou issue close 16 --comment "done"
+todou issue block 16 --by 12[,15]             # 16 waits for these; --blocks is the other direction
+todou issue unblock 16 --by 12 [--blocks 23]  # same refs as block; it finds the edge itself
 todou comment add -p <proj> 16 --body-file -
 todou comment list 16 [--author @me] [-q text] [--last 5]
 todou comment view 16 123
