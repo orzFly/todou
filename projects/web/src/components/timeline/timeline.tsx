@@ -27,7 +27,7 @@ import { EventGroup } from "@/components/timeline/event-group.tsx";
 import { EventRow } from "@/components/timeline/event-row.tsx";
 import { FoldBlock } from "@/components/timeline/fold-block.tsx";
 import {
-  groupTimeline,
+  groupTimelineSides,
   hiddenRunKey,
   type RenderUnit,
 } from "@/components/timeline/group-events.ts";
@@ -79,10 +79,17 @@ export function Timeline({
     headEnabled && head.data ? remainingCount(totalCount, above, below) : 0;
   const items: TimelineItem[] = [...above, ...below];
   const renderedCount = items.length + pendingComments.length;
+  // One source for "is there a fold block in the seam": grouping and
+  // rendering answering that differently would merge a run across a gap the
+  // reader can still see, or leave one split under nothing at all.
+  const gap = remaining > 0;
 
   const { isRevealed, reveal, reportHidden } = useRevealedRuns();
-  const unitsAbove = groupTimeline(above, isRevealed);
-  const unitsBelow = groupTimeline(below, isRevealed);
+  const { above: unitsAbove, below: unitsBelow } = groupTimelineSides(
+    above,
+    below,
+    { gap, isRevealed },
+  );
   // Reported upward rather than recomputed there: the section line and the
   // floating bar sit above this component, and the merged item list they
   // would have to count is this component's to own.
@@ -316,7 +323,7 @@ export function Timeline({
           </div>
         )}
         {unitsAbove.map(renderUnit)}
-        {remaining > 0 && (
+        {gap && (
           <div ref={blockRef} className="pb-2">
             <FoldBlock
               remaining={remaining}

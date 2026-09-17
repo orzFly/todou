@@ -10,6 +10,7 @@ import type {
   Status,
   TimelineComment,
   TimelineEvent,
+  TimelineItem,
   TimelinePage,
   UserRef,
 } from "@todou/shared";
@@ -670,5 +671,188 @@ describe("timeline load failure (T-376)", () => {
     expect(calls.filter((u) => u.includes("last=1"))).toHaveLength(
       tailCallsBefore,
     );
+  });
+});
+
+describe("one upload across the fold seam (T-404)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const session = {
+    agent: "claude-code",
+    model: "model-alpha",
+    session_id: "session-a",
+  } as const;
+  const EPOCH = Date.parse("2026-09-16T09:00:00.000Z");
+  const at = (n: number) => new Date(EPOCH + n * 1000).toISOString();
+
+  const commentAt = (n: number): TimelineComment => ({
+    type: "comment",
+    id: n,
+    author: user,
+    body: `c${n}`,
+    component: null,
+    created_at: at(n),
+    edited_at: null,
+    resolved_at: null,
+    hidden_at: null,
+    agent_context: null,
+  });
+
+  const uploadAt = (n: number): TimelineEvent => ({
+    type: "event",
+    id: n,
+    event_type: "attachment_added",
+    actor: bot,
+    payload: { attachment: { id: n, filename: `seam-${n}.png` } },
+    created_at: at(n),
+    agent_context: session,
+  });
+
+  /** `total` entries where each `[from, count]` (1-based) is one upload and
+      every other entry is a comment. */
+  const card = (
+    total: number,
+    ...uploads: Array<[from: number, count: number]>
+  ): TimelineItem[] =>
+    Array.from({ length: total }, (_, i) =>
+      uploads.some(([from, count]) => i + 1 >= from && i + 1 < from + count)
+        ? uploadAt(i + 1)
+        : commentAt(i + 1),
+    );
+
+  const pageOf = (
+    items: TimelineItem[],
+    total: number,
+    cursors: { prev?: string; next?: string } = {},
+  ): TimelinePage => ({
+    items,
+    prev_cursor: cursors.prev ?? null,
+    next_cursor: cursors.next ?? null,
+    total_count: total,
+  });
+
+  /** Timeline GETs routed by query string: `last=1` is the tail's first page,
+      an `after=` cursor is a fold expansion, and the bare request is the
+      head's first page (keyed `""`). */
+  function stubCard(tail: TimelinePage, head: Record<string, TimelinePage>) {
+    vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method === "GET" && /\/projects\/p\/issues\/19\/timeline/.test(url)) {
+        if (url.includes("last=1")) return Response.json(tail);
+        const after =
+          new URL(url, "http://todou.example").searchParams.get("after") ?? "";
+        const page = head[after];
+        if (!page) throw new Error(`no head page for after="${after}"`);
+        return Response.json(page);
+      }
+      if (method === "GET" && url.includes("/references/config")) {
+        return Response.json(DEFAULT_REFERENCE_CONFIG);
+      }
+      if (method === "GET" && url.includes("/reference-directory")) {
+        return Response.json(null);
+      }
+      if (method === "GET" && url.includes("/questions")) {
+        return Response.json({ items: [], open: 0 });
+      }
+      if (method === "GET") {
+        return Response.json([]);
+      }
+      throw new Error(`unexpected fetch: ${method} ${url}`);
+    });
+  }
+
+  const attachedGroups = (container: HTMLElement) =>
+    [...container.querySelectorAll('[data-testid="event-group"]')].filter((g) =>
+      /attached/.test(g.textContent ?? ""),
+    );
+
+  it("renders one group for the upload the two 50-item windows split", async () => {
+    // The card as reported: 59 entries, the last 50 of them the tail's page
+    // and the first 50 the head's, so the seam falls between 50 and 51 and
+    // the upload at 49–54 straddles it.
+    const items = card(59, [49, 6]);
+    stubCard(pageOf(items.slice(9), 59, { prev: "P" }), {
+      "": pageOf(items.slice(0, 50), 59, { next: "H1" }),
+    });
+    const { container, findByText, getAllByText, queryByTestId } =
+      renderWithRouter(
+        <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
+        testQueryClient(),
+      );
+
+    // Wait on an entry only the head carries. Before it lands `above` is
+    // empty, all six events sit in the tail, and the page already shows one
+    // group — asserting any earlier would pass without the fix.
+    await findByText("c1");
+    // And with the seam closed, which is what makes one group the right
+    // answer: two windows still holding a fold between them may split it.
+    expect(queryByTestId("fold-block")).toBeNull();
+
+    const groups = attachedGroups(container);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.textContent).toContain("attached 6 files");
+    for (let n = 49; n <= 54; n++) {
+      expect(getAllByText(`seam-${n}.png`)).toHaveLength(1);
+    }
+  });
+
+  it("re-merges the upload once Load more closes the seam", async () => {
+    // Over 100 entries, so the fold block is real at first and splitting the
+    // upload 3/3 is correct — until the reader expands the head to the tail.
+    const items = card(150, [98, 6]);
+    stubCard(pageOf(items.slice(100), 150, { prev: "P" }), {
+      "": pageOf(items.slice(0, 50), 150, { next: "H1" }),
+      H1: pageOf(items.slice(50, 100), 150, { next: "H2" }),
+    });
+    const { container, findByRole, findByTestId, queryByTestId } =
+      renderWithRouter(
+        <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
+        testQueryClient(),
+      );
+
+    expect((await findByTestId("fold-block")).textContent).toContain(
+      "50 remaining items",
+    );
+    await waitFor(() => {
+      const split = attachedGroups(container);
+      expect(split).toHaveLength(1);
+      expect(split[0]?.textContent).toContain("attached 3 files");
+    });
+
+    fireEvent.click(await findByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(queryByTestId("fold-block")).toBeNull());
+
+    const groups = attachedGroups(container);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.textContent).toContain("attached 6 files");
+  });
+
+  it("keeps two uploads apart while the fold block still sits between them", async () => {
+    // Two separate uploads, one at the end of the head window and one at the
+    // start of the tail, close enough in time and from the same session that
+    // the merge rule would join them if they were adjacent. Fifty unloaded
+    // entries are all that keep them apart, so grouping has to read the same
+    // seam the fold block does.
+    const items = card(150, [49, 2], [101, 2]);
+    stubCard(pageOf(items.slice(100), 150, { prev: "P" }), {
+      "": pageOf(items.slice(0, 50), 150, { next: "H1" }),
+    });
+    const { container, findByTestId } = renderWithRouter(
+      <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
+      testQueryClient(),
+    );
+
+    await findByTestId("fold-block");
+    await waitFor(() => {
+      const groups = attachedGroups(container);
+      expect(groups).toHaveLength(2);
+      expect(groups.map((g) => g.textContent)).toEqual([
+        expect.stringContaining("attached 2 files"),
+        expect.stringContaining("attached 2 files"),
+      ]);
+    });
   });
 });

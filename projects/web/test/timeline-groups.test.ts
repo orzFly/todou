@@ -9,8 +9,11 @@ import {
   familyOf,
   groupKey,
   groupTimeline,
+  groupTimelineSides,
+  hiddenRunKey,
   MERGE_WINDOW_MS,
   netStatusChain,
+  type RenderUnit,
 } from "../src/components/timeline/group-events.ts";
 
 const human: UserRef = {
@@ -61,7 +64,7 @@ function event(
   };
 }
 
-function comment(atMs: number): TimelineComment {
+function comment(atMs: number, hidden = false): TimelineComment {
   return {
     type: "comment",
     id: nextId++,
@@ -71,7 +74,7 @@ function comment(atMs: number): TimelineComment {
     created_at: new Date(EPOCH + atMs).toISOString(),
     edited_at: null,
     resolved_at: null,
-    hidden_at: null,
+    hidden_at: hidden ? new Date(EPOCH + atMs).toISOString() : null,
     agent_context: sessionA,
   };
 }
@@ -343,6 +346,145 @@ describe("groupTimeline", () => {
       family: "labels",
       events: [b1, b2],
     });
+  });
+});
+
+/** Narrow a unit to one kind, failing the test rather than the type check. */
+function unitOf<K extends RenderUnit["kind"]>(
+  kind: K,
+  unit: RenderUnit | undefined,
+): Extract<RenderUnit, { kind: K }> {
+  if (unit?.kind !== kind) {
+    throw new Error(`expected a ${kind} unit, got ${unit?.kind ?? "none"}`);
+  }
+  return unit as Extract<RenderUnit, { kind: K }>;
+}
+
+describe("groupTimelineSides", () => {
+  const file = (n: number, atMs: number, ctx: AgentContext = sessionA) =>
+    event({
+      event_type: "attachment_added",
+      payload: { attachment: { id: n, filename: `seam-${n}.png` } },
+      agent_context: ctx,
+      atMs,
+    });
+
+  /** The shape the card reported: one six-file upload with two files on the
+      head side of the seam and four on the tail side. */
+  function uploadAcrossTheSeam() {
+    const files = Array.from({ length: 6 }, (_, i) =>
+      file(i + 1, 47_000 + i * 1000),
+    );
+    return {
+      above: [
+        ...Array.from({ length: 47 }, (_, i) => comment(i * 1000)),
+        ...files.slice(0, 2),
+      ],
+      below: [
+        ...files.slice(2),
+        ...Array.from({ length: 5 }, (_, i) => comment(60_000 + i * 1000)),
+      ],
+      ids: files.map((e) => e.id),
+    };
+  }
+
+  it("merges an upload that straddles a closed seam (T-404)", () => {
+    const { above, below, ids } = uploadAcrossTheSeam();
+    const units = groupTimelineSides(above, below, { gap: false });
+    expect(units.below.some((u) => u.kind === "group")).toBe(false);
+    const merged = unitOf("group", units.above.at(-1));
+    expect(merged.family).toBe("attachments");
+    // The ids in order, not the length: six is also what three events
+    // duplicated across the seam would come to.
+    expect(merged.events.map((e) => e.id)).toEqual(ids);
+  });
+
+  it("leaves the sides apart while a fold block sits in the seam", () => {
+    const { above, below } = uploadAcrossTheSeam();
+    const units = groupTimelineSides(above, below, { gap: true });
+    expect(unitOf("group", units.above.at(-1)).events).toHaveLength(2);
+    expect(unitOf("group", units.below[0]).events).toHaveLength(4);
+  });
+
+  it("cuts at the head side's last item, straddling unit included", () => {
+    const above = Array.from({ length: 50 }, (_, i) => comment(i * 1000));
+    const below = [file(1, 50_000), file(2, 51_000), file(3, 52_000)];
+    const units = groupTimelineSides(above, below, { gap: false });
+    expect(units.above).toHaveLength(50);
+    expect(unitOf("group", units.below[0]).events).toHaveLength(3);
+  });
+
+  it("merges a reference run across the seam, hours apart (T-99)", () => {
+    const HOURS = 3_600_000;
+    const ref = (byIssue: number, atMs: number) =>
+      event({ event_type: "referenced", payload: { by_issue: byIssue }, atMs });
+    const xref = (byIssue: number, atMs: number) =>
+      event({
+        event_type: "cross_referenced",
+        payload: { by_project: "mirror", by_issue: byIssue },
+        atMs,
+      });
+    const units = groupTimelineSides(
+      [ref(7, 0), xref(3, 5 * HOURS)],
+      [ref(8, 11 * HOURS), xref(4, 20 * HOURS)],
+      { gap: false },
+    );
+    const merged = unitOf("group", units.above.at(-1));
+    expect(merged.family).toBe("referenced");
+    expect(merged.events).toHaveLength(4);
+    expect(units.below).toEqual([]);
+  });
+
+  it("still splits on a session boundary that falls on the seam", () => {
+    const units = groupTimelineSides(
+      [file(1, 0, sessionA)],
+      [file(2, 1000, sessionB)],
+      { gap: false },
+    );
+    expect(kinds(units.above)).toEqual(["group:1"]);
+    expect(kinds(units.below)).toEqual(["group:1"]);
+  });
+
+  it("applies the merge window to the seam as to anywhere else", () => {
+    const split = groupTimelineSides(
+      [file(1, 0)],
+      [file(2, MERGE_WINDOW_MS + 1)],
+      { gap: false },
+    );
+    expect(kinds(split.above)).toEqual(["group:1"]);
+    expect(kinds(split.below)).toEqual(["group:1"]);
+
+    const merged = groupTimelineSides(
+      [file(3, 0)],
+      [file(4, MERGE_WINDOW_MS)],
+      {
+        gap: false,
+      },
+    );
+    expect(kinds(merged.above)).toEqual(["group:2"]);
+    expect(merged.below).toEqual([]);
+  });
+
+  it("joins a hidden-comment run across the seam (T-281)", () => {
+    const above = [comment(0, true), comment(1000, true)];
+    const units = groupTimelineSides(
+      above,
+      [comment(2000, true), comment(3000, true)],
+      { gap: false },
+    );
+    expect(units.below).toEqual([]);
+    const run = unitOf("hidden", units.above.at(-1));
+    expect(run.comments).toHaveLength(4);
+    // The reveal is remembered under the run's first comment, which after
+    // the join is the head side's, not the one the tail half started with.
+    expect(hiddenRunKey(run)).toBe(`hidden-${above[0]?.id}`);
+  });
+
+  it("puts everything on the tail side while the head is still empty", () => {
+    const below = [comment(0), file(1, 1000), file(2, 2000)];
+    const units = groupTimelineSides([], below, { gap: false });
+    expect(units.above).toEqual([]);
+    expect(kinds(units.below)).toEqual(["item", "group:2"]);
   });
 });
 

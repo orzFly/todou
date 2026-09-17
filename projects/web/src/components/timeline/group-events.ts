@@ -117,6 +117,10 @@ export function hiddenRunKey(unit: { comments: TimelineComment[] }): string {
  * `hiddenRunKey`; those comments pass through as ordinary items. A predicate
  * rather than a set, so "reveal all" is one flag on the caller's side and
  * not a set that has to be kept in step with the runs that exist.
+ *
+ * What it scans has to be contiguous: a run is only a run if nothing the
+ * reader cannot see sits inside it. The folded timeline arrives in two
+ * pieces, and joining them is `groupTimelineSides`' job, not this one's.
  */
 export function groupTimeline(
   items: TimelineItem[],
@@ -184,6 +188,58 @@ export function groupTimeline(
       ? unit.comments.map((item) => ({ kind: "item", item }))
       : [unit],
   );
+}
+
+/** Items a unit stands for — every kind carries its own, so the sizes of a
+    scan's units sum to the number of items that went into it. */
+const unitSize = (unit: RenderUnit): number =>
+  unit.kind === "group"
+    ? unit.events.length
+    : unit.kind === "hidden"
+      ? unit.comments.length
+      : 1;
+
+/**
+ * Group both rendered sides of a folded timeline (T-30) — as one scan when
+ * the seam between them is closed.
+ *
+ * A fold block in the seam means unloaded items really do sit between the
+ * sides, so a run that spans it is two runs as far as anyone can tell, and
+ * each side is scanned on its own. With no fold block the sides print back
+ * to back with nothing between them, and scanning them separately was what
+ * split one upload into `attached 2 files` and `attached 4 files` (T-404).
+ * The seam closes whenever `remaining` reaches 0: on a 51-to-100-item card
+ * the two 50-item windows meet from the start, and on a longer one they meet
+ * once the reader has expanded the fold to the end.
+ *
+ * Where to cut the single scan back into two arrays is recovered by
+ * counting: `above` is a prefix of the timeline and `below` the suffix after
+ * it (`mergeFolded` drops the overlap), so the units cover the items in
+ * order and the first `above.length` of them belong to the head side. A unit
+ * straddling the seam is handed to the head side; with the seam closed the
+ * two arrays render as one sequence, so the choice settles the arithmetic
+ * rather than the output.
+ */
+export function groupTimelineSides(
+  above: TimelineItem[],
+  below: TimelineItem[],
+  opts: { gap: boolean; isRevealed?: (key: string) => boolean },
+): { above: RenderUnit[]; below: RenderUnit[] } {
+  if (opts.gap) {
+    return {
+      above: groupTimeline(above, opts.isRevealed),
+      below: groupTimeline(below, opts.isRevealed),
+    };
+  }
+  const units = groupTimeline([...above, ...below], opts.isRevealed);
+  let seen = 0;
+  let cut = 0;
+  for (const unit of units) {
+    if (seen >= above.length) break;
+    seen += unitSize(unit);
+    cut++;
+  }
+  return { above: units.slice(0, cut), below: units.slice(cut) };
 }
 
 /** Tolerant name extraction shared with describeEvent — bad payloads render "?". */
