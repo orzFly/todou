@@ -701,13 +701,18 @@ describe("the sidebar's assignees reach their own pages (T-391)", () => {
       client,
     );
 
-    // The Assignees section only. The picker below it renders the same
-    // people as bare avatars, and the sidebar as a whole would let those
-    // answer for these.
-    const heading = await view.findByText("Assignees");
-    const list = heading.nextElementSibling as HTMLElement;
+    // The Assignees section only — the rest of the sidebar carries chips of
+    // its own. Taken from the enclosing section rather than by walking
+    // siblings off the heading: T-403 wraps that heading in a title row and
+    // makes the chip list conditional, and a sibling walk would then land on
+    // the wrong node (or on none). The picker inside this section draws the
+    // same people as bare `UserAvatar`s, which are not anchors — and were it
+    // ever to link them, this list would grow rather than quietly agree.
+    const section = (await view.findByText("Assignees")).closest(
+      "section",
+    ) as HTMLElement;
     expect(
-      [...list.querySelectorAll('a[href^="/users/"]')].map((a) =>
+      [...section.querySelectorAll('a[href^="/users/"]')].map((a) =>
         a.getAttribute("href"),
       ),
     ).toEqual(["/users/alice", "/users/bob"]);
