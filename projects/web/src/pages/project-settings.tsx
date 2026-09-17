@@ -38,13 +38,19 @@ import {
   meQuery,
   projectQuery,
   statusesQuery,
+  useCan,
 } from "@/api/queries.ts";
 import { referenceConfigQuery } from "@/api/references.ts";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { AddAgentPicker } from "@/components/shared/add-agent-picker.tsx";
+import { AvatarEditor } from "@/components/shared/avatar-editor.tsx";
 import { RolePermissionsDialog } from "@/components/shared/role-permissions-table.tsx";
-import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
+import {
+  displayNameOf,
+  initialsOf,
+  UserChip,
+} from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -71,6 +77,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { PRESET_COLORS } from "@/lib/labels.ts";
 import { cappedRole } from "@/lib/roles.ts";
+import { useProjectRefs } from "@/lib/use-project-refs.ts";
 
 /** Exported so a test can hold the picker to the schema's own list. */
 export const ROLES: readonly MemberRole[] = MEMBER_ROLES;
@@ -214,8 +221,57 @@ export function SlugSection({ slug }: { slug: string }) {
   );
 }
 
+/**
+ * The project's icon, for whoever may change it.
+ *
+ * Mounted only when the viewer may edit — the caller's check, not one in
+ * here, because the directory query behind the REF fallback would otherwise
+ * be fetched for a reader who never gets to see the control.
+ */
+function ProjectIconEditor({ slug }: { slug: string }) {
+  const project = useSuspenseQuery(projectQuery(slug));
+  const refs = useProjectRefs([project.data]);
+  const queryClient = useQueryClient();
+
+  // Everything that draws an icon: this page, the project list and the home
+  // cards, and the bot list's project chips.
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["project", slug] });
+    queryClient.invalidateQueries({ queryKey: ["projects"] });
+    queryClient.invalidateQueries({ queryKey: ["agent-memberships"] });
+  };
+  const upload = useMutation({
+    mutationFn: (file: File) => api.uploadProjectIcon(slug, file),
+    onError: (error) => toast.error(error.message),
+    onSettled: invalidate,
+  });
+  const remove = useMutation({
+    mutationFn: () => api.deleteProjectIcon(slug),
+    onError: (error) => toast.error(error.message),
+    onSettled: invalidate,
+  });
+
+  const prefix = refs.get(slug)?.prefix ?? null;
+  return (
+    <AvatarEditor
+      subject={{
+        name: project.data.name,
+        imageUrl: project.data.icon_url ?? null,
+      }}
+      shape="square"
+      fallback={prefix || initialsOf(project.data.name)}
+      onUpload={(file) => upload.mutate(file)}
+      onRemove={() => remove.mutate()}
+      pending={upload.isPending || remove.isPending}
+    />
+  );
+}
+
 export function ProjectSection({ slug }: { slug: string }) {
   const project = useSuspenseQuery(projectQuery(slug));
+  // Hidden rather than shown disabled: a reader has nothing to read here that
+  // the icon beside the project's name upstairs does not already show.
+  const mayEditIcon = useCan(slug, "project.update");
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [descriptionDraft, setDescriptionDraft] = useState<string | null>(null);
   const queryClient = useQueryClient();
@@ -255,6 +311,7 @@ export function ProjectSection({ slug }: { slug: string }) {
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-semibold">Project</h2>
+      {mayEditIcon && <ProjectIconEditor slug={slug} />}
       <form
         className="max-w-xl space-y-4"
         onSubmit={(e) => {

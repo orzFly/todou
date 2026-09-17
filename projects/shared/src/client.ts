@@ -637,6 +637,13 @@ export class TodouClient {
     this.request<Project>("GET", `/projects/${slug}`);
   updateProject = (slug: string, input: ProjectUpdateInput) =>
     this.request<Project>("PATCH", `/projects/${slug}`, { json: input });
+  uploadProjectIcon = (ref: string, file: File) => {
+    const form = new FormData();
+    form.set("file", file);
+    return this.request<Project>("POST", `/projects/${ref}/icon`, { form });
+  };
+  deleteProjectIcon = (ref: string) =>
+    this.request<Project>("DELETE", `/projects/${ref}/icon`);
 
   /**
    * One account's public identity. `ref` is a user id when all digits, a

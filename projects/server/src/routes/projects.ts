@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import {
   AccessDenial,
@@ -23,6 +24,11 @@ import {
   setMember,
 } from "../services/members.ts";
 import {
+  deleteProjectIcon,
+  openProjectIcon,
+  setProjectIcon,
+} from "../services/project-icon.ts";
+import {
   blockClearStatusOf,
   createProject,
   deleteProject,
@@ -41,6 +47,47 @@ const memberParams = z.object({
 
 const jsonBody = <T extends z.ZodType>(schema: T) => ({
   content: { "application/json": { schema } },
+});
+
+/** Same shape as `POST /me/avatar`'s body. */
+const iconBody = {
+  content: {
+    "multipart/form-data": {
+      schema: z.object({
+        file: z
+          .custom<File>((v: unknown) => v instanceof File, "file required")
+          .openapi({ type: "string", format: "binary" }),
+      }),
+    },
+  },
+};
+
+const uploadIconRoute = createRoute({
+  method: "post",
+  path: "/{slug}/icon",
+  summary: "Upload this project's icon (png/jpeg/webp/gif, multipart; admin)",
+  request: { params: slugParam, body: iconBody },
+  responses: {
+    200: { description: "Updated project", ...jsonBody(Project) },
+  },
+});
+
+const deleteIconRoute = createRoute({
+  method: "delete",
+  path: "/{slug}/icon",
+  summary: "Remove this project's icon and go back to the fallback (admin)",
+  request: { params: slugParam },
+  responses: {
+    200: { description: "Updated project", ...jsonBody(Project) },
+  },
+});
+
+const getIconRoute = createRoute({
+  method: "get",
+  path: "/{slug}/icon",
+  summary: "This project's icon image (anyone who can read the project)",
+  request: { params: slugParam },
+  responses: { 200: { description: "Image stream" } },
 });
 
 const listRoute = createRoute({
@@ -263,6 +310,58 @@ export function projectRoutes() {
     const { slug, userId } = c.req.valid("param");
     await removeDenial(c.get("appCtx"), c.get("user"), slug, userId);
     return c.body(null, 204);
+  });
+
+  app.openapi(uploadIconRoute, async (c) => {
+    const ctx = c.get("appCtx");
+    const { project, role } = await requireCapability(
+      ctx,
+      c.get("user"),
+      c.req.valid("param").slug,
+      "project.update",
+    );
+    const { file } = c.req.valid("form");
+    return c.json(
+      toProject(await setProjectIcon(ctx, project, file), role),
+      200,
+    );
+  });
+
+  app.openapi(deleteIconRoute, async (c) => {
+    const ctx = c.get("appCtx");
+    const { project, role } = await requireCapability(
+      ctx,
+      c.get("user"),
+      c.req.valid("param").slug,
+      "project.update",
+    );
+    return c.json(toProject(await deleteProjectIcon(ctx, project), role), 200);
+  });
+
+  app.openapi(getIconRoute, async (c) => {
+    const ctx = c.get("appCtx");
+    // Same gate as GET /projects/{slug}: whoever can see the project's name
+    // can see its icon, and nobody else learns it exists.
+    const { project } = await requireCapability(
+      ctx,
+      c.get("user"),
+      c.req.valid("param").slug,
+      "project.read",
+    );
+    const icon = await openProjectIcon(ctx, project.id);
+    const { stream, size } = await ctx.storage.getStream(icon.key);
+
+    c.header("content-type", icon.contentType);
+    c.header("content-length", String(size));
+    c.header("content-disposition", "inline");
+    c.header("x-content-type-options", "nosniff");
+    // As on the avatar route: embedded cross-site this loads nothing. The
+    // type is an allowlist result from setProjectIcon, not normalised here.
+    c.header("cross-origin-resource-policy", "same-origin");
+    // The URL carries a per-upload version, so a new image is a new URL
+    // rather than a stale cache entry.
+    c.header("cache-control", "private, max-age=31536000, immutable");
+    return c.body(Readable.toWeb(stream) as ReadableStream);
   });
 
   return app;

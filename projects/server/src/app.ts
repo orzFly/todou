@@ -124,6 +124,7 @@ export function createApp(ctx: AppContext) {
   api.use("/projects/:slug/attachments", uploadBodyLimit(ctx.config));
   api.use("/me/avatar", avatarBodyLimit());
   api.use("/agents/:id/avatar", avatarBodyLimit());
+  api.use("/projects/:slug/icon", avatarBodyLimit());
   api.use("*", jsonBodyLimit(ctx.config));
   // Order matters: /auth endpoints and the OpenAPI document are registered
   // before the auth guard so they work unauthenticated; everything after

@@ -7,10 +7,10 @@ import type { StorageBackend } from "../storage/types.ts";
 export type BlobKey = { key: string; origin: string };
 
 /**
- * Every blob key the deployment knows about: avatars from the system
- * database plus attachments from every project database. This enumeration
- * — not a bucket listing — is the source of truth for migration, so the
- * tool scales with the database, never with bucket size.
+ * Every blob key the deployment knows about: avatars and project icons from
+ * the system database plus attachments from every project database. This
+ * enumeration — not a bucket listing — is the source of truth for migration,
+ * so the tool scales with the database, never with bucket size.
  */
 export async function enumerateBlobKeys(router: DbRouter): Promise<BlobKey[]> {
   const keys: BlobKey[] = [];
@@ -29,9 +29,13 @@ export async function enumerateBlobKeys(router: DbRouter): Promise<BlobKey[]> {
       id: projects.id,
       slug: projects.slug,
       databaseUrl: projects.databaseUrl,
+      iconKey: projects.iconKey,
     })
     .from(projects);
   for (const project of projectRows) {
+    if (project.iconKey) {
+      keys.push({ key: project.iconKey, origin: `icon:${project.slug}` });
+    }
     const db = await router.forProject({
       id: project.id,
       slug: project.slug,

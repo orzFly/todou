@@ -12,6 +12,10 @@ import {
   useRef,
   useState,
 } from "react";
+import { ProjectIcon } from "@/components/shared/project-icon.tsx";
+import { ProjectRow } from "@/components/shared/project-row.tsx";
+import { matchProject, type ProjectMatch } from "@/lib/project-match.ts";
+import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { cn } from "@/lib/utils";
 
 /** Below this the search box is noise (T-76 design §3). */
@@ -21,7 +25,7 @@ export type ProjectListboxOption = {
   project: Project;
   /** Present renders an `<a href>`; absent renders a `<button>`. */
   link?: LinkProps;
-  /** After the name — the navbar's unread badge, the move dialog's slug. */
+  /** After the spelling token — the navbar's unread badge. */
   trailing?: ReactNode;
   /** Greys the name; the navbar marks projects never visited. */
   muted?: boolean;
@@ -83,17 +87,28 @@ export function ProjectListbox({
 
   const showSearch = options.length >= SEARCH_THRESHOLD;
   const q = query.trim().toLowerCase();
-  const items = useMemo(
-    () =>
-      q === ""
-        ? options
-        : options.filter(
-            ({ project }) =>
-              project.name.toLowerCase().includes(q) ||
-              project.slug.toLowerCase().includes(q),
-          ),
-    [options, q],
-  );
+
+  const projects = useMemo(() => options.map((o) => o.project), [options]);
+  const refs = useProjectRefs(projects);
+
+  // The match travels with the row: the body paints the segment this decided
+  // on, rather than working out a second time why the row is here.
+  const items = useMemo(() => {
+    if (q === "") return options.map((option) => ({ option, match: null }));
+    const hits: { option: ProjectListboxOption; match: ProjectMatch }[] = [];
+    for (const option of options) {
+      const match = matchProject(
+        {
+          name: option.project.name,
+          slug: option.project.slug,
+          prefix: refs.get(option.project.slug)?.prefix ?? null,
+        },
+        q,
+      );
+      if (match !== null) hits.push({ option, match });
+    }
+    return hits;
+  }, [options, q, refs]);
 
   // Clamped rather than reset per keystroke, so the highlight tracks a
   // shrinking list without jumping to the top when it grows back.
@@ -127,13 +142,13 @@ export function ProjectListbox({
     else if (e.key === "End") setHighlight(Math.max(0, items.length - 1));
     else if (e.key === "Enter") {
       const item = items[hl];
-      if (item) onSelect?.(item);
+      if (item) onSelect?.(item.option);
     } else return;
     e.preventDefault();
   };
 
   const activeId = items[hl]
-    ? `${idPrefix}-${items[hl].project.slug}`
+    ? `${idPrefix}-${items[hl].option.project.slug}`
     : undefined;
   const listId = `${idPrefix}-list`;
 
@@ -182,10 +197,12 @@ export function ProjectListbox({
             {emptyText}
           </div>
         ) : (
-          items.map((option, idx) => (
+          items.map(({ option, match }, idx) => (
             <Row
               key={option.project.slug}
               option={option}
+              match={match}
+              prefix={refs.get(option.project.slug)?.prefix ?? null}
               id={`${idPrefix}-${option.project.slug}`}
               idx={idx}
               highlighted={idx === hl}
@@ -207,6 +224,8 @@ export function ProjectListbox({
 
 function Row({
   option,
+  match,
+  prefix,
   id,
   idx,
   highlighted,
@@ -216,6 +235,8 @@ function Row({
   onLinkClick,
 }: {
   option: ProjectListboxOption;
+  match: ProjectMatch | null;
+  prefix: string | null;
   id: string;
   idx: number;
   highlighted: boolean;
@@ -247,10 +268,26 @@ function Row({
           {checked && <CheckIcon className="size-3.5" />}
         </span>
       )}
-      <span className={cn("truncate", option.muted && "text-muted-foreground")}>
-        {option.project.name}
-      </span>
-      {option.trailing}
+      <ProjectRow
+        project={{
+          name: option.project.name,
+          slug: option.project.slug,
+          prefix,
+        }}
+        match={match}
+        muted={option.muted}
+        icon={
+          <ProjectIcon
+            project={{
+              name: option.project.name,
+              prefix,
+              icon_url: option.project.icon_url,
+            }}
+            className="size-5"
+          />
+        }
+        trailing={option.trailing}
+      />
     </>
   );
 

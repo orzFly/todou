@@ -333,3 +333,50 @@ describe("agent projects column (T-227)", () => {
     });
   });
 });
+
+describe("project icons in the agents table", () => {
+  /** The chip for a project in the collapsed cell. */
+  const chipFor = (name: string) =>
+    screen.getAllByLabelText(new RegExp(`^${name} ·`)).at(0) as HTMLElement;
+
+  it("draws no icon node on a 14px chip for a project with no icon", async () => {
+    // Two fallback letters are a smudge at this size, and the chip already
+    // carries the slug — so with no real image there is nothing to draw.
+    renderPage({
+      memberships: [membership(ALPHA, "writer")],
+      manageable_projects: [manageable(ALPHA)],
+    });
+    await screen.findByRole("button", { name: "Manage probe-bot's projects" });
+    expect(chipFor("Alpha").querySelector('[data-slot="avatar"]')).toBeNull();
+  });
+
+  it("draws one on a chip for a project that has an icon", async () => {
+    renderPage({
+      memberships: [
+        membership(
+          { ...ALPHA, icon_url: "/api/projects/1/icon?v=a" },
+          "writer",
+        ),
+      ],
+      manageable_projects: [manageable(ALPHA)],
+    });
+    await screen.findByRole("button", { name: "Manage probe-bot's projects" });
+    const icon = chipFor("Alpha").querySelector('[data-slot="avatar"]');
+    expect(icon).not.toBeNull();
+    // Square, so it never reads as one of the people elsewhere on this page.
+    expect(icon?.getAttribute("data-shape")).toBe("square");
+  });
+
+  it("draws an icon on every dialog row, icon or not", async () => {
+    // The 24px row has space for a fallback, so it is unconditional.
+    renderPage({
+      memberships: [membership(ALPHA, "writer"), membership(BETA, "reader")],
+      manageable_projects: [manageable(ALPHA), manageable(BETA)],
+    });
+    await openDialog();
+    const dialog = screen.getByRole("dialog");
+    expect(
+      dialog.querySelectorAll('[data-slot="avatar"][data-shape="square"]'),
+    ).toHaveLength(2);
+  });
+});

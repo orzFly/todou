@@ -6,7 +6,7 @@ import {
   useParams,
 } from "@tanstack/react-router";
 import type { Me } from "@todou/shared";
-import { type ReactNode, Suspense } from "react";
+import { type ReactNode, Suspense, useMemo } from "react";
 import { api, authModeQuery, projectQuery } from "@/api/queries.ts";
 import { useUserEvents } from "@/api/useUserEvents.ts";
 import { VersionFooter } from "@/components/footer.tsx";
@@ -16,6 +16,7 @@ import { NewIssueButton, ProjectNav } from "@/components/project-nav.tsx";
 import { ProjectSwitcher } from "@/components/project-switcher.tsx";
 import { SearchBox } from "@/components/search-box.tsx";
 import { SearchToggle } from "@/components/search-toggle.tsx";
+import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { UnsavedChangesGuard } from "@/components/shared/unsaved-guard.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { ThemeMenu } from "@/components/theme-menu.tsx";
@@ -30,6 +31,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MD_UP, SM_UP, useMediaQuery } from "@/lib/use-media-query.ts";
+import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { cn } from "@/lib/utils";
 
 export function AppShell({
@@ -104,6 +106,15 @@ export function AppShell({
     ...projectQuery(slug ?? ""),
     enabled: slug != null,
   });
+  // The directory, not this project's own `useRefPrefix`, although that one is
+  // right here: the two disagree on a contested prefix, and a REF shown in the
+  // breadcrumb while the switcher two pixels away has dropped it is worse than
+  // either rule on its own.
+  const one = useMemo(
+    () => (project.data ? [project.data] : undefined),
+    [project.data],
+  );
+  const refs = useProjectRefs(one);
 
   return (
     <div
@@ -135,9 +146,17 @@ export function AppShell({
                 <Link
                   to="/projects/$slug"
                   params={{ slug }}
-                  className="truncate font-semibold hover:underline"
+                  className="flex min-w-0 items-center gap-1.5 font-semibold hover:underline"
                 >
-                  {project.data?.name ?? slug}
+                  <ProjectIcon
+                    project={{
+                      name: project.data?.name ?? slug,
+                      prefix: refs.get(slug)?.prefix ?? null,
+                      icon_url: project.data?.icon_url,
+                    }}
+                    className="size-5"
+                  />
+                  <span className="truncate">{project.data?.name ?? slug}</span>
                 </Link>
                 <ProjectSwitcher slug={slug} />
                 <ProjectNav slug={slug} className="ml-2 hidden sm:flex" />

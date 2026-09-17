@@ -1,4 +1,11 @@
-import type { Project, ReferenceDirectory } from "@todou/shared";
+import type { ReferenceDirectory } from "@todou/shared";
+
+/**
+ * All a spelling needs of a project. Wider than `Project` on purpose: the
+ * bot list holds `ProjectBrief`s, and a prefix is looked up by slug either
+ * way.
+ */
+export type NamedProject = { slug: string; name: string };
 
 /** A project in the completion pool, with its equivalent spellings ranked. */
 export type ProjectRefOption = {
@@ -10,6 +17,12 @@ export type ProjectRefOption = {
    * prefix, `["homelab/"]` where there is not.
    */
   spellings: string[];
+  /**
+   * The REF prefix in force this moment and uncontested, written bare
+   * (`ACC`); null where there is no usable one. Bare rather than `ACC-`
+   * because this one names a project, not a card waiting for its number.
+   */
+  prefix: string | null;
 };
 
 /**
@@ -28,7 +41,7 @@ export type ProjectRefOption = {
  * ranking.
  */
 export function projectSpellings(
-  projects: readonly Project[] | undefined,
+  projects: readonly NamedProject[] | undefined,
   directory: ReferenceDirectory | null | undefined,
 ): ProjectRefOption[] {
   if (projects === undefined) return [];
@@ -51,6 +64,7 @@ export function projectSpellings(
       spellings: usable
         ? [`${(claim as { prefix: string }).prefix}-`, `${project.slug}/`]
         : [`${project.slug}/`],
+      prefix: usable ? (claim as { prefix: string }).prefix : null,
     };
   });
   // `GET /api/projects` has no ORDER BY, so without this the rows would sit

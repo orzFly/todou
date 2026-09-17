@@ -62,7 +62,8 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
           project: item.project,
           link: { to: target, params: { slug: item.project.slug } },
           muted: item.neverVisited,
-          trailing: <UnreadBadge count={count} className="ml-auto shrink-0" />,
+          // The spelling token ahead of it already takes the free space.
+          trailing: <UnreadBadge count={count} className="shrink-0" />,
           // Only when there is something to announce: the badge is
           // aria-hidden (a bare number reads as noise), and an unconditional
           // label would put "— 0 未读" into every activedescendant

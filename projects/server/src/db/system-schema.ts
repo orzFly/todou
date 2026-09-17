@@ -132,6 +132,10 @@ export const projects = pgTable(
     description: text("description").notNull().default(""),
     // Per-project routing override; null = follow configured placement.
     databaseUrl: text("database_url"),
+    // Storage key of the uploaded project icon; null = REF/initials fallback.
+    // Same shape and the same fresh-key-per-upload rule as a user's avatar.
+    iconKey: text("icon_key"),
+    iconContentType: text("icon_content_type"),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("projects_slug_idx").on(t.slug)],

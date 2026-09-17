@@ -4,7 +4,13 @@ import {
   isAvatarContentType,
 } from "@todou/shared";
 import { Trash2Icon, UploadIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { initialsOf } from "@/components/shared/user-chip.tsx";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -15,18 +21,24 @@ import { cn } from "@/lib/utils";
 const MAX_MB = AVATAR_MAX_BYTES / 1024 / 1024;
 
 /**
- * Avatar preview with upload/remove controls. Mutations stay with the
- * caller — this component only picks the file. Picking covers three entries
- * (button, drop, paste), all of which meet in `handleFile`, so the caller's
- * `onUpload` contract is unchanged: one `File`, already within the size cap.
+ * Image preview with upload/remove controls, for a user's avatar and a
+ * project's icon alike. Mutations stay with the caller — this component only
+ * picks the file. Picking covers three entries (button, drop, paste), all of
+ * which meet in `handleFile`, so the caller's `onUpload` contract is one
+ * `File`, already within the size cap.
  */
 export function AvatarEditor({
-  user,
+  subject,
+  shape = "circle",
+  fallback,
   onUpload,
   onRemove,
   pending = false,
 }: {
-  user: { display_name: string; avatar_url: string | null };
+  subject: { name: string; imageUrl: string | null };
+  shape?: "circle" | "square";
+  /** Drawn in place of `subject.name`'s initials; a project shows its REF. */
+  fallback?: ReactNode;
   onUpload: (file: File) => void;
   onRemove: () => void;
   pending?: boolean;
@@ -43,7 +55,7 @@ export function AvatarEditor({
   const handleFile = useCallback(
     async (file: File) => {
       if (!isAvatarContentType(file.type)) {
-        toast.error("Avatar must be a PNG, JPEG, WebP, or GIF image.");
+        toast.error("Must be a PNG, JPEG, WebP, or GIF image.");
         return;
       }
       setPreparing(true);
@@ -60,7 +72,7 @@ export function AvatarEditor({
       if (result.kind === "too-large") {
         // The server would truncate the request anyway; saying so here spares
         // the user a multi-megabyte round trip for the same answer.
-        toast.error(`Couldn't get that image under the ${MAX_MB} MB limit.`);
+        toast.error(`Couldn't get this under the ${MAX_MB} MB limit.`);
         return;
       }
       if (result.kind === "resized" && file.type === "image/gif") {
@@ -110,7 +122,7 @@ export function AvatarEditor({
       // aim at. A fieldset because the row is now a named group of controls
       // rather than a layout box, and only a grouping element may carry the
       // drop and hover handlers.
-      aria-label="avatar"
+      aria-label={shape === "square" ? "icon" : "avatar"}
       className={cn(
         "flex items-center gap-4 rounded-md",
         // outline rather than border: it takes no layout space, so the button
@@ -147,15 +159,15 @@ export function AvatarEditor({
         e.preventDefault();
         dragDepth.current = 0;
         setDraggingOver(false);
-        // An avatar is one image; anything else in the drop is ignored.
+        // One image; anything else in the drop is ignored.
         const file = e.dataTransfer.files[0];
         if (file) void handleFile(file);
       }}
     >
-      <Avatar size="lg" className="size-16">
-        {user.avatar_url && <AvatarImage src={user.avatar_url} alt="" />}
+      <Avatar size="lg" shape={shape} className="size-16">
+        {subject.imageUrl && <AvatarImage src={subject.imageUrl} alt="" />}
         <AvatarFallback className="text-lg">
-          {initialsOf(user.display_name)}
+          {fallback ?? initialsOf(subject.name)}
         </AvatarFallback>
       </Avatar>
       <div className="flex flex-col gap-1">
@@ -181,7 +193,7 @@ export function AvatarEditor({
           >
             <UploadIcon className="size-3.5" /> Upload
           </Button>
-          {user.avatar_url && (
+          {subject.imageUrl && (
             <Button
               type="button"
               variant="outline"
