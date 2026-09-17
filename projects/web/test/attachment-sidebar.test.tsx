@@ -77,6 +77,43 @@ describe("the sidebar attachment section", () => {
     expect(target?.querySelectorAll("li")).toHaveLength(5);
   });
 
+  // Both halves are needed: with only the first, deleting the row outright
+  // would pass; with only the second, drawing it always would.
+  it("drops the jump row once it has listed every file", async () => {
+    const view = renderWithProviders(
+      <AttachmentSidebarSection slug="demo" issueNumber={7} />,
+      seeded(4),
+    );
+    const section = await view.findByTestId("attachment-sidebar");
+    await waitFor(() => expect(section.querySelectorAll("li")).toHaveLength(4));
+    expect(within(section).queryByText(/^全部 \d+ 个/)).toBeNull();
+  });
+
+  it("keeps the jump row while files are missing from it", async () => {
+    // Five is the case the body panel's own fold does not cover: it stays
+    // unfolded until eight, while the sidebar has already dropped one.
+    const view = renderWithProviders(
+      <AttachmentSidebarSection slug="demo" issueNumber={7} />,
+      seeded(5),
+    );
+    const section = await view.findByTestId("attachment-sidebar");
+    await waitFor(() => expect(section.querySelectorAll("li")).toHaveLength(4));
+    expect(within(section).getByText(/^全部 \d+ 个/)).toBeTruthy();
+  });
+
+  it("makes the heading itself the way down to the body list", async () => {
+    const view = renderWithProviders(
+      <AttachmentSidebarSection slug="demo" issueNumber={7} />,
+      seeded(4),
+    );
+    const section = await view.findByTestId("attachment-sidebar");
+    const heading = section.querySelector("h3") as HTMLElement;
+    const link = within(heading).getByRole("link");
+    expect(link.getAttribute("href")).toBe("#attachments");
+    // The count is inside the link, not stranded beside it.
+    expect(link.textContent).toContain("4");
+  });
+
   it("renders nothing when the card has no files", async () => {
     const view = renderWithProviders(
       <AttachmentSidebarSection slug="demo" issueNumber={7} />,

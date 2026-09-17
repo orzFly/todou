@@ -17,6 +17,7 @@ import {
   type ViewerState,
   viewerStateFor,
 } from "@/components/issue/attachment-viewer.tsx";
+import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
 import {
   RICH_CHIP_ICON,
   RICH_CHIP_LABEL,
@@ -191,7 +192,7 @@ const SIDEBAR_CAP = 4;
  * next door: the newest few files, sticky beside a long timeline, so the
  * mockup someone attached at the top of the card is still one click away at
  * comment forty. The body section keeps the full list — 240px has no room
- * for a size or a download button — and the last row jumps to it.
+ * for a size or a download button — and the heading jumps to it.
  */
 export function AttachmentSidebarSection({
   slug,
@@ -211,10 +212,15 @@ export function AttachmentSidebarSection({
   const hiddenBefore = items.length - shown.length;
 
   return (
-    <section className="space-y-2" data-testid="attachment-sidebar">
-      <h3 className="text-xs font-medium text-muted-foreground uppercase">
-        Attachments <span className="normal-case">{items.length}</span>
-      </h3>
+    <SidebarSection
+      name="attachments"
+      testId="attachment-sidebar"
+      title={
+        <a href="#attachments">
+          Attachments <span className="normal-case">{items.length}</span>
+        </a>
+      }
+    >
       <ul>
         {shown.map((attachment, shownIndex) => {
           const Icon = attachmentIcon(attachment);
@@ -241,16 +247,23 @@ export function AttachmentSidebarSection({
           );
         })}
       </ul>
-      {/* A real anchor, so middle-click and ⌘-click behave. The landing is
+      {/* Only while this list is short of the full set — `hiddenBefore`, not
+          the body panel's own fold, which starts three files later: between
+          five and seven files the body stays unfolded while the sidebar has
+          already dropped some, and that is exactly when this row is needed.
+
+          A real anchor, so middle-click and ⌘-click behave. The landing is
           not swallowed by the floating title bar: `useScrollInsets` writes
           its height into `scroll-padding-top`, which native anchor jumps
           already honour. */}
-      <a
-        href="#attachments"
-        className="text-xs text-muted-foreground hover:underline"
-      >
-        全部 {items.length} 个 ↓
-      </a>
+      {hiddenBefore > 0 && (
+        <a
+          href="#attachments"
+          className="text-xs text-muted-foreground hover:underline"
+        >
+          全部 {items.length} 个 ↓
+        </a>
+      )}
       <AttachmentViewerDialog
         state={viewer}
         onNavigate={(index) =>
@@ -260,7 +273,7 @@ export function AttachmentSidebarSection({
         slug={slug}
         issueNumber={issueNumber}
       />
-    </section>
+    </SidebarSection>
   );
 }
 

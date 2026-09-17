@@ -59,8 +59,14 @@ function mount(entries: IssueMetadataEntry[], role: MemberRole = "writer") {
   return { client, unmount: rendered.unmount };
 }
 
+/** Whichever door the section is offering: the summary block on a card with
+ *  metadata, the heading's button on an empty one, which since T-403 draws no
+ *  summary to click. These tests are about the dialog, not the way in. */
 const openDialog = async () => {
-  fireEvent.click(await screen.findByTestId("metadata-open"));
+  const summary = screen.queryByTestId("metadata-open");
+  fireEvent.click(
+    summary ?? (await screen.findByRole("button", { name: "Edit metadata" })),
+  );
   await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
 };
 

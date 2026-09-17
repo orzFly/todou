@@ -8,6 +8,7 @@ import {
   useMuteIssue,
   useUnmuteIssue,
 } from "@/api/mutes.ts";
+import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -77,10 +78,7 @@ export function MuteMenu({
   ];
 
   return (
-    <section className="space-y-2">
-      <h3 className="text-xs font-medium text-muted-foreground uppercase">
-        Notifications
-      </h3>
+    <SidebarSection name="notifications" title="Notifications">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="outline" size="sm" className="w-full justify-start">
@@ -121,6 +119,6 @@ export function MuteMenu({
           to hear from any of its cards.
         </p>
       )}
-    </section>
+    </SidebarSection>
   );
 }

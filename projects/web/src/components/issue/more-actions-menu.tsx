@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { useDeleteIssueMutation } from "@/api/issues.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import { MoveIssueDialog } from "@/components/issue/move-issue-dialog.tsx";
+import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
@@ -46,24 +47,23 @@ export function IssueMoreActions({
   };
 
   return (
-    <section>
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="text-xs font-medium text-muted-foreground uppercase">
-          More actions
-        </h3>
+    <SidebarSection
+      name="more-actions"
+      title="More actions"
+      action={
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               ref={trigger}
               variant="ghost"
-              size="icon-sm"
+              size="icon-xs"
               aria-label="More actions"
             >
-              <EllipsisIcon className="size-4" />
+              <EllipsisIcon className="size-3.5" />
             </Button>
           </DropdownMenuTrigger>
           {/* The entries need far more room than the trigger's width, which is
-              what the menu defaults to and which here is a 28px square. */}
+              what the menu defaults to and which here is a 24px square. */}
           <DropdownMenuContent className="w-auto" align="end">
             <DropdownMenuItem onSelect={() => setMoving(true)}>
               <FolderInputIcon className="size-3.5" />
@@ -81,8 +81,8 @@ export function IssueMoreActions({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-      </div>
-
+      }
+    >
       <MoveIssueDialog
         slug={slug}
         issueNumber={issue.number}
@@ -124,6 +124,6 @@ export function IssueMoreActions({
           )
         }
       />
-    </section>
+    </SidebarSection>
   );
 }

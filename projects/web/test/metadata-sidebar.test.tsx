@@ -1,4 +1,10 @@
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { IssueMetadataEntry, MemberRole, Project } from "@todou/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { issueMetadataQuery } from "../src/api/metadata.ts";
@@ -85,7 +91,7 @@ describe("the metadata sidebar while /metadata is in flight (T-365)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
-  it("shows neither the dash nor the lines until the query settles", async () => {
+  it("waits, rather than claiming the card is empty, until the query settles", async () => {
     const metadata = deferred<{ entries: IssueMetadataEntry[] }>();
     vi.spyOn(api, "getIssueMetadata").mockReturnValue(metadata.promise);
     const client = testQueryClient();
@@ -95,17 +101,21 @@ describe("the metadata sidebar while /metadata is in flight (T-365)", () => {
       client,
     );
 
-    // `—` means "this card has no metadata"; while the query is in flight
-    // that claim is not established, so the dash must not be on screen.
+    // A bare section means "this card has no metadata"; in flight that claim
+    // is not established, so the skeleton holds the space instead.
     const section = await screen.findByTestId("metadata-sidebar");
-    expect(section.textContent).not.toContain("—");
+    expect(within(section).getByTestId("metadata-loading")).toBeTruthy();
 
     await act(async () => metadata.resolve({ entries: [] }));
     await waitFor(() =>
-      expect(screen.getByTestId("metadata-sidebar").textContent).toContain("—"),
+      expect(screen.queryByTestId("metadata-loading")).toBeNull(),
+    );
+    // Settled and empty: the heading, and nothing under it.
+    expect(screen.getByTestId("metadata-sidebar").textContent?.trim()).toBe(
+      "Metadata",
     );
 
-    // And with entries, the lines replace the dash.
+    // And with entries, the lines fill the section in.
     vi.spyOn(api, "getIssueMetadata").mockResolvedValue({
       entries: [entry("ci", "run", "green")],
     });
@@ -113,11 +123,8 @@ describe("the metadata sidebar while /metadata is in flight (T-365)", () => {
       queryKey: issueMetadataQuery(SLUG, NUMBER).queryKey,
     });
     await waitFor(() =>
-      expect(screen.getByTestId("metadata-sidebar").textContent).not.toContain(
-        "—",
-      ),
+      expect(screen.getByTestId("metadata-open").textContent).toContain("ci"),
     );
-    expect(screen.getByTestId("metadata-open").textContent).toContain("ci");
   });
 });
 
@@ -148,9 +155,9 @@ describe("the metadata sidebar when /metadata fails (T-376)", () => {
     // established. This is the assertion the card body used to demand in
     // reverse; proposal.md replaces it with the retry contract below.
     expect(screen.queryByTestId("metadata-open")).toBeNull();
-    expect(screen.getByTestId("metadata-sidebar").textContent).not.toContain(
-      "—",
-    );
+    // Including the heading's own button (T-403), which is the second door
+    // into the same dialog and has to be shut by the same rule.
+    expect(screen.queryByRole("button", { name: "Edit metadata" })).toBeNull();
   });
 
   it("recovers the section, and with it the write entry, when Retry succeeds", async () => {
@@ -169,13 +176,10 @@ describe("the metadata sidebar when /metadata fails (T-376)", () => {
     expect(screen.queryByText("Failed to load metadata.")).toBeNull();
   });
 
-  it("shows a reader the same failure, with no dash", async () => {
+  it("shows a reader the same failure", async () => {
     mountFailed("reader");
     expect(await screen.findByText("Failed to load metadata.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
-    expect(screen.getByTestId("metadata-sidebar").textContent).not.toContain(
-      "—",
-    );
   });
 
   it("no longer says retrying may help", async () => {
@@ -203,13 +207,15 @@ describe("the metadata sidebar summary", () => {
     expect(line).toContain("2");
   });
 
-  it("shows a dash for a card nobody has written on", async () => {
+  it("leaves a reader the heading alone on a card nobody has written on", async () => {
     mount([], "reader");
-    // An empty card gives a reader nothing to open; the sidebar shows the
-    // dash itself instead of hiding the section.
-    const summary = await screen.findByTestId("metadata-sidebar");
-    expect(summary.textContent).toContain("—");
+    // The section stays, so "this card has none" and "there is no such
+    // feature" remain tellable apart — but with nothing drawn under it, and
+    // no way in for someone who could not write anyway.
+    const section = await screen.findByTestId("metadata-sidebar");
+    expect(section.textContent?.trim()).toBe("Metadata");
     expect(screen.queryByTestId("metadata-open")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit metadata" })).toBeNull();
   });
 
   it("lets a writer open an empty card, because writing lives in the dialog", async () => {
@@ -217,7 +223,12 @@ describe("the metadata sidebar summary", () => {
     // namespace form any more — the writer lands on Browse and switches to
     // Bulk, whose placeholder names the line format.
     mount([], "writer");
-    await openDialog();
+    // An empty card draws no summary block (T-403), so the heading's button
+    // is the writer's only door in — which is the point of it being there.
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Edit metadata" }),
+    );
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
     fireEvent.mouseDown(screen.getByRole("tab", { name: "Bulk" }));
     await waitFor(() =>
       expect(screen.getByTestId("metadata-editor-tab")).toBeTruthy(),

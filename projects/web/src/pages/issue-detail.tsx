@@ -43,6 +43,7 @@ import { MarkReadOnView } from "@/components/issue/mark-read-on-view.tsx";
 import { MetadataSection } from "@/components/issue/metadata-section.tsx";
 import { IssueMoreActions } from "@/components/issue/more-actions-menu.tsx";
 import { MuteMenu } from "@/components/issue/mute-menu.tsx";
+import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
 import {
   SpecEntryRow,
   SpecSidebarSection,
@@ -588,11 +589,8 @@ export function Sidebar({
     // Sticky on large screens (T-63): the sidebar keeps Status and the
     // Latest spec section in view while the timeline scrolls; when taller
     // than the viewport it scrolls internally.
-    <aside className="min-w-0 space-y-5 text-sm lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:self-start lg:overflow-y-auto">
-      <section className="space-y-2">
-        <h3 className="text-xs font-medium text-muted-foreground uppercase">
-          Status
-        </h3>
+    <aside className="min-w-0 space-y-3 text-sm lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:self-start lg:overflow-y-auto">
+      <SidebarSection name="status" title="Status">
         {trashed ? (
           <StatusPill status={issue.status} />
         ) : (
@@ -623,83 +621,88 @@ export function Sidebar({
             </DropdownMenuContent>
           </DropdownMenu>
         )}
-      </section>
+      </SidebarSection>
 
-      {/* Directly under Status (T-377): being blocked is a fact about this
-          card's status, and the answer to "why has nothing happened here"
-          belongs beside the thing it explains. */}
+      <SidebarSection
+        name="labels"
+        title="Labels"
+        action={
+          !trashed && (
+            <LabelPicker
+              allLabels={allLabels}
+              selected={issue.labels}
+              onToggle={(label) => {
+                const current = issue.labels.map((l) => l.id);
+                patch.mutate({
+                  ...patchTarget,
+                  label_ids: current.includes(label.id)
+                    ? current.filter((id) => id !== label.id)
+                    : [...current, label.id],
+                });
+              }}
+              onCreate={canCreateLabels ? createLabel : undefined}
+              trigger={
+                <Button variant="ghost" size="icon-xs" aria-label="Edit labels">
+                  <PencilIcon className="size-3.5" />
+                </Button>
+              }
+            />
+          )
+        }
+      >
+        {issue.labels.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <LabelChips labels={issue.labels} truncate />
+          </div>
+        )}
+      </SidebarSection>
+
+      <SidebarSection
+        name="assignees"
+        title="Assignees"
+        action={
+          !trashed && (
+            <AssigneePicker
+              members={members}
+              selectedIds={issue.assignees.map((a) => a.id)}
+              onToggle={(userId) => {
+                const current = issue.assignees.map((a) => a.id);
+                patch.mutate({
+                  ...patchTarget,
+                  assignee_ids: current.includes(userId)
+                    ? current.filter((id) => id !== userId)
+                    : [...current, userId],
+                });
+              }}
+              trigger={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Edit assignees"
+                >
+                  <PencilIcon className="size-3.5" />
+                </Button>
+              }
+            />
+          )
+        }
+      >
+        {issue.assignees.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {issue.assignees.map((user) => (
+              <UserChip key={user.id} user={user} />
+            ))}
+          </div>
+        )}
+      </SidebarSection>
+
       <BlocksSection slug={slug} issue={issue} trashed={trashed} />
 
-      <section className="space-y-2">
-        <h3 className="text-xs font-medium text-muted-foreground uppercase">
-          Labels
-        </h3>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <LabelChips labels={issue.labels} truncate />
-        </div>
-        {!trashed && (
-          <LabelPicker
-            allLabels={allLabels}
-            selected={issue.labels}
-            onToggle={(label) => {
-              const current = issue.labels.map((l) => l.id);
-              patch.mutate({
-                ...patchTarget,
-                label_ids: current.includes(label.id)
-                  ? current.filter((id) => id !== label.id)
-                  : [...current, label.id],
-              });
-            }}
-            onCreate={canCreateLabels ? createLabel : undefined}
-            trigger={
-              <Button variant="outline" size="sm">
-                Edit labels
-              </Button>
-            }
-          />
-        )}
-      </section>
+      <MuteMenu slug={slug} issueNumber={issue.number} />
 
-      <section className="space-y-2">
-        <h3 className="text-xs font-medium text-muted-foreground uppercase">
-          Assignees
-        </h3>
-        <div className="flex flex-wrap gap-2">
-          {issue.assignees.map((user) => (
-            <UserChip key={user.id} user={user} />
-          ))}
-        </div>
-        {!trashed && (
-          <AssigneePicker
-            members={members}
-            selectedIds={issue.assignees.map((a) => a.id)}
-            onToggle={(userId) => {
-              const current = issue.assignees.map((a) => a.id);
-              patch.mutate({
-                ...patchTarget,
-                assignee_ids: current.includes(userId)
-                  ? current.filter((id) => id !== userId)
-                  : [...current, userId],
-              });
-            }}
-            trigger={
-              <Button variant="outline" size="sm">
-                Edit assignees
-              </Button>
-            }
-          />
-        )}
-      </section>
-
-      {/* Next to Latest spec, because both are "the files on this card", and
-          above it so the insertion point stays clear of Notifications
-          (T-372), which sits between the spec section and the metadata. */}
-      <AttachmentSidebarSection slug={slug} issueNumber={issue.number} />
-
-      {/* Placement per the T-63 verdict: after Assignees, verdict-free. */}
       <SpecSidebarSection slug={slug} issueNumber={issue.number} />
 
-      <MuteMenu slug={slug} issueNumber={issue.number} />
+      <AttachmentSidebarSection slug={slug} issueNumber={issue.number} />
 
       <MetadataSection slug={slug} issueNumber={issue.number} />
 

@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import type { SpecReviewStatus } from "@todou/shared";
 import { ArrowDownIcon, BookOpenTextIcon, FileTextIcon } from "lucide-react";
 import { specVersionStatsQuery, useIssueSpec } from "@/api/spec.ts";
+import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
 import {
   DiffstatBar,
   StatNumbers,
@@ -146,15 +147,37 @@ export function SpecSidebarSection({
   if (!spec.data) return null;
   const byPath = new Map(stats.data?.map((s) => [s.path, s]) ?? []);
   const params = { slug, number: String(issueNumber) };
+  const heading = (
+    <>
+      Latest spec{" "}
+      <span className="font-mono normal-case">
+        v{spec.data.current_version}
+      </span>
+    </>
+  );
 
   return (
-    <section className="space-y-2" data-testid="spec-sidebar">
-      <h3 className="text-xs font-medium text-muted-foreground uppercase">
-        Latest spec{" "}
-        <span className="font-mono normal-case">
-          v{spec.data.current_version}
-        </span>
-      </h3>
+    <SidebarSection
+      name="spec"
+      testId="spec-sidebar"
+      title={
+        latest.data ? (
+          <Link
+            to="/projects/$slug/issues/$number"
+            params={params}
+            hash={eventAnchor(latest.data.eventId)}
+            hashScrollIntoView={false}
+            title="jump to the latest push"
+          >
+            {heading}
+          </Link>
+        ) : (
+          // No push to land on yet, so the title is text — the same reason the
+          // badge below drops its link.
+          heading
+        )
+      }
+    >
       {latest.data ? (
         <Link
           to="/projects/$slug/issues/$number"
@@ -199,6 +222,6 @@ export function SpecSidebarSection({
       >
         Read &amp; review →
       </Link>
-    </section>
+    </SidebarSection>
   );
 }

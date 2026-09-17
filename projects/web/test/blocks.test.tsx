@@ -160,8 +160,11 @@ describe("BlocksSection (T-377)", () => {
       />,
       clientAs("reader"),
     );
+    // The heading triggers, by the names they actually carry: querying the
+    // old /^Add$/ would pass here for the wrong reason — nothing answers to
+    // it any more — and stop testing who may edit.
     await waitFor(() =>
-      expect(reader.queryByRole("button", { name: /^Add$/ })).toBeNull(),
+      expect(reader.queryByRole("button", { name: /^Add a block/ })).toBeNull(),
     );
 
     const trashed = renderWithProviders(
@@ -169,7 +172,9 @@ describe("BlocksSection (T-377)", () => {
       clientAs("writer"),
     );
     await waitFor(() =>
-      expect(trashed.queryByRole("button", { name: /^Add$/ })).toBeNull(),
+      expect(
+        trashed.queryByRole("button", { name: /^Add a block/ }),
+      ).toBeNull(),
     );
   });
 
@@ -181,8 +186,10 @@ describe("BlocksSection (T-377)", () => {
       <BlocksSection slug="p" issue={issue({})} trashed={false} />,
       clientAs("writer"),
     );
-    const sections = await view.findAllByRole("button", { name: /^Add$/ });
-    fireEvent.click(sections[0] as HTMLElement);
+    const opener = await view.findByRole("button", {
+      name: "Add a blocked by entry",
+    });
+    fireEvent.click(opener);
     const input = await view.findByPlaceholderText("#12 or other-project#12");
     fireEvent.change(input, { target: { value: "other#31" } });
     fireEvent.keyDown(input, { key: "Enter" });

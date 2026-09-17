@@ -1,9 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
+import { PencilIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { groupMetadata, issueMetadataQuery } from "@/api/metadata.ts";
 import { useCan } from "@/api/queries.ts";
 import { MetadataDialog } from "@/components/issue/metadata-dialog.tsx";
+import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
@@ -36,8 +39,8 @@ export function compactAge(iso: string, now: number = Date.now()): string {
  * Every line leads to the one dialog rather than to a filtered view of its
  * own namespace — these lines are a summary, not navigation.
  *
- * An empty card shows `—` rather than hiding the section, so "this card has
- * none" and "this feature does not exist" stay tellable apart.
+ * An empty card keeps the section, heading and all, rather than hiding it, so
+ * "this card has none" and "this feature does not exist" stay tellable apart.
  */
 export function MetadataSection({
   slug,
@@ -47,67 +50,82 @@ export function MetadataSection({
   issueNumber: number;
 }) {
   const [open, setOpen] = useState(false);
-  const trigger = useRef<HTMLButtonElement>(null);
+  // Two controls open the same dialog, so the one to hand focus back to is
+  // whichever was clicked, not a ref bound to either of them.
+  const opener = useRef<HTMLButtonElement>(null);
   const metadata = useQuery(issueMetadataQuery(slug, issueNumber));
   const canWrite = useCan(slug, "metadata.write");
   const groups = groupMetadata(metadata.data?.entries ?? []);
-  // `—` on this surface means "this card has none", so it renders only
-  // once the query has said so — while in flight the section waits, and
+  const loading = !metadata.isSuccess && !metadata.isError;
+  const failed = metadata.isError && groups.length === 0;
+  // A bare section on this surface means "this card has none", so it renders
+  // only once the query has said so — while in flight the section waits, and
   // a failure says itself instead (T-365).
   const empty = metadata.isSuccess && groups.length === 0;
+  // The same gate the summary block below carries, because this button is a
+  // second door into the same dialog: an unsettled or failed read offers no
+  // way in, since a write made past one would be blind (T-365, T-376).
+  const canOpen = !loading && !failed && (canWrite || groups.length > 0);
 
   return (
-    <section className="space-y-2" data-testid="metadata-sidebar">
-      <h3 className="text-xs font-medium text-muted-foreground uppercase">
-        Metadata
-      </h3>
-      {!metadata.isSuccess && !metadata.isError ? (
+    <SidebarSection
+      name="metadata"
+      title="Metadata"
+      testId="metadata-sidebar"
+      action={
+        canOpen && (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Edit metadata"
+            onClick={(event) => {
+              opener.current = event.currentTarget;
+              setOpen(true);
+            }}
+          >
+            <PencilIcon className="size-3.5" />
+          </Button>
+        )
+      }
+    >
+      {loading ? (
         <Skeleton className="h-4 w-16" data-testid="metadata-loading" />
-      ) : metadata.isError && groups.length === 0 ? (
+      ) : failed ? (
         // The exit for a state that will not heal itself: refetch this one
-        // query, and the entry rule below comes back on its own. A writer
-        // does not get `metadata-open` here — writing past a failed read is
-        // a blind write, and the reader re-establishes the read first.
+        // query, and both ways into the dialog come back on their own.
         <LoadFailure
           message="Failed to load metadata."
           detail={metadata.error.message}
           onRetry={() => metadata.refetch()}
           retrying={metadata.isFetching}
         />
-      ) : empty && !canWrite ? (
-        <p className="text-sm text-muted-foreground">—</p>
-      ) : (
+      ) : empty ? null : (
         <button
           type="button"
-          ref={trigger}
           data-testid="metadata-open"
-          onClick={() => setOpen(true)}
+          onClick={(event) => {
+            opener.current = event.currentTarget;
+            setOpen(true);
+          }}
           className="w-full space-y-1 rounded-md px-1.5 py-1 text-left hover:bg-muted"
           title="Show every key"
         >
-          {empty ? (
-            <span className="text-sm text-muted-foreground">—</span>
-          ) : (
-            groups.map((group) => (
-              <span
-                key={group.namespace}
-                className="flex items-baseline gap-1.5"
-              >
-                <span className="truncate font-mono text-xs">
-                  {group.namespace}
-                </span>
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {group.entries.length}
-                </span>
-                <span
-                  className="ml-auto shrink-0 text-[10.5px] text-muted-foreground"
-                  title={group.updatedAt}
-                >
-                  {compactAge(group.updatedAt)}
-                </span>
+          {groups.map((group) => (
+            <span key={group.namespace} className="flex items-baseline gap-1.5">
+              <span className="truncate font-mono text-xs">
+                {group.namespace}
               </span>
-            ))
-          )}
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {group.entries.length}
+              </span>
+              <span
+                className="ml-auto shrink-0 text-[10.5px] text-muted-foreground"
+                title={group.updatedAt}
+              >
+                {compactAge(group.updatedAt)}
+              </span>
+            </span>
+          ))}
         </button>
       )}
       <MetadataDialog
@@ -115,8 +133,8 @@ export function MetadataSection({
         issueNumber={issueNumber}
         open={open}
         onOpenChange={setOpen}
-        restoreFocusTo={trigger}
+        restoreFocusTo={opener}
       />
-    </section>
+    </SidebarSection>
   );
 }
