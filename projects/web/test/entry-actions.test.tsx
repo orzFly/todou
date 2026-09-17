@@ -90,12 +90,20 @@ function renderComment(
 
 type View = ReturnType<typeof renderComment>;
 
-/** Radix opens on pointerdown, which is also when the selection is read. */
-async function openMenu(view: View) {
+/**
+ * Radix opens on pointerdown, which is also when the selection is read.
+ *
+ * `collapseSelection` supplies what a real browser does on that press and
+ * happy-dom does not: the default action drops the selection. Without it the
+ * menu's fallback read finds the selection still standing, and the capture on
+ * pointerdown goes untested.
+ */
+async function openMenu(view: View, { collapseSelection = false } = {}) {
   const trigger = await waitFor(() =>
     within(view.container).getByRole("button", { name: "comment actions" }),
   );
   fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+  if (collapseSelection) window.getSelection()?.removeAllRanges();
   await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
   return trigger;
 }
@@ -108,6 +116,20 @@ function itemNames(): string[] {
 
 function menuItem(name: string): HTMLElement {
   return within(screen.getByRole("menu")).getByRole("menuitem", { name });
+}
+
+/** Select the rendered body's second block, source lines 3-3. */
+async function selectSecondParagraph(view: View) {
+  const second = await waitFor(() => {
+    const blocks = view.container.querySelectorAll("p[data-loc]");
+    if (blocks.length < 2) throw new Error("body not stamped yet");
+    return blocks[1] as HTMLElement;
+  });
+  const range = document.createRange();
+  range.selectNodeContents(second);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
 }
 
 let writeText: ReturnType<typeof vi.fn>;
@@ -204,18 +226,21 @@ describe("EntryActionsMenu on a comment", () => {
   it("quotes only the selected blocks, in their source form", async () => {
     const onQuote = vi.fn();
     const view = renderComment({ onQuote });
-    const second = await waitFor(() => {
-      const blocks = view.container.querySelectorAll("p[data-loc]");
-      if (blocks.length < 2) throw new Error("body not stamped yet");
-      return blocks[1] as HTMLElement;
-    });
-    const range = document.createRange();
-    range.selectNodeContents(second);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
+    await selectSecondParagraph(view);
 
     await openMenu(view);
+    fireEvent.click(menuItem("Quote reply"));
+    await waitFor(() =>
+      expect(onQuote).toHaveBeenCalledExactlyOnceWith("Second **paragraph**."),
+    );
+  });
+
+  it("keeps the selection the press underneath it drops", async () => {
+    const onQuote = vi.fn();
+    const view = renderComment({ onQuote });
+    await selectSecondParagraph(view);
+
+    await openMenu(view, { collapseSelection: true });
     fireEvent.click(menuItem("Quote reply"));
     await waitFor(() =>
       expect(onQuote).toHaveBeenCalledExactlyOnceWith("Second **paragraph**."),
