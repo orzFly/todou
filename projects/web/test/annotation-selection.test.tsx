@@ -1,5 +1,11 @@
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  waitFor,
+} from "@testing-library/react";
 import type { IssueListItem } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
@@ -9,6 +15,7 @@ import {
   AnnotatedMarkdown,
   selectionEndpoints,
 } from "../src/components/spec/annotated-markdown.tsx";
+import { POINTER_FINE } from "../src/lib/use-media-query.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 /** Render, select `pick`'s range, and return the floating comment button. */
@@ -51,10 +58,22 @@ async function stageSelection(
   const selection = window.getSelection();
   if (!selection) throw new Error("no selection support");
   selection.removeAllRanges();
+  // Applying the range is the whole trigger: `selectionchange` is what the
+  // component listens to, and no mouse event is involved (T-384).
   selection.addRange(range);
-  fireEvent.mouseUp(container);
   const button = await view.findByText(/Comment L/);
   return { view, container, onStage, button };
+}
+
+/**
+ * Let the rAF-batched recompute run and React commit it. Assertions that
+ * something is *still* on screen are worthless without it: they would pass
+ * in the frame before the component has looked at the selection at all.
+ */
+async function settle(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+  });
 }
 
 // T-60: the spec annotation flow died in two places — the comment button's
@@ -124,16 +143,16 @@ describe("AnnotatedMarkdown floating button (T-60 root cause B)", () => {
     });
 
     selectParagraph(container);
-    fireEvent.mouseUp(container);
     const button = await view.findByText(/Comment L1/);
 
-    // The real browser clears the selection on the button's mousedown
-    // (prevented in production by preventDefault, but jsdom runs no such
-    // default anyway); what must hold is that the button's own mouse
-    // events never re-enter the container handler and unmount it.
+    // The real browser clears the selection on the button's press
+    // (prevented in production by preventDefault, but happy-dom runs no
+    // such default anyway); what must hold is that the button's own press
+    // never feeds the trigger and unmounts it.
+    fireEvent.pointerDown(button);
     window.getSelection()?.removeAllRanges();
-    fireEvent.mouseDown(button);
-    fireEvent.mouseUp(button);
+    fireEvent.pointerUp(button);
+    await settle();
     expect(view.queryByText(/Comment L1/)).not.toBeNull();
 
     fireEvent.click(button);
@@ -145,7 +164,7 @@ describe("AnnotatedMarkdown floating button (T-60 root cause B)", () => {
     });
   });
 
-  it("still clears the button on a genuine collapsed-selection mouseup", async () => {
+  it("still clears the button once the selection genuinely goes", async () => {
     const view = renderWithProviders(
       <AnnotatedMarkdown
         slug="p"
@@ -165,13 +184,11 @@ describe("AnnotatedMarkdown floating button (T-60 root cause B)", () => {
     });
 
     selectParagraph(container);
-    fireEvent.mouseUp(container);
     await view.findByText(/Comment L1/);
 
-    // A click elsewhere in the document collapses the selection; the
-    // mouseup originates on markdown content, so the button must go.
+    // A click elsewhere in the document collapses the selection, and
+    // nothing at all is dispatched inside the container.
     window.getSelection()?.removeAllRanges();
-    fireEvent.mouseUp(container.querySelector("p[data-loc]") as Element);
     await waitFor(() => {
       expect(view.queryByText(/Comment L1/)).toBeNull();
     });
@@ -265,7 +282,6 @@ describe("AnnotatedMarkdown column anchors (T-142)", () => {
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
-    fireEvent.mouseUp(container);
     fireEvent.click(await view.findByText(/Comment L1/));
     expect(onStage).toHaveBeenCalledWith({
       lineStart: 1,
@@ -399,10 +415,8 @@ describe("AnnotatedMarkdown line-end columns (T-169)", () => {
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
-    fireEvent.mouseUp(container);
-    await waitFor(() => {
-      expect(view.queryByText(/Comment L/)).toBeNull();
-    });
+    await settle();
+    expect(view.queryByText(/Comment L/)).toBeNull();
   });
 });
 
@@ -588,6 +602,9 @@ describe("selection endpoints across a shadow boundary (T-164)", () => {
       isCollapsed: over.isCollapsed,
       rangeCount: 1,
       getRangeAt: () => range,
+      // What the trigger reads to tell an empty selection from a live one,
+      // and the legacy collapse is exactly the lie it must not believe.
+      toString: () => "selected",
       ...(composed === undefined
         ? {}
         : {
@@ -698,7 +715,243 @@ describe("selection endpoints across a shadow boundary (T-164)", () => {
         ],
       }),
     );
-    fireEvent.mouseUp(container);
-    expect(await view.findByText(/Comment L1–3/)).not.toBeNull();
+    fireEvent(document, new Event("selectionchange"));
+    // The composed endpoints are two ordinary text nodes, so the anchor
+    // narrows to the columns they cover — the legacy collapse that used to
+    // decide this had no columns to give.
+    expect(await view.findByText(/Comment L1:1–L3:6/)).not.toBeNull();
+  });
+});
+
+// T-384: the entry hung off one `mouseup` on the container, so it appeared
+// only for a mouse drag that both began and ended inside the prose. Every
+// case here is a path that event never saw — and the touchscreen half is
+// the reason the button did not exist there at all: a long press is a
+// selection gesture, for which no compatibility mouse event is synthesised.
+describe("AnnotatedMarkdown selection triggers (T-384)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  // Three paragraphs, on source lines 1, 3 and 5.
+  const BODY = "alpha one\n\nbeta two\n\ngamma three\n";
+
+  async function mount(body = BODY) {
+    const onStage = vi.fn();
+    const view = renderWithProviders(
+      <AnnotatedMarkdown
+        slug="p"
+        issueNumber={1}
+        body={body}
+        annotations={[]}
+        onStage={onStage}
+        onEditDraft={() => {}}
+        onRemoveDraft={() => {}}
+        onResolve={() => {}}
+      />,
+    );
+    const container = await waitFor(() => {
+      const el = view.getByTestId("annotated-markdown");
+      if (!el.querySelector("p[data-loc]")) throw new Error("not rendered");
+      return el;
+    });
+    return { view, container, onStage };
+  }
+
+  /** Put a range on the document — all a keyboard selection ever does. */
+  function select(start: Node, from: number, end: Node, to: number): void {
+    const range = document.createRange();
+    range.setStart(start, from);
+    range.setEnd(end, to);
+    const selection = window.getSelection();
+    if (!selection) throw new Error("no selection support");
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function textOf(container: HTMLElement, nth: number): Node {
+    const node = container.querySelectorAll("p[data-loc]")[nth]?.firstChild;
+    if (!node) throw new Error(`no paragraph ${nth}`);
+    return node;
+  }
+
+  /** A device whose primary pointer is a finger. */
+  function stubCoarsePointer(): void {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query !== POINTER_FINE,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+  }
+
+  it("offers the entry for a keyboard selection, with no pointer event at all", async () => {
+    const { view, container } = await mount();
+    select(textOf(container, 0), 0, textOf(container, 0), 5);
+    expect(await view.findByText(/Comment L1:1–5/)).not.toBeNull();
+  });
+
+  it("offers the entry for a drag released outside the container", async () => {
+    const { view, container } = await mount();
+    const prose = textOf(container, 0);
+    fireEvent.pointerDown(prose.parentElement as Element);
+    select(prose, 0, textOf(container, 2), 5);
+    await settle();
+    // Mid-drag the entry would sit under the words still being selected.
+    expect(view.queryByText(/Comment L/)).toBeNull();
+    fireEvent.pointerUp(document.body);
+    expect(await view.findByText(/Comment L1:1–L5:5/)).not.toBeNull();
+  });
+
+  it("clears the entry when the selection is emptied anywhere on the page", async () => {
+    const { view, container } = await mount();
+    select(textOf(container, 0), 0, textOf(container, 0), 5);
+    await view.findByText(/Comment L/);
+    window.getSelection()?.removeAllRanges();
+    await settle();
+    expect(view.queryByText(/Comment L/)).toBeNull();
+  });
+
+  it("keeps its anchor while the entry itself is pressed (T-60)", async () => {
+    const { view, container, onStage } = await mount();
+    select(textOf(container, 1), 0, textOf(container, 1), 4);
+    const button = await view.findByText(/Comment L3:1–4/);
+    // The press is what clears the selection on a touchscreen, and the
+    // click that stages has not happened yet.
+    fireEvent.pointerDown(button);
+    window.getSelection()?.removeAllRanges();
+    await settle();
+    expect(view.queryByText(/Comment L3:1–4/)).not.toBeNull();
+    fireEvent.click(button);
+    expect(onStage).toHaveBeenCalledWith({
+      lineStart: 3,
+      lineEnd: 3,
+      colStart: 1,
+      colEnd: 4,
+    });
+  });
+
+  it("drops the anchor when a press on the entry is followed by no click", async () => {
+    const { view, container } = await mount();
+    select(textOf(container, 1), 0, textOf(container, 1), 4);
+    const button = await view.findByText(/Comment L3/);
+    // Installed before the press, which is what arms the fallback timer.
+    vi.useFakeTimers();
+    fireEvent.pointerDown(button);
+    window.getSelection()?.removeAllRanges();
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    expect(view.queryByText(/Comment L3/)).not.toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(view.queryByText(/Comment L3/)).toBeNull();
+  });
+
+  it("recomputes nothing mid-drag, and exactly once when the pointer lifts", async () => {
+    const { view, container } = await mount();
+    const prose = textOf(container, 0);
+    const range = document.createRange();
+    range.setStart(prose, 0);
+    range.setEnd(prose, 5);
+    const composed = vi.fn(() => [
+      {
+        startContainer: prose,
+        startOffset: 0,
+        endContainer: prose,
+        endOffset: 5,
+        collapsed: false,
+      },
+    ]);
+    vi.spyOn(window, "getSelection").mockReturnValue({
+      anchorNode: prose,
+      anchorOffset: 0,
+      focusNode: prose,
+      focusOffset: 5,
+      isCollapsed: false,
+      rangeCount: 1,
+      getRangeAt: () => range,
+      toString: () => "alpha",
+      getComposedRanges: composed,
+    } as unknown as Selection);
+
+    fireEvent.pointerDown(prose.parentElement as Element);
+    for (let i = 0; i < 3; i++) {
+      fireEvent(document, new Event("selectionchange"));
+    }
+    await settle();
+    // Reading the endpoints walks every open shadow root under the
+    // container; a drag delivers `selectionchange` every frame.
+    expect(composed).not.toHaveBeenCalled();
+    expect(view.queryByText(/Comment L/)).toBeNull();
+
+    fireEvent.pointerUp(document.body);
+    await settle();
+    expect(composed).toHaveBeenCalledTimes(1);
+    expect(view.queryByText(/Comment L/)).not.toBeNull();
+  });
+
+  it("clamps an endpoint past the end of the file to the last block", async () => {
+    const { view, container } = await mount();
+    // What a drag off the end of the prose lands in: the next section of
+    // the page, which carries no source lines of its own.
+    const below = document.createElement("p");
+    below.textContent = "Comments without a place in v3";
+    document.body.append(below);
+    try {
+      select(textOf(container, 0), 0, below.firstChild as Node, 8);
+      expect(await view.findByText(/Comment L1–5/)).not.toBeNull();
+    } finally {
+      below.remove();
+    }
+  });
+
+  it("clamps an endpoint above the file to the first block", async () => {
+    const above = document.createElement("p");
+    above.textContent = "page header";
+    document.body.prepend(above);
+    try {
+      const { view, container } = await mount();
+      select(above.firstChild as Node, 0, textOf(container, 1), 4);
+      expect(await view.findByText(/Comment L1–3/)).not.toBeNull();
+    } finally {
+      above.remove();
+    }
+  });
+
+  it("stages the same anchor from the touch action bar as from the rail button", async () => {
+    const desktop = await mount();
+    select(textOf(desktop.container, 1), 0, textOf(desktop.container, 1), 4);
+    const rail = await desktop.view.findByText(/Comment L3:1–4/);
+    expect(rail.closest('[data-testid="annotation-action-bar"]')).toBeNull();
+    fireEvent.click(rail);
+    cleanup();
+
+    stubCoarsePointer();
+    const touch = await mount();
+    select(textOf(touch.container, 1), 0, textOf(touch.container, 1), 4);
+    const bar = await touch.view.findByText(/Comment L3:1–4/);
+    expect(bar.closest('[data-testid="annotation-action-bar"]')).not.toBeNull();
+    fireEvent.click(bar);
+
+    expect(touch.onStage.mock.calls).toEqual(desktop.onStage.mock.calls);
+    expect(touch.onStage).toHaveBeenCalledWith({
+      lineStart: 3,
+      lineEnd: 3,
+      colStart: 1,
+      colEnd: 4,
+    });
+  });
+
+  it("offers the touch action bar with no pointer event at all", async () => {
+    // Dragging the platform's own selection handles: the page is told the
+    // selection moved and nothing else.
+    stubCoarsePointer();
+    const { view, container } = await mount();
+    select(textOf(container, 0), 0, textOf(container, 0), 5);
+    expect(await view.findByTestId("annotation-action-bar")).not.toBeNull();
   });
 });
