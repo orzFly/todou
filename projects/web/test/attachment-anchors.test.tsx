@@ -125,6 +125,27 @@ describe("timeline attached-event link", () => {
       ]);
     });
   });
+
+  it("types the icon from the filename when the query cannot (T-401)", async () => {
+    const view = renderWithProviders(
+      <AttachmentEventLink
+        slug="demo"
+        issueNumber={7}
+        attachmentId={9}
+        filename="bundle.zip"
+      />,
+    );
+    await waitFor(() => {
+      const icon = view.container.querySelector("a svg");
+      expect(icon).not.toBeNull();
+      // Whole-token, not substring: `lucide-file-archive` contains
+      // `lucide-file`, so the fallback icon would satisfy a looser test.
+      expect(icon?.classList.contains("lucide-file-archive")).toBe(true);
+    });
+    expect(hrefs(view.container)).toEqual([
+      "/api/projects/demo/attachments/9/download/bundle.zip",
+    ]);
+  });
 });
 
 describe("markdown rich link", () => {

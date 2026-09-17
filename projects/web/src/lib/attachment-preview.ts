@@ -1,7 +1,9 @@
 /**
- * Preview-eligibility rules for attachments. Pure module (no React) so the
- * markdown pipeline, attachment lists, and tests can all share one answer
- * to "what happens when this file is clicked/embedded".
+ * What an attachment is, and what clicking it does: preview-eligibility
+ * rules, plus the coarse kind an icon is drawn from. Pure module (no React)
+ * so the markdown pipeline, attachment lists, icons and tests all share one
+ * answer — `hasGenericType`, "a declared content type outranks the
+ * filename", is the rule a second copy elsewhere would fork.
  */
 
 /**
@@ -104,6 +106,64 @@ export function isHtmlDocument(attachment: {
   const type = attachment.content_type ?? "";
   if (type === "text/html" || type === "application/xhtml+xml") return true;
   return hasGenericType(type) && /\.(html?|xhtml)$/i.test(attachment.filename);
+}
+
+// Archive types as the CLI, the browser and the common upload tools spell
+// them; the same format arrives under several names depending on which one
+// did the labelling.
+const ARCHIVE_TYPES = new Set([
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/gzip",
+  "application/x-gzip",
+  "application/x-tar",
+  "application/x-7z-compressed",
+  "application/vnd.rar",
+  "application/x-rar-compressed",
+  "application/x-bzip2",
+  "application/x-xz",
+  "application/zstd",
+]);
+
+const ARCHIVE_EXTENSION = /\.(zip|tar|gz|tgz|bz2|tbz|tbz2|xz|txz|7z|rar|zst)$/i;
+
+const AUDIO_EXTENSION = /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|wma|aif|aiff)$/i;
+
+/**
+ * `ts` is deliberately missing: it is MPEG transport stream and TypeScript
+ * both, and TEXT_EXTENSION claims it. A source file the CLI uploaded as
+ * application/octet-stream must not come back as a video.
+ */
+const VIDEO_EXTENSION = /\.(mp4|m4v|webm|mov|mkv|avi|wmv|flv|mpg|mpeg)$/i;
+
+/** Archive by declared type, or by filename when the type is generic. */
+export function isArchiveFile(attachment: {
+  filename: string;
+  content_type?: string;
+}): boolean {
+  const type = attachment.content_type ?? "";
+  if (ARCHIVE_TYPES.has(type)) return true;
+  return hasGenericType(type) && ARCHIVE_EXTENSION.test(attachment.filename);
+}
+
+/** Audio by declared type, or by filename when the type is generic. */
+export function isAudioFile(attachment: {
+  filename: string;
+  content_type?: string;
+}): boolean {
+  const type = attachment.content_type ?? "";
+  if (type.startsWith("audio/")) return true;
+  return hasGenericType(type) && AUDIO_EXTENSION.test(attachment.filename);
+}
+
+/** Video by declared type, or by filename when the type is generic. */
+export function isVideoFile(attachment: {
+  filename: string;
+  content_type?: string;
+}): boolean {
+  const type = attachment.content_type ?? "";
+  if (type.startsWith("video/")) return true;
+  return hasGenericType(type) && VIDEO_EXTENSION.test(attachment.filename);
 }
 
 /**

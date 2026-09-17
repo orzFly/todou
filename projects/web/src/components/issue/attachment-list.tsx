@@ -4,7 +4,10 @@ import {
   ChevronDownIcon,
   ChevronUpIcon,
   DownloadIcon,
+  FileArchiveIcon,
+  FileHeadphoneIcon,
   FileIcon,
+  FilePlayIcon,
   FileTextIcon,
   ImageIcon,
   PaperclipIcon,
@@ -26,8 +29,11 @@ import {
 } from "@/components/shared/rich-chip.ts";
 import {
   formatSize,
+  isArchiveFile,
+  isAudioFile,
   isHtmlDocument,
   isTextDocument,
+  isVideoFile,
   type PreviewTarget,
   previewKind,
 } from "@/lib/attachment-preview.ts";
@@ -39,6 +45,17 @@ function isPlainLeftClick(e: MouseEvent): boolean {
   return !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
 }
 
+/**
+ * One table behind every attachment icon on the page — body list, sidebar,
+ * markdown rich link and timeline row — so a file cannot wear two hats in
+ * one viewport.
+ *
+ * The three binary kinds are tested last, after the three that were here
+ * first: only files that fall through to `FileIcon` today can move. `.ts` is
+ * why that ordering is load-bearing rather than merely cautious — it is a
+ * TypeScript source and an MPEG transport stream, and `isTextDocument` has
+ * to get the first look at it.
+ */
 function attachmentIcon(attachment: {
   filename: string;
   content_type?: string;
@@ -46,6 +63,13 @@ function attachmentIcon(attachment: {
   if (previewKind(attachment) === "image") return ImageIcon;
   if (isHtmlDocument(attachment)) return AppWindowIcon;
   if (isTextDocument(attachment)) return FileTextIcon;
+  if (isArchiveFile(attachment)) return FileArchiveIcon;
+  // `FileHeadphone` and `FilePlay` are lucide's current names for the audio
+  // and video file glyphs; `FileAudio` and `FileVideo` still import, as
+  // aliases, but render under the new names — which is what the class in the
+  // DOM says, and what the tests therefore have to match.
+  if (isAudioFile(attachment)) return FileHeadphoneIcon;
+  if (isVideoFile(attachment)) return FilePlayIcon;
   return FileIcon;
 }
 
@@ -281,6 +305,12 @@ export function AttachmentSidebarSection({
  * Inline filename link for "attached …" timeline events. The event payload
  * carries only id/filename, so content type and canonical URL come from the
  * issue's attachments query (already cached by AttachmentList).
+ *
+ * Plain on purpose (T-371): no chip border and no `title`, the latter
+ * because `ListGroup` hangs the row's exact timestamp off the `<li>` and a
+ * `title` here would cover it over the filename. The type icon is the one
+ * thing it borrows from the rich link (T-401), so the row reads like the
+ * `referenced` rows beside it.
  */
 export function AttachmentEventLink({
   slug,
@@ -299,6 +329,9 @@ export function AttachmentEventLink({
   const url = attachment
     ? attachmentAnchorHref(attachment)
     : attachmentHref(slug, attachmentId, filename);
+  // The filename alone already answers most types, so the icon is right on
+  // the first frame instead of changing once the query lands.
+  const Icon = attachmentIcon(attachment ?? { filename });
 
   return (
     <>
@@ -322,6 +355,12 @@ export function AttachmentEventLink({
           }
         }}
       >
+        {/* Written out rather than shared with the `IssueLink` beside it:
+            `rich-chip.ts` is fenced off from timeline rows (T-359), and a
+            constant read from both ends would turn "the two row kinds line
+            up" into an assertion that cannot fail. The test pins the two
+            literals equal instead. */}
+        <Icon aria-hidden className="mr-0.5 inline size-3.5 align-middle" />
         {filename}
       </a>
       <AttachmentViewerDialog

@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  isArchiveFile,
+  isAudioFile,
   isHtmlDocument,
   isMarkdownDocument,
   isPreviewableImage,
   isTextDocument,
+  isVideoFile,
   opensInBrowserTab,
   previewKind,
   TEXT_PREVIEW_MAX_BYTES,
@@ -134,6 +137,65 @@ describe("isHtmlDocument / html previews (T-58)", () => {
         "/api/projects/p/attachments/7/download/download.html",
       ),
     ).toBe("/api/projects/p/attachments/7/view/download.html");
+  });
+});
+
+describe("isArchiveFile / isAudioFile / isVideoFile (T-401)", () => {
+  it("trusts a declared archive, audio or video type", () => {
+    expect(isArchiveFile(attachment("bundle.zip", "application/zip"))).toBe(
+      true,
+    );
+    expect(isArchiveFile(attachment("src.tgz", "application/gzip"))).toBe(true);
+    expect(isArchiveFile(attachment("old.rar", "application/vnd.rar"))).toBe(
+      true,
+    );
+    expect(isAudioFile(attachment("take.m4a", "audio/mp4"))).toBe(true);
+    expect(isVideoFile(attachment("clip.mp4", "video/mp4"))).toBe(true);
+  });
+
+  it("falls back to the filename for generic types (CLI uploads)", () => {
+    expect(
+      isArchiveFile(attachment("bundle.zip", "application/octet-stream")),
+    ).toBe(true);
+    expect(isArchiveFile(attachment("dump.7z", ""))).toBe(true);
+    expect(
+      isAudioFile(attachment("take.flac", "application/octet-stream")),
+    ).toBe(true);
+    expect(
+      isVideoFile(attachment("clip.mp4", "application/octet-stream")),
+    ).toBe(true);
+    expect(isVideoFile(attachment("CLIP.MOV", ""))).toBe(true);
+  });
+
+  it("does not let the extension override a declared type", () => {
+    // Same file, mislabelled: every new predicate defers, and the declared
+    // type is what decides — the gate the extension tables sit behind.
+    const mislabelled = attachment("clip.mp4", "text/plain");
+    expect(isVideoFile(mislabelled)).toBe(false);
+    expect(isAudioFile(mislabelled)).toBe(false);
+    expect(isArchiveFile(mislabelled)).toBe(false);
+    expect(isTextDocument(mislabelled)).toBe(true);
+    expect(isArchiveFile(attachment("fake.zip", "text/plain"))).toBe(false);
+  });
+
+  it("leaves the files the older tiers already claimed alone", () => {
+    for (const file of [
+      attachment("shot.png", "image/png"),
+      attachment("demo.html", "text/html"),
+      attachment("main.rs", "application/octet-stream"),
+      attachment("notes.md", ""),
+      // TypeScript source, not MPEG transport stream.
+      attachment("index.ts", "application/octet-stream"),
+    ]) {
+      expect(isArchiveFile(file)).toBe(false);
+      expect(isAudioFile(file)).toBe(false);
+      expect(isVideoFile(file)).toBe(false);
+    }
+    expect(isPreviewableImage(attachment("shot.png", "image/png"))).toBe(true);
+    expect(isHtmlDocument(attachment("demo.html", "text/html"))).toBe(true);
+    expect(
+      isTextDocument(attachment("index.ts", "application/octet-stream")),
+    ).toBe(true);
   });
 });
 

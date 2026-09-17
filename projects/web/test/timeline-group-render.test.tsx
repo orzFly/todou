@@ -111,6 +111,26 @@ const move = (from: [number, string], to: [number, string], at: string) =>
     created_at: at,
   });
 
+let nextFileId = 50;
+const file = (filename: string) =>
+  event({
+    event_type: "attachment_added",
+    payload: { attachment: { id: nextFileId++, filename } },
+  });
+
+/**
+ * lucide puts the icon's identity in its own `lucide-*` class and everything
+ * else we asked for beside it, so one split separates "which icon" from
+ * "where it sits". Read off `classList`, never off the joined string:
+ * `lucide-file-text` contains `lucide-file`, and a substring test would let
+ * the fallback icon's assertion pass on a text file.
+ */
+const identityOf = (icon: Element | null | undefined) =>
+  [...(icon?.classList ?? [])].find((c) => c.startsWith("lucide-")) ?? null;
+
+const geometryOf = (icon: Element) =>
+  [...icon.classList].filter((c) => !c.startsWith("lucide")).sort();
+
 const refItem = (number: number, title: string): IssueListItem => ({
   id: number,
   number,
@@ -758,5 +778,121 @@ describe("EventGroup", () => {
     await findByTestId("event-group");
     expect(container.querySelectorAll("svg.lucide-user-minus")).toHaveLength(1);
     expect(container.querySelector("svg.lucide-user-plus")).toBeNull();
+  });
+
+  it("gives every attached row one icon, inside its link (T-401)", async () => {
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="attachments"
+        events={[file("before.png"), file("notes.md")]}
+        slug="p"
+        issueNumber={1}
+      />,
+    );
+    const group = await findByTestId("event-group");
+    const rows = [...group.querySelectorAll("li")];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      // Inside the anchor, so the icon is part of the click target and of
+      // what a copied link visually belongs to.
+      const icons = [...row.querySelectorAll("a svg")];
+      expect(icons).toHaveLength(1);
+      expect(geometryOf(icons[0] as Element)).toEqual([
+        "align-middle",
+        "inline",
+        "mr-0.5",
+        "size-3.5",
+      ]);
+    }
+  });
+
+  it("draws each attached row from its own file type (T-401)", async () => {
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="attachments"
+        events={[
+          file("shot.png"),
+          file("notes.md"),
+          file("bundle.zip"),
+          // The older tiers get the first look: `.ts` is TypeScript here,
+          // not the MPEG transport stream the video tier would claim.
+          file("index.ts"),
+        ]}
+        slug="p"
+        issueNumber={1}
+      />,
+    );
+    const group = await findByTestId("event-group");
+    const rows = [...group.querySelectorAll("li")];
+    expect(rows.map((row) => identityOf(row.querySelector("a svg")))).toEqual([
+      "lucide-image",
+      "lucide-file-text",
+      "lucide-file-archive",
+      "lucide-file-text",
+    ]);
+  });
+
+  it("leaves the paperclip on the attached group's header (T-401)", async () => {
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="attachments"
+        events={[file("shot.png"), file("bundle.zip")]}
+        slug="p"
+        issueNumber={1}
+      />,
+    );
+    const group = await findByTestId("event-group");
+    // The header's own icon slot, ahead of the actor chip and the harness
+    // badge — both of which also draw an svg up there.
+    const headerIcon = group.firstElementChild?.firstElementChild;
+    expect(identityOf(headerIcon?.querySelector("svg"))).toBe(
+      "lucide-paperclip",
+    );
+    // The division of labour: the header says "an attachment event", the
+    // rows say which file. Neither one repeats the other.
+    expect([...group.querySelectorAll("ul li a svg")].map(identityOf)).toEqual([
+      "lucide-image",
+      "lucide-file-archive",
+    ]);
+  });
+
+  it("sits an attached row's icon where a referenced row's sits (T-401)", async () => {
+    const referenced = event({
+      event_type: "referenced",
+      payload: { by_issue: 7 },
+    });
+    const { container } = renderWithProviders(
+      <>
+        <EventGroup
+          family="referenced"
+          events={[referenced]}
+          slug="todou"
+          issueNumber={1}
+        />
+        <EventGroup
+          family="attachments"
+          events={[file("shot.png")]}
+          slug="todou"
+          issueNumber={1}
+        />
+      </>,
+      crossClient([["todou", refItem(7, "Local source")]]),
+    );
+    const rowIconOf = (groupIndex: number) =>
+      waitFor(() => {
+        const groups = container.querySelectorAll(
+          '[data-testid="event-group"]',
+        );
+        expect(groups).toHaveLength(2);
+        const icon = groups[groupIndex]?.querySelector("ul li a svg");
+        expect(icon).not.toBeNull();
+        return geometryOf(icon as Element);
+      });
+    const onReferences = await rowIconOf(0);
+    const onAttachments = await rowIconOf(1);
+    // Two icons carrying no geometry at all would also be "equal", and the
+    // absolute values are pinned one test above.
+    expect(onReferences).not.toHaveLength(0);
+    expect(onAttachments).toEqual(onReferences);
   });
 });
