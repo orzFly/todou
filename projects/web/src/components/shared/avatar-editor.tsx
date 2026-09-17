@@ -164,7 +164,11 @@ export function AvatarEditor({
         if (file) void handleFile(file);
       }}
     >
-      <Avatar size="lg" shape={shape} className="size-16">
+      {/* The box is 40px, and three characters do not always fit it: `text-lg`
+          draws `WWW` 50.7px wide, so `overflow-hidden` is what keeps the
+          widest REFs inside rather than across the row. Measured in Chrome;
+          `REF` is 33.4px and has room to spare. */}
+      <Avatar size="lg" shape={shape} className="overflow-hidden">
         {subject.imageUrl && <AvatarImage src={subject.imageUrl} alt="" />}
         <AvatarFallback className="text-lg">
           {fallback ?? initialsOf(subject.name)}

@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { MemberRole, Project } from "@todou/shared";
+import type { MemberRole, Project, ReferenceDirectory } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { projectQuery } from "../src/api/queries.ts";
+import { referenceDirectoryQuery } from "../src/api/references.ts";
 import { ProjectSection } from "../src/pages/project-settings.tsx";
 
 const PROJECT: Project = {
@@ -14,7 +15,10 @@ const PROJECT: Project = {
   icon_url: null,
 };
 
-function renderSection(viewer_role: MemberRole = "admin") {
+function renderSection(
+  viewer_role: MemberRole = "admin",
+  directory?: ReferenceDirectory,
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -22,6 +26,9 @@ function renderSection(viewer_role: MemberRole = "admin") {
     ...PROJECT,
     viewer_role,
   });
+  if (directory) {
+    client.setQueryData(referenceDirectoryQuery.queryKey, directory);
+  }
   const invalidated: unknown[][] = [];
   const real = client.invalidateQueries.bind(client);
   vi.spyOn(client, "invalidateQueries").mockImplementation((filters) => {
@@ -56,6 +63,33 @@ describe("the project icon editor", () => {
   it("is there for an admin", () => {
     renderSection("admin");
     expect(iconZone()).not.toBeNull();
+  });
+
+  it("draws the same three characters of a long REF that every list row draws", async () => {
+    // The editor is the one face that does not go through `ProjectIcon`, and
+    // it drew the whole of a 20-character REF straight out of its box and
+    // across to the Upload button beside it.
+    renderSection("admin", {
+      entries: [
+        {
+          prefix: "W".repeat(20),
+          slug: "todou",
+          from: "2020-01-01T00:00:00.000Z",
+          to: null,
+        },
+      ],
+      contested: [],
+    });
+    const zone = await waitFor(() => {
+      const found = iconZone();
+      expect(
+        found?.querySelector('[data-slot="avatar-fallback"]')?.textContent,
+      ).toBe("WWW");
+      return found as HTMLElement;
+    });
+    expect(zone.querySelector('[data-slot="avatar"]')?.className).toContain(
+      "overflow-hidden",
+    );
   });
 
   it("refreshes every surface that draws the icon after an upload", async () => {

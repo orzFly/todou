@@ -45,12 +45,9 @@ import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { AddAgentPicker } from "@/components/shared/add-agent-picker.tsx";
 import { AvatarEditor } from "@/components/shared/avatar-editor.tsx";
+import { projectIconFallback } from "@/components/shared/project-icon.tsx";
 import { RolePermissionsDialog } from "@/components/shared/role-permissions-table.tsx";
-import {
-  displayNameOf,
-  initialsOf,
-  UserChip,
-} from "@/components/shared/user-chip.tsx";
+import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -259,7 +256,7 @@ function ProjectIconEditor({ slug }: { slug: string }) {
         imageUrl: project.data.icon_url ?? null,
       }}
       shape="square"
-      fallback={prefix || initialsOf(project.data.name)}
+      fallback={projectIconFallback({ name: project.data.name, prefix })}
       onUpload={(file) => upload.mutate(file)}
       onRemove={() => remove.mutate()}
       pending={upload.isPending || remove.isPending}

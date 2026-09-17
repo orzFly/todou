@@ -36,12 +36,19 @@ const me = {
   created_at: "2026-01-01T00:00:00Z",
 };
 
-/** `homelab` holds `CH`; `plain` holds nothing. */
+/** `homelab` holds `CH`; `refract` holds one too long to draw whole; `plain`
+ *  holds nothing. */
 const DIRECTORY: ReferenceDirectory = {
   entries: [
     {
       prefix: "CH",
       slug: "homelab",
+      from: "2020-01-01T00:00:00.000Z",
+      to: null,
+    },
+    {
+      prefix: "REFRACT",
+      slug: "refract",
       from: "2020-01-01T00:00:00.000Z",
       to: null,
     },
@@ -111,21 +118,52 @@ describe("the REF watermark on a project card", () => {
     expect(watermarkOf("plain")).toBeNull();
   });
 
+  it("cuts a REF too long for the mark and keeps it whole for a reader", async () => {
+    renderProjects([project("refract")], DIRECTORY);
+    await waitFor(() => expect(cardOf("refract")).toBeTruthy());
+
+    const mark = watermarkOf("refract") as Element;
+    expect(mark.textContent).toBe("REFR");
+    expect(mark.getAttribute("aria-label")).toBe("REFRACT");
+  });
+
   it("is absent for every card while the directory is unavailable", async () => {
     renderProjects([project("homelab"), project("plain")]);
     await waitFor(() => expect(cardOf("homelab")).toBeTruthy());
     expect(watermarkOf("homelab")).toBeNull();
   });
 
-  it("takes no part in the text: no reserve, no truncation", async () => {
+  it("takes no part in the text: nothing is reserved for it", async () => {
     // The mark is a background, so the description is laid out as if it were
-    // not there — it may run straight over it.
+    // not there — it may run straight over it. The clamp below is the one
+    // truncation on this card, and it is about card height, not about the
+    // mark.
     renderProjects([project("homelab")], DIRECTORY);
     await waitFor(() => expect(cardOf("homelab")).toBeTruthy());
     const card = cardOf("homelab");
     const desc = card.querySelector('[data-slot="card-description"]');
     expect(desc?.className ?? "").not.toContain("truncate");
+    expect(desc?.className ?? "").not.toMatch(/\bpr-/);
     expect((desc as HTMLElement).style.paddingRight).toBe("");
+  });
+
+  it("stands on cards the page has made the same height", async () => {
+    // One size for every mark only holds while every card is one size, and
+    // three classes hold that up together: without `auto-rows-fr` a row sizes
+    // itself, without `h-full` the card does not take the row's height, and
+    // without the clamp every card on the page pays the tallest one's height.
+    // (The heights themselves are a browser check — happy-dom reports every
+    // offsetHeight as 0, so asserting one here could never fail.)
+    renderProjects([project("homelab"), project("plain")], DIRECTORY);
+    await waitFor(() => expect(cardOf("homelab")).toBeTruthy());
+    const card = cardOf("homelab");
+    expect(card.parentElement?.parentElement?.className).toContain(
+      "auto-rows-fr",
+    );
+    expect(card.className).toContain("h-full");
+    expect(
+      card.querySelector('[data-slot="card-description"]')?.className,
+    ).toContain("line-clamp-3");
   });
 
   it("is inert: it takes no clicks and joins no selection", async () => {

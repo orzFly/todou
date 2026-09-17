@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { ProjectIcon } from "../src/components/shared/project-icon.tsx";
+import {
+  ProjectIcon,
+  projectIconFallback,
+} from "../src/components/shared/project-icon.tsx";
 import { render } from "./render.tsx";
 
 const draw = (project: {
@@ -30,7 +33,7 @@ describe("what a project icon draws", () => {
 
   it("keeps a long REF inside its box instead of across the card", () => {
     // A 20-character prefix drew 192px of ink in a 40px box and ran straight
-    // through the project's title. The watermark still carries it in full.
+    // through the project's title.
     const container = draw({ name: "Pathological", prefix: "W".repeat(20) });
     expect(container.textContent).toBe("WWW");
     expect(
@@ -41,6 +44,19 @@ describe("what a project icon draws", () => {
   it("leaves a REF that already fits alone", () => {
     expect(draw({ name: "Homelab", prefix: "CH" }).textContent).toBe("CH");
     expect(draw({ name: "Warehouse", prefix: "WMS" }).textContent).toBe("WMS");
+  });
+
+  // Asserted on the function and not only through `ProjectIcon`, because the
+  // settings page's icon editor draws its box through `AvatarEditor` and
+  // reaches this rule only by calling it.
+  it("cuts a long REF to the same three characters wherever it is called", () => {
+    expect(
+      projectIconFallback({ name: "Pathological", prefix: "W".repeat(20) }),
+    ).toBe("WWW");
+  });
+
+  it("falls back to initials when called with no REF", () => {
+    expect(projectIconFallback({ name: "Home Lab", prefix: null })).toBe("HL");
   });
 
   it("is square, so a project never reads as a person", () => {

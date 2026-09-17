@@ -50,7 +50,10 @@ export function ProjectsPage() {
           还没有项目——种下第一颗土豆吧 🥔
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        // `auto-rows-fr` makes every row as tall as its tallest card. The
+        // watermark resolves its size against the card's box, so cards of
+        // different heights would draw the same REF at two sizes on one page.
+        <div className="grid auto-rows-fr gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {ordered.map(({ project, neverVisited }) => {
             const prefix = refs.get(project.slug)?.prefix ?? null;
             return (
@@ -60,7 +63,11 @@ export function ProjectsPage() {
                 params={{ slug: project.slug }}
               >
                 {/* `relative` so the watermark anchors to the card rather
-                    than to the page; `Card` already clips its overflow. */}
+                    than to the page; `Card` already clips its overflow, and
+                    that clip is what cuts the mark's bleed. `h-full` is not
+                    redundant beside `auto-rows-fr` — it is what passes the
+                    row's height down to the card, which is the box the mark
+                    sizes itself against. */}
                 <Card className="relative h-full transition-colors hover:bg-accent/50">
                   {/* Above the watermark: the mark is a background, and a
                       positioned element would otherwise paint over this. */}
@@ -81,7 +88,11 @@ export function ProjectsPage() {
                       />
                       <span className="truncate">{project.name}</span>
                     </CardTitle>
-                    <CardDescription>
+                    {/* Without the clamp every card on the page pays the
+                        tallest card's height: measured, one five-line
+                        description takes every card to 176px against the 136px
+                        the clamp holds them to. */}
+                    <CardDescription className="line-clamp-3">
                       {project.slug}
                       {project.description ? ` — ${project.description}` : ""}
                     </CardDescription>

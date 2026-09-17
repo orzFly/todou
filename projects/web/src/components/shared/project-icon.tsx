@@ -14,10 +14,25 @@ import { cn } from "@/lib/utils";
 /**
  * As much of a REF as a box this size can hold. Prefixes run to 20 characters
  * and the box is 14–40px, so the whole of a long one is never legible here —
- * and unclipped it draws straight across the card. The card's watermark still
- * carries the prefix in full.
+ * and unclipped it draws straight across the card.
  */
 const GLYPH_LIMIT = 3;
+
+/**
+ * What an avatar box draws for a project that has no icon.
+ *
+ * Exported because the settings page's icon editor draws the same box through
+ * `AvatarEditor` instead of through `ProjectIcon`, and for as long as each of
+ * them spelled this rule out separately the two drifted apart.
+ */
+export function projectIconFallback(project: {
+  name: string;
+  prefix?: string | null;
+}): string {
+  return project.prefix
+    ? project.prefix.slice(0, GLYPH_LIMIT)
+    : initialsOf(project.name);
+}
 
 export function ProjectIcon({
   project,
@@ -46,9 +61,7 @@ export function ProjectIcon({
           404 on every project that has no icon, which is most of them. */}
       {project.icon_url && <AvatarImage src={project.icon_url} alt="" />}
       <AvatarFallback className="text-[10px] font-medium">
-        {project.prefix
-          ? project.prefix.slice(0, GLYPH_LIMIT)
-          : initialsOf(project.name)}
+        {projectIconFallback(project)}
       </AvatarFallback>
     </Avatar>
   );
