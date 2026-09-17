@@ -1006,7 +1006,9 @@ describe("AnnotatedMarkdown entry placement and shadow fallback (T-384)", () => 
     selection?.addRange(range);
 
     const button = await view.findByText(/Comment L/);
-    return Number.parseFloat((button as HTMLElement).style.top.replace("px", ""));
+    return Number.parseFloat(
+      (button as HTMLElement).style.top.replace("px", ""),
+    );
   }
 
   it("sits six pixels under the end of the selection", async () => {
