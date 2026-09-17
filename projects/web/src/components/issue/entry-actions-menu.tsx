@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { can, type Project } from "@todou/shared";
 import {
   CircleDotIcon,
   CopyIcon,
@@ -11,12 +12,17 @@ import {
   type ComponentProps,
   type ReactNode,
   type RefObject,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import type Markdown from "react-markdown";
-import { projectsQuery } from "@/api/queries.ts";
-import { ProjectListbox } from "@/components/project-listbox.tsx";
+import { projectQuery, projectsQuery } from "@/api/queries.ts";
+import { useProjectOrder } from "@/api/useProjectOrder.ts";
+import {
+  ProjectListbox,
+  type ProjectListboxOption,
+} from "@/components/project-listbox.tsx";
 import { useQuoteReply } from "@/components/timeline/quote-reply.tsx";
 import { Button } from "@/components/ui/button";
 import {
@@ -46,14 +52,25 @@ export const QUOTE_REHYPE_PLUGINS: ComponentProps<
   typeof Markdown
 >["rehypePlugins"] = [rehypeSourceLines];
 
+/** Where the quote comes from, whichever project the new card is filed in. */
+type QuoteSource = {
+  quote_project: string;
+  quote_issue: number;
+  /** Absent for the issue body, whose permalink is the card itself. */
+  quote_comment?: number;
+};
+
 /**
  * The `…` on a comment and on an issue body: four things any reader may do
  * with the entry, then whatever the caller's capabilities add below a rule.
  *
- * None of the four is gated. `comment.create` and `issue.create` have no gate
- * anywhere else either — the box at the foot of the page and the navbar's New
- * issue button render for everyone and the server refuses what it must — and
+ * None of the four is gated, and neither is this project's own row in the
+ * Reference submenu. `comment.create` and `issue.create` have no gate anywhere
+ * else either — the box at the foot of the page and the navbar's New issue
+ * button render for everyone and the server refuses what it must — and
  * `useCan` suspends, which on a timeline would put a boundary on every row.
+ * The submenu's other projects are the exception, and they cost no boundary:
+ * their role arrives inside the list they are drawn from.
  */
 export function EntryActionsMenu({
   slug,
@@ -80,15 +97,24 @@ export function EntryActionsMenu({
   children?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const navigate = useNavigate();
-  const projects = useQuery(projectsQuery);
+  // Controlled, because two of the three gestures below have to open or
+  // withhold the submenu by hand.
+  const [targets, setTargets] = useState(false);
+  /** Which device is making the click under way; the click cannot say. */
+  const pointer = useRef<string | null>(null);
+  /** Drops the one submenu-open Radix runs behind a modified click. */
+  const suppressOpen = useRef(false);
   const { available, quote } = useQuoteReply();
-  /** Where the quote comes from, whichever project the new card is filed in. */
-  const quoteSource = {
-    quote_project: slug,
-    quote_issue: issueNumber,
-    quote_comment: commentId,
-  };
+  // Memoized because it is a dependency of the submenu's own memo, and a
+  // fresh literal per render would rebuild every row on every keystroke.
+  const quoteSource = useMemo<QuoteSource>(
+    () => ({
+      quote_project: slug,
+      quote_issue: issueNumber,
+      quote_comment: commentId,
+    }),
+    [slug, issueNumber, commentId],
+  );
   // Read on pointerdown and kept here: the press's own default action
   // collapses the selection, and `markdown-view.tsx` warns that re-rendering
   // the document clears it silently (T-60). Reading before either happens
@@ -162,42 +188,77 @@ export function EntryActionsMenu({
             Quote reply
           </DropdownMenuItem>
         )}
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
-            <CircleDotIcon className="size-3.5" />
-            Reference in a new issue
+        <DropdownMenuSub
+          open={targets}
+          onOpenChange={(next) => {
+            if (next && suppressOpen.current) {
+              suppressOpen.current = false;
+              return;
+            }
+            setTargets(next);
+          }}
+        >
+          {/* This row files the card here; the submenu is for filing it
+              somewhere else. Hovering, `→` and a tap all still open it. */}
+          <DropdownMenuSubTrigger
+            asChild
+            onPointerDown={(e) => {
+              pointer.current = e.pointerType;
+            }}
+            onClickCapture={(e) => {
+              // A mouse has already opened the submenu by hovering, so its
+              // click carries nothing and can be spent on filing the card.
+              // Touch has no hover — Radix opens a submenu on pointermove and
+              // only for a mouse — so the tap is the only gesture that can
+              // reach the other projects, and it stays theirs.
+              if (pointer.current !== null && pointer.current !== "mouse") {
+                e.preventDefault();
+                pointer.current = null;
+                setTargets(true);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.target !== e.currentTarget) return;
+              // `→` is APG's key for opening a submenu and stays Radix's.
+              if (e.key !== "Enter" && e.key !== " ") return;
+              pointer.current = null;
+              e.currentTarget.click();
+              // Radix reads Enter and Space as "open the submenu" too, and
+              // composeEventHandlers skips its half once this is set.
+              e.preventDefault();
+            }}
+          >
+            <Link
+              to="/projects/$slug/issues/new"
+              params={{ slug }}
+              search={quoteSource}
+              onClick={(e) => {
+                // The capture handler above already spent this one on opening
+                // the submenu.
+                if (e.defaultPrevented) return;
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+                  // The browser is opening a tab in the background, so leave
+                  // the menu standing — and keep Radix from taking this click
+                  // as "open the submenu", which would pull focus into its
+                  // search box out from under the reader.
+                  suppressOpen.current = true;
+                  return;
+                }
+                setOpen(false);
+              }}
+            >
+              <CircleDotIcon className="size-3.5" />
+              Reference in a new issue
+            </Link>
           </DropdownMenuSubTrigger>
           {/* Portalled out of the parent content, which scrolls and clips its
               own overflow. */}
           <DropdownMenuPortal>
             <DropdownMenuSubContent className="w-64 p-0">
-              <ProjectListbox
-                options={(projects.data ?? []).map((project) => ({
-                  project,
-                  link: {
-                    to: "/projects/$slug/issues/new",
-                    params: { slug: project.slug },
-                    search: quoteSource,
-                  },
-                }))}
-                label="Reference in a new issue"
-                idPrefix="quote-target"
-                searchPlaceholder="Search projects…"
-                emptyText="No matching project."
-                listClassName="max-h-64"
-                autoFocus
-                onSelect={(option) => {
-                  setOpen(false);
-                  navigate({
-                    to: "/projects/$slug/issues/new",
-                    params: { slug: option.project.slug },
-                    search: quoteSource,
-                  });
-                }}
-                onLinkClick={(e) => {
-                  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-                  setOpen(false);
-                }}
+              <QuoteTargets
+                slug={slug}
+                quoteSource={quoteSource}
+                onPicked={() => setOpen(false)}
               />
             </DropdownMenuSubContent>
           </DropdownMenuPortal>
@@ -210,5 +271,89 @@ export function EntryActionsMenu({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/**
+ * Where to file the new card: this project first, then everywhere else the
+ * reader may open one.
+ *
+ * Its own component because Radix mounts a submenu's content only while it is
+ * open, and a timeline holds one of these menus per comment: the project list,
+ * the frecency order's `storage` subscription and `meQuery` underneath it then
+ * exist once the reader asks for them rather than two hundred times on load.
+ * The parent item's href needs none of it — only the slug it already has.
+ */
+function QuoteTargets({
+  slug,
+  quoteSource,
+  onPicked,
+}: {
+  slug: string;
+  quoteSource: QuoteSource;
+  /** Close the whole menu behind an unmodified pick. */
+  onPicked: () => void;
+}) {
+  const navigate = useNavigate();
+  // The project this entry lives in, read from its own query rather than
+  // looked up in the list: the pinned row then does not wait on the list, and
+  // survives a server that does not return this project in it.
+  const current = useQuery(projectQuery(slug));
+  const projects = useQuery(projectsQuery);
+  const ordered = useProjectOrder(projects.data ?? []);
+
+  const options = useMemo<ProjectListboxOption[]>(() => {
+    const row = (project: Project, note: boolean): ProjectListboxOption => ({
+      project,
+      link: {
+        to: "/projects/$slug/issues/new",
+        params: { slug: project.slug },
+        search: quoteSource,
+      },
+      trailing: note ? (
+        <span className="shrink-0 text-muted-foreground text-xs">
+          (current)
+        </span>
+      ) : undefined,
+    });
+    // The new-issue page gates nothing, so a reader who cannot file here would
+    // meet the 403 only after writing the card. The destination's own role,
+    // like the Move dialog's. Not the current project, which follows the
+    // navbar's New issue button in rendering for every reader.
+    const rest = ordered
+      .map((item) => item.project)
+      .filter(
+        (project) =>
+          project.slug !== slug &&
+          can(project.viewer_role ?? null, "issue.create"),
+      );
+    return [
+      ...(current.data === undefined ? [] : [row(current.data, true)]),
+      ...rest.map((project) => row(project, false)),
+    ];
+  }, [current.data, ordered, quoteSource, slug]);
+
+  return (
+    <ProjectListbox
+      options={options}
+      label="Reference in a new issue"
+      idPrefix="quote-target"
+      searchPlaceholder="Search projects…"
+      emptyText="No matching project."
+      listClassName="max-h-64"
+      autoFocus
+      onSelect={(option) => {
+        onPicked();
+        navigate({
+          to: "/projects/$slug/issues/new",
+          params: { slug: option.project.slug },
+          search: quoteSource,
+        });
+      }}
+      onLinkClick={(e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        onPicked();
+      }}
+    />
   );
 }

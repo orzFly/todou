@@ -1,5 +1,5 @@
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
-import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
+import { DropdownMenu as DropdownMenuPrimitive, Slot } from "radix-ui";
 import type * as React from "react";
 import { cn } from "@/lib/utils";
 
@@ -265,7 +265,10 @@ function DropdownMenuSubTrigger({
       )}
       {...props}
     >
-      {children}
+      {/* Slottable, so `asChild` callers keep working: Slot takes exactly one
+          child, and the arrow beside `children` would be a second one. Wrapped,
+          the arrow renders inside whatever element the caller passes in. */}
+      <Slot.Slottable>{children}</Slot.Slottable>
       <ChevronRightIcon className="ml-auto" />
     </DropdownMenuPrimitive.SubTrigger>
   );

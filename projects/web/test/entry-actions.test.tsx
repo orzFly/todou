@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { Issue, Project, TimelineComment } from "@todou/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { projectQuery } from "../src/api/queries.ts";
 import { CommentItem } from "../src/components/timeline/comment-item.tsx";
 import {
   QuoteReplyProvider,
@@ -49,20 +50,32 @@ function Sink({ onQuote }: { onQuote: (markdown: string) => void }) {
   return null;
 }
 
-function project(slug: string): Project {
+function project(slug: string, overrides: Partial<Project> = {}): Project {
   return {
     id: slug.length,
     slug,
     name: slug,
     description: "",
     created_at: "2026-01-01T00:00:00Z",
+    // The picker keeps only the projects the reader may file a card in, so a
+    // fixture with no role at all would empty every list here.
+    viewer_role: "writer",
+    ...overrides,
   };
 }
 
-/** Seeded so the submenu has somewhere to file the new card. */
-function clientWith(projects: Project[]): QueryClient {
+/**
+ * Seeded so the submenu has somewhere to file the new card. The single-project
+ * query as well as the list: the pinned current row reads that one, and on a
+ * real page `project-layout` has already fetched it.
+ */
+function clientWith(
+  projects: Project[],
+  current: Project = project("p"),
+): QueryClient {
   const client = testQueryClient();
   client.setQueryData(["projects"], projects);
+  client.setQueryData(projectQuery(current.slug).queryKey, current);
   return client;
 }
 
@@ -72,6 +85,8 @@ function renderComment(
     onQuote?: (markdown: string) => void;
     comment?: TimelineComment;
     projects?: Project[];
+    /** The project the comment lives in, as its own query answers for it. */
+    current?: Project;
   } = {},
 ) {
   return renderWithProviders(
@@ -84,7 +99,10 @@ function renderComment(
         viewer={options.viewer ?? null}
       />
     </QuoteReplyProvider>,
-    clientWith(options.projects ?? [project("p"), project("other")]),
+    clientWith(
+      options.projects ?? [project("p"), project("other")],
+      options.current,
+    ),
   );
 }
 
@@ -279,14 +297,21 @@ describe("EntryActionsMenu on a comment", () => {
   });
 });
 
-/** Open the `…`, then the Reference submenu, and return its listbox. */
+function referenceRow(): HTMLElement {
+  return within(screen.getByRole("menu")).getByRole("menuitem", {
+    name: "Reference in a new issue",
+  });
+}
+
+/**
+ * Open the `…`, then the Reference submenu, and return its listbox.
+ *
+ * With `→`, not a click: a click on that row now files the card in this
+ * project, which would send every caller of this helper somewhere else.
+ */
 async function openQuoteTargets(view: View) {
   await openMenu(view);
-  fireEvent.click(
-    within(screen.getByRole("menu")).getByRole("menuitem", {
-      name: "Reference in a new issue",
-    }),
-  );
+  fireEvent.keyDown(referenceRow(), { key: "ArrowRight" });
   return waitFor(() =>
     screen.getByRole("listbox", { name: "Reference in a new issue" }),
   );
@@ -295,6 +320,11 @@ async function openQuoteTargets(view: View) {
 function quoteParams(option: HTMLElement): URLSearchParams {
   const href = option.getAttribute("href") ?? "";
   return new URLSearchParams(href.slice(href.indexOf("?")));
+}
+
+/** Which project a row files the new card in, read off its own href. */
+function targetSlug(option: HTMLElement): string {
+  return (option.getAttribute("href") ?? "").split("/")[2] ?? "";
 }
 
 describe("Reference in a new issue", () => {
@@ -350,6 +380,182 @@ describe("Reference in a new issue", () => {
     await waitFor(() =>
       expect(within(listbox).getAllByRole("option")).toHaveLength(1),
     );
+  });
+
+  it("puts this project first, marked (current), and only once", async () => {
+    const view = renderComment();
+    const listbox = await openQuoteTargets(view);
+    const options = within(listbox).getAllByRole("option");
+
+    expect(targetSlug(options[0])).toBe("p");
+    expect(options[0].textContent).toContain("(current)");
+    // Pinned means moved, not copied: the list it came in with holds it too.
+    expect(options.map(targetSlug)).toEqual(["p", "other"]);
+    for (const other of options.slice(1)) {
+      expect(other.textContent).not.toContain("(current)");
+    }
+  });
+
+  it("orders the rest the way the navbar switcher does", async () => {
+    const view = renderComment({
+      // Handed over oldest-first, so passing the list through unsorted cannot
+      // produce the expected order. With no visit recorded, the frecency
+      // comparator degrades to newest first.
+      projects: [
+        project("p"),
+        project("older", { created_at: "2026-01-02T00:00:00Z" }),
+        project("newest", { created_at: "2026-03-01T00:00:00Z" }),
+        project("middle", { created_at: "2026-02-01T00:00:00Z" }),
+      ],
+      // Older than all of them, so a pinned row that got sorted along with
+      // the rest would fall to the bottom instead of holding the top.
+      current: project("p", { created_at: "2026-01-01T00:00:00Z" }),
+    });
+    const listbox = await openQuoteTargets(view);
+    expect(within(listbox).getAllByRole("option").map(targetSlug)).toEqual([
+      "p",
+      "newest",
+      "middle",
+      "older",
+    ]);
+  });
+
+  it("offers only the projects the reader may file a card in, plus this one", async () => {
+    const view = renderComment({
+      projects: [
+        project("readable", { viewer_role: "reader" }),
+        project("reportable", { viewer_role: "reporter" }),
+        // A server predating the field sends no role at all.
+        project("roleless", { viewer_role: undefined }),
+      ],
+      // The new-issue page renders for readers here as the navbar's button
+      // does, so this row stays whatever the reader holds.
+      current: project("p", { viewer_role: "reader" }),
+    });
+    const listbox = await openQuoteTargets(view);
+    expect(within(listbox).getAllByRole("option").map(targetSlug)).toEqual([
+      "p",
+      "reportable",
+    ]);
+  });
+});
+
+/**
+ * The row itself, whose gestures divide: what a mouse and a keyboard do with
+ * it, and what still belongs to the submenu.
+ *
+ * Every one of these asserts the memory router's real location rather than an
+ * href — an href that is right while the click does nothing is the shape this
+ * goes wrong in, and only the location can tell the two apart.
+ */
+describe("the Reference row itself", () => {
+  it("is a link to this project's new-issue page, carrying the quote", async () => {
+    const view = renderComment();
+    await openMenu(view);
+    const row = referenceRow();
+
+    expect(row.tagName).toBe("A");
+    expect((row.getAttribute("href") ?? "").split("?")[0]).toBe(
+      "/projects/p/issues/new",
+    );
+    const params = quoteParams(row);
+    expect(params.get("quote_project")).toBe("p");
+    expect(params.get("quote_issue")).toBe("7");
+    expect(params.get("quote_comment")).toBe("1234");
+  });
+
+  it("files the card in this project when a mouse clicks it", async () => {
+    const view = renderComment();
+    await openMenu(view);
+    fireEvent.click(referenceRow());
+
+    // Read before awaiting the navigation: opening the submenu is synchronous,
+    // while afterwards the whole tree is gone and nothing could be found.
+    expect(
+      screen.queryByRole("listbox", { name: "Reference in a new issue" }),
+    ).toBeNull();
+    await waitFor(() =>
+      expect(view.router.state.location.pathname).toBe(
+        "/projects/p/issues/new",
+      ),
+    );
+    expect(view.router.state.location.searchStr).toContain("quote_issue=7");
+  });
+
+  it("files the card in this project on Enter", async () => {
+    const view = renderComment();
+    await openMenu(view);
+    const row = referenceRow();
+    row.focus();
+    fireEvent.keyDown(row, { key: "Enter" });
+
+    expect(
+      screen.queryByRole("listbox", { name: "Reference in a new issue" }),
+    ).toBeNull();
+    await waitFor(() =>
+      expect(view.router.state.location.pathname).toBe(
+        "/projects/p/issues/new",
+      ),
+    );
+  });
+
+  it("opens the project list on ArrowRight, and goes nowhere", async () => {
+    const view = renderComment();
+    await openQuoteTargets(view);
+    expect(view.router.state.location.pathname).toBe("/");
+  });
+
+  it("opens the project list on a tap, and goes nowhere", async () => {
+    const view = renderComment();
+    await openMenu(view);
+    const row = referenceRow();
+    // Touch never hovers, so this tap is the only way to the other projects.
+    fireEvent.pointerDown(row, { pointerType: "touch" });
+    fireEvent.click(row);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("listbox", { name: "Reference in a new issue" }),
+      ).toBeTruthy(),
+    );
+    expect(view.router.state.location.pathname).toBe("/");
+  });
+
+  it("hands a ⌘-click to the browser, leaving the menu as it was", async () => {
+    const view = renderComment();
+    await openMenu(view);
+    fireEvent.click(referenceRow(), { metaKey: true });
+
+    expect(view.router.state.location.pathname).toBe("/");
+    expect(screen.getByRole("menu")).toBeTruthy();
+    // Radix would open the submenu on this click, and the list pulls focus
+    // into its search box — out of the tab the reader is still standing in.
+    expect(
+      screen.queryByRole("listbox", { name: "Reference in a new issue" }),
+    ).toBeNull();
+  });
+
+  // Nothing here resets the submenu when the menu closes, and nothing needs
+  // to: Radix's own `Sub` pushes `onOpenChange(false)` at a controlled submenu
+  // whenever its parent closes. This is the guard on that, not on our code —
+  // drop the controlled state or meet a Radix that stops doing it, and a menu
+  // reopens with the project list already standing.
+  it("comes back with the project list closed", async () => {
+    const view = renderComment();
+    const trigger = await openMenu(view);
+    fireEvent.keyDown(referenceRow(), { key: "ArrowRight" });
+    await waitFor(() =>
+      screen.getByRole("listbox", { name: "Reference in a new issue" }),
+    );
+
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
+
+    expect(
+      screen.queryByRole("listbox", { name: "Reference in a new issue" }),
+    ).toBeNull();
   });
 });
 
@@ -438,13 +644,17 @@ describe("EntryActionsMenu on the issue body", () => {
   it("references the body rather than a comment", async () => {
     const view = renderBody();
     await openBodyMenu(view);
-    fireEvent.click(menuItem("Reference in a new issue"));
+    const row = quoteParams(referenceRow());
+    expect(row.get("quote_issue")).toBe("7");
+    expect(row.has("quote_comment")).toBe(false);
+
+    fireEvent.keyDown(referenceRow(), { key: "ArrowRight" });
     const listbox = await waitFor(() =>
       screen.getByRole("listbox", { name: "Reference in a new issue" }),
     );
-    const params = quoteParams(within(listbox).getAllByRole("option")[0]);
-    expect(params.get("quote_issue")).toBe("7");
-    expect(params.has("quote_comment")).toBe(false);
+    const option = quoteParams(within(listbox).getAllByRole("option")[0]);
+    expect(option.get("quote_issue")).toBe("7");
+    expect(option.has("quote_comment")).toBe(false);
   });
 
   it("offers nothing to copy or quote on a card with no description", async () => {

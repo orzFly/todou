@@ -67,18 +67,33 @@ export function renderWithProviders(
     path: "search",
     validateSearch: (search: Record<string, unknown>) => search,
   });
+  const newIssueRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "issues/new",
+    validateSearch: (search: Record<string, unknown>) => search,
+  });
   const router = createRouter({
     routeTree: rootRoute.addChildren([
       indexRoute,
-      projectRoute.addChildren([issueRoute, specRoute, searchRoute]),
+      projectRoute.addChildren([
+        issueRoute,
+        specRoute,
+        searchRoute,
+        newIssueRoute,
+      ]),
     ]),
     history: createMemoryHistory({ initialEntries: [initialEntry] }),
   });
-  return render(
-    <QueryClientProvider client={client}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>,
-  );
+  return {
+    ...render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    ),
+    // Where a gesture ended up, which is the only thing that tells a link that
+    // navigates apart from one whose href is right and whose click does nothing.
+    router,
+  };
 }
 
 // Leaves that need neither router nor query cache mount through the plain
