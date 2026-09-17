@@ -32,9 +32,11 @@ function PopoverContent({
   collisionPadding = 8,
   onOpenAutoFocus,
   onCloseAutoFocus,
+  onInteractOutside,
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Content>) {
   const trigger = useRef<HTMLElement | null>(null);
+  const interactedOutside = useRef(false);
   return (
     <PopoverPrimitive.Portal>
       <PopoverPrimitive.Content
@@ -58,9 +60,26 @@ function PopoverContent({
                 ) as HTMLElement | undefined) ?? null)
               : null;
         }}
+        onInteractOutside={(event) => {
+          onInteractOutside?.(event);
+          // Mirrors the condition Radix's non-modal branch keeps for itself,
+          // `event.defaultPrevented` check included, so the restore below can
+          // stand aside in exactly the cases Radix would.
+          if (!event.defaultPrevented) interactedOutside.current = true;
+        }}
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event);
           if (event.defaultPrevented) return;
+          const outside = interactedOutside.current;
+          interactedOutside.current = false;
+          // Every popover here is non-modal, so a click outside reaches what
+          // is under it and focus is already wherever the user just put it —
+          // a comment box, the next field. Radix deliberately skips its
+          // restore then, and taking it over anyway would drag focus back to
+          // the trigger and take a phone's keyboard down with it. Falling
+          // through rather than preventDefault()ing hands that decision back:
+          // Radix suppresses the restore, moving neither focus nor the page.
+          if (outside) return;
           const element = trigger.current;
           // Without a trigger to hand the focus to, fall through to Radix's
           // own restore rather than preventDefault() into a focusless document.

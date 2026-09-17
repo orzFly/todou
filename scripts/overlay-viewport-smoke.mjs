@@ -62,6 +62,33 @@ const EDGE_PADDING = 8;
  */
 const KNOWN_FAILURES = [];
 
+/**
+ * The checks each trigger has to contribute before a run counts as having
+ * covered it. A trigger that stops resolving does not fail anything by itself
+ * — its samples move quietly into "out of reach" — so without a floor the
+ * check can lose whole surfaces and still exit 0. `displaced-close` matters
+ * most: it is the only probe that can tell this change's focus restore from
+ * Radix's own.
+ *
+ * Enforced only on a full default scan with no fault seeded, because a
+ * narrowed --scan-height and a short-circuited fault pass both measure less
+ * on purpose. The numbers are the observed counts less a small margin;
+ * re-derive them from a run's own per-trigger line after changing the page.
+ */
+const MIN_CHECKS = {
+  status: 10, // 14 observed
+  labels: 14, // 18
+  assignees: 11, // 15
+  notifications: 9, // 12
+  more: 4, // 6
+  comment: 3, // 4
+  submenu: 3, // 4
+  // 2 observed, and no margin on purpose: the shortest viewport already cannot
+  // reach a sidebar trigger at the foot of the document, so the two that can
+  // are the whole of this probe's coverage.
+  "displaced-close": 2,
+};
+
 /** Each `mobile: true`, each a width the card's screenshots could have come from. */
 const VIEWPORTS = [
   { width: 412, height: 915 },
@@ -71,16 +98,20 @@ const VIEWPORTS = [
 
 // ---------------------------------------------------------------- arguments
 
+/**
+ * A default run takes a few minutes. Widen it (`--scan-height=900
+ * --scan-step=10`) when chasing a report rather than guarding a change —
+ * MIN_CHECKS is calibrated against these, and stands down when they change.
+ */
+const DEFAULTS = { scanHeight: 300, scanStep: 60 };
+
 function parseArgs(argv) {
   const opts = {
     serverPort: 0,
     webPort: 0,
     seedFault: null,
     selfTest: false,
-    // A default run takes a few minutes. Widen it (`--scan-height=900
-    // --scan-step=10`) when chasing a report rather than guarding a change.
-    scanHeight: 300,
-    scanStep: 60,
+    ...DEFAULTS,
     close: "outside",
     keep: false,
   };
@@ -574,8 +605,22 @@ function pageHelpers() {
       return element.getBoundingClientRect().top > window.innerHeight;
     },
 
+    /**
+     * Every trigger a scan walks, not just two: a lookup that silently stops
+     * resolving turns into "out of reach" samples, which cost nothing and
+     * look like a narrower page rather than a broken check.
+     * `submenu-trigger` is absent here because it only exists once the
+     * comment menu is open; MIN_CHECKS is what guards that one.
+     */
     ready() {
-      return find("status") !== null && find("comment") !== null;
+      return [
+        "status",
+        "labels",
+        "assignees",
+        "notifications",
+        "more",
+        "comment",
+      ].every((name) => find(name) !== null);
     },
   };
 }
@@ -856,19 +901,38 @@ async function probeSubmenu(page, viewport, y, how) {
  */
 async function probeDisplacedClose(page, viewport, how) {
   await evaluate(page, () => window.__smoke.scrollTo(window.__smoke.bottom()));
-  const point = await evaluate(page, () => window.__smoke.tapPoint("status"));
-  if (point === null)
-    return { skipped: "status pill out of reach", where: "displaced" };
-
   const where = `${viewport.width}×${viewport.height} displaced-close`;
+  // Whichever sidebar trigger this viewport can actually reach at the foot of
+  // the document. Insisting on the status pill cost two of the three viewports
+  // — and this is the one probe that tells the override from Radix's own
+  // restore, so it is the last one that should go quiet.
+  let name = null;
+  let point = null;
+  for (const candidate of [
+    "status",
+    "labels",
+    "assignees",
+    "notifications",
+    "more",
+  ]) {
+    point = await evaluate(page, (n) => window.__smoke.tapPoint(n), candidate);
+    if (point !== null) {
+      name = candidate;
+      break;
+    }
+  }
+  if (name === null) {
+    return { skipped: "no sidebar trigger within reach", where };
+  }
+
   await tap(page, point);
   if ((await waitForOverlays(page, 1)).length === 0) {
-    return { inert: "status menu did not open", where };
+    return { inert: `${name} menu did not open`, where };
   }
   const displaced = await evaluate(
     page,
-    (name, pixels) => window.__smoke.displace(name, pixels),
-    "status",
+    (n, pixels) => window.__smoke.displace(n, pixels),
+    name,
     3000,
   );
   const before = await evaluate(page, () => window.__smoke.scrollY());
@@ -895,14 +959,25 @@ async function runPass(page, target, opts, { stopWhen = null } = {}) {
     inert: [],
     failures: [],
     known: [],
+    // Per trigger, because a total cannot say which surface stopped being
+    // measured: dropping one trigger moves its samples into `skipped`, and
+    // both counts stay plausible.
+    byTrigger: {},
     // Which KNOWN_FAILURES entries this run actually saw. One that saw nothing
     // is stale, and the run says so rather than carrying it another year.
     matched: new Set(),
   };
-  const record = (result) => {
-    if (result === null || result.skipped) tally.skipped++;
-    else if (result.inert) tally.inert.push(`${result.where}: ${result.inert}`);
-    else {
+  const record = (name, result) => {
+    tally.byTrigger[name] ??= { checks: 0, skipped: 0, inert: 0 };
+    const seen = tally.byTrigger[name];
+    if (result === null || result.skipped) {
+      tally.skipped++;
+      seen.skipped++;
+    } else if (result.inert) {
+      tally.inert.push(`${result.where}: ${result.inert}`);
+      seen.inert++;
+    } else {
+      seen.checks++;
       tally.checks++;
       for (const failure of result.failures) {
         const known = KNOWN_FAILURES.find((entry) =>
@@ -963,14 +1038,17 @@ async function runPass(page, target, opts, { stopWhen = null } = {}) {
         "more",
         "comment",
       ]) {
-        record(await probe(page, viewport, trigger, y, opts.close));
+        record(trigger, await probe(page, viewport, trigger, y, opts.close));
         if (done()) return tally;
       }
-      record(await probeSubmenu(page, viewport, y, opts.close));
+      record("submenu", await probeSubmenu(page, viewport, y, opts.close));
       if (done()) return tally;
     }
 
-    record(await probeDisplacedClose(page, viewport, opts.close));
+    record(
+      "displaced-close",
+      await probeDisplacedClose(page, viewport, opts.close),
+    );
     if (done()) return tally;
   }
 
@@ -1016,12 +1094,42 @@ function report(label, tally) {
       `${tally.inert.length} opened nothing, ${tally.failures.length} failures` +
       (tally.known.length > 0 ? `, ${tally.known.length} known` : ""),
   );
+  const perTrigger = Object.entries(tally.byTrigger)
+    .map(([name, t]) => `${name} ${t.checks}/${t.checks + t.skipped + t.inert}`)
+    .join("  ");
+  if (perTrigger !== "") console.log(`  checked  ${perTrigger}`);
   for (const failure of tally.failures)
     console.log(`  ${failure.key}: ${failure.detail}`);
   for (const known of tally.known)
     console.log(`  known ${known.key}: ${known.detail} — ${known.why}`);
   for (const inert of tally.inert) console.log(`  ? ${inert}`);
   return tally;
+}
+
+/**
+ * Triggers that came back under their floor. Only meaningful on a full default
+ * scan; anything narrower is measuring less by request.
+ */
+function underFloor(tally, opts) {
+  if (opts.seedFault !== null) return [];
+  if (
+    opts.scanHeight !== DEFAULTS.scanHeight ||
+    opts.scanStep !== DEFAULTS.scanStep
+  ) {
+    return [];
+  }
+  return Object.entries(MIN_CHECKS)
+    .filter(([name, floor]) => (tally.byTrigger[name]?.checks ?? 0) < floor)
+    .map(
+      ([name, floor]) =>
+        `${name}: ${tally.byTrigger[name]?.checks ?? 0} checks, floor ${floor}`,
+    );
+}
+
+function reportFloors(tally, opts) {
+  const short = underFloor(tally, opts);
+  for (const line of short) console.log(`coverage below its floor — ${line}`);
+  return short.length === 0;
 }
 
 /** Entries that saw nothing this run, which is a failure of the list itself. */
@@ -1085,7 +1193,8 @@ async function main() {
         await runPass(page, target, opts),
       );
       const fresh = reportStale(tally);
-      if (tally.inert.length > 0 || !fresh) return 1;
+      const covered = reportFloors(tally, opts);
+      if (tally.inert.length > 0 || !fresh || !covered) return 1;
       if (opts.seedFault === null) return tally.failures.length === 0 ? 0 : 1;
       const invariant = FAULTS[opts.seedFault].invariant;
       const bit = tally.failures.some((f) => f.invariant === invariant);
@@ -1123,6 +1232,7 @@ async function main() {
     const verdicts = [
       ["clean run is green", clean.failures.length === 0],
       ["every known failure still happens", reportStale(clean)],
+      ["every trigger met its coverage floor", reportFloors(clean, opts)],
       ["clean run measured something", clean.checks > 0],
       ["every clean tap opened its overlay", clean.inert.length === 0],
       [

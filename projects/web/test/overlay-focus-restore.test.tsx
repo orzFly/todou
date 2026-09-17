@@ -88,3 +88,62 @@ describe.each([
     );
   });
 });
+
+describe("overlay focus restore stands aside for an outside interaction", () => {
+  it("leaves focus in the field a click outside the popover moved it to", async () => {
+    render(
+      <>
+        <Popover>
+          <PopoverTrigger>Edit labels</PopoverTrigger>
+          <PopoverContent>
+            <button type="button">bug</button>
+          </PopoverContent>
+        </Popover>
+        <textarea aria-label="Write a comment" />
+      </>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Edit labels" }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+
+    // A popover is non-modal: the click reaches the textarea and focuses it
+    // before the dismissal is even decided. Pulling focus back to the trigger
+    // from here is what takes a phone's keyboard down under the user.
+    const field = screen.getByLabelText("Write a comment");
+    field.focus();
+    fireEvent.pointerDown(field, { button: 0, pointerType: "mouse" });
+    fireEvent.pointerUp(field, { button: 0, pointerType: "mouse" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    expect(document.activeElement).toBe(field);
+  });
+
+  // The popover's rule deliberately does not transfer to the menu. A menu is
+  // modal: its focus trap reclaims focus before an outside right click can
+  // hold it, so there is nothing the user placed to preserve, and standing
+  // aside for Radix here buys `document.body` instead — measured in Chromium
+  // both ways on T-388. The restore stays, and this pins that it does.
+  it("still restores the trigger after a right click outside the menu", async () => {
+    render(
+      <>
+        <DropdownMenu>
+          <DropdownMenuTrigger>Status</DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem>Backlog</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <textarea aria-label="Write a comment" />
+      </>,
+    );
+    const trigger = screen.getByRole("button", { name: "Status" });
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
+
+    const field = screen.getByLabelText("Write a comment");
+    field.focus();
+    fireEvent.pointerDown(field, { button: 2, pointerType: "mouse" });
+    fireEvent.pointerUp(field, { button: 2, pointerType: "mouse" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+
+    expect(document.activeElement).toBe(trigger);
+  });
+});
