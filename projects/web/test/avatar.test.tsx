@@ -76,14 +76,21 @@ describe("UserChip names (T-149)", () => {
   });
 
   // happy-dom lays nothing out, so this cannot see the alignment itself —
-  // only that the two classes carrying it are still on the elements. What
-  // they buy is measured in a real browser (T-359).
+  // only that the classes carrying it are still on the elements. What they
+  // buy is measured in a real browser (T-359, T-391).
   it("lays the chip out inline and centres the avatar on the line (T-359)", async () => {
     const { container, findByText } = renderWithProviders(
       <UserChip user={human} />,
     );
     const root = (await findByText("Spud Farmer")).parentElement;
     expect(root?.className).toContain("inline-block");
+    // `shrink-0` is the entire reason the anchor *replaces* the chip's outer
+    // span instead of wrapping it: the chip is a flex item in the comment
+    // header, the event row and the board's meta row, and a slot held by an
+    // element without this gets squeezed in exactly those dense rows. Drop it
+    // from `box` in user-chip.tsx and this is the line that reds — nothing
+    // else in the suite can see it (T-391).
+    expect(root?.className).toContain("shrink-0");
 
     const avatarBox = container.querySelector("[data-slot=avatar]");
     expect(avatarBox?.className).toContain("align-middle");

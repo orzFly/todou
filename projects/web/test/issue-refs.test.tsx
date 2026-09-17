@@ -233,10 +233,17 @@ describe("EventRow issue refs", () => {
     await waitFor(() =>
       expect(view.container.textContent).toContain("referenced by #3"),
     );
-    // Asked of issue links specifically: the row's actor chip is an anchor of
-    // its own now (T-391), so "no anchors at all" would fail on the chip and
-    // say nothing about the reference this case is here for.
-    expect(view.container.querySelector("a[data-issue-link]")).toBeNull();
+    // The row's complete anchor list, which is what this case has always
+    // asked: with no slug the timestamp renders as a <span> rather than a
+    // <Link>, so the actor's chip (T-391) is the only anchor the row has.
+    // Narrowing this to `a[data-issue-link]` would still pass today and
+    // would stop biting the moment a reference reached the row by some
+    // other rendering path.
+    expect(
+      [...view.container.querySelectorAll("a")].map((a) =>
+        a.getAttribute("href"),
+      ),
+    ).toEqual(["/users/user"]);
   });
 });
 
