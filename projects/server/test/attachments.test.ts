@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { attachments } from "../src/db/project-schema.ts";
 import { sanitizeFilename } from "../src/services/attachment-names.ts";
 import { type FakeS3, startFakeS3 } from "./fake-s3.ts";
 import { addUserWithToken, makeTestApp, type TestApp } from "./helpers.ts";
@@ -349,17 +351,22 @@ describe("attachments (fs backend)", () => {
 describe("filenames are unique within one card (T-269)", () => {
   let t: TestApp;
   let cookie: string;
+  let projectId: number;
   const slug = "attach-unique";
   const headers = () => ({ "content-type": "application/json", cookie });
 
   beforeAll(async () => {
     t = await makeTestApp("dedicated");
     cookie = await t.login();
-    await t.app.request("/api/projects", {
-      method: "POST",
-      headers: headers(),
-      body: JSON.stringify({ slug, name: "Unique" }),
-    });
+    projectId = (
+      await json(
+        await t.app.request("/api/projects", {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({ slug, name: "Unique" }),
+        }),
+      )
+    ).id;
     for (const title of ["first card", "second card"]) {
       await t.app.request(`/api/projects/${slug}/issues`, {
         method: "POST",
@@ -394,6 +401,46 @@ describe("filenames are unique within one card (T-269)", () => {
     const third = await put(1, "foo.png");
     expect(third.filename).toBe(`foo-${third.id}.png`);
     expect(third.url).toContain(`/download/foo-${third.id}.png`);
+  });
+
+  it("hands the list back by upload time, whatever order the rows sit in (T-369)", async () => {
+    // Three collisions (each rewritten by an `update` right after its insert)
+    // and one clean name, then the newest row is backdated behind all of them.
+    //
+    // The backdating is what gives this case teeth. Nothing in the product
+    // moves a `created_at` — so on a list this small every storage engine we
+    // run on happens to return the rows in insertion order anyway, and an
+    // assertion that only says "ascending" holds with the `orderBy` deleted.
+    // A row whose time disagrees with its position is the one arrangement
+    // where the ordering key has to be read for the answer to come out right.
+    const files = [
+      await put(1, "ord.png"),
+      await put(1, "ord.png"),
+      await put(1, "ord.png"),
+      await put(1, "zzz.png"),
+    ];
+    const newest = files[3] as { id: number };
+    const db = await t.ctx.router.forProject({
+      id: projectId,
+      slug,
+      database_url: "",
+    });
+    await db
+      .update(attachments)
+      .set({ createdAt: new Date("2020-01-01T00:00:00Z") })
+      .where(eq(attachments.id, newest.id));
+
+    const list: { id: number; created_at: string }[] = await json(
+      await t.app.request(`/api/projects/${slug}/attachments?issue_number=1`, {
+        headers: { cookie },
+      }),
+    );
+    expect(list[0]?.id).toBe(newest.id);
+    const times = list.map((one) => Date.parse(one.created_at));
+    expect(times).toEqual([...times].sort((a, b) => a - b));
+    const rest = list.slice(1).map((one) => one.id);
+    expect(rest).toEqual([...rest].sort((a, b) => a - b));
+    expect(rest).toContain(files[0]?.id);
   });
 
   it("folds case when deciding, and keeps it when storing", async () => {

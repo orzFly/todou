@@ -6,7 +6,7 @@ import type {
   DirectUploadRequest,
   DirectUploadTicket,
 } from "@todou/shared";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import { uniqueViolation } from "../auth/provision.ts";
 import type { AppContext } from "../bootstrap.ts";
@@ -520,10 +520,16 @@ export async function listIssueAttachments(
   const issue = issueRows[0];
   if (!issue) throw new NotFoundError("issue not found");
   assertIssueReadable(issue, actor, role);
+  // Ascending order is this endpoint's contract, not an accident of storage:
+  // a name that collided is rewritten by an `update` right after its insert,
+  // which used to hand those rows back last. `createdAt` leads because the
+  // list renders that column — a row's position and its printed time have to
+  // agree — and the id only settles ties within one clock tick.
   const rows = await db
     .select()
     .from(attachments)
-    .where(eq(attachments.issueId, issue.id));
+    .where(eq(attachments.issueId, issue.id))
+    .orderBy(asc(attachments.createdAt), asc(attachments.id));
   const result: Attachment[] = [];
   for (const row of rows) {
     result.push(await toAttachment(ctx, slug, row));

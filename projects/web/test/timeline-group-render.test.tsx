@@ -528,7 +528,7 @@ describe("EventGroup", () => {
     );
   });
 
-  it("links every attached file", async () => {
+  it("gives every attached file a row and a permalink of its own", async () => {
     const fileEvents = [
       event({
         event_type: "attachment_added",
@@ -539,7 +539,7 @@ describe("EventGroup", () => {
         payload: { attachment: { id: 6, filename: "after.png" } },
       }),
     ];
-    const { findByTestId } = renderWithProviders(
+    const { findByTestId, queryByTestId } = renderWithProviders(
       <EventGroup
         family="attachments"
         events={fileEvents}
@@ -548,8 +548,39 @@ describe("EventGroup", () => {
       />,
     );
     const group = await findByTestId("event-group");
-    expect(group.textContent).toContain("attached");
-    expect(group.textContent).toContain("before.png");
-    expect(group.textContent).toContain("after.png");
+    expect(group.textContent).toContain("attached 2 files");
+
+    const rows = [...group.querySelectorAll("li")];
+    expect(rows.map((li) => li.textContent)).toEqual([
+      "before.png",
+      "after.png",
+    ]);
+    // The `#event-N` targets sit on the rows, so a permalink lands on the
+    // file itself with nothing left to expand — and nothing to expand with.
+    expect(rows.map((li) => li.id)).toEqual(
+      fileEvents.map((e) => `event-${e.id}`),
+    );
+    expect(queryByTestId("event-group-toggle")).toBeNull();
+  });
+
+  it("renders a lone attachment exactly like several", async () => {
+    const lone = event({
+      event_type: "attachment_added",
+      payload: { attachment: { id: 7, filename: "only.png" } },
+    });
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="attachments"
+        events={[lone]}
+        slug="p"
+        issueNumber={1}
+      />,
+    );
+    const group = await findByTestId("event-group");
+    expect(group.textContent).toContain("attached 1 file");
+    const rows = [...group.querySelectorAll("li")];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toBe("only.png");
+    expect(rows[0]?.id).toBe(`event-${lone.id}`);
   });
 });

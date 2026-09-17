@@ -14,8 +14,10 @@ import {
   useEventRenderContext,
 } from "@/components/timeline/event-row.tsx";
 import {
+  type CollapsedFamily,
   type MergeFamily,
   netStatusChain,
+  rendersAsList,
 } from "@/components/timeline/group-events.ts";
 import {
   type EventEntities,
@@ -44,10 +46,8 @@ const distinct = (labels: Label[]): Label[] => [
 ];
 
 function summarize(
-  family: Exclude<MergeFamily, "referenced">,
+  family: CollapsedFamily,
   events: TimelineEvent[],
-  slug: string,
-  issueNumber: number,
   entities: EventEntities,
 ): Summary {
   switch (family) {
@@ -122,46 +122,13 @@ function summarize(
           .join(" · "),
       };
     }
-    case "attachments": {
-      const files = events.map((e) => ({
-        eventId: e.id,
-        attachment: e.payload.attachment as
-          | { id?: number; filename?: string }
-          | undefined,
-      }));
-      return {
-        node: (
-          <>
-            {"attached "}
-            {files.map((file, i) => (
-              <Fragment key={file.eventId}>
-                {i > 0 && ", "}
-                {file.attachment?.id !== undefined ? (
-                  <AttachmentEventLink
-                    slug={slug}
-                    issueNumber={issueNumber}
-                    attachmentId={file.attachment.id}
-                    filename={file.attachment.filename ?? "a file"}
-                  />
-                ) : (
-                  (file.attachment?.filename ?? "a file")
-                )}
-              </Fragment>
-            ))}
-          </>
-        ),
-        text: `attached ${files
-          .map((f) => f.attachment?.filename ?? "a file")
-          .join(", ")}`,
-      };
-    }
   }
 }
 
 /**
- * One render unit for a merged run (T-92). Most families collapse to a
- * summary row with an expander; referenced runs instead keep every
- * reference visible as a block list (T-99) — nothing to expand.
+ * One render unit for a merged run (T-92). Status and label runs collapse to
+ * a summary row with an expander; the list families keep every event visible
+ * as a block list (T-99, T-369) — nothing to expand.
  */
 export function EventGroup({
   family,
@@ -177,9 +144,14 @@ export function EventGroup({
   /** Parsed `#event-N` target currently in the URL hash, if any. */
   anchorEventId?: number;
 }) {
-  return family === "referenced" ? (
-    <ReferencedGroup events={events} slug={slug} issueNumber={issueNumber} />
-  ) : (
+  if (rendersAsList(family)) {
+    return family === "attachments" ? (
+      <AttachmentsGroup events={events} slug={slug} issueNumber={issueNumber} />
+    ) : (
+      <ReferencedGroup events={events} slug={slug} issueNumber={issueNumber} />
+    );
+  }
+  return (
     <CollapsedGroup
       family={family}
       events={events}
@@ -192,23 +164,31 @@ export function EventGroup({
 
 /**
  * GitHub's "This was referenced" shape (T-99): a header naming the actor
- * once, then one always-visible line per reference — long source titles
- * wrap instead of truncating. A lone reference renders this exact way
- * too (groupTimeline emits referenced singles as groups), so there is no
- * second rendering path. The `#event-N` anchors sit on the list rows
- * themselves, so deep links land without any expansion; each row's
- * created_at survives only as its tooltip.
+ * once, then one always-visible line per event — long content wraps instead
+ * of truncating. A lone event renders this exact way too (groupTimeline
+ * emits singles of these families as groups), so there is no second
+ * rendering path. The `#event-N` anchors sit on the list rows themselves,
+ * so deep links land without any expansion; each row's created_at survives
+ * only as its tooltip.
+ *
+ * Both families that render as a list share this one component rather than
+ * a copied skeleton, which is what keeps "one per line" from growing two
+ * slightly different faces.
  */
-function ReferencedGroup({
+function ListGroup({
   events,
   slug,
   issueNumber,
+  headline,
+  renderRow,
 }: {
   events: TimelineEvent[];
   slug: string;
   issueNumber: number;
+  /** The header's sentence, in the family's own words. */
+  headline: ReactNode;
+  renderRow: (event: TimelineEvent) => ReactNode;
 }) {
-  const ctx = useEventRenderContext(slug, issueNumber);
   const first = events[0];
   const last = events[events.length - 1];
   if (!first || !last) return null;
@@ -227,9 +207,7 @@ function ReferencedGroup({
           context={first.agent_context}
           className="align-middle"
         />{" "}
-        <span className="min-w-0 flex-1">
-          referenced {events.length} time{events.length === 1 ? "" : "s"}
-        </span>{" "}
+        <span className="min-w-0 flex-1">{headline}</span>{" "}
         <Link
           to="/projects/$slug/issues/$number"
           params={{ slug, number: String(issueNumber) }}
@@ -253,11 +231,84 @@ function ReferencedGroup({
             title={event.created_at}
             className="py-1 wrap-anywhere"
           >
-            {referenceSource(event, ctx).node}
+            {renderRow(event)}
           </li>
         ))}
       </ul>
     </div>
+  );
+}
+
+function ReferencedGroup({
+  events,
+  slug,
+  issueNumber,
+}: {
+  events: TimelineEvent[];
+  slug: string;
+  issueNumber: number;
+}) {
+  const ctx = useEventRenderContext(slug, issueNumber);
+  return (
+    <ListGroup
+      events={events}
+      slug={slug}
+      issueNumber={issueNumber}
+      headline={
+        <>
+          referenced {events.length} time{events.length === 1 ? "" : "s"}
+        </>
+      }
+      renderRow={(event) => referenceSource(event, ctx).node}
+    />
+  );
+}
+
+/**
+ * `attached …` as one row per file (T-369). A lone upload takes this shape
+ * too: the alternative is a second face for the family that has to be
+ * maintained — and to go wrong — separately.
+ *
+ * No per-row timestamp, as with references: the files of one upload are
+ * seconds apart, so the header's own stamp is the whole story and the exact
+ * moment stays on each row's tooltip.
+ */
+function AttachmentsGroup({
+  events,
+  slug,
+  issueNumber,
+}: {
+  events: TimelineEvent[];
+  slug: string;
+  issueNumber: number;
+}) {
+  return (
+    <ListGroup
+      events={events}
+      slug={slug}
+      issueNumber={issueNumber}
+      headline={
+        <>
+          attached {events.length} file{events.length === 1 ? "" : "s"}
+        </>
+      }
+      renderRow={(event) => {
+        const file = event.payload.attachment as
+          | { id?: number; filename?: string }
+          | undefined;
+        const filename = file?.filename ?? "a file";
+        return file?.id === undefined ? (
+          filename
+        ) : (
+          <AttachmentEventLink
+            slug={slug}
+            issueNumber={issueNumber}
+            attachmentId={file.id}
+            filename={filename}
+          />
+        );
+      }}
+    />
   );
 }
 
@@ -274,7 +325,7 @@ function CollapsedGroup({
   issueNumber,
   anchorEventId,
 }: {
-  family: Exclude<MergeFamily, "referenced">;
+  family: CollapsedFamily;
   events: TimelineEvent[];
   slug: string;
   issueNumber: number;
@@ -297,7 +348,7 @@ function CollapsedGroup({
   const last = events[events.length - 1];
   if (!first || !last) return null;
 
-  const summary = summarize(family, events, slug, issueNumber, entities);
+  const summary = summarize(family, events, entities);
   const dim = summary.dim ? "text-muted-foreground/60" : undefined;
 
   return (

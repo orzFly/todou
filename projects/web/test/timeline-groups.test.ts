@@ -258,12 +258,25 @@ describe("groupTimeline", () => {
     expect(kinds(units)).toEqual(["group:1", "item", "group:1"]);
   });
 
-  it("emits a lone referenced event as a group, unlike other families", () => {
+  it("emits a lone list-family event as a group, unlike other families", () => {
     const lone = groupTimeline([
       event({ event_type: "referenced", payload: { by_issue: 7 }, atMs: 0 }),
     ]);
     expect(kinds(lone)).toEqual(["group:1"]);
 
+    // One file renders with the same header and row as many (T-369), which
+    // takes a group to render at all.
+    const loneFile = groupTimeline([
+      event({
+        event_type: "attachment_added",
+        payload: { attachment: { id: 5, filename: "one.png" } },
+        atMs: 0,
+      }),
+    ]);
+    expect(kinds(loneFile)).toEqual(["group:1"]);
+
+    // Still only those two families: the summary row is what a lone status
+    // or label change is for.
     const loneLabel = groupTimeline([event({ atMs: 0 })]);
     expect(kinds(loneLabel)).toEqual(["item"]);
   });

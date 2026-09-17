@@ -21,6 +21,22 @@ export const MERGE_WINDOW_MS = 300_000;
 
 export type MergeFamily = "status" | "labels" | "referenced" | "attachments";
 
+/** The families whose runs render as one row per event. */
+export type ListFamily = "referenced" | "attachments";
+/** The rest: a summary row with an expander behind it. */
+export type CollapsedFamily = Exclude<MergeFamily, ListFamily>;
+
+/**
+ * Both `groupTimeline` — which has to emit even a lone event of these
+ * families as a group — and `EventGroup`, which has to render every group of
+ * theirs as a list, ask this one question. Two copies of the answer would
+ * eventually disagree, and the disagreement renders as either an empty
+ * group shell or a row with no header over it.
+ */
+export function rendersAsList(family: MergeFamily): family is ListFamily {
+  return family === "referenced" || family === "attachments";
+}
+
 /**
  * References arrive whenever some other card's work touches this one —
  * hours apart by nature, so a gesture-sized window would never fold them
@@ -88,10 +104,10 @@ export function hiddenRunKey(unit: { comments: TimelineComment[] }): string {
 /**
  * Fold consecutive same-family, same-key events within the window into
  * groups; everything else passes through untouched. Single-event runs stay
- * plain items so today's rendering is the unchanged baseline — except
- * referenced, whose lone events still come out as groups so one reference
- * renders exactly like many (T-99). Order is never rearranged — any
- * comment or foreign-family item splits the run.
+ * plain items so today's rendering is the unchanged baseline — except the
+ * list families, whose lone events still come out as groups so one reference
+ * or one file renders exactly like many (T-99, T-369). Order is never
+ * rearranged — any comment or foreign-family item splits the run.
  *
  * Adjacent hidden comments fold the same way (T-281), under the same rule:
  * an event between two of them ends the run, so hiding the comments around
@@ -117,7 +133,7 @@ export function groupTimeline(
   const flush = () => {
     if (!run) return;
     const first = run.events[0];
-    if (run.events.length === 1 && first && run.family !== "referenced") {
+    if (run.events.length === 1 && first && !rendersAsList(run.family)) {
       units.push({ kind: "item", item: first });
     } else {
       units.push({ kind: "group", family: run.family, events: run.events });

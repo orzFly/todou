@@ -23,7 +23,10 @@ import {
 } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import { AssigneePicker } from "@/components/issue/assignee-picker.tsx";
-import { AttachmentList } from "@/components/issue/attachment-list.tsx";
+import {
+  AttachmentList,
+  AttachmentSidebarSection,
+} from "@/components/issue/attachment-list.tsx";
 import { BlocksSection } from "@/components/issue/blocks-section.tsx";
 import {
   EntryActionsMenu,
@@ -144,7 +147,16 @@ export function IssueDetailPage() {
               </div>
               <BodyBlock slug={slug} issue={issue.data} readOnly={trashed} />
               <SpecEntryRow slug={slug} issueNumber={issueNumber} />
-              <AttachmentList slug={slug} issueNumber={issueNumber} />
+              {/* Keyed for the same reason as `Timeline` and `Composer`
+                  below: `/issues/7 → /issues/8` is one route with a changed
+                  param, so this instance is reused and its fold — "I am
+                  reading the older files on card 7" — would greet the reader
+                  on card 8 (T-317). */}
+              <AttachmentList
+                key={cardKey}
+                slug={slug}
+                issueNumber={issueNumber}
+              />
               <TimelineDivider />
               <Timeline
                 // The row keys inside `Timeline` carry no card, so a jump to
@@ -673,6 +685,11 @@ export function Sidebar({
           />
         )}
       </section>
+
+      {/* Next to Latest spec, because both are "the files on this card", and
+          above it so the insertion point stays clear of Notifications
+          (T-372), which sits between the spec section and the metadata. */}
+      <AttachmentSidebarSection slug={slug} issueNumber={issue.number} />
 
       {/* Placement per the T-63 verdict: after Assignees, verdict-free. */}
       <SpecSidebarSection slug={slug} issueNumber={issue.number} />
