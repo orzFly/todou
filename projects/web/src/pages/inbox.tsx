@@ -158,6 +158,7 @@ function InboxRow({ item }: { item: InboxItem }) {
       slug={item.project.slug}
       issue={item}
       specAwaitingReview={item.pending_spec_review}
+      mentionsYou={item.mentions_you}
       trailing={
         <span className="ml-auto flex shrink-0 items-center gap-2 max-sm:hidden">
           <StatusPill status={item.status} />

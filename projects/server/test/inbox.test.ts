@@ -38,15 +38,16 @@ describe("cross-project inbox T-97", () => {
     return json(res);
   };
 
-  const rowOf = (
-    page: { items: { number: number; project: { slug: string } }[] },
-    slug: string,
-    number: number,
-  ) =>
-    page.items.find(
-      (i: { number: number; project: { slug: string } }) =>
-        i.project.slug === slug && i.number === number,
-    );
+  type Row = {
+    number: number;
+    project: { slug: string };
+    unread?: boolean;
+    unread_comments?: number;
+    mentions_you?: boolean;
+  };
+
+  const rowOf = (page: { items: Row[] }, slug: string, number: number) =>
+    page.items.find((i: Row) => i.project.slug === slug && i.number === number);
 
   async function createIssueAs(
     slug: string,
@@ -487,6 +488,140 @@ describe("cross-project inbox T-97", () => {
     for (const n of nums) await markRead(PB, n);
   });
 
+  describe("a mention is a reason of its own (T-373)", () => {
+    const PM = "inbox-mention";
+
+    beforeAll(async () => {
+      const created = await t.app.request("/api/projects", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ slug: PM, name: "Inbox Mention" }),
+      });
+      expect(created.status).toBe(201);
+      const member = await t.app.request(
+        `/api/projects/${PM}/members/${bob.user.id}`,
+        {
+          method: "PUT",
+          headers: headers(),
+          body: JSON.stringify({ role: "writer" }),
+        },
+      );
+      expect(member.status).toBe(204);
+      // Mints bob's frontier before any fixture exists.
+      await items("", bob.headers);
+      // These fixtures are judged through BOB's eyes, and the point of the
+      // first two is that a mention survives his weak-unread toggle — so
+      // his toggle has to actually be off, not sitting on the default.
+      const weak = await t.app.request("/api/me/prefs", {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...bob.headers },
+        body: JSON.stringify({ show_weak_unread: false }),
+      });
+      expect(weak.status).toBe(200);
+      await settle();
+    });
+
+    it("keeps a mention-only card with weak unread off, flagged", async () => {
+      // Bob's own card, read, then edited by alice to carry @bob: no new
+      // comment, no event — the row is the only witness.
+      const n = await createIssueAs(PM, bob.headers, "mention only");
+      await settle();
+      await markReadAs(PM, n, bob.headers);
+
+      const res = await t.app.request(`/api/projects/${PM}/issues/${n}`, {
+        method: "PATCH",
+        headers: headers(),
+        body: JSON.stringify({ body: "now with @inbox-bob inside" }),
+      });
+      expect(res.status).toBe(200);
+      await settle();
+
+      const weakOff = await items("", bob.headers);
+      const row = rowOf(weakOff, PM, n);
+      expect(row).toBeDefined();
+      expect(row?.mentions_you).toBe(true);
+      // A mention is not a comment.
+      expect(row?.unread_comments).toBe(0);
+    });
+
+    it("keeps the row after the card closes, where questions do not", async () => {
+      const n = await createIssueAs(PM, bob.headers, "closed with mention");
+      const asked = await createIssueAs(
+        PM,
+        bob.headers,
+        "closed with question",
+      );
+      await ask(PM, asked, headers(), "which half?");
+      await setStatus(PM, asked, "closed");
+      // Read past everything, including the close event itself: the card's
+      // only would-be reason is the pending question T-111 retires on close.
+      await markReadAs(PM, asked, bob.headers);
+      await setStatus(PM, n, "closed");
+      const res = await t.app.request(`/api/projects/${PM}/issues/${n}`, {
+        method: "PATCH",
+        headers: headers(),
+        body: JSON.stringify({ body: "hey @inbox-bob" }),
+      });
+      expect(res.status).toBe(200);
+      await settle();
+
+      const page = await items("", bob.headers);
+      expect(rowOf(page, PM, n)).toBeDefined();
+      // T-111's retirement of pending reasons is untouched.
+      expect(rowOf(page, PM, asked)).toBeUndefined();
+    });
+
+    it("a mention on a muted card still reaches the inbox", async () => {
+      const n = await createIssueAs(PM, bob.headers, "muted but mentioned");
+      const mute = await t.app.request(`/api/projects/${PM}/issues/${n}/mute`, {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...bob.headers },
+        body: JSON.stringify({ mode: "forever" }),
+      });
+      expect(mute.status).toBe(204);
+      await settle();
+
+      const res = await t.app.request(`/api/projects/${PM}/issues/${n}`, {
+        method: "PATCH",
+        headers: headers(),
+        body: JSON.stringify({ body: "still @inbox-bob here" }),
+      });
+      expect(res.status).toBe(200);
+      await settle();
+
+      const page = await items("", bob.headers);
+      const row = rowOf(page, PM, n);
+      expect(row).toBeDefined();
+      expect(row?.mentions_you).toBe(true);
+    });
+
+    afterAll(async () => {
+      // Hand bob's toggle back: later describes read his real prefs.
+      await t.app.request("/api/me/prefs", {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...bob.headers },
+        body: JSON.stringify({ show_weak_unread: true }),
+      });
+    });
+
+    /** markRead scoped to this describe's helper shape. */
+    async function markReadAs(
+      slug: string,
+      number: number,
+      who: Record<string, string>,
+    ) {
+      await settle();
+      const res = await t.app.request(
+        `/api/projects/${slug}/issues/${number}/read`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json", ...who },
+          body: "{}",
+        },
+      );
+      expect(res.status).toBe(204);
+    }
+  });
   // The SSE path judges one card at a time (T-273) while the list scans a
   // project. Two fetches, one rule — so the test that matters is not what
   // either answers, but that they never disagree. Since T-275 the single
@@ -526,7 +661,7 @@ describe("cross-project inbox T-97", () => {
       expect(res.status).toBe(200);
     }
 
-    /** The five deciding fields of the list's row, or null when it has none. */
+    /** The six deciding fields of the list's row, or null when it has none. */
     function listFingerprint(
       page: {
         items: {
@@ -537,6 +672,7 @@ describe("cross-project inbox T-97", () => {
           unread_comments: number;
           pending_spec_review: boolean;
           open_questions: number;
+          mentions_you: boolean;
         }[];
       },
       number: number,
@@ -551,6 +687,7 @@ describe("cross-project inbox T-97", () => {
         unread_comments: row.unread_comments,
         pending_spec_review: row.pending_spec_review,
         open_questions: row.open_questions,
+        mentions_you: row.mentions_you,
       };
     }
 

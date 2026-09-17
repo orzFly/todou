@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Id, Timestamp } from "./common.ts";
 import { MemberRole, ProjectBrief } from "./project.ts";
-import { Login, User } from "./user.ts";
+import { LoginInput, User } from "./user.ts";
 
 /** A machine user. Owned by a human; authenticates only via PAT. */
 export const Agent = User.extend({
@@ -10,13 +10,13 @@ export const Agent = User.extend({
 export type Agent = z.infer<typeof Agent>;
 
 export const AgentCreateInput = z.object({
-  login: Login,
+  login: LoginInput,
   display_name: z.string().trim().min(1).max(200),
 });
 export type AgentCreateInput = z.infer<typeof AgentCreateInput>;
 
 export const AgentUpdateInput = z.object({
-  login: Login.optional(),
+  login: LoginInput.optional(),
   display_name: z.string().trim().min(1).max(200).optional(),
 });
 export type AgentUpdateInput = z.infer<typeof AgentUpdateInput>;

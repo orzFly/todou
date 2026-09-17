@@ -14,6 +14,7 @@ import type { Db } from "../db/driver.ts";
 import {
   comments,
   issueEvents,
+  issueMentions,
   issueReads,
   issues,
   readFrontiers,
@@ -50,6 +51,8 @@ type KeptState = {
   pendingSpecReview: boolean;
   openQuestions: number;
   specCreatedAt: Date | undefined;
+  mentionsYou: boolean;
+  mentionLatest: Date | undefined;
 };
 
 /**
@@ -74,12 +77,15 @@ export function inboxKeepCheck(input: {
   showWeakUnread: boolean;
   /** Why the mute gate holds this card quiet, when it does (T-372). */
   silenced: MuteReason | null;
+  /** The reader was @-mentioned past their threshold (T-373). */
+  mentionsYou: boolean;
 }): { keep: boolean; pendingSpecReview: boolean; openQuestions: number } {
   // Closing an issue retires both pending reasons (T-111), so a closed
   // issue only survives on unread activity of its own — a new foreign
   // comment (or, with the weak toggle on, a foreign event). The flag goes
   // false with it: telling the reader to review a spec on a closed issue
-  // is the staleness T-111 is about.
+  // is the staleness T-111 is about. A mention survives the close: being
+  // named is news about you, not work waiting on the card.
   const pendingSpecReview =
     !input.isClosed &&
     input.specAuthorId !== null &&
@@ -87,7 +93,13 @@ export function inboxKeepCheck(input: {
   const openQuestions = input.isClosed ? 0 : input.openQuestions;
   const result = { pendingSpecReview, openQuestions };
 
-  // The mute gate goes first and answers nothing but the verdict: the
+  // A mention outranks every gate below (T-373): not the mute's business
+  // ("this one they named me in" is exactly the exception a mute carves),
+  // not `show_weak_unread`'s (it is stronger than a comment, not weaker),
+  // and not T-111's (which retires pending work, not delivered news).
+  if (input.mentionsYou) return { keep: true, ...result };
+
+  // The mute gate goes next and answers nothing but the verdict: the
   // reasons above still come back out, because the callers report them
   // (T-372's unread stays truthful under a mute; so do these).
   if (input.silenced !== null) return { keep: false, ...result };
@@ -251,11 +263,41 @@ export async function groupInbox(
       ),
     );
 
+  // The mention scan runs unconditionally (T-373): it is not an event scan,
+  // so the derivation below — "with weak unread hidden, the event scan can
+  // be skipped" — is untouched, but its candidate set now has a fourth
+  // source. A card whose only news is a mention arrives here, or not at
+  // all; same threshold as every scan above, same `ne` on the actor.
+  const mentionCand = await db
+    .select({
+      issueId: issueMentions.issueId,
+      latest: max(issueMentions.createdAt),
+    })
+    .from(issueMentions)
+    .leftJoin(
+      issueReads,
+      and(
+        eq(issueReads.issueId, issueMentions.issueId),
+        eq(issueReads.userId, userId),
+      ),
+    )
+    .leftJoin(readFrontiers, frontierJoin(userId, issueMentions.projectId))
+    .where(
+      and(
+        inArray(issueMentions.projectId, projectIds),
+        eq(issueMentions.userId, userId),
+        ne(issueMentions.actorId, userId),
+        sql`${issueMentions.createdAt} > coalesce(${issueReads.lastSeenAt}, ${readFrontiers.frontierAt})`,
+      ),
+    )
+    .groupBy(issueMentions.issueId);
+
   const candidateIds = new Set<number>([
     ...commentCand.map((r) => r.issueId),
     ...issueCand.map((r) => r.issueId),
     ...eventCand.map((r) => r.issueId),
     ...pendingRows.map((r) => r.id),
+    ...mentionCand.map((r) => r.issueId),
   ]);
   if (candidateIds.size === 0) return { items: [], truncated: false };
   const ids = [...candidateIds];
@@ -332,6 +374,12 @@ export async function groupInbox(
   const commentLatest = new Map(
     commentCand.flatMap((r) => (r.latest ? [[r.issueId, r.latest]] : [])),
   );
+  const mentionLatest = new Map(
+    mentionCand.flatMap((r) => (r.latest ? [[r.issueId, r.latest]] : [])),
+  );
+  // unreadIssueState re-derived the mention set under its own threshold;
+  // this is the same question for the whole group, so reuse the scan.
+  const mentionsYou = new Set(mentionCand.map((r) => r.issueId));
 
   const kept: { bundle: IssueBundle; state: KeptState }[] = [];
   for (const bundle of bundles) {
@@ -348,6 +396,7 @@ export async function groupInbox(
       userId,
       showWeakUnread,
       silenced: silenced.get(row.id) ?? null,
+      mentionsYou: mentionsYou.has(row.id),
     });
     if (!keep) continue;
     kept.push({
@@ -358,6 +407,8 @@ export async function groupInbox(
         pendingSpecReview,
         openQuestions,
         specCreatedAt: specAuthor?.createdAt,
+        mentionsYou: mentionsYou.has(row.id),
+        mentionLatest: mentionLatest.get(row.id),
       },
     });
   }
@@ -383,6 +434,7 @@ export async function groupInbox(
     const at = [
       commentLatest.get(row.id),
       eventLatest.get(row.id),
+      state.mentionsYou ? state.mentionLatest : undefined,
       state.pendingSpecReview ? state.specCreatedAt : undefined,
       state.openQuestions > 0 ? questionTimes.get(row.id) : undefined,
     ]
@@ -402,6 +454,7 @@ export async function groupInbox(
         project: { slug: project.slug, name: project.name },
         last_activity_at: at.toISOString(),
         pending_spec_review: state.pendingSpecReview,
+        mentions_you: state.mentionsYou,
       },
     });
     slices.set(row.projectId, slice);
@@ -473,7 +526,7 @@ export async function inboxRowState(
     [project.id],
     [row.id],
   );
-  const { unread, counts, silenced } = await unreadIssueState(
+  const { unread, counts, silenced, mentioned } = await unreadIssueState(
     db,
     [project.id],
     actor.id,
@@ -506,6 +559,7 @@ export async function inboxRowState(
     userId: actor.id,
     showWeakUnread: prefs.show_weak_unread,
     silenced: silenced.get(row.id) ?? null,
+    mentionsYou: mentioned.has(row.id),
   });
   if (!keep) return null;
 
@@ -522,6 +576,7 @@ export async function inboxRowState(
     // zero there would never match the cached row.
     pending_spec_review: pendingSpecReview,
     open_questions: row.openQuestions,
+    mentions_you: mentioned.has(row.id),
   };
 }
 
@@ -629,13 +684,15 @@ export async function getInbox(
         query.limit,
         prefs.show_weak_unread,
         // With weak unread hidden, the event scan cannot turn up a row that
-        // survives: the three surviving reasons — unread comments, a spec
-        // awaiting the reader, open questions — are each found by one of the
-        // other scans, and an event-only card falls at the second guard. So
-        // the scan runs only when weak unread is on. This is derived from
-        // `inboxKeepCheck`, which means a new event-dependent reason silently
-        // invalidates it; "trimming discovers the same page" in
-        // test/inbox.test.ts is the guard that turns red instead.
+        // survives: the four surviving reasons — unread comments, a mention,
+        // a spec awaiting the reader, open questions — are each found by one
+        // of the other scans, and an event-only card falls at the second
+        // guard. So the scan runs only when weak unread is on. This is
+        // derived from `inboxKeepCheck`, which means a new event-dependent
+        // reason silently invalidates it; "trimming discovers the same page"
+        // in test/inbox.test.ts is the guard that turns red instead. The
+        // mention scan inside `groupInbox` is NOT gated on this flag: it is
+        // its own scan, and a mention survives the weak toggle anyway.
         prefs.show_weak_unread,
         visible,
         mutedProjects,

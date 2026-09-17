@@ -28,6 +28,7 @@ import {
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "@/api/references.ts";
+import { mentionCompletionSource } from "@/lib/editor/mention-completion.ts";
 import {
   type ProjectRefOption,
   projectSpellings,
@@ -425,7 +426,11 @@ export function completionWith(sources: CompletionSource[]): Extension {
 export function useRefCompletion(slug: string): Extension {
   const queryClient = useQueryClient();
   return useMemo(
-    () => completionWith([refCompletionSource(slug, queryClient)]),
+    () =>
+      completionWith([
+        refCompletionSource(slug, queryClient),
+        mentionCompletionSource(slug, queryClient),
+      ]),
     [slug, queryClient],
   );
 }
@@ -485,6 +490,14 @@ export const completionTheme = EditorView.theme({
   },
   ".cm-completionIcon-project-ref::after": {
     content: "'◇'",
+    color: "var(--muted-foreground)",
+  },
+  ".cm-completionIcon-mention-user::after": {
+    content: "'@'",
+    color: "var(--primary)",
+  },
+  ".cm-completionIcon-mention-agent::after": {
+    content: "'◉'",
     color: "var(--muted-foreground)",
   },
 });

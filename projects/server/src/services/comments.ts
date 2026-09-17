@@ -35,6 +35,7 @@ import { currentRefPrefix } from "./references.ts";
 import { throwIfCommentAliased } from "./relocation.ts";
 import {
   recordCrossReferences,
+  recordIssueMentions,
   recordLocalReferences,
   resolveContent,
 } from "./resolve-pass.ts";
@@ -108,6 +109,8 @@ export async function insertCommentInTx(
     actorId: number;
     body: string;
     localRefs: number[];
+    /** Users this comment @-mentions; one row each, in this transaction. */
+    mentions: number[];
     component?: CommentComponent | null;
     agentContext: AgentContext | null;
   },
@@ -116,7 +119,8 @@ export async function insertCommentInTx(
   /** Publish after commit; the comment leads, subscribers pin that. */
   timeline: ChangeEvent[];
 }> {
-  const { project, issue, actorId, body, agentContext, localRefs } = args;
+  const { project, issue, actorId, body, agentContext, localRefs, mentions } =
+    args;
   const component = args.component ?? null;
   const issueNumber = issue.number;
 
@@ -172,6 +176,14 @@ export async function insertCommentInTx(
       issue_number: ref.issueNumber,
     });
   }
+  await recordIssueMentions(
+    tx,
+    project,
+    actorId,
+    issue.id,
+    comment.id,
+    mentions,
+  );
   return { comment, timeline };
 }
 
@@ -216,6 +228,7 @@ export async function createComment(
       actorId: actor.id,
       body: resolved.storedText,
       localRefs: resolved.local,
+      mentions: resolved.mentions,
       component,
       agentContext,
     });
@@ -426,6 +439,14 @@ export async function updateComment(
       { issueNumber, commentId: row.id },
       resolved.local,
       agentContext,
+    );
+    await recordIssueMentions(
+      tx,
+      project,
+      actor.id,
+      row.issueId,
+      row.id,
+      resolved.mentions,
     );
     return { after, refs };
   });

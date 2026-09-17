@@ -42,6 +42,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { mentionCompletionSource } from "@/lib/editor/mention-completion.ts";
 import {
   completionWith,
   refCompletionSource,
@@ -105,6 +106,7 @@ export function NewIssuePage() {
         ? [
             completionWith([
               refCompletionSource(slug, queryClient),
+              mentionCompletionSource(slug, queryClient),
               commandCompletionSource(() => registryRef.current),
             ]),
             commandDecoration(() => registryRef.current),
@@ -112,7 +114,12 @@ export function NewIssuePage() {
         : // Every command this page offers writes one of the three triage
           // fields, so without the capability none of them is installed and
           // a `/label` line stays the prose it looks like.
-          [completionWith([refCompletionSource(slug, queryClient)])],
+          [
+            completionWith([
+              refCompletionSource(slug, queryClient),
+              mentionCompletionSource(slug, queryClient),
+            ]),
+          ],
     [slug, queryClient, canTriage],
   );
 

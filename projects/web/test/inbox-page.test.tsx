@@ -52,6 +52,7 @@ function makeItem(
     project: { slug, name: `Project ${slug}` },
     last_activity_at: "2026-01-02T00:00:00Z",
     pending_spec_review: false,
+    mentions_you: false,
     ...overrides,
   };
 }
@@ -167,6 +168,20 @@ describe("InboxPage", () => {
     mockInbox({ items: [makeItem("a", 1)], truncated: true });
     const view = renderWithProviders(<InboxPage />);
     expect(await view.findByText(/more unread than shown/)).toBeTruthy();
+  });
+
+  it("marks mentioned rows with an @, and only those", async () => {
+    mockInbox({
+      items: [makeItem("a", 1, { mentions_you: true }), makeItem("a", 2)],
+      truncated: false,
+    });
+    const view = renderWithProviders(<InboxPage />);
+    expect(await view.findByText("issue 1")).toBeTruthy();
+    const badges = view.container.querySelectorAll("svg.lucide-at-sign");
+    expect(badges).toHaveLength(1);
+    const badge = badges[0] as SVGElement;
+    // The badge sits on the mentioned row, not the other one.
+    expect(badge.closest("li")?.textContent).toContain("issue 1");
   });
 });
 

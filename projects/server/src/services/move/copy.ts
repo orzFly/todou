@@ -7,6 +7,7 @@ import {
   issueAssignees,
   issueEvents,
   issueLabels,
+  issueMentions,
   issueMetadata,
   issueMutes,
   issueReads,
@@ -152,6 +153,16 @@ export const ISSUE_CHILD_TABLES: ReadonlyArray<{
     copied: false,
     clearSource: (db, id) =>
       db.delete(issueMutes).where(eq(issueMutes.issueId, id)),
+  },
+  {
+    // A mention is notification state, not content: like the read position
+    // and the mute, it belongs to this card in this project and does not
+    // follow a move — but the source rows must go so the tombstone holds
+    // nothing (T-373).
+    name: "issue_mentions",
+    copied: false,
+    clearSource: (db, id) =>
+      db.delete(issueMentions).where(eq(issueMentions.issueId, id)),
   },
   {
     name: "pending_uploads",

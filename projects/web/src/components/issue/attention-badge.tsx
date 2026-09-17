@@ -1,4 +1,8 @@
-import { BookOpenTextIcon, MessageCircleQuestionIcon } from "lucide-react";
+import {
+  AtSignIcon,
+  BookOpenTextIcon,
+  MessageCircleQuestionIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
@@ -71,5 +75,24 @@ export function SpecReviewBadge({
       <BookOpenTextIcon className="size-3.5" />
       spec
     </AttentionBadge>
+  );
+}
+
+/**
+ * The @-mention marker (T-373). Blue, not amber: the amber family is "work
+ * waiting on you" (a question, a review); a mention is news about you, and
+ * its colour sits with the unread markers that say the same thing.
+ */
+export function MentionBadge({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border border-blue-500/60 bg-blue-500/10 px-1.5 py-0.5 text-xs text-blue-700 dark:text-blue-400",
+        className,
+      )}
+      title="someone @-mentioned you here"
+    >
+      <AtSignIcon className="size-3.5" />
+    </span>
   );
 }

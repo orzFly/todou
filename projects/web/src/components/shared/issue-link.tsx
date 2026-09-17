@@ -11,6 +11,7 @@ import {
 import { useRefPlacement } from "@/api/prefs.ts";
 import { projectsQuery } from "@/api/queries.ts";
 import { referenceConfigQuery } from "@/api/references.ts";
+import { MentionLink } from "@/components/shared/mention-link.tsx";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import { qualifiedRefSpelling } from "@/lib/issue-refs.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
@@ -234,6 +235,8 @@ const ISSUE_REF_HREF = /^#issue-(\d{1,9})(?:\/comment-(\d{1,9}))?$/;
 const XREF_HREF =
   /^#xref-([a-z0-9][a-z0-9-]*)\/(\d{1,9})(?:\/comment-(\d{1,9}))?$/;
 const XREF_COMMENT_HREF = /^#xref-comment-(\d{1,9})$/;
+const MENTION_HREF = /^#mention-([a-z0-9][a-z0-9-]*)$/;
+const USER_HREF = /^\/users\/(\d{1,15})$/;
 
 type AnchorProps = ComponentProps<"a"> & {
   node?: { children?: Array<{ type: string; value?: string }> };
@@ -308,6 +311,26 @@ export function MarkdownLink({
         slug={home}
         pageSlug={slug}
         commentId={Number(commentMatch[1])}
+        fallback={written ?? props.href ?? ""}
+      />
+    );
+  }
+  const mentionMatch = props.href?.match(MENTION_HREF);
+  if (mentionMatch?.[1] !== undefined) {
+    return (
+      <MentionLink
+        slug={home}
+        login={mentionMatch[1]}
+        fallback={written ?? props.href ?? ""}
+      />
+    );
+  }
+  const userMatch = props.href?.match(USER_HREF);
+  if (userMatch?.[1] !== undefined) {
+    return (
+      <MentionLink
+        slug={home}
+        userId={Number(userMatch[1])}
         fallback={written ?? props.href ?? ""}
       />
     );

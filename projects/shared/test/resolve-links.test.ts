@@ -22,6 +22,9 @@ const ORIGIN = "https://todou.example";
 /** Project ids the fake resolver below hands out, one per slug. */
 const IDS: Record<string, number> = { todou: 7, alpha: 12, beta: 3 };
 
+/** User ids the fake resolver hands out, one per login. */
+const USER_IDS: Record<string, number> = { alice: 12, bot: 30 };
+
 const ANCHOR: ScanConfig = {
   internalPrefix: null,
   cross: {
@@ -82,7 +85,27 @@ function resolve(text: string, options: { origin?: string } = {}): string {
   }
   for (const link of links) {
     const found = link.target;
-    if (found === null || found.project.kind === "id") continue;
+    if (found === null) continue;
+    if (found.kind === "user") {
+      if (found.user.kind === "id") continue;
+      const uid = USER_IDS[found.user.login];
+      if (uid === undefined) continue;
+      edits.push(
+        link.bare
+          ? {
+              start: link.start,
+              end: link.end,
+              text: linkFor({ kind: "user", userId: uid }, link.href),
+            }
+          : {
+              start: link.hrefStart,
+              end: link.hrefEnd,
+              text: hrefFor({ kind: "user", userId: uid }),
+            },
+      );
+      continue;
+    }
+    if (found.project.kind === "id") continue;
     const id = IDS[found.project.slug];
     if (id === undefined) continue;
     const target: ResolvedTarget =
@@ -168,6 +191,36 @@ describe("href normalisation", () => {
     expect(resolve("[f](/api/projects/beta/attachments/8/view)")).toBe(
       "[f](/api/projects/3/attachments/8/view)",
     );
+  });
+
+  it("rewrites a login-form user href to the id form", () => {
+    expect(resolve("[@alice](/users/alice)")).toBe("[@alice](/users/12)");
+  });
+
+  it("leaves an id-form user href exactly as written", () => {
+    expect(resolve("[@alice](/users/12)")).toBe("[@alice](/users/12)");
+  });
+
+  it("recognises a same-origin absolute user URL too", () => {
+    const text = "[@alice](https://todou.example/users/alice)";
+    expect(resolve(text)).toBe(text);
+    expect(resolve(text, { origin: ORIGIN })).toBe("[@alice](/users/12)");
+  });
+
+  it("refuses a user href carrying a query or a hash", () => {
+    expect(parseInternalHref("/users/12?x=1")).toBeNull();
+    expect(parseInternalHref("/users/12#comment-3")).toBeNull();
+    // And the parse side of the id/login split:
+    expect(parseInternalHref("/users/12")).toEqual({
+      kind: "user",
+      user: { kind: "id", id: 12 },
+    });
+    expect(parseInternalHref("/users/alice")).toEqual({
+      kind: "user",
+      user: { kind: "login", login: "alice" },
+    });
+    // hrefFor returns to the id form.
+    expect(hrefFor({ kind: "user", userId: 12 })).toBe("/users/12");
   });
 
   it("leaves an external href alone", () => {

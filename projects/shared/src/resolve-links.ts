@@ -76,6 +76,10 @@ export type LinkTarget =
       variant: AttachmentVariant;
       /** The cosmetic trailing segment, still percent-encoded, or null. */
       name: string | null;
+    }
+  | {
+      kind: "user";
+      user: { kind: "id"; id: number } | { kind: "login"; login: string };
     };
 
 export type MarkdownLink = {
@@ -201,7 +205,8 @@ export type ResolvedTarget =
       id: number;
       variant: AttachmentVariant;
       name: string | null;
-    };
+    }
+  | { kind: "user"; userId: number };
 
 /** The canonical id-anchored href for a resolved target. */
 export function hrefFor(target: ResolvedTarget): string {
@@ -210,10 +215,10 @@ export function hrefFor(target: ResolvedTarget): string {
       target.commentId === undefined ? "" : `#comment-${target.commentId}`;
     return `/projects/${target.projectId}/issues/${target.number}${anchor}`;
   }
+  if (target.kind === "user") return `/users/${target.userId}`;
   const name = target.name === null ? "" : `/${target.name}`;
   return `/api/projects/${target.projectId}/attachments/${target.id}/${target.variant}${name}`;
 }
-
 /**
  * The stored form of a reference: the author's own spelling as the link text,
  * the permanent address as the destination. Keeping the text verbatim is what
@@ -241,6 +246,12 @@ const ATTACHMENT_PATH = new RegExp(
 );
 const COMMENT_HASH = /^#comment-(\d{1,9})$/;
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
+/**
+ * `/users/<id|login>`. No project segment: the user's address is global to
+ * the deployment. A query or hash is refused by the shared rules above.
+ */
+const USER_PATH = /^\/users\/([a-z0-9][a-z0-9-]{0,63})\/?$/;
 
 /**
  * A digit run this long fits in a JavaScript number exactly, which is what a
@@ -297,8 +308,21 @@ export function parseInternalHref(
       ...(commentId === undefined ? {} : { commentId }),
     };
   }
-
   if (hash !== "") return null;
+
+  const user = USER_PATH.exec(path);
+  if (user !== null) {
+    const segment = user[1] as string;
+    return {
+      kind: "user",
+      // Same ruler as `projectOf`: an all-digit segment is an id, anything
+      // else a login someone wrote by hand.
+      user: /^\d{1,15}$/.test(segment)
+        ? { kind: "id", id: Number(segment) }
+        : { kind: "login", login: segment },
+    };
+  }
+
   const attachment = ATTACHMENT_PATH.exec(path);
   if (attachment === null) return null;
   return {

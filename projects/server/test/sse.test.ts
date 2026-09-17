@@ -552,6 +552,7 @@ describe("user-level SSE stream (T-122)", () => {
         unread_comments: row.unread_comments,
         pending_spec_review: row.pending_spec_review,
         open_questions: row.open_questions,
+        mentions_you: row.mentions_you,
       };
     };
 
@@ -893,6 +894,7 @@ describe("user-level SSE stream (T-122)", () => {
         unread_comments: row.unread_comments,
         pending_spec_review: row.pending_spec_review,
         open_questions: row.open_questions,
+        mentions_you: row.mentions_you,
       });
       expect(event.inbox_row).toMatchObject({
         unread: false,
