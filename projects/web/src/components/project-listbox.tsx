@@ -25,6 +25,8 @@ export type ProjectListboxOption = {
   project: Project;
   /** Present renders an `<a href>`; absent renders a `<button>`. */
   link?: LinkProps;
+  /** Beside the name — the Reference submenu's `(current)`. */
+  note?: ReactNode;
   /** After the spelling token — the navbar's unread badge. */
   trailing?: ReactNode;
   /** Greys the name; the navbar marks projects never visited. */
@@ -276,6 +278,7 @@ function Row({
         }}
         match={match}
         muted={option.muted}
+        note={option.note}
         icon={
           <ProjectIcon
             project={{

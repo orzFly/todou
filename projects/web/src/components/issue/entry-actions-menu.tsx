@@ -242,6 +242,14 @@ export function EntryActionsMenu({
                   // as "open the submenu", which would pull focus into its
                   // search box out from under the reader.
                   suppressOpen.current = true;
+                  // Radix only opens what is not open already, so after a
+                  // hover has opened the list this click consumes nothing.
+                  // Cleared once the click is fully dispatched — anything
+                  // later is a new gesture, and a flag left standing would
+                  // eat that reader's next legitimate open.
+                  queueMicrotask(() => {
+                    suppressOpen.current = false;
+                  });
                   return;
                 }
                 setOpen(false);
@@ -303,14 +311,14 @@ function QuoteTargets({
   const ordered = useProjectOrder(projects.data ?? []);
 
   const options = useMemo<ProjectListboxOption[]>(() => {
-    const row = (project: Project, note: boolean): ProjectListboxOption => ({
+    const row = (project: Project, pinned: boolean): ProjectListboxOption => ({
       project,
       link: {
         to: "/projects/$slug/issues/new",
         params: { slug: project.slug },
         search: quoteSource,
       },
-      trailing: note ? (
+      note: pinned ? (
         <span className="shrink-0 text-muted-foreground text-xs">
           (current)
         </span>

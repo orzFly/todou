@@ -28,6 +28,7 @@ export function ProjectRow({
   match,
   muted,
   icon,
+  note,
   trailing,
 }: {
   project: ProjectRowProject;
@@ -35,6 +36,13 @@ export function ProjectRow({
   match: ProjectMatch | null;
   muted?: boolean;
   icon?: ReactNode;
+  /**
+   * A word about the project itself — the Reference submenu's `(current)`.
+   * Beside the name rather than at the end, because it says what this project
+   * is to the reader; hanging it past the spelling token would take that
+   * token out of the column it shares with every other row.
+   */
+  note?: ReactNode;
   /** The switcher's unread badge; the other hosts hang nothing here. */
   trailing?: ReactNode;
 }) {
@@ -54,6 +62,7 @@ export function ProjectRow({
           project.name
         )}
       </span>
+      {note}
       {slugSegment && (
         <span className="shrink-0 text-muted-foreground text-xs">
           <MatchHighlight text={project.slug} range={match.range} />

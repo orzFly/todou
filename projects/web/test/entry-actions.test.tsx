@@ -297,10 +297,12 @@ describe("EntryActionsMenu on a comment", () => {
   });
 });
 
+/**
+ * Not scoped to the menu: an open submenu is a second `role="menu"`, and
+ * scoping would throw there rather than find the row it holds open.
+ */
 function referenceRow(): HTMLElement {
-  return within(screen.getByRole("menu")).getByRole("menuitem", {
-    name: "Reference in a new issue",
-  });
+  return screen.getByRole("menuitem", { name: "Reference in a new issue" });
 }
 
 /**
@@ -394,6 +396,25 @@ describe("Reference in a new issue", () => {
     for (const other of options.slice(1)) {
       expect(other.textContent).not.toContain("(current)");
     }
+  });
+
+  it("marks it beside the name, leaving the spelling column alone", async () => {
+    const view = renderComment();
+    const listbox = await openQuoteTargets(view);
+    const row = within(listbox).getAllByRole("option")[0];
+    const spelling = row.querySelector('[data-slot="project-spelling"]');
+    const note = [...row.querySelectorAll("span")].find(
+      (el) => el.textContent === "(current)",
+    );
+    if (spelling === null || note === undefined) {
+      throw new Error("the pinned row lost its note or its spelling token");
+    }
+
+    // The token is `ml-auto` and every other row's sits flush right; a note
+    // hung past it would push that one row's token out of the column.
+    expect(note.compareDocumentPosition(spelling)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
   });
 
   it("orders the rest the way the navbar switcher does", async () => {
@@ -537,9 +558,35 @@ describe("the Reference row itself", () => {
 
   // Nothing here resets the submenu when the menu closes, and nothing needs
   // to: Radix's own `Sub` pushes `onOpenChange(false)` at a controlled submenu
-  // whenever its parent closes. This is the guard on that, not on our code —
-  // drop the controlled state or meet a Radix that stops doing it, and a menu
-  // reopens with the project list already standing.
+  // whenever its parent closes. This is the guard on that contract, not on our
+  // code — what makes it red is `onOpenChange` refusing that `false`. Going
+  // uncontrolled does not: Radix then resets its own state through the same
+  // effect, and the cases that fail instead are the tap and the ⌘-click.
+  it("still opens the list after a ⌘-click that opened nothing", async () => {
+    const view = renderComment();
+    const trigger = await openMenu(view);
+    // The mouse path: hovering opened the list before the click landed, so
+    // Radix — which only opens what is closed — takes nothing from the flag
+    // that ⌘-click sets. Left standing, it eats a later honest open.
+    fireEvent.keyDown(referenceRow(), { key: "ArrowRight" });
+    await waitFor(() =>
+      screen.getByRole("listbox", { name: "Reference in a new issue" }),
+    );
+    fireEvent.click(referenceRow(), { metaKey: true });
+
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
+    fireEvent.keyDown(referenceRow(), { key: "ArrowRight" });
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("listbox", { name: "Reference in a new issue" }),
+      ).toBeTruthy(),
+    );
+  });
+
   it("comes back with the project list closed", async () => {
     const view = renderComment();
     const trigger = await openMenu(view);
