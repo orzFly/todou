@@ -26,6 +26,10 @@ import { testQueryClient } from "./render.tsx";
  * `AttachmentList` would supply that key itself and keep passing with the
  * page's line deleted — the argument `timeline-key.test.tsx` and
  * `revealed-runs-card.test.tsx` both make, and the same route tree they use.
+ *
+ * That key also has to differ from the one on its sibling `Timeline`, which is
+ * what the second case holds: alike, React matches neither against the other
+ * and abandons this section's DOM node on the page (T-402).
  */
 
 const user = {
@@ -36,6 +40,9 @@ const user = {
   avatar_url: null,
   owner: null,
 };
+
+/** The card the reader lands on with nothing of its own to show. */
+const cardWithoutFiles = 9;
 
 /** Eight files, which is where folding starts. */
 const filesFor = (card: number): Attachment[] =>
@@ -103,7 +110,7 @@ function stubPage(): void {
     }
     if (url.includes("/attachments")) {
       const card = Number(/issue_number=(\d+)/.exec(url)?.[1]);
-      return json(filesFor(card));
+      return json(card === cardWithoutFiles ? [] : filesFor(card));
     }
     if (url.includes("/metadata")) return json({ namespaces: {} });
     if (url.includes("/prefs")) return json({});
@@ -180,9 +187,8 @@ describe("the issue page's attachment section, keyed by card", () => {
   it("does not carry an expanded list across to the next card", async () => {
     stubPage();
     const view = renderAt("/projects/p/issues/7");
-    // Named by card, because the outgoing page is still in the DOM while the
-    // router transitions — the point of the case is which section the reader
-    // arrives at, not how many exist mid-flight.
+    // Named by card, because what this case reads is whose files the reader
+    // gets; how many sections the page carries is the case below.
     const sectionFor = (card: number) =>
       [...view.container.querySelectorAll("section#attachments")].find((el) =>
         el.textContent?.includes(`card-${card}-file-`),
@@ -207,5 +213,42 @@ describe("the issue page's attachment section, keyed by card", () => {
       within(sectionFor(8) as HTMLElement).getByTestId("attachment-fold-toggle")
         .textContent,
     ).toContain("展开其余 3 个");
+  });
+
+  it("leaves no section behind when the reader jumps on", async () => {
+    stubPage();
+    const view = renderAt("/projects/p/issues/7");
+    const panels = () => [
+      ...view.container.querySelectorAll("section#attachments"),
+    ];
+    const arriveAt = async (card: number) => {
+      await view.router.navigate({
+        to: "/projects/$slug/issues/$number",
+        params: { slug: "p", number: String(card) },
+      });
+      await waitFor(() =>
+        expect(
+          within(view.container).getAllByText(`Card ${card}`).length,
+        ).toBeGreaterThan(0),
+      );
+    };
+
+    await waitFor(() => expect(panels()).toHaveLength(1));
+
+    for (const card of [8, 7, 8]) {
+      await arriveAt(card);
+      await waitFor(() =>
+        expect(
+          panels().some((el) => el.textContent?.includes(`card-${card}-file-`)),
+        ).toBe(true),
+      );
+      expect(panels()).toHaveLength(1);
+    }
+
+    // The worst arrival of the lot: nothing of this card's to list, so a
+    // section left behind is the one the `#attachments` anchor and the
+    // sidebar's jump both land on — somebody else's files.
+    await arriveAt(cardWithoutFiles);
+    expect(panels()).toHaveLength(0);
   });
 });

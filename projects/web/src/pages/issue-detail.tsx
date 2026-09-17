@@ -151,9 +151,13 @@ export function IssueDetailPage() {
                   below: `/issues/7 → /issues/8` is one route with a changed
                   param, so this instance is reused and its fold — "I am
                   reading the older files on card 7" — would greet the reader
-                  on card 8 (T-317). */}
+                  on card 8 (T-317). The prefix is what keeps the value off
+                  its sibling `Timeline`'s: one value cannot hold two places
+                  in React's list, so keyed alike the outgoing section is
+                  neither matched nor removed and its DOM node stays on the
+                  page, one more per jump (T-402). */}
               <AttachmentList
-                key={cardKey}
+                key={`attachments-${cardKey}`}
                 slug={slug}
                 issueNumber={issueNumber}
               />
@@ -164,8 +168,9 @@ export function IssueDetailPage() {
                 // instance and let its in-flight write follow the new props.
                 // The slug is in the key because that reuse is what makes a
                 // cross-project jump destructive rather than a 404. Same remedy
-                // and same reason as the `Composer` below.
-                key={cardKey}
+                // and same reason as the `Composer` below. Prefixed against
+                // the sibling above, as that comment sets out.
+                key={`timeline-${cardKey}`}
                 slug={slug}
                 issueNumber={issueNumber}
                 pendingComments={composer.pending.filter((p) => !p.failed)}
