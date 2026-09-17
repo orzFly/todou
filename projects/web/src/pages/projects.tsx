@@ -11,10 +11,7 @@ import { toast } from "sonner";
 import { api, projectsQuery } from "@/api/queries.ts";
 import { useProjectOrder } from "@/api/useProjectOrder.ts";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
-import {
-  RefWatermark,
-  watermarkClearance,
-} from "@/components/shared/ref-watermark.tsx";
+import { RefWatermark } from "@/components/shared/ref-watermark.tsx";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -65,7 +62,9 @@ export function ProjectsPage() {
                 {/* `relative` so the watermark anchors to the card rather
                     than to the page; `Card` already clips its overflow. */}
                 <Card className="relative h-full transition-colors hover:bg-accent/50">
-                  <CardHeader>
+                  {/* Above the watermark: the mark is a background, and a
+                      positioned element would otherwise paint over this. */}
+                  <CardHeader className="relative z-10">
                     <CardTitle
                       className={cn(
                         "flex items-center gap-2.5 text-base",
@@ -82,12 +81,7 @@ export function ProjectsPage() {
                       />
                       <span className="truncate">{project.name}</span>
                     </CardTitle>
-                    {/* Stops before the watermark rather than running
-                        under it; a card without one keeps the full width. */}
-                    <CardDescription
-                      className="truncate"
-                      style={{ paddingRight: watermarkClearance(prefix) }}
-                    >
+                    <CardDescription>
                       {project.slug}
                       {project.description ? ` — ${project.description}` : ""}
                     </CardDescription>

@@ -117,6 +117,37 @@ describe("the REF watermark on a project card", () => {
     expect(watermarkOf("homelab")).toBeNull();
   });
 
+  it("takes no part in the text: no reserve, no truncation", async () => {
+    // The mark is a background, so the description is laid out as if it were
+    // not there — it may run straight over it.
+    renderProjects([project("homelab")], DIRECTORY);
+    await waitFor(() => expect(cardOf("homelab")).toBeTruthy());
+    const card = cardOf("homelab");
+    const desc = card.querySelector('[data-slot="card-description"]');
+    expect(desc?.className ?? "").not.toContain("truncate");
+    expect((desc as HTMLElement).style.paddingRight).toBe("");
+  });
+
+  it("is inert: it takes no clicks and joins no selection", async () => {
+    renderProjects([project("homelab")], DIRECTORY);
+    await waitFor(() => expect(cardOf("homelab")).toBeTruthy());
+    const mark = watermarkOf("homelab") as HTMLElement;
+    expect(mark.className).toContain("pointer-events-none");
+    expect(mark.className).toContain("select-none");
+  });
+
+  it("is painted under the card's own text", async () => {
+    // happy-dom lays nothing out, so the paint order itself is a browser
+    // check; what is assertable here is the pair of classes that produce it.
+    renderProjects([project("homelab")], DIRECTORY);
+    await waitFor(() => expect(cardOf("homelab")).toBeTruthy());
+    const card = cardOf("homelab");
+    expect((watermarkOf("homelab") as HTMLElement).className).toContain("z-0");
+    const header = card.querySelector('[data-slot="card-header"]');
+    expect(header?.className).toContain("z-10");
+    expect(header?.className).toContain("relative");
+  });
+
   it("floats out of flow, after the header, and stays readable", async () => {
     renderProjects([project("homelab")], DIRECTORY);
     await waitFor(() => expect(cardOf("homelab")).toBeTruthy());

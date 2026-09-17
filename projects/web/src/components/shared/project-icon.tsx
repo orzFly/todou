@@ -33,8 +33,9 @@ export function ProjectIcon({
   return (
     <Avatar
       shape="square"
-      // Clipped here rather than on `Avatar` itself: a user's avatar hangs its
-      // bot badge outside its own box on purpose.
+      // Clipped here rather than on `Avatar` itself: only this caller puts
+      // text of arbitrary length in the fallback, and a shared component
+      // should not carry one caller's constraint.
       className={cn(
         "inline-flex size-5 overflow-hidden align-middle",
         className,
