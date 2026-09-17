@@ -118,10 +118,12 @@ describe("overlay focus restore stands aside for an outside interaction", () => 
   });
 
   // The popover's rule deliberately does not transfer to the menu. A menu is
-  // modal: its focus trap reclaims focus before an outside right click can
-  // hold it, so there is nothing the user placed to preserve, and standing
-  // aside for Radix here buys `document.body` instead — measured in Chromium
-  // both ways on T-388. The restore stays, and this pins that it does.
+  // modal, so its layer puts `pointer-events: none` on the body and the
+  // element under an outside right click never receives it — the pointerdown
+  // lands on `html`, focus never leaves the menu, and there is nothing the
+  // user placed to preserve. Standing aside for Radix here buys
+  // `document.body` instead, measured in Chromium both ways on T-388. The
+  // restore stays, and this pins that it does.
   it("still restores the trigger after a right click outside the menu", async () => {
     render(
       <>

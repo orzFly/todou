@@ -69,9 +69,13 @@ function PopoverContent({
         }}
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event);
-          if (event.defaultPrevented) return;
+          // Cleared before anything can return early, which is where Radix
+          // clears its own: a close that bails out still ends this cycle, and
+          // a flag surviving into the next one would make a later close stand
+          // aside for an interaction that belonged to this one.
           const outside = interactedOutside.current;
           interactedOutside.current = false;
+          if (event.defaultPrevented) return;
           // Every popover here is non-modal, so a click outside reaches what
           // is under it and focus is already wherever the user just put it —
           // a comment box, the next field. Radix deliberately skips its

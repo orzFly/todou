@@ -74,6 +74,13 @@ const KNOWN_FAILURES = [];
  * narrowed --scan-height and a short-circuited fault pass both measure less
  * on purpose. The numbers are the observed counts less a small margin;
  * re-derive them from a run's own per-trigger line after changing the page.
+ *
+ * Note what that scope costs: the widened scan this file recommends for
+ * chasing a report is itself a non-default scan, so the run with the most
+ * samples is also the run with no floor under them. `--scan-height=0` reports
+ * `comment 0/3 submenu 0/3` and still exits 0. Read the per-trigger line
+ * yourself when the parameters are not the defaults — it is printed on every
+ * run precisely so that it can be read.
  */
 const MIN_CHECKS = {
   status: 10, // 14 observed
@@ -83,9 +90,14 @@ const MIN_CHECKS = {
   more: 4, // 6
   comment: 3, // 4
   submenu: 3, // 4
-  // 2 observed, and no margin on purpose: the shortest viewport already cannot
-  // reach a sidebar trigger at the foot of the document, so the two that can
-  // are the whole of this probe's coverage.
+  // 2 observed, and no margin on purpose. The third sample is lost on
+  // 360×520, and not to geometry: that viewport does find a sidebar trigger
+  // (labels) and does open its menu — `displace()` then returns false,
+  // because the spacer it inserts fails to push the trigger out of the
+  // viewport there, so the probe takes its "trigger stayed on screen" exit.
+  // Why the spacer does not move it has not been worked out. Treat this 2 as
+  // an unexplained shortfall rather than a ceiling: fix the displacement and
+  // a third sample is there to be had, at which point raise this number.
   "displaced-close": 2,
 };
 
@@ -101,7 +113,8 @@ const VIEWPORTS = [
 /**
  * A default run takes a few minutes. Widen it (`--scan-height=900
  * --scan-step=10`) when chasing a report rather than guarding a change —
- * MIN_CHECKS is calibrated against these, and stands down when they change.
+ * MIN_CHECKS is calibrated against these, and stands down when they change,
+ * which leaves a widened run's coverage unguarded. See MIN_CHECKS.
  */
 const DEFAULTS = { scanHeight: 300, scanStep: 60 };
 
