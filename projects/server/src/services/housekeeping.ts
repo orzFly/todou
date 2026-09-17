@@ -2,6 +2,7 @@ import { and, isNotNull, lte, or } from "drizzle-orm";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { sessions, tokens } from "../db/system-schema.ts";
+import { repairBlocks } from "./blocks.ts";
 import { sweepMoves } from "./move/execute.ts";
 import { syncRefPrefixMirror } from "./reference-directory.ts";
 
@@ -70,6 +71,28 @@ async function recoverMoves(ctx: AppContext): Promise<void> {
 }
 
 /**
+ * Recompute every block verdict and send the clearings that never landed
+ * (T-377).
+ *
+ * The announcement is a cross-database write and can fail; the verdict
+ * cannot. Without this pass a lost entry is the feature failing once with
+ * nobody the wiser — which is the whole of what the card asked for.
+ */
+async function repairBlockEdges(ctx: AppContext): Promise<void> {
+  try {
+    const { recomputed, announced } = await repairBlocks(ctx);
+    if (recomputed > 0 || announced > 0) {
+      console.log(
+        `housekeeping: repaired ${recomputed} block verdict(s), ` +
+          `sent ${announced} missed clearing(s)`,
+      );
+    }
+  } catch (err) {
+    console.error("housekeeping: block repair failed", err);
+  }
+}
+
+/**
  * Run the auth sweep now and then on an interval. Returns a stop function —
  * the serve shutdown path must call it (see T-56's graceful-shutdown hook).
  * The timer is unref'd so a missed stop can never hold the process open.
@@ -81,6 +104,7 @@ export function startHousekeeping(
   const db = ctx.router.system();
   const run = async () => {
     await recoverMoves(ctx);
+    await repairBlockEdges(ctx);
     try {
       const swept = await sweepAuthRows(db);
       if (swept.sessions > 0 || swept.tokens > 0) {

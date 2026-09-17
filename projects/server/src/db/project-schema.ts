@@ -59,6 +59,12 @@ export const projectMeta = pgTable("project_meta", {
     .notNull()
     .default(1),
   createdAt: createdAt(),
+  // The clear line for block edges (T-377): a blocker at this status or past
+  // it stops blocking; NULL falls back to the closed category. Here rather
+  // than in the system tier's `projects` because the `statuses` row it names
+  // is in this database — deciding whether a card has reached the line is
+  // then one local comparison of positions.
+  blockClearStatusId: bigint("block_clear_status_id", { mode: "number" }),
 });
 
 // Append-only internal reference-format history (T-80). NULL prefix = "#N".
@@ -323,6 +329,13 @@ export const issueEvents = pgTable(
         // the destination and is what the ownership intervals are read from.
         "moved_out",
         "moved_in",
+        // Block edges (T-377). The first two land on both ends and say which
+        // one they are in the payload; the last two only ever reach the
+        // blocked end, whose work they are about.
+        "block_added",
+        "block_removed",
+        "block_cleared",
+        "block_reblocked",
       ],
     }).notNull(),
     payload: jsonb("payload").notNull().default({}),

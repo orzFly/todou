@@ -7,9 +7,10 @@ import { and, asc, count, eq, ne } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
-import { issues, statuses } from "../db/project-schema.ts";
+import { issues, projectMeta, statuses } from "../db/project-schema.ts";
 import { ConflictError, NotFoundError } from "../errors.ts";
 import { requireCapability, routeInfoOf } from "./access.ts";
+import { announceBlockChanges, reevaluateProjectBlocks } from "./blocks.ts";
 
 type StatusRow = typeof statuses.$inferSelect;
 
@@ -129,6 +130,13 @@ export async function updateStatus(
     id: row.id,
     action: "updated",
   });
+  // A reorder silently changes what the clear line means — the rule is
+  // "at this position or past it", so moving any status can put a card on
+  // the other side of a line nobody touched (T-377).
+  if (input.position !== undefined) {
+    const changes = await reevaluateProjectBlocks(ctx, project, db);
+    await announceBlockChanges(ctx, changes, actor.id);
+  }
   return toStatus(row);
 }
 
@@ -155,6 +163,15 @@ export async function deleteStatus(
   if ((referencing[0]?.n ?? 0) > 0) {
     throw new ConflictError(
       "status is used by existing issues — move them to another status first",
+    );
+  }
+  const meta = await db
+    .select({ lineId: projectMeta.blockClearStatusId })
+    .from(projectMeta)
+    .where(eq(projectMeta.projectId, project.id));
+  if ((meta[0]?.lineId ?? null) === statusId) {
+    throw new ConflictError(
+      "status is this project's block clear line — point it elsewhere first",
     );
   }
   const deleted = await db

@@ -20,6 +20,7 @@ import { agentRoutes } from "./routes/agents.ts";
 import { attachmentRoutes } from "./routes/attachments.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { batchRoutes } from "./routes/batch.ts";
+import { blockRoutes } from "./routes/blocks.ts";
 import {
   cliAuthPublicRoutes,
   cliAuthSessionRoutes,
@@ -171,6 +172,7 @@ export function createApp(ctx: AppContext) {
   api.route("/projects", labelRoutes());
   api.route("/projects", metadataRoutes());
   api.route("/projects", issueRoutes());
+  api.route("/projects", blockRoutes());
   api.route("/projects", searchRoutes());
   api.route("/projects", specRoutes());
   api.route("/projects", attachmentRoutes());

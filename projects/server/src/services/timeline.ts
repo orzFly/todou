@@ -152,7 +152,8 @@ type Filters = {
 };
 
 /**
- * What a move event may say to this reader.
+ * What an event naming another project may say to this reader — moves, and
+ * the block edges that name their far end (T-377).
  *
  * Blanking fields rather than hiding rows is why this is post-processing
  * while `crossRefVisibleCondition` is a SQL predicate: dropping rows would
@@ -169,7 +170,7 @@ type Filters = {
  * predicate decides them whole, and a move no longer rewrites one, so there
  * is no row that was visible under an old spelling and needs to survive.
  */
-export function redactMovePayloads<T extends TimelineItem>(
+export function redactEventPayloads<T extends TimelineItem>(
   items: T[],
   visibleProjectIds: Set<number>,
 ): T[] {
@@ -192,6 +193,21 @@ export function redactMovePayloads<T extends TimelineItem>(
       case "moved_out":
         if (!seen(payload.to_project_id)) {
           blank(payload, ["to_project_id", "to_project", "to_number"]);
+        }
+        break;
+      // A block edge keeps its row and loses the far end's name, for the
+      // same reason a move does: "this card is waiting on something" is a
+      // fact about this card, and dropping the line would show it as free.
+      case "block_added":
+      case "block_removed":
+        if (!seen(payload.other_project_id)) {
+          blank(payload, ["other_project_id", "other_number"]);
+        }
+        break;
+      case "block_cleared":
+      case "block_reblocked":
+        if (!seen(payload.blocker_project_id)) {
+          blank(payload, ["blocker_project_id", "blocker_number"]);
         }
         break;
       default:
@@ -452,7 +468,7 @@ export async function getTimeline(
   merged = backward ? merged.slice(-query.limit) : merged.slice(0, query.limit);
 
   const refs = await actorRefs(ctx, merged);
-  const items: TimelineItem[] = redactMovePayloads(
+  const items: TimelineItem[] = redactEventPayloads(
     merged.map((m) => toItem(m, refs, !query.include_hidden)),
     visible.ids,
   );
@@ -625,7 +641,7 @@ export async function getProjectActivity(
     : merged.slice(0, query.limit);
 
   const refs = await actorRefs(ctx, page);
-  const items = redactMovePayloads(
+  const items = redactEventPayloads(
     page.map((m) => ({
       ...toItem(m, refs, !query.include_hidden),
       issue_number: m.number,
@@ -810,7 +826,7 @@ export async function getCrossActivity(
   for (const row of page) positions[row.slug] = encodeCursor(cursorOf(row));
 
   const refs = await actorRefs(ctx, page);
-  const items = redactMovePayloads(
+  const items = redactEventPayloads(
     page.map((m) => ({
       ...toItem(m, refs, !query.include_hidden),
       issue_number: m.number,

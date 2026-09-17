@@ -78,6 +78,13 @@
       "when": 1789581068960,
       "tag": "0010_project_mutes",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789622162835,
+      "tag": "0011_issue_blocks",
+      "breakpoints": true
     }
   ]
 }

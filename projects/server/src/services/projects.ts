@@ -29,6 +29,7 @@ import {
   ValidationFailedError,
 } from "../errors.ts";
 import { type ProjectRow, requireCapability, routeInfoOf } from "./access.ts";
+import { announceBlockChanges, reevaluateProjectBlocks } from "./blocks.ts";
 import { mirrorRefFormat } from "./reference-directory.ts";
 
 export function toProject(row: ProjectRow, viewerRole?: MemberRole): Project {
@@ -330,29 +331,85 @@ export async function updateProject(
     pinnedUrl = databaseUrlToPin(ctx, project, rename);
   }
 
-  const updated = await system.transaction(async (tx) => {
-    if (rename !== null) {
-      await tx
-        .insert(slugHistory)
-        .values({ projectId: project.id, slug: rename });
+  // Before the registry write, so a bad status id costs nothing: the column
+  // lives in the project's own database and its value names a row there.
+  if (input.block_clear_status_id !== undefined) {
+    const db = await ctx.router.forProject(routeInfoOf(project));
+    if (input.block_clear_status_id !== null) {
+      const rows = await db
+        .select({ id: statuses.id })
+        .from(statuses)
+        .where(
+          and(
+            eq(statuses.id, input.block_clear_status_id),
+            eq(statuses.projectId, project.id),
+          ),
+        );
+      if (rows.length === 0) {
+        throw new ValidationFailedError("unknown status_id");
+      }
     }
-    return tx
-      .update(projects)
-      .set({
-        ...(input.name === undefined ? {} : { name: input.name }),
-        ...(input.description === undefined
-          ? {}
-          : { description: input.description }),
-        ...(rename === null ? {} : { slug: rename }),
-        ...(pinnedUrl === null ? {} : { databaseUrl: pinnedUrl }),
-      })
-      .where(eq(projects.id, project.id))
-      .returning();
-  });
+    await db
+      .update(projectMeta)
+      .set({ blockClearStatusId: input.block_clear_status_id })
+      .where(eq(projectMeta.projectId, project.id));
+    // Moving the line re-decides every edge this project's cards block at
+    // once — bounded by the project's edge count, not by its card count.
+    const changes = await reevaluateProjectBlocks(ctx, project, db);
+    await announceBlockChanges(ctx, changes, actor.id);
+  }
+
+  const registryPatch = {
+    ...(input.name === undefined ? {} : { name: input.name }),
+    ...(input.description === undefined
+      ? {}
+      : { description: input.description }),
+    ...(rename === null ? {} : { slug: rename }),
+    ...(pinnedUrl === null ? {} : { databaseUrl: pinnedUrl }),
+  };
+  // A PATCH may now name nothing the registry holds — the clear line lives
+  // in the project's own database — and an UPDATE with no assignments is a
+  // driver error rather than a no-op.
+  const updated =
+    Object.keys(registryPatch).length === 0
+      ? [project]
+      : await system.transaction(async (tx) => {
+          if (rename !== null) {
+            await tx
+              .insert(slugHistory)
+              .values({ projectId: project.id, slug: rename });
+          }
+          return tx
+            .update(projects)
+            .set(registryPatch)
+            .where(eq(projects.id, project.id))
+            .returning();
+        });
   const row = updated[0];
   if (!row) throw new Error("project update returned no row");
   ctx.bus.publish(row.id, { entity: "project", id: row.id, action: "updated" });
-  return toProject(row);
+  return {
+    ...toProject(row),
+    block_clear_status_id: await blockClearStatusOf(ctx, row),
+  };
+}
+
+/**
+ * The project's clear line (T-377). Read on demand rather than carried by
+ * `toProject`, which works off the registry row: this one lives in the
+ * project's own database, so a list of projects would pay a query per row —
+ * the same reason `former_slugs` is only on the single-project GET.
+ */
+export async function blockClearStatusOf(
+  ctx: AppContext,
+  project: ProjectRow,
+): Promise<number | null> {
+  const db = await ctx.router.forProject(routeInfoOf(project));
+  const rows = await db
+    .select({ id: projectMeta.blockClearStatusId })
+    .from(projectMeta)
+    .where(eq(projectMeta.projectId, project.id));
+  return rows[0]?.id ?? null;
 }
 
 export async function deleteProject(

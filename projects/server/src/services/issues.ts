@@ -27,6 +27,7 @@ import {
   inArray,
   isNotNull,
   lt,
+  notInArray,
   or,
   type SQL,
   sql,
@@ -57,7 +58,20 @@ import {
   requireCapability,
   routeInfoOf,
 } from "./access.ts";
-import { loadReferenceInputs, visibleProjects } from "./cross-references.ts";
+import {
+  announceBlockChanges,
+  type BlockSets,
+  blockedNumbersIn,
+  blockSetsOf,
+  blocksForIssues,
+  evaluateBlockerStatus,
+  markBlockerDeleted,
+} from "./blocks.ts";
+import {
+  loadReferenceInputs,
+  type VisibleProjects,
+  visibleProjects,
+} from "./cross-references.ts";
 import {
   decodeListCursor as decodeCursor,
   encodeListCursor as encodeCursor,
@@ -86,6 +100,12 @@ import { getUserRefs } from "./users.ts";
 
 type IssueRow = typeof issues.$inferSelect;
 export type StatusRow = typeof statuses.$inferSelect;
+
+/** Run `fn` at most once, and only if somebody asks for its answer. */
+function once<T>(fn: () => Promise<T>): () => Promise<T> {
+  let pending: Promise<T> | undefined;
+  return () => (pending ??= fn());
+}
 
 /**
  * Which timeline event a status move records, and its payload. Shared by
@@ -122,6 +142,8 @@ export type IssueBundle = {
   deletedBy: UserRef | null;
   /** Arrivals in this card's history, oldest first (T-231). */
   moves: IssueMove[];
+  /** Both directions of this card's block edges (T-377). */
+  blocks: BlockSets;
   /**
    * Present only when the request named namespaces with `?metadata=`
    * (T-282). Undefined means nobody asked; an empty array means somebody
@@ -154,6 +176,8 @@ export function toIssue(bundle: IssueBundle): Issue {
     deleted_at: bundle.row.deletedAt?.toISOString() ?? null,
     deleted_by: bundle.deletedBy,
     moves: bundle.moves,
+    blocked_by: bundle.blocks.blocked_by,
+    blocks: bundle.blocks.blocks,
     // Written only when it was asked for: the key's absence is the answer
     // "nobody asked", which `[]` would erase.
     ...(bundle.metadata === undefined ? {} : { metadata: bundle.metadata }),
@@ -169,11 +193,10 @@ export function toIssue(bundle: IssueBundle): Issue {
  * client renders that stretch's local references as plain text.
  */
 async function movesOf(
-  ctx: AppContext,
   db: Db,
   projectIds: number[],
   ids: number[],
-  actor: UserRow,
+  visible: () => Promise<VisibleProjects>,
 ): Promise<Map<number, IssueMove[]>> {
   const byIssue = new Map<number, IssueMove[]>();
   if (ids.length === 0) return byIssue;
@@ -194,7 +217,7 @@ async function movesOf(
     .orderBy(asc(issueEvents.createdAt), asc(issueEvents.id));
   // Cards that never moved are the norm; only a hit pays for the lookup.
   if (rows.length === 0) return byIssue;
-  const visible = (await visibleProjects(ctx, actor)).ids;
+  const seen = (await visible()).ids;
 
   for (const row of rows) {
     const payload = row.payload as {
@@ -203,7 +226,7 @@ async function movesOf(
       from_number?: number | null;
     };
     const from = payload.from_project_id ?? null;
-    const known = from !== null && visible.has(from);
+    const known = from !== null && seen.has(from);
     const list = byIssue.get(row.issueId) ?? [];
     list.push({
       at: row.createdAt.toISOString(),
@@ -292,7 +315,17 @@ export async function bundleIssues(
     ...(metadataRows?.map((m) => m.updatedBy) ?? []),
   ];
   const refs = await getUserRefs(ctx.router.system(), refIds);
-  const moves = await movesOf(ctx, db, projectIds, ids, actor);
+  // One answer for both the moves and the block edges, and fetched only if
+  // one of them turns out to need it: a page of cards that never moved and
+  // nobody waits for pays nothing for the visibility walk.
+  const visible = once(() => visibleProjects(ctx, actor));
+  const moves = await movesOf(db, projectIds, ids, visible);
+  const blocks = await blocksForIssues(
+    ctx,
+    projectIds,
+    rows.map((r) => r.number),
+    visible,
+  );
   const metadata =
     metadataRows === undefined
       ? undefined
@@ -324,6 +357,9 @@ export async function bundleIssues(
           ? null
           : (refs.get(row.deletedBy) ?? ghost(row.deletedBy)),
       moves: moves.get(row.id) ?? [],
+      // Keyed by the pair, not by the number: a group of projects sharing one
+      // database can hold the same number in two of them.
+      blocks: blockSetsOf(blocks, row.projectId, row.number),
       ...(metadata === undefined
         ? {}
         : { metadata: metadata.get(row.id) ?? [] }),
@@ -739,6 +775,20 @@ export async function listIssues(
 
   if (query.numbers !== undefined) {
     conditions.push(inArray(issues.number, query.numbers));
+  }
+  if (query.blocked !== undefined) {
+    // The edges are in another database, so this cannot be a join; it is a
+    // set that the paginated query then narrows by. Bounded by the project's
+    // edge count rather than its card count, which is what makes carrying it
+    // in memory reasonable — and keeps every page of the result whole, the
+    // way a post-filter over rows would not.
+    const blocked = await blockedNumbersIn(ctx, project.id);
+    if (query.blocked) {
+      if (blocked.length === 0) return { items: [], next_cursor: null };
+      conditions.push(inArray(issues.number, blocked));
+    } else if (blocked.length > 0) {
+      conditions.push(notInArray(issues.number, blocked));
+    }
   }
   if (query.category !== undefined) {
     const catStatuses = await db
@@ -1171,6 +1221,14 @@ export async function updateIssue(
       agentContext,
     );
   }
+  // After the commit, under the same discipline as the cross-references
+  // above: the verdict is decided here, in the blocker's own database, and
+  // only its conclusion travels (T-377). A save that did not move the status
+  // cannot move any verdict, so it asks nothing.
+  if (input.status_id !== undefined && input.status_id !== before.statusId) {
+    const changes = await evaluateBlockerStatus(ctx, project, db, [number]);
+    await announceBlockChanges(ctx, changes, actor.id, agentContext);
+  }
 
   const after = await loadIssueRow(db, project.id, number);
   const bundle = (await bundleIssues(ctx, db, [project.id], [after], actor))[0];
@@ -1274,6 +1332,10 @@ async function setTrashed(
       : { kind: "fields", status_id: row.statusId },
   });
   for (const e of events) ctx.bus.publish(project.id, e);
+  // The trash suspends the edges this card blocks rather than clearing them
+  // (T-377): a card nobody can reach is not one whose work is done, and it
+  // may be restored a minute later.
+  await markBlockerDeleted(ctx, project, [number], trashed);
   return { project, db, row: after };
 }
 

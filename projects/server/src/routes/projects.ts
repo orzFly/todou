@@ -23,6 +23,7 @@ import {
   setMember,
 } from "../services/members.ts";
 import {
+  blockClearStatusOf,
   createProject,
   deleteProject,
   formerSlugsOf,
@@ -177,6 +178,7 @@ export function projectRoutes() {
       {
         ...toProject(project, role),
         former_slugs: await formerSlugsOf(ctx.router.system(), project),
+        block_clear_status_id: await blockClearStatusOf(ctx, project),
       },
       200,
     );

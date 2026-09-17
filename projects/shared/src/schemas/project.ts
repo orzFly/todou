@@ -87,6 +87,14 @@ export const Project = z.object({
    * without a request per row — the server checks the role again anyway.
    */
   viewer_role: MemberRole.optional(),
+  /**
+   * The clear line (T-377): a blocker at this status or past it stops
+   * blocking, and null falls back to the closed category. Optional for the
+   * same reason as `former_slugs` — it lives in the project's own database,
+   * so only the single-project GET and the PATCH that writes it carry it,
+   * and a list of every project would be a query per row to fetch it.
+   */
+  block_clear_status_id: Id.nullable().optional(),
 });
 export type Project = z.infer<typeof Project>;
 
@@ -116,6 +124,8 @@ export const ProjectUpdateInput = z.object({
    * attachment in the new project is fetched instead of 404ing.
    */
   reclaim: z.boolean().optional(),
+  /** Null clears the line and falls back to the closed category (T-377). */
+  block_clear_status_id: Id.nullable().optional(),
 });
 export type ProjectUpdateInput = z.infer<typeof ProjectUpdateInput>;
 
