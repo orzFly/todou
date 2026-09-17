@@ -85,7 +85,8 @@ export function ProjectsPage() {
                     {/* Stops before the watermark rather than running
                         under it; a card without one keeps the full width. */}
                     <CardDescription
-                      className={cn("truncate", watermarkClearance(prefix))}
+                      className="truncate"
+                      style={{ paddingRight: watermarkClearance(prefix) }}
                     >
                       {project.slug}
                       {project.description ? ` — ${project.description}` : ""}

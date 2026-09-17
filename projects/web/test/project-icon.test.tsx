@@ -28,6 +28,21 @@ describe("what a project icon draws", () => {
     expect(container.textContent).toBe("HL");
   });
 
+  it("keeps a long REF inside its box instead of across the card", () => {
+    // A 20-character prefix drew 192px of ink in a 40px box and ran straight
+    // through the project's title. The watermark still carries it in full.
+    const container = draw({ name: "Pathological", prefix: "W".repeat(20) });
+    expect(container.textContent).toBe("WWW");
+    expect(
+      container.querySelector('[data-slot="avatar"]')?.className,
+    ).toContain("overflow-hidden");
+  });
+
+  it("leaves a REF that already fits alone", () => {
+    expect(draw({ name: "Homelab", prefix: "CH" }).textContent).toBe("CH");
+    expect(draw({ name: "Warehouse", prefix: "WMS" }).textContent).toBe("WMS");
+  });
+
   it("is square, so a project never reads as a person", () => {
     const container = draw({ name: "Homelab", prefix: "CH" });
     expect(

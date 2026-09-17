@@ -138,6 +138,11 @@ describe("project icons", () => {
     await createProject(s);
     const huge = await upload(s, iconForm(new Uint8Array(4 * 1024 * 1024)));
     expect(huge.status).toBe(413);
+    // The status alone cannot show which limit answered: the API-wide JSON
+    // limit is 4 MB and also 413s, so dropping the scoped one off this route
+    // leaves the test green. The message is the only thing that tells them
+    // apart, and this asserts the scoped one ran.
+    expect((await json(huge)).error.message).toContain("2 MB");
   });
 
   it("changes the URL on replacement and drops the old blob", async () => {
