@@ -1,8 +1,14 @@
-import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import {
+  useQuery,
+  useQueryClient,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
+import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import type { Issue, Status } from "@todou/shared";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { commentRefQuery } from "@/api/issue-refs.ts";
+import { issueQuery } from "@/api/issues.ts";
 import {
   api,
   labelsQuery,
@@ -22,6 +28,7 @@ import {
   StagedFileUploadButton,
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
+import { PageSkeleton } from "@/components/page-skeleton.tsx";
 import { CommandErrors } from "@/components/shared/command-errors.tsx";
 import {
   MarkdownEditor,
@@ -51,11 +58,13 @@ import {
   commandCompletionSource,
   commandDecoration,
 } from "@/lib/editor/slash-commands.ts";
+import { quotedReference } from "@/lib/quote-markdown.ts";
 import {
   applyDraftCommands,
   newIssueSubmitLabel,
   parseCommandLines,
 } from "@/lib/slash-commands.ts";
+import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
 import { cn } from "@/lib/utils";
 
@@ -64,8 +73,62 @@ export function pickDefaultStatus(statuses: Status[]): Status | undefined {
   return statuses.find((s) => s.is_default) ?? statuses[0];
 }
 
+/**
+ * The form, plus whatever it is opened to quote. Two layers because
+ * `MarkdownEditor` reads `initialValue` once at mount and the quoted text
+ * arrives from the network: the form may not mount before it is here.
+ */
 export function NewIssuePage() {
   const { slug } = useParams({ from: "/authed/projects/$slug/issues/new" });
+  const search = useSearch({ from: "/authed/projects/$slug/issues/new" });
+  const { quote_issue: quotedIssue, quote_comment: quotedComment } = search;
+  const from = search.quote_project ?? slug;
+
+  const comment = useQuery({
+    ...commentRefQuery(from, quotedIssue ?? 0, quotedComment ?? 0),
+    enabled: quotedIssue !== undefined && quotedComment !== undefined,
+  });
+  const issue = useQuery({
+    ...issueQuery(from, quotedIssue ?? 0),
+    enabled: quotedIssue !== undefined && quotedComment === undefined,
+  });
+
+  if (quotedIssue === undefined) return <NewIssueForm slug={slug} />;
+  const source = quotedComment === undefined ? issue : comment;
+  if (source.isLoading) return <PageSkeleton kind="sections" />;
+
+  const quoted = source.data ?? null;
+  const address = `${window.location.origin}/projects/${from}/issues/${quotedIssue}`;
+  return (
+    <NewIssueForm
+      slug={slug}
+      initialBody={
+        quoted === null
+          ? ""
+          : quotedReference({
+              body: quoted.body,
+              authorLogin: quoted.author.login,
+              permalink:
+                quotedComment === undefined
+                  ? address
+                  : `${address}#${commentAnchor(quotedComment)}`,
+            })
+      }
+      quoteMissing={quoted === null}
+    />
+  );
+}
+
+function NewIssueForm({
+  slug,
+  initialBody = "",
+  quoteMissing = false,
+}: {
+  slug: string;
+  initialBody?: string;
+  /** The page was opened to quote something it could not read. */
+  quoteMissing?: boolean;
+}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const statuses = useSuspenseQuery(statusesQuery(slug));
@@ -81,7 +144,10 @@ export function NewIssuePage() {
 
   const [title, setTitle] = useState("");
   const editor = useRef<MarkdownEditorHandle>(null);
-  const [draft, setDraft] = useState("");
+  // Seeded rather than left empty: the live command parsing reads `draft`,
+  // and submitting re-reads the editor anyway, so this only governs what the
+  // form shows before it is sent.
+  const [draft, setDraft] = useState(initialBody);
   const [statusId, setStatusId] = useState("");
   const [labelIds, setLabelIds] = useState<number[]>([]);
   const [assigneeIds, setAssigneeIds] = useState<number[]>([]);
@@ -221,8 +287,15 @@ export function NewIssuePage() {
           {/* A contenteditable is not a labelable element, so the caption
               stands on its own and the editor carries its own name. */}
           <Label>Description</Label>
+          {quoteMissing && (
+            <p className="text-sm text-muted-foreground">
+              The text this was opened to quote could not be read — it may have
+              been deleted, or be in a project you cannot see.
+            </p>
+          )}
           <MarkdownEditor
             ref={editor}
+            initialValue={initialBody}
             ariaLabel="Description"
             placeholder={
               canTriage

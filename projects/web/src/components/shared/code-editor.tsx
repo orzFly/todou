@@ -24,6 +24,13 @@ export type CodeEditorHandle = {
    * rescue it). Annotate before extending its use there.
    */
   setValue: (value: string) => void;
+  /**
+   * Add to the end of the document, caret after it and scrolled into view.
+   *
+   * Unmarked, unlike `setValue`: the text arrives because the reader asked
+   * for it, so `userChanged()` reading true afterwards is the right answer.
+   */
+  append: (text: string) => void;
   focus: () => void;
   /**
    * True when the document changed through a CM user event (typing, paste,
@@ -198,6 +205,16 @@ export function CodeEditor({
       if (!current) return;
       current.dispatch({
         changes: { from: 0, to: current.state.doc.length, insert: value },
+      });
+    },
+    append: (text: string) => {
+      const current = view.current;
+      if (!current) return;
+      const at = current.state.doc.length;
+      current.dispatch({
+        changes: { from: at, insert: text },
+        selection: { anchor: at + text.length },
+        scrollIntoView: true,
       });
     },
     focus: () => view.current?.focus(),

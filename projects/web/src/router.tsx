@@ -9,7 +9,7 @@ import {
   Outlet,
 } from "@tanstack/react-router";
 import { useState } from "react";
-import { issueSearchSchema } from "@/api/issues.ts";
+import { issueSearchSchema, newIssueSearchSchema } from "@/api/issues.ts";
 import { meQuery } from "@/api/queries.ts";
 import { searchPageSchema } from "@/api/search.ts";
 import { ConnectionBanner } from "@/components/connection-banner.tsx";
@@ -298,6 +298,7 @@ const newIssueRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "issues/new",
   component: NewIssuePage,
+  validateSearch: (search) => newIssueSearchSchema.parse(search),
   staticData: { pageSkeleton: "sections" },
 });
 

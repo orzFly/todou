@@ -2,10 +2,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { MemberRole, TimelineComment } from "@todou/shared";
 import { can, isHidden } from "@todou/shared";
-import { EllipsisIcon, EyeOffIcon, PencilIcon, Trash2Icon } from "lucide-react";
+import { EyeOffIcon, PencilIcon, Trash2Icon } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
+import {
+  EntryActionsMenu,
+  QUOTE_REHYPE_PLUGINS,
+} from "@/components/issue/entry-actions-menu.tsx";
 import {
   StagedFileTray,
   StagedFileUploadButton,
@@ -24,12 +28,7 @@ import { QuestionsCard } from "@/components/timeline/questions-card.tsx";
 import { SpecCommentAnchorCard } from "@/components/timeline/spec-comment-card.tsx";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 
@@ -85,12 +84,15 @@ export function CommentItem({
   const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const menuTrigger = useRef<HTMLButtonElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const editor = useRef<MarkdownEditorHandle>(null);
   const [uploading, setUploading] = useState(false);
   const staging = useStagedFiles();
   const queryClient = useQueryClient();
   const refCompletion = useRefCompletion(slug);
   const target: Target = { slug, issueNumber, commentId: comment.id };
+  const mayHide = canHideComment(viewer) && !isHidden(comment);
+  const mayDelete = canEditComment(viewer, comment.author.id);
   const save = useMutation({
     mutationFn: (vars: Target & { body: string }) =>
       api.updateComment(vars.slug, vars.issueNumber, vars.commentId, vars.body),
@@ -231,22 +233,18 @@ export function CommentItem({
                 <PencilIcon className="size-3.5" />
               </Button>
             )}
-            {(canHideComment(viewer) ||
-              canEditComment(viewer, comment.author.id)) && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    ref={menuTrigger}
-                    size="icon-sm"
-                    variant="ghost"
-                    aria-label="comment actions"
-                  >
-                    <EllipsisIcon className="size-3.5" />
-                  </Button>
-                </DropdownMenuTrigger>
-                {/* The entries need more room than the trigger's 28px. */}
-                <DropdownMenuContent className="w-auto" align="end">
-                  {canHideComment(viewer) && !isHidden(comment) && (
+            <EntryActionsMenu
+              slug={slug}
+              issueNumber={issueNumber}
+              commentId={comment.id}
+              body={comment.body}
+              bodyRef={bodyRef}
+              label="comment actions"
+              triggerRef={menuTrigger}
+            >
+              {mayHide || mayDelete ? (
+                <>
+                  {mayHide && (
                     <DropdownMenuItem
                       onSelect={() =>
                         setHidden.mutate({ ...target, hidden: true })
@@ -256,7 +254,7 @@ export function CommentItem({
                       Hide comment
                     </DropdownMenuItem>
                   )}
-                  {canEditComment(viewer, comment.author.id) && (
+                  {mayDelete && (
                     <DropdownMenuItem
                       variant="destructive"
                       onSelect={() => setConfirmingDelete(true)}
@@ -265,9 +263,9 @@ export function CommentItem({
                       Delete comment…
                     </DropdownMenuItem>
                   )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+                </>
+              ) : null}
+            </EntryActionsMenu>
           </div>
         )}
       </div>
@@ -335,9 +333,15 @@ export function CommentItem({
             </div>
           </div>
         ) : (
-          <MarkdownView slug={slug} issueNumber={issueNumber}>
-            {comment.body}
-          </MarkdownView>
+          <div ref={bodyRef}>
+            <MarkdownView
+              slug={slug}
+              issueNumber={issueNumber}
+              rehypePlugins={QUOTE_REHYPE_PLUGINS}
+            >
+              {comment.body}
+            </MarkdownView>
+          </div>
         )}
         {/* The component slot renders after the body and is immutable, so
             it stays put while the body above is edited. */}

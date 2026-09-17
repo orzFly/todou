@@ -24,6 +24,10 @@ import {
 import { useRefPrefix } from "@/api/references.ts";
 import { AssigneePicker } from "@/components/issue/assignee-picker.tsx";
 import { AttachmentList } from "@/components/issue/attachment-list.tsx";
+import {
+  EntryActionsMenu,
+  QUOTE_REHYPE_PLUGINS,
+} from "@/components/issue/entry-actions-menu.tsx";
 import { FloatingTitleBar } from "@/components/issue/floating-title-bar.tsx";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
 import {
@@ -57,6 +61,7 @@ import {
   useCommentComposer,
   withAttachmentMarkers,
 } from "@/components/timeline/composer.tsx";
+import { QuoteReplyProvider } from "@/components/timeline/quote-reply.tsx";
 import { RevealAllEye } from "@/components/timeline/reveal-all-eye.tsx";
 import { RevealedRunsProvider } from "@/components/timeline/revealed-runs.tsx";
 import { Timeline } from "@/components/timeline/timeline.tsx";
@@ -120,64 +125,68 @@ export function IssueDetailPage() {
       {/* Above both the bar and the timeline: the bar only mirrors the
         reveal entry the timeline's own section line carries (T-281). */}
       <RevealedRunsProvider card={cardKey}>
-        <div className="min-w-0">
-          <FloatingTitleBar
-            slug={slug}
-            issue={issue.data}
-            watchTarget={titleRef}
-            barRef={barRef}
-            mirror={<RevealAllEye />}
-          />
-          <div className="space-y-4">
-            {trashed && <TrashBanner slug={slug} issue={issue.data} />}
-            <div ref={titleRef}>
-              <TitleBlock slug={slug} issue={issue.data} readOnly={trashed} />
-            </div>
-            <BodyBlock slug={slug} issue={issue.data} readOnly={trashed} />
-            <SpecEntryRow slug={slug} issueNumber={issueNumber} />
-            <AttachmentList slug={slug} issueNumber={issueNumber} />
-            <TimelineDivider />
-            <Timeline
-              // The row keys inside `Timeline` carry no card, so a jump to
-              // another card that shares a comment id would reuse the row's
-              // instance and let its in-flight write follow the new props.
-              // The slug is in the key because that reuse is what makes a
-              // cross-project jump destructive rather than a 404. Same remedy
-              // and same reason as the `Composer` below.
-              key={cardKey}
+        {/* Inside, so one provider covers both the timeline the Quote reply
+            entries live in and the Composer they write into. */}
+        <QuoteReplyProvider>
+          <div className="min-w-0">
+            <FloatingTitleBar
               slug={slug}
-              issueNumber={issueNumber}
-              pendingComments={composer.pending.filter((p) => !p.failed)}
-              viewer={viewer}
+              issue={issue.data}
+              watchTarget={titleRef}
+              barRef={barRef}
+              mirror={<RevealAllEye />}
             />
-            {/* Floats at the viewport bottom while the timeline scrolls by,
-              and settles into flow at the end of the page (GitHub-style). */}
-            {!trashed && (
-              <div
-                ref={composerRef}
-                className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4"
-              >
-                <Composer
-                  // `/issues/7 → /issues/8` is one route with a changed param,
-                  // so the router keeps this subtree and nothing remounts. The
-                  // key is what empties the box on arrival at the next card:
-                  // the draft, the staged files and the editor's own document
-                  // all go together, instead of a lit-up button over an empty
-                  // box that submits nothing. Resetting from inside instead
-                  // does not survive Strict Mode's double render of the
-                  // transition (T-317).
-                  key={issueNumber}
-                  slug={slug}
-                  issueNumber={issueNumber}
-                  onSend={composer.send}
-                  onSendWithCommands={composer.sendWithCommands}
-                  failed={composer.pending.filter((p) => p.failed)}
-                  onRetry={composer.retry}
-                />
+            <div className="space-y-4">
+              {trashed && <TrashBanner slug={slug} issue={issue.data} />}
+              <div ref={titleRef}>
+                <TitleBlock slug={slug} issue={issue.data} readOnly={trashed} />
               </div>
-            )}
+              <BodyBlock slug={slug} issue={issue.data} readOnly={trashed} />
+              <SpecEntryRow slug={slug} issueNumber={issueNumber} />
+              <AttachmentList slug={slug} issueNumber={issueNumber} />
+              <TimelineDivider />
+              <Timeline
+                // The row keys inside `Timeline` carry no card, so a jump to
+                // another card that shares a comment id would reuse the row's
+                // instance and let its in-flight write follow the new props.
+                // The slug is in the key because that reuse is what makes a
+                // cross-project jump destructive rather than a 404. Same remedy
+                // and same reason as the `Composer` below.
+                key={cardKey}
+                slug={slug}
+                issueNumber={issueNumber}
+                pendingComments={composer.pending.filter((p) => !p.failed)}
+                viewer={viewer}
+              />
+              {/* Floats at the viewport bottom while the timeline scrolls by,
+              and settles into flow at the end of the page (GitHub-style). */}
+              {!trashed && (
+                <div
+                  ref={composerRef}
+                  className="sticky bottom-0 z-10 border-t bg-background pt-3 pb-4"
+                >
+                  <Composer
+                    // `/issues/7 → /issues/8` is one route with a changed param,
+                    // so the router keeps this subtree and nothing remounts. The
+                    // key is what empties the box on arrival at the next card:
+                    // the draft, the staged files and the editor's own document
+                    // all go together, instead of a lit-up button over an empty
+                    // box that submits nothing. Resetting from inside instead
+                    // does not survive Strict Mode's double render of the
+                    // transition (T-317).
+                    key={issueNumber}
+                    slug={slug}
+                    issueNumber={issueNumber}
+                    onSend={composer.send}
+                    onSendWithCommands={composer.sendWithCommands}
+                    failed={composer.pending.filter((p) => p.failed)}
+                    onRetry={composer.retry}
+                  />
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        </QuoteReplyProvider>
       </RevealedRunsProvider>
       <Sidebar
         slug={slug}
@@ -347,6 +356,7 @@ export function BodyBlock({
 }) {
   const [editing, setEditing] = useState(false);
   const editor = useRef<MarkdownEditorHandle>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const refCompletion = useRefCompletion(slug);
   const [uploading, setUploading] = useState(false);
   const staging = useStagedFiles();
@@ -410,22 +420,30 @@ export function BodyBlock({
             fetchRevisions={() => api.getIssueRevisions(slug, issue.number)}
           />
         )}
-        {!readOnly && (
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            className="ml-auto"
-            aria-label="edit body"
-            onClick={() => {
-              // The editor mounts fresh off issue.body, so entering edit mode
-              // always starts from what is on screen.
-              staging.clear();
-              setEditing(!editing);
-            }}
-          >
-            <PencilIcon className="size-3.5" />
-          </Button>
-        )}
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          {!readOnly && (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label="edit body"
+              onClick={() => {
+                // The editor mounts fresh off issue.body, so entering edit mode
+                // always starts from what is on screen.
+                staging.clear();
+                setEditing(!editing);
+              }}
+            >
+              <PencilIcon className="size-3.5" />
+            </Button>
+          )}
+          <EntryActionsMenu
+            slug={slug}
+            issueNumber={issue.number}
+            body={issue.body}
+            bodyRef={bodyRef}
+            label="description actions"
+          />
+        </div>
       </div>
       <div className="px-3 py-2">
         {editing ? (
@@ -478,9 +496,15 @@ export function BodyBlock({
             No description.
           </p>
         ) : (
-          <MarkdownView slug={slug} issueNumber={issue.number}>
-            {issue.body}
-          </MarkdownView>
+          <div ref={bodyRef}>
+            <MarkdownView
+              slug={slug}
+              issueNumber={issue.number}
+              rehypePlugins={QUOTE_REHYPE_PLUGINS}
+            >
+              {issue.body}
+            </MarkdownView>
+          </div>
         )}
       </div>
     </div>
