@@ -1,9 +1,10 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import { QueryClient } from "@tanstack/react-query";
+import { fireEvent, waitFor } from "@testing-library/react";
 import type { Agent, Me, Member } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentsQuery, membersQuery, meQuery } from "../src/api/queries.ts";
 import { MembersSection } from "../src/pages/project-settings.tsx";
+import { renderWithProviders } from "./render.tsx";
 
 const ME: Me = {
   id: 100,
@@ -31,18 +32,18 @@ const MEMBERS: Member[] = [
   { user: BOB, role: "admin", created_at: "2026-01-02T00:00:00.000Z" },
 ];
 
-function renderSection(me: Me) {
+// Through the router shim, because the member chips are links now (T-391);
+// RouterProvider mounts a tick late, so the heading is the gate.
+async function renderSection(me: Me) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   client.setQueryData(membersQuery("todou").queryKey, MEMBERS);
   client.setQueryData(agentsQuery.queryKey, [] as Agent[]);
   client.setQueryData(meQuery.queryKey, me);
-  return render(
-    <QueryClientProvider client={client}>
-      <MembersSection slug="todou" />
-    </QueryClientProvider>,
-  );
+  const view = renderWithProviders(<MembersSection slug="todou" />, client);
+  await view.findByRole("heading", { name: "Members" });
+  return view;
 }
 
 afterEach(() => {
@@ -50,8 +51,8 @@ afterEach(() => {
 });
 
 describe("MembersSection on your own row", () => {
-  it("disables both controls on your row and leaves the others alone", () => {
-    const view = renderSection(ME);
+  it("disables both controls on your row and leaves the others alone", async () => {
+    const view = await renderSection(ME);
     const mine = view.container.querySelector(
       "button[aria-label='remove alice']",
     );
@@ -82,7 +83,7 @@ describe("MembersSection on your own row", () => {
       return new Response(null, { status: 204 });
     }) as typeof fetch);
 
-    const view = renderSection(ME);
+    const view = await renderSection(ME);
     // The positive control comes first: without it, a stub that never got
     // attached would satisfy the negative assertion on its own.
     fireEvent.click(

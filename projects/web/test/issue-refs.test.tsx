@@ -1,19 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  createRootRoute,
-  createRoute,
-  createRouter,
-  RouterProvider,
-} from "@tanstack/react-router";
 import { render, waitFor } from "@testing-library/react";
 import type { IssueListItem, TimelineEvent } from "@todou/shared";
-import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { EventRow } from "../src/components/timeline/event-row.tsx";
 import { splitIssueRefs } from "../src/lib/issue-refs.ts";
 import { refHref } from "../src/lib/remark-issue-refs.ts";
+import { renderWithProviders } from "./render.tsx";
 
 // Fences render through the lazily-imported pierre CodeView (T-31); pin it
 // to a plain pre>code so the DOM is deterministic no matter when the lazy
@@ -65,38 +59,6 @@ const refItem = (number: number, title: string): IssueListItem => ({
   blocks: [],
   moves: [],
 });
-
-/**
- * IssueLink needs a live router for <Link>; a shim tree with just the
- * issue-detail path keeps these component tests off the full app router.
- */
-function renderWithProviders(ui: ReactElement, client: QueryClient) {
-  const rootRoute = createRootRoute();
-  const indexRoute = createRoute({
-    getParentRoute: () => rootRoute,
-    path: "/",
-    component: () => ui,
-  });
-  const projectRoute = createRoute({
-    getParentRoute: () => rootRoute,
-    path: "/projects/$slug",
-  });
-  const issueRoute = createRoute({
-    getParentRoute: () => projectRoute,
-    path: "issues/$number",
-  });
-  const router = createRouter({
-    routeTree: rootRoute.addChildren([
-      indexRoute,
-      projectRoute.addChildren([issueRoute]),
-    ]),
-  });
-  return render(
-    <QueryClientProvider client={client}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>,
-  );
-}
 
 function seededClient(slug: string, items: IssueListItem[]): QueryClient {
   const client = new QueryClient({
@@ -265,15 +227,16 @@ describe("EventRow issue refs", () => {
     expect(link.textContent).toContain("Source issue");
   });
 
-  it("stays plain text without a slug", () => {
+  it("stays plain text without a slug", async () => {
     const client = new QueryClient();
-    const view = render(
-      <QueryClientProvider client={client}>
-        <EventRow event={event} />
-      </QueryClientProvider>,
+    const view = renderWithProviders(<EventRow event={event} />, client);
+    await waitFor(() =>
+      expect(view.container.textContent).toContain("referenced by #3"),
     );
-    expect(view.container.querySelector("a")).toBeNull();
-    expect(view.container.textContent).toContain("referenced by #3");
+    // Asked of issue links specifically: the row's actor chip is an anchor of
+    // its own now (T-391), so "no anchors at all" would fail on the chip and
+    // say nothing about the reference this case is here for.
+    expect(view.container.querySelector("a[data-issue-link]")).toBeNull();
   });
 });
 

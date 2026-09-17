@@ -115,6 +115,19 @@ describe("SpecVersionPicker (T-178)", () => {
     );
   });
 
+  it("leaves the pusher's chip unlinked inside the menu item (T-391)", async () => {
+    await openMenu();
+    const oldest = versionLinks()[2] as HTMLElement;
+
+    // The item is itself the anchor to that version's url. A second anchor
+    // nested in it is invalid content, and whichever of the two won the
+    // click, one of them would be the wrong destination.
+    expect(oldest.querySelectorAll('a[href^="/users/"]')).toHaveLength(0);
+    // The other half: without it, a picker that stopped rendering the chip
+    // at all would satisfy the line above.
+    expect(oldest.textContent).toContain("Bot One");
+  });
+
   it("falls back to 'no message' where a version pushed without one", async () => {
     await openMenu();
     const items = versionLinks();

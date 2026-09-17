@@ -97,6 +97,7 @@ export function RevisionHistory({
                 <UserChip
                   user={revision.actor}
                   nameClassName="font-medium text-foreground/80"
+                  link={false}
                 />
                 <AgentContextBadge
                   context={revision.agent_context}

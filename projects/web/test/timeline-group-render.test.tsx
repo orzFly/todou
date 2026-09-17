@@ -896,3 +896,47 @@ describe("EventGroup", () => {
     expect(onAttachments).toEqual(onReferences);
   });
 });
+
+describe("a group header's actor links to their page (T-391)", () => {
+  // The header only — the expanded rows and the resident block list are
+  // siblings of it, so a chip down there cannot answer for the header's.
+  const headerLinksIn = (group: HTMLElement) =>
+    [
+      ...(group.firstElementChild as HTMLElement).querySelectorAll(
+        'a[href^="/users/"]',
+      ),
+    ].map((a) => a.getAttribute("href"));
+
+  it("links it on a summarized run", async () => {
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="labels"
+        events={[
+          label("area:infra", "label_added"),
+          label("kind:legacy", "label_removed"),
+        ]}
+        slug="p"
+        issueNumber={1}
+      />,
+    );
+    const group = await findByTestId("event-group");
+    expect(headerLinksIn(group)).toEqual(["/users/bot-one"]);
+  });
+
+  it("links it on a resident block list", async () => {
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="referenced"
+        events={[
+          event({ event_type: "referenced", payload: { by_issue: 7 } }),
+          event({ event_type: "referenced", payload: { by_issue: 9 } }),
+        ]}
+        slug="p"
+        issueNumber={1}
+      />,
+      crossClient(),
+    );
+    const group = await findByTestId("event-group");
+    expect(headerLinksIn(group)).toEqual(["/users/bot-one"]);
+  });
+});

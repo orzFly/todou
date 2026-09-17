@@ -8,6 +8,7 @@ import {
 } from "@tanstack/react-router";
 import { render } from "@testing-library/react";
 import type { ReactElement } from "react";
+import { userSearchSchema } from "../src/api/users.ts";
 
 // happy-dom ships no EventSource, and the shell opens the user-level stream
 // on mount (T-122). An inert stand-in keeps shell-rendering tests mountable;
@@ -35,7 +36,8 @@ export function testQueryClient(): QueryClient {
 /**
  * Mount a component that needs router context (Link, useRouterState)
  * without the app router: a shim tree whose index route renders `ui`,
- * plus the issue-detail path so issue/comment links resolve. Memory
+ * plus the issue-detail and user-page paths so issue, comment and user
+ * chip links resolve. Memory
  * history keeps one test's navigation from leaking into the next.
  * RouterProvider mounts asynchronously — assert via waitFor/findBy.
  */
@@ -53,6 +55,14 @@ export function renderWithProviders(
   const projectRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/projects/$slug",
+  });
+  // The real route's own validator, not a passthrough: it drops `role=any`
+  // and `state=open`, which is what keeps a user chip's href the bare
+  // `/users/<login>` the link assertions are written against.
+  const userRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/users/$ref",
+    validateSearch: userSearchSchema,
   });
   const issueRoute = createRoute({
     getParentRoute: () => projectRoute,
@@ -75,6 +85,7 @@ export function renderWithProviders(
   const router = createRouter({
     routeTree: rootRoute.addChildren([
       indexRoute,
+      userRoute,
       projectRoute.addChildren([
         issueRoute,
         specRoute,

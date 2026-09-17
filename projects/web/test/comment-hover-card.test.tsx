@@ -183,6 +183,32 @@ describe("comment hover card (T-371)", () => {
     expect(card.textContent).toContain("Alice");
   });
 
+  // The card's own header, not the card: the preview body can hold @mentions,
+  // which render user links of their own and would answer for this one.
+  // Nesting is not a worry here — the content is portalled out of the trigger
+  // (T-391).
+  it("links the previewed comment's author", async () => {
+    const view = renderWithProviders(
+      <MarkdownView slug="todou">
+        {"see [T-7#comment-42](/projects/todou/issues/7#comment-42)"}
+      </MarkdownView>,
+      seeded(),
+    );
+    const trigger = await waitFor(() => {
+      const el = view.container.querySelector("a[data-comment-link='42']");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    hover(trigger);
+    const header = (await opened()).firstElementChild as HTMLElement;
+
+    expect(
+      [...header.querySelectorAll('a[href^="/users/"]')].map((a) =>
+        a.getAttribute("href"),
+      ),
+    ).toEqual(["/users/alice"]);
+  });
+
   it("asks the server for nothing the link had not already fetched", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const view = renderWithProviders(

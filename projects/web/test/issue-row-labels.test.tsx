@@ -118,3 +118,55 @@ describe("IssueRow keeps a long label inside the row (T-306)", () => {
     }
   });
 });
+
+const person = (id: number, login: string, name: string) => ({
+  id,
+  login,
+  display_name: name,
+  kind: "human" as const,
+  avatar_url: null,
+  owner: null,
+});
+
+describe("IssueRow assignees reach their own pages (T-391)", () => {
+  it("links each assignee's avatar and gives it a readable name", async () => {
+    const item: IssueListItem = {
+      ...issue(0),
+      assignees: [person(2, "alice", "Alice Liu"), person(3, "bob", "Bob Ray")],
+    };
+    const view = renderWithProviders(
+      <ul>
+        <IssueRow
+          slug="p"
+          issue={item}
+          meta={
+            <IssueRowMeta
+              issue={item}
+              statuses={[status]}
+              allLabels={labels}
+              onStatus={() => {}}
+              onToggleLabel={() => {}}
+            />
+          }
+        />
+      </ul>,
+    );
+    await view.findByText("issue 1");
+
+    // The row, and user addresses only — the row's other anchor is its title,
+    // which points at the issue. Two assignees with two different logins, so
+    // this list changes shape rather than staying satisfied by a survivor.
+    const row = view.container.querySelector("li") as HTMLElement;
+    const links = [...row.querySelectorAll('a[href^="/users/"]')];
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([
+      "/users/alice",
+      "/users/bob",
+    ]);
+    // A compact chip is an avatar alone, and the image's `alt` is empty:
+    // without this label the row never says who it is assigned to.
+    expect(links.map((a) => a.getAttribute("aria-label"))).toEqual([
+      "Alice Liu",
+      "Bob Ray",
+    ]);
+  });
+});

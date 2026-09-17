@@ -257,6 +257,57 @@ describe("source stack draws every file (T-203)", () => {
     expect(block.textContent).not.toContain("belongs to the other block");
   });
 
+  // Card by card, not block by block: both carry the same author, so a
+  // block-wide query would stay satisfied by whichever card kept its link
+  // (T-391).
+  it("links each annotation's author to their page", async () => {
+    mockSpec([
+      comment("keep.md", 1, 1, "was this line always here?"),
+      comment("keep.md", 2, 1, "yes, since v1"),
+    ]);
+    const view = await stack("?v=2&compare=1&file=keep.md");
+    const block = view.container.querySelector(
+      '[data-file-unchanged="keep.md"]',
+    ) as HTMLElement;
+    const cards = await waitFor(() => {
+      const els = block.querySelectorAll('[data-testid="file-annotation"]');
+      expect(els).toHaveLength(2);
+      return [...els];
+    });
+
+    for (const card of cards) {
+      expect(
+        [...card.querySelectorAll('a[href^="/users/"]')].map((a) =>
+          a.getAttribute("href"),
+        ),
+      ).toEqual(["/users/bot-one"]);
+    }
+  });
+
+  // A comment anchored to the file rather than to any line: the rendered
+  // view gives it its own section, and that section is the only place the
+  // reader meets its author (T-391).
+  it("links the author of a comment with no line to sit on", async () => {
+    const fileLevel = comment("keep.md", 2, 1, "about the file as a whole");
+    mockSpec([
+      {
+        ...fileLevel,
+        anchor: { ...fileLevel.anchor, line_start: null, line_end: null },
+        current_line_start: null,
+        current_line_end: null,
+      },
+    ]);
+    const view = renderSpecView("?v=2&view=rendered&file=keep.md");
+    const section = (await view.findByText("File comments"))
+      .parentElement as HTMLElement;
+
+    expect(
+      [...section.querySelectorAll('a[href^="/users/"]')].map((a) =>
+        a.getAttribute("href"),
+      ),
+    ).toEqual(["/users/bot-one"]);
+  });
+
   it("keeps ↑↓ on the differing files only", async () => {
     mockSpec();
     // v2→v3 touches keep.md and nothing else; four blocks sit around it.

@@ -89,3 +89,26 @@ describe("the issue body editor", () => {
     expect(cmGetValue(view.container)).toBe("the first draft\n");
   });
 });
+
+describe("the issue body's author chip (T-391)", () => {
+  it("links the author, and only the author", async () => {
+    const view = renderWithProviders(
+      // An @mention in the body would render a user link of its own; this
+      // body holds one so the header-scoped query below has something to be
+      // wrong about if it were asked of the whole block.
+      <BodyBlock
+        slug="todou"
+        issue={{ ...ISSUE, body: "ask @bob about it" }}
+      />,
+    );
+    await view.findByLabelText("edit body");
+
+    const header = view.container.querySelector("div.rounded-lg")
+      ?.firstElementChild as HTMLElement;
+    expect(
+      [...header.querySelectorAll('a[href^="/users/"]')].map((a) =>
+        a.getAttribute("href"),
+      ),
+    ).toEqual(["/users/alice"]);
+  });
+});

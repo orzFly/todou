@@ -185,6 +185,35 @@ describe("CliAuthCard", () => {
     expect(queryByRole("radio", { name: "Agent 9 @old" })).toBeNull();
   });
 
+  // Both chips on this page sit inside a `<label>` that owns a radio: a
+  // `<label>` may not hold interactive content other than its own control,
+  // and an anchor here would turn "pick this account" into "go and read
+  // somebody's profile" (T-391).
+  it("leaves both account chips unlinked inside their radio labels", () => {
+    const { getByRole } = renderWithQuery(
+      <CliAuthCard
+        request={request}
+        me={me}
+        agents={[agent(7, "bot-one")]}
+        onCancel={() => {}}
+        mint={vi.fn()}
+        deliver={() => {}}
+      />,
+    );
+    const rowOf = (name: string) =>
+      getByRole("radio", { name }).closest("label") as HTMLElement;
+
+    for (const [row, shown] of [
+      [rowOf("Agent 7 @bot-one"), "Agent 7"],
+      [rowOf(`${me.display_name} (yourself)`), me.display_name],
+    ] as const) {
+      expect(row.querySelectorAll('a[href^="/users/"]')).toHaveLength(0);
+      // The name is the other half: a row that stopped rendering its chip
+      // would satisfy the line above without linking anything either.
+      expect(row.textContent).toContain(shown);
+    }
+  });
+
   it("requires an explicit pick among several agents with no history", () => {
     const { getByRole } = renderWithQuery(
       <CliAuthCard

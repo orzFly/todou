@@ -203,7 +203,7 @@ export function AppShell({
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="sm">
-                    <UserChip user={me} />
+                    <UserChip user={me} link={false} />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">

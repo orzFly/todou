@@ -424,7 +424,11 @@ function NewIssueForm({
               {members.data
                 .filter((member) => assigneeIds.includes(member.user.id))
                 .map((member) => (
-                  <UserChip key={member.user.id} user={member.user} />
+                  <UserChip
+                    key={member.user.id}
+                    user={member.user}
+                    link={false}
+                  />
                 ))}
             </div>
             <AssigneePicker

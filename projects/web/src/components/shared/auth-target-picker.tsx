@@ -139,7 +139,7 @@ export function AuthTargetFieldset({
               checked={selection?.kind === "agent" && selection.id === agent.id}
               onChange={() => setSelection({ kind: "agent", id: agent.id })}
             />
-            <UserChip user={agent} />
+            <UserChip user={agent} link={false} />
             {/* Which account a token ends up belonging to is the whole
                 question on this page, so the login is never optional. */}
             <span className="truncate text-sm text-muted-foreground">
@@ -185,7 +185,7 @@ export function AuthTargetFieldset({
               checked={selection?.kind === "me"}
               onChange={() => setSelection({ kind: "me" })}
             />
-            <UserChip user={me} />
+            <UserChip user={me} link={false} />
             <span className="text-sm text-muted-foreground">yourself</span>
           </label>
         )}

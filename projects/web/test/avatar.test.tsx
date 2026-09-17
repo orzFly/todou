@@ -2,6 +2,7 @@ import { fireEvent, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AvatarEditor } from "../src/components/shared/avatar-editor.tsx";
 import { initialsOf, UserChip } from "../src/components/shared/user-chip.tsx";
+import { renderWithProviders } from "./render.tsx";
 
 vi.mock("sonner", async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -25,48 +26,63 @@ describe("initialsOf", () => {
   });
 });
 
+// A chip is an anchor by default now, so these mount through the router shim
+// and wait for it — the same chip the app renders, rather than the link={false}
+// spelling, which would leave the class guard below watching an element the
+// app never shows (T-391).
 describe("UserChip names (T-149)", () => {
-  it("shows the display name, keeping the login for the initials fallback", () => {
-    const { getByText, queryByText } = render(<UserChip user={human} />);
-    expect(getByText("Spud Farmer")).toBeTruthy();
+  it("shows the display name, keeping the login for the initials fallback", async () => {
+    const { findByText, queryByText } = renderWithProviders(
+      <UserChip user={human} />,
+    );
+    expect(await findByText("Spud Farmer")).toBeTruthy();
     expect(queryByText("spud")).toBeNull();
     expect(queryByText("@spud")).toBeNull();
   });
 
-  it("falls back to the login when the display name is blank", () => {
-    const { getByText } = render(
+  it("falls back to the login when the display name is blank", async () => {
+    const { findByText, getByText } = renderWithProviders(
       <UserChip user={{ ...human, display_name: "   " }} />,
     );
-    expect(getByText("spud")).toBeTruthy();
+    expect(await findByText("spud")).toBeTruthy();
     expect(getByText("S")).toBeTruthy();
   });
 
-  it("adds the login beside the name under showLogin, never when compact", () => {
-    const { getByText, queryByText, rerender } = render(
+  it("adds the login beside the name under showLogin", async () => {
+    const { findByText, getByText } = renderWithProviders(
       <UserChip user={human} showLogin />,
     );
-    expect(getByText("Spud Farmer")).toBeTruthy();
+    expect(await findByText("Spud Farmer")).toBeTruthy();
     expect(getByText("@spud")).toBeTruthy();
+  });
 
-    rerender(<UserChip user={human} showLogin compact />);
+  it("leaves the login off a compact chip even under showLogin", async () => {
+    const { findByText, queryByText } = renderWithProviders(
+      <UserChip user={human} showLogin compact />,
+    );
+    // The initials are what a compact chip does render, so waiting on them
+    // keeps the absence below from being read off an unmounted tree.
+    expect(await findByText("SF")).toBeTruthy();
     expect(queryByText("@spud")).toBeNull();
   });
 
-  it("reads the name off an old server's response without printing undefined", () => {
+  it("reads the name off an old server's response without printing undefined", async () => {
     const legacy = { ...human } as Partial<typeof human>;
     legacy.display_name = undefined;
-    const { getByText } = render(
+    const { findByText } = renderWithProviders(
       <UserChip user={legacy as typeof human} showLogin />,
     );
-    expect(getByText("spud")).toBeTruthy();
+    expect(await findByText("spud")).toBeTruthy();
   });
 
   // happy-dom lays nothing out, so this cannot see the alignment itself —
   // only that the two classes carrying it are still on the elements. What
   // they buy is measured in a real browser (T-359).
-  it("lays the chip out inline and centres the avatar on the line (T-359)", () => {
-    const { container, getByText } = render(<UserChip user={human} />);
-    const root = getByText("Spud Farmer").parentElement;
+  it("lays the chip out inline and centres the avatar on the line (T-359)", async () => {
+    const { container, findByText } = renderWithProviders(
+      <UserChip user={human} />,
+    );
+    const root = (await findByText("Spud Farmer")).parentElement;
     expect(root?.className).toContain("inline-block");
 
     const avatarBox = container.querySelector("[data-slot=avatar]");
@@ -75,20 +91,22 @@ describe("UserChip names (T-149)", () => {
 });
 
 describe("UserChip avatars", () => {
-  it("falls back to initials without an avatar", () => {
-    const { container, getByText } = render(<UserChip user={human} />);
-    expect(getByText("SF")).toBeTruthy();
+  it("falls back to initials without an avatar", async () => {
+    const { container, findByText } = renderWithProviders(
+      <UserChip user={human} />,
+    );
+    expect(await findByText("SF")).toBeTruthy();
     expect(container.querySelector("[data-slot=avatar-image]")).toBeNull();
   });
 
-  it("mounts an AvatarImage when avatar_url is set, keeping the fallback", () => {
-    const { container, getByText } = render(
+  it("mounts an AvatarImage when avatar_url is set, keeping the fallback", async () => {
+    const { container, findByText } = renderWithProviders(
       <UserChip user={{ ...human, avatar_url: "/api/users/1/avatar?v=abc" }} />,
     );
     // Radix keeps the initials fallback until the image finishes loading —
     // in happy-dom it never does, so only the fallback is observable. The
     // real-image path is covered by the server round-trip test.
-    expect(getByText("SF")).toBeTruthy();
+    expect(await findByText("SF")).toBeTruthy();
     expect(container.innerHTML).toBeTruthy();
   });
 });

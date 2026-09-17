@@ -374,6 +374,26 @@ describe("the access page without admin of the target", () => {
     expect(screen.queryByLabelText("role in theirs")).toBeNull();
     expect(screen.queryByRole("button", { name: "Add to project" })).toBeNull();
   });
+
+  // "Ask one of these people" is only useful if you can reach them, and the
+  // opener shares this project with every admin named here, so the page
+  // resolves (T-391). Scoped to that sentence: the rest of the card carries
+  // chips of its own.
+  it("makes each admin it names reachable", async () => {
+    stubFetch();
+    renderCard({ targets: ["theirs"], login: "bot", uid: 5 });
+    // Wait on the admin's own name: the sentence renders before the member
+    // list arrives, so the paragraph alone is not yet the thing to measure.
+    const sentence = (await screen.findByText("keeper")).closest(
+      "p",
+    ) as HTMLElement;
+
+    expect(
+      [...sentence.querySelectorAll('a[href^="/users/"]')].map((a) =>
+        a.getAttribute("href"),
+      ),
+    ).toEqual(["/users/keeper"]);
+  });
 });
 
 describe("the access page on a target it cannot see", () => {

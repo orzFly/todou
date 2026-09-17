@@ -658,3 +658,58 @@ describe("leaving a page with unsaved work", () => {
     mounted.unmount();
   });
 });
+
+describe("the sidebar's assignees reach their own pages (T-391)", () => {
+  const person = (id: number, login: string, name: string) => ({
+    id,
+    login,
+    display_name: name,
+    kind: "human" as const,
+    avatar_url: null,
+    owner: null,
+  });
+
+  it("links every assignee listed under the heading", async () => {
+    const client = testQueryClient();
+    client.setQueryData(projectQuery("p").queryKey, {
+      id: 1,
+      slug: "p",
+      name: "p",
+      description: "",
+      created_at: "2026-01-01T00:00:00Z",
+      viewer_role: "writer",
+    });
+    const assignees = [
+      person(2, "alice", "Alice Liu"),
+      person(3, "bob", "Bob Ray"),
+    ];
+    const view = renderWithProviders(
+      <Sidebar
+        slug="p"
+        issue={{ ...CARD, assignees }}
+        statuses={[CARD.status]}
+        allLabels={[]}
+        members={assignees.map((user) => ({
+          user,
+          role: "writer" as const,
+          created_at: "2026-01-01T00:00:00Z",
+          owner_role: null,
+        }))}
+        canDelete={false}
+        trashed={false}
+      />,
+      client,
+    );
+
+    // The Assignees section only. The picker below it renders the same
+    // people as bare avatars, and the sidebar as a whole would let those
+    // answer for these.
+    const heading = await view.findByText("Assignees");
+    const list = heading.nextElementSibling as HTMLElement;
+    expect(
+      [...list.querySelectorAll('a[href^="/users/"]')].map((a) =>
+        a.getAttribute("href"),
+      ),
+    ).toEqual(["/users/alice", "/users/bob"]);
+  });
+});

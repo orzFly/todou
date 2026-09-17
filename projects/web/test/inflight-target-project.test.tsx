@@ -29,6 +29,7 @@ import type {
   ReferenceConfig,
   Status,
 } from "@todou/shared";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useBoardMove } from "../src/api/board.ts";
 import {
@@ -60,6 +61,7 @@ import {
   StatusesSection,
 } from "../src/pages/project-settings.tsx";
 import { cmSetValue } from "./cm.ts";
+import { renderWithProviders } from "./render.tsx";
 
 /**
  * The project-side twin of `inflight-target.test.tsx`: that file records
@@ -222,6 +224,24 @@ const writeCalls = (calls: Call[]) =>
 type SectionView = ReturnType<typeof render>;
 
 type SectionComponent = (props: { slug: string }) => React.ReactElement | null;
+
+/**
+ * Holds the slug the section is mounted with, so the swap below is a
+ * re-render rather than a remount. `rerender` cannot do it any more: the
+ * shim router bakes its element in when the router is built (T-391), so
+ * re-rendering the tree would replace the router the chips' links need.
+ */
+function SlugHarness({
+  section: Section,
+  setter,
+}: {
+  section: SectionComponent;
+  setter: { current: (slug: string) => void };
+}) {
+  const [slug, setSlug] = useState("p");
+  setter.current = setSlug;
+  return <Section slug={slug} />;
+}
 
 type ProjectCase = {
   name: string;
@@ -561,10 +581,12 @@ describe("a project write the settings page then left", () => {
     const calls = stubFetch();
     const client = queryClient();
     seed(client);
-    const view = render(
-      <QueryClientProvider client={client}>
-        <c.section slug="p" />
-      </QueryClientProvider>,
+    // Through the router shim: the user chips these sections render are links
+    // now (T-391), and a link needs router context to resolve its href.
+    const setSlug = { current: (_: string) => {} };
+    const view = renderWithProviders(
+      <SlugHarness section={c.section} setter={setSlug} />,
+      client,
     );
     // The section suspends until its queries resolve; wait for the form.
     await waitFor(() =>
@@ -581,11 +603,7 @@ describe("a project write the settings page then left", () => {
     // The page leaves for project q: the route slug (and so the prop this
     // section would receive on the real page) changes while the component
     // stays mounted — a re-render, not a remount.
-    view.rerender(
-      <QueryClientProvider client={client}>
-        <c.section slug="q" />
-      </QueryClientProvider>,
-    );
+    act(() => setSlug.current("q"));
     if (c.editWhilePaused) c.edit?.(view);
     await act(async () => {
       onlineManager.setOnline(true);

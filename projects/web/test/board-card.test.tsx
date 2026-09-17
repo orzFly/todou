@@ -417,3 +417,44 @@ describe("BoardCardContent spec badge (T-53)", () => {
     expect(noSpec.queryByTitle(/awaiting review/)).toBeNull();
   });
 });
+
+describe("BoardCardContent assignees reach their own pages (T-391)", () => {
+  const person = (id: number, login: string, name: string) => ({
+    id,
+    login,
+    display_name: name,
+    kind: "human" as const,
+    avatar_url: null,
+    owner: null,
+  });
+
+  it("links each assignee's avatar and gives it a readable name", async () => {
+    const view = renderWithProviders(
+      <BoardCardContent
+        slug="p"
+        issue={{
+          ...issue(0),
+          assignees: [
+            person(2, "alice", "Alice Liu"),
+            person(3, "bob", "Bob Ray"),
+          ],
+        }}
+      />,
+    );
+    await view.findByText("issue 1");
+
+    // User addresses only — the card's other anchor is its title. Two logins,
+    // so neither avatar's link can stand in for the other's.
+    const links = [...view.container.querySelectorAll('a[href^="/users/"]')];
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([
+      "/users/alice",
+      "/users/bob",
+    ]);
+    // Nothing else on a board card says who it is assigned to: the avatar's
+    // `alt` is empty and the fallback carries initials only.
+    expect(links.map((a) => a.getAttribute("aria-label"))).toEqual([
+      "Alice Liu",
+      "Bob Ray",
+    ]);
+  });
+});

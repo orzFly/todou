@@ -59,3 +59,21 @@ describe("AppShell logout visibility", () => {
     expect(screen.queryByText("@user")).toBeNull();
   });
 });
+
+describe("the header's account chip stays a menu trigger (T-391)", () => {
+  it("puts no link inside the trigger button", async () => {
+    const client = testQueryClient();
+    client.setQueryData(["auth-mode"], { mode: "single" });
+    const view = renderWithProviders(<AppShell me={me}>x</AppShell>, client);
+    const trigger = (await view.findByText("User")).closest(
+      "button",
+    ) as HTMLElement;
+
+    // The button's job is to open the account menu. An anchor inside it
+    // would take the click instead — and the menu already carries Profile,
+    // which is the way to this page.
+    expect(trigger.querySelectorAll('a[href^="/users/"]')).toHaveLength(0);
+    // Without this half, a trigger that rendered no chip would pass.
+    expect(trigger.textContent).toContain("User");
+  });
+});

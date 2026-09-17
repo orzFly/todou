@@ -615,6 +615,21 @@ describe("QuestionsCard (answered)", () => {
       "shrink-0",
     );
   });
+
+  // Scoped to the "answered by" group, not the card: the answers below carry
+  // no chip today, but a card-wide query would stop being about this one the
+  // moment they did.
+  it("links the answerer, with a name a screen reader can read (T-391)", async () => {
+    stubFetch(answered);
+    const view = renderCard();
+
+    const meta = await view.findByText("answered by");
+    const link = meta.querySelector('a[href^="/users/"]');
+    expect(link?.getAttribute("href")).toBe("/users/user");
+    // A compact chip is a bare avatar with an empty `alt`; without the label
+    // its accessible name degrades to the fallback initials.
+    expect(link?.getAttribute("aria-label")).toBe("User");
+  });
 });
 
 describe("QuestionsCard while the verdict is unknown (T-365)", () => {

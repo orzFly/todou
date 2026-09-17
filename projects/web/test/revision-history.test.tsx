@@ -67,3 +67,28 @@ describe("RevisionHistory · load failure (T-376)", () => {
     expect(screen.queryByText(/Failed to load history/)).toBeNull();
   });
 });
+
+describe("the revision list's actor chip stays unlinked (T-391)", () => {
+  it("leaves no anchor inside the row's button", async () => {
+    renderWithProviders(
+      <RevisionHistory
+        label="comment"
+        editedAt="2026-08-12T10:00:00Z"
+        filename="comment.md"
+        queryKey={["revisions", "comment", 2]}
+        fetchRevisions={vi.fn().mockResolvedValue({ items: [revision] })}
+      />,
+    );
+    fireEvent.click(await screen.findByText("(edited)"));
+
+    // Each row is a button that opens that revision's diff. An anchor inside
+    // it would take the click somewhere else entirely.
+    const row = (await screen.findByText("User")).closest(
+      "button",
+    ) as HTMLElement;
+    expect(row.querySelectorAll('a[href^="/users/"]')).toHaveLength(0);
+    // The name is the other half: a row that rendered no chip would satisfy
+    // the line above on its own.
+    expect(row.textContent).toContain("User");
+  });
+});

@@ -108,6 +108,25 @@ describe("agents settings page (T-205)", () => {
     expect(view.queryByText(/^Active /)).toBeNull();
     expect(view.queryByText(/^Deactivated /)).toBeNull();
   });
+
+  // Owning an agent is enough to read its page (T-410), which is what let
+  // this row be linked at all. Each row is searched on its own and the two
+  // agents carry different logins, so one row's anchor cannot stand in for
+  // the other's; dropping the link leaves an empty list here.
+  it("links each agent's chip to that agent's own page (T-391)", async () => {
+    const view = renderAgents([PROBE, HELPER]);
+    await view.findByText("Handle");
+
+    const userLinksIn = (login: string) =>
+      [
+        ...(
+          view.getByText(`@${login}`).closest("tr") as HTMLElement
+        ).querySelectorAll('a[href^="/users/"]'),
+      ].map((a) => a.getAttribute("href"));
+
+    expect(userLinksIn("probe-bot")).toEqual(["/users/probe-bot"]);
+    expect(userLinksIn("helper-bot")).toEqual(["/users/helper-bot"]);
+  });
 });
 
 describe("agent tokens dialog · load failure (T-376)", () => {

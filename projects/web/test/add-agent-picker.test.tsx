@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient } from "@tanstack/react-query";
 import {
   fireEvent,
   render,
@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentsQuery, membersQuery, meQuery } from "../src/api/queries.ts";
 import { AddAgentPicker } from "../src/components/shared/add-agent-picker.tsx";
 import { MembersSection } from "../src/pages/project-settings.tsx";
+import { renderWithProviders } from "./render.tsx";
 
 let nextId = 100;
 
@@ -241,7 +242,9 @@ const ME: Me = {
   created_at: "2026-08-28T00:00:00Z",
 };
 
-function renderSection() {
+// Through the router shim, because the member chips are links now (T-391);
+// RouterProvider mounts a tick late, so the heading is the gate.
+async function renderSection() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -250,11 +253,9 @@ function renderSection() {
   client.setQueryData(membersQuery("todou").queryKey, MEMBERS);
   client.setQueryData(agentsQuery.queryKey, ALL);
   client.setQueryData(meQuery.queryKey, ME);
-  return render(
-    <QueryClientProvider client={client}>
-      <MembersSection slug="todou" />
-    </QueryClientProvider>,
-  );
+  const view = renderWithProviders(<MembersSection slug="todou" />, client);
+  await view.findByRole("heading", { name: "Members" });
+  return view;
 }
 
 describe("MembersSection add agent", () => {
@@ -269,7 +270,7 @@ describe("MembersSection add agent", () => {
       return new Response(null, { status: 204 });
     }) as typeof fetch);
 
-    renderSection();
+    await renderSection();
     fireEvent.click(screen.getByRole("button", { name: /add agent/i }));
     await waitFor(() => expect(screen.getByRole("listbox")).toBeTruthy());
 
@@ -288,7 +289,7 @@ describe("MembersSection add agent", () => {
   });
 
   it("draws the candidate's avatar exactly like the members table draws one", async () => {
-    const { container } = renderSection();
+    const { container } = await renderSection();
     fireEvent.click(screen.getByRole("button", { name: /add agent/i }));
     await waitFor(() => expect(screen.getByRole("listbox")).toBeTruthy());
 

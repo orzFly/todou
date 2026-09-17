@@ -410,3 +410,30 @@ describe("the new-issue page's Ctrl-Enter", () => {
     expect(createIssue).not.toHaveBeenCalled();
   });
 });
+
+describe("the new-issue sidebar's picked assignees (T-391)", () => {
+  it("echoes the pick without linking it — there is no card yet", async () => {
+    renderAs("admin");
+    await screen.findByLabelText("Title");
+
+    fireEvent.pointerDown(
+      await screen.findByRole("button", { name: "Edit assignees" }),
+      { button: 0, pointerType: "mouse" },
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: /User/ }));
+    // The picker stays open on purpose (several people in a row), and while
+    // it is open Radix marks the rest of the page `aria-hidden`, which hides
+    // the very section this case is about from every role query.
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+
+    // The echo lives under the Assignees heading, beside the picker that
+    // wrote it. It restates a choice the reader just made on a card that does
+    // not exist yet, so it is a readout, not a way to anybody's page.
+    const echo = (await screen.findByRole("heading", { name: "Assignees" }))
+      .nextElementSibling as HTMLElement;
+    expect(echo.querySelectorAll('a[href^="/users/"]')).toHaveLength(0);
+    // The other half: an echo that rendered nothing would pass the line above.
+    expect(echo.textContent).toContain("User");
+  });
+});

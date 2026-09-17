@@ -87,7 +87,7 @@ export function SpecVersionMenuRow({
           <MessageText message={message} />
         </span>
         <span className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-          <UserChip user={author} nameClassName="text-xs" />
+          <UserChip user={author} nameClassName="text-xs" link={false} />
           <span aria-hidden>·</span>
           <time dateTime={createdAt} title={createdAt} className="truncate">
             {new Date(createdAt).toLocaleString()}

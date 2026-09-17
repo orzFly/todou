@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import type { UserKind, UserRef } from "@todou/shared";
 import { BotIcon } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -90,21 +91,25 @@ export function UserChip({
   compact = false,
   showLogin = false,
   nameClassName,
+  link = true,
 }: {
   user: UserRef;
   compact?: boolean;
   /** Add the secondary `@login` — for places where two people may share a name. */
   showLogin?: boolean;
   nameClassName?: string;
+  /**
+   * Defaults on: the user page was reachable from nothing but an @mention
+   * before it did, and a display that quietly forgets to link is an omission
+   * nobody ever notices (T-391). Turn it off where the chip only echoes a
+   * control's current value — inside a `DropdownMenuItem`, a `<label>`
+   * carrying a radio, or a `<button>` — because there an anchor either
+   * steals the click the control wanted or is invalid content outright.
+   */
+  link?: boolean;
 }) {
-  // Not a flex container, because one takes its baseline from its first flex
-  // item — here the avatar. Showing an image that box has no text baseline to
-  // give, so the chip sat on the line's own baseline and carried the name 5px
-  // above the sentence around it, then jumped the moment the image replaced
-  // the initials, which do have one. For the same reason UserAvatar's
-  // `align-middle` only bites out here: a flex item would ignore it.
-  const chip = (
-    <span className="inline-block shrink-0 whitespace-nowrap">
+  const body = (
+    <>
       <UserAvatar user={user} badge />
       {!compact && (
         <span className={cn("ml-1.5 text-sm", nameClassName)}>
@@ -116,7 +121,38 @@ export function UserChip({
           @{user.login}
         </span>
       )}
-    </span>
+    </>
+  );
+
+  // Not a flex container, because one takes its baseline from its first flex
+  // item — here the avatar. Showing an image that box has no text baseline to
+  // give, so the chip sat on the line's own baseline and carried the name 5px
+  // above the sentence around it, then jumped the moment the image replaced
+  // the initials, which do have one. For the same reason UserAvatar's
+  // `align-middle` only bites out here: a flex item would ignore it.
+  //
+  // The anchor takes these classes rather than sitting outside them: the
+  // chip is a flex item in the comment header, the event row and the board's
+  // meta row, and wrapping it would hand that slot to an element without
+  // `shrink-0`, squeezing the chip in exactly the dense rows it is used in.
+  const box = "inline-block shrink-0 whitespace-nowrap";
+
+  // The avatar's `alt` is empty and the fallback only carries initials, so a
+  // compact chip reaching for a name of its own has none to find.
+  const label = compact ? displayNameOf(user) : undefined;
+
+  const chip = link ? (
+    <Link
+      to="/users/$ref"
+      params={{ ref: user.login }}
+      className={cn(box, "hover:underline")}
+      aria-label={label}
+      title={label}
+    >
+      {body}
+    </Link>
+  ) : (
+    <span className={box}>{body}</span>
   );
 
   if (user.kind !== "machine") return chip;

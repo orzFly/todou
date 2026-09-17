@@ -1,9 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  fireEvent,
-  render as renderBare,
-  waitFor,
-} from "@testing-library/react";
+import { fireEvent, waitFor } from "@testing-library/react";
 import type {
   Label,
   QuestionsComponent,
@@ -15,7 +10,6 @@ import type {
   UserRef,
 } from "@todou/shared";
 import { DEFAULT_REFERENCE_CONFIG } from "@todou/shared";
-import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { refConfigFor } from "../src/api/references.ts";
 import {
@@ -43,16 +37,6 @@ import {
   renderWithProviders as renderWithRouter,
   testQueryClient,
 } from "./render.tsx";
-
-// CommentItem mounts an edit mutation, which needs a query client.
-function render(ui: ReactElement) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-  return renderBare(
-    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
-  );
-}
 
 const user: UserRef = {
   id: 1,
@@ -374,8 +358,11 @@ describe("timeline rendering", () => {
     await waitFor(() => expect(getByText("bold potato")).toBeTruthy());
   });
 
-  it("renders agent actors with their badge in event rows", () => {
-    const { getByTitle, container } = render(
+  // Through the router shim rather than the bare helper above: this is the
+  // one case here that renders the row's leading actor chip, and that chip
+  // is a link now (T-391).
+  it("renders agent actors with their badge in event rows", async () => {
+    const { findByTitle, container } = renderWithRouter(
       <EventRow
         event={{
           type: "event",
@@ -388,7 +375,7 @@ describe("timeline rendering", () => {
         }}
       />,
     );
-    expect(getByTitle("closed this (Done)").textContent).toBe(
+    expect((await findByTitle("closed this (Done)")).textContent).toBe(
       "closed this Done",
     );
     expect(container.querySelector('[aria-label="agent"]')).toBeTruthy();
@@ -854,5 +841,71 @@ describe("one upload across the fold seam (T-404)", () => {
         expect.stringContaining("attached 2 files"),
       ]);
     });
+  });
+});
+
+describe("user chips in the timeline link to the user page (T-391)", () => {
+  const userLinksIn = (el: Element) =>
+    [...el.querySelectorAll('a[href^="/users/"]')].map((a) =>
+      a.getAttribute("href"),
+    );
+
+  it("links a comment's author, and the click lands on their page", async () => {
+    const { container, findByText, router } = renderWithRouter(
+      <CommentItem
+        slug="p"
+        issueNumber={1}
+        comment={{
+          type: "comment",
+          id: 1,
+          author: user,
+          body: "potato",
+          component: null,
+          created_at: "2026-08-11T00:00:00Z",
+          edited_at: null,
+          resolved_at: null,
+          hidden_at: null,
+          agent_context: null,
+        }}
+      />,
+    );
+    await findByText("potato");
+
+    // The comment header alone. Asked of the whole comment, an @mention in
+    // the body would answer for the author chip and deleting this link would
+    // still pass.
+    const header = container.querySelector("[data-comment-id='1']")
+      ?.firstElementChild as HTMLElement;
+    expect(userLinksIn(header)).toEqual(["/users/user"]);
+
+    // "The href is right" and "the click goes somewhere" are two claims.
+    // Swap the chip's <Link> for a plain <a href> carrying the same address
+    // and every href assertion in this suite still passes while this one
+    // reds on `/` — that is the failure it is here for. Unregistering
+    // `/users/$ref` from the shim tree does *not* red it: the location moves
+    // to an unmatched path just the same.
+    fireEvent.click(
+      header.querySelector('a[href="/users/user"]') as HTMLAnchorElement,
+    );
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/users/user"),
+    );
+  });
+
+  it("links the event's actor and the person the event names, separately", async () => {
+    const { container, findByText } = row(
+      "assigned",
+      { user: { id: bot.id, login: bot.login } },
+      { members: [bot] },
+    );
+    await findByText("Worker Bot");
+
+    // Two chips on one row, deliberately two different logins: whichever of
+    // the two loses its link, this list changes shape. A shared login would
+    // let the survivor answer for both.
+    expect(userLinksIn(container)).toEqual([
+      "/users/user",
+      "/users/worker-bot",
+    ]);
   });
 });

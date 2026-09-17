@@ -1,15 +1,10 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { QueryClient } from "@tanstack/react-query";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { Agent, Me, Member, MemberRole, UserRef } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentsQuery, api, membersQuery, meQuery } from "../src/api/queries.ts";
 import { MembersSection } from "../src/pages/project-settings.tsx";
+import { renderWithProviders } from "./render.tsx";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -62,22 +57,26 @@ const meFrom = (user: UserRef, instanceAdmin = false): Me => ({
   created_at: at,
 });
 
-function renderSection(
+// Through the router shim, because the member chips are links now (T-391).
+// RouterProvider mounts a tick late, and the gate is scoped to this render's
+// own container — a test that renders two sections has two headings.
+async function renderSection(
   members: Member[],
   me: Me,
   agents: Agent[] = [],
-): HTMLElement {
+): Promise<HTMLElement> {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   client.setQueryData(membersQuery("todou").queryKey, members);
   client.setQueryData(agentsQuery.queryKey, agents);
   client.setQueryData(meQuery.queryKey, me);
-  return render(
-    <QueryClientProvider client={client}>
-      <MembersSection slug="todou" />
-    </QueryClientProvider>,
-  ).container;
+  const { container } = renderWithProviders(
+    <MembersSection slug="todou" />,
+    client,
+  );
+  await within(container).findByRole("heading", { name: "Members" });
+  return container;
 }
 
 /**
@@ -108,8 +107,8 @@ const removeButton = (container: HTMLElement, name: string) =>
   ) as HTMLButtonElement | null;
 
 describe("MembersSection as an indented tree (T-340)", () => {
-  it("files each machine under its owner and sorts by display name", () => {
-    const container = renderSection(
+  it("files each machine under its owner and sorts by display name", async () => {
+    const container = await renderSection(
       [
         member(BOB, "writer"),
         member(ALICE_BOT, "reader", "admin"),
@@ -127,8 +126,8 @@ describe("MembersSection as an indented tree (T-340)", () => {
     ]);
   });
 
-  it("keeps a machine whose owner is an instance admin in the main list", () => {
-    const container = renderSection(
+  it("keeps a machine whose owner is an instance admin in the main list", async () => {
+    const container = await renderSection(
       [member(ALICE, "admin"), member(ROOT_BOT, "admin", "admin")],
       meFrom(ALICE),
     );
@@ -140,8 +139,8 @@ describe("MembersSection as an indented tree (T-340)", () => {
     expect(roleSelect(container, "root-bot")?.disabled).toBe(false);
   });
 
-  it("splits out a machine whose owner holds nothing, and locks its role", () => {
-    const container = renderSection(
+  it("splits out a machine whose owner holds nothing, and locks its role", async () => {
+    const container = await renderSection(
       [member(ALICE, "admin"), member(ORPHAN_BOT, "writer", null)],
       meFrom(ALICE),
     );
@@ -154,8 +153,8 @@ describe("MembersSection as an indented tree (T-340)", () => {
     expect(removeButton(container, "orphan-bot")?.disabled).toBe(false);
   });
 
-  it("gives an owner header row no controls of its own", () => {
-    const container = renderSection(
+  it("gives an owner header row no controls of its own", async () => {
+    const container = await renderSection(
       [member(ALICE, "admin"), member(ROOT_BOT, "reader", "admin")],
       meFrom(ALICE),
     );
@@ -166,8 +165,8 @@ describe("MembersSection as an indented tree (T-340)", () => {
     expect(roleSelect(container, "root-admin")).toBeNull();
   });
 
-  it("marks a row already above its ceiling instead of hiding the role", () => {
-    const container = renderSection(
+  it("marks a row already above its ceiling instead of hiding the role", async () => {
+    const container = await renderSection(
       [
         member(ALICE, "admin"),
         member(BOB, "reader"),
@@ -193,8 +192,8 @@ describe("MembersSection from a non-admin's chair", () => {
     member(BOB_BOT, "reporter", "reporter"),
   ];
 
-  it("leaves controls only on the machines I own", () => {
-    const container = renderSection(ROWS, meFrom(BOB));
+  it("leaves controls only on the machines I own", async () => {
+    const container = await renderSection(ROWS, meFrom(BOB));
 
     expect(roleSelect(container, "bob-bot")?.disabled).toBe(false);
     expect(removeButton(container, "bob-bot")?.disabled).toBe(false);
@@ -206,8 +205,8 @@ describe("MembersSection from a non-admin's chair", () => {
     expect(removeButton(container, "alice")).toBeNull();
   });
 
-  it("keeps my own row's controls present but disabled", () => {
-    const container = renderSection(ROWS, meFrom(BOB));
+  it("keeps my own row's controls present but disabled", async () => {
+    const container = await renderSection(ROWS, meFrom(BOB));
 
     // The other half of the pair above: this control is meaningful to me,
     // it is simply not mine to press, so it stays.
@@ -215,24 +214,24 @@ describe("MembersSection from a non-admin's chair", () => {
     expect(removeButton(container, "bob")?.disabled).toBe(true);
   });
 
-  it("offers Add person to an admin and to nobody else", () => {
+  it("offers Add person to an admin and to nobody else", async () => {
     // Both halves read through their own container. Asked of `screen` before
     // any render, the negative half is put to an empty document — cleanup
     // has already taken the previous test's tree down — and passes whatever
     // the component does.
-    const asReporter = renderSection(ROWS, meFrom(BOB));
+    const asReporter = await renderSection(ROWS, meFrom(BOB));
     expect(
       within(asReporter).queryByRole("button", { name: /Add person/ }),
     ).toBeNull();
 
-    const asAdmin = renderSection(ROWS, meFrom(ALICE));
+    const asAdmin = await renderSection(ROWS, meFrom(ALICE));
     expect(
       within(asAdmin).getByRole("button", { name: /Add person/ }),
     ).toBeTruthy();
   });
 
-  it("caps the role its dropdown offers at my own", () => {
-    const container = renderSection(ROWS, meFrom(BOB));
+  it("caps the role its dropdown offers at my own", async () => {
+    const container = await renderSection(ROWS, meFrom(BOB));
 
     fireEvent.keyDown(roleSelect(container, "bob-bot") as HTMLElement, {
       key: "ArrowDown",
@@ -262,7 +261,7 @@ describe("MembersSection from a non-admin's chair", () => {
       created_at: at,
       disabled_at: null,
     };
-    renderSection(ROWS, meFrom(BOB), [agent]);
+    await renderSection(ROWS, meFrom(BOB), [agent]);
 
     fireEvent.click(screen.getByRole("button", { name: /Add agent/ }));
     fireEvent.click(await screen.findByRole("option", { name: /spare-bot/ }));
@@ -274,7 +273,7 @@ describe("MembersSection from a non-admin's chair", () => {
 });
 
 describe("MembersSection against a server that never sends owner_role", () => {
-  it("treats an unknown ceiling as read-only", () => {
+  it("treats an unknown ceiling as read-only", async () => {
     const rows = [
       member(ALICE, "admin"),
       // The field absent entirely, which is what a rolling release looks
@@ -283,7 +282,7 @@ describe("MembersSection against a server that never sends owner_role", () => {
       { user: BOB_BOT, role: "writer", created_at: at } as Member,
       member(BOB, "writer"),
     ];
-    const container = renderSection(rows, meFrom(ALICE));
+    const container = await renderSection(rows, meFrom(ALICE));
 
     expect(roleSelect(container, "bob-bot")).toBeNull();
     expect(container.textContent).toContain("(locked)");
@@ -299,7 +298,7 @@ describe("MembersSection adding a person by login", () => {
     const spy = vi
       .spyOn(api, "addMember")
       .mockResolvedValue(member(BOB, "reporter"));
-    renderSection([member(ALICE, "admin")], meFrom(ALICE));
+    await renderSection([member(ALICE, "admin")], meFrom(ALICE));
 
     fireEvent.click(screen.getByRole("button", { name: /Add person/ }));
     fireEvent.change(screen.getByLabelText("login to add"), {
@@ -313,5 +312,31 @@ describe("MembersSection adding a person by login", () => {
         role: "reporter",
       }),
     );
+  });
+});
+
+describe("every member row links to that member's page (T-391)", () => {
+  it("points each row's chip at its own login", async () => {
+    const container = await renderSection(
+      [
+        member(ALICE, "admin"),
+        member(BOB, "writer"),
+        member(BOB_BOT, "writer", "writer"),
+      ],
+      meFrom(ALICE),
+    );
+
+    // Each row on its own, and three different logins: a row that lost its
+    // link cannot be covered by a neighbour that kept one.
+    const userLinksIn = (login: string) =>
+      [
+        ...(rowOf(container, login) as Element).querySelectorAll(
+          'a[href^="/users/"]',
+        ),
+      ].map((a) => a.getAttribute("href"));
+
+    expect(userLinksIn("alice")).toEqual(["/users/alice"]);
+    expect(userLinksIn("bob")).toEqual(["/users/bob"]);
+    expect(userLinksIn("bob-bot")).toEqual(["/users/bob-bot"]);
   });
 });

@@ -1,4 +1,4 @@
-import { waitFor } from "@testing-library/react";
+import { fireEvent, waitFor } from "@testing-library/react";
 import type { SpecCommentItem } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -284,5 +284,41 @@ describe("openEnclosingFolds", () => {
     } finally {
       Element.prototype.scrollIntoView = original;
     }
+  });
+});
+
+describe("an annotation card names its author with a link (T-391)", () => {
+  it("links the author inside the block's comment popover", async () => {
+    const { view } = await renderSpec({
+      body: doc(),
+      annotations: [annotation(1)],
+    });
+
+    fireEvent.click(await view.findByLabelText("1 comment(s) on this block"));
+
+    // The popover holds the annotation cards and nothing else, and this
+    // block carries exactly one annotation — so the author's chip is the
+    // only user link that may appear here.
+    const popover = await waitFor(() => {
+      const el = document.querySelector("[data-slot='popover-content']");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    expect(
+      [...popover.querySelectorAll('a[href^="/users/"]')].map((a) =>
+        a.getAttribute("href"),
+      ),
+    ).toEqual(["/users/alice"]);
+
+    // Close it before the test ends: happy-dom and Radix's portal disagree
+    // about who owns the detached content node, and tearing the tree down
+    // with the popover still open throws out of `cleanup`, not out of this
+    // case — which would fail whichever test ran next.
+    fireEvent.keyDown(popover, { key: "Escape" });
+    await waitFor(() =>
+      expect(
+        document.querySelector("[data-slot='popover-content']"),
+      ).toBeNull(),
+    );
   });
 });
