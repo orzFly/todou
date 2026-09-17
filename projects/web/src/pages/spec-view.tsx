@@ -770,17 +770,28 @@ function SpecViewBody({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const onlySourceChanged =
+    changedRanges.length === 0 &&
+    selected !== undefined &&
+    baselineBody !== undefined &&
+    baselineBody !== selected.body;
   /**
    * The display slot's rendered half is `fold`, and it is the one control of
    * the three that can be refused: a file with nothing marked would fold into
    * a single placeholder over the document the reader came to read.
+   *
+   * The rail beside such a file still reads `+3/−3`, counted in bytes, and
+   * says nothing about where they went, so the source-only case names itself:
+   * otherwise the reader takes the unmarked page for a fault (T-383).
    */
   const foldReason = !comparing
     ? "Turn comparing on to fold unchanged blocks"
     : selected === undefined
       ? `This file is not part of v${version}`
       : changedRanges.length === 0
-        ? `Nothing changed in this file since v${baseline}`
+        ? onlySourceChanged
+          ? `Only the source changed in this file since v${baseline} — see the source diff`
+          : `Nothing changed in this file since v${baseline}`
         : undefined;
   const foldUnchanged =
     renderedCompare && !isNewFile && foldReason === undefined && fold;

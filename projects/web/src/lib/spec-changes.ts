@@ -1,14 +1,23 @@
 import { diffLines } from "diff";
+import { canonicalForDiff } from "./spec-canonical.ts";
 
 export type LineRange = { start: number; end: number };
 
 /**
- * 1-based inclusive line ranges of `newBody` that differ from `oldBody`
- * (insertions and rewrites; a pure deletion leaves no new lines to mark).
- * Drives the re-review aids: green "changed since vX" highlights and the
- * prev/next-change navigation (T-23 phase 3). Lines are all they drive: the
- * decoration engine aligns leaf blocks over the whole document and never asks
- * where the lines fell (T-211).
+ * 1-based inclusive line ranges of `newBody` whose *rendering* differs from
+ * `oldBody` (insertions and rewrites; a pure deletion leaves no new lines to
+ * mark). Drives the re-review aids: green "changed since vX" highlights and
+ * the prev/next-change navigation (T-23 phase 3). Lines are all they drive:
+ * the decoration engine aligns leaf blocks over the whole document and never
+ * asks where the lines fell (T-211).
+ *
+ * Rendering rather than bytes, because a reader asked to re-review a line can
+ * only ever check the page: renumbering a list, re-padding a table or trimming
+ * a line end moves bytes the parser throws away, and marking those lines sends
+ * the reader looking for a difference that is not on screen (T-383). The
+ * source diff is where the bytes stay visible. Normalising inside this
+ * function rather than at the call site is what keeps every caller — the
+ * wash, the fold pass and the nav — on one answer.
  */
 export function changedLineRanges(
   oldBody: string,
@@ -17,7 +26,10 @@ export function changedLineRanges(
   if (oldBody === newBody) return [];
   const ranges: LineRange[] = [];
   let newPos = 1;
-  for (const part of diffLines(oldBody, newBody)) {
+  for (const part of diffLines(
+    canonicalForDiff(oldBody),
+    canonicalForDiff(newBody),
+  )) {
     const count = part.count ?? 0;
     if (part.added) {
       const range = { start: newPos, end: newPos + count - 1 };

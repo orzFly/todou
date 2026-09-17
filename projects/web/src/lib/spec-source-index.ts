@@ -1,13 +1,5 @@
 import type { Nodes } from "mdast";
-import remarkFrontmatter from "remark-frontmatter";
-import remarkGfm from "remark-gfm";
-import remarkParse from "remark-parse";
-import { unified } from "unified";
-import {
-  FRONTMATTER_FLAVOURS,
-  remarkFrontmatterTable,
-} from "./remark-frontmatter-table.ts";
-import { remarkRejectedUrlsAsText } from "./remark-rejected-urls.ts";
+import { parseMarkdown } from "./markdown-processor.ts";
 import type { LineRange } from "./spec-changes.ts";
 
 /**
@@ -62,21 +54,6 @@ const FRONTMATTER_BLOCKS: Record<string, SourceBlockType> = {
   frontmatterKey: "tableCell",
   frontmatterValue: "tableCell",
 };
-
-/**
- * This list has to stay the same one `MarkdownView` renders with. Let the two
- * diverge and the index reads a block as a `heading` leaf where the DOM has a
- * table: every offset the decorations compute then lands on a node that is not
- * there, and `rehypeDecorations` drops what it cannot place *in silence*. The
- * symptom is decorations quietly vanishing, not an error — so plugins go in
- * both places at once (T-240).
- */
-const processor = unified()
-  .use(remarkParse)
-  .use(remarkGfm)
-  .use(remarkRejectedUrlsAsText)
-  .use(remarkFrontmatter, FRONTMATTER_FLAVOURS)
-  .use(remarkFrontmatterTable);
 
 /** One run of prose, with both of its coordinate systems. */
 export type SourceSegment = {
@@ -343,10 +320,7 @@ export function buildSegmentIndex(source: string): SegmentIndex {
     parent = outerParent;
   };
 
-  // `runSync`, not `parse` alone: `parse` stops at the tokenizer and runs no
-  // transformer, so `remarkFrontmatterTable` — which is one — would never fire
-  // and the index would hold the `yaml` leaf while the DOM held a table.
-  visit(processor.runSync(processor.parse(source), source));
+  visit(parseMarkdown(source));
   return {
     source,
     text,
