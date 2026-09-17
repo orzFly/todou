@@ -32,6 +32,13 @@ function DropdownMenuContent({
   className,
   align = "start",
   sideOffset = 4,
+  // Radix defaults to sticky="partial", whose limiter keeps the menu glued to
+  // the trigger and lets it follow the trigger out of the viewport — the menu
+  // then renders half off-screen with visibility still "visible", so nothing
+  // else catches it. "always" trades staying glued for staying reachable.
+  sticky = "always",
+  collisionPadding = 8,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
   return (
@@ -40,8 +47,37 @@ function DropdownMenuContent({
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}
         align={align}
+        sticky={sticky}
+        collisionPadding={collisionPadding}
+        onCloseAutoFocus={(event) => {
+          onCloseAutoFocus?.(event);
+          if (event.defaultPrevented) return;
+          const content = event.currentTarget;
+          const id =
+            content instanceof HTMLElement
+              ? content.getAttribute("aria-labelledby")
+              : null;
+          const trigger = id === null ? null : document.getElementById(id);
+          // Without a trigger to hand the focus to, fall through to Radix's own
+          // restore rather than preventDefault() into a focusless document.
+          if (trigger === null) return;
+          event.preventDefault();
+          // Radix restores focus with a bare focus(), which lets the browser
+          // scroll the trigger back into view — obeying the scroll-padding
+          // useScrollInsets writes on <html>, so the page can travel a full
+          // document height. preventScroll keeps the restore invisible.
+          trigger.focus({ preventScroll: true });
+        }}
         className={cn(
-          "z-50 max-h-(--radix-dropdown-menu-content-available-height) w-(--radix-dropdown-menu-trigger-width) min-w-32 origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:overflow-hidden data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          // Two separate caps, and the smaller has to win: the Radix variable
+          // keeps the menu off its own anchor, while the viewport term is what
+          // survives an anchor sitting outside the viewport, where that
+          // variable resolves to the whole viewport height. min() is the only
+          // spelling that keeps both — two max-h utilities collapse to one in
+          // cn(), and two max-height declarations would settle by cascade
+          // order rather than by value. dvh, because the term that matters is
+          // the one the mobile address bar moves.
+          "z-50 max-h-[min(calc(100dvh-1rem),var(--radix-dropdown-menu-content-available-height,100dvh))] w-(--radix-dropdown-menu-trigger-width) min-w-32 origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:overflow-hidden data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className,
         )}
         {...props}
@@ -237,13 +273,31 @@ function DropdownMenuSubTrigger({
 
 function DropdownMenuSubContent({
   className,
+  // MenuSubContent hardwires `side` after spreading these through, but both
+  // land on the popper underneath. No onCloseAutoFocus override to match
+  // DropdownMenuContent's: it hardwires that one to preventDefault(), so the
+  // scrolling focus restore never happens here.
+  sticky = "always",
+  collisionPadding = 8,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
   return (
     <DropdownMenuPrimitive.SubContent
       data-slot="dropdown-menu-sub-content"
+      sticky={sticky}
+      collisionPadding={collisionPadding}
       className={cn(
-        "z-50 min-w-[96px] origin-(--radix-dropdown-menu-content-transform-origin) overflow-hidden rounded-lg bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-foreground/10 duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+        // A submenu is the one surface the collision middleware cannot rescue:
+        // MenuSubContent hardwires side="right", and Radix configures shift
+        // with crossAxis: false, so horizontal overflow is never shifted away.
+        // flip moves it to the left of the parent menu and it overflows there
+        // instead. Capping the width to what the chosen side actually offers
+        // is the only lever a prop or a class has on that axis.
+        //
+        // overflow-y-auto rather than the plain overflow-hidden this used to
+        // carry: a height cap with the overflow clipped only hides the items
+        // it cuts off, which is the symptom being fixed rather than a fix.
+        "z-50 max-h-[calc(100dvh-1rem)] max-w-[min(calc(100dvw-1rem),var(--radix-dropdown-menu-content-available-width,100dvw))] min-w-[96px] origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-foreground/10 duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
         className,
       )}
       {...props}
