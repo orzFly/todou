@@ -179,11 +179,6 @@ export function EntryActionsMenu({
                     params: { slug: project.slug },
                     search: quoteSource,
                   },
-                  trailing: (
-                    <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                      {project.slug}
-                    </span>
-                  ),
                 }))}
                 label="Reference in a new issue"
                 idPrefix="quote-target"

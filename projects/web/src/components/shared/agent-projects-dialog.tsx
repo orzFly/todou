@@ -7,10 +7,11 @@ import {
   ROLE_RANK,
 } from "@todou/shared";
 import { PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { agentMembershipsQuery, api } from "@/api/queries.ts";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
+import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,6 +30,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cappedRole } from "@/lib/roles.ts";
+import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { cn } from "@/lib/utils";
 
 /** Visual grouping only — the role is also written out in text. */
@@ -111,6 +113,14 @@ function ProjectBadges({ memberships }: { memberships: AgentMembership[] }) {
             className={cn("size-1.5 rounded-full", ROLE_DOT[m.role])}
             aria-hidden="true"
           />
+          {/* Only a real image: two fallback letters at 14px are a smudge,
+              and this chip already carries the slug beside it. */}
+          {m.project.icon_url && (
+            <ProjectIcon
+              project={{ name: m.project.name, icon_url: m.project.icon_url }}
+              className="size-3.5"
+            />
+          )}
           {m.project.slug}
         </Badge>
       ))}
@@ -149,6 +159,14 @@ function AgentProjectsBody({ agent }: { agent: Agent }) {
     onError: (error) => toast.error(error.message),
     onSettled: (_data, _error, slug) => invalidate(slug),
   });
+
+  // Above the early returns, as a hook must be. Briefs carry slug and name,
+  // which is all a prefix lookup needs.
+  const known = useMemo(
+    () => (memberships.data?.memberships ?? []).map((m) => m.project),
+    [memberships.data],
+  );
+  const refs = useProjectRefs(known);
 
   if (memberships.isPending) {
     return (
@@ -196,6 +214,7 @@ function AgentProjectsBody({ agent }: { agent: Agent }) {
             <MembershipRow
               key={m.project.id}
               membership={m}
+              prefix={refs.get(m.project.slug)?.prefix ?? null}
               manageable={ceilingOf.has(m.project.id)}
               ceiling={ceilingOf.get(m.project.id)}
               onRole={(role) => setRole.mutate({ slug: m.project.slug, role })}
@@ -261,12 +280,15 @@ function AgentProjectsBody({ agent }: { agent: Agent }) {
 
 function MembershipRow({
   membership,
+  prefix,
   manageable,
   ceiling,
   onRole,
   onRemove,
 }: {
   membership: AgentMembership;
+  /** The project's REF, which the icon falls back to before initials. */
+  prefix: string | null;
   manageable: boolean;
   /** My role in this project: what the agent's role here may not exceed. */
   ceiling: MemberRole | undefined;
@@ -283,6 +305,10 @@ function MembershipRow({
     (ROLE_RANK[option] > ROLE_RANK[ceiling] && option !== role);
   return (
     <div className="flex items-center gap-2">
+      <ProjectIcon
+        project={{ name: project.name, prefix, icon_url: project.icon_url }}
+        className="size-6 shrink-0"
+      />
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm">{project.name}</div>
         <div className="truncate text-xs text-muted-foreground">

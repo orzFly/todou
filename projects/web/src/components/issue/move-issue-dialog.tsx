@@ -91,14 +91,7 @@ export function MoveIssueDialog({
 
         {target === null ? (
           <ProjectListbox
-            options={candidates.map((project) => ({
-              project,
-              trailing: (
-                <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                  {project.slug}
-                </span>
-              ),
-            }))}
+            options={candidates.map((project) => ({ project }))}
             onSelect={(option) => setTarget(option.project)}
             label="Move to project"
             idPrefix="pick"

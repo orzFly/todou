@@ -8,9 +8,10 @@ import {
   useParams,
 } from "@tanstack/react-router";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { InboxItem, Project } from "@todou/shared";
+import type { InboxItem, Project, ReferenceDirectory } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
+import { referenceDirectoryQuery } from "../src/api/references.ts";
 import { ProjectSwitcher } from "../src/components/project-switcher.tsx";
 import { recordVisit, visitsKey } from "../src/lib/project-visits.ts";
 import { testQueryClient } from "./render.tsx";
@@ -82,10 +83,18 @@ function inboxItem(slug: string, number: number): InboxItem {
  * The switcher needs live routes to land its navigations somewhere; the
  * project subtree mirrors the app's so module keeping sees the real shapes.
  */
-function renderSwitcher(projects: Project[], at = "/", inbox?: InboxItem[]) {
+function renderSwitcher(
+  projects: Project[],
+  at = "/",
+  inbox?: InboxItem[],
+  directory?: ReferenceDirectory,
+) {
   const c = testQueryClient();
   c.setQueryData(["me"], me);
   c.setQueryData(["projects"], projects);
+  // Unseeded by default, which is the shape a switcher sees while the
+  // directory is still in flight: every project reads as having no prefix.
+  if (directory) c.setQueryData(referenceDirectoryQuery.queryKey, directory);
   vi.spyOn(api, "me").mockResolvedValue(me);
   vi.spyOn(api, "listProjects").mockResolvedValue(projects);
   // Left unseeded elsewhere on purpose: the shell owns this query in the app,
@@ -378,6 +387,62 @@ describe("ProjectSwitcher unread badges (T-202)", () => {
     ]);
     await openSwitcher();
     expect(screen.getByRole("option", { name: "beta — 2 未读" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "alpha" })).toBeTruthy();
+    // No count means no aria-label, so this row is announced by its own
+    // content — the name and the spelling token, and nothing about unreads.
+    const alpha = screen
+      .getAllByRole("option")
+      .find((el) => el.textContent?.includes("alpha"));
+    expect(alpha?.getAttribute("aria-label")).toBe(null);
+    expect(alpha?.textContent).not.toContain("未读");
+  });
+});
+
+describe("ProjectSwitcher and the REF prefix", () => {
+  const DIRECTORY: ReferenceDirectory = {
+    entries: [
+      {
+        prefix: "CH",
+        slug: "homelab",
+        from: "2020-01-01T00:00:00.000Z",
+        to: null,
+      },
+    ],
+    contested: [],
+  };
+  const withHomelab = [...manyProjects, project("homelab", 50)];
+
+  it("reaches homelab by typing CH, and says so on the row", async () => {
+    // The card's own complaint: searching `CH` here used to return nothing.
+    renderSwitcher(withHomelab, "/", undefined, DIRECTORY);
+    await openSwitcher();
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "CH" },
+    });
+    await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(1));
+    const row = screen.getByRole("option");
+    expect(row.textContent).toContain("homelab");
+    // The token at the row's end is the bare REF, and the hit is painted on
+    // it. Queried precisely: the icon beside the name falls back to the REF
+    // too, so "CH" appears on this row twice.
+    const token = row.querySelector('[data-slot="project-spelling"]');
+    expect(token?.textContent).toBe("CH");
+    expect(token?.querySelector("mark")?.textContent).toBe("CH");
+    expect(row.textContent).not.toContain("CH-");
+  });
+
+  it("writes each row's spelling token under an empty query", async () => {
+    renderSwitcher(withHomelab, "/", undefined, DIRECTORY);
+    await openSwitcher();
+    const rows = screen.getAllByRole("option");
+    // Exactly one token per row: the REF where there is one, the slug where
+    // there is not — never an empty tail.
+    const tokenOf = (el: HTMLElement | undefined) =>
+      el?.querySelector('[data-slot="project-spelling"]')?.textContent;
+    expect(
+      tokenOf(rows.find((el) => el.textContent?.includes("homelab"))),
+    ).toBe("CH");
+    expect(tokenOf(rows.find((el) => el.textContent?.includes("alpha")))).toBe(
+      "alpha",
+    );
   });
 });

@@ -1,12 +1,14 @@
+import type { QueryClient } from "@tanstack/react-query";
 import { fireEvent, waitFor, within } from "@testing-library/react";
-import type { Project } from "@todou/shared";
+import type { Project, ReferenceDirectory } from "@todou/shared";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { referenceDirectoryQuery } from "../src/api/references.ts";
 import {
   ProjectListbox,
   type ProjectListboxOption,
 } from "../src/components/project-listbox.tsx";
-import { renderWithProviders } from "./render.tsx";
+import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 function project(slug: string): Project {
   return {
@@ -208,5 +210,78 @@ describe("ProjectListbox filtering", () => {
       expect(within(list).getAllByRole("option")).toHaveLength(3),
     );
     expect(highlighted(list)).toBe("pick-gamma");
+  });
+});
+
+describe("ProjectListbox filtering by REF", () => {
+  /** A directory in which `homelab` holds `CH`, and nothing is contested. */
+  const withPrefix = () => {
+    const client = testQueryClient();
+    const directory: ReferenceDirectory = {
+      entries: [
+        {
+          prefix: "CH",
+          slug: "homelab",
+          from: "2020-01-01T00:00:00.000Z",
+          to: null,
+        },
+      ],
+      contested: [],
+    };
+    client.setQueryData(referenceDirectoryQuery.queryKey, directory);
+    return client;
+  };
+
+  const search = async (client: QueryClient, query: string) => {
+    const view = renderWithProviders(
+      <ProjectListbox
+        options={asButtons([...MANY, project("homelab")])}
+        label="Pick a project"
+        idPrefix="pick"
+        searchPlaceholder="Search projects…"
+        emptyText="No matching project."
+      />,
+      client,
+    );
+    const input = await waitFor(() =>
+      within(view.container).getByRole("combobox"),
+    );
+    fireEvent.change(input, { target: { value: query } });
+    return view;
+  };
+
+  it("reaches a project by its REF prefix", async () => {
+    // The whole complaint behind this card: `CH` used to match nothing.
+    const view = await search(withPrefix(), "CH");
+    const list = await listbox(view);
+    await waitFor(() =>
+      expect(within(list).getAllByRole("option")).toHaveLength(1),
+    );
+    const row = within(list).getByRole("option");
+    expect(row.textContent).toContain("homelab");
+    // The token at the row's end is the bare REF, and the hit is painted on
+    // it. (The square icon beside the name also falls back to the REF, so
+    // "CH" is on this row twice — hence the precise query.)
+    const token = row.querySelector('[data-slot="project-spelling"]');
+    expect(token?.textContent).toBe("CH");
+    expect(token?.querySelector("mark")?.textContent).toBe("CH");
+  });
+
+  it("takes a prefix that still has its card hyphen attached", async () => {
+    const view = await search(withPrefix(), "ch-");
+    const list = await listbox(view);
+    await waitFor(() =>
+      expect(within(list).getAllByRole("option")).toHaveLength(1),
+    );
+  });
+
+  it("finds nothing by REF while the directory is unavailable", async () => {
+    // No directory means no prefix for any project, which is what the list
+    // looked like before this card — name and slug only.
+    const view = await search(testQueryClient(), "CH");
+    const list = await listbox(view);
+    await waitFor(() =>
+      expect(within(list).queryAllByRole("option")).toHaveLength(0),
+    );
   });
 });

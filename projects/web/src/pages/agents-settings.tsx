@@ -287,7 +287,10 @@ function EditAgentDialog({ agent }: { agent: Agent }) {
         </DialogHeader>
         <div className="space-y-4">
           <AvatarEditor
-            user={agent}
+            subject={{
+              name: agent.display_name,
+              imageUrl: agent.avatar_url,
+            }}
             onUpload={(file) => upload.mutate(file)}
             onRemove={() => removeAvatar.mutate()}
             pending={upload.isPending || removeAvatar.isPending}

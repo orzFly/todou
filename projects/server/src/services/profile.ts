@@ -7,7 +7,8 @@ import { users } from "../db/system-schema.ts";
 import {
   ConflictError,
   NotFoundError,
-  ValidationFailedError,
+  PayloadTooLargeError,
+  UnsupportedMediaTypeError,
 } from "../errors.ts";
 
 export type ProfilePatch = { display_name?: string; login?: string };
@@ -77,12 +78,12 @@ export async function setAvatar(
   file: File,
 ): Promise<UserRow> {
   if (!isAvatarContentType(file.type)) {
-    throw new ValidationFailedError(
+    throw new UnsupportedMediaTypeError(
       "avatar must be a png, jpeg, webp, or gif image",
     );
   }
   if (file.size > AVATAR_MAX_BYTES) {
-    throw new ValidationFailedError(
+    throw new PayloadTooLargeError(
       `avatar exceeds the ${AVATAR_MAX_BYTES / 1024 / 1024} MB limit`,
     );
   }

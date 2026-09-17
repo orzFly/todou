@@ -97,8 +97,14 @@ describe("agent memberships (T-227)", () => {
     expect(alpha.agent_id).toBe(agent.id);
     expect(alpha.role).toBe("admin");
     expect(typeof alpha.created_at).toBe("string");
-    // A brief, not a whole Project: no description, no created_at.
-    expect(Object.keys(alpha.project).sort()).toEqual(["id", "name", "slug"]);
+    // A brief, not a whole Project: no description, no created_at. `icon_url`
+    // is in the brief on purpose — the project chips here draw it (T-375).
+    expect(Object.keys(alpha.project).sort()).toEqual([
+      "icon_url",
+      "id",
+      "name",
+      "slug",
+    ]);
     expect(
       body.memberships.find(
         (m: { project: { slug: string } }) => m.project.slug === "shape-beta",

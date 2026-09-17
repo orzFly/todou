@@ -10,6 +10,11 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { api, projectsQuery } from "@/api/queries.ts";
 import { useProjectOrder } from "@/api/useProjectOrder.ts";
+import { ProjectIcon } from "@/components/shared/project-icon.tsx";
+import {
+  RefWatermark,
+  watermarkClearance,
+} from "@/components/shared/ref-watermark.tsx";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -28,11 +33,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useProjectRefs } from "@/lib/use-project-refs.ts";
+import { cn } from "@/lib/utils";
 
 export function ProjectsPage() {
   const projects = useSuspenseQuery(projectsQuery);
   // Same frecency order as the navbar switcher (T-76).
   const ordered = useProjectOrder(projects.data);
+  const refs = useProjectRefs(projects.data);
 
   return (
     <div className="space-y-6">
@@ -46,31 +54,48 @@ export function ProjectsPage() {
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {ordered.map(({ project, neverVisited }) => (
-            <Link
-              key={project.id}
-              to="/projects/$slug"
-              params={{ slug: project.slug }}
-            >
-              <Card className="h-full transition-colors hover:bg-accent/50">
-                <CardHeader>
-                  <CardTitle
-                    className={
-                      neverVisited
-                        ? "text-base text-muted-foreground"
-                        : "text-base"
-                    }
-                  >
-                    {project.name}
-                  </CardTitle>
-                  <CardDescription>
-                    {project.slug}
-                    {project.description ? ` — ${project.description}` : ""}
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-            </Link>
-          ))}
+          {ordered.map(({ project, neverVisited }) => {
+            const prefix = refs.get(project.slug)?.prefix ?? null;
+            return (
+              <Link
+                key={project.id}
+                to="/projects/$slug"
+                params={{ slug: project.slug }}
+              >
+                {/* `relative` so the watermark anchors to the card rather
+                    than to the page; `Card` already clips its overflow. */}
+                <Card className="relative h-full transition-colors hover:bg-accent/50">
+                  <CardHeader>
+                    <CardTitle
+                      className={cn(
+                        "flex items-center gap-2.5 text-base",
+                        neverVisited && "text-muted-foreground",
+                      )}
+                    >
+                      <ProjectIcon
+                        project={{
+                          name: project.name,
+                          prefix,
+                          icon_url: project.icon_url,
+                        }}
+                        className="size-10 text-sm"
+                      />
+                      <span className="truncate">{project.name}</span>
+                    </CardTitle>
+                    {/* Stops before the watermark rather than running
+                        under it; a card without one keeps the full width. */}
+                    <CardDescription
+                      className={cn("truncate", watermarkClearance(prefix))}
+                    >
+                      {project.slug}
+                      {project.description ? ` — ${project.description}` : ""}
+                    </CardDescription>
+                  </CardHeader>
+                  {prefix && <RefWatermark prefix={prefix} />}
+                </Card>
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>

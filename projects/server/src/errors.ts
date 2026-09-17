@@ -7,6 +7,7 @@ type ErrorStatus =
   | 409
   | 410
   | 413
+  | 415
   | 422
   | 502
   | 503;
@@ -99,6 +100,13 @@ export class MetadataPreconditionError extends DomainError {
 export class ValidationFailedError extends DomainError {
   constructor(message = "validation failed", details?: unknown) {
     super(422, "validation_failed", message, details);
+  }
+}
+
+/** An upload whose content type is not on the route's allowlist. */
+export class UnsupportedMediaTypeError extends DomainError {
+  constructor(message = "unsupported media type") {
+    super(415, "unsupported_media_type", message);
   }
 }
 

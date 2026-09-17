@@ -97,7 +97,11 @@ describe("AvatarEditor", () => {
   it("fires onUpload with the picked file", async () => {
     const onUpload = vi.fn();
     const { container } = render(
-      <AvatarEditor user={human} onUpload={onUpload} onRemove={() => {}} />,
+      <AvatarEditor
+        subject={{ name: human.display_name, imageUrl: human.avatar_url }}
+        onUpload={onUpload}
+        onRemove={() => {}}
+      />,
     );
     const input = container.querySelector(
       "input[type=file]",
@@ -113,14 +117,21 @@ describe("AvatarEditor", () => {
 
   it("only offers Remove when an avatar exists", () => {
     const { queryByText, rerender, getByText } = render(
-      <AvatarEditor user={human} onUpload={() => {}} onRemove={() => {}} />,
+      <AvatarEditor
+        subject={{ name: human.display_name, imageUrl: human.avatar_url }}
+        onUpload={() => {}}
+        onRemove={() => {}}
+      />,
     );
     expect(queryByText("Remove")).toBeNull();
 
     const onRemove = vi.fn();
     rerender(
       <AvatarEditor
-        user={{ ...human, avatar_url: "/api/users/1/avatar?v=abc" }}
+        subject={{
+          name: human.display_name,
+          imageUrl: "/api/users/1/avatar?v=abc",
+        }}
         onUpload={() => {}}
         onRemove={onRemove}
       />,
@@ -164,7 +175,11 @@ describe("AvatarEditor drop and paste (T-226)", () => {
   function setup() {
     const onUpload = vi.fn();
     const { container, getByText } = render(
-      <AvatarEditor user={human} onUpload={onUpload} onRemove={() => {}} />,
+      <AvatarEditor
+        subject={{ name: human.display_name, imageUrl: human.avatar_url }}
+        onUpload={onUpload}
+        onRemove={() => {}}
+      />,
     );
     const zone = container.querySelector("fieldset") as HTMLElement;
     return { onUpload, zone, getByText };

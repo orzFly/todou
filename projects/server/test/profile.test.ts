@@ -186,13 +186,16 @@ describe("avatars", () => {
   });
 
   it("rejects non-image and oversized uploads", async () => {
+    // Both still rejected; only which rejection is said changed (T-375).
+    // 415 and 413 are what the project-icon route answers too, so the three
+    // upload endpoints give one answer per reason.
     const badType = await uploadMine(avatarForm("text", "text/plain"));
-    expect(badType.status).toBe(422);
+    expect(badType.status).toBe(415);
 
     const oversized = await uploadMine(
       avatarForm(new Uint8Array(2 * 1024 * 1024 + 1)),
     );
-    expect(oversized.status).toBe(422);
+    expect(oversized.status).toBe(413);
   });
 
   it("removes my avatar and 404s the image afterwards", async () => {

@@ -95,11 +95,22 @@ export const Project = z.object({
    * and a list of every project would be a query per row to fetch it.
    */
   block_clear_status_id: Id.nullable().optional(),
+  /**
+   * Versioned URL of the uploaded project icon; null = draw the fallback.
+   * Optional for the same reason as `viewer_role`: a server predating it
+   * omits the field, and a client reads that as "no icon".
+   */
+  icon_url: z.string().nullable().optional(),
 });
 export type Project = z.infer<typeof Project>;
 
 /** Just enough of a project to name and link it from another entity's view. */
-export const ProjectBrief = Project.pick({ id: true, slug: true, name: true });
+export const ProjectBrief = Project.pick({
+  id: true,
+  slug: true,
+  name: true,
+  icon_url: true,
+});
 export type ProjectBrief = z.infer<typeof ProjectBrief>;
 
 export const ProjectCreateInput = z.object({

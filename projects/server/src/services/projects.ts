@@ -33,9 +33,27 @@ import { type ProjectRow, requireCapability, routeInfoOf } from "./access.ts";
 import { announceBlockChanges, reevaluateProjectBlocks } from "./blocks.ts";
 import { mirrorRefFormat } from "./reference-directory.ts";
 
-/** Enough of a project to name it and link to it. */
+/**
+ * The icon's URL, or null. Minted with the project's **id** although the
+ * route also answers to a slug: a slug can be renamed away, and stored links
+ * have been id-anchored since T-266. Accept broadly, write narrowly.
+ */
+export function projectIconUrlOf(row: ProjectRow): string | null {
+  if (!row.iconKey) return null;
+  // A fresh key per upload, so the tail cache-busts: the URL changes exactly
+  // when the image does.
+  const version = row.iconKey.split("/").pop()?.slice(0, 8) ?? "0";
+  return `/api/projects/${row.id}/icon?v=${version}`;
+}
+
+/** Enough of a project to name it, link to it, and draw it. */
 export function toProjectBrief(row: ProjectRow): ProjectBrief {
-  return { id: row.id, slug: row.slug, name: row.name };
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    icon_url: projectIconUrlOf(row),
+  };
 }
 
 export function toProject(row: ProjectRow, viewerRole?: MemberRole): Project {
@@ -45,6 +63,7 @@ export function toProject(row: ProjectRow, viewerRole?: MemberRole): Project {
     name: row.name,
     description: row.description,
     created_at: row.createdAt.toISOString(),
+    icon_url: projectIconUrlOf(row),
     ...(viewerRole === undefined ? {} : { viewer_role: viewerRole }),
   };
 }
@@ -468,6 +487,9 @@ export async function deleteProject(
       await db.delete(statuses).where(eq(statuses.projectId, project.id));
       await db.delete(projectMeta).where(eq(projectMeta.projectId, project.id));
     }
+    // The icon blob lives outside every table above, so nothing cascades to
+    // it; left behind it would be unreachable storage nobody can name.
+    if (project.iconKey) await ctx.storage.delete(project.iconKey);
   } catch (cause) {
     console.error(
       `project ${project.slug} deleted from registry but data cleanup failed`,

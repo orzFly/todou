@@ -87,7 +87,10 @@ export function ProfileSettingsPage() {
       </div>
 
       <AvatarEditor
-        user={me.data}
+        subject={{
+          name: me.data.display_name,
+          imageUrl: me.data.avatar_url,
+        }}
         onUpload={(file) => upload.mutate(file)}
         onRemove={() => removeAvatar.mutate()}
         pending={upload.isPending || removeAvatar.isPending}

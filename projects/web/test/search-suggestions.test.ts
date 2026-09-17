@@ -190,6 +190,26 @@ describe("the shared pool of project spellings", () => {
     ).toEqual([["accel/"]]);
   });
 
+  it("hands out no prefix for a contested one either", () => {
+    // Two assertions on one rule: a contested prefix resolves to nothing, so
+    // neither the completion pool nor the lists that read `prefix` may show
+    // it. Either one alone would let the other drift.
+    const [option] = projectSpellings([project("accel", "Accel")], {
+      entries: [{ prefix: "ACC", slug: "accel", from: SINCE, to: null }],
+      contested: [{ prefix: "ACC", from: SINCE, to: null }],
+    });
+    expect(option?.prefix).toBe(null);
+    expect(option?.spellings).toEqual(["accel/"]);
+  });
+
+  it("hands out the bare prefix where the claim holds", () => {
+    const [option] = projectSpellings([project("accel", "Accel")], {
+      entries: [{ prefix: "ACC", slug: "accel", from: SINCE, to: null }],
+      contested: [],
+    });
+    expect(option?.prefix).toBe("ACC");
+  });
+
   it("has only the slug form once the claim is retired", () => {
     expect(
       spellingsOf([project("accel", "Accel")], {
@@ -219,9 +239,14 @@ describe("the shared pool of project spellings", () => {
 });
 
 const PROJECTS: ProjectRefOption[] = [
-  { slug: "todou", name: "Todou", spellings: ["T-", "todou/"] },
-  { slug: "accel", name: "Accel", spellings: ["ACC-", "accel/"] },
-  { slug: "homelab", name: "Homelab", spellings: ["homelab/"] },
+  { slug: "todou", name: "Todou", spellings: ["T-", "todou/"], prefix: "T" },
+  {
+    slug: "accel",
+    name: "Accel",
+    spellings: ["ACC-", "accel/"],
+    prefix: "ACC",
+  },
+  { slug: "homelab", name: "Homelab", spellings: ["homelab/"], prefix: null },
 ];
 
 const projects = (marked: string) => projectRefSource(PROJECTS)(at(marked));
