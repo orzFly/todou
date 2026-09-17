@@ -1,6 +1,22 @@
 import { type MemberRole, ROLE_RANK } from "@todou/shared";
 
 /**
+ * The dot colour each role is drawn with. Visual grouping only — every badge
+ * carrying one writes the role out in text beside it, so the colour is never
+ * the only thing saying which role this is.
+ *
+ * Here rather than in either of the two files that draw one (the agents
+ * table's project badges, the user page's seats), because four colours kept
+ * in two places are four colours that drift.
+ */
+export const ROLE_DOT: Record<MemberRole, string> = {
+  admin: "bg-violet-500",
+  writer: "bg-sky-500",
+  reporter: "bg-teal-500",
+  reader: "bg-muted-foreground",
+};
+
+/**
  * The most of `want` a ceiling allows, or null when it allows nothing at all
  * (T-340). A machine's role is capped at its owner's, and both places that
  * add one — the project settings page and the agent's own projects dialog —

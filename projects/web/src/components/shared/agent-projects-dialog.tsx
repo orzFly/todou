@@ -29,17 +29,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cappedRole } from "@/lib/roles.ts";
+import { cappedRole, ROLE_DOT } from "@/lib/roles.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { cn } from "@/lib/utils";
-
-/** Visual grouping only — the role is also written out in text. */
-const ROLE_DOT: Record<MemberRole, string> = {
-  admin: "bg-violet-500",
-  writer: "bg-sky-500",
-  reporter: "bg-teal-500",
-  reader: "bg-muted-foreground",
-};
 
 const MAX_BADGES = 3;
 

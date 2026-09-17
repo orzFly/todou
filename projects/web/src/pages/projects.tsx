@@ -3,22 +3,18 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { formatRef } from "@todou/shared";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { api, projectsQuery } from "@/api/queries.ts";
 import { useProjectOrder } from "@/api/useProjectOrder.ts";
-import { ProjectIcon } from "@/components/shared/project-icon.tsx";
-import { RefWatermark } from "@/components/shared/ref-watermark.tsx";
-import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+  ProjectCard,
+  ProjectCardGrid,
+} from "@/components/shared/project-card.tsx";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -31,7 +27,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
-import { cn } from "@/lib/utils";
 
 export function ProjectsPage() {
   const projects = useSuspenseQuery(projectsQuery);
@@ -50,59 +45,23 @@ export function ProjectsPage() {
           还没有项目——种下第一颗土豆吧 🥔
         </div>
       ) : (
-        // `auto-rows-fr` makes every row as tall as its tallest card. The
-        // watermark resolves its size against the card's box, so cards of
-        // different heights would draw the same REF at two sizes on one page.
-        <div className="grid auto-rows-fr gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {ordered.map(({ project, neverVisited }) => {
-            const prefix = refs.get(project.slug)?.prefix ?? null;
-            return (
-              <Link
-                key={project.id}
-                to="/projects/$slug"
-                params={{ slug: project.slug }}
-              >
-                {/* `relative` so the watermark anchors to the card rather
-                    than to the page; `Card` already clips its overflow, and
-                    that clip is what cuts the mark's bleed. `h-full` is not
-                    redundant beside `auto-rows-fr` — it is what passes the
-                    row's height down to the card, which is the box the mark
-                    sizes itself against. */}
-                <Card className="relative h-full transition-colors hover:bg-accent/50">
-                  {/* Above the watermark: the mark is a background, and a
-                      positioned element would otherwise paint over this. */}
-                  <CardHeader className="relative z-10">
-                    <CardTitle
-                      className={cn(
-                        "flex items-center gap-2.5 text-base",
-                        neverVisited && "text-muted-foreground",
-                      )}
-                    >
-                      <ProjectIcon
-                        project={{
-                          name: project.name,
-                          prefix,
-                          icon_url: project.icon_url,
-                        }}
-                        className="size-10 text-sm"
-                      />
-                      <span className="truncate">{project.name}</span>
-                    </CardTitle>
-                    {/* Without the clamp every card on the page pays the
-                        tallest card's height: measured, one five-line
-                        description takes every card to 176px against the 136px
-                        the clamp holds them to. */}
-                    <CardDescription className="line-clamp-3">
-                      {project.slug}
-                      {project.description ? ` — ${project.description}` : ""}
-                    </CardDescription>
-                  </CardHeader>
-                  {prefix && <RefWatermark prefix={prefix} />}
-                </Card>
-              </Link>
-            );
-          })}
-        </div>
+        <ProjectCardGrid>
+          {ordered.map(({ project, neverVisited }) => (
+            <ProjectCard
+              key={project.id}
+              project={{
+                slug: project.slug,
+                name: project.name,
+                prefix: refs.get(project.slug)?.prefix ?? null,
+                icon_url: project.icon_url,
+              }}
+              muted={neverVisited}
+            >
+              {project.slug}
+              {project.description ? ` — ${project.description}` : ""}
+            </ProjectCard>
+          ))}
+        </ProjectCardGrid>
       )}
     </div>
   );
