@@ -69,6 +69,8 @@ function makeItem(
     unread: false,
     unread_comments: 0,
     muted: null,
+    blocked_by: [],
+    blocks: [],
     moves: [],
     project: { id: slug.length, slug, name: `Project ${slug}` },
     ...overrides,
