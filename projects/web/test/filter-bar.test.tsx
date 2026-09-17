@@ -8,6 +8,7 @@ const counts: IssueCounts = { open: 5, closed: 3, by_status: {} };
 
 function renderBar(search: IssueSearch) {
   const onChange = vi.fn();
+  const onTyped = vi.fn();
   const utils = render(
     <FilterBar
       search={search}
@@ -15,10 +16,12 @@ function renderBar(search: IssueSearch) {
       statuses={[]}
       labels={[]}
       members={[]}
+      typed={search.q ?? ""}
+      onTyped={onTyped}
       onChange={onChange}
     />,
   );
-  return { onChange, ...utils };
+  return { onChange, onTyped, ...utils };
 }
 
 describe("category segment in the toolbar (T-88)", () => {

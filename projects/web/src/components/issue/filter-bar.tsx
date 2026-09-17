@@ -12,7 +12,7 @@ import {
   Rows3Icon,
   SearchIcon,
 } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import {
   csvToIds,
   effectiveCategory,
@@ -49,6 +49,8 @@ export function FilterBar({
   statuses,
   labels,
   members,
+  typed,
+  onTyped,
   onChange,
 }: {
   search: IssueSearch;
@@ -56,18 +58,12 @@ export function FilterBar({
   statuses: Status[];
   labels: LabelType[];
   members: Member[];
+  /** What the search box holds; the list page owns it and debounces it into
+      the URL, because the rows narrow themselves by it in the meantime. */
+  typed: string;
+  onTyped: (value: string) => void;
   onChange: (next: IssueSearch) => void;
 }) {
-  const [q, setQ] = useState(search.q ?? "");
-  // Debounce free-text search into the URL.
-  useEffect(() => {
-    const handle = setTimeout(() => {
-      const next = q.trim() === "" ? undefined : q.trim();
-      if (next !== search.q) onChange({ ...search, q: next });
-    }, 300);
-    return () => clearTimeout(handle);
-  }, [q, search, onChange]);
-
   const selectedStatuses = csvToIds(search.status) ?? [];
   const selectedLabels = csvToIds(search.label) ?? [];
   const selectedAssignee = members.find((m) => m.user.id === search.assignee);
@@ -89,8 +85,8 @@ export function FilterBar({
       <div className="relative">
         <SearchIcon className="absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
         <Input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
+          value={typed}
+          onChange={(e) => onTyped(e.target.value)}
           placeholder="Search issues…"
           className="w-56 pl-8"
         />
