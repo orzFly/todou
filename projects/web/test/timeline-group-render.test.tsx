@@ -12,7 +12,7 @@ import type {
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
-import { projectsQuery } from "../src/api/queries.ts";
+import { membersQuery, projectsQuery } from "../src/api/queries.ts";
 import {
   referenceConfigQuery,
   referenceDirectoryQuery,
@@ -55,6 +55,51 @@ const label = (name: string, type: "label_added" | "label_removed") =>
     event_type: type,
     payload: { label: { id: nextLabelId++, name, color: "#0f0" } },
   });
+
+const alice: UserRef = {
+  id: 1,
+  login: "alice",
+  display_name: "Alice",
+  kind: "human",
+  avatar_url: null,
+  owner: null,
+};
+
+const agent: UserRef = {
+  id: 3,
+  login: "claude-agent",
+  display_name: "Claude Agent",
+  kind: "machine",
+  avatar_url: null,
+  owner: { id: 1, login: "alice" },
+};
+
+const newcomer: UserRef = {
+  id: 4,
+  login: "newcomer",
+  display_name: "Newcomer",
+  kind: "human",
+  avatar_url: null,
+  owner: null,
+};
+
+/** Assignment payloads carry `{id, login}`, so the display name on screen
+    can only come from the member list. */
+const assign = (type: "assigned" | "unassigned", user: UserRef, at: string) =>
+  event({
+    event_type: type,
+    payload: { user: { id: user.id, login: user.login } },
+    created_at: at,
+  });
+
+/** The gesture the card reported: the middle assignee is picked and taken
+    back off, leaving one person out and one person in. */
+const handOff = () => [
+  assign("unassigned", alice, "2026-08-13T12:00:32.000Z"),
+  assign("assigned", agent, "2026-08-13T12:00:32.500Z"),
+  assign("unassigned", agent, "2026-08-13T12:00:33.000Z"),
+  assign("assigned", newcomer, "2026-08-13T12:00:34.000Z"),
+];
 
 const move = (from: [number, string], to: [number, string], at: string) =>
   event({
@@ -146,6 +191,22 @@ function crossClient(
   for (const [slug, item] of targets) {
     client.setQueryData(issueRefQuery(slug, item.number).queryKey, item);
   }
+  return client;
+}
+
+/** A project whose assignees the member list can put a name to. */
+function memberClient(): QueryClient {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  client.setQueryData(
+    membersQuery("p").queryKey,
+    [alice, agent, newcomer].map((user) => ({
+      user,
+      role: "writer",
+      created_at: SINCE,
+    })),
+  );
   return client;
 }
 
@@ -582,5 +643,120 @@ describe("EventGroup", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.textContent).toBe("only.png");
     expect(rows[0]?.id).toBe(`event-${lone.id}`);
+  });
+
+  it("reads a hand-off as an arrow between the two who net out", async () => {
+    const { findByTestId, getByTestId, getByTitle, queryByTitle } =
+      renderWithProviders(
+        <EventGroup
+          family="assignees"
+          events={handOff()}
+          slug="p"
+          issueNumber={1}
+        />,
+        memberClient(),
+      );
+    const group = await findByTestId("event-group");
+    expect(getByTitle("reassigned Alice → Newcomer")).toBeTruthy();
+    // The assignee who was picked and dropped is cancelled from the summary,
+    // and the expander is where it stays readable.
+    expect(group.textContent).not.toContain("Claude Agent");
+
+    fireEvent.click(getByTestId("event-group-toggle"));
+    await waitFor(() => {
+      expect(queryByTitle("assigned Claude Agent")).toBeTruthy();
+      expect(queryByTitle("unassigned Claude Agent")).toBeTruthy();
+    });
+  });
+
+  it("spells both halves out when the net is not one for one", async () => {
+    const { findByTitle } = renderWithProviders(
+      <EventGroup
+        family="assignees"
+        events={[
+          assign("unassigned", alice, "2026-08-13T12:00:32.000Z"),
+          assign("assigned", agent, "2026-08-13T12:00:33.000Z"),
+          assign("assigned", newcomer, "2026-08-13T12:00:34.000Z"),
+        ]}
+        slug="p"
+        issueNumber={1}
+      />,
+      memberClient(),
+    );
+    await findByTitle("assigned Claude Agent, Newcomer · unassigned Alice");
+  });
+
+  it("leaves out the half with nobody in it", async () => {
+    const { findByTestId, getByTitle } = renderWithProviders(
+      <EventGroup
+        family="assignees"
+        events={[
+          assign("assigned", agent, "2026-08-13T12:00:33.000Z"),
+          assign("assigned", newcomer, "2026-08-13T12:00:34.000Z"),
+        ]}
+        slug="p"
+        issueNumber={1}
+      />,
+      memberClient(),
+    );
+    await findByTestId("event-group");
+    const summary = getByTitle("assigned Claude Agent, Newcomer");
+    expect(summary.textContent).not.toContain("·");
+    expect(summary.textContent).not.toContain("unassigned");
+  });
+
+  it("prints a run that cancels out in full, dimmed", async () => {
+    const { findByTestId, getByTitle } = renderWithProviders(
+      <EventGroup
+        family="assignees"
+        events={[
+          assign("assigned", agent, "2026-08-13T12:00:33.000Z"),
+          assign("unassigned", agent, "2026-08-13T12:00:34.000Z"),
+        ]}
+        slug="p"
+        issueNumber={1}
+      />,
+      memberClient(),
+    );
+    await findByTestId("event-group");
+    const summary = getByTitle(
+      "assigned Claude Agent · unassigned Claude Agent",
+    );
+    expect(summary.className).toContain("text-muted-foreground/60");
+  });
+
+  it("takes the header icon from the summary, not the first event", async () => {
+    // The hand-off opens with an unassigned event, so the first event's icon
+    // would contradict the sentence beside it.
+    const { findByTestId, container } = renderWithProviders(
+      <EventGroup
+        family="assignees"
+        events={handOff()}
+        slug="p"
+        issueNumber={1}
+      />,
+      memberClient(),
+    );
+    await findByTestId("event-group");
+    expect(container.querySelectorAll("svg.lucide-user-plus")).toHaveLength(1);
+    expect(container.querySelector("svg.lucide-user-minus")).toBeNull();
+  });
+
+  it("keeps the leaving icon when the net only lets people go", async () => {
+    const { findByTestId, container } = renderWithProviders(
+      <EventGroup
+        family="assignees"
+        events={[
+          assign("unassigned", alice, "2026-08-13T12:00:33.000Z"),
+          assign("unassigned", newcomer, "2026-08-13T12:00:34.000Z"),
+        ]}
+        slug="p"
+        issueNumber={1}
+      />,
+      memberClient(),
+    );
+    await findByTestId("event-group");
+    expect(container.querySelectorAll("svg.lucide-user-minus")).toHaveLength(1);
+    expect(container.querySelector("svg.lucide-user-plus")).toBeNull();
   });
 });

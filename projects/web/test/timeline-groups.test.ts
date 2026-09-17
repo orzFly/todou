@@ -12,8 +12,10 @@ import {
   groupTimelineSides,
   hiddenRunKey,
   MERGE_WINDOW_MS,
+  netAssignees,
   netStatusChain,
   type RenderUnit,
+  windowMsFor,
 } from "../src/components/timeline/group-events.ts";
 
 const human: UserRef = {
@@ -82,6 +84,29 @@ function comment(atMs: number, hidden = false): TimelineComment {
 const kinds = (units: ReturnType<typeof groupTimeline>) =>
   units.map((u) => (u.kind === "group" ? `group:${u.events.length}` : "item"));
 
+/** Assignment payloads carry `{id, login}` and no display name. */
+const assignees = {
+  alice: { id: 1, login: "alice" },
+  agent: { id: 3, login: "claude-agent" },
+  newcomer: { id: 4, login: "newcomer" },
+};
+
+const assign = (
+  type: "assigned" | "unassigned",
+  user: unknown,
+  atMs: number,
+  overrides: Partial<TimelineEvent> = {},
+) => event({ event_type: type, payload: { user }, atMs, ...overrides });
+
+/** The gesture the card reported: one person, one session, four events in
+    two seconds, the middle assignee taken back off again. */
+const pickerGesture = () => [
+  assign("unassigned", assignees.alice, 0),
+  assign("assigned", assignees.agent, 500),
+  assign("unassigned", assignees.agent, 1000),
+  assign("assigned", assignees.newcomer, 2000),
+];
+
 describe("familyOf", () => {
   it("maps the mergeable vocabulary and nothing else", () => {
     expect(familyOf("status_changed")).toBe("status");
@@ -90,6 +115,8 @@ describe("familyOf", () => {
     expect(familyOf("referenced")).toBe("referenced");
     expect(familyOf("cross_referenced")).toBe("referenced");
     expect(familyOf("attachment_added")).toBe("attachments");
+    expect(familyOf("assigned")).toBe("assignees");
+    expect(familyOf("unassigned")).toBe("assignees");
     // Every remaining type, so "nothing else" is a claim and not a sample —
     // cross_referenced sat outside both lists and merged nowhere for two
     // releases without a single test going red (T-256).
@@ -98,8 +125,6 @@ describe("familyOf", () => {
       "closed",
       "reopened",
       "title_changed",
-      "assigned",
-      "unassigned",
       "question_answered",
       "spec_pushed",
       "spec_review",
@@ -349,6 +374,53 @@ describe("groupTimeline", () => {
   });
 });
 
+describe("groupTimeline · assignees", () => {
+  it("folds one picker gesture into a single group", () => {
+    expect(kinds(groupTimeline(pickerGesture()))).toEqual(["group:4"]);
+  });
+
+  it("leaves a lone assignment the plain row it is today", () => {
+    const units = groupTimeline([
+      assign("assigned", assignees.newcomer, 0),
+      comment(1000),
+    ]);
+    expect(kinds(units)).toEqual(["item", "item"]);
+  });
+
+  it("merges on the shared window and splits just past it", () => {
+    expect(windowMsFor("assignees")).toBe(MERGE_WINDOW_MS);
+    expect(windowMsFor("assignees")).not.toBe(windowMsFor("referenced"));
+
+    const merged = groupTimeline([
+      assign("assigned", assignees.agent, 0),
+      assign("unassigned", assignees.agent, MERGE_WINDOW_MS),
+    ]);
+    expect(kinds(merged)).toEqual(["group:2"]);
+
+    const split = groupTimeline([
+      assign("assigned", assignees.agent, 0),
+      assign("unassigned", assignees.agent, MERGE_WINDOW_MS + 1),
+    ]);
+    expect(kinds(split)).toEqual(["item", "item"]);
+  });
+
+  it("keeps a hand-off its two halves' actors made apart", () => {
+    // The group header names one actor, so merging these would file the
+    // newcomer's own step under the person who stepped away.
+    const twoPeople = groupTimeline([
+      assign("unassigned", assignees.alice, 0, { actor: human }),
+      assign("assigned", assignees.newcomer, 1000, { actor: bot }),
+    ]);
+    expect(kinds(twoPeople)).toEqual(["item", "item"]);
+
+    const twoSessions = groupTimeline([
+      assign("unassigned", assignees.alice, 0, { agent_context: sessionA }),
+      assign("assigned", assignees.newcomer, 1000, { agent_context: sessionB }),
+    ]);
+    expect(kinds(twoSessions)).toEqual(["item", "item"]);
+  });
+});
+
 /** Narrow a unit to one kind, failing the test rather than the type check. */
 function unitOf<K extends RenderUnit["kind"]>(
   kind: K,
@@ -552,6 +624,63 @@ describe("netStatusChain", () => {
     expect(chain.net).toEqual({
       from: { id: null, name: "?" },
       to: { id: null, name: "?" },
+    });
+  });
+});
+
+describe("netAssignees", () => {
+  it("cancels the assignee who was taken back off", () => {
+    const chain = netAssignees(pickerGesture());
+    expect(chain.net).toEqual({
+      added: [assignees.newcomer],
+      removed: [assignees.alice],
+    });
+    expect(chain.isNoop).toBe(false);
+  });
+
+  it("nets the same whichever half of a hand-off came first", () => {
+    const out = assign("unassigned", assignees.alice, 0);
+    const back = assign("assigned", assignees.newcomer, 1000);
+    const expected = {
+      added: [assignees.newcomer],
+      removed: [assignees.alice],
+    };
+    expect(netAssignees([out, back]).net).toEqual(expected);
+    expect(netAssignees([back, out]).net).toEqual(expected);
+  });
+
+  it("reports a repeated direction instead of erasing it", () => {
+    const chain = netAssignees([
+      assign("assigned", assignees.agent, 0),
+      assign("assigned", assignees.agent, 1000),
+    ]);
+    expect(chain.net.added).toEqual([assignees.agent]);
+    expect(chain.isNoop).toBe(false);
+  });
+
+  it("flags a run that cancels out, keeping both sides of it", () => {
+    const chain = netAssignees([
+      assign("assigned", assignees.agent, 0),
+      assign("unassigned", assignees.agent, 1000),
+    ]);
+    expect(chain.isNoop).toBe(true);
+    expect(chain.net).toEqual({ added: [], removed: [] });
+    expect(chain.touched).toEqual({
+      added: [assignees.agent],
+      removed: [assignees.agent],
+    });
+  });
+
+  it("counts an id-less payload as someone else", () => {
+    const ghost = { login: "newcomer" };
+    const chain = netAssignees([
+      assign("assigned", assignees.newcomer, 0),
+      assign("unassigned", ghost, 1000),
+    ]);
+    expect(chain.isNoop).toBe(false);
+    expect(chain.net).toEqual({
+      added: [assignees.newcomer],
+      removed: [ghost],
     });
   });
 });

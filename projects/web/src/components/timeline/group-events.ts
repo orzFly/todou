@@ -19,7 +19,12 @@ import { isHidden } from "@todou/shared";
  */
 export const MERGE_WINDOW_MS = 300_000;
 
-export type MergeFamily = "status" | "labels" | "referenced" | "attachments";
+export type MergeFamily =
+  | "status"
+  | "labels"
+  | "referenced"
+  | "attachments"
+  | "assignees";
 
 /** The families whose runs render as one row per event. */
 export type ListFamily = "referenced" | "attachments";
@@ -48,11 +53,17 @@ export function windowMsFor(family: MergeFamily): number {
 }
 
 /**
- * Only low-information, high-frequency types merge. Milestones
- * (opened/closed/reopened), spec events (spec_pushed renders a version card
- * that a collapsed group would hide), and rare types stay standalone.
+ * Low information and high frequency are asked of a run, not of a type: a
+ * collapsed family's lone event passes straight through groupTimeline, so
+ * one `assigned` on its own still renders as the hand-off it is, and what
+ * the standard judges is a burst of them.
+ * Milestones (opened/closed/reopened), spec events (spec_pushed renders a
+ * version card that a collapsed group would hide), and rare types stay
+ * standalone.
  * label_added and label_removed share a family on purpose: one triage
- * gesture often does both, and GitHub renders that as a single row.
+ * gesture often does both, and GitHub renders that as a single row. assigned
+ * and unassigned are the second such pair, with a stronger claim than
+ * labels: handing a card to someone else emits both halves every time.
  * referenced and cross_referenced likewise: the reader cares who pointed
  * here, not whether they did it from this project, and every row says so
  * itself.
@@ -64,6 +75,8 @@ const FAMILY_BY_TYPE: Partial<Record<IssueEventType, MergeFamily>> = {
   referenced: "referenced",
   cross_referenced: "referenced",
   attachment_added: "attachments",
+  assigned: "assignees",
+  unassigned: "assignees",
 };
 
 export function familyOf(type: IssueEventType): MergeFamily | null {
@@ -289,4 +302,79 @@ export function netStatusChain(events: TimelineEvent[]): StatusChain {
       ? net.from.id === net.to.id
       : net.from.name === net.to.name;
   return { hops, net, isNoop };
+}
+
+const field = (v: unknown, key: string): unknown =>
+  typeof v === "object" && v !== null && key in v
+    ? (v as Record<string, unknown>)[key]
+    : undefined;
+
+/** Identity as resolveUser resolves it — the member id where the payload has
+    one, the login otherwise, so a ghost that lost its id is never counted as
+    the member who still has it. */
+const assigneeKey = (user: unknown): string => {
+  const id = field(user, "id");
+  if (typeof id === "number") return `#${id}`;
+  const login = field(user, "login");
+  return `@${typeof login === "string" ? login : "?"}`;
+};
+
+type AssigneeSide = "added" | "removed";
+
+export type AssigneeChain = {
+  /** Everyone the run touched, once per side, in first-appearance order. */
+  touched: Record<AssigneeSide, unknown[]>;
+  /** What the run leaves behind, round trips cancelled out. */
+  net: Record<AssigneeSide, unknown[]>;
+  /** Everyone the run touched ended where they started. */
+  isNoop: boolean;
+};
+
+/**
+ * An assignment run collapses to its net effect: one picker gesture that
+ * takes a card off A, tries B and settles on C reads as A out, C in.
+ *
+ * Each user's direction comes from their first and last event rather than
+ * from counting their events, so a payload that repeats a direction — two
+ * `assigned A` with no `unassigned A` between them — still reports A as
+ * assigned, where parity would erase them.
+ *
+ * The buckets hold payload users as they were written; resolving them into
+ * chips is the summary's job, as netStatusChain leaves the pills to
+ * resolveStatus.
+ */
+export function netAssignees(events: TimelineEvent[]): AssigneeChain {
+  const touched: AssigneeChain["touched"] = { added: [], removed: [] };
+  const listed: Record<AssigneeSide, Set<string>> = {
+    added: new Set(),
+    removed: new Set(),
+  };
+  const ends = new Map<
+    string,
+    { user: unknown; first: AssigneeSide; last: AssigneeSide }
+  >();
+
+  for (const event of events) {
+    const side: AssigneeSide =
+      event.event_type === "assigned" ? "added" : "removed";
+    const user = event.payload.user;
+    const key = assigneeKey(user);
+    const seen = ends.get(key);
+    if (seen) seen.last = side;
+    else ends.set(key, { user, first: side, last: side });
+    if (!listed[side].has(key)) {
+      listed[side].add(key);
+      touched[side].push(user);
+    }
+  }
+
+  const net: AssigneeChain["net"] = { added: [], removed: [] };
+  for (const end of ends.values()) {
+    if (end.first === end.last) net[end.last].push(end.user);
+  }
+  return {
+    touched,
+    net,
+    isNoop: net.added.length === 0 && net.removed.length === 0,
+  };
 }

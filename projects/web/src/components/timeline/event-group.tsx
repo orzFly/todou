@@ -1,6 +1,11 @@
 import { Link } from "@tanstack/react-router";
 import type { Label, TimelineEvent } from "@todou/shared";
-import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  UserMinusIcon,
+  UserPlusIcon,
+} from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useState } from "react";
 import { AttachmentEventLink } from "@/components/issue/attachment-list.tsx";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
@@ -10,27 +15,37 @@ import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   EventRow,
   ICONS,
+  IN_SENTENCE,
   referenceSource,
   useEventRenderContext,
 } from "@/components/timeline/event-row.tsx";
 import {
   type CollapsedFamily,
   type MergeFamily,
+  netAssignees,
   netStatusChain,
   rendersAsList,
 } from "@/components/timeline/group-events.ts";
 import {
   type EventEntities,
+  type ResolvedUser,
   resolveLabel,
   resolveStatus,
+  resolveUser,
   useEventEntities,
 } from "@/components/timeline/use-event-entities.ts";
 import { eventAnchor } from "@/lib/timeline-anchors.ts";
 import { cn } from "@/lib/utils";
 
 /** Collapsed summary: the rich node for the row plus a plain-text mirror
-    for the truncation tooltip (the EventRow pattern). */
-type Summary = { node: ReactNode; text: string; dim?: boolean };
+    for the truncation tooltip (the EventRow pattern). `icon` is for the
+    families whose sentence and whose first event can disagree. */
+type Summary = {
+  node: ReactNode;
+  text: string;
+  dim?: boolean;
+  icon?: ReactNode;
+};
 
 /** Chips carry their own gaps only inside a flex box; the summary row is
     inline text flow, so the list needs one of its own. */
@@ -44,6 +59,15 @@ const ChipRow = ({ children }: { children: ReactNode }) => (
 const distinct = (labels: Label[]): Label[] => [
   ...new Map(labels.map((l) => [l.id, l])).values(),
 ];
+
+/** An assignee as a chip, or as the bare `@login` resolveUser degrades to
+    for someone the project no longer knows. */
+const UserFace = ({ face }: { face: ResolvedUser }) =>
+  face.user ? (
+    <UserChip user={face.user} nameClassName={IN_SENTENCE} />
+  ) : (
+    <span className={IN_SENTENCE}>{face.text}</span>
+  );
 
 function summarize(
   family: CollapsedFamily,
@@ -122,13 +146,80 @@ function summarize(
           .join(" · "),
       };
     }
+    case "assignees": {
+      const chain = netAssignees(events);
+      // A run that cancels out has no net assignment to print, so it prints
+      // the whole gesture dimmed, as a noop status chain does.
+      const shown = chain.isNoop ? chain.touched : chain.net;
+      const faces = (users: unknown[]) =>
+        users.map((user) => resolveUser(user, entities.memberById));
+      const added = faces(shown.added);
+      const removed = faces(shown.removed);
+      const [to] = added;
+      const [from] = removed;
+      if (!chain.isNoop && added.length === 1 && removed.length === 1) {
+        if (to && from) {
+          return {
+            node: (
+              <>
+                {"reassigned "}
+                <ChipRow>
+                  <UserFace face={from} />
+                  {"→"}
+                  <UserFace face={to} />
+                </ChipRow>
+              </>
+            ),
+            text: `reassigned ${from.text} → ${to.text}`,
+            icon: <UserPlusIcon className="size-3.5" />,
+          };
+        }
+      }
+      const half = (verb: string, list: ResolvedUser[]) =>
+        list.length === 0 ? null : (
+          <>
+            {`${verb} `}
+            <ChipRow>
+              {list.map((face, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: two payloads may name the same ghost
+                <UserFace key={i} face={face} />
+              ))}
+            </ChipRow>
+          </>
+        );
+      const names = (list: ResolvedUser[]) =>
+        list.map((face) => face.text).join(", ");
+      const netIcon =
+        added.length > 0 ? (
+          <UserPlusIcon className="size-3.5" />
+        ) : (
+          <UserMinusIcon className="size-3.5" />
+        );
+      return {
+        node: (
+          <>
+            {half("assigned", added)}
+            {added.length > 0 && removed.length > 0 && " · "}
+            {half("unassigned", removed)}
+          </>
+        ),
+        text: [
+          added.length > 0 ? `assigned ${names(added)}` : null,
+          removed.length > 0 ? `unassigned ${names(removed)}` : null,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        dim: chain.isNoop,
+        icon: chain.isNoop ? undefined : netIcon,
+      };
+    }
   }
 }
 
 /**
- * One render unit for a merged run (T-92). Status and label runs collapse to
- * a summary row with an expander; the list families keep every event visible
- * as a block list (T-99, T-369) — nothing to expand.
+ * One render unit for a merged run (T-92). Status, label and assignment runs
+ * collapse to a summary row with an expander; the list families keep every
+ * event visible as a block list (T-99, T-369) — nothing to expand.
  */
 export function EventGroup({
   family,
@@ -360,7 +451,7 @@ function CollapsedGroup({
             dim,
           )}
         >
-          {ICONS[first.event_type]}
+          {summary.icon ?? ICONS[first.event_type]}
         </span>{" "}
         <UserChip
           user={first.actor}
