@@ -21,6 +21,7 @@ import {
 } from "@/components/shared/pierre.tsx";
 import { isTextEmbedName } from "@/lib/attachment-preview.ts";
 import { parseAttachmentHref } from "@/lib/attachment-refs.ts";
+import { rehypeDetails } from "@/lib/rehype-details.ts";
 import {
   CODE_CONTENT_START_ATTR,
   parseSourceLoc,
@@ -35,6 +36,7 @@ import {
   REF_REPEAT_ATTR,
   remarkRefOccurrences,
 } from "@/lib/remark-ref-occurrences.ts";
+import { remarkRejectedUrlsAsText } from "@/lib/remark-rejected-urls.ts";
 
 /**
  * A fence rendered as a diff of two versions (T-343). It keeps `.spec-changed`
@@ -318,6 +320,10 @@ export function MarkdownView({
   const remarkPlugins = useMemo(() => {
     const base = [
       remarkGfm,
+      // Before the tokenizers: what it replaces is a link the renderer was
+      // going to blank anyway, and `spec-source-index.ts` has to register it
+      // in the same place (T-240's rule).
+      remarkRejectedUrlsAsText,
       [remarkFrontmatter, FRONTMATTER_FLAVOURS],
       remarkFrontmatterTable,
     ];
@@ -346,12 +352,25 @@ export function MarkdownView({
     ] as ComponentProps<typeof Markdown>["remarkPlugins"];
   }, [slug, preview, refQuery.data, directoryQuery.data, readableQuery.data]);
 
+  // `rehypeDetails` goes first so that every later pass — the caller's stamp,
+  // decoration and fold passes included — walks the tree the reader will get,
+  // rather than one where a fold is still a pair of raw HTML strings. The memo
+  // is the array-identity rule this file opens with, applied to an array this
+  // component now owns.
+  const rehypePasses = useMemo(
+    () =>
+      [rehypeDetails, ...(rehypePlugins ?? [])] as ComponentProps<
+        typeof Markdown
+      >["rehypePlugins"],
+    [rehypePlugins],
+  );
+
   return (
     // Typography lives in styles.css (.markdown-body, GitHub-style).
     <div className="markdown-body">
       <Markdown
         remarkPlugins={remarkPlugins}
-        rehypePlugins={rehypePlugins}
+        rehypePlugins={rehypePasses}
         components={components}
       >
         {children}

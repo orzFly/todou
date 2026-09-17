@@ -30,6 +30,7 @@ import {
   NO_DECORATIONS,
   rehypeDecorations,
 } from "@/lib/rehype-decorations.ts";
+import { rehypeExpandDetails } from "@/lib/rehype-details.ts";
 import {
   FOLD_CLASS,
   FOLD_KEY_ATTR,
@@ -401,6 +402,29 @@ export function chipTop(containerRect: { top: number }, el: Element): number {
 }
 
 /**
+ * The outermost fold standing between `el` and the reader, or `el` itself.
+ *
+ * A closed `<details>` renders its contents `display: none`, and every rect
+ * inside one is zero, so measuring the block directly stacks its chip at the
+ * top of the container. The fold pass never has this problem because it
+ * refuses to fold an annotated block at all — but a `<details>` is the
+ * reader's to close, so the chip follows it up to the fold's own header
+ * instead. Asking which fold is shut says the reason, and needs no layout.
+ *
+ * One pass up the ancestor chain, keeping the last match, rather than a
+ * `closest` that restarts from what it found: the walk then terminates
+ * because the DOM is finite, and a future edit cannot turn it into the
+ * synchronous spin that a test runner has no way to interrupt or name.
+ */
+export function visibleAnchor(el: HTMLElement): HTMLElement {
+  let anchor = el;
+  for (let node = el.parentElement; node !== null; node = node.parentElement) {
+    if (node.matches("details:not([open])")) anchor = node;
+  }
+  return anchor;
+}
+
+/**
  * Rendered markdown with the annotation layer of the spec review view:
  * selecting text floats a "comment" button (the anchor is derived from the
  * blocks' stamped source lines), staged drafts and submitted comments hang
@@ -498,10 +522,20 @@ export function AnnotatedMarkdown({
       decorations.blocks.length > 0 ||
       decorations.tables.length > 0 ||
       decorations.images.length > 0;
-    if (!decorated && !foldUnchanged) return REHYPE_PLUGINS;
+    // Annotations alone used to take this exit: they always come with
+    // decorations to paint. A `<details>` that has to be opened for them does
+    // not, and skipping the array would leave the chip pointing into a fold
+    // nothing ever opened.
+    if (!decorated && !foldUnchanged && annotationRanges.length === 0) {
+      return REHYPE_PLUGINS;
+    }
+    // This order is the only thing holding the three passes together, and
+    // nothing but the array enforces it: rehypeExpandDetails reads the classes
+    // rehypeDecorations paints, and rehypeFoldUnchanged counts top-level
+    // blocks a fold has already been resolved into.
     const plugins: NonNullable<RehypePlugins> = [rehypeSourceLines];
     if (decorated) plugins.push([rehypeDecorations, decorations]);
-    // After the decorations, whose classes decide what counts as changed.
+    plugins.push([rehypeExpandDetails, { changedRanges, annotationRanges }]);
     if (foldUnchanged) {
       plugins.push([
         rehypeFoldUnchanged,
@@ -570,7 +604,9 @@ export function AnnotatedMarkdown({
       }
       next.push({
         blockKey: `${block.start}-${block.end}`,
-        top: chipTop(containerRect, block.el),
+        // The key still names the block the annotation belongs to; only what
+        // gets measured moves when the reader shuts a fold over it.
+        top: chipTop(containerRect, visibleAnchor(block.el)),
         items,
       });
     }
@@ -599,6 +635,16 @@ export function AnnotatedMarkdown({
   useLayoutEffect(() => {
     layout();
   }, [layout, expanded, foldUnchanged]);
+
+  // `toggle` does not bubble, so the capture phase is the only way one
+  // listener hears every `<details>` under the container, nested ones
+  // included.
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (container === null) return;
+    container.addEventListener("toggle", layout, true);
+    return () => container.removeEventListener("toggle", layout, true);
+  }, [layout]);
 
   /** Jump to what a popover entry points at — its own mark, or its block. */
   const flashAnnotation = useCallback(

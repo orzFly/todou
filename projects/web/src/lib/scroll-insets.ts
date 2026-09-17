@@ -75,6 +75,21 @@ function flash(el: HTMLElement) {
 }
 
 /**
+ * Open every closed `<details>` between `el` and the document root.
+ *
+ * A target inside a shut fold has no box at all, so `scrollIntoView` on it
+ * does nothing and reports nothing.
+ */
+export function openEnclosingFolds(el: Element): void {
+  for (let from = el.parentElement; from !== null; ) {
+    const fold = from.closest("details:not([open])");
+    if (fold === null) return;
+    fold.setAttribute("open", "");
+    from = fold.parentElement;
+  }
+}
+
+/**
  * Bring `el` into the strip no overlay covers, and flash it. The one landing
  * out of which every anchor, ↑↓ step and per-file jump is served.
  */
@@ -90,6 +105,7 @@ export function revealBlock(
     flash?: boolean;
   } = {},
 ): void {
+  openEnclosingFolds(el);
   const rect = el.getBoundingClientRect();
   const block = blockFor(
     { top: rect.top + window.scrollY, height: rect.height },
