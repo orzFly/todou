@@ -21,6 +21,7 @@ import {
 } from "@/components/shared/pierre.tsx";
 import { isTextEmbedName } from "@/lib/attachment-preview.ts";
 import { parseAttachmentHref } from "@/lib/attachment-refs.ts";
+import { rehypeDetails } from "@/lib/rehype-details.ts";
 import {
   CODE_CONTENT_START_ATTR,
   parseSourceLoc,
@@ -346,12 +347,25 @@ export function MarkdownView({
     ] as ComponentProps<typeof Markdown>["remarkPlugins"];
   }, [slug, preview, refQuery.data, directoryQuery.data, readableQuery.data]);
 
+  // `rehypeDetails` goes first so that every later pass — the caller's stamp,
+  // decoration and fold passes included — walks the tree the reader will get,
+  // rather than one where a fold is still a pair of raw HTML strings. The memo
+  // is the array-identity rule this file opens with, applied to an array this
+  // component now owns.
+  const rehypePasses = useMemo(
+    () =>
+      [rehypeDetails, ...(rehypePlugins ?? [])] as ComponentProps<
+        typeof Markdown
+      >["rehypePlugins"],
+    [rehypePlugins],
+  );
+
   return (
     // Typography lives in styles.css (.markdown-body, GitHub-style).
     <div className="markdown-body">
       <Markdown
         remarkPlugins={remarkPlugins}
-        rehypePlugins={rehypePlugins}
+        rehypePlugins={rehypePasses}
         components={components}
       >
         {children}

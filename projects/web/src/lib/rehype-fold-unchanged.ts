@@ -131,17 +131,42 @@ function carriesDecoration(node: RootContent): boolean {
   return node.children.some(carriesDecoration);
 }
 
-function blockOf(element: Element, options: FoldOptions): FoldBlock {
+/** 1-based inclusive source lines of an element; null when it has no position. */
+function linesOf(element: Element): LineRange | null {
   const start = element.position?.start.line;
   const end = element.position?.end.line;
-  const lines =
-    start === undefined || end === undefined ? null : { start, end };
+  return start === undefined || end === undefined ? null : { start, end };
+}
+
+export type ReviewInterestOptions = {
+  changedRanges: LineRange[];
+  annotationRanges: LineRange[];
+};
+
+/**
+ * Whether an element holds anything a reviewer came for. The fold pass asks
+ * this of the top-level blocks and `rehypeExpandDetails` asks it of every
+ * fold; two implementations would let a `<details>` stay shut over a change
+ * the fold pass can see, and the disagreement would show up as content
+ * missing from the page rather than as an error.
+ */
+export function reviewInterestOf(
+  element: Element,
+  options: ReviewInterestOptions,
+): { changed: boolean; annotated: boolean } {
+  const lines = linesOf(element);
   const hits = (ranges: LineRange[]) =>
     lines !== null && ranges.some((range) => rangesIntersect(range, lines));
   return {
-    lines,
     changed: hits(options.changedRanges) || carriesDecoration(element),
     annotated: hits(options.annotationRanges),
+  };
+}
+
+function blockOf(element: Element, options: FoldOptions): FoldBlock {
+  return {
+    lines: linesOf(element),
+    ...reviewInterestOf(element, options),
     heading: /^h[1-6]$/.test(element.tagName),
   };
 }

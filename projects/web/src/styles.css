@@ -798,8 +798,44 @@ diffs-container {
   .markdown-body ul,
   .markdown-body ol,
   .markdown-body table,
+  .markdown-body details,
   .markdown-body pre {
     margin-block: 0 1rem;
+  }
+
+  /* No JS toggle anywhere: native <summary> brings Enter/Space, the `open`
+     state and the screen-reader semantics with it. */
+  .markdown-body summary {
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+    cursor: pointer;
+    font-weight: 600;
+    list-style: none;
+  }
+  .markdown-body summary::-webkit-details-marker {
+    display: none;
+  }
+  /* lucide's `chevron-right`, painted through a mask so it follows the text
+     colour into dark mode the way .spec-fold's glyph does. */
+  .markdown-body summary::before {
+    content: "";
+    flex: none;
+    width: 1em;
+    height: 1em;
+    background-color: currentColor;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 18 6-6-6-6'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+    transition: rotate 120ms ease;
+  }
+  .markdown-body details[open] > summary::before {
+    rotate: 90deg;
+  }
+  .markdown-body summary > :last-child {
+    margin-bottom: 0;
+  }
+  .markdown-body details > :last-child {
+    margin-bottom: 0;
   }
 
   .markdown-body h1,

@@ -10,6 +10,11 @@ import type { Element, Root } from "hast";
  * edited cell highlight its own row instead of washing the whole table
  * green; the table keeps its stamp as the fallback for table-wide
  * selections. Consumers resolve nesting by taking the innermost match.
+ *
+ * `details` is here for a second reason on top of that one (T-385): a reader
+ * who closes a fold leaves every annotation inside it with a zero rect, and
+ * the chip layout walks up the stamped ancestors to find something it can
+ * still measure — the fold's own header.
  */
 const BLOCK_TAGS = new Set([
   "p",
@@ -22,6 +27,7 @@ const BLOCK_TAGS = new Set([
   "li",
   "pre",
   "blockquote",
+  "details",
   "table",
   "tr",
   "hr",
