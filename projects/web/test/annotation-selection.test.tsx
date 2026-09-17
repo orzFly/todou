@@ -969,15 +969,18 @@ describe("AnnotatedMarkdown entry placement and shadow fallback (T-384)", () => 
   const rect = (top: number, bottom: number) =>
     ({ top, bottom, height: bottom - top }) as DOMRect;
 
-  it("keeps the entry inside the file when the selection reaches past it", async () => {
-    const onStage = vi.fn();
+  /** The entry's rendered offset, with both rects it is measured from stubbed. */
+  async function topWith(
+    containerRect: DOMRect,
+    selectionRect: DOMRect,
+  ): Promise<number> {
     const view = renderWithProviders(
       <AnnotatedMarkdown
         slug="p"
         issueNumber={1}
         body={"alpha one\n\nbeta two\n\ngamma three\n"}
         annotations={[]}
-        onStage={onStage}
+        onStage={() => {}}
         onEditDraft={() => {}}
         onRemoveDraft={() => {}}
         onResolve={() => {}}
@@ -988,11 +991,9 @@ describe("AnnotatedMarkdown entry placement and shadow fallback (T-384)", () => 
       if (!el.querySelector("p[data-loc]")) throw new Error("not rendered");
       return el;
     });
-    // The shape ⌘/Ctrl-A produces on a real page: the selection's rect is as
-    // tall as the document, while the file it anchors to is a short box.
-    vi.spyOn(container, "getBoundingClientRect").mockReturnValue(rect(0, 52));
+    vi.spyOn(container, "getBoundingClientRect").mockReturnValue(containerRect);
     vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
-      rect(0, 3150),
+      selectionRect,
     );
 
     const node = container.querySelector("p[data-loc]")?.firstChild;
@@ -1005,11 +1006,20 @@ describe("AnnotatedMarkdown entry placement and shadow fallback (T-384)", () => 
     selection?.addRange(range);
 
     const button = await view.findByText(/Comment L/);
-    const top = Number.parseFloat(
-      (button as HTMLElement).style.top.replace("px", ""),
-    );
-    expect(top).toBeGreaterThanOrEqual(0);
-    expect(top).toBeLessThanOrEqual(52);
+    return Number.parseFloat((button as HTMLElement).style.top.replace("px", ""));
+  }
+
+  it("sits six pixels under the end of the selection", async () => {
+    // Pins the offset itself, not just a range it falls in: an `entryTop`
+    // that answered a constant would satisfy the clamp below and still put
+    // the button nowhere near the words it points at.
+    expect(await topWith(rect(0, 400), rect(0, 120))).toBe(126);
+  });
+
+  it("keeps the entry inside the file when the selection reaches past it", async () => {
+    // The shape ⌘/Ctrl-A produces on a real page: the selection's rect is as
+    // tall as the document, while the file it anchors to is a short box.
+    expect(await topWith(rect(0, 52), rect(0, 3150))).toBe(52);
   });
 
   it("widens to whole lines when an endpoint sits in a shadow root", () => {
