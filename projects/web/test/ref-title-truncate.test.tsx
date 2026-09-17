@@ -1,15 +1,21 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { waitFor } from "@testing-library/react";
 import type {
+  Attachment,
   IssueListItem,
   MePrefs,
   ReferenceConfig,
   TimelineEvent,
 } from "@todou/shared";
 import { describe, expect, it } from "vitest";
+import { attachmentsQuery } from "../src/api/attachments.ts";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
 import { prefsQuery } from "../src/api/prefs.ts";
 import { referenceConfigQuery } from "../src/api/references.ts";
+import {
+  AttachmentEventLink,
+  AttachmentRichLink,
+} from "../src/components/issue/attachment-list.tsx";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import {
   RICH_CHIP_LABEL,
@@ -184,4 +190,68 @@ describe("the chip stops at the body (T-371)", () => {
       expect(link.textContent).toContain(LONG);
     });
   }
+});
+
+describe("attachment links keep the whole filename reachable (T-371)", () => {
+  const LONG_FILE = "a-rather-long-attachment-filename-that-gets-cut.txt";
+  const url = `/api/projects/todou/attachments/9/download/${LONG_FILE}`;
+
+  const withAttachment = () => {
+    const client = seeded();
+    client.setQueryData(attachmentsQuery("todou", 7).queryKey, [
+      {
+        id: 9,
+        filename: LONG_FILE,
+        content_type: "text/plain",
+        size: 12,
+        url,
+        uploader: author,
+        created_at: "2026-08-12T00:00:00Z",
+        aliases: [],
+      } satisfies Attachment,
+    ]);
+    return client;
+  };
+
+  it("carries the filename in title, next to a label that may be cut", async () => {
+    const view = renderWithProviders(
+      <AttachmentRichLink
+        slug="todou"
+        issueNumber={7}
+        attachmentId={9}
+        href={url}
+        fallbackName={LONG_FILE}
+      />,
+      withAttachment(),
+    );
+    const link = await waitFor(() => {
+      const el = view.container.querySelector("a");
+      expect(el).not.toBeNull();
+      return el as HTMLAnchorElement;
+    });
+
+    expect(link.getAttribute("title")).toBe(LONG_FILE);
+    expect(titleSpan(link)?.getAttribute("class")).toContain("truncate");
+  });
+
+  it("leaves the event row's filename link without one", async () => {
+    const view = renderWithProviders(
+      <AttachmentEventLink
+        slug="todou"
+        issueNumber={7}
+        attachmentId={9}
+        filename={LONG_FILE}
+      />,
+      withAttachment(),
+    );
+    const link = await waitFor(() => {
+      const el = view.container.querySelector("a");
+      expect(el).not.toBeNull();
+      return el as HTMLAnchorElement;
+    });
+
+    // Nothing truncates it there, so there is nothing to recover.
+    expect(link.getAttribute("title")).toBeNull();
+    expect(titleSpan(link)).toBeUndefined();
+  });
 });

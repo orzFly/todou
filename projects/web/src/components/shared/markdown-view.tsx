@@ -264,10 +264,7 @@ export function MarkdownView({
             img: (
               props: ComponentProps<"img"> & { node?: unknown },
             ): ReactNode => {
-              const target =
-                issueNumber === undefined
-                  ? null
-                  : parseAttachmentHref(props.src);
+              const target = parseAttachmentHref(props.src);
               if (target !== null && issueNumber !== undefined) {
                 return (
                   <MarkdownAttachmentImage
@@ -278,6 +275,14 @@ export function MarkdownView({
                     {...props}
                   />
                 );
+              }
+              // Whether an address names an image is answered by the address,
+              // not by whether this surface can look the attachment up. The
+              // comment hover card renders without an issue number, and a text
+              // document left in an <img> there draws the browser's
+              // broken-image icon.
+              if (target !== null && isTextEmbedName(target.name ?? "")) {
+                return <a href={props.src}>{target.name}</a>;
               }
               const { node: _node, ...rest } = props;
               // biome-ignore lint/a11y/useAltText: alt is forwarded via props when the markdown provides one

@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, waitFor } from "@testing-library/react";
 import type {
+  Attachment,
   IssueListItem,
   MePrefs,
   ReferenceConfig,
@@ -9,6 +10,10 @@ import type {
   TimelineEvent,
 } from "@todou/shared";
 import { describe, expect, it, vi } from "vitest";
+import {
+  attachmentsQuery,
+  attachmentTextQuery,
+} from "../src/api/attachments.ts";
 import { commentRefQuery, issueRefQuery } from "../src/api/issue-refs.ts";
 import { prefsQuery } from "../src/api/prefs.ts";
 import { projectsQuery } from "../src/api/queries.ts";
@@ -19,6 +24,17 @@ import {
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { EventRow } from "../src/components/timeline/event-row.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
+
+// A `.txt` document card renders through CodeBlock, whose real pierre CodeView
+// is lazy and paints into a shadow root.
+vi.mock("@pierre/diffs/react", () => ({
+  CodeView: ({ items }: { items: Array<{ file: { contents: string } }> }) => (
+    <pre>
+      <code>{items.map((item) => item.file.contents).join("\n")}</code>
+    </pre>
+  ),
+  MultiFileDiff: () => null,
+}));
 
 const author = {
   id: 1,
@@ -269,5 +285,60 @@ describe("comment hover card (T-371)", () => {
     hover(trigger);
     const card = await opened();
     expect(card.textContent).toContain(BODY);
+  });
+
+  it("draws a text document embed as a link, not a broken image", async () => {
+    const EMBED =
+      "![notes.txt](/api/projects/todou/attachments/9/download/notes.txt)";
+    const client = seeded(commentOf(42, EMBED));
+    const view = renderWithProviders(
+      <MarkdownView slug="todou">
+        {"see [T-7#comment-42](/projects/todou/issues/7#comment-42)"}
+      </MarkdownView>,
+      client,
+    );
+    const trigger = await waitFor(() => {
+      const el = view.container.querySelector("a[data-comment-link='42']");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    hover(trigger);
+    const card = await opened();
+
+    expect(card.querySelector("img")).toBeNull();
+    const link = card.querySelector("a[href$='notes.txt']");
+    expect(link).not.toBeNull();
+    expect(link?.textContent).toBe("notes.txt");
+  });
+
+  it("still renders the same embed as a document card in the body", async () => {
+    const EMBED =
+      "![notes.txt](/api/projects/todou/attachments/9/download/notes.txt)";
+    const url = "/api/projects/todou/attachments/9/download/notes.txt";
+    const client = seeded();
+    client.setQueryData(attachmentsQuery("todou", 7).queryKey, [
+      {
+        id: 9,
+        filename: "notes.txt",
+        content_type: "text/plain",
+        size: 12,
+        url,
+        uploader: author,
+        created_at: "2026-08-12T00:00:00Z",
+        aliases: [],
+      } satisfies Attachment,
+    ]);
+    client.setQueryData(attachmentTextQuery(url).queryKey, "the document");
+    const view = renderWithProviders(
+      <MarkdownView slug="todou" issueNumber={7}>
+        {EMBED}
+      </MarkdownView>,
+      client,
+    );
+
+    await waitFor(() => {
+      expect(view.container.querySelector("section")).not.toBeNull();
+    });
+    expect(view.container.querySelector("img")).toBeNull();
   });
 });

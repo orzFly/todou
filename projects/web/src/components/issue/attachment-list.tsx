@@ -219,6 +219,9 @@ export function AttachmentRichLink({
     <>
       <a
         href={attachment ? attachmentAnchorHref(attachment) : href}
+        // The label shares the chip's truncating child, so a long filename is
+        // cut where it used to wrap and stay whole.
+        title={attachment?.filename ?? fallbackName}
         className={cn(
           RICH_CHIP_STRUCTURE,
           boxed ? RICH_CHIP_SKIN : "hover:underline",
