@@ -36,6 +36,7 @@ import {
   REF_REPEAT_ATTR,
   remarkRefOccurrences,
 } from "@/lib/remark-ref-occurrences.ts";
+import { remarkRejectedUrlsAsText } from "@/lib/remark-rejected-urls.ts";
 
 /**
  * A fence rendered as a diff of two versions (T-343). It keeps `.spec-changed`
@@ -319,6 +320,10 @@ export function MarkdownView({
   const remarkPlugins = useMemo(() => {
     const base = [
       remarkGfm,
+      // Before the tokenizers: what it replaces is a link the renderer was
+      // going to blank anyway, and `spec-source-index.ts` has to register it
+      // in the same place (T-240's rule).
+      remarkRejectedUrlsAsText,
       [remarkFrontmatter, FRONTMATTER_FLAVOURS],
       remarkFrontmatterTable,
     ];

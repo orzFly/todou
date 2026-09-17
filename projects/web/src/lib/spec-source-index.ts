@@ -7,6 +7,7 @@ import {
   FRONTMATTER_FLAVOURS,
   remarkFrontmatterTable,
 } from "./remark-frontmatter-table.ts";
+import { remarkRejectedUrlsAsText } from "./remark-rejected-urls.ts";
 import type { LineRange } from "./spec-changes.ts";
 
 /**
@@ -73,6 +74,7 @@ const FRONTMATTER_BLOCKS: Record<string, SourceBlockType> = {
 const processor = unified()
   .use(remarkParse)
   .use(remarkGfm)
+  .use(remarkRejectedUrlsAsText)
   .use(remarkFrontmatter, FRONTMATTER_FLAVOURS)
   .use(remarkFrontmatterTable);
 

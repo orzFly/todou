@@ -72,12 +72,6 @@ type Row = {
   text: string;
   /** Selectors that must still find something. */
   present?: string[];
-  /**
-   * A markdown link whose URL protocol is refused. Until the rejected-URL
-   * pass lands, react-markdown empties the attribute and leaves the element,
-   * so `text` cannot hold yet — this names what to read instead.
-   */
-  emptied?: { selector: string; attribute: string };
 };
 
 const ROWS: Row[] = [
@@ -114,52 +108,45 @@ const ROWS: Row[] = [
   {
     n: "6",
     source: "[a](javascript:alert(1))\n",
-    absent: ['a[href^="javascript" i]'],
+    absent: ["a"],
     text: "[a](javascript:alert(1))",
-    emptied: { selector: "a", attribute: "href" },
   },
   {
     n: "7",
     source: "[a](JaVaScRiPt:alert(1))\n",
-    absent: ['a[href^="javascript" i]'],
+    absent: ["a"],
     text: "[a](JaVaScRiPt:alert(1))",
-    emptied: { selector: "a", attribute: "href" },
   },
   {
     n: "8",
     source: "[a](data:text/html,<script>alert(1)</script>)\n",
-    absent: ['a[href^="data" i]', "script"],
+    absent: ["a", "script"],
     text: "[a](data:text/html,<script>alert(1)</script>)",
-    emptied: { selector: "a", attribute: "href" },
   },
   {
     n: "9",
     source: "<javascript:alert(1)>\n",
-    absent: ['a[href^="javascript" i]'],
+    absent: ["a"],
     text: "<javascript:alert(1)>",
-    emptied: { selector: "a", attribute: "href" },
   },
   {
     n: "10",
     source: "![x](javascript:alert(1))\n",
-    absent: ['img[src^="javascript" i]'],
+    absent: ["img"],
     text: "![x](javascript:alert(1))",
-    emptied: { selector: "img", attribute: "src" },
   },
   {
     n: "11",
     source: "[a](vbscript:msgbox(1))\n",
-    absent: ['a[href^="vbscript" i]'],
+    absent: ["a"],
     text: "[a](vbscript:msgbox(1))",
-    emptied: { selector: "a", attribute: "href" },
   },
   {
     n: "11b",
     source: "[a][r]\n\n[r]: javascript:alert(1)\n",
-    absent: ['a[href^="javascript" i]'],
+    absent: ["a"],
     // The bad URL lives on the definition line, which markdown never renders.
     text: "[a][r]",
-    emptied: { selector: "a", attribute: "href" },
   },
   {
     n: "12",
@@ -302,14 +289,7 @@ describe.each(SURFACES)("raw HTML on the %s surface", (_name, props) => {
       for (const selector of row.present ?? []) {
         expect(container.querySelector(selector)).not.toBeNull();
       }
-      if (row.emptied === undefined) {
-        expect(container.textContent).toContain(row.text);
-      } else {
-        const el = container.querySelector(row.emptied.selector);
-        expect(el).not.toBeNull();
-        // Absent or empty: React drops an empty `src` rather than writing one.
-        expect(el?.getAttribute(row.emptied.attribute) ?? "").toBe("");
-      }
+      expect(container.textContent).toContain(row.text);
     },
   );
 });
