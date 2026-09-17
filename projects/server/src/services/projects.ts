@@ -2,6 +2,7 @@ import { rm } from "node:fs/promises";
 import type {
   MemberRole,
   Project,
+  ProjectBrief,
   ProjectCreateInput,
   ProjectUpdateInput,
 } from "@todou/shared";
@@ -31,6 +32,11 @@ import {
 import { type ProjectRow, requireCapability, routeInfoOf } from "./access.ts";
 import { announceBlockChanges, reevaluateProjectBlocks } from "./blocks.ts";
 import { mirrorRefFormat } from "./reference-directory.ts";
+
+/** Enough of a project to name it and link to it. */
+export function toProjectBrief(row: ProjectRow): ProjectBrief {
+  return { id: row.id, slug: row.slug, name: row.name };
+}
 
 export function toProject(row: ProjectRow, viewerRole?: MemberRole): Project {
   return {

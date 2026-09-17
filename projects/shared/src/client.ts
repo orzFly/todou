@@ -84,6 +84,8 @@ import type {
   TokenCreated,
   TokenCreateInput,
   TokenListItem,
+  UserIssuesPage,
+  UserProjects,
   VersionInfo,
 } from "./index.ts";
 import { type BatchStreamItem, SSE_BATCH_ITEM_EVENT } from "./schemas/batch.ts";
@@ -642,6 +644,12 @@ export class TodouClient {
    */
   getUser = (ref: string | number) =>
     this.request<PublicUser>("GET", `/users/${ref}`);
+
+  /** Both lists are scoped to what the CALLER can read, not the subject. */
+  listUserIssues = (ref: string | number, query?: Query) =>
+    this.request<UserIssuesPage>("GET", `/users/${ref}/issues`, { query });
+  listUserProjects = (ref: string | number) =>
+    this.request<UserProjects>("GET", `/users/${ref}/projects`, {});
   deleteProject = (slug: string) =>
     this.request<void>("DELETE", `/projects/${slug}`);
 

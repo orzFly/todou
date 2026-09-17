@@ -5,7 +5,6 @@ import type {
   AgentUpdateInput,
   ManageableProject,
   MemberRole,
-  ProjectBrief,
   TokenCreated,
   TokenCreateInput,
   TokenListItem,
@@ -22,6 +21,7 @@ import {
 } from "../db/system-schema.ts";
 import { ConflictError, ForbiddenError, NotFoundError } from "../errors.ts";
 import { deleteAvatar, setAvatar, updateProfile } from "./profile.ts";
+import { toProjectBrief } from "./projects.ts";
 import { issueToken, listTokens, revokeToken } from "./tokens.ts";
 import { ownerRefOf, toMe } from "./users.ts";
 
@@ -225,12 +225,6 @@ export async function revokeAgentToken(
 /** Most privileged first, which is the reverse of the comparison order. */
 const roleOrder = (role: MemberRole): number => -ROLE_RANK[role];
 
-const toBrief = (p: typeof projects.$inferSelect): ProjectBrief => ({
-  id: p.id,
-  slug: p.slug,
-  name: p.name,
-});
-
 /**
  * Every membership of every agent I own, listed whole — including projects I
  * cannot read myself. That leaks nothing: as owner I may issue the agent a
@@ -277,7 +271,7 @@ export async function listAgentMemberships(
   // them at or below what you hold. `my_role` is that ceiling.
   const manageable: ManageableProject[] = actor.isInstanceAdmin
     ? (await system.select().from(projects)).map((p) => ({
-        ...toBrief(p),
+        ...toProjectBrief(p),
         my_role: "admin" as const,
       }))
     : (
@@ -286,13 +280,13 @@ export async function listAgentMemberships(
           .from(projectMembers)
           .innerJoin(projects, eq(projects.id, projectMembers.projectId))
           .where(eq(projectMembers.userId, actor.id))
-      ).map((r) => ({ ...toBrief(r.project), my_role: r.role }));
+      ).map((r) => ({ ...toProjectBrief(r.project), my_role: r.role }));
 
   return {
     memberships: rows
       .map((r) => ({
         agent_id: r.agentId,
-        project: toBrief(r.project),
+        project: toProjectBrief(r.project),
         role: r.role,
         created_at: r.createdAt.toISOString(),
       }))

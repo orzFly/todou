@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Id, Timestamp } from "./common.ts";
 import { MemberRole, ProjectBrief } from "./project.ts";
 import { LoginInput, User } from "./user.ts";
+import { UserMembership } from "./user-view.ts";
 
 /** A machine user. Owned by a human; authenticates only via PAT. */
 export const Agent = User.extend({
@@ -26,12 +27,8 @@ export const AgentListQuery = z.object({
 });
 export type AgentListQuery = z.infer<typeof AgentListQuery>;
 
-export const AgentMembership = z.object({
-  agent_id: Id,
-  project: ProjectBrief,
-  role: MemberRole,
-  created_at: Timestamp,
-});
+/** A user's seat plus whose seat it is; same wire shape either way. */
+export const AgentMembership = UserMembership.extend({ agent_id: Id });
 export type AgentMembership = z.infer<typeof AgentMembership>;
 
 /**

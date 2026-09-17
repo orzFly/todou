@@ -1,4 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
+import { UserIssueRole, UserIssueState } from "@todou/shared";
 import { api } from "@/api/queries.ts";
 
 /**
@@ -11,4 +12,55 @@ export const userQuery = (ref: string) =>
     queryKey: ["user", ref],
     queryFn: () => api.getUser(ref),
     staleTime: 60_000,
+  });
+
+export type UserIssuesFilters = {
+  ref: string;
+  role: UserIssueRole;
+  state: UserIssueState;
+};
+
+/**
+ * The user page's search params (T-374), so the route and anything that
+ * renders it read one definition. Defaults stay out of the URL: the address
+ * somebody shares says only what they changed.
+ */
+export function userSearchSchema(search: Record<string, unknown>): {
+  role?: UserIssueRole;
+  state?: UserIssueState;
+} {
+  const role = UserIssueRole.safeParse(search.role);
+  const state = UserIssueState.safeParse(search.state);
+  return {
+    ...(role.success && role.data !== "any" ? { role: role.data } : {}),
+    ...(state.success && state.data !== "open" ? { state: state.data } : {}),
+  };
+}
+
+/**
+ * The first page of someone's cards (T-374). Later pages are fetched with
+ * `queryClient.fetchQuery` and held in component state, the shape the
+ * project issue list uses — the filters are in the key, so switching one
+ * lands on its own cache entry rather than refetching over the old rows.
+ */
+export const userIssuesQuery = ({ ref, role, state }: UserIssuesFilters) =>
+  queryOptions({
+    queryKey: ["user-issues", ref, role, state],
+    queryFn: () => api.listUserIssues(ref, { role, state }),
+  });
+
+/** One appended page, keyed by the cursor that asked for it. */
+export const userIssuesPageQuery = (
+  { ref, role, state }: UserIssuesFilters,
+  after: string,
+) =>
+  queryOptions({
+    queryKey: ["user-issues", ref, role, state, after],
+    queryFn: () => api.listUserIssues(ref, { role, state, after }),
+  });
+
+export const userProjectsQuery = (ref: string) =>
+  queryOptions({
+    queryKey: ["user-projects", ref],
+    queryFn: () => api.listUserProjects(ref),
   });

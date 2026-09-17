@@ -650,7 +650,7 @@ export async function getIssue(
  * and the id tie-break decides — the single-table version of the rule in
  * timeline.ts#beyond.
  */
-function timeAdvance(
+export function timeAdvance(
   sortColumn: AnyPgColumn,
   cur: ListCursor,
   ascending: boolean,

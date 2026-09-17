@@ -1,9 +1,19 @@
 import { Readable } from "node:stream";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
-import { PublicUser } from "@todou/shared";
+import {
+  PublicUser,
+  UserIssuesPage,
+  UserIssuesQuery,
+  UserProjects,
+} from "@todou/shared";
 import type { AppEnv } from "../auth/middleware.ts";
 import { openAvatar } from "../services/profile.ts";
-import { getPublicUser } from "../services/users.ts";
+import { listUserIssues } from "../services/user-issues.ts";
+import {
+  getPublicUser,
+  listUserProjects,
+  resolveVisibleUser,
+} from "../services/users.ts";
 
 const userRoute = createRoute({
   method: "get",
@@ -20,6 +30,48 @@ const userRoute = createRoute({
     200: {
       description: "The account",
       content: { "application/json": { schema: PublicUser } },
+    },
+  },
+});
+
+const userIssuesRoute = createRoute({
+  method: "get",
+  path: "/users/{ref}/issues",
+  summary: "Cards this account opened or is assigned, across projects",
+  description:
+    "Scoped to the projects **the caller** can read, never the ones the " +
+    "subject can: a card in a project you have no access to is absent even " +
+    "when they opened it. `after` takes only the envelope cursor this " +
+    "endpoint mints, and `limit` counts delivered rows across the whole " +
+    "page rather than per project.",
+  request: {
+    params: z.object({ ref: z.string().min(1).max(64) }),
+    query: UserIssuesQuery,
+  },
+  responses: {
+    200: {
+      description: "One page of cards, newest activity first",
+      content: { "application/json": { schema: UserIssuesPage } },
+    },
+  },
+});
+
+const userProjectsRoute = createRoute({
+  method: "get",
+  path: "/users/{ref}/projects",
+  summary: "Projects this account is a member of",
+  description:
+    "Intersected with the projects **the caller** can read. Membership " +
+    "rows only, so an instance admin — admin everywhere without holding a " +
+    "row — lists nothing here. Unpaginated: the count is bounded by the " +
+    "caller's own project count.",
+  request: {
+    params: z.object({ ref: z.string().min(1).max(64) }),
+  },
+  responses: {
+    200: {
+      description: "The subject's memberships, most privileged first",
+      content: { "application/json": { schema: UserProjects } },
     },
   },
 });
@@ -43,6 +95,31 @@ export function userRoutes() {
       await getPublicUser(c.get("appCtx"), user, c.req.valid("param").ref),
       200,
     );
+  });
+
+  app.openapi(userIssuesRoute, async (c) => {
+    const ctx = c.get("appCtx");
+    const viewer = c.get("user");
+    const subject = await resolveVisibleUser(
+      ctx,
+      viewer,
+      c.req.valid("param").ref,
+    );
+    return c.json(
+      await listUserIssues(ctx, viewer, subject, c.req.valid("query")),
+      200,
+    );
+  });
+
+  app.openapi(userProjectsRoute, async (c) => {
+    const ctx = c.get("appCtx");
+    const viewer = c.get("user");
+    const subject = await resolveVisibleUser(
+      ctx,
+      viewer,
+      c.req.valid("param").ref,
+    );
+    return c.json(await listUserProjects(ctx, viewer, subject), 200);
   });
 
   app.openapi(avatarRoute, async (c) => {

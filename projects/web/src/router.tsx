@@ -7,11 +7,13 @@ import {
   lazyRouteComponent,
   Navigate,
   Outlet,
+  useNavigate,
 } from "@tanstack/react-router";
 import { useState } from "react";
 import { issueSearchSchema, newIssueSearchSchema } from "@/api/issues.ts";
 import { meQuery } from "@/api/queries.ts";
 import { searchPageSchema } from "@/api/search.ts";
+import { userSearchSchema } from "@/api/users.ts";
 import { ConnectionBanner } from "@/components/connection-banner.tsx";
 import {
   PagePending,
@@ -348,14 +350,37 @@ const userRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/users/$ref",
   component: UserPage,
+  validateSearch: userSearchSchema,
 });
 
 function UserPage() {
   const { ref } = userRoute.useParams();
-  return /^\d{1,15}$/.test(ref) ? (
-    <UserRedirectPage ref={ref} />
-  ) : (
-    <UserProfilePage ref={ref} />
+  const { role = "any", state = "open" } = userRoute.useSearch();
+  const navigate = useNavigate();
+  if (/^\d{1,15}$/.test(ref)) return <UserRedirectPage ref={ref} />;
+  return (
+    <UserProfilePage
+      ref={ref}
+      role={role}
+      state={state}
+      // Filter controls rewriting their own page's search params: the case
+      // AGENTS.md leaves to navigate() rather than requiring a link.
+      onFilters={(next) =>
+        void navigate({
+          to: "/users/$ref",
+          params: { ref },
+          // Through the same schema the route validates with: it drops
+          // whichever value still sits at its default, so the URL carries
+          // only what the reader actually changed. validateSearch does not
+          // run on a programmatic navigate, so stripping has to happen here.
+          search: userSearchSchema({
+            role: next.role ?? role,
+            state: next.state ?? state,
+          }),
+          replace: true,
+        })
+      }
+    />
   );
 }
 

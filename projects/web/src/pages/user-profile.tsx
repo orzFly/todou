@@ -1,19 +1,33 @@
 import { useQuery } from "@tanstack/react-query";
 import { Navigate } from "@tanstack/react-router";
+import type { UserIssueRole, UserIssueState } from "@todou/shared";
 import { CalendarIcon } from "lucide-react";
 import { userQuery } from "@/api/users.ts";
 import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
+import { UserIssuesSection } from "@/components/user/user-issues-section.tsx";
+import { UserProjectsSection } from "@/components/user/user-projects-section.tsx";
 
 /**
- * The user page (T-373). It answers one question — "who is this" — and
- * nothing else: their cards and projects are T-374's business.
+ * The user page: who this is (T-373), then the cards they are involved in
+ * and the projects they hold a seat in (T-374). Both of those sections show
+ * only what the *reader* may see, never what the subject may.
  *
  * Reached by login (`/users/alice`) and, until the router replaces the
  * address, by id (`/users/12` → replace to `/users/alice`), which is the
  * form stored text links on.
  */
-export function UserProfilePage({ ref }: { ref: string }) {
+export function UserProfilePage({
+  ref,
+  role = "any",
+  state = "open",
+  onFilters = () => undefined,
+}: {
+  ref: string;
+  role?: UserIssueRole;
+  state?: UserIssueState;
+  onFilters?: (next: { role?: UserIssueRole; state?: UserIssueState }) => void;
+}) {
   const user = useQuery(userQuery(ref));
 
   if (user.isPending) {
@@ -44,32 +58,46 @@ export function UserProfilePage({ ref }: { ref: string }) {
 
   const me = user.data;
   return (
-    <div className="max-w-lg space-y-6">
-      <div className="flex items-center gap-4">
-        <UserAvatar
-          user={me}
-          badge
-          className="size-16 text-[20px] [&_svg]:size-4"
-        />
-        <div className="min-w-0">
-          <h1 className="truncate text-xl font-semibold">
-            {displayNameOf(me)}
-          </h1>
-          <p className="text-muted-foreground">@{me.login}</p>
+    <div className="space-y-8">
+      <div className="max-w-lg space-y-6">
+        <div className="flex items-center gap-4">
+          <UserAvatar
+            user={me}
+            badge
+            className="size-16 text-[20px] [&_svg]:size-4"
+          />
+          <div className="min-w-0">
+            <h1 className="truncate text-xl font-semibold">
+              {displayNameOf(me)}
+            </h1>
+            <p className="text-muted-foreground">@{me.login}</p>
+          </div>
+        </div>
+
+        <div className="space-y-2 text-sm">
+          {me.kind === "machine" && (
+            <p className="text-muted-foreground">
+              agent{me.owner ? ` · belongs to @${me.owner.login}` : ""}
+            </p>
+          )}
+          <p className="flex items-center gap-1.5 text-muted-foreground">
+            <CalendarIcon aria-hidden className="size-4" />
+            joined {new Date(me.created_at).toLocaleDateString()}
+          </p>
         </div>
       </div>
 
-      <div className="space-y-2 text-sm">
-        {me.kind === "machine" && (
-          <p className="text-muted-foreground">
-            agent{me.owner ? ` · belongs to @${me.owner.login}` : ""}
-          </p>
-        )}
-        <p className="flex items-center gap-1.5 text-muted-foreground">
-          <CalendarIcon aria-hidden className="size-4" />
-          joined {new Date(me.created_at).toLocaleDateString()}
-        </p>
-      </div>
+      {/* Keyed on the login: arriving by id renders this page once against
+          the id before the redirect lands, and a stale section would
+          otherwise keep querying the old ref. */}
+      <UserIssuesSection
+        key={me.login}
+        login={me.login}
+        role={role}
+        state={state}
+        onFilters={onFilters}
+      />
+      <UserProjectsSection login={me.login} />
     </div>
   );
 }

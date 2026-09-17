@@ -1,10 +1,13 @@
-import type { Me, PublicUser, UserRef } from "@todou/shared";
+import type { Me, PublicUser, UserProjects, UserRef } from "@todou/shared";
+import { ROLE_RANK } from "@todou/shared";
 import { and, eq, inArray } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
-import { projectMembers, users } from "../db/system-schema.ts";
+import { projectMembers, projects, users } from "../db/system-schema.ts";
 import { NotFoundError } from "../errors.ts";
+import { accessibleProjectRows } from "./access.ts";
+import { toProjectBrief } from "./projects.ts";
 
 type OwnerRef = { id: number; login: string } | null;
 
@@ -46,18 +49,21 @@ export async function ownerRefOf(db: Db, row: UserRow): Promise<OwnerRef> {
 }
 
 /**
- * One account's public identity, by id or by login (T-373).
+ * The account `{ref}` names, by id when all digits and by login otherwise
+ * (T-373), or 404 — both for an account that does not exist and for one the
+ * caller may not see, so the ref cannot be used to probe whether a login is
+ * real.
  *
  * Visibility is "shares at least one project with the caller", plus the
- * caller themself and instance admins. Someone who fails that and someone
- * who never existed answer identically — 404, same wording — so the
- * endpoint cannot be used to probe whether a login is real.
+ * caller themself and instance admins. Every `/users/{ref}/*` route resolves
+ * through here, so a subject the reader cannot see never reaches a handler
+ * that would go on to list something about them.
  */
-export async function getPublicUser(
+export async function resolveVisibleUser(
   ctx: AppContext,
   actor: UserRow,
   ref: string,
-): Promise<PublicUser> {
+): Promise<UserRow> {
   const system = ctx.router.system();
   const numeric = /^\d{1,15}$/.test(ref);
   const rows = await system
@@ -93,10 +99,75 @@ export async function getPublicUser(
     // not be usable to probe whether a login is real.
     if (shared.length === 0) throw new NotFoundError("user not found");
   }
-  const owner = await ownerRefOf(system, row);
+  return row;
+}
+
+/** One account's public identity, by id or by login (T-373). */
+export async function getPublicUser(
+  ctx: AppContext,
+  actor: UserRow,
+  ref: string,
+): Promise<PublicUser> {
+  const row = await resolveVisibleUser(ctx, actor, ref);
+  const owner = await ownerRefOf(ctx.router.system(), row);
   return {
     ...toUserRef(row, owner),
     created_at: row.createdAt.toISOString(),
+  };
+}
+
+/**
+ * The projects the subject holds a seat in, narrowed to the ones the
+ * **caller** can read (T-374). The subject's own readable set never enters
+ * this, so the page cannot report that they work somewhere the caller has
+ * no access to.
+ *
+ * Membership rows only. An instance admin is admin everywhere without
+ * holding a row (`projectRoleOf`'s rule) and so reads as a member of
+ * nothing here: this answers "where does this person hold a seat", and
+ * widening it to every project on the deployment would bury the handful
+ * they actually work in.
+ */
+export async function listUserProjects(
+  ctx: AppContext,
+  viewer: UserRow,
+  subject: UserRow,
+): Promise<UserProjects> {
+  const readable = await accessibleProjectRows(ctx, viewer);
+  if (readable.length === 0) return { items: [] };
+  const rows = await ctx.router
+    .system()
+    .select({
+      role: projectMembers.role,
+      createdAt: projectMembers.createdAt,
+      project: projects,
+    })
+    .from(projectMembers)
+    .innerJoin(projects, eq(projects.id, projectMembers.projectId))
+    .where(
+      and(
+        eq(projectMembers.userId, subject.id),
+        inArray(
+          projectMembers.projectId,
+          readable.map((p) => p.id),
+        ),
+      ),
+    );
+  return {
+    items: rows
+      .map((r) => ({
+        project: toProjectBrief(r.project),
+        role: r.role,
+        created_at: r.createdAt.toISOString(),
+      }))
+      // Role rank descending, then slug — the order `listAgentMemberships`
+      // produces, so the codebase keeps one answer for how a membership
+      // list is sorted.
+      .sort(
+        (a, b) =>
+          ROLE_RANK[b.role] - ROLE_RANK[a.role] ||
+          a.project.slug.localeCompare(b.project.slug),
+      ),
   };
 }
 
