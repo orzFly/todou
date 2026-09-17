@@ -126,6 +126,33 @@ describe("the metadata sidebar while /metadata is in flight (T-365)", () => {
       expect(screen.getByTestId("metadata-open").textContent).toContain("ci"),
     );
   });
+
+  it("offers a writer no way in until the read has landed", async () => {
+    const metadata = deferred<{ entries: IssueMetadataEntry[] }>();
+    vi.spyOn(api, "getIssueMetadata").mockReturnValue(metadata.promise);
+    const client = testQueryClient();
+    client.setQueryData(projectQuery(SLUG).queryKey, project("writer"));
+    renderWithProviders(
+      <MetadataSection slug={SLUG} issueNumber={NUMBER} />,
+      client,
+    );
+
+    // Writing past an unsettled read is as blind as writing past a failed
+    // one. The role matters: a reader has no entry either way, so asserting
+    // this on one says nothing about the in-flight half of the gate.
+    const section = await screen.findByTestId("metadata-sidebar");
+    expect(within(section).getByTestId("metadata-loading")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Edit metadata" })).toBeNull();
+
+    // The same writer gets the button the moment the read lands, which is
+    // what proves the absence above was the read and not the role.
+    await act(async () => metadata.resolve({ entries: [] }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Edit metadata" }),
+      ).toBeTruthy(),
+    );
+  });
 });
 
 describe("the metadata sidebar when /metadata fails (T-376)", () => {
