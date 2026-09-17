@@ -122,13 +122,28 @@ type RegisteredTool = {
   ) => Promise<{ content: Array<{ type: string; text: string }> }>;
 };
 
-/** A command `pi.registerCommand` takes, as far as this defines one. */
+/**
+ * One argument completion, as omp reads one. `value` is what replaces the
+ * argument text, and omp reads it with no guard on a keystroke path that is
+ * outside every try/catch — an item without it kills the session (T-396).
+ */
+type CompletionItem = {
+  value: string;
+  label: string;
+  description?: string;
+};
+
+/**
+ * A command `pi.registerCommand` takes. The callback is `handler`, taking the
+ * text after the command name as one string and the context second; measured
+ * against omp v18.1.21, not inferred — `registerCommand` stores the object
+ * without looking at it, so a wrong shape is silent until a user types the
+ * command (T-396).
+ */
 type RegisteredCommand = {
   description: string;
-  run: (ctx: PiContext, args: string[]) => void | Promise<void>;
-  getArgumentCompletions?: (
-    input: string,
-  ) => Array<{ label: string; description: string }>;
+  handler: (args: string, ctx: PiContext) => void | Promise<void>;
+  getArgumentCompletions?: (input: string) => CompletionItem[];
 };
 
 /**
@@ -941,7 +956,15 @@ export default function todou(pi: Pi): void {
 
   pi.registerCommand("todou", {
     description: "what todou is following in this session, and how to stop it",
-    async run(ctx, args) {
+    async handler(argsText, ctx) {
+      // omp hands over the text after the command name as one string, so the
+      // split is ours to do. Whitespace, not `" "`: `/todou   stop   w1`
+      // arrives verbatim, and single-space splitting would put empty strings
+      // where the arguments are. No fallback for a non-string `argsText`
+      // either — `String(argsText ?? "")` would turn a host that changed
+      // shape again into a silent walk down the list branch, where throwing
+      // gets the line omp prints for a command that failed.
+      const args = argsText.trim().split(/\s+/).filter(Boolean);
       try {
         if (args[0] === "stop") {
           const live = [...watches.values()].filter(
@@ -1012,8 +1035,18 @@ export default function todou(pi: Pi): void {
       }
     },
     getArgumentCompletions(input) {
+      // The trailing space is omp's own convention and load-bearing: `value`
+      // replaces the whole argument text, so `"stop "` leaves the caret past
+      // it ready for an id, where `"stop"` would glue the next character on
+      // as `/todou stopw1`.
       return "stop".startsWith(input)
-        ? [{ label: "stop", description: "stop every watch, or one by id" }]
+        ? [
+            {
+              value: "stop ",
+              label: "stop",
+              description: "stop every watch, or one by id",
+            },
+          ]
         : [];
     },
   });

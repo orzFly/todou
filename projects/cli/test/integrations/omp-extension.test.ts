@@ -108,6 +108,8 @@ type Booted = {
   /** Where the extension keeps its own socket, for a receipt address. */
   dir: string;
   token: string;
+  /** Every `registerCommand` the extension made, name and object. */
+  commands: Array<[string, Record<string, unknown>]>;
 };
 
 /**
@@ -129,6 +131,7 @@ function boot(name: string): Booted {
 
   const sent: Array<{ content: string; deliverAs?: string }> = [];
   const handlers: Record<string, Handler[]> = {};
+  const commands: Array<[string, Record<string, unknown>]> = [];
   const pi = {
     on(event: string, handler: Handler) {
       handlers[event] = [...(handlers[event] ?? []), handler];
@@ -140,9 +143,14 @@ function boot(name: string): Booted {
       sent.push({ ...message, deliverAs: options?.deliverAs });
     },
     // The suites above never drive the tool or the command; stubbed so the
-    // extension's registrations cannot take the boot down.
+    // extension's registrations cannot take the boot down. `registerCommand`
+    // records rather than discards so that the two fake hosts in this file
+    // cannot answer differently about the shape omp is handed — an empty
+    // stub here is what let the command's real shape go unexamined.
     registerTool() {},
-    registerCommand() {},
+    registerCommand(commandName: string, command: Record<string, unknown>) {
+      commands.push([commandName, command]);
+    },
     arktype(definition: unknown) {
       return definition;
     },
@@ -166,7 +174,7 @@ function boot(name: string): Booted {
       handlers.session_shutdown?.[0]?.({}, {});
     },
   });
-  return { sent, socket, token, dir: join(runtime, "todou-omp") };
+  return { sent, socket, token, commands, dir: join(runtime, "todou-omp") };
 }
 
 /**
@@ -508,14 +516,27 @@ describe("the todou_watch tool (T-357)", () => {
    * extension registers. Typed shallowly on purpose — the shapes here are
    * what omp was measured to hand over, and the extension must tolerate
    * them exactly as written.
+   *
+   * Measured, not inferred, and re-runnable: a probe extension registering
+   * both `run` and `handler` under two command names, driven by
+   * `omp -p --no-extensions --no-session -e <probe> '/probe-handler stop w1'`.
+   * omp calls `handler` only, hands the whole text after the command name as
+   * one string, and passes the context second (T-396 §2.1). The earlier shape
+   * here was a guess, and a fake host built from a guess agrees with it
+   * forever — which is why 31 green cases shipped a command that had never
+   * worked.
    */
   type WatchBooted = {
     sent: Booted["sent"];
     /** Runs the registered tool and returns its text. */
     run: (args: unknown, ctx?: unknown) => Promise<string>;
-    /** Runs /todou with arguments. */
-    runCommand: (args: string[], ctx?: unknown) => Promise<void>;
-    completions: (input: string) => Array<{ label: string }>;
+    /** Runs /todou with the text after the command name. */
+    runCommand: (args: string, ctx?: unknown) => Promise<void>;
+    completions: (
+      input: string,
+    ) => Array<{ value: string; label: string; description: string }>;
+    /** The registered command object itself, for cases about its shape. */
+    command: Record<string, unknown>;
   };
 
   function bootWatch(name: string, sessionCtx: unknown = {}): WatchBooted {
@@ -579,15 +600,18 @@ describe("the todou_watch tool (T-357)", () => {
       const result = await execute("call", args, undefined, undefined, ctx);
       return result.content[0]?.text ?? "";
     };
-    const runCommand = async (args: string[], ctx: unknown = {}) => {
-      const runIt = command.run as (c: unknown, a: string[]) => Promise<void>;
-      await runIt(ctx, args);
+    const runCommand = async (argsText: string, ctx: unknown = {}) => {
+      const handle = command.handler as (
+        a: string,
+        c: unknown,
+      ) => Promise<void>;
+      await handle(argsText, ctx);
     };
     const completions = (input: string) =>
       (
         command.getArgumentCompletions as (
           i: string,
-        ) => Array<{ label: string; description: string }>
+        ) => Array<{ value: string; label: string; description: string }>
       )(input);
 
     let stopped = false;
@@ -598,7 +622,7 @@ describe("the todou_watch tool (T-357)", () => {
         handlers.session_shutdown?.[0]?.({}, {});
       },
     });
-    return { sent, run, runCommand, completions };
+    return { sent, run, runCommand, completions, command };
   }
 
   /**
@@ -778,7 +802,7 @@ describe("the todou_watch tool (T-357)", () => {
     await run({ action: "start", issue: "T-16" });
     await run({ action: "start", issue: "T-18" });
     const notify: string[] = [];
-    await runCommand(["stop"], {
+    await runCommand("stop", {
       hasUI: false,
       ui: { notify: (t: string) => notify.push(t) },
     });
@@ -818,7 +842,7 @@ describe("the todou_watch tool (T-357)", () => {
     await run({ action: "start", issue: "T-18" });
     await run({ action: "start", issue: "T-20" });
     await run({ action: "start", issue: "T-22" });
-    await runCommand(["stop"], { hasUI: false });
+    await runCommand("stop", { hasUI: false });
     await gone(pids);
     await sentCount({ sent }, 1);
     // The duplicate is a late arrival rather than a missing one, and
@@ -855,11 +879,11 @@ describe("the todou_watch tool (T-357)", () => {
     const { run, runCommand, sent } = bootWatch("stagger");
     await run({ action: "start", issue: "T-16" });
     await run({ action: "start", issue: "T-18" });
-    await runCommand(["stop"], { hasUI: false });
+    await runCommand("stop", { hasUI: false });
     // 200ms: the fast child is dead, the slow one is inside its 0.3s trap.
     await new Promise((resolve) => setTimeout(resolve, 200));
     // The second stop, in the reviewer's window.
-    await runCommand(["stop"], { hasUI: false });
+    await runCommand("stop", { hasUI: false });
     await gone(pids);
     // Both cursors, one message: the guard kept w2's group at the original
     // pair, so w1's exit had a settled set to report.
@@ -881,7 +905,7 @@ describe("the todou_watch tool (T-357)", () => {
     const { run, runCommand, sent } = bootWatch("command-one");
     await run({ action: "start", issue: "T-16" });
     const notify: string[] = [];
-    await runCommand(["stop", "w1"], {
+    await runCommand("stop w1", {
       hasUI: false,
       ui: { notify: (t: string) => notify.push(t) },
     });
@@ -965,8 +989,72 @@ describe("the todou_watch tool (T-357)", () => {
   it("completes /todou's stop argument", () => {
     const { completions } = bootWatch("complete");
     expect(completions("st")).toEqual([
-      { label: "stop", description: "stop every watch, or one by id" },
+      {
+        value: "stop ",
+        label: "stop",
+        description: "stop every watch, or one by id",
+      },
     ]);
     expect(completions("x")).toEqual([]);
+  });
+
+  /**
+   * omp dispatches `n.handler(args, ctx)` and never looks at the object it
+   * was handed until then, so a callback under any other name is a command
+   * that registers, lists, completes — and does nothing when it is typed.
+   * That was T-396's first defect, live from the day /todou shipped.
+   */
+  it("registers its callback as handler, the name omp dispatches", () => {
+    const { command } = bootWatch("callback-name");
+    expect(typeof command.handler).toBe("function");
+    expect(command.run).toBeUndefined();
+  });
+
+  /**
+   * Nothing is following here, so each branch answers with a line only it
+   * writes: the list branch, the stop-everything branch, and the unknown-id
+   * branch. That is what makes the last two comparable.
+   */
+  it("splits the argument text on runs of whitespace", async () => {
+    const { runCommand } = bootWatch("arg-split");
+    const notify: string[] = [];
+    const ctx = { hasUI: false, ui: { notify: (t: string) => notify.push(t) } };
+    await runCommand("", ctx);
+    await runCommand("stop", ctx);
+    await runCommand("stop w1", ctx);
+    await runCommand("  stop   w1  ", ctx);
+    expect(notify[0]).toContain(
+      "todou is not following anything in this session",
+    );
+    expect(notify[1]).toBe("nothing to stop.");
+    expect(notify[2]).toBe('no watch called "w1". /todou lists them.');
+    // The padded spelling is the one that separates a whitespace split from
+    // `argsText.split(" ")`, which puts empty strings where the arguments
+    // are and walks the list branch instead of stopping anything.
+    expect(notify[3]).toBe(notify[2]);
+  });
+
+  /**
+   * The keystroke path in omp reads `item.value` with no guard and outside
+   * every try/catch, so an item without it takes the whole session down —
+   * T-396's second defect, and the only value we hand omp that can.
+   */
+  it("hands omp completion items it can read", () => {
+    const { completions } = bootWatch("completion-shape");
+    const items = ["", "s", "st", "stop"].flatMap((input) =>
+      completions(input),
+    );
+    // A completer that returned nothing would satisfy every assertion below
+    // without ever running one of them.
+    expect(items.length).toBe(4);
+    for (const item of items) {
+      expect(typeof item.value).toBe("string");
+      expect(item.value.length).toBeGreaterThan(0);
+      // `value` replaces the argument text wholesale, so its trailing space
+      // is what leaves the caret ready for an id instead of gluing the next
+      // character on. Label and value differ by exactly that space.
+      expect(item.value.trimEnd()).toBe(item.label);
+      expect(item.value).not.toBe(item.label);
+    }
   });
 });

@@ -20,6 +20,11 @@
 # Check 8 reads `xd://todou_watch` inside the session, which needs an omp new
 # enough to mount extension tools as devices (v18.1.21 was measured).
 #
+# Check 9 is the exception: `/todou` never reaches a model, so it costs nothing
+# and never skips. Run it whenever you touch the extension — it is the only
+# check here that can contradict what we believe about omp's own shape, and the
+# two defects it pins shipped past 31 green unit cases that could not.
+#
 # Everything lands under a scratch HOME and a scratch XDG_RUNTIME_DIR, so a run
 # cannot touch the extension you actually have installed.
 set -uo pipefail
@@ -32,7 +37,7 @@ while [ $# -gt 0 ]; do
     --only) ONLY="${2-}"; shift $(($# > 1 ? 2 : 1)) ;;
     --only=*) ONLY="${1#*=}"; shift ;;
     -h | --help)
-      sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) echo "usage: smoke-omp-integration.sh [--only <check>]" >&2; exit 2 ;;
@@ -602,6 +607,73 @@ if wanted 8; then
       ok "xd://todou_watch answers with the tool's documentation"
     else
       bad "the device did not answer; see $WORK/tool.omp.log"
+    fi
+  fi
+fi
+
+# 9 — `/todou` itself, which no model is involved in: omp matches a slash
+#     command inside `prompt()` and returns before a turn begins. Both defects
+#     T-396 fixed were invisible to the 31 unit cases, because the fake `pi`
+#     they drive was written from the same guess the extension was — only omp
+#     can contradict that guess, and here it costs three seconds and no tokens.
+#
+#     Two independent failures, so two assertions. The command is dispatched as
+#     `handler(args, ctx)`; a callback under any other name leaves omp printing
+#     one error line and doing nothing. Separately, omp reads `item.value` off
+#     the selected completion on every keystroke, unguarded and outside every
+#     try/catch; an item without it takes the whole session down.
+if wanted 9; then
+  step "9. /todou runs, and its completion does not kill the session"
+  if ! command -v script >/dev/null; then
+    skip "needs script(1) to give omp a pty"
+  else
+    MODEL_FLAG=""
+    [ -n "${TODOU_SMOKE_OMP_MODEL:-}" ] &&
+      MODEL_FLAG="--model '$TODOU_SMOKE_OMP_MODEL'"
+    {
+      sleep 12
+      printf '/todou\r'
+      sleep 4
+      # No carriage return after this one, on purpose: the completion popup
+      # has to be open with our item selected, and it is the *next* keystroke
+      # that carries that item into omp's input handler. Submitting here
+      # closes the popup, and the second assertion could never fail again.
+      printf '/todou '
+      sleep 3
+      printf 's'
+      sleep 3
+      printf '\r'
+      sleep 3
+      printf '/exit\r'
+      sleep 3
+    } | omp_env script -qc "omp --cwd '$PROJECT' --no-title --no-session $MODEL_FLAG" /dev/null \
+      > "$WORK/command.omp.log" 2>&1
+
+    # Both assertions carry a positive half, and it is the half that matters:
+    # an extension that failed to load registers no `/todou` at all, and then
+    # every negative half below passes on a session where nothing was tested.
+    # In the TUI the error reads `Extension "command:todou" error: …` (print
+    # mode spells it `Extension error (command:todou): …`), and the message
+    # wraps right after it, so the prefix is the whole grep target.
+    if grep -q "todou is not following anything in this session" \
+      "$WORK/command.omp.log"; then
+      if grep -q 'Extension "command:todou" error' "$WORK/command.omp.log"; then
+        bad "/todou answered but omp still reported the command as failed"
+      else
+        ok "/todou ran and answered from its handler"
+      fi
+    else
+      bad "/todou printed nothing; see $WORK/command.omp.log"
+    fi
+
+    if grep -q "stop every watch, or one by id" "$WORK/command.omp.log"; then
+      if grep -q "Uncaught Exception" "$WORK/command.omp.log"; then
+        bad "the completion popup opened and the keystroke after it killed omp"
+      else
+        ok "the completion item survived a keystroke on top of it"
+      fi
+    else
+      bad "the completion popup never offered our item; see $WORK/command.omp.log"
     fi
   fi
 fi
