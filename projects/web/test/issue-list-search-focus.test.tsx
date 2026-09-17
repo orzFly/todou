@@ -493,6 +493,25 @@ describe("the first stage of the search (T-381)", () => {
     expect(screen.queryByText("Searching…")).toBeNull();
     expect(screen.getByText(/No issues match/)).toBeTruthy();
   });
+
+  it("gives the pager back once the answer it pages is the one on screen", async () => {
+    const server = gatedServer({ nextCursor: "c1" });
+    mountList(server, "/projects/alpha?group=none");
+    await screen.findByText("focus falls out of the box");
+    expect(screen.getByText("Load more")).toBeTruthy();
+
+    vi.useFakeTimers();
+    await type(searchBox(), "foc");
+    await advance(400);
+
+    // Still paging the previous word's query, so it may not be offered.
+    expect(screen.queryByText("Load more")).toBeNull();
+
+    server.open();
+    await advance(50);
+
+    expect(screen.getByText("Load more")).toBeTruthy();
+  });
 });
 
 describe("the search box and the URL (T-381)", () => {
