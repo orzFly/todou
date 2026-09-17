@@ -179,13 +179,19 @@ export function IssueLink({
   const hovered =
     commentId !== undefined && canHover ? (comment.data ?? null) : null;
   // Everything else gets the card's own preview. Deliberately not waiting for
-  // the lookup: every term here is known at first render, so the anchor is one
-  // DOM node from then on. Gating on `item` instead would swap the whole
-  // element the moment the batch lands — React reconciles by type, and a bare
-  // <Link> and a wrapped one are two of them — which collapses a selection
-  // spanning it (T-60) for a wrapper the reader cannot see. What waits for the
-  // lookup is the card's contents, which IssueHoverCard withholds until then;
-  // a ref that resolves to nothing has returned plain text above.
+  // the lookup: adding `item !== undefined` here would swap the whole element
+  // the moment the batch lands — React reconciles by type, and a bare <Link>
+  // and a wrapped one are two of them — so EVERY reference would rebuild its
+  // anchor and collapse a selection spanning it (T-60), for a wrapper the
+  // reader cannot see. What waits for the lookup is the card's contents, which
+  // IssueHoverCard withholds until then; a ref that resolves to nothing has
+  // returned plain text above.
+  //
+  // This narrows that rebuild rather than removing it. `commentId` and
+  // `canHover` are fixed at first render, but `onPageCard` reads the resolved
+  // address, so it still flips when the lookup reveals a move onto or off the
+  // page card — and that reference's anchor is rebuilt. Moved references with
+  // one end on the card being read are the only ones left.
   const previewable = commentId === undefined && canHover && !onPageCard;
   const link = (
     <Link
