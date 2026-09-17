@@ -60,6 +60,8 @@ const listItem = (
   unread: true,
   unread_comments: 2,
   muted: null,
+  blocked_by: [],
+  blocks: [],
   moves: [],
   ...overrides,
 });
@@ -228,6 +230,8 @@ describe("clearInboxUnread", () => {
       unread: false,
       unread_comments: 0,
       muted: null,
+      blocked_by: [],
+      blocks: [],
       open_questions: 3,
     });
     expect(patched.items[1]).toMatchObject({
@@ -244,6 +248,8 @@ describe("clearInboxUnread", () => {
       unread: true,
       unread_comments: 2,
       muted: null,
+      blocked_by: [],
+      blocks: [],
     });
   });
 

@@ -5,7 +5,12 @@ import type { AppEnv } from "../auth/middleware.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
 import { comments, issueEvents, issues } from "../db/project-schema.ts";
-import { issueAddresses, movedIds, projects } from "../db/system-schema.ts";
+import {
+  issueAddresses,
+  issueBlocks,
+  movedIds,
+  projects,
+} from "../db/system-schema.ts";
 import {
   AttachmentMovedError,
   CommentMovedError,
@@ -235,8 +240,46 @@ export async function registerMove(
       },
     });
 
+  // The card's block edges move with it, in this same handle — which is the
+  // move's own transaction where there is one (T-377). Replaying the step
+  // rewrites nothing the second time: no edge is left at the old address.
+  await rewriteBlockAddresses(system, move.from, move.to);
+
   await assertLineageFlat(system, lineage, move.to);
   return lineage;
+}
+
+/**
+ * The block edges at an address follow the card away from it (T-377) — the
+ * same rule the address book and the id aliases follow, for the same reason:
+ * every link to this card has to keep meaning this card.
+ *
+ * Here rather than in blocks.ts so the dependency runs one way: relocation
+ * owns "an address moved", and blocks.ts asks it where a card is now.
+ */
+export async function rewriteBlockAddresses(
+  system: Db,
+  from: Address,
+  to: Address,
+): Promise<void> {
+  await system
+    .update(issueBlocks)
+    .set({ blockerProjectId: to.projectId, blockerNumber: to.number })
+    .where(
+      and(
+        eq(issueBlocks.blockerProjectId, from.projectId),
+        eq(issueBlocks.blockerNumber, from.number),
+      ),
+    );
+  await system
+    .update(issueBlocks)
+    .set({ blockedProjectId: to.projectId, blockedNumber: to.number })
+    .where(
+      and(
+        eq(issueBlocks.blockedProjectId, from.projectId),
+        eq(issueBlocks.blockedNumber, from.number),
+      ),
+    );
 }
 
 /**

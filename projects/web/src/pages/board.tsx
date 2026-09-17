@@ -19,6 +19,7 @@ import { useRefPlacement } from "@/api/prefs.ts";
 import { statusesQuery } from "@/api/queries.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import {
+  BlockedBadge,
   QuestionBadge,
   SpecReviewBadge,
 } from "@/components/issue/attention-badge.tsx";
@@ -29,6 +30,7 @@ import { ProjectMuteButton } from "@/components/project-mute-button.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { openBlockCount } from "@/lib/blocks.ts";
 import { cn } from "@/lib/utils";
 
 type CardDragData = {
@@ -292,6 +294,9 @@ export function BoardCardContent({
           )}
           {issue.spec_review_status === "unreviewed" && (
             <SpecReviewBadge version={issue.spec_version} />
+          )}
+          {openBlockCount(issue.blocked_by) > 0 && (
+            <BlockedBadge count={openBlockCount(issue.blocked_by)} />
           )}
           <LabelChips labels={issue.labels} />
           {/* `pr-1.5` equals the distance the bot badge extends past its

@@ -16,6 +16,7 @@ import type {
   AuthMode,
   Autolink,
   AutolinkCreateInput,
+  BlockRef,
   BulkReadInput,
   CliAuthApproveInput,
   CliAuthApproveResult,
@@ -772,6 +773,35 @@ export class TodouClient {
       `/projects/${slug}/issues/${number}/metadata`,
       { json: input },
     );
+  /**
+   * Block edges (T-377). `ref` is any spelling the deployment resolves —
+   * `#31`, `T-31`, `acme#31`, a stored `/projects/7/issues/31` — and each
+   * add answers with the card's whole set in that direction, because
+   * redrawing that section is what the caller does next.
+   */
+  addIssueBlockedBy = (slug: string, number: number, ref: string) =>
+    this.request<{ blocked_by: BlockRef[] }>(
+      "POST",
+      `/projects/${slug}/issues/${number}/blocked-by`,
+      { json: { ref } },
+    );
+  removeIssueBlockedBy = (slug: string, number: number, edgeId: number) =>
+    this.request<void>(
+      "DELETE",
+      `/projects/${slug}/issues/${number}/blocked-by/${edgeId}`,
+    );
+  addIssueBlocks = (slug: string, number: number, ref: string) =>
+    this.request<{ blocks: BlockRef[] }>(
+      "POST",
+      `/projects/${slug}/issues/${number}/blocks`,
+      { json: { ref } },
+    );
+  removeIssueBlocks = (slug: string, number: number, edgeId: number) =>
+    this.request<void>(
+      "DELETE",
+      `/projects/${slug}/issues/${number}/blocks/${edgeId}`,
+    );
+
   markIssueRead = (slug: string, number: number, input: IssueReadInput = {}) =>
     this.request<void>("PUT", `/projects/${slug}/issues/${number}/read`, {
       json: input,

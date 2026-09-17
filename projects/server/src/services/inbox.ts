@@ -79,6 +79,20 @@ export function inboxKeepCheck(input: {
   silenced: MuteReason | null;
   /** The reader was @-mentioned past their threshold (T-373). */
   mentionsYou: boolean;
+  /**
+   * Unread events that are not weak news (T-377). `block_cleared` is the
+   * only member: it says the work may start now, and the reader most likely
+   * to have turned `show_weak_unread` off is exactly the one who wanted it.
+   * Same precedent as T-151 counting a card somebody else opened as the
+   * first unread comment — an event, kept because of what it says.
+   *
+   * Weaker than a mention, and deliberately: this exempts a card from the
+   * `show_weak_unread` filter alone, while a mention outranks the mute as
+   * well. A muted card whose blocker clears stays quiet — the mute is the
+   * reader saying they do not want this card's news, and a clearing is news
+   * about the card; being named is news about them.
+   */
+  strongEvents: number;
 }): { keep: boolean; pendingSpecReview: boolean; openQuestions: number } {
   // Closing an issue retires both pending reasons (T-111), so a closed
   // issue only survives on unread activity of its own — a new foreign
@@ -116,12 +130,62 @@ export function inboxKeepCheck(input: {
     !input.showWeakUnread &&
     input.isUnread &&
     input.unreadComments === 0 &&
+    input.strongEvents === 0 &&
     !pendingSpecReview &&
     openQuestions === 0
   ) {
     return { keep: false, ...result };
   }
   return { keep: true, ...result };
+}
+
+/**
+ * The event types `inboxKeepCheck` treats as strong (T-377). One member, and
+ * the list is here rather than inline so the two callers below and the test
+ * that pins the trimming all read the same set.
+ */
+export const STRONG_EVENT_TYPES = ["block_cleared"] as const;
+
+/**
+ * How many unread strong events each of these cards is carrying, on the same
+ * threshold every other scan in this file uses.
+ *
+ * Always run, whatever `show_weak_unread` says: the trimming below rests on
+ * every surviving reason being discoverable by one of the other scans, and
+ * this is a reason only the event table knows about. `ensureFrontiers` must
+ * have run for these projects, as for every scan joined to the frontier.
+ */
+async function strongEventCounts(
+  db: Db,
+  projectIds: number[],
+  userId: number,
+  onlyIssues?: number[],
+): Promise<Map<number, number>> {
+  const rows = await db
+    .select({ issueId: issueEvents.issueId, n: sql<number>`count(*)` })
+    .from(issueEvents)
+    .leftJoin(
+      issueReads,
+      and(
+        eq(issueReads.issueId, issueEvents.issueId),
+        eq(issueReads.userId, userId),
+      ),
+    )
+    .leftJoin(readFrontiers, frontierJoin(userId, issueEvents.projectId))
+    .where(
+      and(
+        inArray(issueEvents.projectId, projectIds),
+        inArray(issueEvents.type, [...STRONG_EVENT_TYPES]),
+        ne(issueEvents.actorId, userId),
+        gt(issueEvents.createdAt, readFrontiers.frontierAt),
+        sql`${issueEvents.createdAt} > coalesce(${issueReads.lastSeenAt}, ${readFrontiers.frontierAt})`,
+        onlyIssues === undefined
+          ? undefined
+          : inArray(issueEvents.issueId, onlyIssues),
+      ),
+    )
+    .groupBy(issueEvents.issueId);
+  return new Map(rows.map((r) => [r.issueId, Number(r.n)]));
 }
 
 /**
@@ -240,6 +304,7 @@ export async function groupInbox(
       .groupBy(issueEvents.issueId);
 
   const eventCand = includeEventScan ? await eventScan() : [];
+  const strongCand = await strongEventCounts(db, projectIds, userId);
 
   // Closed issues are excluded here and neutralized again at the keep-check
   // below: once an issue is closed its unreviewed spec and unanswered
@@ -296,6 +361,7 @@ export async function groupInbox(
     ...commentCand.map((r) => r.issueId),
     ...issueCand.map((r) => r.issueId),
     ...eventCand.map((r) => r.issueId),
+    ...strongCand.keys(),
     ...pendingRows.map((r) => r.id),
     ...mentionCand.map((r) => r.issueId),
   ]);
@@ -397,6 +463,7 @@ export async function groupInbox(
       showWeakUnread,
       silenced: silenced.get(row.id) ?? null,
       mentionsYou: mentionsYou.has(row.id),
+      strongEvents: strongCand.get(row.id) ?? 0,
     });
     if (!keep) continue;
     kept.push({
@@ -550,6 +617,7 @@ export async function inboxRowState(
     specAuthorId = versionRows[0]?.authorId ?? null;
   }
 
+  const strong = await strongEventCounts(db, [project.id], actor.id, [row.id]);
   const { keep, pendingSpecReview } = inboxKeepCheck({
     isClosed: row.category === "closed",
     isUnread: unread.has(row.id),
@@ -560,6 +628,7 @@ export async function inboxRowState(
     showWeakUnread: prefs.show_weak_unread,
     silenced: silenced.get(row.id) ?? null,
     mentionsYou: mentioned.has(row.id),
+    strongEvents: strong.get(row.id) ?? 0,
   });
   if (!keep) return null;
 

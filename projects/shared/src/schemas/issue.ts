@@ -14,6 +14,43 @@ export const IssueMove = z.object({
 });
 export type IssueMove = z.infer<typeof IssueMove>;
 
+/**
+ * One end of a block edge, as this viewer may see it (T-377).
+ *
+ * A viewer who cannot read the project at the other end keeps the fact and
+ * loses the name: `hidden` goes true and the four naming fields go null. The
+ * precedent is `IssueMove`, not the reference events — being blocked is a
+ * structural fact about *this* card, so hiding the whole edge would show it
+ * as free to work on while it is not.
+ */
+export const BlockRef = z.object({
+  edge_id: Id,
+  project_id: Id.nullable(),
+  project: ProjectSlug.nullable(),
+  number: Id.nullable(),
+  /** Spelled the way that project spells its refs: "T-373" or "#373". */
+  ref: z.string().nullable(),
+  hidden: z.boolean(),
+  /** When the blocker crossed the clear line; null = still blocking. */
+  cleared_at: Timestamp.nullable(),
+  /**
+   * The blocker is in the trash. Still blocking — but it cannot clear itself
+   * while it is in there, which is the part no other field on screen says.
+   */
+  blocker_deleted: z.boolean().default(false),
+});
+export type BlockRef = z.infer<typeof BlockRef>;
+
+/**
+ * Body of the two block POSTs (T-377). One field, and it takes any spelling
+ * the deployment resolves — `#31`, `T-31`, `acme#31`, a stored
+ * `/projects/7/issues/31` — because the caller pastes what it was given.
+ */
+export const BlockCreateInput = z.strictObject({
+  ref: z.string().min(1).max(200),
+});
+export type BlockCreateInput = z.infer<typeof BlockCreateInput>;
+
 export const Issue = z.object({
   id: Id,
   number: Id,
@@ -97,6 +134,17 @@ export const Issue = z.object({
    * keeps between an absent key and null.
    */
   metadata: z.array(IssueMetadataEntry).optional(),
+  /**
+   * The two directions of the same table (T-377): cards this one waits for,
+   * and cards waiting for this one. Both come with every issue read — one
+   * system-db query per page, whatever the page size — and both default to
+   * `[]` so a response from a server predating them still parses.
+   *
+   * Sorted: still blocking before cleared, then by project and number, with
+   * the hidden entries last. A client renders the array as it arrives.
+   */
+  blocked_by: z.array(BlockRef).default([]),
+  blocks: z.array(BlockRef).default([]),
 });
 export type Issue = z.infer<typeof Issue>;
 
@@ -168,6 +216,16 @@ export const IssueListQuery = z.object({
    * with `limit`; omitting it costs nothing and returns nothing.
    */
   metadata: MetadataNamespaceSelector.optional(),
+  /**
+   * True keeps only cards still blocked by an unresolved edge, false only
+   * cards with none (T-377). Deliberately without a default, unlike
+   * `deleted` above: omitting the key means "do not filter on this", and
+   * only `.optional()` can say that.
+   */
+  blocked: z.preprocess(
+    (v) => (typeof v === "string" ? v === "1" || v === "true" : v),
+    z.boolean().optional(),
+  ),
 });
 export type IssueListQuery = z.infer<typeof IssueListQuery>;
 

@@ -109,6 +109,8 @@ describe("commandTable", () => {
       "delete",
       "restore",
       "transfer",
+      "block",
+      "unblock",
       "search",
       "comment",
     ]);

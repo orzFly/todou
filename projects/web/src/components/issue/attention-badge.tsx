@@ -1,6 +1,7 @@
 import {
   AtSignIcon,
   BookOpenTextIcon,
+  CirclePauseIcon,
   MessageCircleQuestionIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -53,6 +54,36 @@ export function QuestionBadge({
       <MessageCircleQuestionIcon className="size-3.5" />
       {count}
     </AttentionBadge>
+  );
+}
+
+/**
+ * "Something else has to happen first" (T-377), worn in the same places as
+ * the two above.
+ *
+ * Deliberately NOT amber: this file's amber means "waiting on you", and a
+ * blocked card is the opposite — it is waiting on somebody else, and nothing
+ * the reader does to it now helps. Same shape, neutral colour, so the row
+ * still scans as one family of pills.
+ */
+export function BlockedBadge({
+  count,
+  className,
+}: {
+  count: number;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border border-border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground",
+        className,
+      )}
+      title={`waiting for ${count} other issue(s)`}
+    >
+      <CirclePauseIcon className="size-3.5" />
+      {count}
+    </span>
   );
 }
 

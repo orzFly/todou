@@ -11,6 +11,8 @@ import {
   BookOpenTextIcon,
   CheckIcon,
   CircleDotIcon,
+  CirclePauseIcon,
+  CirclePlayIcon,
   CircleSlashIcon,
   FileCheck2Icon,
   LinkIcon,
@@ -363,7 +365,78 @@ export function renderEvent(
         text: `moved this out to ${slug}#${number}`,
       };
     }
+    case "block_added":
+    case "block_removed": {
+      // `role` is which end of the edge this card is, so one event type
+      // serves both timelines (T-377).
+      const blocked = payload.role !== "blocker";
+      const added = event.event_type === "block_added";
+      const verb = added
+        ? blocked
+          ? "marked this blocked by "
+          : "marked this a blocker of "
+        : blocked
+          ? "removed the block by "
+          : "removed this card's block on ";
+      const other = blockEnd(
+        payload.other_project_id,
+        payload.other_number,
+        ctx,
+      );
+      return {
+        node: (
+          <>
+            {verb}
+            {other.node}
+          </>
+        ),
+        text: `${verb}${other.text}`,
+      };
+    }
+    case "block_cleared":
+    case "block_reblocked": {
+      const verb =
+        event.event_type === "block_cleared"
+          ? "cleared the block by "
+          : "re-applied the block by ";
+      const other = blockEnd(
+        payload.blocker_project_id,
+        payload.blocker_number,
+        ctx,
+      );
+      return {
+        node: (
+          <>
+            {verb}
+            {other.node}
+          </>
+        ),
+        text: `${verb}${other.text}`,
+      };
+    }
   }
+}
+
+/**
+ * The card at the other end of a block edge. Both fields go null together
+ * when the reader may not read that project, and what is left — that
+ * something is there — is the part the card's own reader is entitled to.
+ */
+function blockEnd(
+  projectId: unknown,
+  number: unknown,
+  ctx: EventRenderContext,
+): { node: ReactNode; text: string } {
+  const slug =
+    typeof projectId === "number" ? ctx.slugOfProject?.(projectId) : undefined;
+  if (slug === undefined || typeof number !== "number") {
+    const hidden = "a card you cannot see";
+    return { node: hidden, text: hidden };
+  }
+  return {
+    node: <IssueLink slug={slug} number={number} pageSlug={ctx.slug} />,
+    text: `${slug}#${number}`,
+  };
 }
 
 /**
@@ -459,6 +532,10 @@ export const ICONS: Record<TimelineEvent["event_type"], ReactNode> = {
   restored: <ArchiveRestoreIcon className="size-3.5" />,
   moved_out: <LogOutIcon className="size-3.5" />,
   moved_in: <LogInIcon className="size-3.5" />,
+  block_added: <CirclePauseIcon className="size-3.5" />,
+  block_removed: <CirclePauseIcon className="size-3.5" />,
+  block_cleared: <CirclePlayIcon className="size-3.5 text-green-600" />,
+  block_reblocked: <CirclePauseIcon className="size-3.5" />,
 };
 
 /**

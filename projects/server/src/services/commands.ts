@@ -21,6 +21,7 @@ import {
 import { projectMembers } from "../db/system-schema.ts";
 import { NotFoundError, ValidationFailedError } from "../errors.ts";
 import { requireCapability, routeInfoOf } from "./access.ts";
+import { announceBlockChanges, evaluateBlockerStatus } from "./blocks.ts";
 import {
   type CommentRow,
   type HideInTxResult,
@@ -276,6 +277,7 @@ export async function executeCommands(
       .where(eq(issues.id, issue.id));
     let statusId = rows[0]?.statusId;
     if (statusId === undefined) throw new NotFoundError("issue not found");
+    const statusBefore = statusId;
     const assigned = new Set(
       (
         await tx
@@ -402,7 +404,7 @@ export async function executeCommands(
         assignee_ids: [...assigned],
       };
     }
-    return { comment, hide };
+    return { comment, hide, statusChanged: statusId !== statusBefore };
   });
   const commentRow: CommentRow | null = applied.comment;
   const hide = applied.hide;
@@ -431,6 +433,16 @@ export async function executeCommands(
       crossTargets,
       agentContext,
     );
+  }
+
+  // A `/status` moves the card without passing through `updateIssue`, so the
+  // block verdict has to be re-decided from here too (T-377) — otherwise
+  // every clearing done by slash command goes unannounced.
+  if (applied.statusChanged) {
+    const changes = await evaluateBlockerStatus(ctx, project, db, [
+      issueNumber,
+    ]);
+    await announceBlockChanges(ctx, changes, actor.id, agentContext);
   }
 
   const after = await db.select().from(issues).where(eq(issues.id, issue.id));

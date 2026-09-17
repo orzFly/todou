@@ -32,6 +32,15 @@ export const IssueEventType = z.enum([
   // card's ownership intervals from.
   "moved_out",
   "moved_in",
+  // Block edges (T-377). The first two land on both ends of the edge and
+  // tell them apart by `payload.role` rather than by four event types — one
+  // object appearing twice, the way `referenced` carries its direction. The
+  // last two land on the blocked end alone: they are news about whether the
+  // work may start, which only that end is waiting for.
+  "block_added",
+  "block_removed",
+  "block_cleared",
+  "block_reblocked",
 ]);
 export type IssueEventType = z.infer<typeof IssueEventType>;
 
@@ -87,6 +96,27 @@ export const ReferencedPayload = z.object({
   by_moved: z.boolean().optional(),
 });
 export type ReferencedPayload = z.infer<typeof ReferencedPayload>;
+
+/**
+ * `block_added` / `block_removed` (T-377). `role` is what this end of the
+ * edge is, so one event type serves both timelines; the `other_*` pair names
+ * the end the reader is not on, and goes null when they may not read it.
+ */
+export const BlockEdgePayload = z.object({
+  edge_id: Id,
+  role: z.enum(["blocked", "blocker"]),
+  other_project_id: Id.nullable(),
+  other_number: Id.nullable(),
+});
+export type BlockEdgePayload = z.infer<typeof BlockEdgePayload>;
+
+/** `block_cleared` / `block_reblocked`, which only ever reach the blocked end. */
+export const BlockClearedPayload = z.object({
+  edge_id: Id,
+  blocker_project_id: Id.nullable(),
+  blocker_number: Id.nullable(),
+});
+export type BlockClearedPayload = z.infer<typeof BlockClearedPayload>;
 
 export const TimelineComment = z.object({
   type: z.literal("comment"),

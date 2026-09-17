@@ -1175,7 +1175,62 @@ export function StatusesSection({ slug }: { slug: string }) {
           <PlusIcon className="size-3.5" /> Add
         </Button>
       </form>
+      <ClearLinePicker slug={slug} statuses={statuses.data} />
     </section>
+  );
+}
+
+/**
+ * Which status stops a card blocking the ones waiting for it (T-377).
+ *
+ * Inside Statuses rather than beside it: the value names a status, the rule
+ * is read off their order, and reordering the list above silently moves what
+ * this means.
+ */
+function ClearLinePicker({
+  slug,
+  statuses,
+}: {
+  slug: string;
+  statuses: Status[];
+}) {
+  const project = useSuspenseQuery(projectQuery(slug));
+  const queryClient = useQueryClient();
+  const current = project.data.block_clear_status_id ?? null;
+  const set = useMutation({
+    mutationFn: (vars: { slug: string; id: number | null }) =>
+      api.updateProject(vars.slug, { block_clear_status_id: vars.id }),
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["project", vars.slug] });
+      // Every card's badge may have moved with the line.
+      queryClient.invalidateQueries({ queryKey: ["issues"] });
+      queryClient.invalidateQueries({ queryKey: ["issue"] });
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  return (
+    <div className="flex items-center gap-2 border-t pt-3">
+      <span className="text-sm">Blocks clear at</span>
+      <Select
+        value={current === null ? "none" : String(current)}
+        onValueChange={(v) =>
+          set.mutate({ slug, id: v === "none" ? null : Number(v) })
+        }
+      >
+        <SelectTrigger className="w-48" size="sm" aria-label="blocks clear at">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="none">any closed status</SelectItem>
+          {statuses.map((status) => (
+            <SelectItem key={status.id} value={String(status.id)}>
+              {status.name} or later
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
 

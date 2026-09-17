@@ -1,0 +1,1 @@
+ALTER TABLE "project_meta" ADD COLUMN "block_clear_status_id" bigint;

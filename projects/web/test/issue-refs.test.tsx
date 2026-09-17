@@ -61,6 +61,8 @@ const refItem = (number: number, title: string): IssueListItem => ({
   unread: false,
   unread_comments: 0,
   muted: null,
+  blocked_by: [],
+  blocks: [],
   moves: [],
 });
 

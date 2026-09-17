@@ -157,6 +157,62 @@ export const projectMutes = pgTable(
   ],
 );
 
+/**
+ * "This card waits for that one" (T-377), one row per edge.
+ *
+ * System tier for the same reason as `issue_addresses`: the reverse direction
+ * — which cards anywhere point at me — has to be answerable without opening
+ * every project's database, and a second index in the project tier would be
+ * a second truth with no transaction able to commit both.
+ *
+ * The two ends are LOGICAL addresses: `project_id` is a real foreign key, but
+ * the issue row `(project_id, number)` names lives in another database, so
+ * there is none to be had on the pair.
+ */
+export const issueBlocks = pgTable(
+  "issue_blocks",
+  {
+    id: id(),
+    // Only ever "blocks". Kept so that adding relates_to / duplicates later
+    // is widening an enum rather than adding a column.
+    type: text("type", { enum: ["blocks"] })
+      .notNull()
+      .default("blocks"),
+    blockerProjectId: bigint("blocker_project_id", { mode: "number" })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    blockerNumber: bigint("blocker_number", { mode: "number" }).notNull(),
+    blockedProjectId: bigint("blocked_project_id", { mode: "number" })
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    blockedNumber: bigint("blocked_number", { mode: "number" }).notNull(),
+    createdBy: bigint("created_by", { mode: "number" }).notNull(),
+    createdAt: createdAt(),
+    // The instant the blocker crossed its project's clear line; NULL = still
+    // blocking. The conclusion is stored because the read path must never
+    // open the blocker's database to work it out.
+    clearedAt: timestamp("cleared_at", { withTimezone: true }),
+    // When the clearing was announced on the blocked card. Separate from
+    // `cleared_at` because landing an event is a cross-database write that
+    // can fail while the conclusion cannot — this pair is what makes
+    // "cleared, but nobody was told" a state the repair sweep can find.
+    clearedNotifiedAt: timestamp("cleared_notified_at", { withTimezone: true }),
+    // The blocker went to the trash: still blocking, and written here by the
+    // blocker's own side so a reader never has to go and look.
+    blockerDeletedAt: timestamp("blocker_deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("issue_blocks_edge_idx").on(
+      t.blockerProjectId,
+      t.blockerNumber,
+      t.blockedProjectId,
+      t.blockedNumber,
+    ),
+    index("issue_blocks_blocked_idx").on(t.blockedProjectId, t.blockedNumber),
+    index("issue_blocks_blocker_idx").on(t.blockerProjectId, t.blockerNumber),
+  ],
+);
+
 // Mirror of every project's ref_formats history (T-150). Resolving a bare
 // `PREFIX-N` written in project A means asking who held that prefix at that
 // instant across ALL projects — a question the per-project tables cannot

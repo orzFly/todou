@@ -147,6 +147,32 @@ export class IssueMovingError extends DomainError {
 }
 
 /**
+ * Declaring that a card blocks itself (T-377). A code of its own rather than
+ * `ValidationFailedError`'s: this is the one cycle refused at the write, so a
+ * caller building a chain has to be able to tell it from a malformed body.
+ */
+export class BlockSelfError extends DomainError {
+  constructor() {
+    super(422, "block_self", "an issue cannot block itself");
+  }
+}
+
+/**
+ * The far end of a new block edge is in the trash or mid-move (T-377) — the
+ * same `referenceable` gate a new reference passes, reported rather than
+ * silently dropped because this one was asked for outright.
+ */
+export class IssueNotReferenceableError extends DomainError {
+  constructor() {
+    super(
+      409,
+      "issue_not_referenceable",
+      "that issue is in the trash or moving to another project",
+    );
+  }
+}
+
+/**
  * The card moved somewhere the reader has no role, so the response admits
  * that much and no more: never the destination project, never its number.
  */

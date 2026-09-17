@@ -7,9 +7,10 @@ import { and, asc, count, eq, ne } from "drizzle-orm";
 import type { UserRow } from "../auth/pat.ts";
 import type { AppContext } from "../bootstrap.ts";
 import type { Db } from "../db/driver.ts";
-import { issues, statuses } from "../db/project-schema.ts";
+import { issues, projectMeta, statuses } from "../db/project-schema.ts";
 import { ConflictError, NotFoundError } from "../errors.ts";
 import { requireCapability, routeInfoOf } from "./access.ts";
+import { announceBlockChanges, reevaluateProjectBlocks } from "./blocks.ts";
 
 type StatusRow = typeof statuses.$inferSelect;
 
@@ -129,6 +130,15 @@ export async function updateStatus(
     id: row.id,
     action: "updated",
   });
+  // Both halves of the clear-line rule live in this table, so both edits
+  // silently move it (T-377): a reorder changes which side of
+  // "at this position or past it" a card falls on, and a category change
+  // moves the fallback rule that decides it when no line is configured —
+  // which, with every project's line starting NULL, is the default path.
+  if (input.position !== undefined || input.category !== undefined) {
+    const changes = await reevaluateProjectBlocks(ctx, project, db);
+    await announceBlockChanges(ctx, changes, actor.id);
+  }
   return toStatus(row);
 }
 
@@ -155,6 +165,15 @@ export async function deleteStatus(
   if ((referencing[0]?.n ?? 0) > 0) {
     throw new ConflictError(
       "status is used by existing issues — move them to another status first",
+    );
+  }
+  const meta = await db
+    .select({ lineId: projectMeta.blockClearStatusId })
+    .from(projectMeta)
+    .where(eq(projectMeta.projectId, project.id));
+  if ((meta[0]?.lineId ?? null) === statusId) {
+    throw new ConflictError(
+      "status is this project's block clear line — point it elsewhere first",
     );
   }
   const deleted = await db
