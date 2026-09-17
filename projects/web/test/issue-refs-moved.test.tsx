@@ -48,6 +48,8 @@ const issue = (
   unread: false,
   unread_comments: 0,
   muted: null,
+  blocked_by: [],
+  blocks: [],
   deleted_at: null,
   deleted_by: null,
   moves: [],

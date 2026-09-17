@@ -252,6 +252,8 @@ const item = (
   unread: false,
   unread_comments: 0,
   muted: null,
+  blocked_by: [],
+  blocks: [],
   moves: [],
 });
 

@@ -43,6 +43,8 @@ const issue = (unread: boolean, unreadComments = 0): IssueListItem => ({
   unread,
   unread_comments: unreadComments,
   muted: null,
+  blocked_by: [],
+  blocks: [],
   moves: [],
 });
 

@@ -41,6 +41,8 @@ const page = (numbers: number[], s: Status): IssueListPage => ({
     unread: false,
     unread_comments: 0,
     muted: null,
+    blocked_by: [],
+    blocks: [],
     moves: [],
   })),
   next_cursor: null,

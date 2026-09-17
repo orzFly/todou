@@ -302,6 +302,8 @@ const issue = (number: number, body: string): Issue => ({
   unread: false,
   unread_comments: 0,
   muted: null,
+  blocked_by: [],
+  blocks: [],
   moves: [],
 });
 

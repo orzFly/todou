@@ -492,6 +492,70 @@ export function useRestoreIssueMutation() {
 }
 
 /**
+ * Both ends of a block edge move when one does, and either end may be a card
+ * from another project — so the card, every list and the inbox are refetched
+ * rather than patched. The badge is read off the card's own response, and a
+ * cache patched by hand here would be the one place it could disagree.
+ */
+function invalidateAfterBlock(
+  queryClient: ReturnType<typeof useQueryClient>,
+  slug: string,
+  issueNumber: number,
+): void {
+  queryClient.invalidateQueries({ queryKey: ["issue", slug, issueNumber] });
+  queryClient.invalidateQueries({ queryKey: ["issues"] });
+  queryClient.invalidateQueries({ queryKey: ["inbox"] });
+  queryClient.invalidateQueries({
+    queryKey: ["timeline", slug, issueNumber],
+  });
+}
+
+/** Declare that one card waits for another (T-377). */
+export function useAddBlockMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    // The two directions answer with differently named fields, and neither is
+    // read here: the invalidation below refetches the card, which is where
+    // every surface reads its edges from.
+    mutationFn: async (vars: {
+      slug: string;
+      issueNumber: number;
+      direction: "blocked_by" | "blocks";
+      ref: string;
+    }): Promise<void> => {
+      if (vars.direction === "blocked_by") {
+        await api.addIssueBlockedBy(vars.slug, vars.issueNumber, vars.ref);
+        return;
+      }
+      await api.addIssueBlocks(vars.slug, vars.issueNumber, vars.ref);
+    },
+    onError: (error) =>
+      toast.error(`Could not add the block: ${error.message}`),
+    onSettled: (_data, _error, vars) =>
+      invalidateAfterBlock(queryClient, vars.slug, vars.issueNumber),
+  });
+}
+
+export function useRemoveBlockMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      slug: string;
+      issueNumber: number;
+      direction: "blocked_by" | "blocks";
+      edgeId: number;
+    }) =>
+      vars.direction === "blocked_by"
+        ? api.removeIssueBlockedBy(vars.slug, vars.issueNumber, vars.edgeId)
+        : api.removeIssueBlocks(vars.slug, vars.issueNumber, vars.edgeId),
+    onError: (error) =>
+      toast.error(`Could not remove the block: ${error.message}`),
+    onSettled: (_data, _error, vars) =>
+      invalidateAfterBlock(queryClient, vars.slug, vars.issueNumber),
+  });
+}
+
+/**
  * What a move would do, without doing it. Keyed on the destination so
  * switching projects in the dialog re-previews rather than showing the
  * previous answer.

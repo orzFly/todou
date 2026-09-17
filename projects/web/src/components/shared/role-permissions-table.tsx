@@ -161,6 +161,11 @@ export const DISPLAY_ROWS: readonly DisplayRow[] = [
   },
   {
     group: "Collaborate",
+    label: "Record that one issue is waiting for another",
+    caps: ["issue.block"],
+  },
+  {
+    group: "Collaborate",
     label: "Create, recolor and delete labels",
     caps: ["label.create", "label.update", "label.delete"],
   },

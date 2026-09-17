@@ -42,6 +42,8 @@ function makeItem(
     unread: true,
     unread_comments: 1,
     muted: null,
+    blocked_by: [],
+    blocks: [],
     moves: [],
     project: { slug, name: slug },
     last_activity_at: "2026-01-02T00:00:00Z",

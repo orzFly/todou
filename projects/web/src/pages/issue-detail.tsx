@@ -24,6 +24,7 @@ import {
 import { useRefPrefix } from "@/api/references.ts";
 import { AssigneePicker } from "@/components/issue/assignee-picker.tsx";
 import { AttachmentList } from "@/components/issue/attachment-list.tsx";
+import { BlocksSection } from "@/components/issue/blocks-section.tsx";
 import {
   EntryActionsMenu,
   QUOTE_REHYPE_PLUGINS,
@@ -606,6 +607,11 @@ export function Sidebar({
           </DropdownMenu>
         )}
       </section>
+
+      {/* Directly under Status (T-377): being blocked is a fact about this
+          card's status, and the answer to "why has nothing happened here"
+          belongs beside the thing it explains. */}
+      <BlocksSection slug={slug} issue={issue} trashed={trashed} />
 
       <section className="space-y-2">
         <h3 className="text-xs font-medium text-muted-foreground uppercase">
