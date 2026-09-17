@@ -4,6 +4,17 @@ import { useCallback, useSyncExternalStore } from "react";
 export const MD_UP = "(min-width: 768px)";
 export const SM_UP = "(min-width: 640px)";
 
+/**
+ * A mouse-like primary pointer. Asked this way round, and about `pointer`
+ * rather than `any-pointer`, for two reasons:
+ *
+ * - the fallback below answers `true` to everything, so the query has to be
+ *   the one whose `true` is the desktop branch;
+ * - `any-pointer: coarse` flips a touchscreen laptop, whose primary pointer
+ *   is a mouse, onto the touch branch for good.
+ */
+export const POINTER_FINE = "(pointer: fine)";
+
 /** Engines without `matchMedia` get the wide branch, the one that needs no second row. */
 function evaluate(query: string): boolean {
   if (typeof window.matchMedia !== "function") return true;

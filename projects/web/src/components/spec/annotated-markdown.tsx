@@ -4,7 +4,7 @@ import {
   MessageSquarePlusIcon,
   MessageSquareTextIcon,
 } from "lucide-react";
-import type { ComponentProps } from "react";
+import type { ComponentProps, CSSProperties } from "react";
 import {
   type MouseEvent as ReactMouseEvent,
   useCallback,
@@ -58,6 +58,7 @@ import {
   segmentsInLines,
   sourceOffsetOfRendered,
 } from "@/lib/spec-source-index.ts";
+import { POINTER_FINE, useMediaQuery } from "@/lib/use-media-query.ts";
 
 type RehypePlugins = ComponentProps<typeof Markdown>["rehypePlugins"];
 
@@ -106,6 +107,14 @@ export type AnchorRange = {
 };
 
 type PendingSelection = AnchorRange & { top: number };
+
+/**
+ * How long a press on the entry keeps its anchor alive without a `click` to
+ * close the window. Long enough for a touch's own click to arrive, short
+ * enough that a press which slid off the entry does not strand a dead
+ * anchor on screen.
+ */
+const PRESS_WINDOW_MS = 300;
 
 /** The element a node is, or the one holding it. */
 function elementNear(node: Node): Element | null {
@@ -368,6 +377,97 @@ export function selectionEndpoints(
   };
 }
 
+/** Where an endpoint falls relative to the rendered file. */
+type Side = "inside" | "before" | "after";
+
+function sideOf(container: Element, node: Node, offset: number): Side | null {
+  // Containment is settled first: a node inside pierre's shadow root has no
+  // position relative to the container at all, and comparing it would answer
+  // about the host's siblings instead (T-164).
+  if (composedContains(container, node)) return "inside";
+  const span = document.createRange();
+  span.selectNode(container);
+  try {
+    const where = span.comparePoint(node, offset);
+    return where < 0 ? "before" : where > 0 ? "after" : "inside";
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The endpoints as a forward range, or null when they cannot make one.
+ *
+ * Endpoints arrive in whatever order the user dragged, and `setEnd` before
+ * the start silently collapses the range onto that point rather than
+ * complaining — so a collapsed result is the signal to try the other way
+ * round. Ends in two different trees collapse both ways, which is the null.
+ */
+function orderedRange(ends: SelectionEndpoints): Range | null {
+  const forward = document.createRange();
+  forward.setStart(ends.start.node, ends.start.offset);
+  forward.setEnd(ends.end.node, ends.end.offset);
+  if (!forward.collapsed) return forward;
+  const backward = document.createRange();
+  backward.setStart(ends.end.node, ends.end.offset);
+  backward.setEnd(ends.start.node, ends.start.offset);
+  return backward.collapsed ? null : backward;
+}
+
+/** The block one endpoint anchors to, clamped to the container's edges. */
+function blockOfEndpoint(
+  node: Node,
+  side: Side,
+  blocks: Element[],
+): { start: number; end: number } | null {
+  if (side === "inside") return anchorRangeForNode(node);
+  const edge = side === "before" ? blocks[0] : blocks[blocks.length - 1];
+  return edge === undefined
+    ? null
+    : parseSourceLoc(edge.getAttribute(SOURCE_LINE_ATTR));
+}
+
+/**
+ * The anchor a selection points at, or null when it points at nothing in
+ * this file. Endpoints outside the container are clamped to its first or
+ * last block instead of forfeiting the anchor: a drag that overshoots the
+ * end of the prose, or ⌘/Ctrl-A, still means "this file, from here to
+ * there". Only a selection lying wholly on one side of the container has
+ * nothing to say about it.
+ *
+ * Fed endpoints rather than a Selection so that the decision is a value
+ * computation: no DOM events, no React, and tests can hand it a pair of
+ * nodes.
+ */
+export function anchorForSelection(
+  container: Element,
+  index: SegmentIndex,
+  ends: SelectionEndpoints,
+): AnchorRange | null {
+  const startSide = sideOf(container, ends.start.node, ends.start.offset);
+  const endSide = sideOf(container, ends.end.node, ends.end.offset);
+  if (startSide === null || endSide === null) return null;
+  if (startSide === endSide && startSide !== "inside") return null;
+  const blocks = [...container.querySelectorAll(`[${SOURCE_LINE_ATTR}]`)];
+  const from = blockOfEndpoint(ends.start.node, startSide, blocks);
+  const to = blockOfEndpoint(ends.end.node, endSide, blocks);
+  if (from === null || to === null) return null;
+  // A clamped endpoint names a block, not a character in it, so columns are
+  // only ever narrowed while both ends are in the rendered file.
+  const range =
+    startSide === "inside" && endSide === "inside" ? orderedRange(ends) : null;
+  const columns = range === null ? null : columnsOfSelection(index, range);
+  // Direction doesn't matter to the lines; the min/max absorbs it.
+  return (
+    columns ?? {
+      lineStart: Math.min(from.start, to.start),
+      lineEnd: Math.max(from.end, to.end),
+      colStart: null,
+      colEnd: null,
+    }
+  );
+}
+
 /**
  * Innermost block whose source range contains `line`. Stamped blocks nest
  * — a table and its rows, a blockquote and its paragraphs — and document
@@ -425,6 +525,33 @@ export function visibleAnchor(el: HTMLElement): HTMLElement {
 }
 
 /**
+ * Where the floating entry sits, in container coordinates.
+ *
+ * The legacy range is what has a rect — but when the browser clamped it
+ * onto a shadow host it is an empty box there, and the endpoint's own
+ * element is then what says where to sit (T-164).
+ */
+function entryTop(
+  container: Element,
+  selection: Selection,
+  ends: SelectionEndpoints,
+): number {
+  const legacy = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+  const rect =
+    (legacy === null || legacy.collapsed
+      ? elementNear(ends.end.node)?.getBoundingClientRect()
+      : null) ?? legacy?.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  const below = (rect?.bottom ?? 0) - containerRect.top + 6;
+  // A selection that reaches past the file — ⌘/Ctrl-A, or a drag on into
+  // the page below it — has a rect as tall as the page, and that bottom
+  // would put the button hundreds of pixels under the prose it points at,
+  // off screen. Clamping to the file's own box is what keeps "the entry
+  // appeared" and "the reader can reach it" the same statement.
+  return Math.min(Math.max(below, 0), containerRect.bottom - containerRect.top);
+}
+
+/**
  * Rendered markdown with the annotation layer of the spec review view:
  * selecting text floats a "comment" button (the anchor is derived from the
  * blocks' stamped source lines), staged drafts and submitted comments hang
@@ -475,6 +602,13 @@ export function AnnotatedMarkdown({
   const [chips, setChips] = useState<Chip[]>([]);
   const [pending, setPending] = useState<PendingSelection | null>(null);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(NO_FOLDS);
+  /** A drag is in flight: its selection is not final until the pointer lifts. */
+  const draggingRef = useRef(false);
+  /** The entry is being pressed: the selection may vanish, the anchor stays. */
+  const pressingUiRef = useRef(false);
+  const pressTimerRef = useRef<number | null>(null);
+  const pendingRef = useRef<PendingSelection | null>(null);
+  const pointerFine = useMediaQuery(POINTER_FINE);
 
   const index = useMemo(() => buildSegmentIndex(body), [body]);
   const baselineIndex = useMemo(
@@ -551,6 +685,48 @@ export function AnnotatedMarkdown({
     setPending(null);
   }, [body, baselineBody, foldUnchanged]);
 
+  /**
+   * Read the live selection and place the entry.
+   *
+   * `keepOnEmpty` is the window-resize path: a resize is not a reason to
+   * drop an entry, and the selection may well have survived it untouched.
+   */
+  const decide = useCallback(
+    (keepOnEmpty = false) => {
+      const container = containerRef.current;
+      if (!container) return;
+      const selection = window.getSelection();
+      // The cheap branch. `selectionchange` arrives every frame of a drag,
+      // while a full recompute walks every open shadow root under the
+      // container, so emptiness is settled before anything is measured —
+      // by `toString()` rather than `isCollapsed`, which lies about shadow
+      // selections (T-164) and would take a live selection's entry with it.
+      if (selection === null || selection.toString() === "") {
+        // A press on the entry itself collapses the selection before the
+        // click lands. The anchor is already stored in `pending`, and the
+        // click reads it from there, so the press window keeps it (T-60).
+        if (!keepOnEmpty && !pressingUiRef.current) setPending(null);
+        return;
+      }
+      // Mid-drag the entry would sit under the words still being selected,
+      // and every frame would pay for a recompute. `pointerup` schedules
+      // the one that counts.
+      if (draggingRef.current) return;
+      const ends = selectionEndpoints(selection, container);
+      if (ends === null || ends.collapsed) {
+        setPending(null);
+        return;
+      }
+      const anchor = anchorForSelection(container, index, ends);
+      if (anchor === null) {
+        setPending(null);
+        return;
+      }
+      setPending({ top: entryTop(container, selection, ends), ...anchor });
+    },
+    [index],
+  );
+
   const layout = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -625,11 +801,23 @@ export function AnnotatedMarkdown({
     });
   }, [annotations, changedRanges]);
 
+  useEffect(() => {
+    pendingRef.current = pending;
+  }, [pending]);
+
   useLayoutEffect(() => {
     layout();
-    window.addEventListener("resize", layout);
-    return () => window.removeEventListener("resize", layout);
-  }, [layout]);
+    // A resize moves the chips and the entry alike, and the entry's `top`
+    // was measured against a selection rect that has since moved. Recompute
+    // it from the live selection, or leave it where it is when there is no
+    // selection left to measure.
+    const onResize = () => {
+      layout();
+      if (pendingRef.current !== null) decide(true);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [layout, decide]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: folding moves the blocks the chips are measured against
   useLayoutEffect(() => {
@@ -664,62 +852,85 @@ export function AnnotatedMarkdown({
     [],
   );
 
-  const onMouseUp = useCallback(
-    (event: ReactMouseEvent) => {
-      // Presses on the annotation UI itself (floating button, chips) bubble
-      // through here too; deriving state from them would clear `pending`
-      // and unmount the button before its click can fire (T-60).
-      if (
-        event.target instanceof Element &&
-        event.target.closest("[data-annotation-ui]") !== null
-      ) {
+  /**
+   * Every path that changes a selection, which is the point of T-384: the
+   * old container `mouseup` heard mouse drags that ended inside the prose
+   * and nothing else — not the keyboard, not a drag released outside, and
+   * on a touchscreen not the long-press gesture, for which no compatibility
+   * mouse event is ever synthesised.
+   */
+  useEffect(() => {
+    const controller = new AbortController();
+    const { signal } = controller;
+    let frame: number | null = null;
+    const schedule = () => {
+      if (typeof requestAnimationFrame !== "function") {
+        decide();
         return;
       }
-      const container = containerRef.current;
-      if (!container) return;
-      const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0) {
-        setPending(null);
-        return;
-      }
-      // Direction doesn't matter here; the min/max below absorbs it.
-      const ends = selectionEndpoints(selection, container);
-      if (ends === null || ends.collapsed) {
-        setPending(null);
-        return;
-      }
-      if (!composedContains(container, ends.start.node)) return;
-      const from = anchorRangeForNode(ends.start.node);
-      const to = anchorRangeForNode(ends.end.node);
-      if (!from || !to) {
-        setPending(null);
-        return;
-      }
-      // The legacy range still measures the button's position, and still
-      // decides the columns — a selection with one end in code has no
-      // columns to give, and falls back to the line anchor by design. But
-      // when it is the clamped one, its rect is an empty box at the shadow
-      // host; the endpoint's own element is then what says where to sit.
-      const range = selection.getRangeAt(0);
-      const rect =
-        (range.collapsed
-          ? elementNear(ends.end.node)?.getBoundingClientRect()
-          : null) ?? range.getBoundingClientRect();
-      const containerRect = container.getBoundingClientRect();
-      setPending({
-        top: rect.bottom - containerRect.top + 6,
-        // Columns narrow the anchor to what was actually selected; without
-        // them the whole block's line range stands, as it always has.
-        ...(columnsOfSelection(index, range) ?? {
-          lineStart: Math.min(from.start, to.start),
-          lineEnd: Math.max(from.end, to.end),
-          colStart: null,
-          colEnd: null,
-        }),
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        decide();
       });
-    },
-    [index],
-  );
+    };
+    const clearPressWindow = () => {
+      pressingUiRef.current = false;
+      if (pressTimerRef.current !== null) {
+        window.clearTimeout(pressTimerRef.current);
+        pressTimerRef.current = null;
+      }
+    };
+    // Closing the press window re-reads the selection, because what the
+    // window held back is exactly the "the selection is gone" verdict: a
+    // press that ended on something other than the entry — a chip, or the
+    // prose beside it — has to leave the entry pointing at nothing.
+    const releaseUi = () => {
+      clearPressWindow();
+      schedule();
+    };
+    document.addEventListener("selectionchange", schedule, { signal });
+    document.addEventListener(
+      "pointerdown",
+      (event) => {
+        const onUi =
+          event.target instanceof Element &&
+          event.target.closest("[data-annotation-ui]") !== null;
+        if (!onUi) {
+          draggingRef.current = true;
+          return;
+        }
+        pressingUiRef.current = true;
+        // The window has to close by itself too: a press that slides off
+        // the entry fires neither `click` nor `pointercancel`, and leaving
+        // it open would keep a dead anchor on screen indefinitely.
+        pressTimerRef.current = window.setTimeout(releaseUi, PRESS_WINDOW_MS);
+      },
+      { capture: true, signal },
+    );
+    document.addEventListener(
+      "pointerup",
+      () => {
+        draggingRef.current = false;
+        schedule();
+      },
+      { signal },
+    );
+    document.addEventListener(
+      "pointercancel",
+      () => {
+        draggingRef.current = false;
+        releaseUi();
+      },
+      { signal },
+    );
+    document.addEventListener("click", releaseUi, { signal });
+    return () => {
+      controller.abort();
+      if (frame !== null) cancelAnimationFrame(frame);
+      clearPressWindow();
+    };
+  }, [decide]);
 
   /** The fold placeholders are markdown-side nodes, so React never sees them. */
   const onClick = useCallback((event: ReactMouseEvent) => {
@@ -732,13 +943,24 @@ export function AnnotatedMarkdown({
     setPending(null);
   }, []);
 
+  const stagePending = useCallback(() => {
+    if (pending === null) return;
+    onStage({
+      lineStart: pending.lineStart,
+      lineEnd: pending.lineEnd,
+      colStart: pending.colStart,
+      colEnd: pending.colEnd,
+    });
+    setPending(null);
+    window.getSelection()?.removeAllRanges();
+  }, [pending, onStage]);
+
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: mouseup only reads the text selection and click only delegates to the fold placeholders; blocks stay natively selectable
+    // biome-ignore lint/a11y/noStaticElementInteractions: click only delegates to the fold placeholders; blocks stay natively selectable
     // biome-ignore lint/a11y/useKeyWithClickEvents: what the click delegates to is a real <button>, which answers Enter and Space by firing this same click
     <div
       ref={containerRef}
       className="relative pr-10"
-      onMouseUp={onMouseUp}
       onClick={onClick}
       data-testid="annotated-markdown"
     >
@@ -763,39 +985,79 @@ export function AnnotatedMarkdown({
         />
       ))}
 
-      {pending && (
-        <Button
-          size="sm"
-          className="absolute right-0 z-10 shadow-md"
-          style={{ top: pending.top }}
-          data-annotation-ui=""
-          // The browser's default pointer/mouse-down would collapse the
-          // text selection under the button (and move focus) before click
-          // fires — the selection must outlive the press (T-60).
-          onPointerDown={(e) => e.preventDefault()}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => {
-            onStage({
-              lineStart: pending.lineStart,
-              lineEnd: pending.lineEnd,
-              colStart: pending.colStart,
-              colEnd: pending.colEnd,
-            });
-            setPending(null);
-            window.getSelection()?.removeAllRanges();
-          }}
-        >
-          <MessageSquarePlusIcon className="size-4" />
-          Comment{" "}
-          {formatAnchorRange({
-            line_start: pending.lineStart,
-            line_end: pending.lineEnd,
-            col_start: pending.colStart,
-            col_end: pending.colEnd,
-          })}
-        </Button>
-      )}
+      {pending !== null &&
+        (pointerFine ? (
+          <StageButton
+            size="sm"
+            className="absolute right-0 z-10 shadow-md"
+            style={{ top: pending.top }}
+            anchor={pending}
+            onStage={stagePending}
+          />
+        ) : (
+          // Touch selection comes with the platform's own bubble, floating
+          // against the selection, which we can neither move nor dismiss.
+          // Pinned to the bottom of the viewport is the one place the two
+          // cannot claim at once — and the one place a thumb always reaches.
+          // No `env(safe-area-inset-bottom)`: without `viewport-fit=cover`
+          // iOS has already inset the page, and a second one would show.
+          <div
+            className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 p-2 backdrop-blur"
+            data-annotation-ui=""
+            data-testid="annotation-action-bar"
+          >
+            <StageButton
+              size="lg"
+              className="w-full"
+              anchor={pending}
+              onStage={stagePending}
+            />
+          </div>
+        ))}
     </div>
+  );
+}
+
+/** The entry itself, in both of the shapes it takes. */
+function StageButton({
+  anchor,
+  size,
+  className,
+  style,
+  onStage,
+}: {
+  anchor: AnchorRange;
+  size: "sm" | "lg";
+  className: string;
+  style?: CSSProperties;
+  onStage: () => void;
+}) {
+  return (
+    <Button
+      size={size}
+      className={className}
+      style={style}
+      data-annotation-ui=""
+      // A mouse press would collapse the selection under the button (and
+      // move focus) before click fires, and the selection has to outlive
+      // the press (T-60). A touch press is left alone: cancelling it has no
+      // agreed effect on whether `click` follows, and the press window
+      // holds the anchor either way.
+      onPointerDown={(e) => {
+        if (e.pointerType === "mouse") e.preventDefault();
+      }}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onStage}
+    >
+      <MessageSquarePlusIcon className="size-4" />
+      Comment{" "}
+      {formatAnchorRange({
+        line_start: anchor.lineStart,
+        line_end: anchor.lineEnd,
+        col_start: anchor.colStart,
+        col_end: anchor.colEnd,
+      })}
+    </Button>
   );
 }
 
