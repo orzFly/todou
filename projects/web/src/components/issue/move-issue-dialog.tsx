@@ -4,7 +4,7 @@ import { can, type MoveIssueResult, type Project } from "@todou/shared";
 import { useState } from "react";
 import { movePreviewQuery, useMoveIssueMutation } from "@/api/issues.ts";
 import { projectsQuery } from "@/api/queries.ts";
-import { ProjectPicker } from "@/components/project-picker.tsx";
+import { ProjectListbox } from "@/components/project-listbox.tsx";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { Button } from "@/components/ui/button";
 import {
@@ -90,10 +90,23 @@ export function MoveIssueDialog({
         </DialogHeader>
 
         {target === null ? (
-          <ProjectPicker
-            projects={candidates}
-            onSelect={setTarget}
+          <ProjectListbox
+            options={candidates.map((project) => ({
+              project,
+              trailing: (
+                <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                  {project.slug}
+                </span>
+              ),
+            }))}
+            onSelect={(option) => setTarget(option.project)}
             label="Move to project"
+            idPrefix="pick"
+            searchPlaceholder="Search projects…"
+            emptyText="No project to move this into."
+            className="rounded-md border"
+            listClassName="max-h-64"
+            autoFocus
           />
         ) : (
           <div className="space-y-3 text-sm">
