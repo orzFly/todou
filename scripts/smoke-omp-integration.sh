@@ -20,10 +20,15 @@
 # Check 8 reads `xd://todou_watch` inside the session, which needs an omp new
 # enough to mount extension tools as devices (v18.1.21 was measured).
 #
-# Check 9 is the exception: `/todou` never reaches a model, so it costs nothing
-# and never skips. Run it whenever you touch the extension — it is the only
-# check here that can contradict what we believe about omp's own shape, and the
-# two defects it pins shipped past 31 green unit cases that could not.
+# Check 9 is the exception: `/todou` never reaches a model, so it spends no
+# tokens and never skips for want of one. It is not free of time, though —
+# about half a minute on its own (29 to 36 seconds measured), of which 28 are
+# the fixed sleeps its pty driver needs and the rest is omp starting and
+# stopping, which moves with the machine's load; 66 seconds for a whole run
+# with no model set. Like checks 3 and 7 it does skip without script(1).
+# Run it whenever you touch the extension: it is the only check here that can
+# contradict what we believe about omp's own shape, and the two defects it
+# pins shipped past 31 green unit cases that could not.
 #
 # Everything lands under a scratch HOME and a scratch XDG_RUNTIME_DIR, so a run
 # cannot touch the extension you actually have installed.
@@ -37,7 +42,7 @@ while [ $# -gt 0 ]; do
     --only) ONLY="${2-}"; shift $(($# > 1 ? 2 : 1)) ;;
     --only=*) ONLY="${1#*=}"; shift ;;
     -h | --help)
-      sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) echo "usage: smoke-omp-integration.sh [--only <check>]" >&2; exit 2 ;;
@@ -615,13 +620,17 @@ fi
 #     command inside `prompt()` and returns before a turn begins. Both defects
 #     T-396 fixed were invisible to the 31 unit cases, because the fake `pi`
 #     they drive was written from the same guess the extension was — only omp
-#     can contradict that guess, and here it costs three seconds and no tokens.
+#     can contradict that guess, and here it costs no tokens and about half a
+#     minute, nearly all of it the sleeps below rather than omp.
 #
-#     Two independent failures, so two assertions. The command is dispatched as
-#     `handler(args, ctx)`; a callback under any other name leaves omp printing
-#     one error line and doing nothing. Separately, omp reads `item.value` off
-#     the selected completion on every keystroke, unguarded and outside every
-#     try/catch; an item without it takes the whole session down.
+#     Two independent failures, so two assertions, plus a third for the one
+#     way a completion item can be the right shape and still be wrong. The
+#     command is dispatched as `handler(args, ctx)`; a callback under any
+#     other name leaves omp printing one error line and doing nothing.
+#     Separately, omp reads `item.value` off the selected completion on every
+#     keystroke, unguarded and outside every try/catch; an item without it
+#     takes the whole session down. And `value` replaces the argument text
+#     wholesale, so what it ends with decides where the next argument begins.
 if wanted 9; then
   step "9. /todou runs, and its completion does not kill the session"
   if ! command -v script >/dev/null; then
@@ -674,6 +683,21 @@ if wanted 9; then
       fi
     else
       bad "the completion popup never offered our item; see $WORK/command.omp.log"
+    fi
+
+    # A `value` of the right shape can still be the wrong string, and the two
+    # assertions above pass on either. The evidence for the trailing space is
+    # already in this log: the `\r` above accepts the completion rather than
+    # submitting it, so the composer holds `/todou stop ` and the `/exit`
+    # typed next arrives as a second argument — which is what the line below
+    # is answering. Without the space the composer holds `/todou stop/exit`,
+    # one argument that is not `stop`, and the list branch answers instead.
+    # Unit cases pin that space too, but only omp can say it still applies
+    # `value` the way we think it does.
+    if grep -q 'no watch called "/exit"' "$WORK/command.omp.log"; then
+      ok "the accepted completion left a space before the next argument"
+    else
+      bad "the completion's value ran into the argument after it; see $WORK/command.omp.log"
     fi
   fi
 fi
