@@ -71,4 +71,16 @@ describe("quotedReference", () => {
       ].join("\n"),
     );
   });
+
+  it("leaves only the attribution when there is no body to quote", () => {
+    expect(
+      quotedReference({
+        body: "   \n\n  ",
+        authorLogin: "alice",
+        permalink: "https://todou.example/projects/p/issues/370",
+      }),
+    ).toBe(
+      "_Originally posted by @alice in https://todou.example/projects/p/issues/370_",
+    );
+  });
 });

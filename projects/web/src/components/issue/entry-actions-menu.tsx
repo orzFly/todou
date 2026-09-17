@@ -104,6 +104,12 @@ export function EntryActionsMenu({
     commentId === undefined ? "" : `#${commentAnchor(commentId)}`
   }`;
 
+  // Nothing to copy and nothing to quote: writing "" to the clipboard would
+  // replace whatever the reader had there and still report success, and
+  // `blockquote("")` is a lone `>` that lights up the composer's send button.
+  // The same test the body block uses to say `No description.`.
+  const hasBody = body.trim() !== "";
+
   const quoteSelected = () => {
     // Opening with the keyboard fires no pointerdown, so nothing was captured
     // and the live selection is still the one to read.
@@ -142,13 +148,15 @@ export function EntryActionsMenu({
           <LinkIcon className="size-3.5" />
           Copy link
         </DropdownMenuItem>
-        <DropdownMenuItem
-          onSelect={() => void copyToClipboard(body, "Markdown copied")}
-        >
-          <CopyIcon className="size-3.5" />
-          Copy Markdown
-        </DropdownMenuItem>
-        {available && (
+        {hasBody && (
+          <DropdownMenuItem
+            onSelect={() => void copyToClipboard(body, "Markdown copied")}
+          >
+            <CopyIcon className="size-3.5" />
+            Copy Markdown
+          </DropdownMenuItem>
+        )}
+        {available && hasBody && (
           <DropdownMenuItem onSelect={quoteSelected}>
             <TextQuoteIcon className="size-3.5" />
             Quote reply

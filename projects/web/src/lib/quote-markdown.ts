@@ -35,5 +35,10 @@ export function quotedReference(input: {
   authorLogin: string;
   permalink: string;
 }): string {
-  return `${blockquote(input.body)}\n\n_Originally posted by @${input.authorLogin} in ${input.permalink}_`;
+  const attribution = `_Originally posted by @${input.authorLogin} in ${input.permalink}_`;
+  // An entry with no body still has an origin worth recording, and that is
+  // the whole value here; quoting the nothing would only put a lone `>` at
+  // the top of the new card.
+  if (input.body.trim() === "") return attribution;
+  return `${blockquote(input.body)}\n\n${attribution}`;
 }

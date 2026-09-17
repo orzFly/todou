@@ -188,6 +188,22 @@ describe("a new issue opened to quote something", () => {
     );
   });
 
+  it("prefills only the attribution when the quoted entry has no body", async () => {
+    const view = renderAt(`?quote_project=${SLUG}&quote_issue=370`, (client) =>
+      client.setQueryData(issueQuery(SLUG, 370).queryKey, {
+        ...ISSUE,
+        body: "   \n",
+      }),
+    );
+    await waitFor(() =>
+      expect(cmGetValue(view.container)).toBe(
+        `_Originally posted by @alice in ${origin()}/projects/${SLUG}/issues/370_`,
+      ),
+    );
+    // Reading it succeeded — there is simply nothing to quote.
+    expect(view.queryByText(/could not be read/)).toBeNull();
+  });
+
   it("still renders the form when the quote cannot be read, and says why", async () => {
     const view = renderAt(
       `?quote_project=${SLUG}&quote_issue=370&quote_comment=4242`,

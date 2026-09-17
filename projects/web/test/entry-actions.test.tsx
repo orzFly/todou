@@ -252,6 +252,31 @@ describe("EntryActionsMenu on a comment", () => {
     await openMenu(view);
     expect(itemNames()).not.toContain("Quote reply");
   });
+
+  it("drops both body actions when there is no body", async () => {
+    const view = renderComment({
+      comment: comment({ body: "   \n  " }),
+      onQuote: () => {},
+    });
+    await openMenu(view);
+    expect(itemNames()).toEqual(["Copy link", "Reference in a new issue"]);
+  });
+
+  it("keeps them for a body that renders as nothing but an HTML comment", async () => {
+    // MarkdownView has no rehype-raw, so this is escaped and shown as text:
+    // the reader can see it, and it is what Copy Markdown would hand over.
+    const view = renderComment({
+      comment: comment({ body: "<!-- a note to nobody -->" }),
+      onQuote: () => {},
+    });
+    await openMenu(view);
+    expect(itemNames()).toEqual([
+      "Copy link",
+      "Copy Markdown",
+      "Quote reply",
+      "Reference in a new issue",
+    ]);
+  });
 });
 
 /** Open the `…`, then the Reference submenu, and return its listbox. */
@@ -359,11 +384,19 @@ const ISSUE: Issue = {
   moves: [],
 };
 
-function renderBody(options: { readOnly?: boolean; withBox?: boolean } = {}) {
+function renderBody(
+  options: { readOnly?: boolean; withBox?: boolean; body?: string } = {},
+) {
   return renderWithProviders(
     <QuoteReplyProvider>
       {options.withBox && <Sink onQuote={() => {}} />}
-      <BodyBlock slug="p" issue={ISSUE} readOnly={options.readOnly} />
+      <BodyBlock
+        slug="p"
+        issue={
+          options.body === undefined ? ISSUE : { ...ISSUE, body: options.body }
+        }
+        readOnly={options.readOnly}
+      />
     </QuoteReplyProvider>,
     clientWith([project("p"), project("other")]),
   );
@@ -410,6 +443,15 @@ describe("EntryActionsMenu on the issue body", () => {
     const params = quoteParams(within(listbox).getAllByRole("option")[0]);
     expect(params.get("quote_issue")).toBe("7");
     expect(params.has("quote_comment")).toBe(false);
+  });
+
+  it("offers nothing to copy or quote on a card with no description", async () => {
+    const view = renderBody({ withBox: true, body: "" });
+    // The reported case: the body block says `No description.` and the two
+    // body actions would produce an empty clipboard and a lone `>`.
+    await within(view.container).findByText("No description.");
+    await openBodyMenu(view);
+    expect(itemNames()).toEqual(["Copy link", "Reference in a new issue"]);
   });
 
   it("keeps the menu on a trashed card, minus Quote reply", async () => {
