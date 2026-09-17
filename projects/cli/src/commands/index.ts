@@ -29,6 +29,7 @@ import {
   IntegrationUninstallCommand,
 } from "./integration.ts";
 import {
+  IssueBlockCommand,
   IssueCloseCommand,
   IssueCreateCommand,
   IssueDeleteCommand,
@@ -38,6 +39,7 @@ import {
   IssueRestoreCommand,
   IssueStatusCommand,
   IssueTransferCommand,
+  IssueUnblockCommand,
   IssueViewCommand,
   IssueWatchCommand,
 } from "./issue.ts";
@@ -118,6 +120,8 @@ export const commands: Array<CommandClass<CliContext>> = [
   IssueDeleteCommand,
   IssueRestoreCommand,
   IssueTransferCommand,
+  IssueBlockCommand,
+  IssueUnblockCommand,
   SearchCommand,
   CommentAddCommand,
   CommentListCommand,

@@ -1,4 +1,5 @@
 import type {
+  BlockRef,
   Issue,
   IssueListItem,
   IssueUpdateInput,
@@ -114,6 +115,53 @@ function issueRow(
   ];
 }
 
+/**
+ * One direction of a card's block edges, as one line (T-377).
+ *
+ * Hidden entries are counted rather than listed: they have no name to print,
+ * and what the reader needs from them is that something they cannot see is
+ * in the way. The trash note rides only on `blocked by`, where it says the
+ * thing the refs cannot — that this edge will not clear itself — while on
+ * `blocks` it would only restate the state of the card already on screen.
+ */
+function blockLine(
+  refs: BlockRef[],
+  direction: "blocked by" | "blocks",
+  projectSlug: string,
+): string | null {
+  if (refs.length === 0) return null;
+  const parts: string[] = [];
+  let hiddenOpen = 0;
+  let hiddenCleared = 0;
+  for (const ref of refs) {
+    if (ref.hidden) {
+      if (ref.cleared_at === null) hiddenOpen += 1;
+      else hiddenCleared += 1;
+      continue;
+    }
+    // A `#N` from another project has to carry that project's name to mean
+    // anything here; a `P-N` already names its holder deployment-wide.
+    const own = ref.ref ?? `#${ref.number}`;
+    const spelled =
+      ref.project === projectSlug ||
+      ref.project === null ||
+      !own.startsWith("#")
+        ? own
+        : `${ref.project}${own}`;
+    const note =
+      ref.cleared_at !== null
+        ? " (cleared)"
+        : direction === "blocked by" && ref.blocker_deleted
+          ? " (in the trash)"
+          : "";
+    parts.push(`${spelled}${note}`);
+  }
+  const cards = (n: number) => `${n} card${n === 1 ? "" : "s"} you cannot see`;
+  if (hiddenOpen > 0) parts.push(cards(hiddenOpen));
+  if (hiddenCleared > 0) parts.push(`${cards(hiddenCleared)} (cleared)`);
+  return `${direction}: ${parts.join(", ")}`;
+}
+
 export class IssueListCommand extends ProjectCommand {
   static paths = [["issue", "list"]];
   static usage = Command.Usage({
@@ -154,6 +202,12 @@ export class IssueListCommand extends ProjectCommand {
   deleted = Option.Boolean("--deleted", false, {
     description: "List the trash instead (newest deletion first)",
   });
+  blocked = Option.Boolean("--blocked", false, {
+    description: "Only issues still waiting for another issue",
+  });
+  unblocked = Option.Boolean("--unblocked", false, {
+    description: "Only issues nothing is holding up",
+  });
   metadata = Option.Array("--metadata", [], {
     description: "Add a column of metadata in these namespaces (* = all)",
   });
@@ -181,6 +235,12 @@ export class IssueListCommand extends ProjectCommand {
             ["open", "closed", "all"],
             "--state",
           );
+    if (this.blocked && this.unblocked) {
+      throw new CliError(
+        "--blocked and --unblocked are mutually exclusive",
+        "leave both off to list either kind",
+      );
+    }
 
     // The protocol has taken a list here all along (`status` is csvIds
     // server-side, and the client joins arrays with commas) — the single
@@ -213,6 +273,7 @@ export class IssueListCommand extends ProjectCommand {
       order: parseChoice(this.order, ["asc", "desc"], "--order"),
       limit: this.limit ? parsePositiveInt(this.limit, "--limit") : undefined,
       deleted: this.deleted ? true : undefined,
+      blocked: this.blocked ? true : this.unblocked ? false : undefined,
       metadata:
         this.metadata.length === 0 ? undefined : selectorOf(this.metadata),
     });
@@ -294,6 +355,8 @@ type CardRef = {
   spelled: string;
   /** The landing project's prefix, for refs written inside the card. */
   prefix: string | null;
+  /** The landing project's slug, so a block edge into it reads as local. */
+  projectSlug?: string;
   /** Project id → slug, for naming who a reference event came from. */
   slugOfProject?: (id: unknown) => string | null;
   /** The landing project's own id, so a local reference reads as local. */
@@ -422,6 +485,7 @@ export class IssueViewCommand extends ProjectCommand {
       const prefix = prefixes.get(card.slug) ?? null;
       return {
         prefix,
+        projectSlug: card.slug,
         spelled: this.spellRef(card, prefix),
         slugOfProject: directory.slugOf,
         projectId: directory.idOf(card.slug) ?? undefined,
@@ -1938,6 +2002,150 @@ export class IssueRestoreCommand extends ProjectCommand {
   }
 }
 
+/**
+ * `issue block` / `issue unblock` (T-377). Two flags rather than two
+ * subcommands per direction: `--by` and `--blocks` are the two ends of one
+ * relation, and which end you are standing on is the only thing that differs.
+ */
+abstract class IssueBlockCommandBase extends ProjectCommand {
+  number = Option.String({ required: true });
+  by = Option.Array("--by", [], {
+    description: "Issue this one waits for (repeatable, comma-splittable)",
+  });
+  blocks = Option.Array("--blocks", [], {
+    description: "Issue that waits for this one (repeatable)",
+  });
+
+  /** The refs of each direction, checked for "you named nothing". */
+  protected directions(): { by: string[]; blocks: string[] } {
+    const by = splitCommaList(this.by);
+    const blocks = splitCommaList(this.blocks);
+    if (by.length === 0 && blocks.length === 0) {
+      throw new CliError(
+        "name at least one issue",
+        "`--by <ref>` for what this card waits for, `--blocks <ref>` for what waits for it",
+      );
+    }
+    return { by, blocks };
+  }
+
+  /** The card's two directions, printed the way `issue view` prints them. */
+  protected printBlocks(
+    project: string,
+    blockedBy: BlockRef[],
+    blocking: BlockRef[],
+  ): void {
+    this.output({ blocked_by: blockedBy, blocks: blocking }, () => {
+      const lines = [
+        blockLine(blockedBy, "blocked by", project),
+        blockLine(blocking, "blocks", project),
+      ].filter((line): line is string => line !== null);
+      return lines.length === 0 ? "no blocks on this issue" : lines.join("\n");
+    });
+  }
+}
+
+export class IssueBlockCommand extends IssueBlockCommandBase {
+  static paths = [["issue", "block"]];
+  static usage = Command.Usage({
+    description: "Record that one issue is waiting for another",
+    details:
+      "Each ref is any spelling the deployment resolves — `#31`, `T-31`, `other#31`, a full URL. Declaring a block twice changes nothing, so a replay is free. Both cards get a timeline entry: the one being waited on should know somebody is waiting.\n\nNothing is refused because of a block: a blocked card still takes comments, status changes and work. What it gets is a fact anyone can query — `issue list --blocked`, the badge, and a notification on this card when the blocker crosses the project's clear line.",
+    examples: [
+      ["This card waits for two others", "$0 issue block 374 --by T-372,T-373"],
+      ["That card waits for this one", "$0 issue block 372 --blocks T-374"],
+    ],
+  });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const { project, number } = await this.resolveIssueRef(client, this.number);
+    const { by, blocks } = this.directions();
+    let blockedBy: BlockRef[] = [];
+    let blocking: BlockRef[] = [];
+    for (const ref of by) {
+      blockedBy = (await client.addIssueBlockedBy(project, number, ref))
+        .blocked_by;
+    }
+    for (const ref of blocks) {
+      blocking = (await client.addIssueBlocks(project, number, ref)).blocks;
+    }
+    // The direction nobody touched still gets printed, so the line the reader
+    // sees is the card's whole state rather than half of it.
+    const issue = await client.getIssue(project, number);
+    this.printBlocks(
+      project,
+      by.length > 0 ? blockedBy : (issue.blocked_by ?? []),
+      blocks.length > 0 ? blocking : (issue.blocks ?? []),
+    );
+  }
+}
+
+export class IssueUnblockCommand extends IssueBlockCommandBase {
+  static paths = [["issue", "unblock"]];
+  static usage = Command.Usage({
+    description: "Drop a recorded block between two issues",
+    details:
+      "Takes the same refs `issue block` takes and finds the edge itself. An edge whose far end you cannot read has no ref to name it with; `issue view --json` carries its `edge_id`, and `todou api DELETE /projects/<p>/issues/<n>/blocked-by/<edge_id>` removes it.",
+    examples: [["Stop waiting for a card", "$0 issue unblock 374 --by T-372"]],
+  });
+
+  protected async run(client: TodouClient): Promise<void> {
+    const { project, number } = await this.resolveIssueRef(client, this.number);
+    const { by, blocks } = this.directions();
+    const issue = await client.getIssue(project, number);
+
+    for (const ref of by) {
+      await client.removeIssueBlockedBy(
+        project,
+        number,
+        this.edgeOf(issue.blocked_by ?? [], ref, project, "--by"),
+      );
+    }
+    for (const ref of blocks) {
+      await client.removeIssueBlocks(
+        project,
+        number,
+        this.edgeOf(issue.blocks ?? [], ref, project, "--blocks"),
+      );
+    }
+    const after = await client.getIssue(project, number);
+    this.printBlocks(project, after.blocked_by ?? [], after.blocks ?? []);
+  }
+
+  /** The edge on this card that `typed` names, by any spelling of its far end. */
+  private edgeOf(
+    refs: BlockRef[],
+    typed: string,
+    project: string,
+    flag: string,
+  ): number {
+    const wanted = typed.trim();
+    for (const ref of refs) {
+      if (ref.hidden) continue;
+      const local = ref.project === project;
+      const spellings = [
+        ref.ref,
+        ref.project === null ? null : `${ref.project}#${ref.number}`,
+        ref.project === null ? null : `${ref.project}/${ref.number}`,
+        ref.project === null || ref.ref === null
+          ? null
+          : `${ref.project}/${ref.ref}`,
+        // A bare number means this project, so it may only match a card of it.
+        local ? `#${ref.number}` : null,
+        local ? String(ref.number) : null,
+      ];
+      if (spellings.includes(wanted)) return ref.edge_id;
+    }
+    const hidden = refs.filter((ref) => ref.hidden).length;
+    throw new CliError(
+      `this issue has no ${flag} block on ${wanted}`,
+      hidden > 0
+        ? `${hidden} of its blocks point at cards you cannot see — see \`issue unblock --help\``
+        : "`todou issue view` lists the ones it does have",
+    );
+  }
+}
+
 function isTTY(stream: unknown): boolean {
   return Boolean((stream as { isTTY?: boolean })?.isTTY);
 }
@@ -1994,6 +2202,15 @@ function renderIssue(
     lines.push(
       `spec: v${issue.spec_version} · ${status}${unresolved} (todou spec status/pull/comments)`,
     );
+  }
+  // Beside `spec:` and above everything optional: an agent reading a card to
+  // decide whether to start needs this in the default output, and `--json`
+  // is not where that decision is made.
+  for (const line of [
+    blockLine(issue.blocked_by ?? [], "blocked by", ref.projectSlug ?? ""),
+    blockLine(issue.blocks ?? [], "blocks", ref.projectSlug ?? ""),
+  ]) {
+    if (line !== null) lines.push(line);
   }
   if (issue.metadata !== undefined && issue.metadata.length > 0) {
     lines.push(
