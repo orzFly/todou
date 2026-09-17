@@ -3,6 +3,7 @@ import { Navigate } from "@tanstack/react-router";
 import type { UserIssueRole, UserIssueState } from "@todou/shared";
 import { CalendarIcon } from "lucide-react";
 import { userQuery } from "@/api/users.ts";
+import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UserIssuesSection } from "@/components/user/user-issues-section.tsx";
@@ -42,16 +43,26 @@ export function UserProfilePage({
 
   if (user.isError) {
     const status = (user.error as { status?: number }).status;
+    // 404 is an empty state, not a failure: there is nothing to retry into.
+    if (status === 404) {
+      return (
+        <div className="rounded-lg border border-dashed p-10 text-center">
+          <p className="font-medium">No such user here</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            The link may be old, or the account may be private to you.
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="rounded-lg border border-dashed p-10 text-center">
-        <p className="font-medium">
-          {status === 404 ? "No such user here" : "Could not load this user"}
-        </p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {status === 404
-            ? "The link may be old, or the account may be private to you."
-            : "Try again in a moment."}
-        </p>
+        <LoadFailure
+          message={`Could not load this user: ${user.error.message}`}
+          detail={user.error.message}
+          onRetry={() => user.refetch()}
+          retrying={user.isFetching}
+          className="justify-center"
+        />
       </div>
     );
   }

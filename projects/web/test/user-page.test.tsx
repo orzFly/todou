@@ -7,7 +7,7 @@ import {
   RouterProvider,
   useParams,
 } from "@tanstack/react-router";
-import { render } from "@testing-library/react";
+import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import type { PublicUser } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
@@ -119,6 +119,10 @@ describe("UserProfilePage (T-373)", () => {
       new QueryClient({ defaultOptions: { queries: { retry: false } } }),
     );
     expect(await view.findByText("No such user here")).toBeTruthy();
+    // 404 is an empty state, not a failure: there is nothing to retry into.
+    // Green before this card too — a fence against "swap the whole isError
+    // block for a LoadFailure", not evidence the card was fixed.
+    expect(view.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 
   it("carries no email anywhere in the payload it renders", async () => {
@@ -136,5 +140,97 @@ describe("UserProfilePage (T-373)", () => {
     expect(view.router.state.location.pathname).toBe("/users/alice");
     // Replace, not push: the id form never lingers in history.
     expect(view.router.history.canGoBack()).toBe(false);
+  });
+});
+
+describe("UserProfilePage load failure (T-409)", () => {
+  it("offers Retry on a non-404 failure, and recovers when the read succeeds", async () => {
+    let failing = true;
+    const getUser = vi.spyOn(api, "getUser").mockImplementation(async () => {
+      if (failing) {
+        throw Object.assign(new Error("server on fire"), { status: 500 });
+      }
+      return alice;
+    });
+    const view = renderAt(
+      "/users/alice",
+      new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+    );
+    await view.findByText(/Could not load this user/);
+    expect(view.queryByText("Try again in a moment.")).toBeNull();
+    expect(getUser).toHaveBeenCalledTimes(1);
+
+    failing = false;
+    fireEvent.click(view.getByRole("button", { name: "Retry" }));
+    expect(await view.findByText("Alice Potato")).toBeTruthy();
+    // The ref each call asked for, not just the count: a retry bound to the
+    // wrong query would still reach two calls.
+    expect(getUser.mock.calls.map((c) => c[0])).toEqual(["alice", "alice"]);
+  });
+
+  it("retries the ref the page is actually showing", async () => {
+    // What the previous case cannot catch: its ref is "alice" throughout, so
+    // a retry bound to a hardcoded "alice" passes it. This one is a different
+    // account, so a ref-insensitive retry refetches the wrong query and the
+    // page never resolves.
+    let failing = true;
+    const getUser = vi.spyOn(api, "getUser").mockImplementation(async () => {
+      if (failing) {
+        throw Object.assign(new Error("server on fire"), { status: 503 });
+      }
+      return bot;
+    });
+    const view = renderAt(
+      "/users/bot-one",
+      new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+    );
+    await view.findByText(/Could not load this user/);
+
+    failing = false;
+    fireEvent.click(view.getByRole("button", { name: "Retry" }));
+    expect(await view.findByText("A Bot")).toBeTruthy();
+    expect(getUser.mock.calls.map((c) => c[0])).toEqual(["bot-one", "bot-one"]);
+  });
+
+  it("greys the button, not the screen, when the failure kept its data", async () => {
+    // The one path where `retrying` has something to describe. A refetch that
+    // fails with data already cached (window refocus past the 60s staleTime,
+    // server away) leaves status "error" with the data kept, so this branch
+    // renders and `fetchState` does not reset it to pending on the next
+    // fetch. With no cached data the panel unmounts into the skeleton
+    // instead and the button never gets to render disabled.
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    client.setQueryData(userQuery("alice").queryKey, alice);
+    const view = renderAt("/users/alice", client);
+    await view.findByText("Alice Potato");
+
+    vi.spyOn(api, "getUser").mockRejectedValue(
+      Object.assign(new Error("server on fire"), { status: 500 }),
+    );
+    await act(async () => {
+      await client.refetchQueries({ queryKey: userQuery("alice").queryKey });
+    });
+    await view.findByText(/Could not load this user/);
+
+    let release: (user: PublicUser) => void = () => undefined;
+    vi.spyOn(api, "getUser").mockImplementation(
+      () =>
+        new Promise<PublicUser>((resolve) => {
+          release = resolve;
+        }),
+    );
+    fireEvent.click(view.getByRole("button", { name: "Retry" }));
+    await waitFor(() => {
+      expect(
+        view.getByRole("button", { name: "Retry" }).hasAttribute("disabled"),
+      ).toBe(true);
+    });
+
+    await act(async () => {
+      release(alice);
+    });
+    expect(await view.findByText("Alice Potato")).toBeTruthy();
   });
 });
