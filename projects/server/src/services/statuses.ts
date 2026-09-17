@@ -130,10 +130,12 @@ export async function updateStatus(
     id: row.id,
     action: "updated",
   });
-  // A reorder silently changes what the clear line means — the rule is
-  // "at this position or past it", so moving any status can put a card on
-  // the other side of a line nobody touched (T-377).
-  if (input.position !== undefined) {
+  // Both halves of the clear-line rule live in this table, so both edits
+  // silently move it (T-377): a reorder changes which side of
+  // "at this position or past it" a card falls on, and a category change
+  // moves the fallback rule that decides it when no line is configured —
+  // which, with every project's line starting NULL, is the default path.
+  if (input.position !== undefined || input.category !== undefined) {
     const changes = await reevaluateProjectBlocks(ctx, project, db);
     await announceBlockChanges(ctx, changes, actor.id);
   }

@@ -465,6 +465,52 @@ describe("issue block edges T-377", () => {
     await setClearLine(PB, null);
   });
 
+  it("re-decides every edge when a status changes category", async () => {
+    // A project of its own, with no clear line: the verdict is then the
+    // category fallback, which every project starts on — a migration leaves
+    // `block_clear_status_id` NULL everywhere.
+    const slug = "block-category";
+    expect(
+      (
+        await t.app.request("/api/projects", {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify({ slug, name: "Category" }),
+        })
+      ).status,
+    ).toBe(201);
+    const blocked = await createIssue(slug, "waits on a category");
+    const blocker = await createIssue(slug, "sits in next");
+    await block(slug, blocked, "blocked-by", `#${blocker}`);
+    await setStatus(slug, blocker, "Next");
+    expect((await issue(slug, blocked)).blocked_by[0].cleared_at).toBeNull();
+
+    const next = await statusNamed(slug, "Next");
+    const res = await t.app.request(`/api/projects/${slug}/statuses/${next}`, {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify({ category: "closed" }),
+    });
+    expect(res.status).toBe(200);
+    expect(
+      (await issue(slug, blocked)).blocked_by[0].cleared_at,
+    ).not.toBeNull();
+    expect(await timelineTypes(slug, blocked)).toContain("block_cleared");
+
+    // And back: the fallback moves both ways.
+    expect(
+      (
+        await t.app.request(`/api/projects/${slug}/statuses/${next}`, {
+          method: "PATCH",
+          headers: headers(),
+          body: JSON.stringify({ category: "open" }),
+        })
+      ).status,
+    ).toBe(200);
+    expect((await issue(slug, blocked)).blocked_by[0].cleared_at).toBeNull();
+    expect(await timelineTypes(slug, blocked)).toContain("block_reblocked");
+  });
+
   it("refuses to delete the status a project uses as its clear line", async () => {
     const res = await t.app.request(`/api/projects/${PA}/statuses`, {
       method: "POST",

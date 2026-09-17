@@ -17,6 +17,7 @@ import {
 } from "../../db/system-schema.ts";
 import { IssueMovingError } from "../../errors.ts";
 import { type ProjectRow, routeInfoOf } from "../access.ts";
+import { announceBlockChanges, evaluateBlockerStatus } from "../blocks.ts";
 import { getIssue } from "../issues.ts";
 import { lineageOf, recordAliases, registerMove } from "../relocation.ts";
 import { clearIssueChildren, copyIssueTree, type IdMap } from "./copy.ts";
@@ -59,6 +60,20 @@ export async function moveIssue(
       : await moveAcrossDbs(ctx, actor, plan, agentContext);
 
   await afterCommit(ctx, plan, landed);
+
+  // The card that landed carries the MAPPED status, and the line it is judged
+  // against is the destination's — so both premises the old verdict rested on
+  // are gone, and every edge this card blocks has to be re-decided here
+  // (T-377). Leaving it to the hourly repair sweep would park the blocked
+  // cards on a stale verdict, and the sweep has no actor of its own: the one
+  // who declared the edge would be the one reader unread skips.
+  const blocks = await evaluateBlockerStatus(
+    ctx,
+    plan.target.project,
+    plan.target.db,
+    [landed.number],
+  );
+  await announceBlockChanges(ctx, blocks, actor.id, agentContext);
 
   return {
     moved_to: { slug: plan.target.project.slug, number: landed.number },

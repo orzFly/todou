@@ -239,6 +239,40 @@ describe("block edges across databases T-377", () => {
     ).toHaveLength(2);
   });
 
+  it("re-decides the verdict against the destination's clear line", async () => {
+    // The move carries the card to a project whose line says something else
+    // about the same status: in A, `In Progress` is at or past `Todo` and
+    // clears; in B there is no line, so only the closed category does. Both
+    // premises of the old verdict are gone, and leaving it standing would
+    // show the blocked card as free to start on.
+    await setClearLine(PA, "Todo");
+    await setClearLine(PB, null);
+    const blocked = await createIssue(PB, "waits across the move");
+    const blocker = await createIssue(PA, "moves to a stricter project");
+    expect(
+      (await block(PB, blocked, "blocked-by", `${PA}#${blocker}`)).status,
+    ).toBe(200);
+
+    await setStatus(PA, blocker, "In Progress");
+    expect((await issue(PB, blocked)).blocked_by[0].cleared_at).not.toBeNull();
+
+    const res = await t.app.request(
+      `/api/projects/${PA}/issues/${blocker}/move`,
+      {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ to_project: PB }),
+      },
+    );
+    expect(res.status).toBe(200);
+
+    const after = (await issue(PB, blocked)).blocked_by[0];
+    expect(after.project).toBe(PB);
+    expect(after.cleared_at).toBeNull();
+    expect(await timelineTypes(PB, blocked)).toContain("block_reblocked");
+    await setClearLine(PA, "Shipped");
+  });
+
   it("rewrites both ends when a card moves between databases", async () => {
     const blocked = await createIssue(PA, "moving across databases");
     const blocker = await createIssue(PB, "stays in b");
