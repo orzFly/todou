@@ -13,6 +13,11 @@ describe("GET /api/users/{ref} T-373", () => {
   let bob: Awaited<ReturnType<typeof addUserWithToken>>;
   let stranger: Awaited<ReturnType<typeof addUserWithToken>>;
   let admin: Awaited<ReturnType<typeof addUserWithToken>>;
+  let owner: Awaited<ReturnType<typeof addUserWithToken>>;
+  let ownedAgent: Awaited<ReturnType<typeof addUserWithToken>>;
+  let siblingAgent: Awaited<ReturnType<typeof addUserWithToken>>;
+  let strangerAgent: Awaited<ReturnType<typeof addUserWithToken>>;
+  let ownedHuman: Awaited<ReturnType<typeof addUserWithToken>>;
   const headers = () => ({ "content-type": "application/json", cookie });
 
   beforeAll(async () => {
@@ -44,6 +49,38 @@ describe("GET /api/users/{ref} T-373", () => {
       },
     );
     expect(member.status).toBe(204);
+
+    // A fresh non-admin account, never the cookie user above: that one is the
+    // deployment's first human and therefore an instance admin, which would
+    // answer every ownership case below on its own.
+    owner = await addUserWithToken(t.ctx, "route-owner");
+    ownedAgent = await addUserWithToken(t.ctx, "route-agent", {
+      kind: "machine",
+      ownerId: owner.user.id,
+    });
+    siblingAgent = await addUserWithToken(t.ctx, "route-agent-sibling", {
+      kind: "machine",
+      ownerId: owner.user.id,
+    });
+    strangerAgent = await addUserWithToken(t.ctx, "route-agent-elsewhere", {
+      kind: "machine",
+      ownerId: stranger.user.id,
+    });
+    ownedHuman = await addUserWithToken(t.ctx, "route-owned-human", {
+      ownerId: owner.user.id,
+    });
+    // A seat for the owner alone, so `/issues` reaches the merge instead of
+    // returning early on an empty scope. None of the agents get one, which is
+    // what leaves the ownership exemption as the only way to a 200.
+    const ownerSeat = await t.app.request(
+      `/api/projects/${P}/members/${owner.user.id}`,
+      {
+        method: "PUT",
+        headers: headers(),
+        body: JSON.stringify({ role: "writer" }),
+      },
+    );
+    expect(ownerSeat.status).toBe(204);
   });
 
   afterAll(async () => {
@@ -114,5 +151,74 @@ describe("GET /api/users/{ref} T-373", () => {
     });
     expect(res.status).toBe(200);
     expect((await json(res)).login).toBe("route-stranger");
+  });
+
+  it("answers for a machine account the caller owns T-410", async () => {
+    const res = await t.app.request("/api/users/route-agent", {
+      headers: { ...owner.headers },
+    });
+    expect(res.status).toBe(200);
+    expect((await json(res)).id).toBe(ownedAgent.user.id);
+  });
+
+  it("resolves the owned agent for the subresources too T-410", async () => {
+    // The empty project list is the load-bearing half: it says this agent
+    // holds no seat anywhere, so the 200s here and above cannot be the
+    // shared-project branch answering.
+    const projectsRes = await t.app.request("/api/users/route-agent/projects", {
+      headers: { ...owner.headers },
+    });
+    expect(projectsRes.status).toBe(200);
+    expect((await json(projectsRes)).items).toEqual([]);
+
+    const issuesRes = await t.app.request("/api/users/route-agent/issues", {
+      headers: { ...owner.headers },
+    });
+    expect(issuesRes.status).toBe(200);
+    expect((await json(issuesRes)).items).toEqual([]);
+  });
+
+  it("404s for a machine account somebody else owns T-410", async () => {
+    // Without this the 404 below would also pass on an agent whose `ownerId`
+    // never got written, and the rule could be as wide as "any owned account".
+    expect(strangerAgent.user.ownerId).toBe(stranger.user.id);
+
+    const res = await t.app.request("/api/users/route-agent-elsewhere", {
+      headers: { ...owner.headers },
+    });
+    expect(res.status).toBe(404);
+
+    const ghost = await t.app.request("/api/users/never-existed", {
+      headers: { ...owner.headers },
+    });
+    expect(ghost.status).toBe(404);
+    expect(await json(res)).toEqual(await json(ghost));
+  });
+
+  it("404s between two agents of one owner T-410", async () => {
+    const res = await t.app.request("/api/users/route-agent", {
+      headers: { ...siblingAgent.headers },
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("404s for the owner when their own agent asks T-410", async () => {
+    const res = await t.app.request("/api/users/route-owner", {
+      headers: { ...ownedAgent.headers },
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("404s for a human account carrying an owner_id T-410", async () => {
+    // A state no product path builds: `owner_id` is written by `createAgent`
+    // alone, always alongside `kind: "machine"`. The case exists to keep the
+    // `kind` guard from being read as dead code and dropped.
+    expect(ownedHuman.user.kind).toBe("human");
+    expect(ownedHuman.user.ownerId).toBe(owner.user.id);
+
+    const res = await t.app.request("/api/users/route-owned-human", {
+      headers: { ...owner.headers },
+    });
+    expect(res.status).toBe(404);
   });
 });

@@ -21,8 +21,8 @@ const userRoute = createRoute({
   summary:
     "One account's public identity. {ref} is an id when all digits, a login " +
     "otherwise. Visible when the caller shares a project with them, is " +
-    "them, or is an instance admin; everyone else gets the same 404 an " +
-    "unknown login gets.",
+    "them, owns them as an agent, or is an instance admin; everyone else " +
+    "gets the same 404 an unknown login gets.",
   request: {
     params: z.object({ ref: z.string().min(1).max(64) }),
   },

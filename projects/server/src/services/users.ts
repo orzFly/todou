@@ -55,9 +55,10 @@ export async function ownerRefOf(db: Db, row: UserRow): Promise<OwnerRef> {
  * real.
  *
  * Visibility is "shares at least one project with the caller", plus the
- * caller themself and instance admins. Every `/users/{ref}/*` route resolves
- * through here, so a subject the reader cannot see never reaches a handler
- * that would go on to list something about them.
+ * caller themself, instance admins, and the machine accounts the caller
+ * owns. Every `/users/{ref}/*` route resolves through here, so a subject the
+ * reader cannot see never reaches a handler that would go on to list
+ * something about them.
  */
 export async function resolveVisibleUser(
   ctx: AppContext,
@@ -72,7 +73,11 @@ export async function resolveVisibleUser(
     .where(numeric ? eq(users.id, Number(ref)) : eq(users.login, ref));
   const row = rows[0];
   if (row === undefined) throw new NotFoundError("user not found");
-  if (row.id !== actor.id && !actor.isInstanceAdmin) {
+  // Widening to the owner exposes nothing: `GET /agents` already returns a
+  // superset of this row's fields. The `kind` guard holds that true —
+  // `owner_id` is bound to machine accounts by `createAgent`, not by schema.
+  const ownAgent = row.kind === "machine" && row.ownerId === actor.id;
+  if (row.id !== actor.id && !actor.isInstanceAdmin && !ownAgent) {
     // "Shares at least one project": two membership reads, no join needed —
     // the caller's set is small and the question is only whether the two
     // sets intersect at all.
