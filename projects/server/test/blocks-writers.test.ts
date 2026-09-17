@@ -36,6 +36,7 @@ const DECLARED: Record<string, string> = {
   "routes/statuses.ts": "route wiring; the write is in services/statuses.ts",
   "services/inbox.ts": "reads the status for the keep-check",
   "services/search.ts": "reads the status for the facets",
+  "services/user-issues.ts": "reads the status to render someone's card list",
   "services/move/plan.ts": "decides the mapping; copy.ts performs the write",
   "services/move/copy.ts":
     "writes the mapped status into the destination; execute.ts re-evaluates " +
