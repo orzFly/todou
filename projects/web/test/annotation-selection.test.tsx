@@ -13,8 +13,10 @@ import { projectsQuery } from "../src/api/queries.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import {
   AnnotatedMarkdown,
+  anchorForSelection,
   selectionEndpoints,
 } from "../src/components/spec/annotated-markdown.tsx";
+import { buildSegmentIndex } from "../src/lib/spec-source-index.ts";
 import { POINTER_FINE } from "../src/lib/use-media-query.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
@@ -953,5 +955,96 @@ describe("AnnotatedMarkdown selection triggers (T-384)", () => {
     const { view, container } = await mount();
     select(textOf(container, 0), 0, textOf(container, 0), 5);
     expect(await view.findByTestId("annotation-action-bar")).not.toBeNull();
+  });
+});
+
+// The two edges T-384's review found: an entry the reader cannot reach is
+// not an entry, and the anchor of a selection that crosses into pierre's
+// shadow root has to widen to whole lines rather than vanish.
+describe("AnnotatedMarkdown entry placement and shadow fallback (T-384)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const rect = (top: number, bottom: number) =>
+    ({ top, bottom, height: bottom - top }) as DOMRect;
+
+  it("keeps the entry inside the file when the selection reaches past it", async () => {
+    const onStage = vi.fn();
+    const view = renderWithProviders(
+      <AnnotatedMarkdown
+        slug="p"
+        issueNumber={1}
+        body={"alpha one\n\nbeta two\n\ngamma three\n"}
+        annotations={[]}
+        onStage={onStage}
+        onEditDraft={() => {}}
+        onRemoveDraft={() => {}}
+        onResolve={() => {}}
+      />,
+    );
+    const container = await waitFor(() => {
+      const el = view.getByTestId("annotated-markdown");
+      if (!el.querySelector("p[data-loc]")) throw new Error("not rendered");
+      return el;
+    });
+    // The shape ⌘/Ctrl-A produces on a real page: the selection's rect is as
+    // tall as the document, while the file it anchors to is a short box.
+    vi.spyOn(container, "getBoundingClientRect").mockReturnValue(rect(0, 52));
+    vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(
+      rect(0, 3150),
+    );
+
+    const node = container.querySelector("p[data-loc]")?.firstChild;
+    if (!node) throw new Error("no paragraph");
+    const range = document.createRange();
+    range.setStart(node, 0);
+    range.setEnd(node, 5);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const button = await view.findByText(/Comment L/);
+    const top = Number.parseFloat(
+      (button as HTMLElement).style.top.replace("px", ""),
+    );
+    expect(top).toBeGreaterThanOrEqual(0);
+    expect(top).toBeLessThanOrEqual(52);
+  });
+
+  it("widens to whole lines when an endpoint sits in a shadow root", () => {
+    const container = document.createElement("div");
+    const prose = document.createElement("p");
+    prose.setAttribute("data-loc", "1-1");
+    prose.textContent = "alpha beta";
+    const block = document.createElement("div");
+    block.setAttribute("data-loc", "2-2");
+    const host = document.createElement("div");
+    const shadow = host.attachShadow({ mode: "open" });
+    const row = document.createElement("span");
+    row.textContent = "x = 1";
+    shadow.append(row);
+    block.append(host);
+    container.append(prose, block);
+    document.body.append(container);
+    try {
+      const index = buildSegmentIndex("alpha beta\nx = 1\n");
+      const anchor = anchorForSelection(container, index, {
+        start: { node: prose.firstChild as Node, offset: 2 },
+        // pierre renders code into an open shadow root, so this endpoint
+        // lives in a different tree: no range spans the two, and the
+        // columns that would need one are not provable.
+        end: { node: row.firstChild as Node, offset: 3 },
+        collapsed: false,
+      });
+      expect(anchor).toEqual({
+        lineStart: 1,
+        lineEnd: 2,
+        colStart: null,
+        colEnd: null,
+      });
+    } finally {
+      container.remove();
+    }
   });
 });

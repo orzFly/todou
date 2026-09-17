@@ -541,7 +541,14 @@ function entryTop(
     (legacy === null || legacy.collapsed
       ? elementNear(ends.end.node)?.getBoundingClientRect()
       : null) ?? legacy?.getBoundingClientRect();
-  return (rect?.bottom ?? 0) - container.getBoundingClientRect().top + 6;
+  const containerRect = container.getBoundingClientRect();
+  const below = (rect?.bottom ?? 0) - containerRect.top + 6;
+  // A selection that reaches past the file — ⌘/Ctrl-A, or a drag on into
+  // the page below it — has a rect as tall as the page, and that bottom
+  // would put the button hundreds of pixels under the prose it points at,
+  // off screen. Clamping to the file's own box is what keeps "the entry
+  // appeared" and "the reader can reach it" the same statement.
+  return Math.min(Math.max(below, 0), containerRect.bottom - containerRect.top);
 }
 
 /**
