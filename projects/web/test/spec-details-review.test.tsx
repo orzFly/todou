@@ -236,8 +236,6 @@ describe("visibleAnchor", () => {
     ).toBe(root.querySelector("#outer"));
   });
 
-  // The walk starts at the parent, not at the element: `closest` on a shut
-  // fold answers with that fold, and the loop would never leave it.
   it("returns a shut fold that stands on its own", () => {
     const root = host("<details id='t'><p>x</p></details>");
     const target = root.querySelector<HTMLElement>("#t");

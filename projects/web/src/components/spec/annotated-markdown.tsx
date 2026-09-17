@@ -410,16 +410,18 @@ export function chipTop(containerRect: { top: number }, el: Element): number {
  * refuses to fold an annotated block at all — but a `<details>` is the
  * reader's to close, so the chip follows it up to the fold's own header
  * instead. Asking which fold is shut says the reason, and needs no layout.
+ *
+ * One pass up the ancestor chain, keeping the last match, rather than a
+ * `closest` that restarts from what it found: the walk then terminates
+ * because the DOM is finite, and a future edit cannot turn it into the
+ * synchronous spin that a test runner has no way to interrupt or name.
  */
 export function visibleAnchor(el: HTMLElement): HTMLElement {
   let anchor = el;
-  for (;;) {
-    const fold = anchor.parentElement?.closest<HTMLElement>(
-      "details:not([open])",
-    );
-    if (fold === null || fold === undefined) return anchor;
-    anchor = fold;
+  for (let node = el.parentElement; node !== null; node = node.parentElement) {
+    if (node.matches("details:not([open])")) anchor = node;
   }
+  return anchor;
 }
 
 /**

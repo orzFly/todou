@@ -107,9 +107,9 @@ describe("the segment index and the renderer agree about a rejected link", () =>
   });
 
   it("keeps a decoration on the words it was computed for", async () => {
-    // The link sits before the changed word: its rendered length grows from
-    // the label to the whole construct, so an index that still reads it as a
-    // link puts the mark that many characters early.
+    // Not the double-registration guard, though it looks like one: marks are
+    // placed from each text node's own position rather than by a cumulative
+    // offset walk, so this stays green with one. The case above is that guard.
     const before = "前言 [a](javascript:alert(1)) 结论原样。\n";
     const after = "前言 [a](javascript:alert(1)) 结论改写。\n";
     const view = renderWithProviders(
