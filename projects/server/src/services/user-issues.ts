@@ -38,12 +38,17 @@ type Candidate = {
 };
 
 /**
- * Newest first. The `project_id` tie-break is not cosmetic: two rows in
- * different databases can share an `updated_at` to the microsecond, and
- * those databases may sit on hosts whose clocks disagree, so comparing
- * their row ids would order by nothing. Any total order will do — it only
- * has to be the same one on every page, or the cut would fall in a
- * different place each time and rows would double or vanish across it.
+ * Newest first, a tie broken by project.
+ *
+ * What that tie-break buys is the order the page reads in, not its
+ * correctness. Rows can neither double nor vanish across the cut whichever
+ * way a tie resolves, because each project resumes from its own last
+ * delivered row: within one project this ordering *is* that project's own
+ * `ORDER BY updated_at DESC, id DESC`, so any page is a prefix of each
+ * project's stream no matter how the streams interleave.
+ *
+ * Falling through to `row.id` instead would be ordering by nothing —
+ * separate project databases mint ids from unrelated sequences.
  */
 function compare(a: Candidate, b: Candidate): number {
   if (a.ts !== b.ts) return a.ts < b.ts ? 1 : -1;

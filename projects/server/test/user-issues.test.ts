@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { issues } from "../src/db/project-schema.ts";
 import { getProjectByRef, routeInfoOf } from "../src/services/access.ts";
@@ -256,10 +256,19 @@ describe.each(["shared", "dedicated"] as const)(
           ] as const) {
             const project = await getProjectByRef(t.ctx, slug);
             const db = await t.ctx.router.forProject(routeInfoOf(project));
+            // `number` is per project, and under shared placement both
+            // projects live in one `issues` table — without the project
+            // this would stamp whichever other card happens to share the
+            // number.
             await db
               .update(issues)
               .set({ updatedAt: stamp })
-              .where(eq(issues.number, number));
+              .where(
+                and(
+                  eq(issues.projectId, project.id),
+                  eq(issues.number, number),
+                ),
+              );
           }
 
           const first = await json(await list({ limit: "1" }));
@@ -291,7 +300,9 @@ describe.each(["shared", "dedicated"] as const)(
           await db
             .update(issues)
             .set({ updatedAt: stamp })
-            .where(eq(issues.number, number));
+            .where(
+              and(eq(issues.projectId, project.id), eq(issues.number, number)),
+            );
         }
 
         const collected: string[] = [];
@@ -310,6 +321,46 @@ describe.each(["shared", "dedicated"] as const)(
           expect(collected.filter((k) => k === `${pa}/${number}`).length).toBe(
             1,
           );
+        }
+      });
+
+      // What the `project_id` tie-break decides, and the only way to see it
+      // from outside: on a tie the comparator otherwise falls through to
+      // `row.id`, so the two rules have to disagree before either can be
+      // observed. Under shared placement both projects draw row ids from
+      // one sequence, so creating the higher-project card FIRST gives it
+      // the LOWER id — tie-break puts it above, `row.id DESC` below.
+      it("orders a cross-project tie by project, not by row id", async () => {
+        await addMember(pb, viewer.user.id);
+        try {
+          const rowA = await getProjectByRef(t.ctx, pa);
+          const rowB = await getProjectByRef(t.ctx, pb);
+          const [low, high] = rowA.id < rowB.id ? [rowA, rowB] : [rowB, rowA];
+          const nHigh = await createIssue(high.slug, "tie high-project");
+          const nLow = await createIssue(low.slug, "tie low-project");
+          const stamp = new Date("2032-03-03T00:00:00.000789Z");
+          for (const [project, number] of [
+            [high, nHigh],
+            [low, nLow],
+          ] as const) {
+            const db = await t.ctx.router.forProject(routeInfoOf(project));
+            await db
+              .update(issues)
+              .set({ updatedAt: stamp })
+              .where(
+                and(
+                  eq(issues.projectId, project.id),
+                  eq(issues.number, number),
+                ),
+              );
+          }
+
+          const keys = keysOf(await json(await list({ limit: "100" })));
+          expect(keys.indexOf(`${high.slug}/${nHigh}`)).toBeLessThan(
+            keys.indexOf(`${low.slug}/${nLow}`),
+          );
+        } finally {
+          await removeMember(pb, viewer.user.id);
         }
       });
 
