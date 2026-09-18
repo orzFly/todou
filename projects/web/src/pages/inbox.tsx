@@ -46,10 +46,7 @@ export function matchesTab(item: InboxItem, tab: InboxTab): boolean {
 export function InboxPage() {
   const inbox = useQuery(inboxQuery);
   const items = inbox.data?.items;
-  const projects = useMemo(
-    () => items?.map((item) => item.project),
-    [items],
-  );
+  const projects = useMemo(() => items?.map((item) => item.project), [items]);
   const refs = useProjectRefs(projects);
   const [tab, setTab] = useState<InboxTab>("all");
   const data = inbox.data;
@@ -171,6 +168,7 @@ function InboxGroupSection({
                 icon_url: group.project.icon_url,
               }}
               className="size-5"
+              aria-hidden
             />
             {group.project.name}
           </Link>

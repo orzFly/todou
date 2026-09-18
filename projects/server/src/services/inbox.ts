@@ -33,9 +33,9 @@ import {
   visibleProjects,
 } from "./cross-references.ts";
 import { bundleIssues, type IssueBundle, toIssue } from "./issues.ts";
-import { toProjectBrief } from "./projects.ts";
 import { loadIssueMutes, loadMuteContext, loadMutedProjects } from "./mutes.ts";
 import { readPrefs } from "./prefs.ts";
+import { toProjectBrief } from "./projects.ts";
 import { ensureFrontiers, frontierJoin, unreadIssueState } from "./reads.ts";
 import { live } from "./trash.ts";
 

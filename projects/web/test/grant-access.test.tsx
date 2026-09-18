@@ -57,8 +57,18 @@ function agent(id: number, login: string): Agent {
 
 /** `mine` is alice's to administer; `theirs` is only readable. */
 const PROJECTS = [
-  { id: 7, slug: "mine", name: "Mine" },
-  { id: 8, slug: "theirs", name: "Theirs" },
+  {
+    id: 7,
+    slug: "mine",
+    name: "Mine",
+    icon_url: "/api/projects/7/icon?v=grant",
+  },
+  {
+    id: 8,
+    slug: "theirs",
+    name: "Theirs",
+    icon_url: "/api/projects/8/icon?v=grant",
+  },
 ];
 
 const DIRECTORY: ReferenceDirectory = {
@@ -127,6 +137,17 @@ function stubFetch(): Call[] {
     return new Response(null, { status: 204 });
   }) as typeof fetch);
   return calls;
+}
+
+function loadImages(): void {
+  class LoadedImage extends EventTarget {
+    complete = true;
+    naturalWidth = 20;
+    crossOrigin: string | null = null;
+    referrerPolicy = "";
+    src = "";
+  }
+  vi.stubGlobal("Image", LoadedImage);
 }
 
 function renderCard(
@@ -249,6 +270,19 @@ describe("the access page as an admin of the target", () => {
     expect(await screen.findByLabelText("role in mine")).not.toBeNull();
     expect(screen.getByRole("button", { name: "Decline" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Add to project" })).toBeTruthy();
+  });
+
+  it("draws the project icon beside the target's name", async () => {
+    loadImages();
+    stubFetch();
+    renderCard({ targets: ["mine"], login: "bot", uid: 5 });
+
+    const name = await screen.findByText("Mine");
+    expect(
+      name.parentElement?.parentElement
+        ?.querySelector("img")
+        ?.getAttribute("src"),
+    ).toBe("/api/projects/7/icon?v=grant");
   });
 
   it("grants to the account picked here, never to the uid in the URL", async () => {
@@ -384,6 +418,32 @@ describe("the access page on an ambiguous target", () => {
       await screen.findByRole("button", { name: "Add to project" }),
     ).toBeTruthy();
     expect(await screen.findByLabelText("role in mine")).not.toBeNull();
+  });
+
+  it("draws each candidate project's icon inside its button", async () => {
+    loadImages();
+    stubFetch();
+    renderWithProviders(
+      <GrantAccessCard
+        search={{ targets: ["M-1"], login: "bot", uid: 5 }}
+        reason={null}
+        me={me}
+        agents={[agent(5, "bot")]}
+        projects={PROJECTS}
+        directory={{
+          ...DIRECTORY,
+          entries: [
+            { prefix: "M", slug: "mine", from: SINCE, to: null },
+            { prefix: "M", slug: "theirs", from: SINCE, to: null },
+          ],
+        }}
+      />,
+    );
+
+    const candidate = await screen.findByRole("button", { name: "mine" });
+    expect(candidate.querySelector("img")?.getAttribute("src")).toBe(
+      "/api/projects/7/icon?v=grant",
+    );
   });
 });
 

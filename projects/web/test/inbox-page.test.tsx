@@ -144,12 +144,16 @@ describe("InboxPage", () => {
     vi.stubGlobal("Image", LoadedImage);
     const iconUrl = "/api/projects/1/icon?v=inbox";
     mockInbox({
-      items: [makeItem("greenhouse", 42, { project: {
-        id: 1,
-        slug: "greenhouse",
-        name: "Project greenhouse",
-        icon_url: iconUrl,
-      } })],
+      items: [
+        makeItem("greenhouse", 42, {
+          project: {
+            id: 1,
+            slug: "greenhouse",
+            name: "Project greenhouse",
+            icon_url: iconUrl,
+          },
+        }),
+      ],
       truncated: false,
     });
     const view = renderWithProviders(<InboxPage />);

@@ -121,8 +121,7 @@ function seedContext(
         id: 1,
         slug,
         name: slug,
-        icon_url:
-          slug === "mirror" ? "/api/projects/2/icon?v=jump-row" : null,
+        icon_url: slug === "mirror" ? "/api/projects/2/icon?v=jump-row" : null,
         description: "",
         created_at: "2026-01-01T00:00:00.000Z",
       }),

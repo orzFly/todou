@@ -111,16 +111,10 @@ export function UserIssuesSection({
     query.queryKey,
   );
   const items = useMemo(
-    () => [
-      ...(first.data?.items ?? []),
-      ...extraPages.flatMap((p) => p.items),
-    ],
+    () => [...(first.data?.items ?? []), ...extraPages.flatMap((p) => p.items)],
     [extraPages, first.data?.items],
   );
-  const projects = useMemo(
-    () => items.map((item) => item.project),
-    [items],
-  );
+  const projects = useMemo(() => items.map((item) => item.project), [items]);
   const refs = useProjectRefs(projects);
   // The newest loaded page decides. Falling back to page 1's cursor would
   // resurrect it at the end of the list and re-append that page forever.
@@ -202,6 +196,7 @@ export function UserIssuesSection({
                         icon_url: item.project.icon_url,
                       }}
                       className="size-5"
+                      aria-hidden
                     />
                     <span className="text-xs text-muted-foreground">
                       {item.project.name}

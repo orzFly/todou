@@ -328,6 +328,7 @@ function JumpBanner({ slug, q }: { slug: string; q: string }) {
                   icon_url: row.icon_url,
                 }}
                 className="size-5"
+                aria-hidden
               />
               <span className="truncate font-medium">{row.name}</span>
             </Link>

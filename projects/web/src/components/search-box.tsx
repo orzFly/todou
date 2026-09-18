@@ -695,6 +695,7 @@ export function SearchBox({
                       icon_url: row.icon_url,
                     }}
                     className="size-5"
+                    aria-hidden
                   />
                   <span className="truncate">{row.name}</span>
                 </Link>

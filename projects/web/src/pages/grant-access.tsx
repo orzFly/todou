@@ -28,6 +28,7 @@ import {
   LoadFailure,
   RefreshFailure,
 } from "@/components/shared/load-failure.tsx";
+import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { RolePermissionsDialog } from "@/components/shared/role-permissions-table.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,10 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type GrantTarget, resolveGrantTarget } from "@/lib/grant-target.ts";
+import {
+  type ProjectRefOption,
+  projectSpellings,
+} from "@/lib/project-spellings.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 
 /**
@@ -103,7 +108,12 @@ const DEFAULT_ROLE: MemberRole = "writer";
 
 const ROLES: readonly MemberRole[] = MEMBER_ROLES;
 
-export type ProjectBriefRow = { id: number; slug: string; name: string };
+export type ProjectBriefRow = {
+  id: number;
+  slug: string;
+  name: string;
+  icon_url?: string | null;
+};
 
 /** One line of the page: a target, and everything decided about it so far. */
 type Row = {
@@ -188,6 +198,12 @@ export function GrantAccessCard({
   directory: ReferenceDirectory | null;
   refreshFailure?: React.ReactNode;
 }) {
+  const refs: Record<string, ProjectRefOption> = Object.fromEntries(
+    projectSpellings(projects, directory).map((project) => [
+      project.slug,
+      project,
+    ]),
+  );
   const found = search.targets.map((raw) => ({
     raw,
     target: resolveGrantTarget(raw, { projects, directory }),
@@ -329,6 +345,8 @@ export function GrantAccessCard({
             key={row.raw}
             row={row}
             project={projects.find((p) => p.slug === row.slug)}
+            projects={projects}
+            refs={refs}
             denyUid={search.uid}
             busy={decline.isPending || grant.isPending}
             onChoose={(slug) =>
@@ -424,6 +442,8 @@ function NoTarget({ hasAgents }: { hasAgents: boolean }) {
 function TargetRow({
   row,
   project,
+  projects,
+  refs,
   denyUid,
   busy,
   onChoose,
@@ -433,6 +453,8 @@ function TargetRow({
 }: {
   row: Row;
   project: ProjectBriefRow | undefined;
+  projects: readonly ProjectBriefRow[];
+  refs: Record<string, ProjectRefOption>;
   denyUid: number | undefined;
   busy: boolean;
   onChoose: (slug: string) => void;
@@ -464,16 +486,30 @@ function TargetRow({
           Several projects you can read answer to this — pick the one it means.
         </p>
         <div className="flex flex-wrap gap-2">
-          {(target.kind === "several" ? target.slugs : []).map((candidate) => (
-            <Button
-              key={candidate}
-              size="sm"
-              variant="outline"
-              onClick={() => onChoose(candidate)}
-            >
-              {candidate}
-            </Button>
-          ))}
+          {(target.kind === "several" ? target.slugs : []).map((candidate) => {
+            const candidateProject = projects.find(
+              (project) => project.slug === candidate,
+            );
+            return (
+              <Button
+                key={candidate}
+                size="sm"
+                variant="outline"
+                onClick={() => onChoose(candidate)}
+              >
+                <ProjectIcon
+                  project={{
+                    name: candidateProject?.name ?? candidate,
+                    prefix: refs[candidate]?.prefix ?? null,
+                    icon_url: candidateProject?.icon_url,
+                  }}
+                  className="size-5"
+                  aria-hidden
+                />
+                {candidate}
+              </Button>
+            );
+          })}
         </div>
       </div>
     );
@@ -493,9 +529,20 @@ function TargetRow({
           onChange={(e) => onInclude(slug, e.target.checked)}
         />
       ) : null}
-      <div className="min-w-40 flex-1">
-        <p className="text-sm font-medium">{name}</p>
-        <p className="font-mono text-xs text-muted-foreground">{slug}</p>
+      <div className="flex min-w-40 flex-1 items-center gap-2">
+        <ProjectIcon
+          project={{
+            name,
+            prefix: refs[slug]?.prefix ?? null,
+            icon_url: project?.icon_url,
+          }}
+          className="size-5"
+          aria-hidden
+        />
+        <div>
+          <p className="text-sm font-medium">{name}</p>
+          <p className="font-mono text-xs text-muted-foreground">{slug}</p>
+        </div>
       </div>
       {isAdmin ? (
         <Select

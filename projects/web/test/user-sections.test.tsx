@@ -16,6 +16,7 @@ import {
 } from "@testing-library/react";
 import type {
   PublicUser,
+  ReferenceDirectory,
   UserIssueItem,
   UserIssuesPage,
   UserProjects,
@@ -184,10 +185,8 @@ function clientWithUser(): QueryClient {
     format: { prefix: "K", history: [] },
     autolinks: [],
   });
-  client.setQueryData(referenceDirectoryQuery.queryKey, {
-    entries: [],
-    contested: [],
-  });
+  const directory: ReferenceDirectory = { entries: [], contested: [] };
+  client.setQueryData(referenceDirectoryQuery.queryKey, directory);
   return client;
 }
 
