@@ -77,11 +77,18 @@ import {
   LoadMoreFailure,
   LoadMoreFooter,
 } from "@/components/shared/load-more.tsx";
+import {
+  useCancelReturnRestore,
+  useRegisterReturnArea,
+  useRegisterReturnLane,
+} from "@/components/shared/return-context.tsx";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { WINDOW_REGION } from "@/lib/return-view.ts";
 import { useHeaderHeight } from "@/lib/use-header-height.ts";
 import { usePagedAppend } from "@/lib/use-paged-append.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
+import { useReturnView } from "@/lib/use-return-view.ts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -98,6 +105,25 @@ export function IssueListPage() {
   ) : (
     <ProjectIssueListPage slug={slug} search={search} />
   );
+}
+
+/**
+ * The rows a reading position is remembered against (T-407), read out of the
+ * DOM rather than from a body's `items`. The bodies that hold those rows sit
+ * behind this page's Suspense boundary and below its grouped/flat fork, so
+ * nothing above them has the list — and it is the laid-out element, not the
+ * item, that the sampler has to measure anyway. `data-return-id` carries an
+ * issue's database id; the rows come back in document order.
+ */
+function returnRows(
+  root: HTMLElement | null,
+): { id: string; element: HTMLElement }[] {
+  if (root === null) return [];
+  const found = root.querySelectorAll<HTMLElement>("[data-return-id]");
+  return [...found].flatMap((element) => {
+    const id = element.dataset.returnId;
+    return id === undefined || id === "" ? [] : [{ id, element }];
+  });
 }
 
 /** Exported for tests. */
@@ -201,6 +227,52 @@ export function ProjectIssueListPage({
     };
   }, [headerHeight]);
 
+  // One region for the whole page: both bodies scroll with the window, and a
+  // group is not a scrolling element of its own — only its header pins.
+  //
+  // The offset is measured when it is asked for, not carried in a ref the
+  // layout effect above fills. That effect returns without measuring while
+  // the page is still its own skeleton — there is no toolbar to measure yet —
+  // and does not run again when the real one arrives, so a ref would still
+  // read 0 for the first rows the reader scrolls past. An anchor captured
+  // against 0 and restored against the real offset lands a whole toolbar out
+  // (T-407).
+  useRegisterReturnArea({
+    region: WINDOW_REGION,
+    element: () => null,
+    rows: () => returnRows(rootRef.current),
+    inset: () =>
+      groupStickyTop(
+        headerHeight,
+        toolbarRef.current?.getBoundingClientRect().height ?? 0,
+        window.matchMedia("(min-width: 640px)").matches,
+      ),
+    axis: "y",
+  });
+
+  // Whether the body has real rows up rather than a skeleton. A restore that
+  // measured an empty body would find nothing to anchor to, retire itself and
+  // leave the reader at the top of a list they had read three pages into
+  // (T-407); the bodies report when they are past their own skeletons.
+  const [bodyReady, setBodyReady] = useState(false);
+
+  // The URL is not where the effective search word lives: the debounce writes
+  // `q` 300ms after the last keystroke, and leaving the page inside that
+  // window drops the write entirely. A reader who types and opens a visible
+  // card must come back to the list they were looking at, so the snapshot
+  // takes `typed` — trimmed, empty meaning no param — over `search.q`.
+  //
+  // Its slot in the object is load-bearing too: targets are compared by
+  // `JSON.stringify`, and a restored one arrives through `issueSearchSchema`,
+  // which spells `q` first. Rebuilt in that order, the two spellings match
+  // even when the URL has no `q` yet.
+  const typedQ = typed.trim() === "" ? undefined : typed.trim();
+  const { q: _urlQ, ...restOfSearch } = search;
+  useReturnView({
+    target: { kind: "list", slug, search: { q: typedQ, ...restOfSearch } },
+    ready: counts.data !== undefined && bodyReady,
+  });
+
   const grouped =
     effectiveCategory(search) === "open" && effectiveGroup(search) === "status";
 
@@ -285,6 +357,7 @@ export function ProjectIssueListPage({
             search={search}
             typed={typed}
             onCreateLabel={canCreateLabels ? createLabel : undefined}
+            onReady={setBodyReady}
           />
         ) : (
           <FlatIssueList
@@ -294,6 +367,7 @@ export function ProjectIssueListPage({
             search={search}
             typed={typed}
             onCreateLabel={canCreateLabels ? createLabel : undefined}
+            onReady={setBodyReady}
           />
         )}
       </Suspense>
@@ -319,9 +393,27 @@ export function TrashView({
   const issues = useSuspenseQuery(issuesQuery(slug, search));
   const restore = useRestoreIssueMutation();
   const grid = useIssueListGrid();
+  const headerHeight = useHeaderHeight();
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // Declared rather than left out, so that the trash having no Load more is a
+  // decision on the page and not an omission somebody restores by hand.
+  useRegisterReturnLane(null);
+  // Nothing floats over this list but the shell header — there is no filter
+  // toolbar here — so that is the whole inset (T-407).
+  useRegisterReturnArea({
+    region: WINDOW_REGION,
+    element: () => null,
+    rows: () => returnRows(rootRef.current),
+    inset: () => headerHeight,
+    axis: "y",
+  });
+  // The rows are in this very render's output, `useSuspenseQuery` having
+  // already waited for them: there is no skeleton for a restore to wait past.
+  useReturnView({ target: { kind: "list", slug, search }, ready: true });
 
   return (
-    <div className="space-y-4">
+    <div ref={rootRef} className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="flex items-center gap-2 font-heading text-lg font-medium">
           <Trash2Icon className="size-4 text-muted-foreground" />
@@ -391,6 +483,7 @@ export function FlatIssueList({
   search,
   typed,
   onCreateLabel,
+  onReady,
 }: {
   slug: string;
   statuses: Status[];
@@ -398,6 +491,8 @@ export function FlatIssueList({
   search: IssueSearch;
   typed: string;
   onCreateLabel?: (name: string) => Promise<Label>;
+  /** Whether this body is past its skeleton; see `useReturnView`'s `ready`. */
+  onReady?: (ready: boolean) => void;
 }) {
   const query = issuesQuery(slug, search);
   const issues = useQuery({
@@ -411,6 +506,13 @@ export function FlatIssueList({
     hasContent,
     query.queryKey,
   );
+
+  // A failed read stays "not ready" on purpose: the restore keeps waiting, so
+  // a reader who hits Retry still lands where they left off instead of at the
+  // top of a list that finally loaded (T-407).
+  useEffect(() => {
+    onReady?.(hasContent);
+  }, [onReady, hasContent]);
 
   if (replace) {
     return (
@@ -463,6 +565,7 @@ export function GroupedIssueList({
   search,
   typed = "",
   onCreateLabel,
+  onReady,
 }: {
   slug: string;
   statuses: Status[];
@@ -472,9 +575,33 @@ export function GroupedIssueList({
   /** What the search box holds; see `narrowByTitle`. */
   typed?: string;
   onCreateLabel?: (name: string) => Promise<Label>;
+  /** Whether this body is past its skeleton; see `useReturnView`'s `ready`. */
+  onReady?: (ready: boolean) => void;
 }) {
   const selected = csvToIds(search.status);
   const groups = groupStatuses(statuses, counts, selected);
+
+  // Every group has to have answered before the page may put a reading
+  // position back: a group still showing its skeleton has no rows to anchor
+  // against, and the rows it lands afterwards push every row below it down
+  // (T-407). Ids rather than a count, so a group reporting twice cannot pass
+  // for two.
+  const [answered, setAnswered] = useState<ReadonlySet<number>>(
+    () => new Set<number>(),
+  );
+  const markAnswered = useCallback((statusId: number, ready: boolean) => {
+    setAnswered((current) => {
+      if (current.has(statusId) === ready) return current;
+      const next = new Set(current);
+      if (ready) next.add(statusId);
+      else next.delete(statusId);
+      return next;
+    });
+  }, []);
+  const allAnswered = groups.every((status) => answered.has(status.id));
+  useEffect(() => {
+    onReady?.(allAnswered);
+  }, [onReady, allAnswered]);
 
   if (groups.length === 0) {
     return (
@@ -497,6 +624,7 @@ export function GroupedIssueList({
           search={search}
           typed={typed}
           onCreateLabel={onCreateLabel}
+          onAnswered={markAnswered}
         />
       ))}
     </div>
@@ -590,6 +718,7 @@ function IssueGroup({
   search,
   typed,
   onCreateLabel,
+  onAnswered,
 }: {
   slug: string;
   status: Status;
@@ -599,6 +728,8 @@ function IssueGroup({
   search: IssueSearch;
   typed: string;
   onCreateLabel?: (name: string) => Promise<Label>;
+  /** Whether this group's own first page has landed; see `GroupedIssueList`. */
+  onAnswered?: (statusId: number, answered: boolean) => void;
 }) {
   const group = useQuery({
     ...issueGroupQuery(slug, status.id, search),
@@ -606,6 +737,7 @@ function IssueGroup({
   });
   const grid = useIssueListGrid();
   const queryClient = useQueryClient();
+  const cancelRestore = useCancelReturnRestore();
 
   // Same guard as IssueList: pages loaded under a previous filter state
   // would mix stale rows into the group.
@@ -634,9 +766,22 @@ function IssueGroup({
   // so the button never offers "Show 0 more".
   const remaining = Math.max(total - items.length, 0);
 
-  function loadMore() {
+  const hasAnswered = group.data !== undefined;
+  useEffect(() => {
+    onAnswered?.(status.id, hasAnswered);
+  }, [onAnswered, status.id, hasAnswered]);
+  // Groups come and go with the status filter. One left behind as answered
+  // would let the page start locating rows while a group that has just
+  // remounted is still empty (T-407). Its deps are stable, so this cleanup is
+  // the unmount and nothing else.
+  useEffect(
+    () => () => onAnswered?.(status.id, false),
+    [onAnswered, status.id],
+  );
+
+  /** One more page, with none of the meaning a reader's click carries. */
+  function loadNextPage() {
     if (!lastCursor) return;
-    focusRequested.current = true;
     const base = issueGroupQuery(slug, status.id, search);
     paged.append(() =>
       queryClient.fetchQuery({
@@ -656,6 +801,38 @@ function IssueGroup({
       }),
     );
   }
+
+  // The reader's own control, which the restore driver's call must not be
+  // mistaken for: it retires the restore, because paging past what was
+  // remembered means they have taken the view over, and it arms the focus
+  // hand-off T-411 owes a click — a replayed page is not a click and may not
+  // move the focus.
+  function loadMore() {
+    // A Retry after a replayed page failed is the restore continuing, not the
+    // reader taking over: cancelling there would stop the range at the page
+    // that broke even though the retry succeeded (T-407).
+    if (paged.error === null) cancelRestore();
+    focusRequested.current = true;
+    loadNextPage();
+  }
+
+  // Named by the status id, never by its name or its place in the order:
+  // renaming or reordering a status must leave a snapshot written before the
+  // change pointing at the same lane (T-407).
+  // `paged.error` closes the lane only for the moment: the restore stays owed
+  // the page, and the reader's Retry is what completes it. `exhausted` is the
+  // separate question — whether a further page exists at all (T-407).
+  useRegisterReturnLane({
+    lane: `status:${status.id}`,
+    loaded: paged.pages.length,
+    canLoadMore:
+      lastCursor !== null &&
+      !paged.pending &&
+      paged.error === null &&
+      !narrowing,
+    exhausted: lastCursor === null,
+    loadMore: loadNextPage,
+  });
 
   return (
     <section aria-label={status.name}>
@@ -764,6 +941,7 @@ export function IssueList({
 }) {
   const grid = useIssueListGrid();
   const queryClient = useQueryClient();
+  const cancelRestore = useCancelReturnRestore();
 
   // Pages were appended under the previous filter state; keeping them would
   // mix e.g. closed rows into the open list after a category switch.
@@ -787,9 +965,9 @@ export function IssueList({
       ? page.next_cursor
       : (paged.pages.at(-1)?.next_cursor ?? null);
 
-  function loadMore() {
+  /** One more page, with none of the meaning a reader's click carries. */
+  function loadNextPage() {
     if (!lastCursor) return;
-    focusRequested.current = true;
     paged.append(() =>
       queryClient.fetchQuery({
         ...issuesEntry(["issues", slug, search, lastCursor], {
@@ -801,6 +979,35 @@ export function IssueList({
       }),
     );
   }
+
+  // The reader's own control, which the restore driver's call must not be
+  // mistaken for: it retires the restore, because paging past what was
+  // remembered means they have taken the view over, and it arms the focus
+  // hand-off T-411 owes a click — a replayed page is not a click and may not
+  // move the focus.
+  function loadMore() {
+    // A Retry after a replayed page failed is the restore continuing, not the
+    // reader taking over: cancelling there would stop the range at the page
+    // that broke even though the retry succeeded (T-407).
+    if (paged.error === null) cancelRestore();
+    focusRequested.current = true;
+    loadNextPage();
+  }
+
+  // `paged.error` closes the lane only for the moment: the restore stays owed
+  // the page, and the reader's Retry is what completes it. `exhausted` is the
+  // separate question — whether a further page exists at all (T-407).
+  useRegisterReturnLane({
+    lane: "flat",
+    loaded: paged.pages.length,
+    canLoadMore:
+      lastCursor !== null &&
+      !paged.pending &&
+      paged.error === null &&
+      !narrowing,
+    exhausted: lastCursor === null,
+    loadMore: loadNextPage,
+  });
 
   // Only once the server has answered may the screen say there is nothing:
   // while the first stage holds it, an empty list is a missing answer.

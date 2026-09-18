@@ -10,6 +10,7 @@ import {
   useCanHoverPreview,
 } from "@/components/shared/hover-preview.ts";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import {
   HoverCard,
   HoverCardContent,
@@ -92,11 +93,13 @@ function TrashedBlocker({
   spelled: string;
 }) {
   const issue = useQuery({ ...issueQuery(slug, number), staleTime: 60_000 });
+  const returnState = useReturnLinkState();
   if (!issue.data) return <span>{spelled}</span>;
   return (
     <Link
       to="/projects/$slug/issues/$number"
       params={{ slug, number: String(number) }}
+      state={returnState}
       className="font-medium hover:underline"
     >
       <span className="font-normal text-muted-foreground">{spelled} </span>

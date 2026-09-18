@@ -7,6 +7,7 @@ import {
   OPEN_DELAY_MS,
 } from "@/components/shared/hover-preview.ts";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   HoverCard,
@@ -27,6 +28,7 @@ export function CommentHoverCard({
   /** The link the reader hovers. */
   children: ReactNode;
 }) {
+  const returnState = useReturnLinkState();
   return (
     <HoverCard openDelay={OPEN_DELAY_MS} closeDelay={CLOSE_DELAY_MS}>
       <HoverCardTrigger asChild>{children}</HoverCardTrigger>
@@ -39,6 +41,7 @@ export function CommentHoverCard({
               params={{ slug, number: String(issueNumber) }}
               hash={commentAnchor(comment.id)}
               hashScrollIntoView={false}
+              state={returnState}
               className="shrink-0 text-xs whitespace-nowrap text-muted-foreground hover:underline"
               title={comment.created_at}
             >

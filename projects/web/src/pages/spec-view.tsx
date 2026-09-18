@@ -20,7 +20,6 @@ import {
 import {
   detectRenames,
   formatAnchorRange,
-  formatRef,
   type SpecCommentItem,
   type SpecFile,
   type SpecInfo,
@@ -28,7 +27,6 @@ import {
 import { diffLines } from "diff";
 import {
   ArrowDownIcon,
-  ArrowLeftIcon,
   ArrowUpIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -47,7 +45,6 @@ import {
 import { toast } from "sonner";
 import { issueQuery } from "@/api/issues.ts";
 import { api } from "@/api/queries.ts";
-import { useRefPrefix } from "@/api/references.ts";
 import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
 import { SpecStatusBadge } from "@/components/issue/spec-entry.tsx";
 import {
@@ -55,6 +52,11 @@ import {
   PIERRE_THEME_TYPE,
   useSyntaxTheme,
 } from "@/components/shared/pierre.tsx";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
+import {
+  CompactIssueIdentity,
+  SpecReturnLink,
+} from "@/components/shared/return-link.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   AnnotatedMarkdown,
@@ -279,20 +281,17 @@ export function SpecViewPage() {
   });
   const issueNumber = Number(numberParam);
   const spec = useSuspenseQuery(specQuery(slug, issueNumber));
-  const refPrefix = useRefPrefix(slug);
 
   if (spec.data === null) {
     return (
       <div className="mx-auto max-w-lg py-20 text-center text-muted-foreground">
         <p>This issue has no spec yet.</p>
-        <Button asChild variant="link">
-          <Link
-            to="/projects/$slug/issues/$number"
-            params={{ slug, number: numberParam }}
-          >
-            Back to {formatRef(refPrefix, issueNumber)}
-          </Link>
-        </Button>
+        {/* The same control the toolbar's back is. Two spellings of "go back"
+            on one page are two chances to disagree about where back is — and
+            this one also carries the entry's origin on to the issue, so a
+            reader who reached a spec-less spec from a search still gets the
+            rest of the way home (T-407). */}
+        <SpecReturnLink slug={slug} number={issueNumber} />
       </div>
     );
   }
@@ -379,10 +378,17 @@ function SpecViewBody({
   issueNumber: number;
   spec: SpecInfo;
 }) {
-  const refPrefix = useRefPrefix(slug);
   const search = useSearch({
     from: "/authed/projects/$slug/issues/$number/spec",
   });
+  /**
+   * Where the reader came from, to be handed to every navigation that stays
+   * on this page. `search` and history `state` are independent fields: a
+   * version switch or a file switch that rebuilds one and drops the other
+   * leaves a reader who arrived from a search hit with nothing to go back to
+   * after their first click (T-407).
+   */
+  const returnState = useReturnLinkState();
   const version = search.v ?? spec.current_version;
   const files = useSuspenseQuery(specFilesQuery(slug, issueNumber, version));
   const comments = useSuspenseQuery(specCommentsQuery(slug, issueNumber));
@@ -504,6 +510,7 @@ function SpecViewBody({
           baseline: null,
           view,
         }),
+        state: returnState,
       });
       return;
     }
@@ -514,6 +521,7 @@ function SpecViewBody({
       to: "/projects/$slug/issues/$number/spec",
       params,
       search: baselineSearch(next),
+      state: returnState,
     });
   };
 
@@ -699,6 +707,7 @@ function SpecViewBody({
       to: "/projects/$slug/issues/$number/spec",
       params,
       search: fileSearch(nextPath),
+      state: returnState,
     });
   };
 
@@ -1021,35 +1030,37 @@ function SpecViewBody({
             measures each item unshrunk, so a title wide enough to need an
             ellipsis pushed Finish review onto a second line instead — the row
             "fit" by wrapping, which left the title nothing to shrink for
-            (T-206). Wrapping stays on below lg, where the title is display:none
-            and every remaining item is shrink-0: with no elastic item to give,
-            a wrap is the only graceful answer left. */}
+            (T-206). Wrapping stays on below lg, where every item but the
+            identity is shrink-0: one shrinkable item cannot absorb a narrow
+            viewport on its own, so a wrap is the only graceful answer left. */}
         <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
-          <Button
-            asChild
-            size="sm"
-            variant="ghost"
-            className="shrink-0"
-            data-toolbar-slot="back"
-          >
-            <Link to="/projects/$slug/issues/$number" params={params}>
-              <ArrowLeftIcon className="size-4" />
-              {formatRef(refPrefix, issueNumber)}
-            </Link>
-          </Button>
-          {/* Shrink-only (the flex default), not flex-1: a short title lets
+          {/* A direct child of this row, ungrouped: the row's layout contract
+              is read off `back`'s own parent, and the back control must also
+              stay outside the identity's shrinking box, or the way home would
+              be the first thing a long title eats (T-407). */}
+          <SpecReturnLink slug={slug} number={issueNumber} slot="back" />
+          {/* The row's one shrinkable item, and it must remain the only one:
+              shrink-only (the flex default), not flex-1, so a short title lets
               the badge sit right beside it rather than stranding it. `flex-1
               basis-0` would stop the row wrapping too — a zero flex basis is
               a zero hypothetical size, so line breaking never sees the title
               — but at the price of that adjacency, since a grown title eats
-              the free space the elastic gap is there to hold. */}
-          <span
-            data-toolbar-slot="title"
+              the free space the elastic gap is there to hold.
+
+              Shown at every width since T-407 moved the ref off the back
+              control: hidden below lg, nothing on a narrow screen would say
+              which card this spec belongs to. It truncates there instead, and
+              the clip is on this box as well as on the title inside it —
+              `min-w-0` lets the box shrink past its own minimum, and at 360px
+              what it shrinks past is the ref, which would otherwise spill
+              across the row rather than be cut. */}
+          <CompactIssueIdentity
+            slug={slug}
+            number={issueNumber}
             title={issue.data?.title}
-            className="hidden min-w-0 truncate text-sm text-muted-foreground lg:block"
-          >
-            {issue.data?.title}
-          </span>
+            slot="title"
+            className="truncate"
+          />
           <ToolbarSlot name="review-status">
             <SpecStatusBadge status={spec.review_status} />
           </ToolbarSlot>
@@ -1610,6 +1621,10 @@ function SpecFileList({
   sidebarStats: Map<string, SpecFileStat>;
   onNavigate?: () => void;
 }) {
+  // Read here rather than threaded down: the rail is the page's busiest way
+  // of staying on the page, and a file switch that dropped the origin would
+  // cost the reader the collection they came from (T-407).
+  const returnState = useReturnLinkState();
   return (
     <div className="space-y-1">
       {entries.map((entry) => {
@@ -1621,6 +1636,7 @@ function SpecFileList({
             to="/projects/$slug/issues/$number/spec"
             params={params}
             search={searchFor(entry.path)}
+            state={returnState}
             title={
               entry.removed
                 ? `${entry.path} (removed)`
@@ -1703,6 +1719,7 @@ function RemovedFileNotice({
   params: { slug: string; number: string };
   search: SpecSearch;
 }) {
+  const returnState = useReturnLinkState();
   return (
     <div className="space-y-3 py-2 text-sm">
       <p>
@@ -1716,6 +1733,7 @@ function RemovedFileNotice({
           to="/projects/$slug/issues/$number/spec"
           params={params}
           search={search}
+          state={returnState}
         >
           Open the source diff
         </Link>

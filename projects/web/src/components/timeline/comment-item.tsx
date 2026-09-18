@@ -22,6 +22,7 @@ import {
   type MarkdownEditorHandle,
 } from "@/components/shared/markdown-editor.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { RevisionHistory } from "@/components/shared/revision-history.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { withAttachmentMarkers } from "@/components/timeline/composer.tsx";
@@ -91,6 +92,7 @@ export function CommentItem({
   const staging = useStagedFiles();
   const queryClient = useQueryClient();
   const refCompletion = useRefCompletion(slug);
+  const returnState = useReturnLinkState();
   const target: Target = { slug, issueNumber, commentId: comment.id };
   const mayHide = canHideComment(viewer) && !isHidden(comment);
   const mayDelete = canEditComment(viewer, comment.author.id);
@@ -183,6 +185,7 @@ export function CommentItem({
             params={{ slug, number: String(issueNumber) }}
             hash={commentAnchor(comment.id)}
             hashScrollIntoView={false}
+            state={returnState}
             className="shrink-0 text-xs whitespace-nowrap text-muted-foreground hover:underline"
             title={comment.created_at}
           >

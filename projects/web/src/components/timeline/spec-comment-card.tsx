@@ -6,6 +6,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 import { specFilesQuery } from "@/api/spec.ts";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import type { Target } from "@/components/timeline/comment-item.tsx";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils.ts";
@@ -58,6 +59,7 @@ export function SpecCommentAnchorCard({
     },
     onError: (error) => toast.error(error.message),
   });
+  const returnState = useReturnLinkState();
 
   // Null lines = file-level comment (T-61): no quote and no line context.
   const fileLevel = anchor.line_start === null || anchor.line_end === null;
@@ -96,6 +98,7 @@ export function SpecCommentAnchorCard({
           to="/projects/$slug/issues/$number/spec"
           params={{ slug, number: String(issueNumber) }}
           search={{ file: anchor.path, v: anchor.version }}
+          state={returnState}
           className="shrink-0 hover:underline"
         >
           view in doc →

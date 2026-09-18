@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import type { SpecVersionInfo } from "@todou/shared";
 import { ChevronDownIcon } from "lucide-react";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import {
   MessageText,
   SpecVersionMenuRow,
@@ -42,6 +43,11 @@ export function SpecBaselinePicker({
   searchFor: (baseline: number) => SpecSearch;
 }) {
   const params = { slug, number: String(issueNumber) };
+  // Read here rather than threaded in as a prop: a version or baseline switch
+  // stays on the spec page, and a reader who makes one must not lose the way
+  // back to the collection they arrived from (T-407). `search` and history
+  // `state` are independent fields — rewriting one must not drop the other.
+  const returnState = useReturnLinkState();
   const earlier = versions
     .filter((v) => v.number < version)
     .sort((a, b) => b.number - a.number);
@@ -82,6 +88,7 @@ export function SpecBaselinePicker({
                 to="/projects/$slug/issues/$number/spec"
                 params={params}
                 search={searchFor(v.number)}
+                state={returnState}
                 aria-current={active ? "true" : undefined}
                 className="items-start gap-2 py-1.5"
               >

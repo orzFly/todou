@@ -15,6 +15,7 @@ import {
   specVersionStatsQuery,
   useIsVersionPusher,
 } from "@/api/spec.ts";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { Button } from "@/components/ui/button";
 import { diffstatCells, type SpecFileStat } from "@/lib/spec-version-stats.ts";
 import { cn } from "@/lib/utils.ts";
@@ -68,6 +69,7 @@ function SpecVersionCardBody({
   const [expanded, setExpanded] = useState(true);
   const version = payload.version;
   const params = { slug, number: String(issueNumber) };
+  const returnState = useReturnLinkState();
 
   const stats = useQuery(specVersionStatsQuery(slug, issueNumber, payload));
   const byPath = new Map(stats.data?.map((s) => [s.path, s]) ?? []);
@@ -132,6 +134,7 @@ function SpecVersionCardBody({
           to="/projects/$slug/issues/$number/spec"
           params={params}
           search={{ v: version }}
+          state={returnState}
           className="shrink-0 font-medium hover:underline"
         >
           Spec v{version}
@@ -170,6 +173,7 @@ function SpecVersionCardBody({
               to="/projects/$slug/issues/$number/spec"
               params={params}
               search={{ v: version, compare: version - 1 }}
+              state={returnState}
               aria-label={`diff v${version - 1} to v${version}`}
               title={`diff v${version - 1}…v${version}`}
             >
@@ -220,6 +224,7 @@ function SpecVersionCardBody({
                     to="/projects/$slug/issues/$number/spec"
                     params={params}
                     search={nameSearch}
+                    state={returnState}
                     className={cn(
                       "truncate font-mono hover:underline",
                       removed && "text-muted-foreground line-through",
@@ -244,6 +249,7 @@ function SpecVersionCardBody({
                         to="/projects/$slug/issues/$number/spec"
                         params={params}
                         search={diffSearch}
+                        state={returnState}
                         className="group inline-flex items-center gap-1.5"
                         title={`diff v${version - 1}…v${version} · ${row.path}`}
                       >
@@ -268,6 +274,7 @@ function SpecVersionCardBody({
             to="/projects/$slug/issues/$number/spec"
             params={params}
             search={{ v: version }}
+            state={returnState}
             className="hover:underline"
           >
             {anchoredHere.length} review comment
@@ -301,6 +308,7 @@ function ReviewCallToAction({
   params: { slug: string; number: string };
   version: number;
 }) {
+  const returnState = useReturnLinkState();
   return (
     <div
       className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-amber-500/30 bg-amber-500/10 px-2.5 py-2"
@@ -312,6 +320,7 @@ function ReviewCallToAction({
           to="/projects/$slug/issues/$number/spec"
           params={params}
           search={{ v: version }}
+          state={returnState}
         >
           <FileCheck2Icon />
           Read &amp; review →

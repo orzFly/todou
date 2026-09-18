@@ -11,6 +11,7 @@ import { AttachmentEventLink } from "@/components/issue/attachment-list.tsx";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   EventRow,
@@ -318,6 +319,7 @@ function ListGroup({
    */
   rows: ListRow[];
 }) {
+  const returnState = useReturnLinkState();
   const first = events[0];
   const last = events[events.length - 1];
   if (!first || !last) return null;
@@ -342,6 +344,7 @@ function ListGroup({
           params={{ slug, number: String(issueNumber) }}
           hash={eventAnchor(first.id)}
           hashScrollIntoView={false}
+          state={returnState}
           className="shrink-0 text-xs whitespace-nowrap text-muted-foreground/70 hover:underline"
           title={
             first === last
@@ -579,6 +582,7 @@ function CollapsedGroup({
   }, [anchorInside]);
 
   const entities = useEventEntities(slug);
+  const returnState = useReturnLinkState();
 
   const first = events[0];
   const last = events[events.length - 1];
@@ -636,6 +640,7 @@ function CollapsedGroup({
           params={{ slug, number: String(issueNumber) }}
           hash={eventAnchor(first.id)}
           hashScrollIntoView={false}
+          state={returnState}
           className="shrink-0 text-xs whitespace-nowrap text-muted-foreground/70 hover:underline"
           title={`${first.created_at} – ${last.created_at}`}
         >

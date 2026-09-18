@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import type { SpecSearch, SpecView } from "@/lib/spec-search.ts";
 import { cn } from "@/lib/utils.ts";
 
@@ -53,6 +54,11 @@ export function SpecViewToggle({
   | { searchFor?: never; onSelect: (view: SpecView) => void }
 )) {
   const params = { slug, number: String(issueNumber) };
+  // Read here rather than threaded in as a prop: switching the view stays on
+  // the spec page, and a reader who does it once must not lose the way back
+  // to the search they arrived from (T-407). `search` and history `state`
+  // are independent fields — rewriting one must not drop the other.
+  const returnState = useReturnLinkState();
   return (
     <fieldset
       // items-center rather than the default stretch: a segment is 24px tall
@@ -83,6 +89,7 @@ export function SpecViewToggle({
             to="/projects/$slug/issues/$number/spec"
             params={params}
             search={searchFor(option.value)}
+            state={returnState}
             title={option.comparingTitle}
             // Exact, or the router would read the shorter rendered url as a
             // prefix of the longer one and light both segments up.

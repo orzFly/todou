@@ -13,7 +13,14 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import type { SpecComments, SpecFiles, SpecInfo } from "@todou/shared";
+import type {
+  Issue,
+  RefPlacement,
+  SpecComments,
+  SpecFiles,
+  SpecInfo,
+} from "@todou/shared";
+import { MePrefs, TodouError } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
 import { parseSpecSearch } from "../src/lib/spec-search.ts";
@@ -72,7 +79,49 @@ const BODIES: Record<number, Record<string, string>> = {
   },
 };
 
-function mockSpec() {
+const TITLE = "Return navigation and reading position";
+
+/** The card this spec belongs to, which the toolbar's identity names. */
+const ISSUE = {
+  id: 407,
+  number: 1,
+  title: TITLE,
+  body: "",
+  status: {
+    id: 1,
+    name: "In Progress",
+    category: "open",
+    color: "#bf8700",
+    position: 2,
+    is_default: false,
+  },
+  author: AUTHOR,
+  assignees: [],
+  labels: [],
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-02T00:00:00Z",
+  body_edited_at: null,
+  open_questions: 0,
+  spec_version: 2,
+  spec_review_status: "unreviewed",
+  spec_unresolved_comments: 0,
+  deleted_at: null,
+  deleted_by: null,
+  unread: false,
+  unread_comments: 0,
+  muted: null,
+  blocked_by: [],
+  blocks: [],
+  moves: [],
+} satisfies Issue;
+
+function mockSpec(detail: RefPlacement = "before") {
+  // The identity reads the card and the reader's ref-placement preference
+  // (T-407). Both are real requests; unmocked they ride the offline guard.
+  vi.spyOn(api, "getIssue").mockResolvedValue(ISSUE);
+  vi.spyOn(api, "getMyPrefs").mockResolvedValue(
+    MePrefs.parse({ ref_placement_detail: detail }),
+  );
   const info: SpecInfo = {
     current_version: 2,
     current_version_cursor: "c2",
@@ -106,8 +155,10 @@ function mockSpec() {
   );
   const comments: SpecComments = { current_version: 2, items: [] };
   vi.spyOn(api, "getSpecComments").mockResolvedValue(comments);
+  // The prefix carries no separator of its own — `refToken` adds the dash —
+  // so this project spells its first card `T-1`.
   vi.spyOn(api, "getReferenceConfig").mockResolvedValue({
-    format: { prefix: "T-", history: [] },
+    format: { prefix: "T", history: [] },
     autolinks: [],
   });
 }
@@ -153,8 +204,8 @@ function renderSpecView(search: string) {
 }
 
 /** The toolbar, once its data has landed. */
-async function toolbar(search: string) {
-  mockSpec();
+async function toolbar(search: string, detail?: RefPlacement) {
+  mockSpec(detail);
   const view = renderSpecView(search);
   await view.findByRole("button", { name: /finish review/i });
   // The baseline snapshot decides several slots' state; wait for it rather
@@ -382,8 +433,11 @@ describe("spec toolbar fixed slots (T-190)", () => {
       '[data-toolbar-slot="back"]',
     )?.parentElement;
     expect(rowA?.className).toContain("lg:flex-nowrap");
-    // Below lg the title is display:none and every other item is shrink-0:
-    // nothing left to give, so wrapping stays the graceful answer there.
+    // Below lg the identity is the row's one shrinkable item and every other
+    // item is shrink-0, so wrapping stays the graceful answer there. Since
+    // T-407 the identity is no longer display:none at that width — it
+    // truncates — which is why the assertion below matters at every width and
+    // not only from lg up.
     expect(rowA?.className).toContain("flex-wrap");
     // The ellipsis needs both halves, and neither may become a fixed width
     // (T-194) or a grown flex child, which would strand the review badge.
@@ -391,6 +445,11 @@ describe("spec toolbar fixed slots (T-190)", () => {
     expect(cls('[data-toolbar-slot="title"]')).toContain("truncate");
     expect(cls('[data-toolbar-slot="title"]')).not.toMatch(/\bflex-1\b|basis-/);
     expect(cls('[data-toolbar-slot="title"]')).not.toMatch(/(^|\s)(w-|max-w-)/);
+    // And it has to be able to shrink at all. With `lg:flex-nowrap` on the
+    // row, a `shrink-0` identity meets a long title by pushing the row past
+    // the viewport instead of truncating — the overflow T-206 removed, back
+    // through the one item that is allowed to give.
+    expect(cls('[data-toolbar-slot="title"]')).not.toMatch(/(^|\s)shrink-0\b/);
     // One wrapping unit, so the wrap left below lg cannot stage the same
     // stranding it was just fixed for.
     const commentFile = view.container.querySelector(
@@ -672,5 +731,86 @@ describe("spec toolbar fixed slots (T-190)", () => {
     expect(link.getAttribute("href")).toBe(
       "/projects/demo/issues/1/spec?file=fresh.md&v=2&compare=1",
     );
+  });
+});
+
+const slot = (view: { container: HTMLElement }, name: string) =>
+  view.container.querySelector<HTMLElement>(`[data-toolbar-slot="${name}"]`);
+
+describe("the way back and the identity beside it (T-407)", () => {
+  it("goes to this spec's own issue, in one step", async () => {
+    const view = await toolbar("?v=2&file=design.md");
+    const back = slot(view, "back");
+    // A real anchor with its destination resolved at render, so a reader who
+    // arrived at this spec from a search hit or a review badge can preview,
+    // middle-click and bookmark the way home before following it.
+    expect(back?.tagName).toBe("A");
+    expect(back?.getAttribute("href")).toBe("/projects/demo/issues/1");
+    expect(back?.getAttribute("aria-label")).toBe("Back to Issue");
+    expect(back?.textContent).toBe("Issue");
+    // Worn identically to the issue page's control, which asserts these same
+    // three attributes in issue-return-row.test.tsx.
+    expect(back?.dataset.slot).toBe("button");
+    expect(back?.dataset.variant).toBe("ghost");
+    expect(back?.dataset.size).toBe("sm");
+  });
+
+  it("says the number once, in the identity rather than on the way back", async () => {
+    const view = await toolbar("?v=2&file=design.md");
+    const ref = await view.findByText("T-1");
+    // The back control used to carry the number itself; two spellings of the
+    // same card on one row is what T-407 traded for a compact identity.
+    expect(view.getAllByText("T-1")).toHaveLength(1);
+    expect(slot(view, "title")?.contains(ref)).toBe(true);
+    expect(slot(view, "back")?.textContent).toBe("Issue");
+    expect(slot(view, "title")?.textContent).toBe(`T-1${TITLE}`);
+  });
+
+  it.each(["before", "after"] as const)(
+    "places the ref per ref_placement_detail=%s",
+    async (detail) => {
+      const view = await toolbar("?v=2&file=design.md", detail);
+      const ref = await view.findByText("T-1");
+      const title = view.getByText(TITLE);
+      const [first, second] = detail === "before" ? [ref, title] : [title, ref];
+      expect(
+        first.compareDocumentPosition(second) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      // Its own box outside the truncating span, so no title length can eat
+      // it — the rule the full-size heading follows (T-153, T-157).
+      expect(ref.className).toContain("shrink-0");
+      expect(title.className).toContain("truncate");
+      expect(title.contains(ref)).toBe(false);
+    },
+  );
+
+  it("truncates the identity on a narrow screen instead of hiding it", async () => {
+    const view = await toolbar("?v=2&file=design.md");
+    const className = slot(view, "title")?.className ?? "";
+    // happy-dom answers no media query, so the declaration is what a suite
+    // can hold. It matters because below lg this identity used to be
+    // `display:none`, and at 360px nothing else on the row says which card
+    // the spec belongs to.
+    expect(className.split(/\s+/)).not.toContain("hidden");
+    expect(className).not.toMatch(/\blg:(inline-)?flex\b/);
+    expect(className).toContain("truncate");
+  });
+
+  it("offers the same control on a card that has no spec", async () => {
+    mockSpec();
+    // A card with no spec answers 404, which `specQuery` turns into `null`.
+    // Mocking the null directly would skip the translation the page's empty
+    // state depends on.
+    vi.spyOn(api, "getSpec").mockRejectedValue(
+      new TodouError(404, "not_found", "no spec"),
+    );
+    const view = renderSpecView("");
+    await view.findByText(/no spec yet/i);
+    const back = view.getByRole("link", { name: "Back to Issue" });
+    expect(back.getAttribute("href")).toBe("/projects/demo/issues/1");
+    expect(back.textContent).toBe("Issue");
+    // There is no toolbar here to belong to, so it claims no slot on one.
+    expect(back.hasAttribute("data-toolbar-slot")).toBe(false);
   });
 });

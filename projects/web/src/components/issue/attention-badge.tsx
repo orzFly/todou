@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { BlockedHoverCard } from "@/components/shared/blocked-hover-card.tsx";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { cn } from "@/lib/utils";
 
 /**
@@ -108,10 +109,12 @@ export function SpecReviewBadge({
   version: number | null;
   className?: string;
 }) {
+  const returnState = useReturnLinkState();
   return (
     <Link
       to="/projects/$slug/issues/$number/spec"
       params={{ slug, number: String(issueNumber) }}
+      state={returnState}
       className={cn("inline-flex rounded-full hover:brightness-95", className)}
     >
       <AttentionBadge

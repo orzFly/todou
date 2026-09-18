@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Navigate } from "@tanstack/react-router";
 import type { UserIssueRole, UserIssueState } from "@todou/shared";
 import { CalendarIcon } from "lucide-react";
-import { userQuery } from "@/api/users.ts";
+import { useState } from "react";
+import { userQuery, userSearchSchema } from "@/api/users.ts";
 import {
   LoadFailure,
   RefreshFailure,
@@ -13,6 +14,7 @@ import { UserIssuesSection } from "@/components/user/user-issues-section.tsx";
 import { UserProjectsSection } from "@/components/user/user-projects-section.tsx";
 import { statusOf } from "@/lib/http-status";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
+import { useReturnView } from "@/lib/use-return-view.ts";
 
 /**
  * The user page: who this is (T-373), then the cards they are involved in
@@ -45,6 +47,29 @@ export function UserProfilePage({
     hasContent,
     query.queryKey,
   );
+
+  // The cards section owns the rows, so it is the one that can say when they
+  // are up; a restore measuring this page while that section still shows its
+  // skeleton would find nothing to anchor to and retire itself (T-407).
+  const [rowsReady, setRowsReady] = useState(false);
+  // The canonical login, never the id half of the address: `/users/12`
+  // replaces itself with `/users/<login>`, and a snapshot naming the id would
+  // send the reader back through that redirect. It is also the accessible
+  // name on the back link, which would otherwise read "Back to User".
+  const login = data?.login;
+  useReturnView({
+    target: {
+      kind: "user",
+      ref: login ?? ref,
+      // Through the same schema the route validates with, which drops
+      // whichever filter still sits at its default. The URL carries only
+      // what the reader changed, so a target spelling the defaults out would
+      // not describe the page it returns to.
+      search: userSearchSchema({ role, state }),
+    },
+    userLabel: login,
+    ready: rowsReady,
+  });
 
   if (!replace && !hasContent) {
     return (
@@ -138,6 +163,7 @@ export function UserProfilePage({
         role={role}
         state={state}
         onFilters={onFilters}
+        onReady={setRowsReady}
       />
       <UserProjectsSection login={me.login} />
     </div>

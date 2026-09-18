@@ -4,7 +4,7 @@ import type {
   UserIssueState,
   UserIssuesPage,
 } from "@todou/shared";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { userIssuesPageQuery, userIssuesQuery } from "@/api/users.ts";
 import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
@@ -14,7 +14,14 @@ import {
 } from "@/components/shared/load-failure.tsx";
 import { LoadMoreFooter } from "@/components/shared/load-more.tsx";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
+import {
+  useCancelReturnRestore,
+  useRegisterReturnArea,
+  useRegisterReturnLane,
+} from "@/components/shared/return-context.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
+import { WINDOW_REGION } from "@/lib/return-view.ts";
+import { useHeaderHeight } from "@/lib/use-header-height.ts";
 import { usePagedAppend } from "@/lib/use-paged-append.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
@@ -70,6 +77,23 @@ function Segmented<T extends string>({
 }
 
 /**
+ * The rows a reading position is remembered against (T-407), read out of the
+ * DOM: it is the laid-out element the sampler measures, not the item.
+ * `data-return-id` carries an issue's database id, which survives the move
+ * that rewrites its number.
+ */
+function returnRows(
+  root: HTMLElement | null,
+): { id: string; element: HTMLElement }[] {
+  if (root === null) return [];
+  const found = root.querySelectorAll<HTMLElement>("[data-return-id]");
+  return [...found].flatMap((element) => {
+    const id = element.dataset.returnId;
+    return id === undefined || id === "" ? [] : [{ id, element }];
+  });
+}
+
+/**
  * The cards someone is involved in, across every project the reader can see
  * (T-374). Rows are the shared `IssueRow` (T-118) carrying `slug` per row,
  * because this list mixes projects exactly as the inbox does.
@@ -82,17 +106,23 @@ export function UserIssuesSection({
   role,
   state,
   onFilters,
+  onReady,
 }: {
   login: string;
   role: UserIssueRole;
   state: UserIssueState;
   onFilters: (next: { role?: UserIssueRole; state?: UserIssueState }) => void;
+  /** Whether this list is past its skeleton; see `useReturnView`'s `ready`. */
+  onReady?: (ready: boolean) => void;
 }) {
   const filters = { ref: login, role, state };
   const query = userIssuesQuery(filters);
   const first = useQuery(query);
   const grid = useIssueListGrid();
   const queryClient = useQueryClient();
+  const headerHeight = useHeaderHeight();
+  const rootRef = useRef<HTMLElement>(null);
+  const cancelRestore = useCancelReturnRestore();
 
   // Pages appended under another login or filter must never appear with the
   // current first page, even while the new query is still loading.
@@ -119,16 +149,66 @@ export function UserIssuesSection({
   const lastPage = paged.pages.at(-1) ?? first.data;
   const lastCursor = lastPage?.has_more ? lastPage.next_cursor : null;
 
-  function loadMore() {
+  /** One more page, with none of the meaning a reader's click carries. */
+  function loadNextPage() {
     if (!lastCursor) return;
-    focusRequested.current = true;
     paged.append(() =>
       queryClient.fetchQuery(userIssuesPageQuery(filters, lastCursor)),
     );
   }
 
+  // The reader's own control, which the restore driver's call must not be
+  // mistaken for: paging past what a snapshot remembered means they have
+  // taken the view over. It also arms the focus hand-off a click owes — a
+  // replayed page is not a click and may not move the focus (T-411).
+  function loadMore() {
+    // A Retry after a replayed page failed is the restore continuing, not the
+    // reader taking over: cancelling there would stop the range at the page
+    // that broke even though the retry succeeded (T-407).
+    if (paged.error === null) cancelRestore();
+    focusRequested.current = true;
+    loadNextPage();
+  }
+
+  // One flat lane: this list has no groups to read to different depths.
+  // `paged.error` closes the lane only for the moment: the restore stays owed
+  // the page, and the reader's Retry is what completes it. `exhausted` is the
+  // separate question — whether a further page exists at all (T-407).
+  useRegisterReturnLane({
+    lane: "flat",
+    loaded: paged.pages.length,
+    canLoadMore: lastCursor !== null && !paged.pending && paged.error === null,
+    exhausted: lastCursor === null,
+    loadMore: loadNextPage,
+  });
+  // The window scrolls this page, and nothing floats over it but the shell
+  // header. The rows are read from this section alone, so the projects
+  // section below it cannot contribute an anchor (T-407).
+  useRegisterReturnArea({
+    region: WINDOW_REGION,
+    element: () => null,
+    rows: () => returnRows(rootRef.current),
+    inset: () => headerHeight,
+    axis: "y",
+  });
+
+  // Not ready while an appended page is in flight: the list is then a page
+  // short of what the reader left, and a position located against it would
+  // land them above the rows they were reading. A failed read stays not ready
+  // too — the restore keeps waiting, so Retry still lands them where they
+  // were (T-407).
+  const rowsReady = hasContent && !paged.pending;
+  useEffect(() => {
+    onReady?.(rowsReady);
+  }, [onReady, rowsReady]);
+  // A section that has gone back to its skeleton — the page's own read reset,
+  // a logout — must not leave the page above it describing itself as
+  // measurable. Its dep is stable, so this cleanup is the unmount and nothing
+  // else.
+  useEffect(() => () => onReady?.(false), [onReady]);
+
   return (
-    <section className="space-y-3">
+    <section ref={rootRef} className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold">Ta 的卡</h2>
         <div className="flex flex-wrap items-center gap-2">

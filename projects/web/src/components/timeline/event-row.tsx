@@ -46,6 +46,7 @@ import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { SpecAnnotationHoverCard } from "@/components/shared/spec-annotation-hover-card.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
@@ -56,6 +57,7 @@ import {
   useEventEntities,
 } from "@/components/timeline/use-event-entities.ts";
 import { type RefConfig, splitIssueRefs } from "@/lib/issue-refs.ts";
+import type { ReturnLinkState } from "@/lib/return-view-history.ts";
 import { commentAnchor, eventAnchor } from "@/lib/timeline-anchors.ts";
 
 /** Entity emphasis inside an event sentence, one notch below the actor's. */
@@ -77,6 +79,13 @@ export type EventRenderContext = {
    * anchor path rather than waiting for one.
    */
   specAnnotations?: Map<number, SpecCommentItem>;
+  /**
+   * The origin every link out of a row carries (T-407). It rides the context
+   * because the rows are built by plain functions, which cannot ask for it
+   * themselves; `undefined` where there is no origin, which is what keeps a
+   * card opened from nowhere free of one.
+   */
+  returnState?: ReturnLinkState;
 };
 
 export function useEventRenderContext(
@@ -105,6 +114,7 @@ export function useEventRenderContext(
     ...specCommentsQuery(slug ?? "", issueNumber ?? 0),
     enabled: onIssue && issue.data?.spec_version != null,
   });
+  const returnState = useReturnLinkState();
   const slugById = useMemo(() => {
     const map = new Map<number, string>();
     for (const project of projects.data ?? [])
@@ -124,6 +134,7 @@ export function useEventRenderContext(
     slugOfProject: (id) => slugById.get(id),
     entities,
     specAnnotations,
+    returnState,
   };
 }
 
@@ -184,6 +195,7 @@ function annotationRow(
       params={{ slug, number: String(issueNumber) }}
       hash={commentAnchor(id)}
       hashScrollIntoView={false}
+      state={ctx.returnState}
       className="min-w-0 max-w-1/2 shrink-0 hover:underline"
     >
       <span className="block truncate">{where}</span>
@@ -403,6 +415,7 @@ export function renderEvent(
             params={{ slug: ctx.slug, number: String(ctx.issueNumber) }}
             hash={commentAnchor(commentId)}
             hashScrollIntoView={false}
+            state={ctx.returnState}
             className="hover:underline"
           >
             {text}
@@ -793,6 +806,7 @@ export function EventRow({
           params={{ slug, number: String(issueNumber) }}
           hash={eventAnchor(event.id)}
           hashScrollIntoView={false}
+          state={ctx.returnState}
           className="shrink-0 text-xs whitespace-nowrap text-muted-foreground/70 hover:underline"
           title={event.created_at}
         >

@@ -4,6 +4,7 @@ import type { SpecReviewStatus } from "@todou/shared";
 import { ArrowDownIcon, BookOpenTextIcon, FileTextIcon } from "lucide-react";
 import { specVersionStatsQuery, useIssueSpec } from "@/api/spec.ts";
 import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import {
   DiffstatBar,
   StatNumbers,
@@ -75,6 +76,7 @@ export function SpecEntryRow({
     ),
     enabled: latest.data != null,
   });
+  const returnState = useReturnLinkState();
   if (!spec.data) return null;
 
   const totals = (stats.data ?? []).reduce(
@@ -88,6 +90,7 @@ export function SpecEntryRow({
       params={{ slug, number: String(issueNumber) }}
       hash={latest.data ? eventAnchor(latest.data.eventId) : undefined}
       hashScrollIntoView={false}
+      state={returnState}
       className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-1.5 text-sm text-muted-foreground hover:border-foreground/40 hover:bg-muted/40"
       data-testid="spec-entry"
     >
@@ -144,6 +147,7 @@ export function SpecSidebarSection({
     ),
     enabled: latest.data != null,
   });
+  const returnState = useReturnLinkState();
   if (!spec.data) return null;
   const byPath = new Map(stats.data?.map((s) => [s.path, s]) ?? []);
   const params = { slug, number: String(issueNumber) };
@@ -167,6 +171,7 @@ export function SpecSidebarSection({
             params={params}
             hash={eventAnchor(latest.data.eventId)}
             hashScrollIntoView={false}
+            state={returnState}
             title="jump to the latest push"
           >
             {heading}
@@ -184,6 +189,7 @@ export function SpecSidebarSection({
           params={params}
           hash={eventAnchor(latest.data.eventId)}
           hashScrollIntoView={false}
+          state={returnState}
           title="jump to the latest push"
         >
           <SpecStatusBadge status={spec.data.review_status} />
@@ -200,6 +206,7 @@ export function SpecSidebarSection({
                 to="/projects/$slug/issues/$number/spec"
                 params={params}
                 search={{ file: file.path }}
+                state={returnState}
                 className="flex items-center gap-1.5 rounded-md px-1.5 py-1 hover:bg-muted"
               >
                 <FileTextIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -218,6 +225,7 @@ export function SpecSidebarSection({
       <Link
         to="/projects/$slug/issues/$number/spec"
         params={params}
+        state={returnState}
         className="text-xs text-muted-foreground hover:underline"
       >
         Read &amp; review →

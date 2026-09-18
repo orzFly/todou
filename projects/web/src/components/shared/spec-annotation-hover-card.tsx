@@ -13,6 +13,7 @@ import {
   useCanHoverPreview,
 } from "@/components/shared/hover-preview.ts";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   HoverCard,
@@ -43,6 +44,7 @@ export function SpecAnnotationHoverCard({
   children: ReactNode;
 }) {
   const canHover = useCanHoverPreview();
+  const returnState = useReturnLinkState();
   if (!canHover) return <>{children}</>;
 
   const anchor = annotation.anchor;
@@ -58,6 +60,7 @@ export function SpecAnnotationHoverCard({
               params={{ slug, number: String(issueNumber) }}
               hash={commentAnchor(annotation.comment_id)}
               hashScrollIntoView={false}
+              state={returnState}
               className="shrink-0 text-xs whitespace-nowrap text-muted-foreground hover:underline"
               title={annotation.created_at}
             >

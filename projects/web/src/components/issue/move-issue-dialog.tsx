@@ -6,6 +6,7 @@ import { movePreviewQuery, useMoveIssueMutation } from "@/api/issues.ts";
 import { projectsQuery } from "@/api/queries.ts";
 import { ProjectListbox } from "@/components/project-listbox.tsx";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -37,6 +38,7 @@ export function MoveIssueDialog({
 }) {
   const [target, setTarget] = useState<Project | null>(null);
   const navigate = useNavigate();
+  const returnState = useReturnLinkState();
   const projects = useQuery(projectsQuery);
   const preview = useQuery(
     movePreviewQuery(slug, issueNumber, target?.slug ?? null),
@@ -72,6 +74,10 @@ export function MoveIssueDialog({
               number: String(result.moved_to.number),
             },
             replace: true,
+            // A replace drops the entry the reader arrived on, origin and
+            // all, so the card's way back has to be written again here or a
+            // moved card comes back to nowhere (T-407).
+            state: returnState,
           });
         },
       },

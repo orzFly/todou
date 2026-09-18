@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { InboxItem } from "@todou/shared";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { groupInboxItems, type InboxGroup, inboxQuery } from "@/api/inbox.ts";
 import { mutesQuery } from "@/api/mutes.ts";
 import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
@@ -12,19 +12,49 @@ import {
   RefreshFailure,
 } from "@/components/shared/load-failure.tsx";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
+import {
+  useCancelReturnRestore,
+  useRegisterReturnArea,
+  useRegisterReturnLane,
+} from "@/components/shared/return-context.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ProjectRefOption } from "@/lib/project-spellings.ts";
+import { INBOX_TABS, type InboxTab, WINDOW_REGION } from "@/lib/return-view.ts";
+import { useHeaderHeight } from "@/lib/use-header-height.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
+import { useReturnView } from "@/lib/use-return-view.ts";
 import { cn } from "@/lib/utils";
 
-const TABS = [
-  { key: "all", label: "All" },
-  { key: "comments", label: "Comments" },
-  { key: "specs", label: "Specs" },
-  { key: "questions", label: "Questions" },
-] as const;
-export type InboxTab = (typeof TABS)[number]["key"];
+/**
+ * What each tab is called. `INBOX_TABS` decides which tabs exist and in which
+ * order, because a snapshot restores one by name and two lists of them would
+ * drift into a tab that validates but has no button (T-407). Keyed by the
+ * type, so a tab added there cannot reach this page without a word for it.
+ */
+const TAB_LABELS: Record<InboxTab, string> = {
+  all: "All",
+  comments: "Comments",
+  specs: "Specs",
+  questions: "Questions",
+};
+
+/**
+ * The rows a reading position is remembered against (T-407), read out of the
+ * DOM: it is the laid-out element the sampler measures, not the item, and the
+ * rows sit inside the per-project sections rather than in one list here.
+ * `data-return-id` carries an issue's database id.
+ */
+function returnRows(
+  root: HTMLElement | null,
+): { id: string; element: HTMLElement }[] {
+  if (root === null) return [];
+  const found = root.querySelectorAll<HTMLElement>("[data-return-id]");
+  return [...found].flatMap((element) => {
+    const id = element.dataset.returnId;
+    return id === undefined || id === "" ? [] : [{ id, element }];
+  });
+}
 
 /** Tab → reason predicate; exported pure for tests. */
 export function matchesTab(item: InboxItem, tab: InboxTab): boolean {
@@ -60,6 +90,35 @@ export function InboxPage() {
     hasContent,
     inboxQuery.queryKey,
   );
+  const rootRef = useRef<HTMLDivElement>(null);
+  const headerHeight = useHeaderHeight();
+  const cancelRestore = useCancelReturnRestore();
+
+  // Declared rather than left out, so that the inbox having no Load more is a
+  // decision and not an omission somebody restores by hand: it is one payload,
+  // cut by the server rather than paged.
+  useRegisterReturnLane(null);
+  // Opening a card from here is what takes its row out of the list — reading
+  // it retires the unread reason — so the row a position was anchored to is
+  // routinely gone by the time the reader returns. The candidates remembered
+  // after it are what carry the restore on this page (T-407).
+  useRegisterReturnArea({
+    region: WINDOW_REGION,
+    element: () => null,
+    rows: () => returnRows(rootRef.current),
+    inset: () => headerHeight,
+    axis: "y",
+  });
+  // The tab is the one thing about this page no URL carries, by decision, so
+  // the snapshot carries it instead and `applyTab` puts it back. A failed read
+  // stays not ready on purpose — the restore keeps waiting, so a reader who
+  // hits Retry still lands where they left off (T-407).
+  useReturnView({
+    target: { kind: "inbox" },
+    tab,
+    applyTab: setTab,
+    ready: hasContent,
+  });
 
   if (replace) {
     return (
@@ -87,23 +146,29 @@ export function InboxPage() {
   const groups = groupInboxItems(filtered);
 
   return (
-    <div className="space-y-4">
+    <div ref={rootRef} className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Inbox</h1>
         <div className="flex items-center gap-1" role="tablist">
-          {TABS.map((t) => (
+          {INBOX_TABS.map((key) => (
             <button
-              key={t.key}
+              key={key}
               type="button"
               role="tab"
-              aria-selected={tab === t.key}
+              aria-selected={tab === key}
               className={cn(
                 "cursor-pointer rounded-md px-3 py-1 text-sm text-muted-foreground hover:text-foreground",
-                tab === t.key && "bg-accent font-medium text-foreground",
+                tab === key && "bg-accent font-medium text-foreground",
               )}
-              onClick={() => setTab(t.key)}
+              onClick={() => {
+                // The reader choosing a tab outranks the one a restore is
+                // still trying to put back — and the rows it would have
+                // anchored to are not in this tab anyway (T-407).
+                cancelRestore();
+                setTab(key);
+              }}
             >
-              {t.label}
+              {TAB_LABELS[key]}
             </button>
           ))}
         </div>

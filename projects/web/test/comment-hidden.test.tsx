@@ -6,7 +6,7 @@ import type {
   TimelinePage,
 } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { FloatingTitleBar } from "../src/components/issue/floating-title-bar.tsx";
+import { IssueReturnRow } from "../src/components/issue/issue-return-row.tsx";
 import { CommentItem } from "../src/components/timeline/comment-item.tsx";
 import { groupTimeline } from "../src/components/timeline/group-events.ts";
 import { RevealAllEye } from "../src/components/timeline/reveal-all-eye.tsx";
@@ -142,7 +142,7 @@ function renderPage(items: TimelineItem[], hash = "") {
   const calls = stubFetch(items);
   const view = renderWithProviders(
     <RevealedRunsProvider card="p/7">
-      <FloatingTitleBar
+      <IssueReturnRow
         slug="p"
         issue={ISSUE}
         watchTarget={{ current: null }}

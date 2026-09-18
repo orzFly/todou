@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/api/queries.ts";
 import { SpecReadError } from "@/api/spec.ts";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { parseTimelineAnchor } from "@/lib/timeline-anchors.ts";
 
@@ -36,6 +37,7 @@ export function IssueRouteError({ error }: { error: Error }) {
 
 function FollowMove({ error }: { error: MovedError }) {
   const navigate = useNavigate();
+  const returnState = useReturnLinkState();
   const { slug: from } = useParams({ from: "/authed/projects/$slug" });
   const [hash, setHash] = useState<string | null>(null);
   const anchor =
@@ -79,9 +81,13 @@ function FollowMove({ error }: { error: MovedError }) {
         number: String(error.movedTo.number),
       },
       replace: true,
+      // The entry this replaces is the one the reader followed a link onto,
+      // and its origin goes with it — so the new address is given the same
+      // way back rather than none (T-407).
+      state: returnState,
       ...(hash === "" ? {} : { hash: hash.replace(/^#/, "") }),
     });
-  }, [hash, navigate, error.movedTo]);
+  }, [hash, navigate, error.movedTo, returnState]);
 
   return (
     <Empty>
@@ -166,6 +172,7 @@ function SpecReadFailure({
  */
 function FollowMoveToSpec({ error }: { error: MovedError }) {
   const navigate = useNavigate();
+  const returnState = useReturnLinkState();
 
   useEffect(() => {
     void navigate({
@@ -176,8 +183,11 @@ function FollowMoveToSpec({ error }: { error: MovedError }) {
       },
       search: (prev) => prev,
       replace: true,
+      // As in `FollowMove`: the replaced entry takes its origin with it, so
+      // the spec's way back has to be written again here (T-407).
+      state: returnState,
     });
-  }, [navigate, error.movedTo]);
+  }, [navigate, error.movedTo, returnState]);
 
   return (
     <Empty>

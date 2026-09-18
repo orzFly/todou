@@ -19,6 +19,7 @@ import { LabelChips } from "@/components/issue/label-chip.tsx";
 import { LabelPicker } from "@/components/issue/label-picker.tsx";
 import { MarkReadButton } from "@/components/issue/mark-read-button.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   DropdownMenu,
@@ -109,8 +110,13 @@ export function IssueRow({
   const refPrefix = useRefPrefix(slug);
   const refLeads = useRefPlacement("list") === "before";
   const ref = formatRef(refPrefix, issue.number);
+  const returnState = useReturnLinkState();
   return (
     <li
+      // The anchor a returning reader is put back on (T-407). The database id
+      // rather than the number, because a move rewrites the number and the
+      // remembered anchor would then name a different card — or none.
+      data-return-id={String(issue.id)}
       className={cn(
         ISSUE_LIST_ROW,
         "grid grid-cols-subgrid items-center border-b px-3.5 py-2.5 transition-colors last:border-0 hover:bg-muted/50",
@@ -138,6 +144,7 @@ export function IssueRow({
         <Link
           to="/projects/$slug/issues/$number"
           params={{ slug, number: String(issue.number) }}
+          state={returnState}
           className="min-w-0 truncate font-medium hover:underline"
         >
           {issue.title}

@@ -9,6 +9,7 @@ import {
 } from "@/api/mutes.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -120,12 +121,24 @@ export function MutedProjectRow({ project }: { project: MutedProject }) {
 export function MutedIssueRow({ issue }: { issue: MutedIssue }) {
   const prefix = useRefPrefix(issue.project.slug);
   const unmute = useUnmuteIssue();
+  // Always `undefined` today, and deliberately so: this page registers no
+  // collection of its own, and the one link that reaches it — the inbox's
+  // Muted control — passes no origin, because the entry matrix does not infer
+  // one for a page like this. A card opened from here therefore falls back to
+  // its own project's list, which is the wanted behaviour (T-407).
+  //
+  // The call stays because every link into a detail page makes it, and an
+  // exception is what a later reader would have to notice: the day this page
+  // registers itself, or is arrived at carrying an origin, these rows carry it
+  // with no further change.
+  const returnState = useReturnLinkState();
   return (
     <li className="flex items-center justify-between gap-4 py-2">
       <div className="min-w-0 space-y-1">
         <Link
           to="/projects/$slug/issues/$number"
           params={{ slug: issue.project.slug, number: String(issue.number) }}
+          state={returnState}
           className="block truncate text-sm underline-offset-2 hover:underline"
         >
           {issue.project.name} {formatRef(prefix, issue.number)} — {issue.title}

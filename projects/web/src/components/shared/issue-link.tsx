@@ -21,6 +21,7 @@ import { CommentHoverCard } from "@/components/shared/comment-hover-card.tsx";
 import { useCanHoverPreview } from "@/components/shared/hover-preview.ts";
 import { IssueHoverCard } from "@/components/shared/issue-hover-card.tsx";
 import { MentionLink } from "@/components/shared/mention-link.tsx";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import {
   RICH_CHIP_FIXED,
   RICH_CHIP_ICON,
@@ -150,6 +151,7 @@ export function IssueLink({
   const showRepeatedTitle = useShowRepeatedRefTitle();
   const dropTitle = !showRepeatedTitle && repeat;
   const canHover = useCanHoverPreview();
+  const returnState = useReturnLinkState();
   const prefix = config.data?.format.prefix ?? null;
   const crossProject = shownSlug !== pageSlug;
   const spelled = crossProject
@@ -252,6 +254,10 @@ export function IssueLink({
       // The timeline owns anchor positioning (highlight + lazy page
       // loading); the router's own scroll would race it.
       hashScrollIntoView={false}
+      // A prop rather than anything conditional on the lookup: the note above
+      // about rebuilt anchors applies to the element, and the origin is the
+      // same whatever the batch says (T-407).
+      state={returnState}
       data-issue-link={shownNumber}
       data-issue-project={crossProject ? shownSlug : undefined}
       data-comment-link={comment.data?.at.commentId}

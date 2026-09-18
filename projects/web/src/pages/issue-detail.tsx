@@ -32,7 +32,7 @@ import {
   EntryActionsMenu,
   QUOTE_REHYPE_PLUGINS,
 } from "@/components/issue/entry-actions-menu.tsx";
-import { FloatingTitleBar } from "@/components/issue/floating-title-bar.tsx";
+import { IssueReturnRow } from "@/components/issue/issue-return-row.tsx";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
 import {
   LabelPicker,
@@ -96,14 +96,16 @@ export function IssueDetailPage() {
   const members = useSuspenseQuery(membersQuery(slug));
 
   const composer = useCommentComposer(slug, issueNumber, me.data);
-  // Wraps TitleBlock rather than living inside it, so the floating bar's
-  // trigger is unaffected by the block swapping itself for the rename form.
+  // Wraps TitleBlock rather than living inside it, so the trigger for the
+  // return row's title mirror is unaffected by the block swapping itself for
+  // the rename form.
   const titleRef = useRef<HTMLDivElement>(null);
   // Both overlays cover the timeline, so every anchor landing on this page has
-  // to clear them (T-299).
-  const barRef = useRef<HTMLDivElement>(null);
+  // to clear them (T-299). The return row is on screen at every scroll
+  // position, so it covers the timeline whatever the reader has done (T-407).
+  const rowRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
-  useScrollInsets({ top: [barRef], bottom: [composerRef] });
+  useScrollInsets({ top: [rowRef], bottom: [composerRef] });
   const membership = members.data.find((m) => m.user.id === me.data.id);
   const isAdmin = membership?.role === "admin";
   const viewer = {
@@ -124,21 +126,23 @@ export function IssueDetailPage() {
       {/* Nothing in the trash is ever unread, so there is no position to
         advance while looking at one — the endpoint would 404. */}
       {!trashed && <MarkReadOnView slug={slug} number={issueNumber} />}
-      {/* Two layers on purpose: the floating bar's zero-height host has to
-        stay out of the space-y flow, which would otherwise add a gap below
-        it, and its sticky container has to span the whole column. */}
-      {/* Above both the bar and the timeline: the bar only mirrors the
+      {/* Above both the row and the timeline: the row only mirrors the
         reveal entry the timeline's own section line carries (T-281). */}
       <RevealedRunsProvider card={cardKey}>
         {/* Inside, so one provider covers both the timeline the Quote reply
             entries live in and the Composer they write into. */}
         <QuoteReplyProvider>
           <div className="min-w-0">
-            <FloatingTitleBar
+            {/* The card's one back control, and the only floating bar this
+                page wears — nothing below may grow a second one (T-407). A
+                sibling of the space-y block rather than its first child: the
+                row is the column's chrome, not one of its contents, and it
+                carries its own gap. */}
+            <IssueReturnRow
               slug={slug}
               issue={issue.data}
               watchTarget={titleRef}
-              barRef={barRef}
+              rowRef={rowRef}
               mirror={<RevealAllEye />}
             />
             <div className="space-y-4">

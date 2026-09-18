@@ -49,6 +49,7 @@ import {
   type ValuePools,
 } from "@/components/search/suggestions.ts";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { projectSpellings } from "@/lib/project-spellings.ts";
 import { matchHistory, type SearchHistoryEntry } from "@/lib/search-history.ts";
@@ -148,6 +149,10 @@ export function SearchBox({
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  // Read at render, never after `decide()`'s await: the box is chrome that
+  // outlives the page under it, and the origin a card is opened with is the
+  // one that was on screen when the reader asked for it (T-407).
+  const returnState = useReturnLinkState();
   // Seeded from the URL so landing on /search with ?q= shows the query back,
   // and reseeded whenever it changes underneath (a shared link, the back
   // button) — but left alone while the user types.
@@ -395,6 +400,7 @@ export function SearchBox({
       navigate({
         to: "/projects/$slug/issues/$number",
         params: { slug: target.slug, number: String(target.number) },
+        state: returnState,
         ...(target.commentId === undefined
           ? {}
           : {
@@ -707,6 +713,7 @@ export function SearchBox({
                   key={`peek-${row.number}`}
                   to="/projects/$slug/issues/$number"
                   params={{ slug: row.slug, number: String(row.number) }}
+                  state={returnState}
                   {...optionProps(idx)}
                   onMouseMove={() => setHighlight(idx)}
                   onClick={closeUnlessNewTab}
@@ -782,6 +789,7 @@ export function SearchBox({
                     : commentAnchor(row.commentId)
                 }
                 hashScrollIntoView={false}
+                state={returnState}
                 {...optionProps(idx)}
                 onMouseMove={() => setHighlight(idx)}
                 onClick={closeUnlessNewTab}

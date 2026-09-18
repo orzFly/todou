@@ -13,6 +13,7 @@ import {
   type SearchItem,
 } from "@todou/shared";
 import { ArrowRightIcon, ExternalLinkIcon, SearchIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useJumpRows } from "@/api/ref-jump.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import {
@@ -29,9 +30,17 @@ import {
   RefreshFailure,
 } from "@/components/shared/load-failure.tsx";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
+import {
+  useRegisterReturnArea,
+  useRegisterReturnLane,
+  useReturnLinkState,
+} from "@/components/shared/return-context.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
+import { WINDOW_REGION } from "@/lib/return-view.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
+import { useHeaderHeight } from "@/lib/use-header-height.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
+import { useReturnView } from "@/lib/use-return-view.ts";
 import { cn } from "@/lib/utils";
 
 const DOMAIN_LABELS: Array<{ value: SearchDomain; label: string }> = [
@@ -67,19 +76,47 @@ export function groupByIssue(items: SearchItem[]): Array<{
   return [...groups.values()];
 }
 
+/**
+ * The rows a reading position is remembered against (T-407), read out of the
+ * DOM: it is the laid-out element the sampler measures, not the hit. The rows
+ * come back in document order, which is the order they are read in.
+ */
+function returnRows(
+  root: HTMLElement | null,
+): { id: string; element: HTMLElement }[] {
+  if (root === null) return [];
+  const found = root.querySelectorAll<HTMLElement>("[data-return-id]");
+  return [...found].flatMap((element) => {
+    const id = element.dataset.returnId;
+    return id === undefined || id === "" ? [] : [{ id, element }];
+  });
+}
+
 export function SearchPage() {
   const { slug } = useParams({ from: "/authed/projects/$slug" });
   const search = useSearch({ from: "/authed/projects/$slug/search" });
-  return <SearchResults slug={slug} search={search} />;
+  // The snapshot is taken here rather than in the body, because
+  // `useReturnView` needs the router and the body is mounted without one by
+  // its tests. The body reports when its own rows are up (T-407).
+  const [ready, setReady] = useState(false);
+  // The route's search verbatim, `in` included. It has no control on this
+  // page any more — the domain chips write `is:` into `q` — but an older
+  // shared link still carries it, and a back link that dropped it would
+  // return the reader to a wider set of results than they left.
+  useReturnView({ target: { kind: "search", slug, search }, ready });
+  return <SearchResults slug={slug} search={search} onReady={setReady} />;
 }
 
 /** The page proper, addressable without the router context. Exported for tests. */
 export function SearchResults({
   slug,
   search,
+  onReady,
 }: {
   slug: string;
   search: SearchPageSearch;
+  /** Whether the results are up; see `useReturnView`'s `ready`. */
+  onReady?: (ready: boolean) => void;
 }) {
   const q = (search.q ?? "").trim();
   const query = searchQuery(slug, search);
@@ -92,9 +129,35 @@ export function SearchResults({
     hasContent,
     query.queryKey,
   );
+  const linkState = useReturnLinkState();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const headerHeight = useHeaderHeight();
+
+  // An empty box is ready with no rows at all: `searchQuery` is disabled for
+  // an empty `q`, so waiting for it would wait forever. A failed read stays
+  // not ready on purpose — the restore keeps waiting, so a reader who hits
+  // Retry still lands where they left off (T-407).
+  const rowsReady = q === "" || hasContent;
+  useEffect(() => {
+    onReady?.(rowsReady);
+  }, [onReady, rowsReady]);
+
+  // Declared rather than left out, so that this page having no Load more is a
+  // decision and not an omission somebody restores by hand: every hit it will
+  // ever show arrives in one read, and `has_more` only renders a `+`.
+  useRegisterReturnLane(null);
+  // Nothing floats over these results but the shell header — the domain chips
+  // scroll away with everything else — so that is the whole inset (T-407).
+  useRegisterReturnArea({
+    region: WINDOW_REGION,
+    element: () => null,
+    rows: () => returnRows(rootRef.current),
+    inset: () => headerHeight,
+    axis: "y",
+  });
 
   return (
-    <div className="space-y-5">
+    <div ref={rootRef} className="space-y-5">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h2 className="font-heading text-lg font-medium">
           {q === "" ? "Search" : `Results for “${q}”`}
@@ -157,6 +220,7 @@ export function SearchResults({
                   <Link
                     to="/projects/$slug/issues/$number"
                     params={{ slug, number: String(group.issue.number) }}
+                    state={linkState}
                     className="flex items-center gap-2 border-b bg-muted/40 px-4 py-2 hover:bg-accent"
                   >
                     <span className="shrink-0 font-mono text-xs text-muted-foreground">
@@ -171,11 +235,21 @@ export function SearchResults({
                     />
                   </Link>
                   <ul>
-                    {group.hits.map((hit) => (
-                      <li key={hitKey(hit)}>
-                        <HitRow slug={slug} hit={hit} />
-                      </li>
-                    ))}
+                    {group.hits.map((hit) => {
+                      const key = hitKey(hit);
+                      return (
+                        // `hitKey` is unique only inside one card's group — a
+                        // title hit spells the same key on every card — so the
+                        // identity a snapshot remembers has to name the card
+                        // too (T-407).
+                        <li
+                          key={key}
+                          data-return-id={`${group.issue.number}:${key}`}
+                        >
+                          <HitRow slug={slug} hit={hit} />
+                        </li>
+                      );
+                    })}
                   </ul>
                 </li>
               ))}
@@ -283,6 +357,7 @@ const JUMP_BOX =
  */
 function JumpBanner({ slug, q }: { slug: string; q: string }) {
   const rows = useJumpRows(slug, hasQualifier(parseSearchQuery(q)) ? "" : q);
+  const linkState = useReturnLinkState();
   return (
     <>
       {rows.map((row) => {
@@ -348,6 +423,7 @@ function JumpBanner({ slug, q }: { slug: string; q: string }) {
             // The timeline owns anchor positioning; the router's own scroll
             // races it.
             hashScrollIntoView={false}
+            state={linkState}
             className={JUMP_BOX}
           >
             <ArrowRightIcon
@@ -376,6 +452,7 @@ function JumpBanner({ slug, q }: { slug: string; q: string }) {
  * permalink fragment, spec hits open the file they matched in.
  */
 function HitRow({ slug, hit }: { slug: string; hit: SearchItem }) {
+  const linkState = useReturnLinkState();
   const body = (
     <>
       <span className="shrink-0 pt-px font-mono text-xs text-muted-foreground">
@@ -406,6 +483,7 @@ function HitRow({ slug, hit }: { slug: string; hit: SearchItem }) {
         to="/projects/$slug/issues/$number/spec"
         params={{ slug, number: String(hit.issue.number) }}
         search={hit.spec_path === null ? {} : { file: hit.spec_path }}
+        state={linkState}
         className={className}
       >
         {body}
@@ -419,6 +497,7 @@ function HitRow({ slug, hit }: { slug: string; hit: SearchItem }) {
       hash={hit.comment_id === null ? undefined : commentAnchor(hit.comment_id)}
       // The timeline owns anchor positioning; the router's own scroll races it.
       hashScrollIntoView={false}
+      state={linkState}
       className={className}
     >
       {body}
