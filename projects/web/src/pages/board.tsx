@@ -246,6 +246,7 @@ export function BoardCardContent({
     placement === "after" ||
     issue.open_questions > 0 ||
     issue.spec_review_status === "unreviewed" ||
+    openBlockCount(issue.blocked_by) > 0 ||
     issue.labels.length > 0 ||
     issue.assignees.length > 0;
   return (
@@ -309,9 +310,7 @@ export function BoardCardContent({
               version={issue.spec_version}
             />
           )}
-          {openBlockCount(issue.blocked_by) > 0 && (
-            <BlockedBadge count={openBlockCount(issue.blocked_by)} />
-          )}
+          <BlockedBadge slug={slug} blockedBy={issue.blocked_by} />
           <LabelChips labels={issue.labels} />
           {/* `pr-1.5` equals the distance the bot badge extends past its
               avatar (`-right-1.5` on UserAvatar), so `ml-auto` stops the last

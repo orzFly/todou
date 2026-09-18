@@ -26,7 +26,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { openBlockCount } from "@/lib/blocks.ts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -110,7 +109,6 @@ export function IssueRow({
   const refPrefix = useRefPrefix(slug);
   const refLeads = useRefPlacement("list") === "before";
   const ref = formatRef(refPrefix, issue.number);
-  const blockedBy = openBlockCount(issue.blocked_by);
   return (
     <li
       className={cn(
@@ -166,9 +164,11 @@ export function IssueRow({
           />
         )}
         {mentionsYou && <MentionBadge className="shrink-0" />}
-        {blockedBy > 0 && (
-          <BlockedBadge count={blockedBy} className="shrink-0" />
-        )}
+        <BlockedBadge
+          slug={slug}
+          blockedBy={issue.blocked_by}
+          className="shrink-0"
+        />
         {trailing}
       </div>
       {meta && (

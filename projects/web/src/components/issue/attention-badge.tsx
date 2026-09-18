@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import type { BlockRef } from "@todou/shared";
 import {
   AtSignIcon,
   BookOpenTextIcon,
@@ -6,6 +7,7 @@ import {
   MessageCircleQuestionIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { BlockedHoverCard } from "@/components/shared/blocked-hover-card.tsx";
 import { cn } from "@/lib/utils";
 
 /**
@@ -68,23 +70,30 @@ export function QuestionBadge({
  * still scans as one family of pills.
  */
 export function BlockedBadge({
-  count,
+  slug,
+  blockedBy,
   className,
 }: {
-  count: number;
+  slug: string;
+  blockedBy: BlockRef[] | undefined;
   className?: string;
 }) {
+  const refs = (blockedBy ?? []).filter((ref) => ref.cleared_at === null);
+  const count = refs.length;
+  if (count === 0) return null;
   return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full border border-border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground",
-        className,
-      )}
-      title={`waiting for ${count} other issue(s)`}
-    >
-      <CirclePauseIcon className="size-3.5" />
-      {count}
-    </span>
+    <BlockedHoverCard slug={slug} refs={refs}>
+      <span
+        className={cn(
+          "inline-flex items-center gap-1 rounded-full border border-border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground",
+          className,
+        )}
+        title={`waiting for ${count} other issue(s)`}
+      >
+        <CirclePauseIcon className="size-3.5" />
+        {count}
+      </span>
+    </BlockedHoverCard>
   );
 }
 
