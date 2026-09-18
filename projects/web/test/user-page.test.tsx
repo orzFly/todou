@@ -10,8 +10,8 @@ import {
 import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import type { PublicUser } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "../src/api/queries.ts";
-import { userQuery } from "../src/api/users.ts";
+import { api, queryClient } from "../src/api/queries.ts";
+import { userQuery, userSearchSchema } from "../src/api/users.ts";
 import {
   UserProfilePage,
   UserRedirectPage,
@@ -56,6 +56,7 @@ const Route = createRoute({
   getParentRoute: () => Root,
   path: "/users/$ref",
   component: UserRoutePage,
+  validateSearch: userSearchSchema,
 });
 
 /**
@@ -74,6 +75,17 @@ function renderAt(path: string, client: QueryClient) {
   );
   return { ...view, router };
 }
+
+/**
+ * A real flush: one macrotask, so React commits and react-query settles.
+ * `await Promise.resolve()` drains microtasks only, and the same probe run
+ * behind one reports the opposite of what a settled cache holds.
+ */
+const settle = async (ms = 300) => {
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, ms));
+  });
+};
 
 const clientWith = (data: PublicUser): QueryClient => {
   const client = new QueryClient({
@@ -232,5 +244,71 @@ describe("UserProfilePage load failure (T-409)", () => {
       release(alice);
     });
     expect(await view.findByText("Alice Potato")).toBeTruthy();
+  });
+});
+
+describe("the id address under a failing read (T-414)", () => {
+  it("asks once on a 404 and shows the empty state", async () => {
+    const getUser = vi
+      .spyOn(api, "getUser")
+      .mockRejectedValue(
+        Object.assign(new Error("not found"), { status: 404 }),
+      );
+    const view = renderAt(
+      "/users/7",
+      new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+    );
+    // Count first, read the screen second: without the fix this line reports
+    // the real number (thousands) instead of timing out waiting for text.
+    await settle();
+    expect(getUser).toHaveBeenCalledTimes(1);
+    expect(view.getByText("No such user here")).toBeTruthy();
+  });
+
+  it("stops at the production retry bound on a 5xx", async () => {
+    const getUser = vi
+      .spyOn(api, "getUser")
+      .mockRejectedValue(
+        Object.assign(new Error("server on fire"), { status: 503 }),
+      );
+    // The production retry predicate itself, not a copy of it: 5xx retries
+    // twice, 4xx not at all. Only retryDelay is overridden, to drop the 1s + 2s
+    // backoff this case would otherwise spend waiting.
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { ...queryClient.getDefaultOptions().queries, retryDelay: 0 },
+      },
+    });
+    const view = renderAt("/users/7", client);
+    await settle();
+    expect(getUser.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(view.getByText(/Could not load this user/)).toBeTruthy();
+  });
+
+  it("reads the account once when it arrives by id", async () => {
+    const getUser = vi.spyOn(api, "getUser").mockResolvedValue(alice);
+    // Both spellings start cold: clientWithId seeds each of them, and that is
+    // exactly what covers up the second read.
+    const view = renderAt(
+      "/users/7",
+      new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+    );
+    expect(await view.findByText("Alice Potato")).toBeTruthy();
+    expect(view.router.state.location.pathname).toBe("/users/alice");
+    expect(getUser.mock.calls.map((c) => c[0])).toEqual(["7"]);
+  });
+
+  it("carries the filters through the redirect", async () => {
+    vi.spyOn(api, "getUser").mockResolvedValue(alice);
+    const view = renderAt(
+      "/users/7?role=assignee&state=all",
+      new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+    );
+    await view.findByText("Alice Potato");
+    expect(view.router.state.location.pathname).toBe("/users/alice");
+    expect(view.router.state.location.search).toEqual({
+      role: "assignee",
+      state: "all",
+    });
   });
 });
