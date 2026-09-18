@@ -19,6 +19,7 @@ import {
   PagePending,
   type PageSkeletonKind,
 } from "@/components/page-skeleton.tsx";
+import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { AppShell } from "@/components/shell.tsx";
 import { TitleController } from "@/components/title-controller.tsx";
 import { Button } from "@/components/ui/button";
@@ -116,24 +117,44 @@ function AuthedLayout() {
     setSessionLoss(null);
   }
 
-  if (me.isError && statusOf(me.error) !== 401 && me.data === undefined) {
+  // Latched, because the panel below has to outlive its own refetch. With no
+  // cached account, query-core resets the query to pending the instant a
+  // fetch starts (query.js, `fetchState`), so `me.isError` drops and
+  // `me.error` goes null for the length of every attempt. Read live, the
+  // condition would therefore be false exactly while a retry is running, and
+  // the whole failure screen would flip to page skeletons and back — every
+  // 15s unattended, and again under the click of the Retry button the user is
+  // aiming at. Derived during render for the same reason `sessionLoss` is.
+  const [coldStartFailure, setColdStartFailure] = useState<string | null>(null);
+  if (me.isError && !errored401 && me.data === undefined) {
+    if (me.error.message !== coldStartFailure) {
+      setColdStartFailure(me.error.message);
+    }
+  } else if (me.data !== undefined && coldStartFailure !== null) {
+    // The account arrived, so the latch is what retires the panel — and the
+    // only thing that does. Reading `me.data === undefined` at the branch
+    // below as well would put two guards on one condition, each passing the
+    // suite with the other deleted; one of them has to be the guard.
+    // Clearing, rather than gating, is the one that also survives a logout:
+    // `shell.tsx` clears the whole cache before it redirects, and a latch
+    // left set would flash a stale failure over that render.
+    setColdStartFailure(null);
+  }
+
+  if (coldStartFailure !== null && !errored401) {
     // Cold-start failure: there is no cached account, so nothing to keep —
     // but the shell still frames the answer, and the account slot says
     // "unavailable" instead of spinning a skeleton forever.
     return (
       <AppShell accountUnavailable>
         <main className="mx-auto max-w-lg px-4 py-20 text-center">
-          <p className="text-destructive">
-            Failed to reach the todou server: {me.error.message}
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            className="mt-4"
-            onClick={() => me.refetch()}
-          >
-            Try again
-          </Button>
+          <LoadFailure
+            message={`Failed to reach the todou server: ${coldStartFailure}`}
+            detail={coldStartFailure}
+            onRetry={() => me.refetch()}
+            retrying={me.isFetching}
+            className="justify-center"
+          />
         </main>
       </AppShell>
     );

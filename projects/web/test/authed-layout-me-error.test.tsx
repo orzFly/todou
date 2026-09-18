@@ -106,6 +106,58 @@ function failingSpy(method: "me" | "getProject", status: number) {
     .mockRejectedValue(Object.assign(new Error(`HTTP ${status}`), { status }));
 }
 
+/**
+ * Boots the app with nothing seeded for `me` and `/api/me` failing, so the
+ * app lands straight in the cold-start branch. Same draft URL as the rest of
+ * the suite — cold start has no draft to lose, but the answer must hold where
+ * the other states do. The spy comes back with the mount because half of what
+ * separates this panel from a button that merely looks right is what it calls.
+ */
+async function mountColdStart(): Promise<{
+  container: HTMLElement;
+  meSpy: ReturnType<typeof failingSpy>;
+}> {
+  const client = testQueryClient();
+  client.setQueryData(projectsQuery.queryKey, [project]);
+  client.setQueryData(projectQuery("p").queryKey, project);
+  client.setQueryData(statusesQuery("p").queryKey, []);
+  client.setQueryData(labelsQuery("p").queryKey, []);
+  client.setQueryData(membersQuery("p").queryKey, []);
+  const meSpy = failingSpy("me", 502);
+  await startAtDraftPage();
+  const mounted = render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  return { container: mounted.container, meSpy };
+}
+
+/**
+ * Holds the next `/api/me` open until the returned `reject` is called, so a
+ * test can assert on a state that lasts rather than on one a clock ends. An
+ * assertion on a window something else closes would read the same whatever
+ * opened it.
+ */
+function holdNextMeFetch(meSpy: ReturnType<typeof failingSpy>): () => void {
+  let fail!: (error: unknown) => void;
+  meSpy.mockImplementationOnce(
+    () =>
+      new Promise<Me>((_, reject) => {
+        fail = reject;
+      }),
+  );
+  return () => fail(Object.assign(new Error("HTTP 502"), { status: 502 }));
+}
+
+/** The panel's one button, held across renders so `disabled` can be read off
+ * the same node the click landed on. */
+async function findRetryButton(): Promise<HTMLButtonElement> {
+  return (await screen.findByRole("button", {
+    name: "Retry",
+  })) as HTMLButtonElement;
+}
+
 const beforeUnload = () => {
   const event = new Event("beforeunload", { cancelable: true });
   window.dispatchEvent(event);
@@ -260,32 +312,150 @@ describe("/api/me failing while a draft is on screen", () => {
   });
 
   it("shows the in-shell error panel on a cold-start failure", async () => {
-    // No `me` seeded: the app boots straight into the failure. Same draft URL
-    // as the rest of the suite — cold start has no draft to lose, but the
-    // answer must hold where the other states do.
-    const client = testQueryClient();
-    client.setQueryData(projectsQuery.queryKey, [project]);
-    client.setQueryData(projectQuery("p").queryKey, project);
-    client.setQueryData(statusesQuery("p").queryKey, []);
-    client.setQueryData(labelsQuery("p").queryKey, []);
-    client.setQueryData(membersQuery("p").queryKey, []);
-    vi.spyOn(api, "me").mockRejectedValue(
-      Object.assign(new Error("HTTP 502"), { status: 502 }),
-    );
-    await startAtDraftPage();
-    const mounted = render(
-      <QueryClientProvider client={client}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>,
-    );
+    const view = await mountColdStart();
 
     // The failure is what routes here, so assert on its text arriving; the
     // failure panel lives inside the shell's `<main>`, not in place of the
     // shell, and the account slot says so instead of spinning a skeleton.
     await screen.findByText("Account unavailable");
-    const header = mounted.container.querySelector("header");
+    const header = view.container.querySelector("header");
     expect(header).not.toBeNull();
     expect(header?.querySelector("[data-slot=skeleton]")).toBeNull();
+  });
+
+  it("refetches the account on Retry, error text still on screen", async () => {
+    const view = await mountColdStart();
+
+    // The whole sentence, error included: what T-376 did at three other
+    // panels was move the raw error off the line and onto the `title` alone,
+    // and only asserting the joined string notices that happening here.
+    await screen.findByText("Failed to reach the todou server: HTTP 502");
+    // Pinned before the click as well as after: the "before" is what makes
+    // the "after" mean the click did it, and it also says nothing else on
+    // this panel is fetching on its own.
+    expect(view.meSpy).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(await findRetryButton());
+    await waitFor(() => expect(view.meSpy).toHaveBeenCalledTimes(2));
+  });
+
+  it("renders the shared failure shape, not a renamed hand-rolled panel", async () => {
+    await mountColdStart();
+
+    const retry = await findRetryButton();
+    // The old wording is gone from the tree, so "renamed the old button" and
+    // "forgot to delete it" both fail here instead of passing as an adoption.
+    expect(screen.queryByText("Try again")).toBeNull();
+    // The raw error rides the message line's `title`, and nothing rides the
+    // button's — the part of the shared contract a hand-written pair of
+    // elements never happens to have.
+    expect(
+      screen
+        .getByText("Failed to reach the todou server: HTTP 502")
+        .getAttribute("title"),
+    ).toBe("HTTP 502");
+    expect(retry.getAttribute("title")).toBeNull();
+  });
+
+  it("keeps the panel up through its own refetch, no skeleton swap", async () => {
+    const view = await mountColdStart();
+
+    const retry = await findRetryButton();
+    expect(document.querySelectorAll("[data-slot=skeleton]")).toHaveLength(0);
+
+    const failTheRetry = holdNextMeFetch(view.meSpy);
+    fireEvent.click(retry);
+    await waitFor(() => expect(view.meSpy).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+
+    // Read `me.isError` live and this is where the panel would go: with no
+    // cached account, query-core resets the query to pending the instant a
+    // fetch starts (query.js, `fetchState`), and the branch would hand the
+    // screen to PagePending for the length of every attempt — the 15s poll's
+    // as much as this click's.
+    expect(retry.isConnected).toBe(true);
+    expect(
+      screen.getByText("Failed to reach the todou server: HTTP 502"),
+    ).toBeTruthy();
+    // Both halves, because "no skeletons" alone also holds for a panel that
+    // rendered nothing at all.
+    expect(document.querySelectorAll("[data-slot=skeleton]")).toHaveLength(0);
+
+    failTheRetry();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    expect(retry.isConnected).toBe(true);
+  });
+
+  it("greys Retry for the fetch the click started, and no other", async () => {
+    const view = await mountColdStart();
+
+    const retry = await findRetryButton();
+    // Nothing is in flight before the gesture. This pair is the half that
+    // tells a button greyed by the 15s poll — which keeps refetching this very
+    // branch (router.tsx's refetchInterval) — apart from one greyed by the
+    // click, and it is what makes the count after the click mean anything.
+    expect(retry.disabled).toBe(false);
+    expect(view.meSpy).toHaveBeenCalledTimes(1);
+
+    const failTheRetry = holdNextMeFetch(view.meSpy);
+    fireEvent.click(retry);
+    await waitFor(() => expect(retry.disabled).toBe(true));
+    expect(view.meSpy).toHaveBeenCalledTimes(2);
+
+    // Held open, it stays greyed, and the count stays the click's own: the
+    // greying ends when this one fetch does, not when a timer says so.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(retry.disabled).toBe(true);
+    expect(view.meSpy).toHaveBeenCalledTimes(2);
+
+    // Releasing that one fetch, and nothing else, is what gives the button
+    // back.
+    failTheRetry();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    expect(retry.disabled).toBe(false);
+  });
+
+  it("drops the panel when a retry finally brings the account", async () => {
+    const view = await mountColdStart();
+    const retry = await findRetryButton();
+
+    view.meSpy.mockResolvedValueOnce(me);
+    fireEvent.click(retry);
+
+    // The account arrived, so the panel goes and the app renders its page —
+    // asserted positively as well, because "the panel is gone" also holds for
+    // a tree that rendered nothing at all.
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull(),
+    );
+    expect(
+      screen.queryByText("Failed to reach the todou server: HTTP 502"),
+    ).toBeNull();
+    expect(await screen.findByLabelText("Title")).toBeTruthy();
+  });
+
+  it("hands a cold start over to /login once the failure turns 401", async () => {
+    const view = await mountColdStart();
+    const retry = await findRetryButton();
+
+    // The session turns out to be the problem after all. A dead session has
+    // to reach /login; the latch must not hold the screen behind a panel that
+    // goes on offering to retry something no retry can fix.
+    view.meSpy.mockRejectedValue(
+      Object.assign(new Error("HTTP 401"), { status: 401 }),
+    );
+    fireEvent.click(retry);
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 
   it("still redirects to /login on 401 with nothing unsaved", async () => {
