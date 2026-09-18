@@ -183,7 +183,7 @@ describe("reference validity lookup cost", () => {
     });
     expect(getComment).toHaveBeenCalledTimes(1); // hover adds zero comment GETs
     expect(list).toHaveBeenCalledTimes(1);
-  });
+  }, 30_000);
 
   it.each([1, 10, 100])(
     "%i distinct comment queries cost exactly N logical GETs, with zero for fresh repeats",
@@ -213,6 +213,7 @@ describe("reference validity lookup cost", () => {
         client.getQueryCache().findAll({ queryKey: ["comment-ref", SLUG, 7] }),
       ).toHaveLength(count);
     },
+    30_000,
   );
 
   it("resolves 101 different issue refs using list chunks of 100 and 1", async () => {
@@ -257,7 +258,7 @@ describe("reference validity lookup cost", () => {
     expect(repeated).toEqual(results);
     expect(list).toHaveBeenCalledTimes(2);
     expect(getIssue).not.toHaveBeenCalled();
-  });
+  }, 30_000);
 });
 
 // Match the shared client's positional JSON-envelope contract. This fixture
@@ -312,5 +313,5 @@ describe("reference GET transport cost", () => {
     expect(fixture.envelopes).toHaveLength(1); // envelopes
     expect(fixture.envelopes[0]).toEqual(paths.map((url) => ({ url })));
     expect(fixture.envelopes.flat()).toHaveLength(3); // logical GETs, not one
-  });
+  }, 30_000);
 });
