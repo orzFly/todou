@@ -1003,6 +1003,84 @@ describe("EventGroup", () => {
     ]);
   });
 
+  it("starts resolved rows with a decorative comment icon, including revealed rows", async () => {
+    const shown = annotation();
+    const hidden = annotation({ hidden_at: "2026-08-13T12:30:00.000Z" });
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="spec_resolved"
+        events={[resolveEvent([shown, hidden])]}
+        slug="p"
+        issueNumber={1}
+      />,
+      specClient([shown, hidden]),
+    );
+    const group = await findByTestId("event-group");
+    fireEvent.click(await findByTestId("spec-hidden-toggle"));
+    await waitFor(() => expect(group.querySelectorAll("li a")).toHaveLength(2));
+    for (const link of group.querySelectorAll("li a")) {
+      const icon = link.parentElement?.firstElementChild;
+      expect(identityOf(icon)).toBe("lucide-message-square-text");
+      expect(icon?.getAttribute("aria-hidden")).toBe("true");
+      expect(icon?.classList.contains("size-3.5")).toBe(true);
+      expect(icon?.classList.contains("shrink-0")).toBe(true);
+      expect(link.parentElement?.classList.contains("items-center")).toBe(true);
+    }
+  });
+
+  it.each([
+    [
+      "Chinese",
+      "很长的中文标题".repeat(20),
+      "这条批注的摘要需要保持一行".repeat(10),
+    ],
+    [
+      "English",
+      "UnbrokenEnglishFilename".repeat(20),
+      "UnbrokenEnglishWord".repeat(20),
+    ],
+  ])(
+    "clips only resolved text leaves for long %s rows",
+    async (_, path, body) => {
+      // happy-dom checks the CSS/DOM contract, not actual layout or clipping.
+      const item = annotation({ path, body });
+      const { findByTestId } = renderWithProviders(
+        <EventGroup
+          family="spec_resolved"
+          events={[resolveEvent([item])]}
+          slug="p"
+          issueNumber={1}
+        />,
+        specClient([item]),
+      );
+      const group = await findByTestId("event-group");
+      const li = group.querySelector("li");
+      const link = li?.querySelector("a");
+      expect(link?.getAttribute("href")).toBe(
+        `/projects/p/issues/1#comment-${item.comment_id}`,
+      );
+      const row = link?.parentElement;
+      const label = link?.firstElementChild;
+      const snippet = row?.lastElementChild;
+      expect(row?.classList.contains("flex")).toBe(true);
+      expect(row?.classList.contains("min-w-0")).toBe(true);
+      expect(link?.classList.contains("min-w-0")).toBe(true);
+      expect(link?.classList.contains("max-w-1/2")).toBe(true);
+      expect(link?.classList.contains("shrink-0")).toBe(true);
+      expect(label?.classList.contains("block")).toBe(true);
+      expect(label?.classList.contains("truncate")).toBe(true);
+      expect(snippet?.classList.contains("min-w-0")).toBe(true);
+      expect(snippet?.classList.contains("truncate")).toBe(true);
+      // The link/hover trigger and icon stay outside the clipping text leaves.
+      for (const node of [li, row, link]) {
+        expect(node?.classList.contains("truncate")).toBe(false);
+        expect(node?.classList.contains("overflow-hidden")).toBe(false);
+      }
+      expect(label?.textContent).toBe(`${path} L42`);
+      expect(snippet?.textContent).toContain(body.slice(0, 60));
+    },
+  );
+
   it("puts each event's anchor on the first row it produced", async () => {
     const a = annotation({ line: 42 });
     const b = annotation({ line: 91 });

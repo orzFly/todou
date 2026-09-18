@@ -23,6 +23,7 @@ import {
   ListChecksIcon,
   LogInIcon,
   LogOutIcon,
+  MessageSquareTextIcon,
   PaperclipIcon,
   PencilIcon,
   RefreshCwIcon,
@@ -132,8 +133,8 @@ const SNIPPET_MAX = 60;
 /**
  * Markdown source rather than rendered text: stripping emphasis off sixty
  * characters would cost the timeline a markdown-to-text pass neither package
- * has, so a body opening with `**why**` shows its asterisks. The cut is here
- * and not in CSS because a list-group row wraps instead of truncating.
+ * has, so a body opening with `**why**` shows its asterisks. CSS also clips
+ * the preview to the row's available width; the hover card keeps the full body.
  */
 function snippetOf(body: string): string {
   const line = body.split("\n").find((l) => l.trim() !== "") ?? "";
@@ -183,16 +184,18 @@ function annotationRow(
       params={{ slug, number: String(issueNumber) }}
       hash={commentAnchor(id)}
       hashScrollIntoView={false}
-      className="hover:underline"
+      className="min-w-0 max-w-1/2 shrink-0 hover:underline"
     >
-      {where}
+      <span className="block truncate">{where}</span>
     </Link>
   );
   return {
     id,
     hidden,
     node: (
-      <>
+      // Clip text leaves only: the icon and hover trigger keep their full boxes.
+      <span className="flex min-w-0 items-center gap-2">
+        <MessageSquareTextIcon className="size-3.5 shrink-0 text-muted-foreground/70" />
         {item === undefined ? (
           link
         ) : (
@@ -205,9 +208,11 @@ function annotationRow(
           </SpecAnnotationHoverCard>
         )}
         {snippet !== null && (
-          <span className="ml-2 text-muted-foreground/70">“{snippet}”</span>
+          <span className="min-w-0 truncate text-muted-foreground/70">
+            “{snippet}”
+          </span>
         )}
-      </>
+      </span>
     ),
     text,
   };
