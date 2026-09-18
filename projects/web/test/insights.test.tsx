@@ -180,7 +180,7 @@ describe("Insights controls", () => {
     });
     fireEvent.click(within(grains).getByRole("button", { name: "6h" }));
     expect(change).toHaveBeenLastCalledWith({ ...search, grain: "6h" });
-    expect(screen.getByLabelText("Timezone").tagName).toBe("SELECT");
+    expect(screen.getByLabelText("时区").tagName).toBe("SELECT");
     expect(screen.queryByRole("combobox", { name: "时间范围" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "统计粒度" })).toBeNull();
   });
@@ -240,17 +240,29 @@ describe("Insights controls", () => {
     );
   });
 
-  it("prevents obviously over-400 hourly grains but leaves shorter ranges selectable", () => {
+  it("用中文说明超限粒度，短范围仍可选", () => {
     const change = vi.fn();
     const view = render(
-      <InsightsControls search={search} context={context} onChange={change} />,
+      <InsightsControls
+        search={search}
+        context={context}
+        onChange={change}
+        resolvedGrain="6h"
+        bucketCount={30}
+      />,
     );
     const grain = screen.getByRole("group", { name: "统计粒度" });
-    expect(within(grain).getByRole("button", { name: /1h/ })).toHaveProperty(
-      "disabled",
-      true,
+    const unavailable = within(grain).getByRole("button", {
+      name: "1h，不可用：超过400桶上限",
+    });
+    expect(unavailable).toHaveProperty("disabled", true);
+    expect(unavailable.getAttribute("title")).toBe(
+      "超过400桶上限；请缩短时间范围或选择更粗的粒度",
     );
-    expect(screen.getByText(/400 buckets/)).toBeTruthy();
+    expect(
+      screen.getByText("1h 超过400桶上限；请缩短时间范围或选择更粗的粒度。"),
+    ).toBeTruthy();
+    expect(screen.getByText(/自动 → 6h · 30 桶 · 最多 400 桶/)).toBeTruthy();
     view.rerender(
       <InsightsControls
         search={{ ...search, range: "7d" }}
@@ -272,7 +284,7 @@ describe("Insights page", () => {
       .mockResolvedValue(settings);
     const request = vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
     const view = renderPage();
-    await screen.findByText(/Current cohort: 4 cards/);
+    await screen.findByText(/当前卡片集合：本项目现有 4 张卡/);
     expect(settingsRequest).toHaveBeenCalledWith("x");
     const expected = {
       from: "2026-09-17",
@@ -336,7 +348,7 @@ describe("Insights page", () => {
     const failed = renderPage();
     await screen.findByText(/Could not load insights: read unavailable/);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    await screen.findByText(/Current cohort: 4 cards/);
+    await screen.findByText(/当前卡片集合：本项目现有 4 张卡/);
     failed.unmount();
     failed.client.clear();
   });
@@ -387,17 +399,10 @@ describe("Insights page", () => {
         }}
       />,
     );
-    expect(
-      screen.getByText(/Historical membership outside this cohort/),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(
-        /Deleting or moving a card out changes past chart values/,
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(/moved in counts only from its latest arrival/),
-    ).toBeTruthy();
+    expect(screen.getByText(/当前卡片集合：本项目现有 4 张卡/)).toBeTruthy();
+    expect(screen.getByText(/删除或移出卡片会改写过去的曲线/)).toBeTruthy();
+    expect(screen.getByText(/搬入卡片仅从最近一次进入本项目起计/)).toBeTruthy();
+    expect(screen.getByText(/修改状态角色也会重新解释历史/)).toBeTruthy();
     expect(screen.getByText(/Gaps are not zero/).textContent).toContain(
       "broken transition chain",
     );

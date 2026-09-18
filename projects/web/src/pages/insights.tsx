@@ -257,13 +257,11 @@ export function InsightsControls({
                   type="button"
                   aria-pressed={search.grain === grain}
                   aria-label={
-                    exceeds
-                      ? `${label}, unavailable: more than 400 buckets`
-                      : undefined
+                    exceeds ? `${label}，不可用：超过400桶上限` : undefined
                   }
                   title={
                     exceeds
-                      ? "More than 400 buckets; shorten the range or choose a coarser grain"
+                      ? "超过400桶上限；请缩短时间范围或选择更粗的粒度"
                       : undefined
                   }
                   disabled={exceeds}
@@ -313,7 +311,7 @@ export function InsightsControls({
       )}
       <div className="flex flex-wrap items-end justify-between gap-2">
         <label className="grid gap-1 text-sm">
-          Timezone
+          时区
           <select
             className={controlClass}
             value={search.tz}
@@ -332,14 +330,14 @@ export function InsightsControls({
           {search.grain === "auto" && resolvedGrain
             ? `自动 → ${GRAIN_LABELS[resolvedGrain as Exclude<GrainValue, "auto">] ?? resolvedGrain}`
             : GRAIN_LABELS[search.grain]}
-          {bucketCount === undefined ? "" : ` · ${bucketCount} buckets`}
+          {bucketCount === undefined ? "" : ` · ${bucketCount} 桶`}
           {" · "}最多 400 桶
         </span>
       </div>
       {unavailable.length > 0 && (
         <p className="text-xs text-muted-foreground">
-          {unavailable.join("、")} exceeds 400 buckets for this range; shorten
-          the range or choose a coarser grain.
+          {unavailable.join("、")}{" "}
+          超过400桶上限；请缩短时间范围或选择更粗的粒度。
         </p>
       )}
       {error && (
@@ -370,15 +368,14 @@ export function InsightsResults({ data }: { data: BurnResponse }) {
     <div className="space-y-5">
       <div className="space-y-1 text-sm text-muted-foreground">
         <p>
-          Current cohort: {data.cohort.count} cards currently in this project.
-          Historical membership outside this cohort is not included. Deleting or
-          moving a card out changes past chart values; a card moved in counts
-          only from its latest arrival. Changing status roles also reinterprets
-          the past.
+          当前卡片集合：本项目现有 {data.cohort.count}{" "}
+          张卡。集合外的历史卡片不计入。
+          删除或移出卡片会改写过去的曲线；搬入卡片仅从最近一次进入本项目起计。
+          修改状态角色也会重新解释历史。
         </p>
         <p>
-          As of <time dateTime={data.as_of}>{data.as_of}</time> ·{" "}
-          {data.resolved_grain} buckets · {data.timezone}
+          数据截至 <time dateTime={data.as_of}>{data.as_of}</time> ·{" "}
+          {data.resolved_grain} 粒度 · {data.timezone}
         </p>
         {data.history_coverage.has_unknown && (
           <p role="status">
