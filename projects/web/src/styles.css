@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+@import "overlayscrollbars/overlayscrollbars.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -117,6 +118,30 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
+}
+
+/* The board columns' scrollbars. Mixing off --foreground is what makes one
+   class serve both palettes: the token flips under .dark, so nothing has to
+   re-set scrollbars.theme when the theme changes.
+
+   The three sizes are measured against the column's p-2 gutter, and they are
+   a hit-testing result, not a drawing one: --os-size is the whole bar's box,
+   so 8px is the gutter exactly, --os-padding-perpendicular shrinks the drawn
+   handle to 6px inside it, and any interactive-area-offset pushes the bar's
+   hit area back over the card. At 10px/2px/4px the handle draws flush with
+   the card edge and still eats 6px of it. Re-measure this if the column's
+   padding moves (T-395). */
+.os-theme-todou {
+    --os-size: 8px;
+    --os-padding-perpendicular: 1px;
+    --os-padding-axis: 2px;
+    --os-handle-interactive-area-offset: 0;
+    --os-track-bg: transparent;
+    --os-handle-border-radius: 6px;
+    --os-handle-bg: color-mix(in oklab, var(--foreground) 20%, transparent);
+    --os-handle-bg-hover: color-mix(in oklab, var(--foreground) 32%, transparent);
+    --os-handle-bg-active: color-mix(in oklab, var(--foreground) 45%, transparent);
+    --os-handle-min-size: 24px;
 }
 
 /* Every pierre code surface renders in a shadow root and resolves its

@@ -31,6 +31,7 @@ import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { openBlockCount } from "@/lib/blocks.ts";
+import { useOverlayScrollbars } from "@/lib/use-overlay-scrollbars.ts";
 import { cn } from "@/lib/utils";
 
 type CardDragData = {
@@ -137,6 +138,7 @@ export function BoardPage() {
 function BoardColumn({ slug, status }: { slug: string; status: Status }) {
   const column = useQuery(boardColumnQuery(slug, status.id));
   const { setNodeRef, isOver } = useDroppable({ id: status.id });
+  const { slot, viewport } = useOverlayScrollbars();
 
   return (
     <div
@@ -166,21 +168,29 @@ function BoardColumn({ slug, status }: { slug: string; status: Status }) {
           {status.category}
         </span>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
-        {column.isPending && <Skeleton className="h-20 w-full" />}
-        {column.data?.items.map((issue) => (
-          <BoardCard
-            key={issue.id}
-            slug={slug}
-            issue={issue}
-            statusId={status.id}
-          />
-        ))}
-        {column.data?.items.length === 0 && (
-          <div className="py-6 text-center text-xs text-muted-foreground">
-            empty
-          </div>
-        )}
+      {/* The overlay scrollbars are absolutely positioned against this box, so
+          it has to be `relative` and it has to hug the scroll container: given
+          the whole column instead, the bar is drawn over the header row too. */}
+      <div ref={slot} className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          ref={viewport}
+          className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2"
+        >
+          {column.isPending && <Skeleton className="h-20 w-full" />}
+          {column.data?.items.map((issue) => (
+            <BoardCard
+              key={issue.id}
+              slug={slug}
+              issue={issue}
+              statusId={status.id}
+            />
+          ))}
+          {column.data?.items.length === 0 && (
+            <div className="py-6 text-center text-xs text-muted-foreground">
+              empty
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
