@@ -22,12 +22,14 @@ import {
 } from "../src/api/references.ts";
 import {
   inCodeContext,
+  refCompletionSource,
+} from "../src/lib/editor/ref-completion.ts";
+import {
   projectTriggerAt,
   type RefTriggerContext,
   rankCandidates,
-  refCompletionSource,
   refTriggerAt,
-} from "../src/lib/editor/ref-completion.ts";
+} from "../src/lib/ref-completion.ts";
 
 const DIRECTORY: PrefixDirectory = {
   entries: [

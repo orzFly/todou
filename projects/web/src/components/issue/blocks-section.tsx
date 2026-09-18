@@ -1,12 +1,11 @@
 import type { BlockRef } from "@todou/shared";
 import { PlusIcon, XIcon } from "lucide-react";
-import { useState } from "react";
 import { useAddBlockMutation, useRemoveBlockMutation } from "@/api/issues.ts";
 import { useCan } from "@/api/queries.ts";
+import { RefPicker } from "@/components/issue/ref-picker.tsx";
 import { SidebarSection } from "@/components/issue/sidebar-section.tsx";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 
 type Direction = "blocked_by" | "blocks";
 
@@ -72,25 +71,9 @@ function BlockList({
   refs: BlockRef[];
   editable: boolean;
 }) {
-  const [adding, setAdding] = useState(false);
-  const [value, setValue] = useState("");
   const add = useAddBlockMutation();
   const remove = useRemoveBlockMutation();
   if (refs.length === 0 && !editable) return null;
-
-  const submit = () => {
-    const ref = value.trim();
-    if (ref === "") return;
-    add.mutate(
-      { slug, issueNumber, direction, ref },
-      {
-        onSuccess: () => {
-          setValue("");
-          setAdding(false);
-        },
-      },
-    );
-  };
 
   return (
     <SidebarSection
@@ -99,16 +82,32 @@ function BlockList({
       testId={`blocks-${direction}`}
       action={
         editable && (
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            // Not plain "Add": both sections carry this button, and up in the
-            // header it no longer sits against the list that would say which.
-            aria-label={`Add a ${title.toLowerCase()} entry`}
-            onClick={() => setAdding((on) => !on)}
-          >
-            <PlusIcon className="size-3.5" />
-          </Button>
+          <RefPicker
+            slug={slug}
+            exclude={[
+              { slug, number: issueNumber },
+              ...refs.flatMap((ref) =>
+                ref.project !== null && ref.number !== null
+                  ? [{ slug: ref.project, number: ref.number }]
+                  : [],
+              ),
+            ]}
+            pending={add.isPending}
+            onPick={(ref) =>
+              add.mutateAsync({ slug, issueNumber, direction, ref })
+            }
+            trigger={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                // Not plain "Add": both sections carry this button, and up in
+                // the header it no longer sits against the list saying which.
+                aria-label={`Add a ${title.toLowerCase()} entry`}
+              >
+                <PlusIcon className="size-3.5" />
+              </Button>
+            }
+          />
         )
       }
     >
@@ -163,26 +162,6 @@ function BlockList({
             </li>
           ))}
         </ul>
-      )}
-      {editable && adding && (
-        <div className="flex gap-1">
-          <Input
-            autoFocus
-            value={value}
-            // The server takes every spelling, so the placeholder shows the
-            // one that is not obvious: another project's card.
-            placeholder="#12 or other-project#12"
-            disabled={add.isPending}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submit();
-              if (e.key === "Escape") setAdding(false);
-            }}
-          />
-          <Button size="sm" onClick={submit} disabled={add.isPending}>
-            Add
-          </Button>
-        </div>
       )}
     </SidebarSection>
   );
