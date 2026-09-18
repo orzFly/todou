@@ -2,6 +2,8 @@ import { queryOptions } from "@tanstack/react-query";
 import { UserIssueRole, UserIssueState } from "@todou/shared";
 import { api } from "@/api/queries.ts";
 
+const userKey = (ref: string) => ["user", ref] as const;
+
 /**
  * One account's public identity. 60s staleTime, the metadata cadence: the
  * login an avatar render from here follow a rename eventually, never
@@ -9,8 +11,17 @@ import { api } from "@/api/queries.ts";
  */
 export const userQuery = (ref: string) =>
   queryOptions({
-    queryKey: ["user", ref],
-    queryFn: () => api.getUser(ref),
+    queryKey: userKey(ref),
+    queryFn: async ({ client }) => {
+      const user = await api.getUser(ref);
+      // One row, two addresses. What an id read returns also answers the
+      // login key the redirect is about to subscribe to (and the reverse),
+      // or every id address costs two reads. A login may not be all digits
+      // (`LoginInput`), so this comparison tells the two spellings apart.
+      const alias = ref === user.login ? String(user.id) : user.login;
+      client.setQueryData(userKey(alias), user);
+      return user;
+    },
     staleTime: 60_000,
   });
 

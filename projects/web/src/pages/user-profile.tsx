@@ -23,11 +23,13 @@ export function UserProfilePage({
   role = "any",
   state = "open",
   onFilters = () => undefined,
+  redirectToLogin = false,
 }: {
   ref: string;
   role?: UserIssueRole;
   state?: UserIssueState;
   onFilters?: (next: { role?: UserIssueRole; state?: UserIssueState }) => void;
+  redirectToLogin?: boolean;
 }) {
   const user = useQuery(userQuery(ref));
 
@@ -68,6 +70,12 @@ export function UserProfilePage({
   }
 
   const me = user.data;
+  if (redirectToLogin) {
+    return (
+      <Navigate to="/users/$ref" params={{ ref: me.login }} search replace />
+    );
+  }
+
   return (
     <div className="space-y-8">
       <div className="max-w-lg space-y-6">
@@ -114,27 +122,18 @@ export function UserProfilePage({
 }
 
 /**
- * The id-shaped half of the address: load by id, then hand the reader to
- * the login-shaped one with `replace`, so the URL bar ends up holding the
- * shareable form. A 404 here renders through UserProfilePage's error state
- * rather than a dangling skeleton.
+ * The id-shaped half of the address (`/users/12`), which is the form stored
+ * text links on. It renders the same page the login form does and hands the
+ * reader on once the account resolves.
+ *
+ * Exactly one component may subscribe to `userQuery` for this address.
+ * Rendering the page against a query this one had already failed gave the
+ * cache two observers, and react-query refetches on mount while a query sits
+ * in error with no data (`retryOnMount` defaults to true): the refetch reset
+ * the query to pending, this component swapped back to its skeleton, the
+ * second observer unmounted, and the failure repeated — a mount loop that
+ * never showed the failure and never stopped asking (T-414).
  */
 export function UserRedirectPage({ ref: id }: { ref: string }) {
-  const user = useQuery(userQuery(id));
-  if (user.isPending) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="size-16 rounded-full" />
-        <Skeleton className="h-6 w-48" />
-      </div>
-    );
-  }
-  if (user.data === undefined) {
-    // Unknown or invisible id: show the same page a bad login gets, by
-    // rendering the profile page against the id itself.
-    return <UserProfilePage ref={id} />;
-  }
-  return (
-    <Navigate to="/users/$ref" params={{ ref: user.data.login }} replace />
-  );
+  return <UserProfilePage ref={id} redirectToLogin />;
 }
