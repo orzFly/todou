@@ -48,6 +48,7 @@ import {
   qualifierValueSource,
   type ValuePools,
 } from "@/components/search/suggestions.ts";
+import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { projectSpellings } from "@/lib/project-spellings.ts";
 import { matchHistory, type SearchHistoryEntry } from "@/lib/search-history.ts";
@@ -687,6 +688,14 @@ export function SearchBox({
                   <span className="shrink-0 font-mono text-xs text-muted-foreground">
                     {row.spelled}
                   </span>
+                  <ProjectIcon
+                    project={{
+                      name: row.name,
+                      prefix: row.prefix,
+                      icon_url: row.icon_url,
+                    }}
+                    className="size-5"
+                  />
                   <span className="truncate">{row.name}</span>
                 </Link>
               );

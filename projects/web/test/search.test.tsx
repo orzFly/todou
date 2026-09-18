@@ -57,6 +57,7 @@ import { renderWithProviders, testQueryClient } from "./render.tsx";
 afterEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function deferred<T>() {
@@ -155,6 +156,8 @@ function seedJumpContext(client: QueryClient, autolinks: Autolink[] = []) {
         id: 1,
         slug,
         name: slug === "todou" ? "Todou" : "Mirror",
+        icon_url:
+          slug === "mirror" ? "/api/projects/2/icon?v=search-jump" : null,
         description: "",
         created_at: "2026-01-01T00:00:00.000Z",
       }),
@@ -1480,6 +1483,14 @@ describe("SearchBox · qualifier completion", () => {
   });
 
   it("offers the project's home first once its name is complete", async () => {
+    class LoadedImage extends EventTarget {
+      complete = true;
+      naturalWidth = 20;
+      crossOrigin: string | null = null;
+      referrerPolicy = "";
+      src = "";
+    }
+    vi.stubGlobal("Image", LoadedImage);
     const client = seedPeek(seedPools(seedBox()));
     const utils = renderBox(client);
     await typeInto(utils, "M-");
@@ -1489,6 +1500,9 @@ describe("SearchBox · qualifier completion", () => {
     const [home] = optionsOf(utils.container);
     expect(home?.getAttribute("href")).toBe("/projects/mirror");
     expect(home?.textContent).toContain("M-");
+    expect(home?.querySelector("img")?.getAttribute("src")).toBe(
+      "/api/projects/2/icon?v=search-jump",
+    );
     // Enter with nothing arrowed onto follows it: searching the literal
     // `M-` would only find text that happens to spell it.
     submit(utils.container);
