@@ -18,9 +18,10 @@ export function LoadMoreFailure({
   const failure = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (retrying || !focusRequested.current) return;
-    // Narrowing can remount this row without a new click. Consume the click's
-    // focus handoff once so a remount cannot take focus from the search box.
+    // Consume the click once even when the reader has moved elsewhere, so
+    // later remounts cannot deliver stale focus.
     focusRequested.current = false;
+    if (document.activeElement !== document.body) return;
     failure.current?.querySelector<HTMLButtonElement>("button")?.focus();
   });
 

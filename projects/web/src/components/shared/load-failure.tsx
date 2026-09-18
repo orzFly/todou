@@ -21,7 +21,6 @@ function FailureRow({
   detail,
   onRetry,
   retrying,
-  autoFocus,
   size,
   className,
   textClassName,
@@ -30,7 +29,6 @@ function FailureRow({
   detail: string | undefined;
   onRetry: () => void;
   retrying: boolean;
-  autoFocus?: boolean;
   size: "sm" | "xs";
   className?: string;
   textClassName: string;
@@ -50,7 +48,6 @@ function FailureRow({
         variant="outline"
         size={size}
         onClick={onRetry}
-        autoFocus={autoFocus}
         disabled={retrying}
       >
         Retry
@@ -63,7 +60,6 @@ export function LoadFailure({
   detail,
   onRetry,
   retrying,
-  autoFocus,
   size = "sm",
   className,
 }: {
@@ -71,8 +67,6 @@ export function LoadFailure({
   detail: string | undefined;
   onRetry: () => void;
   retrying: boolean;
-  /** Keep keyboard focus at the control's replacement after it unmounts. */
-  autoFocus?: boolean;
   size?: "sm" | "xs";
   className?: string;
 }) {
@@ -82,7 +76,6 @@ export function LoadFailure({
       detail={detail}
       onRetry={onRetry}
       retrying={retrying}
-      autoFocus={autoFocus}
       size={size}
       className={className}
       textClassName="text-destructive"

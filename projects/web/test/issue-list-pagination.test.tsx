@@ -85,6 +85,28 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function FocusHarness() {
+  const [typed, setTyped] = useState("");
+  return (
+    <>
+      <input
+        aria-label="search"
+        value={typed}
+        onChange={(event) => setTyped(event.target.value)}
+      />
+      <IssueList
+        slug="p"
+        page={{ items: [item(1, "first", open)], next_cursor: "c1" }}
+        statuses={[open, done]}
+        allLabels={[]}
+        search={{}}
+        typed={typed}
+        narrowing={typed.trim() !== ""}
+      />
+    </>
+  );
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -218,13 +240,16 @@ describe("issue list Load More pagination state", () => {
     );
 
     const view = renderWithProviders(
-      <IssueList
-        slug="p"
-        page={page1}
-        statuses={[open, done]}
-        allLabels={[]}
-        search={{}}
-      />,
+      <>
+        <button type="button">unrelated action</button>
+        <IssueList
+          slug="p"
+          page={page1}
+          statuses={[open, done]}
+          allLabels={[]}
+          search={{}}
+        />
+      </>,
     );
 
     fireEvent.click(await view.findByText("Load more"));
@@ -243,29 +268,7 @@ describe("issue list Load More pagination state", () => {
       }),
     );
 
-    function Harness() {
-      const [typed, setTyped] = useState("");
-      return (
-        <>
-          <input
-            aria-label="search"
-            value={typed}
-            onChange={(event) => setTyped(event.target.value)}
-          />
-          <IssueList
-            slug="p"
-            page={{ items: [item(1, "first", open)], next_cursor: "c1" }}
-            statuses={[open, done]}
-            allLabels={[]}
-            search={{}}
-            typed={typed}
-            narrowing={typed.trim() !== ""}
-          />
-        </>
-      );
-    }
-
-    const view = renderWithProviders(<Harness />);
+    const view = renderWithProviders(<FocusHarness />);
     fireEvent.click(await view.findByText("Load more"));
     const retry = await view.findByRole("button", { name: "Retry" });
     expect(document.activeElement).toBe(retry);
@@ -279,6 +282,85 @@ describe("issue list Load More pagination state", () => {
     fireEvent.change(search, { target: { value: "" } });
     expect(view.getByRole("button", { name: "Retry" })).toBeTruthy();
     expect(document.activeElement).toBe(search);
+  });
+
+  it("does not deliver focus late after the reader leaves an in-flight append", async () => {
+    const request = deferred<void>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), "http://test");
+        if (!url.pathname.endsWith("/issues")) {
+          return new Response("{}", { status: 404 });
+        }
+        await request.promise;
+        return new Response("{}", { status: 500 });
+      }),
+    );
+
+    const view = renderWithProviders(<FocusHarness />);
+    fireEvent.click(await view.findByText("Load more"));
+    const search = view.getByRole("textbox", { name: "search" });
+    search.focus();
+    fireEvent.change(search, { target: { value: "f" } });
+    expect(view.queryByRole("button", { name: "Retry" })).toBeNull();
+
+    await act(async () => request.resolve());
+    fireEvent.change(search, { target: { value: "" } });
+    expect(view.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(view.getByText("first")).toBeTruthy();
+    expect(document.activeElement).toBe(search);
+
+    // The rejected handoff was consumed. A later ordinary remount must not
+    // fire it after focus happens to return to the body.
+    fireEvent.change(search, { target: { value: "f" } });
+    search.blur();
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.change(search, { target: { value: "" } });
+    expect(view.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("does not deliver focus late after the reader leaves an in-flight Retry", async () => {
+    let request = Promise.resolve();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), "http://test");
+        if (!url.pathname.endsWith("/issues")) {
+          return new Response("{}", { status: 404 });
+        }
+        await request;
+        return new Response("{}", { status: 500 });
+      }),
+    );
+
+    const view = renderWithProviders(<FocusHarness />);
+    fireEvent.click(await view.findByText("Load more"));
+    const retry = await view.findByRole("button", { name: "Retry" });
+    expect(document.activeElement).toBe(retry);
+
+    const pendingRetry = deferred<void>();
+    request = pendingRetry.promise;
+    fireEvent.click(retry);
+    const search = view.getByRole("textbox", { name: "search" });
+    search.focus();
+    fireEvent.change(search, { target: { value: "f" } });
+    expect(view.queryByRole("button", { name: "Retry" })).toBeNull();
+
+    await act(async () => pendingRetry.resolve());
+    fireEvent.change(search, { target: { value: "" } });
+    expect(view.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(view.getByText("first")).toBeTruthy();
+    expect(document.activeElement).toBe(search);
+
+    // Declining the handoff must still consume it on the Retry path.
+    fireEvent.change(search, { target: { value: "f" } });
+    search.blur();
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.change(search, { target: { value: "" } });
+    expect(view.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(document.activeElement).toBe(document.body);
   });
 
   it("clears an append failure when the filter state changes", async () => {
