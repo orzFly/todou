@@ -41,11 +41,10 @@ describe("userQuery's alias seeding (T-414)", () => {
 
     release(alice);
     await pending;
-    // A macrotask, not just `await pending`: the fetch promise settles the
-    // moment clear() cancels the query, which is before the response has
-    // reached the seeding line at all. Everything the late response runs is
-    // microtasks, and one macrotask drains all of them — without this the
-    // case would pass against an implementation that does repopulate.
+    // A cancelled fetch settles its promise on the cancellation, not on the
+    // `queryFn` it has stopped waiting for, so `pending` is no evidence that
+    // the late response has finished running. The macrotask is what this
+    // case has to wait on to be asserting against a settled cache.
     await new Promise((r) => setTimeout(r, 0));
 
     expect(
