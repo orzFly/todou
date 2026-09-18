@@ -414,11 +414,18 @@ export type SpecCommentsResolveInput = z.infer<typeof SpecCommentsResolveInput>;
  *
  * The two arrays are positionally aligned — `paths[i]` anchors
  * `comment_ids[i]` — which readers rely on to name an annotation the listing
- * cannot supply, and which the shape above cannot state.
+ * cannot supply, and which the shape above cannot state. `paths` is optional
+ * because events written before it existed carry no such key; a reader with
+ * neither it nor the listing falls back to the comment id.
+ *
+ * Not strict, though the header speaks for everything an agent sends: no
+ * agent sends this one. Both emitters write the row as a literal, and the
+ * only reader is a timeline row that draws nothing at all when the payload
+ * is rejected — so an unknown key costs less ignored than fatal.
  */
-export const SpecCommentsResolvedPayload = z.strictObject({
+export const SpecCommentsResolvedPayload = z.object({
   comment_ids: z.array(Id),
-  paths: z.array(z.string()),
+  paths: z.array(z.string()).optional(),
   via: z.literal("hide").optional(),
 });
 export type SpecCommentsResolvedPayload = z.infer<

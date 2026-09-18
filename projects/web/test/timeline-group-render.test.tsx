@@ -1046,6 +1046,58 @@ describe("EventGroup", () => {
       expect(li.querySelector("a")).not.toBeNull();
     }
   });
+
+  it("names an annotation by id when the event predates paths", async () => {
+    // The group is the only face this family draws, so the degrade has to be
+    // asserted here: renderEvent's own fallback is never what the app shows.
+    const old = event({
+      event_type: "spec_comments_resolved",
+      payload: { comment_ids: [4601] },
+    });
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="spec_resolved"
+        events={[old]}
+        slug="p"
+        issueNumber={1}
+      />,
+      specClient([]),
+    );
+    const group = await findByTestId("event-group");
+    const rows = [...group.querySelectorAll("li")];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("spec comment #4601");
+    // The permalink is what a rejected payload used to lose outright.
+    expect(rows[0]?.getAttribute("id")).toBe(`event-${old.id}`);
+  });
+
+  it("opens the hidden block for an #event-N anchor inside it", async () => {
+    const buried = annotation({
+      line: 7,
+      hidden_at: "2026-08-13T12:30:00.000Z",
+    });
+    const only = resolveEvent([buried]);
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="spec_resolved"
+        events={[only]}
+        slug="p"
+        issueNumber={1}
+        anchorEventId={only.id}
+      />,
+      specClient([buried]),
+    );
+    const group = await findByTestId("event-group");
+    await waitFor(() => {
+      const rows = [...group.querySelectorAll("li")];
+      // Singular, and the anchored row is out where the hash can reach it.
+      expect(rows.map((li) => li.textContent)).toEqual([
+        "1 hidden comment",
+        "design.md L7",
+      ]);
+      expect(rows[1]?.getAttribute("id")).toBe(`event-${only.id}`);
+    });
+  });
 });
 
 describe("a group header's actor links to their page (T-391)", () => {

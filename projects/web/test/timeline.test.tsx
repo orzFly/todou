@@ -223,10 +223,11 @@ describe("renderEvent text mirror", () => {
         annotation_count: 0,
       }),
     ).toBe("commented on spec v3");
-    // No `paths`, so the payload does not parse and the row list has nothing
-    // to name — the count sentence is what a malformed payload falls back to.
-    expect(textOf("spec_comments_resolved", { comment_ids: [4, 5] })).toBe(
-      "resolved 2 spec comments",
+    // Ids that are not ids: nothing to name, so the sentence falls back to
+    // the count, which the payload still carries. The app never draws this
+    // face — the group does — so the group path has its own case.
+    expect(textOf("spec_comments_resolved", { comment_ids: ["four"] })).toBe(
+      "resolved 1 spec comment",
     );
   });
 
@@ -269,6 +270,10 @@ describe("renderEvent text mirror", () => {
     expect(
       textOf("spec_comments_resolved", { comment_ids: [4], paths: [] }),
     ).toBe("resolved spec comment #4");
+    // An event written before `paths` existed carries no such key at all.
+    expect(textOf("spec_comments_resolved", { comment_ids: [4] })).toBe(
+      "resolved spec comment #4",
+    );
   });
 
   it("keeps the annotation's anchor through both degrades", async () => {

@@ -221,7 +221,12 @@ export function resolvedAnnotations(
   const parsed = SpecCommentsResolvedPayload.safeParse(event.payload);
   if (!parsed.success) return [];
   return parsed.data.comment_ids.map((id, i) =>
-    annotationRow(id, parsed.data.paths[i], ctx.specAnnotations?.get(id), ctx),
+    annotationRow(
+      id,
+      parsed.data.paths?.[i],
+      ctx.specAnnotations?.get(id),
+      ctx,
+    ),
   );
 }
 
