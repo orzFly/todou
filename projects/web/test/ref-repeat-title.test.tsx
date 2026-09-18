@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   commentRefQuery,
   issueRefQuery,
+  type ResolvedCommentRef,
   type ResolvedIssueRef,
 } from "../src/api/issue-refs.ts";
 import { prefsQuery } from "../src/api/prefs.ts";
@@ -92,7 +93,13 @@ function seeded(overrides: Partial<MePrefs> = {}): QueryClient {
   client.setQueryData(referenceConfigQuery("todou").queryKey, config);
   client.setQueryData(issueRefQuery("todou", 7).queryKey, refItem(7, "Target"));
   client.setQueryData(issueRefQuery("todou", 8).queryKey, refItem(8, "Other"));
-  client.setQueryData(commentRefQuery("todou", 7, 42).queryKey, commentOf(42));
+  client.setQueryData<ResolvedCommentRef | null>(
+    commentRefQuery("todou", 7, 42).queryKey,
+    () => ({
+      ...commentOf(42),
+      at: { slug: "todou", number: 7, commentId: 42 },
+    }),
+  );
   client.setQueryData(prefsQuery.queryKey, { ...PREFS, ...overrides });
   return client;
 }

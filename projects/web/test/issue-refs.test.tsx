@@ -1,8 +1,27 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  QueryObserver,
+} from "@tanstack/react-query";
 import { render, waitFor } from "@testing-library/react";
-import type { IssueListItem, TimelineEvent } from "@todou/shared";
+import type {
+  IssueListItem,
+  ReferenceDirectory,
+  TimelineEvent,
+} from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { issueRefQuery } from "../src/api/issue-refs.ts";
+import {
+  commentLocationQuery,
+  commentRefQuery,
+  invalidateIssueRefQueries,
+  issueRefQuery,
+  type LocatedComment,
+} from "../src/api/issue-refs.ts";
+import { projectsQuery } from "../src/api/queries.ts";
+import {
+  referenceConfigQuery,
+  referenceDirectoryQuery,
+} from "../src/api/references.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { EventRow } from "../src/components/timeline/event-row.tsx";
 import { splitIssueRefs } from "../src/lib/issue-refs.ts";
@@ -245,6 +264,29 @@ describe("EventRow issue refs", () => {
       ),
     ).toEqual(["/users/user"]);
   });
+  it("keeps a known comment address ordinary when its comment is missing", async () => {
+    const client = seededClient("todou", [refItem(3, "Source issue")]);
+    client.setQueryData(commentRefQuery("todou", 3, 42).queryKey, null);
+    const view = renderWithProviders(
+      <EventRow
+        event={{ ...event, payload: { by_issue: 3, by_comment: 42 } }}
+        slug="todou"
+      />,
+      client,
+    );
+    const link = await waitFor(() => {
+      const el = view.container.querySelector(
+        "a[href='/projects/todou/issues/3#comment-42']",
+      );
+      expect(el).not.toBeNull();
+      return el as HTMLAnchorElement;
+    });
+    expect(link.textContent).toContain("#3#comment-42");
+    expect(link.getAttribute("data-issue-link")).toBeNull();
+    expect(link.getAttribute("title")).toBeNull();
+    expect(link.querySelector("svg")).toBeNull();
+    expect(link.textContent).not.toContain("Source issue");
+  });
 });
 
 describe("issue ref batching", () => {
@@ -252,6 +294,12 @@ describe("issue ref batching", () => {
     const urls: string[] = [];
     vi.stubGlobal("fetch", (async (input: unknown) => {
       urls.push(String(input));
+      if (String(input).includes("/issues/999")) {
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
       return new Response(
         JSON.stringify({
           items: [refItem(5, "Five"), refItem(9, "Nine")],
@@ -279,5 +327,172 @@ describe("issue ref batching", () => {
     expect(five?.title).toBe("Five");
     expect(nine?.title).toBe("Nine");
     expect(missing).toBeNull();
+  });
+});
+describe("reference invalidation", () => {
+  it("stales matching refs and locations immediately, cancels old generations, and refreshes active refs", async () => {
+    const client = seededClient("todou", [refItem(3, "Old")]);
+    const issueKey = issueRefQuery("todou", 3).queryKey;
+    const locationKey = commentLocationQuery("todou", 42).queryKey;
+    client.setQueryData(locationKey, null);
+    client.setQueryData(
+      issueRefQuery("other", 3).queryKey,
+      refItem(3, "Other"),
+    );
+    let releaseOld: ((value: IssueListItem) => void) | undefined;
+    let calls = 0;
+    const observer = new QueryObserver(client, {
+      ...issueRefQuery("todou", 3),
+      queryFn: ({ signal }) => {
+        signal.addEventListener("abort", () => {});
+        calls += 1;
+        if (calls > 1) return Promise.resolve(refItem(3, "New"));
+        return new Promise<IssueListItem>((resolve) => {
+          releaseOld = resolve;
+        });
+      },
+    });
+    const stop = observer.subscribe(() => {});
+    const oldRequest = client.refetchQueries({
+      queryKey: issueKey,
+      type: "active",
+    });
+    await waitFor(() => expect(releaseOld).toBeDefined());
+
+    const refresh = invalidateIssueRefQueries(client, {
+      slug: "todou",
+      issueNumber: 3,
+    });
+    expect(client.getQueryState(issueKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(locationKey)?.isInvalidated).toBe(true);
+    expect(
+      client.getQueryState(issueRefQuery("other", 3).queryKey)?.isInvalidated,
+    ).toBe(false);
+    await refresh;
+    releaseOld?.(refItem(3, "Old response"));
+    await oldRequest;
+    expect(client.getQueryData<IssueListItem>(issueKey)?.title).toBe("New");
+    expect(calls).toBe(2);
+    stop();
+  });
+  it("revalidates a prewarmed 59-second-old active ref at age 60 seconds", async () => {
+    vi.useFakeTimers();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    let stop: (() => void) | undefined;
+    try {
+      vi.setSystemTime(new Date("2026-09-18T12:00:00Z"));
+      const key = issueRefQuery("todou", 3).queryKey;
+      client.setQueryData(key, refItem(3, "Prewarmed"), {
+        updatedAt: Date.now() - 59_000,
+      });
+      let resolveProbe: ((value: IssueListItem) => void) | undefined;
+      const refreshed = vi.fn(
+        () =>
+          new Promise<IssueListItem>((resolve) => {
+            resolveProbe = resolve;
+          }),
+      );
+      const observer = new QueryObserver(client, {
+        ...issueRefQuery("todou", 3),
+        queryFn: refreshed,
+      });
+      stop = observer.subscribe(() => {});
+      expect(refreshed).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(999);
+      expect(refreshed).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(refreshed).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(25);
+      expect(refreshed).toHaveBeenCalledTimes(1);
+      resolveProbe?.(refItem(3, "Revalidated"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(client.getQueryData<IssueListItem>(key)?.title).toBe(
+        "Revalidated",
+      );
+    } finally {
+      stop?.();
+      client.clear();
+      vi.useRealTimers();
+    }
+  });
+  it("reuses a located comment without resetting its freshness or refetching it", async () => {
+    const client = seededClient("todou", [refItem(3, "Parent")]);
+    client.setQueryData(referenceConfigQuery("todou").queryKey, {
+      format: { prefix: null, history: [] },
+      autolinks: [],
+    });
+    client.setQueryData<ReferenceDirectory>(
+      referenceDirectoryQuery.queryKey,
+      () => ({
+        entries: [],
+        contested: [],
+      }),
+    );
+    client.setQueryData(projectsQuery.queryKey, [
+      {
+        id: 1,
+        slug: "todou",
+        name: "todou",
+        description: "",
+        created_at: "2026-08-12T00:00:00Z",
+      },
+    ]);
+    const updatedAt = Date.now() - 20_000;
+    const locationKey = commentLocationQuery("todou", 42).queryKey;
+    client.setQueryData<LocatedComment | null>(
+      locationKey,
+      () => ({
+        issue_number: 3,
+        issue_ref: "#3",
+        comment: {
+          type: "comment",
+          id: 42,
+          author: refItem(3, "").author,
+          body: "body",
+          created_at: "2026-08-12T00:00:00Z",
+          edited_at: null,
+          resolved_at: null,
+          hidden_at: null,
+          component: null,
+          agent_context: null,
+        },
+      }),
+      { updatedAt },
+    );
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", (async (input: unknown) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch);
+    const view = renderWithProviders(
+      <MarkdownView slug="todou" preview>
+        {"#comment-42"}
+      </MarkdownView>,
+      client,
+    );
+    const rich = await waitFor(() => {
+      const link = view.container.querySelector("a[data-comment-link='42']");
+      expect(link).not.toBeNull();
+      return link as HTMLAnchorElement;
+    });
+    expect(rich.getAttribute("href")).toBe(
+      "/projects/todou/issues/3#comment-42",
+    );
+    expect(rich.getAttribute("data-issue-link")).toBe("3");
+    expect(rich.textContent).toContain("Parent");
+    expect(rich.textContent).toContain("comment by User");
+    const commentKey = commentRefQuery("todou", 3, 42).queryKey;
+    expect(client.getQueryState(locationKey)?.dataUpdatedAt).toBe(updatedAt);
+    expect(client.getQueryState(commentKey)?.dataUpdatedAt).toBe(updatedAt);
+    expect(client.getQueryData(commentKey)).toMatchObject({
+      id: 42,
+      at: { slug: "todou", number: 3, commentId: 42 },
+    });
+    expect(urls.filter((url) => url.includes("/comments/42"))).toHaveLength(0);
   });
 });

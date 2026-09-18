@@ -1,12 +1,13 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { formatRef, type LinkTarget, parseInternalHref } from "@todou/shared";
 import { CircleDotIcon, CircleSlashIcon } from "lucide-react";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import {
   commentLocationQuery,
   commentRefQuery,
   issueRefQuery,
+  type ResolvedCommentRef,
 } from "@/api/issue-refs.ts";
 import {
   useBoxedRefLinks,
@@ -42,13 +43,12 @@ const CURRENT_NOTE = "current";
 
 /**
  * GitHub-style rich issue reference: status icon, title and muted ref once
- * the batched lookup lands (in the viewer's preferred order, T-153), a
- * plain ref link while it loads, and plain text when the number matches no
- * issue the viewer may see. With
- * `commentId` the link deep-links to that comment's anchor and reads "… ·
- * comment by X". Spelling is a UI string, so it always uses the project's
- * CURRENT format (T-80) — only user-authored text is anchored to its
- * created_at.
+ * the complete target is freshly confirmed (in the viewer's preferred order,
+ * T-153). Until then a known address remains an ordinary link; a bare
+ * unresolved comment remains text. With `commentId` the link deep-links to
+ * that comment's anchor and reads "… · comment by X".
+ * Spelling uses the project's CURRENT format (T-80); user-authored text
+ * alone is anchored to its created_at.
  *
  * A reference names a card, not an address: `slug`/`number` are where it was
  * written, which is only how the row is found, while everything the reader
@@ -68,6 +68,11 @@ export function IssueLink({
   pageNumber,
   asWritten = false,
   fallback,
+  fallbackHref,
+  fallbackChildren,
+  initialComment,
+  initialCommentUpdatedAt,
+  fallbackAnchorProps,
   inBody = false,
   repeat = false,
 }: {
@@ -91,6 +96,13 @@ export function IssueLink({
   asWritten?: boolean;
   /** Literal text to show when the ref resolves to nothing; defaults to the spelling. */
   fallback?: string;
+  /** Original explicit URL and children; retained verbatim until confirmation. */
+  fallbackHref?: string;
+  fallbackChildren?: ReactNode;
+  /** A located comment can prime this query at its original cache timestamp. */
+  initialComment?: ResolvedCommentRef;
+  fallbackAnchorProps?: ComponentProps<"a">;
+  initialCommentUpdatedAt?: number;
   /**
    * Render as a chip: the markdown renderer's form, where the reader's
    * preferences may add a border and a title cap. Off everywhere else, so a
@@ -112,10 +124,26 @@ export function IssueLink({
   const shownSlug = asWritten ? slug : toSlug;
   const shownNumber = asWritten ? number : toNumber;
   const config = useQuery(referenceConfigQuery(shownSlug));
-  const comment = useQuery({
+  const commentQuery = useQuery({
     ...commentRefQuery(slug, number, commentId ?? 0),
-    enabled: commentId !== undefined,
+    enabled: commentId !== undefined && initialComment === undefined,
+    initialData: initialComment,
+    initialDataUpdatedAt: initialCommentUpdatedAt,
   });
+  // A fresh location response is itself the complete authorized comment.
+  // Keep its original timestamp and use it on every refresh, not only when
+  // TanStack happens to create an empty comment-ref cache entry.
+  const comment =
+    initialComment === undefined
+      ? commentQuery
+      : {
+          data: initialComment,
+          isFetching: false,
+          isError: false,
+          isStale:
+            initialCommentUpdatedAt === undefined ||
+            Date.now() - initialCommentUpdatedAt >= 60_000,
+        };
   const refLeads = useRefPlacement("reference") === "before";
   const boxed = useBoxedRefLinks() && inBody;
   const capTitle = useTruncateRefTitle() && inBody;
@@ -140,33 +168,63 @@ export function IssueLink({
   // toggle is set.
   const asCurrent = onPageCard && !showRepeatedTitle;
 
-  // Across projects a failed lookup degrades exactly like a miss: a link
-  // the viewer cannot follow would announce that the project exists
-  // (T-150). Within this project the reader demonstrably has access, so a
-  // transient failure keeps the link rather than swallowing it.
-  if (ref.data === null || (crossProject && ref.isError)) {
-    return <>{fallback ?? spelled}</>;
+  // Never paint any part of a rich card from one confirmed query and another
+  // pending, stale, failed, or mismatched query. In particular the comment's
+  // final parent must agree with the issue's final address after redirects.
+  const confirmedIssue =
+    ref.data !== undefined &&
+    ref.data !== null &&
+    ref.data.deleted_at == null &&
+    !ref.isFetching &&
+    !ref.isStale &&
+    !ref.isError &&
+    !(ref.data.at === undefined && /^\d+$/.test(toSlug));
+  const confirmedComment =
+    commentId === undefined ||
+    (comment.data !== undefined &&
+      comment.data !== null &&
+      !comment.isFetching &&
+      !comment.isStale &&
+      !comment.isError &&
+      comment.data.at.slug === toSlug &&
+      comment.data.at.number === toNumber &&
+      comment.data.at.commentId === comment.data.id);
+  if (!confirmedIssue || !confirmedComment || !ref.data) {
+    if (fallbackHref !== undefined) {
+      return (
+        <a {...fallbackAnchorProps} href={fallbackHref}>
+          {fallbackChildren ?? fallback ?? spelled}
+        </a>
+      );
+    }
+    // System rows know this address even when metadata cannot be confirmed.
+    // A legacy row with no project still exits before it reaches IssueLink.
+    const href = `/projects/${slug}/issues/${number}${
+      commentId === undefined ? "" : `#${commentAnchor(commentId)}`
+    }`;
+    const text =
+      fallback ??
+      `${slug === pageSlug ? `#${number}` : `${slug}#${number}`}${
+        commentId === undefined ? "" : `#comment-${commentId}`
+      }`;
+    return <a href={href}>{text}</a>;
   }
 
   const item = ref.data;
   const commentNote =
-    commentId === undefined
+    commentId === undefined || !comment.data
       ? null
-      : comment.data
-        ? `comment by ${displayNameOf(comment.data.author)}`
-        : "comment";
-  // The muted tail, assembled rather than concatenated: the `·` belongs to
-  // the join, not to the note it used to be welded to. A reference to the
-  // card being read drops everything in front of that note, and a separator
-  // carried by the note itself would then lead the whole chip.
+      : `comment by ${displayNameOf(comment.data.author)}`;
+  // The muted tail is assembled rather than concatenated: the separator
+  // belongs to the join, not to the note itself.
   const tail: string[] = [];
   // Leading the title, the ref has already been spelled once; repeating it
   // after would read as two refs. "current" replaces it outright.
   if (!asCurrent && !(refLeads && item)) tail.push(spelled);
   if (asCurrent && commentNote === null) tail.push(CURRENT_NOTE);
   if (commentNote !== null) {
-    const precededByTitle = item !== undefined && !asCurrent && !dropTitle;
-    const precededByRef = item !== undefined && !asCurrent && refLeads;
+    const precededByTitle = !asCurrent && !dropTitle;
+    const precededByRef = !asCurrent && refLeads;
     const preceded = tail.length > 0 || precededByTitle || precededByRef;
     tail.push(preceded ? `· ${commentNote}` : commentNote);
   }
@@ -178,32 +236,25 @@ export function IssueLink({
   // whole comment, body included, so hovering asks the server nothing.
   const hovered =
     commentId !== undefined && canHover ? (comment.data ?? null) : null;
-  // Everything else gets the card's own preview. Deliberately not waiting for
-  // the lookup: adding `item !== undefined` here would swap the whole element
-  // the moment the batch lands — React reconciles by type, and a bare <Link>
-  // and a wrapped one are two of them — so EVERY reference would rebuild its
-  // anchor and collapse a selection spanning it (T-60), for a wrapper the
-  // reader cannot see. What waits for the lookup is the card's contents, which
-  // IssueHoverCard withholds until then; a ref that resolves to nothing has
-  // returned plain text above.
-  //
-  // This narrows that rebuild rather than removing it. `commentId` and
-  // `canHover` are fixed at first render, but `onPageCard` reads the resolved
-  // address, so it still flips when the lookup reveals a move onto or off the
-  // page card — and that reference's anchor is rebuilt. Moved references with
-  // one end on the card being read are the only ones left.
+  // The confirmed issue already supplied the card contents. A hover preview
+  // for a comment reuses its confirmed query result; an issue preview uses
+  // the same resolved item and final address.
   const previewable = commentId === undefined && canHover && !onPageCard;
   const link = (
     <Link
       to="/projects/$slug/issues/$number"
       params={{ slug: toSlug, number: String(toNumber) }}
-      hash={commentId === undefined ? undefined : commentAnchor(commentId)}
+      hash={
+        commentId === undefined
+          ? undefined
+          : commentAnchor(comment.data?.at.commentId ?? commentId)
+      }
       // The timeline owns anchor positioning (highlight + lazy page
       // loading); the router's own scroll would race it.
       hashScrollIntoView={false}
       data-issue-link={shownNumber}
       data-issue-project={crossProject ? shownSlug : undefined}
-      data-comment-link={commentId}
+      data-comment-link={comment.data?.at.commentId}
       className={
         inBody
           ? cn(
@@ -315,35 +366,53 @@ function CommentLink({
   fallback: string;
   repeat?: boolean;
 }) {
-  const located = useQuery(commentLocationQuery(slug, commentId));
-  if (!located.data) return <>{fallback}</>;
-  // A comment that moved answers from its new project, and the issue number
-  // that comes back belongs to THAT project — pairing it with the project
-  // asked would name a different card entirely.
+  const client = useQueryClient();
+  const locationOptions = commentLocationQuery(slug, commentId);
+  const located = useQuery(locationOptions);
+  if (
+    !located.data ||
+    located.isFetching ||
+    located.isStale ||
+    located.isError
+  ) {
+    return <>{fallback}</>;
+  }
+  // The location lookup has already fetched the complete comment. Reuse it
+  // with the same dataUpdatedAt, not a freshly stamped cache entry that could
+  // extend the life of stale authorization metadata.
   const home = located.data.slug ?? slug;
+  const comment = located.data.comment;
   return (
     <IssueLink
       slug={home}
       number={located.data.issue_number}
-      commentId={located.data.comment.id}
+      commentId={comment.id}
       pageSlug={pageSlug}
       pageNumber={pageNumber}
       fallback={fallback}
       inBody
       repeat={repeat}
+      initialComment={{
+        ...comment,
+        at: {
+          slug: home,
+          number: located.data.issue_number,
+          commentId: comment.id,
+        },
+      }}
+      initialCommentUpdatedAt={
+        client.getQueryState(locationOptions.queryKey)?.dataUpdatedAt
+      }
     />
   );
 }
 
 /**
  * A stored reference, as the resolve pass writes it: `[#12](/projects/7/issues/12)`.
- * The project is named by an id, which no rename or move can invalidate, so
- * turning it back into something a reader can click means asking the
- * directory which slug that id answers to today.
- *
- * An id nobody in the viewer's directory holds is a project they cannot
- * read: the link stays exactly as written, undecorated. The text already
- * carries the id, so nothing is revealed either way.
+ * Prefer the visible directory's slug for a numeric project id. If the
+ * directory has no entry, probe the numeric single-target route anyway: an
+ * old unreadable address may redirect to a visible destination. Until that
+ * move is confirmed the authored href and children remain an ordinary link.
  */
 function useStoredTarget(href: string | undefined): {
   slug: string;
@@ -369,8 +438,8 @@ function useStoredTarget(href: string | undefined): {
     };
   }
   const id = target.project.id;
-  const slug = (projects.data ?? []).find((p) => p.id === id)?.slug;
-  if (slug === undefined) return null;
+  const slug =
+    (projects.data ?? []).find((p) => p.id === id)?.slug ?? String(id);
   return {
     slug,
     number: target.number,
@@ -432,8 +501,11 @@ export function MarkdownLink({
         pageSlug={slug}
         pageNumber={pageNumber}
         fallback={written}
+        fallbackHref={props.href}
+        fallbackChildren={props.children}
         inBody
         repeat={repeat}
+        fallbackAnchorProps={props}
       />
     );
   }
@@ -448,7 +520,12 @@ export function MarkdownLink({
         pageSlug={slug}
         pageNumber={pageNumber}
         fallback={written}
+        fallbackHref={`/projects/${home}/issues/${refMatch[1]}${
+          refMatch[2] === undefined ? "" : `#comment-${refMatch[2]}`
+        }`}
+        fallbackChildren={props.children}
         inBody
+        fallbackAnchorProps={props}
         repeat={repeat}
       />
     );
@@ -463,8 +540,13 @@ export function MarkdownLink({
         pageSlug={slug}
         pageNumber={pageNumber}
         fallback={written}
-        inBody
+        fallbackHref={`/projects/${xrefMatch[1]}/issues/${xrefMatch[2]}${
+          xrefMatch[3] === undefined ? "" : `#comment-${xrefMatch[3]}`
+        }`}
+        fallbackChildren={props.children}
         repeat={repeat}
+        inBody
+        fallbackAnchorProps={props}
       />
     );
   }

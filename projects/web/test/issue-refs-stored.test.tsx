@@ -13,8 +13,13 @@ import type {
   ReferenceDirectory,
 } from "@todou/shared";
 import type { ReactElement } from "react";
-import { describe, expect, it } from "vitest";
-import { issueRefQuery, type ResolvedIssueRef } from "../src/api/issue-refs.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  commentRefQuery,
+  issueRefQuery,
+  type ResolvedCommentRef,
+  type ResolvedIssueRef,
+} from "../src/api/issue-refs.ts";
 import { projectsQuery } from "../src/api/queries.ts";
 import {
   referenceConfigQuery,
@@ -28,6 +33,7 @@ const config: ReferenceConfig = {
 };
 
 const DIRECTORY: ReferenceDirectory = { entries: [], contested: [] };
+afterEach(() => vi.unstubAllGlobals());
 
 const user = {
   id: 1,
@@ -72,7 +78,10 @@ const refItem = (number: number, title: string): IssueListItem => ({
 
 /** Projects 1 and 2 are readable; 9 is not in the viewer's directory. */
 function seed(queries: QueryClient): QueryClient {
-  queries.setQueryData(referenceDirectoryQuery.queryKey, DIRECTORY);
+  queries.setQueryData<ReferenceDirectory>(
+    referenceDirectoryQuery.queryKey,
+    DIRECTORY,
+  );
   queries.setQueryData(
     projectsQuery.queryKey,
     ["a", "b"].map(
@@ -207,9 +216,25 @@ describe("stored id-anchored references", () => {
     expect(link.getAttribute("data-issue-project")).toBe("b");
   });
 
-  it("carries a comment anchor into the link", async () => {
+  it("carries a confirmed comment anchor into the link", async () => {
     const queries = seed(client());
     queries.setQueryData(issueRefQuery("a", 12).queryKey, refItem(12, "A's"));
+    queries.setQueryData<ResolvedCommentRef | null>(
+      commentRefQuery("a", 12, 7).queryKey,
+      () => ({
+        type: "comment",
+        id: 7,
+        author: user,
+        body: "hello",
+        created_at: "2026-01-01T00:00:00.000Z",
+        edited_at: null,
+        resolved_at: null,
+        hidden_at: null,
+        component: null,
+        agent_context: null,
+        at: { slug: "a", number: 12, commentId: 7 },
+      }),
+    );
 
     const view = renderWithProviders(
       <MarkdownView slug="a">
@@ -221,6 +246,248 @@ describe("stored id-anchored references", () => {
     const link = await anchor(view, 12);
     expect(link.getAttribute("href")).toBe("/projects/a/issues/12#comment-7");
     expect(link.getAttribute("data-comment-link")).toBe("7");
+  });
+});
+
+describe("unconfirmed stored references", () => {
+  const source = "/projects/1/issues/12#comment-7";
+  const markdown = `[**careful** and \`literal\`](${source})`;
+
+  it("keeps exact href and complex children when the comment is missing or belongs to another issue", async () => {
+    for (const target of [
+      null,
+      {
+        type: "comment" as const,
+        id: 7,
+        author: user,
+        body: "other",
+        created_at: "2026-01-01T00:00:00.000Z",
+        edited_at: null,
+        resolved_at: null,
+        hidden_at: null,
+        component: null,
+        agent_context: null,
+        at: { slug: "b", number: 44, commentId: 7 },
+      },
+    ]) {
+      const queries = seed(client());
+      queries.setQueryData(
+        issueRefQuery("a", 12).queryKey,
+        refItem(12, "Title must not leak"),
+      );
+      queries.setQueryData<ResolvedCommentRef | null>(
+        commentRefQuery("a", 12, 7).queryKey,
+        target,
+      );
+      const view = renderWithProviders(
+        <MarkdownView slug="a">{markdown}</MarkdownView>,
+        queries,
+      );
+      const link = await waitFor(() => {
+        const el = view.container.querySelector("a[href]");
+        expect(el).not.toBeNull();
+        return el as HTMLAnchorElement;
+      });
+      expect(link.getAttribute("href")).toBe(source);
+      expect(link.querySelector("strong")?.textContent).toBe("careful");
+      expect(link.querySelector("code")?.textContent).toBe("literal");
+      expect(link.getAttribute("data-issue-link")).toBeNull();
+      expect(link.getAttribute("title")).toBeNull();
+      expect(link.querySelector("svg")).toBeNull();
+      expect(link.textContent).not.toContain("Title must not leak");
+      view.unmount();
+    }
+  });
+
+  it("keeps the original anchor during a delayed comment request, then enriches it", async () => {
+    const queries = seed(client());
+    queries.setQueryData(
+      issueRefQuery("a", 12).queryKey,
+      refItem(12, "Confirmed title"),
+    );
+    let release: ((response: Response) => void) | undefined;
+    vi.stubGlobal("fetch", (async (input: unknown) => {
+      const url = String(input);
+      if (url.includes("/comments/7")) {
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch);
+    const view = renderWithProviders(
+      <MarkdownView slug="a">{markdown}</MarkdownView>,
+      queries,
+    );
+    await waitFor(() => expect(release).toBeDefined());
+    const pending = view.container.querySelector(
+      "a[href]",
+    ) as HTMLAnchorElement;
+    expect(pending.getAttribute("href")).toBe(source);
+    expect(pending.getAttribute("data-issue-link")).toBeNull();
+    release?.(
+      new Response(
+        JSON.stringify({
+          type: "comment",
+          id: 7,
+          author: user,
+          body: "confirmed",
+          created_at: "2026-01-01T00:00:00.000Z",
+          edited_at: null,
+          resolved_at: null,
+          hidden_at: null,
+          component: null,
+          agent_context: null,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const rich = await anchor(view, 12);
+    expect(rich.textContent).toContain("Confirmed title");
+    expect(rich.textContent).toContain("comment by User");
+  });
+
+  it("preserves an explicit invalid link even after its issue lookup fails", async () => {
+    const queries = seed(client());
+    queries.setQueryData(issueRefQuery("a", 999).queryKey, null);
+    const view = renderWithProviders(
+      <MarkdownView slug="a">
+        {"[**exact** and `code`](/projects/1/issues/999)"}
+      </MarkdownView>,
+      queries,
+    );
+    const link = await waitFor(() => {
+      const el = view.container.querySelector("a");
+      expect(el).not.toBeNull();
+      return el as HTMLAnchorElement;
+    });
+    expect(link.getAttribute("href")).toBe("/projects/1/issues/999");
+    expect(link.querySelector("strong")?.textContent).toBe("exact");
+    expect(link.querySelector("code")?.textContent).toBe("code");
+    expect(link.getAttribute("data-issue-link")).toBeNull();
+    expect(link.getAttribute("title")).toBeNull();
+    expect(link.querySelector("svg")).toBeNull();
+  });
+
+  it("never enriches an issue during a pending or failed lookup", async () => {
+    const queries = seed(client());
+    let releaseList: ((response: Response) => void) | undefined;
+    vi.stubGlobal("fetch", (async (input: unknown) => {
+      if (String(input).includes("numbers=")) {
+        return new Promise<Response>((resolve) => {
+          releaseList = resolve;
+        });
+      }
+      return new Response(JSON.stringify({ error: { code: "failed" } }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch);
+    const view = renderWithProviders(
+      <MarkdownView slug="a">
+        {"[**written**](/projects/1/issues/12)"}
+      </MarkdownView>,
+      queries,
+    );
+    await waitFor(() => expect(releaseList).toBeDefined());
+    const assertOrdinary = () => {
+      const link = view.container.querySelector(
+        "a[href='/projects/1/issues/12']",
+      );
+      expect(link?.querySelector("strong")?.textContent).toBe("written");
+      expect(link?.getAttribute("data-issue-link")).toBeNull();
+      expect(link?.getAttribute("title")).toBeNull();
+      expect(link?.querySelector("svg")).toBeNull();
+    };
+    assertOrdinary();
+    releaseList?.(
+      new Response(JSON.stringify({ error: { code: "failed" } }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        queries.getQueryState(issueRefQuery("a", 12).queryKey)?.status,
+      ).toBe("error"),
+    );
+    assertOrdinary();
+  });
+
+  it("never partially enriches an issue while its comment lookup errors", async () => {
+    const queries = seed(client());
+    queries.setQueryData(
+      issueRefQuery("a", 12).queryKey,
+      refItem(12, "Parent title"),
+    );
+    vi.stubGlobal(
+      "fetch",
+      (async () =>
+        new Response(JSON.stringify({ error: { code: "failed" } }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
+    );
+    const view = renderWithProviders(
+      <MarkdownView slug="a">{markdown}</MarkdownView>,
+      queries,
+    );
+    await waitFor(() =>
+      expect(
+        queries.getQueryState(commentRefQuery("a", 12, 7).queryKey)?.status,
+      ).toBe("error"),
+    );
+    const link = view.container.querySelector("a[href]") as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe(source);
+    expect(link.querySelector("strong")?.textContent).toBe("careful");
+    expect(link.getAttribute("data-issue-link")).toBeNull();
+    expect(link.textContent).not.toContain("Parent title");
+  });
+
+  it("probes an unknown numeric project id and uses only a confirmed moved destination", async () => {
+    const queries = seed(client());
+    queries.setQueryData(projectsQuery.queryKey, []);
+    vi.stubGlobal("fetch", (async (input: unknown) => {
+      const url = String(input);
+      if (url.includes("numbers=")) {
+        return new Response(JSON.stringify({ error: { code: "forbidden" } }), {
+          status: 403,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/projects/9/issues/12")) {
+        return new Response(
+          JSON.stringify({ moved_to: { slug: "b", number: 45 } }),
+          {
+            status: 301,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+      if (url.includes("/projects/b/issues/45")) {
+        return new Response(
+          JSON.stringify({ ...refItem(45, "Final card"), body: "" }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+      return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch);
+    const view = renderWithProviders(
+      <MarkdownView slug="a">{"[#12](/projects/9/issues/12)"}</MarkdownView>,
+      queries,
+    );
+    const link = await anchor(view, 45);
+    expect(link.getAttribute("href")).toBe("/projects/b/issues/45");
+    expect(link.textContent).toContain("Final card");
   });
 });
 

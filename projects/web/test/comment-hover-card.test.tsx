@@ -16,7 +16,11 @@ import {
   attachmentsQuery,
   attachmentTextQuery,
 } from "../src/api/attachments.ts";
-import { commentRefQuery, issueRefQuery } from "../src/api/issue-refs.ts";
+import {
+  commentRefQuery,
+  issueRefQuery,
+  type ResolvedCommentRef,
+} from "../src/api/issue-refs.ts";
 import { issueQuery } from "../src/api/issues.ts";
 import { prefsQuery } from "../src/api/prefs.ts";
 import { projectsQuery } from "../src/api/queries.ts";
@@ -124,7 +128,10 @@ function seeded(comment: TimelineComment = commentOf(42, BODY)): QueryClient {
   client.setQueryData(referenceConfigQuery("todou").queryKey, config);
   // Every query the preview's own MarkdownView mounts, so a cache miss cannot
   // be mistaken for a request the hover itself made.
-  client.setQueryData(referenceDirectoryQuery.queryKey, directory);
+  client.setQueryData<ReferenceDirectory>(
+    referenceDirectoryQuery.queryKey,
+    directory,
+  );
   client.setQueryData(projectsQuery.queryKey, [
     {
       id: 1,
@@ -135,9 +142,12 @@ function seeded(comment: TimelineComment = commentOf(42, BODY)): QueryClient {
     },
   ]);
   client.setQueryData(issueRefQuery("todou", 7).queryKey, refItem(7, "Target"));
-  client.setQueryData(
+  client.setQueryData<ResolvedCommentRef | null>(
     commentRefQuery("todou", 7, comment.id).queryKey,
-    comment,
+    () => ({
+      ...comment,
+      at: { slug: "todou", number: 7, commentId: comment.id },
+    }),
   );
   client.setQueryData(prefsQuery.queryKey, PREFS);
   return client;

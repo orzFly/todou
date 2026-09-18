@@ -20,6 +20,7 @@ import {
 } from "@todou/shared";
 import { useEffect } from "react";
 import { insightsKeys } from "@/api/insights.ts";
+import { invalidateIssueRefQueries } from "@/api/issue-refs.ts";
 import { issueListDescriptorOf } from "@/api/issues-cache.ts";
 import { api, clientOrigin } from "@/api/queries.ts";
 import {
@@ -133,7 +134,13 @@ export function invalidationsFor(
   switch (event.entity) {
     case "issue":
       return event.issue_number === undefined
-        ? [refetch(["issues", slug]), refetch(insightsKeys.burn(slug))]
+        ? [
+            refetch(["issues", slug]),
+            refetch(insightsKeys.burn(slug)),
+            refetch(["issue-ref"]),
+            refetch(["comment-ref"]),
+            refetch(["comment-location"]),
+          ]
         : [
             // Where the row landed is the one thing the pointer cannot say,
             // so the write path says it instead (T-279).
@@ -142,10 +149,28 @@ export function invalidationsFor(
             refetch(["timeline", slug, event.issue_number]),
             // A current-cohort write can change every historical range.
             refetch(insightsKeys.burn(slug)),
+            // A gone row can be trash or a move. Old slugs, stored numeric
+            // project ids, and redirected comment ids cannot be enumerated
+            // from this event, so withdraw every affected ref conservatively.
+            refetch(
+              event.list_row?.kind === "gone"
+                ? ["issue-ref"]
+                : ["issue-ref", slug, event.issue_number],
+            ),
+            refetch(
+              event.list_row?.kind === "gone"
+                ? ["comment-ref"]
+                : ["comment-ref", slug, event.issue_number],
+            ),
+            refetch(["comment-location"]),
           ];
     case "comment":
       return event.issue_number === undefined
-        ? []
+        ? [
+            refetch(insightsKeys.burn(slug)),
+            refetch(["comment-ref"]),
+            refetch(["comment-location"]),
+          ]
         : [
             refetch(["timeline", slug, event.issue_number]),
             refetch(["questions", slug, event.issue_number]),
@@ -153,6 +178,9 @@ export function invalidationsFor(
               verdict: "contains",
               number: event.issue_number,
             }),
+            refetch(insightsKeys.burn(slug)),
+            refetch(["comment-ref"]),
+            refetch(["comment-location"]),
           ];
     case "timeline":
       return event.issue_number === undefined
@@ -224,6 +252,11 @@ export function invalidationsFor(
         refetch(["access-denials", slug]),
         refetch(["projects"]),
         refetch(["agent-memberships"]),
+        refetch(["reference-directory"]),
+        refetch(["reference-config"]),
+        refetch(["issue-ref"]),
+        refetch(["comment-ref"]),
+        refetch(["comment-location"]),
       ];
     case "project":
       return [
@@ -232,6 +265,11 @@ export function invalidationsFor(
         // Settings writes deliberately use the existing project entity.
         refetch(insightsKeys.settings(slug)),
         refetch(insightsKeys.burn(slug)),
+        refetch(["reference-directory"]),
+        refetch(["reference-config"]),
+        refetch(["issue-ref"]),
+        refetch(["comment-ref"]),
+        refetch(["comment-location"]),
       ];
   }
 }
@@ -631,6 +669,21 @@ export function applyInvalidation(
 ): void {
   const { key, scope } = invalidation;
   if (scope === "refetch") {
+    if (
+      key[0] === "issue-ref" ||
+      key[0] === "comment-ref" ||
+      key[0] === "comment-location"
+    ) {
+      void invalidateIssueRefQueries(
+        queryClient,
+        {},
+        {
+          queryKey: key,
+          refetchType: maxRefetch,
+        },
+      );
+      return;
+    }
     // Visible, the call has to keep its exact former shape: `refetchType`
     // defaults to "active", so spelling it out is equivalent at runtime but
     // would break the 15 existing `toHaveBeenCalledWith({ queryKey })`
@@ -861,6 +914,11 @@ export function reconnectInvalidations(): QueryKeyLike[] {
     ["agent-memberships"],
     ["project"],
     ["projects"],
+    ["reference-directory"],
+    ["reference-config"],
+    ["issue-ref"],
+    ["comment-ref"],
+    ["comment-location"],
     ["inbox"],
     // A preference toggled on another device during the outage arrives
     // nowhere else: its `me` event was dropped with the connection.

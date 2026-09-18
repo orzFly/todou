@@ -86,6 +86,9 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       { key: ["issue", "todou", 42], scope: "refetch" },
       { key: ["timeline", "todou", 42], scope: "refetch" },
       { key: ["insights-burn", "todou"], scope: "refetch" },
+      { key: ["issue-ref", "todou", 42], scope: "refetch" },
+      { key: ["comment-ref", "todou", 42], scope: "refetch" },
+      { key: ["comment-location"], scope: "refetch" },
     ]);
   });
 
@@ -121,6 +124,23 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
     });
   });
 
+  it("invalidates historical source addresses when a card leaves its list", () => {
+    const keys = invalidationsFor(
+      {
+        entity: "issue",
+        id: 1,
+        action: "deleted",
+        issue_number: 42,
+        list_row: { kind: "gone" },
+      },
+      "old-slug",
+    ).map((invalidation) => invalidation.key);
+    expect(keys).toContainEqual(["issue-ref"]);
+    expect(keys).toContainEqual(["comment-ref"]);
+    expect(keys).toContainEqual(["comment-location"]);
+    expect(keys).not.toContainEqual(["issue-ref", "old-slug", 42]);
+  });
+
   it("leaves the lists to the paired issue event on a spec change", () => {
     // Every spec write emits an `issue` event too, and its `activity`
     // verdict refreshes exactly the pages showing the badge — so a second,
@@ -154,6 +174,24 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
         scope: { issueRows: [{ verdict: "contains", number: 7 }] },
       },
       { key: ["insights-burn", "todou"], scope: "refetch" },
+      { key: ["comment-ref"], scope: "refetch" },
+      { key: ["comment-location"], scope: "refetch" },
+    ]);
+  });
+
+  it("withdraws comment reference metadata with a comment event", () => {
+    expect(
+      invalidationsFor(
+        { entity: "comment", id: 9, action: "deleted", issue_number: 7 },
+        "todou",
+      ).map((invalidation) => invalidation.key),
+    ).toEqual([
+      ["timeline", "todou", 7],
+      ["questions", "todou", 7],
+      ["issues", "todou"],
+      ["insights-burn", "todou"],
+      ["comment-ref"],
+      ["comment-location"],
     ]);
   });
 
@@ -177,6 +215,11 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       { key: ["access-denials", "p"], scope: "refetch" },
       { key: ["projects"], scope: "refetch" },
       { key: ["agent-memberships"], scope: "refetch" },
+      { key: ["reference-directory"], scope: "refetch" },
+      { key: ["reference-config"], scope: "refetch" },
+      { key: ["issue-ref"], scope: "refetch" },
+      { key: ["comment-ref"], scope: "refetch" },
+      { key: ["comment-location"], scope: "refetch" },
     ]);
   });
 
@@ -226,6 +269,9 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
     // the compensation must too.
     expect(keys).toContainEqual(["issues"]);
     expect(keys).toContainEqual(["projects"]);
+    expect(keys).toContainEqual(["issue-ref"]);
+    expect(keys).toContainEqual(["comment-ref"]);
+    expect(keys).toContainEqual(["comment-location"]);
     // A preference toggled elsewhere during the outage has no other way in:
     // its `me` event went down with the connection (T-275).
     expect(keys).toContainEqual(["me-prefs"]);

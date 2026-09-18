@@ -1,6 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type {
-  CommentLocation,
   IssueListItem,
   Project,
   ReferenceConfig,
@@ -13,6 +12,8 @@ import {
   commentLocationQuery,
   commentRefQuery,
   issueRefQuery,
+  type LocatedComment,
+  type ResolvedCommentRef,
   type ResolvedIssueRef,
 } from "../src/api/issue-refs.ts";
 import { recentOpenIssuesQuery } from "../src/api/issues.ts";
@@ -113,7 +114,10 @@ function seedContext(
     ...over,
   });
   client.setQueryData(referenceConfigQuery("mirror").queryKey, config("M"));
-  client.setQueryData(referenceDirectoryQuery.queryKey, DIRECTORY);
+  client.setQueryData<ReferenceDirectory>(
+    referenceDirectoryQuery.queryKey,
+    DIRECTORY,
+  );
   client.setQueryData(
     projectsQuery.queryKey,
     ["todou", "mirror"].map(
@@ -313,7 +317,7 @@ describe("useJumpRows", () => {
 
   it("follows a bare comment anchor to the card carrying it", async () => {
     const client = seedContext(testQueryClient());
-    const located: CommentLocation = {
+    const located: LocatedComment = {
       issue_number: 141,
       issue_ref: "T-141",
       comment: comment(1837),
@@ -323,9 +327,12 @@ describe("useJumpRows", () => {
       issueRefQuery("todou", 141).queryKey,
       item(141, "搜索"),
     );
-    client.setQueryData(
+    client.setQueryData<ResolvedCommentRef | null>(
       commentRefQuery("todou", 141, 1837).queryKey,
-      comment(1837),
+      () => ({
+        ...comment(1837),
+        at: { slug: "todou", number: 141, commentId: 1837 },
+      }),
     );
     expect(await rowsOf(client, "#comment-1837")).toMatchObject([
       {

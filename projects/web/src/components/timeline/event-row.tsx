@@ -656,9 +656,11 @@ export function referenceSource(
   // Local or not is a display property now, worked out by comparing where
   // the reference was written with where it is being read.
   const local = slug === ctx.slug;
-  const text = local
+  const issueText = local
     ? formatRef(ctx.refConfig.internalPrefix, number)
     : `${slug}#${number}`;
+  const text =
+    commentId === undefined ? issueText : `${issueText}#comment-${commentId}`;
   return {
     node: (
       <IssueLink

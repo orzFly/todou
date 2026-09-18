@@ -12,6 +12,7 @@ import type {
 } from "@todou/shared";
 import { toast } from "sonner";
 import { z } from "zod";
+import { invalidateIssueRefQueries } from "@/api/issue-refs.ts";
 import { issuesEntry } from "@/api/issues-cache.ts";
 import { api } from "@/api/queries.ts";
 
@@ -458,13 +459,16 @@ function invalidateAfterTrashMove(
   queryClient: ReturnType<typeof useQueryClient>,
   slug: string,
   issueNumber: number,
+  refs = true,
 ): void {
   queryClient.invalidateQueries({ queryKey: ["issues", slug] });
   queryClient.invalidateQueries({ queryKey: ["issue", slug, issueNumber] });
   queryClient.invalidateQueries({ queryKey: ["inbox"] });
-  // Every rendered <IssueLink> to this card reads through here, and this is
-  // the invalidation that makes them flip to plain text (and back).
-  queryClient.invalidateQueries({ queryKey: ["issue-ref", slug] });
+  if (refs) {
+    // Reference metadata is an authorization result: make it ineligible
+    // immediately, then let the centralized helper cancel/refetch active refs.
+    void invalidateIssueRefQueries(queryClient, { slug, issueNumber });
+  }
 }
 
 /** Move an issue to the trash (T-145). */
@@ -596,15 +600,19 @@ export function useMoveIssueMutation() {
       // Both ends move: the card leaves one project's lists and joins the
       // other's, and every <IssueLink> pointing at the old address has to
       // re-resolve before it can find the redirect.
-      invalidateAfterTrashMove(queryClient, vars.slug, vars.issueNumber);
+      invalidateAfterTrashMove(queryClient, vars.slug, vars.issueNumber, false);
       if (result) {
         invalidateAfterTrashMove(
           queryClient,
           result.moved_to.slug,
           result.moved_to.number as number,
+          false,
         );
       }
-      queryClient.invalidateQueries({ queryKey: ["comment-location"] });
+      // Historical slug and numeric project-id addresses cannot all be
+      // enumerated here. A move invalidates both known ends and any older
+      // address that can redirect through them.
+      void invalidateIssueRefQueries(queryClient);
     },
   });
 }

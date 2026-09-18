@@ -8,12 +8,17 @@ import type {
   ReferenceConfig,
   ReferenceDirectory,
   SpecCommentItem,
+  TimelineComment,
   TimelineEvent,
   UserRef,
 } from "@todou/shared";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
-import { issueRefQuery } from "../src/api/issue-refs.ts";
+import {
+  commentRefQuery,
+  issueRefQuery,
+  type ResolvedCommentRef,
+} from "../src/api/issue-refs.ts";
 import { issueQuery } from "../src/api/issues.ts";
 import { membersQuery, projectsQuery } from "../src/api/queries.ts";
 import {
@@ -174,6 +179,34 @@ const refItem = (number: number, title: string): IssueListItem => ({
   moves: [],
 });
 
+const refComment = (id: number): TimelineComment => ({
+  type: "comment",
+  id,
+  author: alice,
+  body: "Comment body",
+  created_at: "2026-08-12T00:00:00Z",
+  edited_at: null,
+  resolved_at: null,
+  hidden_at: null,
+  component: null,
+  agent_context: null,
+});
+
+function seedComment(
+  client: QueryClient,
+  slug: string,
+  number: number,
+  id: number,
+) {
+  client.setQueryData<ResolvedCommentRef | null>(
+    commentRefQuery(slug, number, id).queryKey,
+    () => ({
+      ...refComment(id),
+      at: { slug, number, commentId: id },
+    }),
+  );
+}
+
 const SINCE = "2026-08-01T00:00:00.000Z";
 
 const configOf = (prefix: string): ReferenceConfig => ({
@@ -207,7 +240,10 @@ function crossClient(
   });
   client.setQueryData(referenceConfigQuery("todou").queryKey, configOf("T"));
   client.setQueryData(referenceConfigQuery("mirror").queryKey, configOf("M"));
-  client.setQueryData(referenceDirectoryQuery.queryKey, directory);
+  client.setQueryData<ReferenceDirectory>(
+    referenceDirectoryQuery.queryKey,
+    directory,
+  );
   client.setQueryData(projectsQuery.queryKey, [
     project(1, "todou"),
     project(2, "mirror"),
@@ -508,6 +544,18 @@ describe("EventGroup", () => {
       payload: { by_issue: 9 },
       created_at: "2026-08-13T14:30:00.000Z",
     });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    client.setQueryData(
+      issueRefQuery("p", 7).queryKey,
+      refItem(7, "First source"),
+    );
+    client.setQueryData(
+      issueRefQuery("p", 9).queryKey,
+      refItem(9, "Last source"),
+    );
+    seedComment(client, "p", 7, 42);
     const { findByTestId, queryByTestId, container } = renderWithProviders(
       <EventGroup
         family="referenced"
@@ -515,6 +563,7 @@ describe("EventGroup", () => {
         slug="p"
         issueNumber={1}
       />,
+      client,
     );
     const group = await findByTestId("event-group");
     expect(group.textContent).toContain("referenced 2 times");
@@ -530,11 +579,11 @@ describe("EventGroup", () => {
     await waitFor(() => {
       expect(container.querySelector('[data-issue-link="7"]')).toBeTruthy();
       expect(container.querySelector('[data-issue-link="9"]')).toBeTruthy();
+      expect(container.querySelector('[data-comment-link="42"]')).toBeTruthy();
     });
-    // The by_comment deep link survives the move into the list.
-    await waitFor(() =>
-      expect(container.querySelector('[data-comment-link="42"]')).toBeTruthy(),
-    );
+    expect(
+      container.querySelector('[data-comment-link="42"]')?.getAttribute("href"),
+    ).toBe("/projects/p/issues/7#comment-42");
 
     // Header stamp: first event's permalink, range tooltip.
     const stamp = container.querySelector(
@@ -647,6 +696,8 @@ describe("EventGroup", () => {
         by_comment: 42,
       },
     });
+    const client = crossClient([["mirror", refItem(3, "Mirror source")]]);
+    seedComment(client, "mirror", 3, 42);
     const { container } = renderWithProviders(
       <EventGroup
         family="referenced"
@@ -654,7 +705,7 @@ describe("EventGroup", () => {
         slug="todou"
         issueNumber={1}
       />,
-      crossClient([["mirror", refItem(3, "Mirror source")]]),
+      client,
     );
     const link = await waitFor(() => {
       const el = container.querySelector('a[data-comment-link="42"]');
