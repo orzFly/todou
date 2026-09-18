@@ -16,6 +16,7 @@ import {
   attachments,
   autolinks,
   comments,
+  insightsSettings,
   issueEvents,
   issues,
   labels,
@@ -484,6 +485,9 @@ export async function deleteProject(
       await db.delete(issueEvents).where(eq(issueEvents.projectId, project.id));
       await db.delete(attachments).where(eq(attachments.projectId, project.id));
       await db.delete(labels).where(eq(labels.projectId, project.id));
+      await db
+        .delete(insightsSettings)
+        .where(eq(insightsSettings.projectId, project.id));
       await db.delete(statuses).where(eq(statuses.projectId, project.id));
       await db.delete(projectMeta).where(eq(projectMeta.projectId, project.id));
     }

@@ -134,6 +134,13 @@
       "when": 1789631255698,
       "tag": "0018_block_clear_status",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1789752849687,
+      "tag": "0019_insights_settings",
+      "breakpoints": true
     }
   ]
 }

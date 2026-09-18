@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/dialog";
 import { Toaster } from "@/components/ui/sonner";
 import { statusOf } from "@/lib/http-status.ts";
+import { parseInsightsSearch } from "@/lib/insights-search.ts";
 import { parseSpecSearch } from "@/lib/spec-search.ts";
 import { hasUnsavedWork } from "@/lib/unsaved-guard.ts";
 import { AgentsSettingsPage } from "@/pages/agents-settings.tsx";
@@ -308,6 +309,17 @@ const projectBoardRoute = createRoute({
   staticData: { fillsViewport: true, pageSkeleton: "board" },
 });
 
+const projectInsightsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "insights",
+  component: lazyRouteComponent(
+    () => import("@/pages/insights.tsx"),
+    "InsightsPage",
+  ),
+  validateSearch: parseInsightsSearch,
+  staticData: { pageSkeleton: "insights" },
+});
+
 const projectSearchRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "search",
@@ -452,6 +464,7 @@ const routeTree = rootRoute.addChildren([
     projectRoute.addChildren([
       projectIndexRoute,
       projectBoardRoute,
+      projectInsightsRoute,
       projectSearchRoute,
       newIssueRoute,
       issueRoute,

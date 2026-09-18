@@ -19,6 +19,7 @@ import {
   SSE_PING_EVENT,
 } from "@todou/shared";
 import { useEffect } from "react";
+import { insightsKeys } from "@/api/insights.ts";
 import { issueListDescriptorOf } from "@/api/issues-cache.ts";
 import { api, clientOrigin } from "@/api/queries.ts";
 import {
@@ -132,20 +133,17 @@ export function invalidationsFor(
   switch (event.entity) {
     case "issue":
       return event.issue_number === undefined
-        ? [refetch(["issues", slug])]
+        ? [refetch(["issues", slug]), refetch(insightsKeys.burn(slug))]
         : [
             // Where the row landed is the one thing the pointer cannot say,
             // so the write path says it instead (T-279).
             issueListInvalidation(slug, event.issue_number, event.list_row),
             refetch(["issue", slug, event.issue_number]),
             refetch(["timeline", slug, event.issue_number]),
+            // A current-cohort write can change every historical range.
+            refetch(insightsKeys.burn(slug)),
           ];
     case "comment":
-    case "timeline":
-      // Question components and their answers ride the timeline, so the
-      // per-issue question status (T-19) goes stale with it — as do the
-      // unread markers (T-46), which travel in the list payload. List
-      // ordering is the paired issue event's job; see InvalidationScope.
       return event.issue_number === undefined
         ? []
         : [
@@ -155,6 +153,18 @@ export function invalidationsFor(
               verdict: "contains",
               number: event.issue_number,
             }),
+          ];
+    case "timeline":
+      return event.issue_number === undefined
+        ? []
+        : [
+            refetch(["timeline", slug, event.issue_number]),
+            refetch(["questions", slug, event.issue_number]),
+            issueRow(slug, {
+              verdict: "contains",
+              number: event.issue_number,
+            }),
+            refetch(insightsKeys.burn(slug)),
           ];
     case "attachment":
       return event.issue_number === undefined
@@ -192,7 +202,12 @@ export function invalidationsFor(
             },
           ];
     case "status":
-      return [refetch(["statuses", slug]), refetch(["issues", slug])];
+      return [
+        refetch(["statuses", slug]),
+        refetch(["issues", slug]),
+        refetch(insightsKeys.settings(slug)),
+        refetch(insightsKeys.burn(slug)),
+      ];
     case "label":
       return [refetch(["labels", slug]), refetch(["issues", slug])];
     case "member":
@@ -211,7 +226,13 @@ export function invalidationsFor(
         refetch(["agent-memberships"]),
       ];
     case "project":
-      return [refetch(["project", slug]), refetch(["projects"])];
+      return [
+        refetch(["project", slug]),
+        refetch(["projects"]),
+        // Settings writes deliberately use the existing project entity.
+        refetch(insightsKeys.settings(slug)),
+        refetch(insightsKeys.burn(slug)),
+      ];
   }
 }
 
@@ -832,6 +853,8 @@ export function reconnectInvalidations(): QueryKeyLike[] {
     ["spec"],
     ["spec-files"],
     ["issue-metadata"],
+    insightsKeys.settings(),
+    insightsKeys.burn(),
     ["statuses"],
     ["labels"],
     ["members"],

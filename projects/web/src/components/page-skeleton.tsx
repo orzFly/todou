@@ -8,6 +8,7 @@ export type PageSkeletonKind =
   | "detail"
   | "spec"
   | "board"
+  | "insights"
   | "sections";
 
 /**
@@ -27,6 +28,8 @@ export function PageSkeleton({ kind }: { kind: PageSkeletonKind }) {
       return <SpecSkeleton />;
     case "board":
       return <BoardSkeleton />;
+    case "insights":
+      return <InsightsSkeleton />;
     case "sections":
       return <SectionsSkeleton />;
   }
@@ -352,6 +355,59 @@ function BoardSkeleton() {
                 <Skeleton key={card} className="h-20 w-full" />
               ))}
             </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const INSIGHTS_CHARTS = ["throughput", "cycle-time"];
+const INSIGHTS_ROWS = ["i1", "i2", "i3", "i4"];
+
+function InsightsSkeleton() {
+  return (
+    <div className="space-y-6" data-testid="page-skeleton" data-kind="insights">
+      <Skeleton className="h-7 w-32" />
+      <div
+        className="flex flex-wrap items-center gap-2"
+        data-testid="insights-skeleton-controls"
+      >
+        <Skeleton className="h-8 w-28" />
+        <Skeleton className="h-8 w-36" />
+        <Skeleton className="h-8 w-24" />
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        {INSIGHTS_CHARTS.map((chart) => (
+          <div
+            key={chart}
+            className="min-w-0 space-y-4 rounded-lg border p-4"
+            data-testid="insights-skeleton-chart"
+          >
+            <Skeleton className="h-5 w-32" />
+            <Skeleton className="h-48 w-full" />
+            <Skeleton className="mx-auto h-3 w-1/2" />
+          </div>
+        ))}
+      </div>
+      <div
+        className="overflow-hidden rounded-lg border"
+        data-testid="insights-skeleton-table"
+      >
+        <div className="grid grid-cols-[2fr_1fr_1fr] gap-4 border-b bg-muted px-4 py-3">
+          <Skeleton className="h-4 w-3/5" />
+          <Skeleton className="h-4 w-2/3" />
+          <Skeleton className="h-4 w-2/3" />
+        </div>
+        {INSIGHTS_ROWS.map((row) => (
+          <div
+            key={row}
+            className="grid grid-cols-[2fr_1fr_1fr] gap-4 border-b px-4 py-3 last:border-0"
+            data-testid="insights-skeleton-table-row"
+          >
+            <Skeleton className="h-4 w-4/5" />
+            <Skeleton className="h-4 w-1/2" />
+            <Skeleton className="h-4 w-1/2" />
           </div>
         ))}
       </div>

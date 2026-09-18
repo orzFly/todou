@@ -24,6 +24,7 @@ export * from "./schemas/common.ts";
 export * from "./schemas/component.ts";
 export * from "./schemas/cursor-envelope.ts";
 export * from "./schemas/inbox.ts";
+export * from "./schemas/insights.ts";
 export * from "./schemas/issue.ts";
 export * from "./schemas/metadata.ts";
 export * from "./schemas/move.ts";
