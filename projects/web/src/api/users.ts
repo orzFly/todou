@@ -12,8 +12,13 @@ const userKey = (ref: string) => ["user", ref] as const;
 export const userQuery = (ref: string) =>
   queryOptions({
     queryKey: userKey(ref),
-    queryFn: async ({ client }) => {
+    queryFn: async ({ client, signal }) => {
       const user = await api.getUser(ref);
+      // Nobody is waiting on the key this writes, so it has to honour this
+      // fetch's own cancellation: `api.getUser` takes no signal, and a
+      // response landing after a logout `clear()` would otherwise rebuild
+      // the cache that logout had just emptied, marked fresh (T-414).
+      if (signal.aborted) return user;
       // One row, two addresses. What an id read returns also answers the
       // login key the redirect is about to subscribe to (and the reverse),
       // or every id address costs two reads. A login may not be all digits
