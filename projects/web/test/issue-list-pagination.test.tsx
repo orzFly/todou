@@ -582,8 +582,8 @@ describe("issue list Load More pagination state", () => {
       request.resolve();
     });
 
-    // Both filters have one first-page row, so a row-count assertion is
-    // green with or without the bug. The old filter's concrete title is not.
+    // Assert the old filter's identity, not just the number of rows:
+    // this fixture happens to gain a row when the stale page leaks.
     expect(view.queryByText("done two")).toBeNull();
   });
 
