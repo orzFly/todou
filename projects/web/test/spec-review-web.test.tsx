@@ -74,9 +74,25 @@ describe("rehypeSourceLines", () => {
       </QueryClientProvider>,
     );
     // The fence spans source lines 3-6; its contents begin after the ```.
-    const wrapper = view.container.querySelector("[data-loc='3-6']");
-    expect(wrapper).not.toBeNull();
+    const wrapper = view.container.querySelector("div.markdown-fence");
+    expect(wrapper?.getAttribute("data-loc")).toBe("3-6");
     expect(wrapper?.getAttribute("data-loc-content-start")).toBe("4");
+  });
+  it("wraps a fence even when the markdown has no source-line plugin", () => {
+    const view = render(
+      <QueryClientProvider client={testQueryClient()}>
+        <MarkdownView>
+          {"before\n\n```ts\nconst a = 1;\n```\n\nafter"}
+        </MarkdownView>
+      </QueryClientProvider>,
+    );
+    const wrapper = view.container.querySelector("div.markdown-fence");
+    expect(wrapper?.parentElement?.classList.contains("markdown-body")).toBe(
+      true,
+    );
+    expect(wrapper?.querySelector("pre code")?.textContent).toBe(
+      "const a = 1;",
+    );
   });
 
   // Three distinct lines: identical ones would let an off-by-one anchor land

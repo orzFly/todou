@@ -19,27 +19,68 @@ import {
 import { FENCE_SHAPES } from "./fence-shapes.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
-// Same pin as spec-review-web: fences go through pierre's lazy CodeView.
-vi.mock("@pierre/diffs/react", () => ({
-  CodeView: ({ items }: { items: Array<{ file: { contents: string } }> }) => (
-    <pre>
-      <code>{items.map((item) => item.file.contents).join("\n")}</code>
-    </pre>
-  ),
-  // The real one draws per-line rows this environment has no layout for; what
-  // a test here can still pin is which fence was handed which two bodies.
-  MultiFileDiff: ({
-    oldFile,
-    newFile,
-  }: {
-    oldFile: { contents: string };
-    newFile: { contents: string };
-  }) => (
-    <div data-testid="fence-diff" data-old={oldFile.contents}>
-      {newFile.contents}
-    </div>
-  ),
-}));
+// Same pin as spec-review-web: fences go through pierre's lazy surfaces. The
+// ref callback also emits pierre's first-line lifecycle signal so the tested
+// tree advances past the readable fallback exactly as the real component does.
+vi.mock("@pierre/diffs/react", () => {
+  type Options = {
+    onPostRender?: (
+      node: HTMLElement,
+      instance: unknown,
+      phase: string,
+    ) => void;
+  };
+  const markReady = (node: HTMLElement | null, options: Options) => {
+    if (node === null || node.querySelector("diffs-container") !== null) return;
+    const host = document.createElement("diffs-container");
+    const line = document.createElement("div");
+    line.dataset.line = "1";
+    host.attachShadow({ mode: "open" }).appendChild(line);
+    node.appendChild(host);
+    queueMicrotask(() => options.onPostRender?.(host, {}, "mount"));
+  };
+  return {
+    CodeView: ({
+      items,
+      options,
+      containerRef,
+    }: {
+      items: Array<{ file: { contents: string } }>;
+      options: Options;
+      containerRef?: (node: HTMLDivElement | null) => void;
+    }) => (
+      <div
+        ref={(node) => {
+          containerRef?.(node);
+          markReady(node, options);
+        }}
+      >
+        <pre>
+          <code>{items.map((item) => item.file.contents).join("\n")}</code>
+        </pre>
+      </div>
+    ),
+    // The real one draws per-line rows this environment has no layout for;
+    // what a test here can still pin is which fence got which two bodies.
+    MultiFileDiff: ({
+      oldFile,
+      newFile,
+      options,
+    }: {
+      oldFile: { contents: string };
+      newFile: { contents: string };
+      options: Options;
+    }) => (
+      <div
+        ref={(node) => markReady(node, options)}
+        data-testid="fence-diff"
+        data-old={oldFile.contents}
+      >
+        {newFile.contents}
+      </div>
+    ),
+  };
+});
 
 async function renderDiff(
   before: string,
@@ -969,13 +1010,17 @@ describe("an edited fence renders as pierre's diff (T-343)", () => {
       TWO_FENCES("a = 1;"),
       TWO_FENCES("a = 2;"),
     );
-    const diffs = [...container.querySelectorAll("[data-testid='fence-diff']")];
-    expect(diffs.map((el) => el.getAttribute("data-old"))).toEqual([
-      "a = 1;\n",
-    ]);
-    expect(diffs.map((el) => el.textContent)).toEqual(["a = 2;\n"]);
-    // The untouched fence is still its own contents, through plain CodeView.
-    expect(texts(container, "pre code")).toEqual(["untouched();"]);
+    await waitFor(() => {
+      const diffs = [
+        ...container.querySelectorAll("[data-testid='fence-diff']"),
+      ];
+      expect(diffs.map((el) => el.getAttribute("data-old"))).toEqual([
+        "a = 1;\n",
+      ]);
+      expect(diffs.map((el) => el.textContent)).toEqual(["a = 2;\n"]);
+      // The untouched fence is its own contents, through plain CodeView.
+      expect(texts(container, "pre code")).toEqual(["untouched();"]);
+    });
   });
 
   it("marks that fence's wrapper without costing it its nav stop", async () => {

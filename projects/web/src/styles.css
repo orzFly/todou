@@ -824,6 +824,7 @@ diffs-container {
   .markdown-body ol,
   .markdown-body table,
   .markdown-body details,
+  .markdown-body .markdown-fence,
   .markdown-body pre {
     margin-block: 0 1rem;
   }

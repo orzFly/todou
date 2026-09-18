@@ -126,27 +126,30 @@ function MarkdownPre({
     ) : (
       <CodeDiffBlock filename={filename} before={baseline} after={fence.text} />
     );
-  if (loc === null) return block;
-  // Whether there is a marker line to skip is answered by the line count, not
-  // by reading the opening line: a fence inside a blockquote opens on
-  // "> ```ts", whose `>` survives `trimStart()` and used to read as "not a
-  // fence" — which put the content start on the marker itself and every
-  // anchor in the block one line early (T-343). A nested quote would need two
-  // prefixes stripped, and the next container shape a third; the span never
-  // needs to know what any of them look like.
-  const span = loc.end - loc.start + 1;
-  const contentLines = fence.text === "" ? 0 : fence.text.split("\n").length;
-  const fenced = span - contentLines >= 1;
-  const wrapperProps = {
-    [SOURCE_LINE_ATTR]: stamp,
-    [CODE_CONTENT_START_ATTR]: loc.start + (fenced ? 1 : 0),
-    // Decoration classes ride on the <pre> too (T-158: a fence inside a
-    // wholly-new range) and would otherwise vanish in the swap.
-    className:
-      baseline === undefined
-        ? props.className
-        : [props.className, FENCE_DIFF_CLASS].filter(Boolean).join(" "),
-  };
+  const wrapperProps =
+    loc === null
+      ? { className: "markdown-fence" }
+      : {
+          [SOURCE_LINE_ATTR]: stamp,
+          [CODE_CONTENT_START_ATTR]: (() => {
+            // Whether there is a marker line to skip is answered by the line
+            // count, not by reading the opening line: a fence inside a
+            // blockquote opens on "> ```ts", whose `>` survives trimStart().
+            const span = loc.end - loc.start + 1;
+            const contentLines =
+              fence.text === "" ? 0 : fence.text.split("\n").length;
+            return loc.start + (span - contentLines >= 1 ? 1 : 0);
+          })(),
+          // Decoration classes ride on the <pre> too (T-158: a fence inside
+          // a wholly-new range) and would otherwise vanish in the swap.
+          className: [
+            "markdown-fence",
+            props.className,
+            baseline === undefined ? undefined : FENCE_DIFF_CLASS,
+          ]
+            .filter(Boolean)
+            .join(" "),
+        };
   return <div {...wrapperProps}>{block}</div>;
 }
 

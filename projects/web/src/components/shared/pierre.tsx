@@ -78,6 +78,9 @@ function PlainCodeFallback({ contents }: { contents: string }) {
 // below can find which block a failed <diffs-container> belongs to. A WeakMap
 // because the entry is only ever reachable through a live node.
 const DEGRADE_HANDLERS = new WeakMap<Element, () => void>();
+// Options are cached at module scope; readiness belongs to the mounted block,
+// just like degradation, rather than to a closure in an options object.
+const READY_HANDLERS = new WeakMap<Element, () => void>();
 
 /**
  * pierre's own posture on a highlighter failure is to paint the exception
@@ -90,14 +93,31 @@ const DEGRADE_HANDLERS = new WeakMap<Element, () => void>();
  * paint — the stack never reaches the screen.
  */
 function handlePostRender(container: HTMLElement): void {
-  if (container.shadowRoot?.querySelector("[data-error-wrapper]") == null) {
-    return;
+  const shadow = container.shadowRoot;
+  if (shadow?.querySelector("[data-error-wrapper]") != null) {
+    for (
+      let node: Element | null = container;
+      node;
+      node = node.parentElement
+    ) {
+      const degrade = DEGRADE_HANDLERS.get(node);
+      if (degrade !== undefined) {
+        degrade();
+        return;
+      }
+    }
   }
-  for (let node: Element | null = container; node; node = node.parentElement) {
-    const degrade = DEGRADE_HANDLERS.get(node);
-    if (degrade !== undefined) {
-      degrade();
-      return;
+  if (shadow?.querySelector("[data-line]") != null) {
+    for (
+      let node: Element | null = container;
+      node;
+      node = node.parentElement
+    ) {
+      const ready = READY_HANDLERS.get(node);
+      if (ready !== undefined) {
+        ready();
+        return;
+      }
     }
   }
 }
@@ -244,8 +264,8 @@ export function fenceFilename(tag: string | undefined): string {
 /**
  * Read-only code rendering through pierre CodeView: syntax highlighting
  * from the filename, dark/light theme in step with the revision diffs.
- * Until the pierre chunk arrives a plain <pre> shows the same text, so
- * content is readable immediately.
+ * Until pierre renders its first line a plain <pre> shows the same text, so
+ * content stays readable through both chunk loading and highlighter startup.
  *
  * pierre's virtualization scaffold declares `contain: inline-size`, so this
  * block contributes 0px to an ancestor's intrinsic width: in a content-sized
@@ -283,6 +303,7 @@ export function CodeBlock({
     [lineNumbers, syntaxTheme],
   );
   const [degraded, setDegraded] = useState(false);
+  const [ready, setReady] = useState(contents === "");
   const filenameRef = useRef(filename);
   filenameRef.current = filename;
   const warned = useRef(false);
@@ -300,20 +321,24 @@ export function CodeBlock({
       }
       setDegraded(true);
     });
+    READY_HANDLERS.set(node, () => setReady(true));
   }, []);
   // Highlighting fails per grammar rather than per input, so a block that has
   // gone plain stays plain: re-arming it would only repeat the same failure.
   if (degraded) return <PlainCodeFallback contents={contents} />;
   return (
     <CodeViewBoundary contents={contents}>
-      <Suspense fallback={<PlainCodeFallback contents={contents} />}>
-        <LazyCodeView
-          items={items}
-          options={options}
-          className={className}
-          containerRef={containerRef}
-        />
-      </Suspense>
+      {!ready && <PlainCodeFallback contents={contents} />}
+      <div style={ready ? undefined : { visibility: "hidden" }}>
+        <Suspense fallback={null}>
+          <LazyCodeView
+            items={items}
+            options={options}
+            className={className}
+            containerRef={containerRef}
+          />
+        </Suspense>
+      </div>
     </CodeViewBoundary>
   );
 }
@@ -341,6 +366,7 @@ function FenceDiff({
     [filename, after],
   );
   const [degraded, setDegraded] = useState(false);
+  const [ready, setReady] = useState(after === "");
   const filenameRef = useRef(filename);
   filenameRef.current = filename;
   const warned = useRef(false);
@@ -357,18 +383,22 @@ function FenceDiff({
       }
       setDegraded(true);
     });
+    READY_HANDLERS.set(node, () => setReady(true));
   }, []);
   if (degraded) return <PlainCodeFallback contents={after} />;
   return (
     <div ref={containerRef}>
       <CodeViewBoundary contents={after}>
-        <Suspense fallback={<PlainCodeFallback contents={after} />}>
-          <LazyMultiFileDiff
-            oldFile={oldFile}
-            newFile={newFile}
-            options={options}
-          />
-        </Suspense>
+        {!ready && <PlainCodeFallback contents={after} />}
+        <div style={ready ? undefined : { visibility: "hidden" }}>
+          <Suspense fallback={null}>
+            <LazyMultiFileDiff
+              oldFile={oldFile}
+              newFile={newFile}
+              options={options}
+            />
+          </Suspense>
+        </div>
       </CodeViewBoundary>
     </div>
   );
