@@ -133,7 +133,7 @@ export function CommentItem({
 
   async function handleSave() {
     if (uploading) return;
-    const body = editor.current?.getValue() ?? comment.body;
+    const body = (editor.current?.getValue() ?? comment.body).trimEnd();
     // `target` was read during render, before any of this: the upload below is
     // a real request, and by the time it answers the page may be showing
     // another card, whose comment of the same id this PATCH would overwrite.
@@ -145,7 +145,7 @@ export function CommentItem({
           target.slug,
           target.issueNumber,
         );
-        full = withAttachmentMarkers(body.trimEnd(), markers);
+        full = withAttachmentMarkers(body, markers);
       } catch (error) {
         toast.error(`Could not upload files: ${(error as Error).message}`);
         return;

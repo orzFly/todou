@@ -23,6 +23,11 @@ import {
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "@/api/references.ts";
+import { inCodeContext } from "@/lib/editor/code-context.ts";
+import {
+  applyWithSpace,
+  spaceAfterAccept,
+} from "@/lib/editor/completion-space.ts";
 import { mentionCompletionSource } from "@/lib/editor/mention-completion.ts";
 import {
   type ProjectRefOption,
@@ -76,33 +81,6 @@ function projectOptions(pool: ProjectRefOption[], typed: string): Completion[] {
   return options;
 }
 
-/** Node names @lezer/markdown gives code, where the grammar reads no refs. */
-const CODE_NODES = new Set([
-  "CodeText",
-  "CodeBlock",
-  "FencedCode",
-  "InlineCode",
-  "CodeMark",
-  "CommentBlock",
-  "Comment",
-  "HTMLBlock",
-  "HTMLTag",
-]);
-
-type SyntaxNode = { name: string; parent: SyntaxNode | null };
-
-export function inCodeContext(
-  tree: { resolveInner: (pos: number, side: -1) => SyntaxNode },
-  pos: number,
-): boolean {
-  let node: SyntaxNode | null = tree.resolveInner(pos, -1);
-  while (node !== null) {
-    if (CODE_NODES.has(node.name)) return true;
-    node = node.parent;
-  }
-  return false;
-}
-
 const MAX_OPTIONS = 20;
 
 function toOption(anchor: string, item: IssueListItem): Completion {
@@ -111,8 +89,8 @@ function toOption(anchor: string, item: IssueListItem): Completion {
     label: spelling,
     detail: item.title,
     type: item.status.category === "closed" ? "issue-closed" : "issue-open",
-    // Only the number is added; the spelling the typist chose survives.
-    apply: spelling,
+    // The chosen spelling survives, followed by a pending separator space.
+    apply: applyWithSpace(spelling),
   };
 }
 
@@ -234,6 +212,7 @@ export function completionWith(sources: CompletionSource[]): Extension {
   return [
     Prec.high(keymap.of([{ key: "Tab", run: acceptCompletion }])),
     autocompletion({ override: sources }),
+    spaceAfterAccept,
     completionTheme,
   ];
 }

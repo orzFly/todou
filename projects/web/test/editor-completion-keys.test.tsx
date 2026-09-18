@@ -150,7 +150,7 @@ describe("the completion panel's keys", () => {
     const view = editor();
     await panelFor(view.container, "see T-");
     const event = cmPressKey(view.container, "Tab");
-    expect(cmGetValue(view.container)).toBe("see T-1");
+    expect(cmGetValue(view.container)).toBe("see T-1 ");
     expect(event.defaultPrevented).toBe(true);
   });
 
@@ -174,11 +174,17 @@ describe("the completion panel's keys", () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
-  it("accepts a project candidate on Tab", async () => {
+  it("keeps the project row space-free and reopens on mirror's cards", async () => {
     const view = editor();
     await panelFor(view.container, "see mir");
     cmPressKey(view.container, "Tab");
     expect(cmGetValue(view.container)).toBe("see mirror/");
+    await waitFor(() =>
+      expect(completionStatus(cmView(view.container).state)).toBe("active"),
+    );
+    await settle();
+    cmPressKey(view.container, "Enter");
+    expect(cmGetValue(view.container)).toBe("see mirror/1 ");
   });
 
   it("accepts a project candidate on Enter, exactly as a card is", async () => {
@@ -188,6 +194,17 @@ describe("the completion panel's keys", () => {
     await panelFor(view.container, "see mir");
     cmPressKey(view.container, "Enter");
     expect(cmGetValue(view.container)).toBe("see mirror/");
+  });
+
+  it("lets the open panel consume Enter without inserting a newline", async () => {
+    const view = editor();
+    await panelFor(view.container, "see T-");
+    const event = cmPressKey(view.container, "Enter");
+    expect(event.defaultPrevented).toBe(true);
+    expect(cmGetValue(view.container)).toBe("see T-1 ");
+    expect(cmGetValue(view.container)).not.toContain("\n");
+    cmPressKey(view.container, "Enter");
+    expect(cmGetValue(view.container)).toBe("see T-1\n");
   });
 
   it("spends the first Escape on the panel, not on the dialog around it", async () => {

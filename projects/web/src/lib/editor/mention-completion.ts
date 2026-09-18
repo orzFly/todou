@@ -7,7 +7,8 @@ import type {
 import { syntaxTree } from "@codemirror/language";
 import type { QueryClient } from "@tanstack/react-query";
 import { membersQuery } from "@/api/queries.ts";
-import { inCodeContext } from "@/lib/editor/ref-completion.ts";
+import { inCodeContext } from "@/lib/editor/code-context.ts";
+import { applyWithSpace } from "@/lib/editor/completion-space.ts";
 
 /**
  * Mention completion (@login) beside the reference completion, as a second
@@ -15,10 +16,10 @@ import { inCodeContext } from "@/lib/editor/ref-completion.ts";
  * install a second panel competing for the same keys (the note on
  * `completionWith` in ref-completion.ts).
  *
- * What it inserts is plain `@login`: the same text a hand-typist produces,
- * resolved by the same server pass. Completion only saves typing; it never
- * creates a shape only it can produce — the principle ref completion runs
- * on (T-161), applied unchanged.
+ * It inserts `@login` and a pending separator space: the same text a
+ * hand-typist produces, resolved by the same server pass. Completion only
+ * saves typing; it never creates a shape only it can produce — the principle
+ * ref completion runs on (T-161), applied unchanged.
  */
 
 const MAX_OPTIONS = 20;
@@ -95,7 +96,7 @@ export function mentionCompletionSource(
           detail: m.user.display_name,
           // The panel's icon separates people from agents at a glance.
           type: m.user.kind === "machine" ? "mention-agent" : "mention-user",
-          apply: `@${m.user.login}`,
+          apply: applyWithSpace(`@${m.user.login}`),
         }),
       );
     if (options.length === 0) return null;

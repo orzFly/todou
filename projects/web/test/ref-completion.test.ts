@@ -1,4 +1,7 @@
-import { CompletionContext } from "@codemirror/autocomplete";
+import {
+  CompletionContext,
+  type CompletionResult,
+} from "@codemirror/autocomplete";
 import { EditorState } from "@codemirror/state";
 import { QueryClient } from "@tanstack/react-query";
 import type {
@@ -20,16 +23,15 @@ import {
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
-import {
-  inCodeContext,
-  refCompletionSource,
-} from "../src/lib/editor/ref-completion.ts";
+import { inCodeContext } from "../src/lib/editor/code-context.ts";
+import { refCompletionSource } from "../src/lib/editor/ref-completion.ts";
 import {
   projectTriggerAt,
   type RefTriggerContext,
   rankCandidates,
   refTriggerAt,
 } from "../src/lib/ref-completion.ts";
+import { acceptInto } from "./cm.ts";
 
 const DIRECTORY: PrefixDirectory = {
   entries: [
@@ -333,6 +335,13 @@ const completeAt = (
     client,
   )(new CompletionContext(EditorState.create({ doc }), pos, false));
 
+function applyFirst(result: CompletionResult | null, doc: string): string {
+  if (result === null) throw new Error("expected a completion result");
+  const option = result.options[0];
+  if (option === undefined) throw new Error("expected a completion option");
+  return acceptInto(option, doc, result.from, doc.length);
+}
+
 describe("refCompletionSource", () => {
   it("offers the project's issues and completes only the number", async () => {
     const client = seededClient({
@@ -341,22 +350,22 @@ describe("refCompletionSource", () => {
     const result = await completeAt(client, "todou", "fixed by #7");
     expect(result?.from).toBe("fixed by ".length);
     expect(result?.options.map((o) => o.label)).toEqual(["#7", "#70"]);
-    expect(result?.options[0]?.apply).toBe("#7");
+    expect(applyFirst(result, "fixed by #7")).toBe("fixed by #7 ");
     expect(result?.options[0]?.detail).toBe("Seventh potato");
   });
 
   it("keeps the spelling the typist chose", async () => {
     const client = seededClient({ pages: { mirror: [item(7, "Theirs")] } });
     const qualified = await completeAt(client, "todou", "see mirror#7");
-    expect(qualified?.options[0]?.apply).toBe("mirror#7");
+    expect(applyFirst(qualified, "see mirror#7")).toBe("see mirror#7 ");
     const bare = await completeAt(client, "todou", "see M-7");
-    expect(bare?.options[0]?.apply).toBe("M-7");
+    expect(applyFirst(bare, "see M-7")).toBe("see M-7 ");
   });
 
   it("inserts the canonical spelling however the anchor was typed", async () => {
     const client = seededClient({ pages: { mirror: [item(7, "Theirs")] } });
     const result = await completeAt(client, "todou", "see Mirror#7");
-    expect(result?.options[0]?.apply).toBe("mirror#7");
+    expect(applyFirst(result, "see Mirror#7")).toBe("see mirror#7 ");
   });
 
   it("spells this project's own refs in its current format", async () => {
@@ -365,7 +374,7 @@ describe("refCompletionSource", () => {
       pages: { todou: [item(9, "Ninth")] },
     });
     const result = await completeAt(client, "todou", "fixed by T-9");
-    expect(result?.options[0]?.apply).toBe("T-9");
+    expect(applyFirst(result, "fixed by T-9")).toBe("fixed by T-9 ");
   });
 
   it("marks closed candidates apart from open ones", async () => {
@@ -413,7 +422,7 @@ describe("refCompletionSource", () => {
     // `mirror#45` is a different card, or none. The written form resolves to
     // the moved card when it is stored, so the typed number is the right one
     // to hand back (T-274).
-    expect(result?.options[0]?.apply).toBe("mirror#3");
+    expect(applyFirst(result, "see mirror#3")).toBe("see mirror#3 ");
     expect(result?.options[0]?.detail).toBe("Landed in harbor");
   });
 

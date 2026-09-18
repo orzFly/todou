@@ -22,6 +22,7 @@ import {
   CodeEditor,
   type CodeEditorHandle,
 } from "@/components/shared/code-editor.tsx";
+import { trimTrailingSpaceOnEnter } from "@/lib/editor/trim-trailing-space.ts";
 
 /**
  * GFM markdown, assembled straight from the Lezer parser rather than through
@@ -198,6 +199,13 @@ export const MarkdownEditor = forwardRef<
             cancel();
             return true;
           },
+        },
+        // Completion's Prec.highest keymap sees Enter first while its panel is
+        // open; this only handles the key after completion declines it.
+        {
+          key: "Enter",
+          run: trimTrailingSpaceOnEnter,
+          shift: trimTrailingSpaceOnEnter,
         },
         ...lineKeymap,
       ]}

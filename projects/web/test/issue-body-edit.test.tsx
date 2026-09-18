@@ -1,5 +1,5 @@
 import { fireEvent, waitFor } from "@testing-library/react";
-import type { Issue } from "@todou/shared";
+import type { Attachment, Issue } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
 import { BodyBlock } from "../src/pages/issue-detail.tsx";
@@ -48,6 +48,17 @@ const ISSUE: Issue = {
   moves: [],
 };
 
+const ATTACHMENT: Attachment = {
+  id: 12,
+  filename: "notes.txt",
+  content_type: "text/plain",
+  size: 5,
+  url: "/attachments/notes.txt",
+  uploader: author,
+  created_at: "2026-09-08T09:00:00Z",
+  aliases: [],
+};
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -68,13 +79,38 @@ describe("the issue body editor", () => {
     const updateIssue = vi.spyOn(api, "updateIssue").mockResolvedValue(ISSUE);
     const view = await openEditor();
 
-    cmSetValue(view.container, "the second draft");
+    cmSetValue(view.container, "  the second draft \t\n");
     cmPressKey(view.container, "Enter", { ctrlKey: true });
 
     await waitFor(() => expect(updateIssue).toHaveBeenCalledOnce());
-    expect(updateIssue.mock.calls[0]?.[2]).toEqual({
-      body: "the second draft",
+    const patchedBody = updateIssue.mock.calls[0]?.[2]?.body;
+    expect(patchedBody).toBe("  the second draft");
+    expect(patchedBody).not.toMatch(/\s$/);
+  });
+
+  it("trims the body before appending staged attachment markers", async () => {
+    vi.spyOn(api, "uploadAttachment").mockResolvedValue(ATTACHMENT);
+    const updateIssue = vi.spyOn(api, "updateIssue").mockResolvedValue(ISSUE);
+    const view = await openEditor();
+
+    cmSetValue(view.container, "\tthe second draft \t\n");
+    fireEvent.drop(cmView(view.container).contentDOM, {
+      dataTransfer: {
+        files: [new File(["notes"], "notes.txt", { type: "text/plain" })],
+        types: [],
+        items: [],
+        getData: () => "",
+      } as unknown as DataTransfer,
     });
+    await view.findByText("notes.txt");
+    cmPressKey(view.container, "Enter", { ctrlKey: true });
+
+    await waitFor(() => expect(updateIssue).toHaveBeenCalledOnce());
+    const patchedBody = updateIssue.mock.calls[0]?.[2]?.body;
+    expect(patchedBody).toBe(
+      "\tthe second draft\n\n[notes.txt](/attachments/notes.txt)",
+    );
+    expect(patchedBody).not.toMatch(/\s$/);
   });
 
   it("leaves Alt-Enter to the editor, saving nothing", async () => {

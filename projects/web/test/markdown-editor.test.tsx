@@ -12,6 +12,7 @@ import {
   cmPlaceholder,
   cmPressKey,
   cmSetValue,
+  cmType,
   cmView,
 } from "./cm.ts";
 
@@ -82,6 +83,57 @@ describe("MarkdownEditor", () => {
     cmPressKey(view.container, "Enter", { altKey: true });
     expect(onSubmit).not.toHaveBeenCalled();
     expect(cmGetValue(view.container)).toBe("text\n");
+  });
+
+  it.each([
+    ["Enter", {}],
+    ["Shift-Enter", { shiftKey: true }],
+  ] as const)("trims one trailing space on %s", (_name, modifiers) => {
+    const view = render(<MarkdownEditor />);
+    cmType(view.container, "foo ");
+
+    cmPressKey(view.container, "Enter", modifiers);
+
+    expect(cmGetValue(view.container)).toBe("foo\n");
+  });
+
+  it("preserves two spaces that express a Markdown hard break", () => {
+    const view = render(<MarkdownEditor />);
+    cmType(view.container, "foo  ");
+
+    cmPressKey(view.container, "Enter");
+
+    expect(cmGetValue(view.container)).toBe("foo  \n");
+  });
+
+  it("leaves the default indentation behavior in charge on whitespace-only lines", () => {
+    const view = render(<MarkdownEditor />);
+    cmType(view.container, "  ");
+
+    cmPressKey(view.container, "Enter");
+    cmPressKey(view.container, "Enter");
+
+    expect(cmGetValue(view.container)).toBe("\n\n");
+  });
+
+  it("undoes trimming and the newline as one edit", () => {
+    const view = render(<MarkdownEditor initialValue="foo " />);
+    cmView(view.container).dispatch({ selection: { anchor: 4 } });
+
+    cmPressKey(view.container, "Enter");
+    expect(cmGetValue(view.container)).toBe("foo\n");
+    cmPressKey(view.container, "z", { ctrlKey: true });
+
+    expect(cmGetValue(view.container)).toBe("foo ");
+  });
+
+  it("preserves trailing whitespace inside a real fenced-code syntax tree", () => {
+    const view = render(<MarkdownEditor />);
+    cmType(view.container, "```\nx ");
+
+    cmPressKey(view.container, "Enter");
+
+    expect(cmGetValue(view.container)).toBe("```\nx \n");
   });
 
   it("forwards paste and drop to the staging handlers", () => {

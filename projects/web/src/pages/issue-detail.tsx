@@ -400,7 +400,7 @@ export function BodyBlock({
     // showing another card — whose body this PATCH would then overwrite with
     // this card's draft.
     const target = { slug, issueNumber: issue.number };
-    const body = editor.current?.getValue() ?? issue.body;
+    const body = (editor.current?.getValue() ?? issue.body).trimEnd();
     let full = body;
     if (staging.staged.length > 0) {
       setUploading(true);
@@ -409,7 +409,7 @@ export function BodyBlock({
           target.slug,
           target.issueNumber,
         );
-        full = withAttachmentMarkers(body.trimEnd(), markers);
+        full = withAttachmentMarkers(body, markers);
       } catch (error) {
         toast.error(`Could not upload files: ${(error as Error).message}`);
         return;

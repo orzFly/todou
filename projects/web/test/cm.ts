@@ -1,3 +1,5 @@
+import type { Completion } from "@codemirror/autocomplete";
+import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { fireEvent } from "@testing-library/react";
 
@@ -20,6 +22,71 @@ export function cmView(root: ParentNode, index = 0): EditorView {
   const view = content === null ? null : EditorView.findFromDOM(content);
   if (view === null) throw new Error("markdown editor has no EditorView");
   return view;
+}
+/** Apply a completion option to a real view and return its exact document. */
+export function acceptInto(
+  option: Completion,
+  doc: string,
+  from: number,
+  to: number,
+): string {
+  const view = new EditorView({
+    state: EditorState.create({
+      doc,
+      selection: { anchor: to },
+    }),
+  });
+  const apply = option.apply ?? option.label;
+  if (typeof apply === "string") {
+    view.dispatch({
+      changes: { from, to, insert: apply },
+      selection: { anchor: from + apply.length },
+    });
+  } else {
+    apply(view, option, from, to);
+  }
+  const result = view.state.doc.toString();
+  view.destroy();
+  return result;
+}
+
+/**
+ * Call the inputHandler facet exactly where CodeMirror's DOM input path does.
+ * This proves handler behavior, not the browser-to-handler DOM plumbing.
+ */
+export function handleViewInput(view: EditorView, text: string): boolean {
+  const { from, to } = view.state.selection.main;
+  const defaultInsert = () =>
+    view.state.update({
+      changes: { from, to, insert: text },
+      selection: { anchor: from + text.length },
+      userEvent: "input.type",
+    });
+  return view.state
+    .facet(EditorView.inputHandler)
+    .some((handler) => handler(view, from, to, text, defaultInsert));
+}
+
+export function cmHandleInput(
+  root: ParentNode,
+  text: string,
+  index = 0,
+): boolean {
+  return handleViewInput(cmView(root, index), text);
+}
+/** Run input handlers, then simulate CodeMirror's default insertion if free. */
+export function cmInput(root: ParentNode, text: string, index = 0): boolean {
+  const handled = cmHandleInput(root, text, index);
+  if (!handled) {
+    const view = cmView(root, index);
+    const { from, to } = view.state.selection.main;
+    view.dispatch({
+      changes: { from, to, insert: text },
+      selection: { anchor: from + text.length },
+      userEvent: "input.type",
+    });
+  }
+  return handled;
 }
 
 export function cmCount(root: ParentNode): number {

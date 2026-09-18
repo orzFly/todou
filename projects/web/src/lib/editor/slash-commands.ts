@@ -18,7 +18,7 @@ import {
   type CommandRegistry,
   commandLinesOf,
 } from "@/lib/slash-commands.ts";
-import { inCodeContext } from "./ref-completion.ts";
+import { inCodeContext } from "./code-context.ts";
 
 /**
  * The editor half of slash commands (T-161): a panel to type them with, and

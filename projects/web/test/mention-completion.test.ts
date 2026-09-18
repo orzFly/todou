@@ -9,6 +9,7 @@ import {
   mentionTriggerAt,
   rankMembers,
 } from "../src/lib/editor/mention-completion.ts";
+import { acceptInto } from "./cm.ts";
 
 const syntaxTreeMock = vi.hoisted(() => vi.fn());
 // Only `syntaxTree` is faked: a bare doc carries no language, so the real
@@ -123,7 +124,14 @@ describe("mentionCompletionSource", () => {
       "@alicia",
       "@bot-one",
     ]);
-    expect(result?.options[0]?.apply).toBe("@alice");
+    const option = result?.options[0];
+    expect(option).toBeDefined();
+    expect(
+      acceptInto(option as NonNullable<typeof option>, "ping @al", 5, 8),
+    ).toBe("ping @alice ");
+    expect(
+      acceptInto(option as NonNullable<typeof option>, "ping @al bob", 5, 8),
+    ).toBe("ping @alice bob");
     expect(result?.options[0]?.detail).toBe("Alice Potato");
   });
 
