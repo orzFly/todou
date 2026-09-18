@@ -51,7 +51,7 @@ export function SpecAnnotationHoverCard({
       <HoverCardTrigger asChild>{children}</HoverCardTrigger>
       <HoverCardContent>
         <HoverDepth.Provider value={1}>
-          <div className="mb-2 flex items-center gap-2">
+          <div className="mb-2 flex items-baseline gap-2">
             <UserChip user={annotation.author} />
             <Link
               to="/projects/$slug/issues/$number"

@@ -1144,7 +1144,7 @@ function AnnotationChip({
             </div>
           ) : (
             <div key={item.key} className="rounded-md border p-2 text-sm">
-              <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+              <div className="mb-1 flex items-baseline gap-2 text-xs text-muted-foreground">
                 <UserChip user={item.item.author} />
                 <span title={item.item.created_at}>
                   {locate(item)} · v{item.item.anchor.version}
@@ -1154,7 +1154,7 @@ function AnnotationChip({
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-6 px-2 text-xs"
+                    className="h-6 self-center px-2 text-xs"
                     disabled={resolving}
                     onClick={() => onResolve(item.item.comment_id)}
                   >

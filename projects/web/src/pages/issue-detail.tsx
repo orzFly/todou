@@ -422,7 +422,7 @@ export function BodyBlock({
 
   return (
     <div className="rounded-lg border">
-      <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
+      <div className="flex items-baseline gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
         <UserChip user={issue.author} />
         <span
           className="shrink-0 text-xs whitespace-nowrap text-muted-foreground"
@@ -439,7 +439,7 @@ export function BodyBlock({
             fetchRevisions={() => api.getIssueRevisions(slug, issue.number)}
           />
         )}
-        <div className="ml-auto flex shrink-0 items-center gap-0.5">
+        <div className="ml-auto flex shrink-0 self-center items-center gap-0.5">
           {!readOnly && (
             <Button
               size="icon-sm"

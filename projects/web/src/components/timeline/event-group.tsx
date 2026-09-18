@@ -65,6 +65,13 @@ const ChipRow = ({ children }: { children: ReactNode }) => (
   </span>
 );
 
+/** Names follow the sentence baseline; badge-like status and label chips stay centered. */
+const AssigneeRow = ({ children }: { children: ReactNode }) => (
+  <span className="inline-flex flex-wrap items-baseline gap-1 align-baseline">
+    {children}
+  </span>
+);
+
 /** A label toggled twice in one run would otherwise repeat, keys and all. */
 const distinct = (labels: Label[]): Label[] => [
   ...new Map(labels.map((l) => [l.id, l])).values(),
@@ -173,11 +180,11 @@ function summarize(
             node: (
               <>
                 {"reassigned "}
-                <ChipRow>
+                <AssigneeRow>
                   <UserFace face={from} />
                   {"→"}
                   <UserFace face={to} />
-                </ChipRow>
+                </AssigneeRow>
               </>
             ),
             text: `reassigned ${from.text} → ${to.text}`,
@@ -189,12 +196,12 @@ function summarize(
         list.length === 0 ? null : (
           <>
             {`${verb} `}
-            <ChipRow>
+            <AssigneeRow>
               {list.map((face, i) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: two payloads may name the same ghost
                 <UserFace key={i} face={face} />
               ))}
-            </ChipRow>
+            </AssigneeRow>
           </>
         );
       const names = (list: ResolvedUser[]) =>
@@ -317,8 +324,8 @@ function ListGroup({
 
   return (
     <div data-testid="event-group">
-      <div className="py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-center sm:gap-2">
-        <span className="inline-flex shrink-0 align-middle text-muted-foreground/70">
+      <div className="py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-baseline sm:gap-2">
+        <span className="inline-flex shrink-0 align-middle text-muted-foreground/70 sm:self-center">
           {ICONS[first.event_type]}
         </span>{" "}
         <UserChip
@@ -327,7 +334,7 @@ function ListGroup({
         />{" "}
         <AgentContextBadge
           context={first.agent_context}
-          className="align-middle"
+          className="align-middle sm:self-center"
         />{" "}
         <span className="min-w-0 flex-1">{headline}</span>{" "}
         <Link
@@ -582,10 +589,10 @@ function CollapsedGroup({
 
   return (
     <div data-testid="event-group">
-      <div className="py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-center sm:gap-2">
+      <div className="py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-baseline sm:gap-2">
         <span
           className={cn(
-            "inline-flex shrink-0 align-middle text-muted-foreground/70",
+            "inline-flex shrink-0 align-middle text-muted-foreground/70 sm:self-center",
             dim,
           )}
         >
@@ -597,7 +604,7 @@ function CollapsedGroup({
         />{" "}
         <AgentContextBadge
           context={first.agent_context}
-          className="align-middle"
+          className="align-middle sm:self-center"
         />{" "}
         {/* The same pair the event row's summary span carries: a UserChip's
             bot badge is drawn outside its line box, and truncate's
@@ -614,7 +621,7 @@ function CollapsedGroup({
           type="button"
           aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
-          className="inline-flex shrink-0 items-center gap-0.5 text-xs whitespace-nowrap text-muted-foreground/70 hover:text-foreground hover:underline"
+          className="inline-flex shrink-0 items-center gap-0.5 text-xs whitespace-nowrap text-muted-foreground/70 hover:text-foreground hover:underline sm:self-center"
           data-testid="event-group-toggle"
         >
           {events.length} items

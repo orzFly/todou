@@ -86,7 +86,7 @@ export function SpecVersionMenuRow({
         <span className="line-clamp-2">
           <MessageText message={message} />
         </span>
-        <span className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <span className="mt-1 flex items-baseline gap-1.5 text-xs text-muted-foreground">
           <UserChip user={author} nameClassName="text-xs" link={false} />
           <span aria-hidden>·</span>
           <time dateTime={createdAt} title={createdAt} className="truncate">

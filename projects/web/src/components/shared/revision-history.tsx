@@ -121,7 +121,7 @@ function KeyedRevisionHistory({
                   <button
                     key={revision.id}
                     type="button"
-                    className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted"
+                    className="flex w-full cursor-pointer items-baseline gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted"
                     onClick={() => setSelected(revision)}
                   >
                     <UserChip
@@ -131,7 +131,7 @@ function KeyedRevisionHistory({
                     />
                     <AgentContextBadge
                       context={revision.agent_context}
-                      className="shrink"
+                      className="shrink self-center"
                     />
                     <span
                       className="ml-auto shrink-0 text-xs text-muted-foreground/70"

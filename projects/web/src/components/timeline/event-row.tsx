@@ -757,9 +757,10 @@ export function EventRow({
   return (
     <div
       id={eventAnchor(event.id)}
-      className="py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-center sm:gap-2"
+      className="py-1.5 pl-1 text-sm text-muted-foreground sm:flex sm:items-baseline sm:gap-2"
     >
-      <span className="inline-flex shrink-0 align-middle text-muted-foreground/70">
+      {/* Text aligns on its baseline; icons and controls center independently. */}
+      <span className="inline-flex shrink-0 align-middle text-muted-foreground/70 sm:self-center">
         {ICONS[event.event_type]}
       </span>{" "}
       {!hideActor && (
@@ -770,7 +771,7 @@ export function EventRow({
           />{" "}
           <AgentContextBadge
             context={event.agent_context}
-            className="align-middle"
+            className="align-middle sm:self-center"
           />{" "}
         </>
       )}

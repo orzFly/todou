@@ -1733,13 +1733,13 @@ function UnplacedComment({
         item.resolved !== null && "opacity-70",
       )}
     >
-      <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+      <div className="mb-1 flex items-baseline gap-2 text-xs text-muted-foreground">
         <UserChip user={item.author} />
         <span>
           {formatAnchorRange(item.anchor)} · v{item.anchor.version}
         </span>
         {item.outdated && (
-          <span className="rounded-full border px-1.5 text-muted-foreground">
+          <span className="self-center rounded-full border px-1.5 text-muted-foreground">
             outdated
           </span>
         )}
@@ -1748,7 +1748,7 @@ function UnplacedComment({
           <Button
             size="sm"
             variant="outline"
-            className="h-6 px-2 text-xs"
+            className="h-6 self-center px-2 text-xs"
             disabled={resolving}
             onClick={() => onResolve(item.comment_id)}
           >
@@ -2337,7 +2337,7 @@ function SpecSourceFile({
 function DiffAnnotation({ item }: { item: SpecCommentItem }) {
   return (
     <div className="border-y bg-background px-3 py-2 text-sm">
-      <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+      <div className="mb-1 flex items-baseline gap-2 text-xs text-muted-foreground">
         <UserChip user={item.author} />
         <span>
           {formatAnchorRange(item.anchor)} · v{item.anchor.version}
