@@ -23,6 +23,7 @@ export type BaselineBlockRef = Pick<SourceBlock, "type" | "start" | "end">;
 export type BaselineTree = {
   tree: Root;
   nodes: ReadonlyMap<string, Element>;
+  parents: ReadonlyMap<Element, Root | Element>;
 };
 
 export type BuildBaselineTreeOptions = {
@@ -105,6 +106,19 @@ export function indexBaselineTree(tree: Root): ReadonlyMap<string, Element> {
   return nodes;
 }
 
+function baselineParents(tree: Root): ReadonlyMap<Element, Root | Element> {
+  const parents = new Map<Element, Root | Element>();
+  const visit = (parent: Root | Element): void => {
+    for (const child of parent.children) {
+      if (child.type !== "element") continue;
+      parents.set(child, parent);
+      visit(child);
+    }
+  };
+  visit(tree);
+  return parents;
+}
+
 /**
  * Parse a complete baseline document into the same safe HAST shape as
  * MarkdownView. Raw HTML stays as `raw` nodes; only the restricted details
@@ -120,7 +134,11 @@ export function buildBaselineTree(
     .use(remarkRehype, { allowDangerousHtml: true })
     .use(rehypeDetails);
   const tree = processor.runSync(processor.parse(source), source) as Root;
-  return { tree, nodes: indexBaselineTree(tree) };
+  return {
+    tree,
+    nodes: indexBaselineTree(tree),
+    parents: baselineParents(tree),
+  };
 }
 
 function stripSourceMetadata(node: RootContent): void {
@@ -130,6 +148,24 @@ function stripSourceMetadata(node: RootContent): void {
     delete node.properties[CODE_CONTENT_START_ATTR];
     for (const child of node.children) stripSourceMetadata(child);
   }
+}
+
+/** Identity of the nearest rendered shell absent from the source block index. */
+export function baselineAncestor(
+  baseline: BaselineTree,
+  block: BaselineBlockRef,
+  tagName: string,
+): Element | null {
+  const node = baseline.nodes.get(baselineNodeKey(block));
+  if (node === undefined) return null;
+  for (
+    let parent = baseline.parents.get(node);
+    parent?.type === "element";
+    parent = baseline.parents.get(parent)
+  ) {
+    if (parent.tagName === tagName) return parent;
+  }
+  return null;
 }
 
 /**

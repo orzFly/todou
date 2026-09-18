@@ -1,6 +1,7 @@
 import type { Element, ElementContent, Root, RootContent, Text } from "hast";
 import {
   type BaselineTree,
+  baselineAncestor,
   extractBaselineNode,
 } from "./spec-baseline-tree.ts";
 import type {
@@ -620,13 +621,173 @@ function numberCurrentList(
   numberList(list, values);
 }
 
+type StructureSlot = { parent: Root | Element; at: number };
+
+/** Last direct rendered child covered by an indexed block with no own element. */
+function positionalTail(
+  parent: Root | Element,
+  ref: StructuralBlockRef,
+): RootContent | null {
+  let tail: RootContent | null = null;
+  for (const child of parent.children as RootContent[]) {
+    const start = child.position?.start.offset;
+    const end = child.position?.end.offset;
+    if (
+      start === undefined ||
+      end === undefined ||
+      start >= ref.end ||
+      end <= ref.start
+    )
+      continue;
+    tail = child;
+  }
+  return tail;
+}
+
+function pointInsideText(node: Text, cut: number) {
+  const start = node.position?.start;
+  if (start === undefined) return null;
+  let line = start.line;
+  let column = start.column;
+  for (const char of node.value.slice(0, cut)) {
+    if (char === "\n") {
+      line++;
+      column = 1;
+    } else {
+      column++;
+    }
+  }
+  return { line, column, offset: (start.offset ?? 0) + cut };
+}
+
+/**
+ * Find a source seam among a semantic parent's actual children. Tight list
+ * paragraphs are text nodes here, and inline images may split one exact text
+ * node; neither can be represented by an element-only predecessor.
+ */
+function slotAtRenderedOffset(
+  parent: Root | Element,
+  offset: number,
+  oldNode: Element,
+): StructureSlot | null {
+  if (!legalChild(parent, oldNode)) return null;
+  let seen = 0;
+  for (let index = 0; index < parent.children.length; index++) {
+    const child = parent.children[index];
+    if (child === undefined) continue;
+    const length = child.type === "text" ? child.value.length : 0;
+    if (offset > seen + length) {
+      seen += length;
+      continue;
+    }
+    if (child.type === "text") {
+      const cut = offset - seen;
+      const left: Text = { type: "text", value: child.value.slice(0, cut) };
+      const right: Text = { type: "text", value: child.value.slice(cut) };
+      parent.children.splice(index, 1, left, right);
+      return { parent, at: index + 1 };
+    }
+    if (child.type === "element") {
+      const nested = slotAtRenderedOffset(child, offset - seen, oldNode);
+      if (nested !== null) return nested;
+    }
+  }
+  return offset === seen ? { parent, at: parent.children.length } : null;
+}
+
+function slotAtOffset(
+  parent: Root | Element,
+  offset: number,
+  oldNode: Element,
+): StructureSlot | null {
+  if (!legalChild(parent, oldNode)) return null;
+  const children = parent.children as RootContent[];
+  for (let index = 0; index < children.length; index++) {
+    const child = children[index];
+    if (child === undefined) continue;
+    const start = child.position?.start.offset;
+    const end = child.position?.end.offset;
+    if (start === undefined || end === undefined) continue;
+    if (offset <= start) return { parent, at: index };
+    if (offset >= end) continue;
+    if (
+      child.type === "text" &&
+      child.position !== undefined &&
+      end - start === child.value.length
+    ) {
+      const cut = offset - start;
+      const point = pointInsideText(child, cut);
+      if (point === null) return null;
+      const left: Text = {
+        ...child,
+        value: child.value.slice(0, cut),
+        position: { start: child.position.start, end: point },
+      };
+      const right: Text = {
+        ...child,
+        value: child.value.slice(cut),
+        position: { start: point, end: child.position.end },
+      };
+      children.splice(index, 1, left, right);
+      return { parent, at: index + 1 };
+    }
+    if (child.type === "element") {
+      return slotAtOffset(child, offset, oldNode);
+    }
+    return null;
+  }
+  return { parent, at: children.length };
+}
+
+/** Resolve restricted details shells by retained children, not a root ordinal. */
+function detailsSlot(
+  tree: Root,
+  record: StructuralDeletion,
+  oldNode: Element,
+  baseline: BaselineTree,
+): StructureSlot | null {
+  const oldDetails = baselineAncestor(baseline, record.old, "details");
+  if (oldDetails === null) return null;
+  const targets = new Set<Element>();
+  let predecessor: { oldStart: number; node: Element } | null = null;
+  for (const anchor of record.retained ?? []) {
+    if (baselineAncestor(baseline, anchor.old, "details") !== oldDetails)
+      continue;
+    const located = locatedBlock(tree, anchor.current);
+    if (
+      located === null ||
+      located.parent.type !== "element" ||
+      located.parent.tagName !== "details"
+    )
+      continue;
+    targets.add(located.parent);
+    if (
+      anchor.old.end <= record.old.start &&
+      (predecessor === null || anchor.old.start > predecessor.oldStart)
+    )
+      predecessor = { oldStart: anchor.old.start, node: located.node };
+  }
+  if (targets.size !== 1) return null;
+  const parent = targets.values().next().value;
+  if (parent === undefined || !legalChild(parent, oldNode)) return null;
+  if (predecessor !== null) {
+    const index = parent.children.indexOf(predecessor.node);
+    return index < 0 ? null : { parent, at: index + 1 };
+  }
+  const summary = parent.children.findIndex(
+    (child) => child.type === "element" && child.tagName === "summary",
+  );
+  return { parent, at: summary + 1 };
+}
+
 /** For a table row the indexed table has an unindexed thead/tbody between. */
 function insertionParent(
   tree: Root,
   record: StructuralDeletion,
   oldNode: Element,
+  baseline: BaselineTree | undefined,
   current?: SegmentIndex,
-): { parent: Root | Element; predecessor: Element | null } | null {
+): StructureSlot | null {
   if (current !== undefined) {
     for (const ref of [record.parent, record.after]) {
       if (ref === null) continue;
@@ -646,26 +807,32 @@ function insertionParent(
     )
       return null;
   }
+  if (
+    baseline !== undefined &&
+    baselineAncestor(baseline, record.old, "details") !== null
+  )
+    return detailsSlot(tree, record, oldNode, baseline);
   const target =
     record.parent === null
       ? { node: tree as Root | Element }
       : locatedBlock(tree, record.parent);
   if (target === null) return null;
   let parent = target.node;
-  if (record.parent?.type === "list" && parent.type === "element") {
-    const ordered = current?.blocks[record.parent.index]?.listOrdered;
-    if (
-      ordered !== null &&
-      ordered !== undefined &&
-      (parent.tagName === "ol") !== ordered
-    )
-      return null;
+  if (record.inlineOffset !== undefined) {
+    return slotAtRenderedOffset(parent, record.inlineOffset, oldNode);
   }
-  let predecessor: Element | null = null;
   if (record.after !== null) {
     const located = locatedBlock(tree, record.after);
-    if (located === null) return null;
-    predecessor = located.node;
+    if (located === null) {
+      const predecessor = positionalTail(parent, record.after);
+      const at =
+        predecessor === null
+          ? -1
+          : (parent.children as RootContent[]).indexOf(predecessor);
+      return at < 0 || !legalChild(parent, oldNode)
+        ? null
+        : { parent, at: at + 1 };
+    }
     if (
       record.parent !== null &&
       target.node.type === "element" &&
@@ -679,8 +846,15 @@ function insertionParent(
       )
         return null;
       parent = located.parent;
-    } else if (located.parent !== parent) return null;
-  } else if (
+    } else if (located.parent !== parent) {
+      return null;
+    }
+    const at = parent.children.indexOf(located.node);
+    return at < 0 || !legalChild(parent, oldNode)
+      ? null
+      : { parent, at: at + 1 };
+  }
+  if (
     record.parent !== null &&
     target.node.type === "element" &&
     target.node.tagName === "table" &&
@@ -697,9 +871,9 @@ function insertionParent(
           : child.tagName === "tbody"),
     );
     if (section?.type !== "element") return null;
-    parent = section;
+    return slotAtOffset(section, record.fallback.at, oldNode);
   }
-  return legalChild(parent, oldNode) ? { parent, predecessor } : null;
+  return slotAtOffset(parent, record.fallback.at, oldNode);
 }
 
 /** A root seam is legal even when a proposed nested parent or slot is gone. */
@@ -760,35 +934,56 @@ function applyStructures(tree: Root, options: Decorations): void {
       fallbackStructure(tree, record, fallbackAtSeam);
       continue;
     }
-    const slot = insertionParent(tree, record, oldNode, currentIndex);
+    const slot = insertionParent(
+      tree,
+      record,
+      oldNode,
+      baselineTree,
+      currentIndex,
+    );
     if (slot === null) {
       fallbackStructure(tree, record, fallbackAtSeam);
       continue;
     }
-    const seam = `${record.parent?.index ?? "root"}:${record.after?.index ?? "front"}`;
-    const preceding = lastAtSeam.get(seam) ?? slot.predecessor;
+    const seam = `${record.parent?.index ?? "root"}:${record.after?.index ?? "front"}:${record.old.type === "image" ? record.fallback.at : ""}`;
+    const preceding = lastAtSeam.get(seam);
     const at =
-      preceding === null ? 0 : slot.parent.children.indexOf(preceding) + 1;
+      preceding === undefined
+        ? slot.at
+        : slot.parent.children.indexOf(preceding) + 1;
     if (
       at < 0 ||
-      (preceding !== null && !slot.parent.children.includes(preceding))
+      (preceding !== undefined && !slot.parent.children.includes(preceding))
     ) {
       fallbackStructure(tree, record, fallbackAtSeam);
       continue;
     }
     addClass(oldNode, "spec-del-structure");
-    if (
-      oldNode.tagName === "li" &&
-      slot.parent.type === "element" &&
-      slot.parent.tagName === "ol"
-    ) {
+    if (oldNode.tagName === "li") {
+      if (
+        slot.parent.type === "element" &&
+        slot.parent.tagName === "ol" &&
+        record.parent !== null
+      )
+        numberCurrentList(slot.parent, record.parent, currentIndex);
       const value = oldBlock?.listItemValue;
-      if (value === null || value === undefined || record.parent === null) {
-        fallbackStructure(tree, record, fallbackAtSeam);
-        continue;
+      if (value !== null && value !== undefined) {
+        if (record.parent === null) {
+          fallbackStructure(tree, record, fallbackAtSeam);
+          continue;
+        }
+        if (slot.parent.type === "element" && slot.parent.tagName === "ul") {
+          // This one old ordered item keeps its numeral without replacing
+          // the current unordered list's marker semantics.
+          addClass(oldNode, "spec-old-ordered-item");
+        }
+        numberItem(oldNode, value, true);
+      } else if (
+        slot.parent.type === "element" &&
+        slot.parent.tagName === "ol"
+      ) {
+        addClass(oldNode, "spec-old-unordered-item");
       }
-      numberCurrentList(slot.parent, record.parent, currentIndex);
-      numberItem(oldNode, value, true);
     }
     numberClonedLists(oldNode);
     slot.parent.children.splice(at, 0, oldNode);

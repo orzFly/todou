@@ -388,6 +388,7 @@ export function AttachmentRichLink({
   href,
   fallbackName,
   children,
+  className,
 }: {
   slug: string;
   issueNumber: number;
@@ -395,6 +396,7 @@ export function AttachmentRichLink({
   href: string;
   fallbackName: string;
   children?: ReactNode;
+  className?: string;
 }) {
   const attachments = useQuery(attachmentsQuery(slug, issueNumber));
   const [viewer, setViewer] = useState<ViewerState | null>(null);
@@ -416,6 +418,7 @@ export function AttachmentRichLink({
         className={cn(
           RICH_CHIP_STRUCTURE,
           boxed ? RICH_CHIP_SKIN : "hover:underline",
+          className,
         )}
         onClick={(e) => {
           if (previewKind(target) !== null && isPlainLeftClick(e)) {

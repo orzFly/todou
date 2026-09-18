@@ -124,6 +124,7 @@ export function MarkdownAttachmentImage({
           attachmentId={id}
           href={src}
           fallbackName={name}
+          className={props.className}
         />
       );
     }
@@ -134,6 +135,7 @@ export function MarkdownAttachmentImage({
         attachmentId={id}
         href={src}
         fallbackName={name}
+        className={props.className}
       />
     );
   }

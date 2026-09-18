@@ -4,6 +4,7 @@ import {
   type SegmentIndex,
   type SourceBlock,
   type SourceBlockType,
+  sourceOffsetOfRendered,
 } from "./spec-source-index.ts";
 
 /** The source identity Main needs to find a block in the rendered tree. */
@@ -34,6 +35,13 @@ export type StructuralDeletion = {
   parent: StructuralBlockRef | null;
   after: StructuralBlockRef | null;
   order: number;
+  /** Retained source identities also resolve unindexed semantic HTML shells. */
+  retained?: ReadonlyArray<{
+    old: StructuralBlockRef;
+    current: StructuralBlockRef;
+  }>;
+  /** Rendered-text seam for inline atomic nodes, independent of source escapes. */
+  inlineOffset?: number;
   /** Existing marker data, retained as a safe rendering fallback. */
   fallback: {
     at: number;
@@ -360,6 +368,55 @@ function fallbackParts(
   return parts;
 }
 
+/**
+ * An image has no rendered text of its own, so its neighbouring prose stays
+ * in one aligned leaf. When that prose is unchanged, its rendered prefix is
+ * a precise seam inside the current paragraph (unlike block-child order,
+ * which cannot see text nodes at all).
+ */
+function inlineImageInsertion(
+  baseline: SegmentIndex,
+  current: SegmentIndex,
+  block: SourceBlock,
+  pairs: ReadonlyArray<NormalizedPair>,
+): { at: number; rendered: number } | null {
+  if (block.type !== "image" || block.parent === null) return null;
+  const parent = baseline.blocks[block.parent];
+  if (parent === undefined) return null;
+  const oldSegments = baseline.segments
+    .filter(
+      (segment) =>
+        segment.start >= parent.start &&
+        segment.end <= parent.end &&
+        (segment.end <= block.start || segment.start >= block.end),
+    )
+    .sort((a, b) => a.start - b.start);
+  const neighbouring =
+    [...oldSegments].reverse().find((segment) => segment.end <= block.start) ??
+    oldSegments.find((segment) => segment.start >= block.end);
+  if (neighbouring === undefined) return null;
+  const pair = pairs.find(
+    (candidate) => candidate.old.group === neighbouring.group,
+  );
+  if (pair === undefined) return null;
+  const oldGroupSegments = baseline.segments.filter(
+    (segment) => segment.group === neighbouring.group,
+  );
+  const newGroupSegments = current.segments.filter(
+    (segment) => segment.group === pair.new.group,
+  );
+  if (
+    oldGroupSegments.map((segment) => segment.text).join("") !==
+    newGroupSegments.map((segment) => segment.text).join("")
+  )
+    return null;
+  const rendered = oldGroupSegments
+    .filter((segment) => segment.end <= block.start)
+    .reduce((length, segment) => length + segment.text.length, 0);
+  const at = sourceOffsetOfRendered(newGroupSegments, rendered, "start");
+  return at === null ? null : { at, rendered };
+}
+
 function insertionOffset(
   current: SegmentIndex,
   parentIndex: number | null,
@@ -390,9 +447,15 @@ export function planStructuralDeletions(
   alignment: Alignment | ReadonlyArray<StructuralAlignmentPair>,
   goneGroups: ReadonlySet<number>,
 ): StructuralDeletionPlan {
-  const mappings = containerMappings(baseline, current, alignment);
+  const pairs = normalizePairs(baseline, current, alignment);
+  const mappings = containerMappings(baseline, current, pairs);
   const planned: StructuralDeletion[] = [];
   const unplanned: SourceBlock[] = [];
+  const retained = [...mappings].flatMap(([oldIndex, currentIndex]) => {
+    const old = refOf(baseline, oldIndex);
+    const nu = refOf(current, currentIndex);
+    return old === null || nu === null ? [] : [{ old, current: nu }];
+  });
 
   for (const block of blocksWhollyInGroups(baseline, goneGroups)) {
     const oldIndex = baseline.blocks.indexOf(block);
@@ -433,13 +496,16 @@ export function planStructuralDeletions(
       continue;
     }
     const parts = fallbackParts(baseline, block);
+    const inline = inlineImageInsertion(baseline, current, block, pairs);
     planned.push({
       old,
       parent,
       after,
       order: block.childIndex,
+      retained,
+      ...(inline === null ? {} : { inlineOffset: inline.rendered }),
       fallback: {
-        at: insertionOffset(current, parentIndex, afterIndex),
+        at: inline?.at ?? insertionOffset(current, parentIndex, afterIndex),
         text: baseline.source.slice(block.start, block.end),
         ...(parts.length === 0 ? {} : { parts }),
       },

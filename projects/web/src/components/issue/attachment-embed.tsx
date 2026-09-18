@@ -13,6 +13,7 @@ import {
   TEXT_PREVIEW_MAX_BYTES,
 } from "@/lib/attachment-preview.ts";
 import { attachmentAnchorHref } from "@/lib/attachment-refs.ts";
+import { cn } from "@/lib/utils";
 
 /** Card-shaped stand-in for the states that have no document body to show. */
 function EmbedShell({
@@ -20,14 +21,18 @@ function EmbedShell({
   href,
   meta,
   children,
+  className,
 }: {
   filename: string;
   href: string;
   meta?: string;
   children: ReactNode;
+  className?: string;
 }) {
   return (
-    <span className="my-2 block overflow-hidden rounded-lg border">
+    <span
+      className={cn("my-2 block overflow-hidden rounded-lg border", className)}
+    >
       <span className="flex items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
         <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
         <a href={href} className="truncate font-medium hover:underline">
@@ -48,10 +53,12 @@ function LoadedEmbed({
   attachment,
   slug,
   issueNumber,
+  className,
 }: {
   attachment: Attachment;
   slug: string;
   issueNumber: number;
+  className?: string;
 }) {
   const text = useQuery(attachmentTextQuery(attachment.url));
   if (text.isPending) {
@@ -60,6 +67,7 @@ function LoadedEmbed({
         filename={attachment.filename}
         href={attachmentAnchorHref(attachment)}
         meta={formatSize(attachment.size)}
+        className={className}
       >
         Loading…
       </EmbedShell>
@@ -70,6 +78,7 @@ function LoadedEmbed({
       <EmbedShell
         filename={attachment.filename}
         href={attachmentAnchorHref(attachment)}
+        className={className}
         meta={formatSize(attachment.size)}
       >
         <LoadFailure
@@ -88,6 +97,7 @@ function LoadedEmbed({
       render={isMarkdownDocument(attachment) ? "markdown" : "code"}
       slug={slug}
       issueNumber={issueNumber}
+      className={className}
       meta={formatSize(attachment.size)}
       downloadUrl={attachment.url}
     />
@@ -107,12 +117,14 @@ export function AttachmentDocumentEmbed({
   attachmentId,
   href,
   fallbackName,
+  className,
 }: {
   slug: string;
   issueNumber: number;
   attachmentId: number;
   href: string;
   fallbackName: string;
+  className?: string;
 }) {
   const attachments = useQuery(attachmentsQuery(slug, issueNumber));
   const attachment = attachments.data?.find((a) => a.id === attachmentId);
@@ -120,7 +132,7 @@ export function AttachmentDocumentEmbed({
   if (attachment === undefined) {
     if (attachments.isPending) {
       return (
-        <EmbedShell filename={fallbackName} href={href}>
+        <EmbedShell filename={fallbackName} href={href} className={className}>
           Loading…
         </EmbedShell>
       );
@@ -134,6 +146,7 @@ export function AttachmentDocumentEmbed({
         attachmentId={attachmentId}
         href={href}
         fallbackName={fallbackName}
+        className={className}
       />
     );
   }
@@ -143,6 +156,7 @@ export function AttachmentDocumentEmbed({
         filename={attachment.filename}
         href={attachmentAnchorHref(attachment)}
         meta={formatSize(attachment.size)}
+        className={className}
       >
         Too large to preview — download to view.
       </EmbedShell>
@@ -153,6 +167,7 @@ export function AttachmentDocumentEmbed({
       attachment={attachment}
       slug={slug}
       issueNumber={issueNumber}
+      className={className}
     />
   );
 }
