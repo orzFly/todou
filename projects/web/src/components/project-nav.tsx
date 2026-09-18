@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 export const projectTabs = [
   { to: "/projects/$slug", label: "List", exact: true },
   { to: "/projects/$slug/board", label: "Board", exact: false },
+  { to: "/projects/$slug/insights", label: "Insights", exact: false },
   { to: "/projects/$slug/settings", label: "Settings", exact: false },
 ] as const;
 
@@ -25,7 +26,12 @@ export function ProjectNav({
   return (
     // nowrap so a squeezed header truncates the project name instead of
     // wrapping the tabs, which would push the create button off its row.
-    <nav className={cn("flex items-center gap-1 whitespace-nowrap", className)}>
+    <nav
+      className={cn(
+        "flex items-center gap-0.5 whitespace-nowrap sm:gap-1",
+        className,
+      )}
+    >
       {projectTabs.map((tab) => (
         <Link
           key={tab.label}
@@ -34,7 +40,7 @@ export function ProjectNav({
           // includeSearch off: exact mode deep-equals the whole search object,
           // so filter params like ?category=closed would drop the highlight (T-79).
           activeOptions={{ exact: tab.exact, includeSearch: false }}
-          className="rounded-md px-3 py-1 text-sm text-muted-foreground hover:text-foreground"
+          className="rounded-md px-1 py-1 text-sm text-muted-foreground hover:text-foreground sm:px-3"
           activeProps={{
             className: "bg-accent text-foreground font-medium",
           }}
@@ -52,10 +58,9 @@ export function ProjectNav({
  * the header's account cluster, after the search box; below that it moves
  * to the project row, which has room the first row does not.
  *
- * It stays an icon on that row even though the row is the wider of the two:
- * the label needs 102px, the narrowest phone leaves 85, and the crossover
- * around 337 is not a breakpoint Tailwind has. aria-label rather than the
- * visible text, because a `display: none` label is not announced either.
+ * It stays an icon on that row to leave room for all four project tabs and
+ * the search toggle on narrow phones. aria-label rather than the visible
+ * text, because a `display: none` label is not announced either.
  */
 export function NewIssueButton({
   slug,

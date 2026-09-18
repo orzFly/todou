@@ -27,6 +27,7 @@ import {
 } from "./routes/cli-auth.ts";
 import { cliDistRoutes } from "./routes/cli-dist.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
+import { insightsRoutes } from "./routes/insights.ts";
 import { issueRoutes } from "./routes/issues.ts";
 import { labelRoutes } from "./routes/labels.ts";
 import { meRoutes } from "./routes/me.ts";
@@ -171,6 +172,7 @@ export function createApp(ctx: AppContext) {
   api.route("/projects", statusRoutes());
   api.route("/projects", referenceRoutes());
   api.route("/projects", labelRoutes());
+  api.route("/projects", insightsRoutes());
   api.route("/projects", metadataRoutes());
   api.route("/projects", issueRoutes());
   api.route("/projects", blockRoutes());

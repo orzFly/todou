@@ -32,7 +32,13 @@ function renderAt(url: string, ui: (slug: string) => ReactElement) {
     component: AtSlug,
     validateSearch: (s) => s,
   });
-  const children = ["board", "settings", "issues/new", "search"].map((path) =>
+  const children = [
+    "board",
+    "insights",
+    "settings",
+    "issues/new",
+    "search",
+  ].map((path) =>
     createRoute({
       getParentRoute: () => projectRoute,
       path,
@@ -92,16 +98,40 @@ describe("ProjectNav active states (T-79)", () => {
     await waitFor(async () => expect(await status("Board")).toBe("active"));
     expect(await status("List")).not.toBe("active");
   });
+
+  it.each(["", "?range=30d&bucket=week"])(
+    "highlights Insights independently of search params (%s)",
+    async (search) => {
+      renderNavAt(`/projects/x/insights${search}`);
+      await waitFor(async () =>
+        expect(await status("Insights")).toBe("active"),
+      );
+      expect(await status("List")).not.toBe("active");
+      expect(await status("Board")).not.toBe("active");
+      expect(await status("Settings")).not.toBe("active");
+    },
+  );
 });
 
 describe("ProjectNav tabs", () => {
-  it("carries the three modules and nothing else", async () => {
+  it("carries the four modules and nothing else", async () => {
     renderNavAt("/projects/x");
     await screen.findByRole("link", { name: "List" });
     const labels = screen
       .getAllByRole("link")
       .map((el) => el.textContent?.trim());
-    expect(labels).toEqual(["List", "Board", "Settings"]);
+    expect(labels).toEqual(["List", "Board", "Insights", "Settings"]);
+  });
+
+  it("links Insights into the current project", async () => {
+    const router = renderNavAt("/projects/beta");
+    const link = await screen.findByRole("link", { name: "Insights" });
+    expect(link.getAttribute("href")).toBe("/projects/beta/insights");
+    fireEvent.click(link);
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/projects/beta/insights"),
+    );
+    await waitFor(async () => expect(await status("Insights")).toBe("active"));
   });
 });
 

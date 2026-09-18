@@ -1,3 +1,11 @@
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Outlet,
+  RouterProvider,
+} from "@tanstack/react-router";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
@@ -14,6 +22,7 @@ const KINDS: PageSkeletonKind[] = [
   "detail",
   "spec",
   "board",
+  "insights",
   "sections",
 ];
 
@@ -40,6 +49,15 @@ describe("PageSkeleton", () => {
     expect(view.getAllByTestId("spec-skeleton-doc")).toHaveLength(1);
   });
 
+  it("draws Insights controls, two charts and a table", () => {
+    const view = render(<PageSkeleton kind="insights" />);
+    const controls = view.getByTestId("insights-skeleton-controls");
+    expect(controls.querySelectorAll("[data-slot=skeleton]")).toHaveLength(3);
+    expect(view.getAllByTestId("insights-skeleton-chart")).toHaveLength(2);
+    expect(view.getByTestId("insights-skeleton-table")).toBeTruthy();
+    expect(view.getAllByTestId("insights-skeleton-table-row")).toHaveLength(4);
+  });
+
   it("builds the list shape out of the body the list page reuses", () => {
     const view = render(<PageSkeleton kind="list" />);
     expect(view.getByTestId("issue-list-body-skeleton")).toBeTruthy();
@@ -58,6 +76,34 @@ describe("PagePending", () => {
     const root = await screen.findByTestId("page-skeleton");
     expect(root.getAttribute("data-kind")).toBe("sections");
   });
+
+  it("uses the Insights staticData declaration over its parent's shape", async () => {
+    const rootRoute = createRootRoute();
+    const projectRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/projects/$slug",
+      component: Outlet,
+      staticData: { pageSkeleton: "sections" },
+    });
+    const insightsRoute = createRoute({
+      getParentRoute: () => projectRoute,
+      path: "insights",
+      component: PagePending,
+      staticData: { pageSkeleton: "insights" },
+    });
+    const pendingRouter = createRouter({
+      routeTree: rootRoute.addChildren([
+        projectRoute.addChildren([insightsRoute]),
+      ]),
+      history: createMemoryHistory({
+        initialEntries: ["/projects/x/insights?range=30d&bucket=week"],
+      }),
+    });
+    render(<RouterProvider router={pendingRouter} />);
+    const root = await screen.findByTestId("page-skeleton");
+    expect(root.getAttribute("data-kind")).toBe("insights");
+    expect(screen.getAllByTestId("insights-skeleton-chart")).toHaveLength(2);
+  });
 });
 
 describe("spec route", () => {
@@ -68,5 +114,13 @@ describe("spec route", () => {
     const spec =
       router.routesById["/authed/projects/$slug/issues/$number/spec"];
     expect(spec.options.staticData?.pageSkeleton).toBe("spec");
+  });
+});
+
+describe("insights route", () => {
+  it("declares the Insights shape for the shell's pending fallback", () => {
+    const insights = router.routesById["/authed/projects/$slug/insights"];
+    expect(insights.options.staticData?.pageSkeleton).toBe("insights");
+    expect(insights.options.pendingComponent).toBeUndefined();
   });
 });

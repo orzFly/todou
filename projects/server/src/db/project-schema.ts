@@ -10,6 +10,7 @@ import {
   type AnyPgColumn,
   bigint,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -66,6 +67,18 @@ export const projectMeta = pgTable("project_meta", {
   // then one local comparison of positions.
   blockClearStatusId: bigint("block_clear_status_id", { mode: "number" }),
 });
+
+export const insightsSettings = pgTable(
+  "insights_settings",
+  {
+    projectId: bigint("project_id", { mode: "number" }).primaryKey(),
+    revision: integer("revision").notNull().default(0),
+    roles: jsonb("roles").$type<Record<string, string>>().notNull().default({}),
+  },
+  (t) => [
+    check("insights_settings_revision_nonnegative", sql`${t.revision} >= 0`),
+  ],
+);
 
 // Append-only internal reference-format history (T-80). NULL prefix = "#N".
 // A history rather than one prefix because a slug-qualified ref may spell a

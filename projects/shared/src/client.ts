@@ -18,6 +18,8 @@ import type {
   AutolinkCreateInput,
   BlockRef,
   BulkReadInput,
+  BurnQuery,
+  BurnResponse,
   CliAuthApproveInput,
   CliAuthApproveResult,
   CliAuthPollInput,
@@ -61,6 +63,7 @@ import type {
   ProjectCreateInput,
   ProjectUpdateInput,
   PublicUser,
+  PutSettings,
   ReferenceConfig,
   ReferenceDirectory,
   RefFormatSetInput,
@@ -68,6 +71,7 @@ import type {
   RevisionPage,
   SearchFacets,
   SearchPage,
+  Settings,
   SpecComments,
   SpecFiles,
   SpecInfo,
@@ -696,6 +700,17 @@ export class TodouClient {
   };
   deleteProjectIcon = (ref: string) =>
     this.request<Project>("DELETE", `/projects/${ref}/icon`);
+
+  getInsightsSettings = (slug: string) =>
+    this.request<Settings>("GET", `/projects/${slug}/insights/settings`);
+  updateInsightsSettings = (slug: string, input: PutSettings) =>
+    this.request<Settings>("PUT", `/projects/${slug}/insights/settings`, {
+      json: input,
+    });
+  getInsightsBurn = (slug: string, query: BurnQuery) =>
+    this.request<BurnResponse>("GET", `/projects/${slug}/insights/burn`, {
+      query: { ...query },
+    });
 
   /**
    * One account's public identity. `ref` is a user id when all digits, a

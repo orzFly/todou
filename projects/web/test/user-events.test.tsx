@@ -85,6 +85,7 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       { key: ["issues", "todou"], scope: "refetch" },
       { key: ["issue", "todou", 42], scope: "refetch" },
       { key: ["timeline", "todou", 42], scope: "refetch" },
+      { key: ["insights-burn", "todou"], scope: "refetch" },
     ]);
   });
 
@@ -152,6 +153,7 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
         key: ["issues", "todou"],
         scope: { issueRows: [{ verdict: "contains", number: 7 }] },
       },
+      { key: ["insights-burn", "todou"], scope: "refetch" },
     ]);
   });
 
@@ -161,6 +163,8 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
     ).toEqual([
       { key: ["statuses", "p"], scope: "refetch" },
       { key: ["issues", "p"], scope: "refetch" },
+      { key: ["insights-settings", "p"], scope: "refetch" },
+      { key: ["insights-burn", "p"], scope: "refetch" },
     ]);
     // A member event can be the user's own grant or revocation, so the
     // project list goes stale with it (T-122) — as does the agent Projects

@@ -41,6 +41,7 @@ import {
   useCan,
 } from "@/api/queries.ts";
 import { referenceConfigQuery } from "@/api/references.ts";
+import { InsightsSettings } from "@/components/insights/insights-settings.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { AddAgentPicker } from "@/components/shared/add-agent-picker.tsx";
@@ -99,6 +100,7 @@ export function ProjectSettingsPage() {
       <MembersSection slug={slug} />
       <AccessDenialsSection slug={slug} />
       <StatusesSection slug={slug} />
+      <InsightsSettings slug={slug} />
       <LabelsSection slug={slug} />
       <ReferencesSection slug={slug} />
       <SlugSection slug={slug} />
