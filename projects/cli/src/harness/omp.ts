@@ -33,6 +33,15 @@ import type { Harness, HostProcess, LiveSession } from "./types.ts";
  * recovered from the session log omp appends to as the turn runs — unless
  * the todou extension is installed, in which case omp publishes the session
  * itself and the scan becomes the fallback.
+ *
+ * Check 7 of `scripts/smoke-omp-integration.sh` asserts the layering below
+ * against a real omp, and it is the only thing that does. The cases in
+ * `test/harness/omp.test.ts` write the record and the breadcrumb themselves,
+ * so they can say how each is read and never whether omp still publishes it,
+ * in that shape and at that moment. Run the smoke when the order or the
+ * guards here change — it is not in `pnpm test`, and adding the breadcrumb
+ * layer below is what last falsified what check 7 asserted, unnoticed until
+ * the script had been failing for a while (T-318, T-399).
  */
 export const omp = {
   id: "omp",

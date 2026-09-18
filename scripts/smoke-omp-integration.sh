@@ -26,9 +26,12 @@
 # the fixed sleeps its pty driver needs and the rest is omp starting and
 # stopping, which moves with the machine's load; 66 seconds for a whole run
 # with no model set. Like checks 3 and 7 it does skip without script(1).
-# Run it whenever you touch the extension: it is the only check here that can
-# contradict what we believe about omp's own shape, and the two defects it
-# pins shipped past 31 green unit cases that could not.
+#
+# Run this after touching the extension, and after touching the fallback
+# layering in projects/cli/src/harness/omp.ts: checks 9 and 7 are the two that
+# can contradict what we believe about omp's own shape rather than restate it,
+# and the two defects check 9 pins shipped past 31 green unit cases that could
+# not.
 #
 # Everything lands under a scratch HOME and a scratch XDG_RUNTIME_DIR, so a run
 # cannot touch the extension you actually have installed.
@@ -42,7 +45,10 @@ while [ $# -gt 0 ]; do
     --only) ONLY="${2-}"; shift $(($# > 1 ? 2 : 1)) ;;
     --only=*) ONLY="${1#*=}"; shift ;;
     -h | --help)
-      sed -n '2,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      # To the first line that is not a comment, then back one: a line number
+      # here was rewritten three times as the header grew and stopped short of
+      # its end every time, the last of them silently.
+      sed -n '2,/^[^#]/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) echo "usage: smoke-omp-integration.sh [--only <check>]" >&2; exit 2 ;;
@@ -65,11 +71,16 @@ RUNTIME="${XDG_RUNTIME_DIR:-/tmp}/todou-smoke-$$"
 # a machine without the extension actually has is the missing kind, so the
 # stricter of the two is what a check should stand on.
 EMPTY_RUNTIME="$WORK/empty-runtime"
+# And an agent directory that stays empty, for the same reason one step further
+# in: it moves `sessions/` and `terminal-sessions/` together, so the probe can
+# ask what todou answers with no source of its own left to read. Real and empty
+# rather than missing, exactly as above.
+EMPTY_AGENT="$WORK/empty-agent"
 # The extension makes this itself; made here too because check 5 dials a
 # socket that is *absent from a directory that exists*, which is the shape a
 # session that has exited leaves behind. Without the directory the sender
 # fails to bind its own listener instead, which is a different failure.
-mkdir -p "$HOME_DIR" "$PROJECT" "$RUNTIME/todou-omp" "$EMPTY_RUNTIME"
+mkdir -p "$HOME_DIR" "$PROJECT" "$RUNTIME/todou-omp" "$EMPTY_RUNTIME" "$EMPTY_AGENT"
 # An empty .zshrc, because a HOME without one sends zsh into
 # `zsh-newuser-install` — a full-screen wizard that waits for a keypress. It
 # takes over the pty the moment anything runs a shell, and blocks it.
@@ -86,10 +97,10 @@ wanted() { [ -z "$ONLY" ] || [ "$ONLY" = "$1" ]; }
 
 # The detector, called the way a tool inside omp would reach it, plus the raw
 # record so a mismatch says which side is wrong rather than only that they
-# disagree. `scanned` is the same detector with the record put out of reach —
-# what todou sees on an omp with no extension — so a run says not just that the
-# answer is right but whether the record is what made it right. `published` is
-# the middle case: no variable, but a record still findable by pid.
+# disagree. Three more answers stand beside the plain one, each withholding a
+# source the one before it still had: `published`, `scanned`, `unsourced`. A
+# check that means to pin one layer reads the pair that brackets it — what that
+# layer answers, and what is left to answer once it is gone too.
 cat > "$WORK/detect.mts" <<'PROBE'
 import { readFileSync } from "node:fs";
 import { detectAgentContext } from "../../projects/cli/src/harness/index.ts";
@@ -105,10 +116,26 @@ const { TODOU_OMP_STATE: _withheld, ...withoutState } = process.env;
 // Withholding the variable no longer withholds the record: it is found by
 // ancestor pid now, which is the whole of T-312. So the no-extension answer
 // has to withhold the directory it is found in as well, or `scanned` below
-// would quietly stop exercising the scan and check 2 would assert nothing.
+// would go on reading the record and check 2 would assert nothing.
+//
+// What it then reaches is whichever layer is still standing, and that differs
+// by window. Checks 2 and 6 ask after a turn has run, so the session log is on
+// disk and the breadcrumb's own `existsSync` guard rules itself out: the scan
+// is what answers there. Check 7 asks before the first turn, where that log
+// not existing is the very condition the breadcrumb waits for, so the
+// breadcrumb answers instead (T-318). `unsourced` withholds that layer too.
 const withoutRecord = {
   ...withoutState,
   XDG_RUNTIME_DIR: process.env.TODOU_SMOKE_EMPTY_RUNTIME,
+};
+// One variable moves `sessions/` and `terminal-sessions/` together: an agent
+// directory named outright counts as relocated, and a relocated one takes its
+// data with it rather than leaving the XDG half behind. `HOME` cannot do the
+// same — the detector takes home as a parameter defaulting to `homedir()`, so
+// writing it into this object reaches nothing.
+const unsourcedEnv = {
+  ...withoutRecord,
+  PI_CODING_AGENT_DIR: process.env.TODOU_SMOKE_EMPTY_AGENT,
 };
 let record: unknown = null;
 try {
@@ -134,6 +161,9 @@ console.log(
     // The variable withheld but the record still reachable by pid: what every
     // context except omp's own bash tool actually gets.
     published: detectAgentContext(withoutState),
+    // And with every root todou can read moved away: the answer that is left
+    // when no layer named here is the one giving it.
+    unsourced: detectAgentContext(unsourcedEnv),
     state_path: statePath ?? null,
     socket: process.env.TODOU_MESSAGING_SOCKET ?? null,
     record,
@@ -192,7 +222,8 @@ PUSH
 # XDG_RUNTIME_DIR — both redirected so a run cannot reach the real ones.
 omp_env() {
   env HOME="$HOME_DIR" XDG_RUNTIME_DIR="$RUNTIME" \
-    TODOU_SMOKE_EMPTY_RUNTIME="$EMPTY_RUNTIME" "$@"
+    TODOU_SMOKE_EMPTY_RUNTIME="$EMPTY_RUNTIME" \
+    TODOU_SMOKE_EMPTY_AGENT="$EMPTY_AGENT" "$@"
 }
 
 # One print-mode turn whose whole job is to run one command. `--auto-approve`
@@ -484,8 +515,9 @@ if wanted 6; then
 fi
 
 # 7 — the window this card is about. A session that has not taken a turn has no
-#     log on disk and therefore no descriptor to hold, so the record is the only
-#     thing that can answer — and the variable naming it does not reach here.
+#     log on disk and therefore no descriptor to hold: what can answer here is
+#     the record, and behind it the terminal breadcrumb (T-318) — while the
+#     variable naming the record does not reach here either.
 #     Driven through `!`, omp's direct shell invoke: the one path into a session
 #     that runs without a turn, which is also why this check needs no model.
 if wanted 7; then
@@ -497,7 +529,7 @@ if wanted 7; then
     # Everything is captured from inside the one `!` invocation, at the moment
     # the probe runs: a sampler from outside could only say the window existed
     # at some point, and the record is deleted on shutdown so afterwards is too
-    # late to read it. `TODOU_SMOKE_EMPTY_RUNTIME` is passed explicitly because
+    # late to read it. Both `TODOU_SMOKE_EMPTY_*` are passed explicitly because
     # omp curates the environment it hands a `!` shell, and whether a test-only
     # variable survives that is not something this check should depend on.
     # XDG_RUNTIME_DIR deliberately is *not* passed: whether it arrives is part
@@ -528,8 +560,8 @@ if [ -n "\$SESSION_LOG" ] && [ -e "\$SESSION_LOG" ]; then
 else
   echo absent > "$WORK/blind.logstate"
 fi
-TODOU_SMOKE_EMPTY_RUNTIME="$EMPTY_RUNTIME" node "$WORK/detect.mts" \
-  > "$WORK/blind.json" 2>"$WORK/blind.err"
+TODOU_SMOKE_EMPTY_RUNTIME="$EMPTY_RUNTIME" TODOU_SMOKE_EMPTY_AGENT="$EMPTY_AGENT" \
+  node "$WORK/detect.mts" > "$WORK/blind.json" 2>"$WORK/blind.err"
 BLIND
     MODEL_FLAG=""
     [ -n "${TODOU_SMOKE_OMP_MODEL:-}" ] &&
@@ -563,6 +595,7 @@ BLIND
     if [ -s "$WORK/blind.json" ]; then
       DETECTED=$(json "$WORK/blind.json" detected.session_id)
       SCANNED=$(json "$WORK/blind.json" scanned.session_id)
+      UNSOURCED=$(json "$WORK/blind.json" unsourced.session_id)
       HOSTPID=$(json "$WORK/blind.json" host.pid)
       OPENLOGS=$(json "$WORK/blind.json" host.open_logs)
       if [ -n "$RECORD_ID" ] && [ "$DETECTED" = "$RECORD_ID" ]; then
@@ -570,13 +603,28 @@ BLIND
       else
         bad "expected $RECORD_ID from a direct-shell invoke, got ${DETECTED:-nothing}"
       fi
-      # And the record is what did it: with the record out of reach the same
-      # call in the same place has nothing to fall back to, because the log it
-      # would scan for does not exist yet.
-      if [ -z "$SCANNED" ]; then
-        ok "and without the record there is no answer to be had"
+      # omp's half of the breadcrumb, which nothing else here can reach: the
+      # cases in `test/harness/omp.test.ts` write the breadcrumbs they read, so
+      # they pin how one is parsed and can never say whether omp still drops
+      # one at this moment, in this shape, naming a log that does not exist
+      # yet. Against `RECORD_ID`, which `blind.sh` read off disk, and not
+      # against `DETECTED` — two answers out of one probe agreeing says
+      # nothing. The emptiness guard is not spare: two blanks compare equal.
+      if [ -n "$RECORD_ID" ] && [ "$SCANNED" = "$RECORD_ID" ]; then
+        ok "and the breadcrumb answers with the same session, record out of reach ($SCANNED)"
       else
-        bad "the scan answered $SCANNED with no log on disk; the record was not what resolved this"
+        bad "expected $RECORD_ID from the breadcrumb, got ${SCANNED:-nothing}"
+      fi
+      # And that the answer above came from the layer this names. Moving the
+      # agent directory takes `sessions/` and `terminal-sessions/` with it, so
+      # with the record already withheld nothing todou reads is left standing.
+      # A layer that answers from somewhere else — a cwd guess, a mtime guess —
+      # fails here, which is the whole of what the assertion above would
+      # otherwise let through.
+      if [ -z "$UNSOURCED" ]; then
+        ok "and with the agent directory out of reach too, nothing answers at all"
+      else
+        bad "something still answered $UNSOURCED with every source withheld"
       fi
       if [ "$OPENLOGS" = "0" ]; then
         ok "the descriptor path was blind, as the window requires"
