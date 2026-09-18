@@ -163,6 +163,55 @@ describe("GroupedIssueList", () => {
     });
   });
 
+  it("keeps loaded group rows and replaces Show more after an append failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), "http://test");
+        if (!url.pathname.endsWith("/issues")) {
+          return new Response("{}", { status: 404 });
+        }
+        const status = url.searchParams.get("status");
+        const cursor = url.searchParams.get("cursor");
+        if (status === "5" && cursor === "c5") {
+          return new Response("{}", { status: 500 });
+        }
+        if (status === "5" && cursor === null) {
+          return new Response(
+            JSON.stringify({
+              items: [item(51, "ship one", ship)],
+              next_cursor: "c5",
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
+        }
+        return new Response("{}", { status: 404 });
+      }),
+    );
+
+    const view = renderWithProviders(
+      <GroupedIssueList
+        slug="p"
+        statuses={statuses}
+        counts={{ open: 2, closed: 0, by_status: { "5": 2 } }}
+        allLabels={[]}
+        search={{}}
+      />,
+    );
+
+    expect(await view.findByText("ship one")).toBeTruthy();
+    fireEvent.click(view.getByText("Show 1 more…"));
+
+    // The loaded row must stay visible; hiding the group would turn this
+    // append failure into the separate cold-load behavior.
+    expect(await view.findByText(/Could not load more/)).toBeTruthy();
+    expect(view.getByText("ship one")).toBeTruthy();
+    expect(view.queryByText("Show 1 more…")).toBeNull();
+  });
+
   it("shows the empty state when every group is empty", async () => {
     vi.stubGlobal("fetch", fakeGroupServer({}));
     const { findByText } = renderWithProviders(

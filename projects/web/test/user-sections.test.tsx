@@ -345,6 +345,29 @@ describe("UserIssuesSection (T-374)", () => {
     });
   });
 
+  it("keeps loaded cards and replaces Load more after an append failure", async () => {
+    vi.spyOn(api, "listUserIssues").mockImplementation(
+      async (_ref, query): Promise<UserIssuesPage> => {
+        if (query?.after === "2:cursor") {
+          throw Object.assign(new Error("page unavailable"), { status: 500 });
+        }
+        return page([makeItem("todou", 12)], "2:cursor");
+      },
+    );
+    vi.spyOn(api, "listUserProjects").mockResolvedValue(noProjects());
+
+    const view = renderAt("/users/alice", clientWithUser());
+    expect(await view.findByText("T-12")).toBeTruthy();
+    fireEvent.click(view.getByRole("button", { name: "Load more" }));
+
+    // A pagination error must not hide the first page that already loaded.
+    expect(
+      await view.findByText("Could not load more: page unavailable"),
+    ).toBeTruthy();
+    expect(view.getByText("T-12")).toBeTruthy();
+    expect(view.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
   it("offers no Load more when the first page is the whole list", async () => {
     vi.spyOn(api, "listUserIssues").mockResolvedValue(
       page([makeItem("todou", 12)]),

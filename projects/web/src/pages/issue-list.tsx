@@ -73,9 +73,14 @@ import {
   LoadFailure,
   RefreshFailure,
 } from "@/components/shared/load-failure.tsx";
+import {
+  LoadMoreFailure,
+  LoadMoreFooter,
+} from "@/components/shared/load-more.tsx";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useHeaderHeight } from "@/lib/use-header-height.ts";
+import { usePagedAppend } from "@/lib/use-paged-append.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { cn } from "@/lib/utils";
 
@@ -600,21 +605,19 @@ function IssueGroup({
     placeholderData: keepPreviousData,
   });
   const grid = useIssueListGrid();
-  const [extraPages, setExtraPages] = useState<IssueListPageData[]>([]);
   const queryClient = useQueryClient();
 
   // Same guard as IssueList: pages loaded under a previous filter state
   // would mix stale rows into the group.
   const paginationKey = JSON.stringify([slug, search, status.id]);
-  const [loadedFor, setLoadedFor] = useState(paginationKey);
-  if (loadedFor !== paginationKey) {
-    setLoadedFor(paginationKey);
-    setExtraPages([]);
-  }
+  const paged = usePagedAppend<IssueListPageData>(paginationKey);
 
   const items = useMemo(
-    () => [...(group.data?.items ?? []), ...extraPages.flatMap((p) => p.items)],
-    [group.data, extraPages],
+    () => [
+      ...(group.data?.items ?? []),
+      ...paged.pages.flatMap((page) => page.items),
+    ],
+    [group.data, paged.pages],
   );
   const narrowing = isNarrowing(typed, search, group.isPlaceholderData);
   const shown = useMemo(
@@ -622,33 +625,34 @@ function IssueGroup({
     [narrowing, items, typed],
   );
   const lastCursor =
-    extraPages.length === 0
+    paged.pages.length === 0
       ? (group.data?.next_cursor ?? null)
-      : (extraPages.at(-1)?.next_cursor ?? null);
+      : (paged.pages.at(-1)?.next_cursor ?? null);
   // The optimistic move patches only the first page, so the loaded count
   // can drift by one from `total` until the server refetch settles; clamp
   // so the button never offers "Show 0 more".
   const remaining = Math.max(total - items.length, 0);
 
-  async function loadMore() {
+  function loadMore() {
     if (!lastCursor) return;
     const base = issueGroupQuery(slug, status.id, search);
-    const next = await queryClient.fetchQuery({
-      ...issuesEntry([...base.queryKey, lastCursor], {
-        kind: "page",
-        filter: groupFilter(search, status.id, lastCursor),
-      }),
-      queryFn: () =>
-        api.listIssues(slug, {
-          status: [status.id],
-          q: search.q,
-          label: csvToIds(search.label),
-          assignee: search.assignee,
-          ...effectiveSort(search),
-          cursor: lastCursor,
+    paged.append(() =>
+      queryClient.fetchQuery({
+        ...issuesEntry([...base.queryKey, lastCursor], {
+          kind: "page",
+          filter: groupFilter(search, status.id, lastCursor),
         }),
-    });
-    setExtraPages((prev) => [...prev, next]);
+        queryFn: () =>
+          api.listIssues(slug, {
+            status: [status.id],
+            q: search.q,
+            label: csvToIds(search.label),
+            assignee: search.assignee,
+            ...effectiveSort(search),
+            cursor: lastCursor,
+          }),
+      }),
+    );
   }
 
   return (
@@ -706,14 +710,26 @@ function IssueGroup({
             the query for the previous search word, and the count beside it is
             counting that word's matches. Both come back with the answer. */}
         {!narrowing && lastCursor && remaining > 0 && (
-          <li className={ISSUE_LIST_ROW}>
-            <button
-              type="button"
-              className="w-full cursor-pointer p-2 text-center text-sm text-muted-foreground hover:text-foreground"
-              onClick={loadMore}
-            >
-              Show {remaining} more…
-            </button>
+          <li
+            className={
+              paged.error ? cn(ISSUE_LIST_ROW, "p-3 text-sm") : ISSUE_LIST_ROW
+            }
+          >
+            {paged.error ? (
+              <LoadMoreFailure
+                error={paged.error}
+                onRetry={loadMore}
+                retrying={paged.pending}
+              />
+            ) : (
+              <button
+                type="button"
+                className="w-full cursor-pointer p-2 text-center text-sm text-muted-foreground hover:text-foreground"
+                onClick={loadMore}
+              >
+                {paged.pending ? "Loading…" : `Show ${remaining} more…`}
+              </button>
+            )}
           </li>
         )}
       </ul>
@@ -744,21 +760,16 @@ export function IssueList({
   onCreateLabel?: (name: string) => Promise<Label>;
 }) {
   const grid = useIssueListGrid();
-  const [extraPages, setExtraPages] = useState<IssueListPageData[]>([]);
   const queryClient = useQueryClient();
 
   // Pages were appended under the previous filter state; keeping them would
   // mix e.g. closed rows into the open list after a category switch.
   const paginationKey = JSON.stringify([slug, search]);
-  const [loadedFor, setLoadedFor] = useState(paginationKey);
-  if (loadedFor !== paginationKey) {
-    setLoadedFor(paginationKey);
-    setExtraPages([]);
-  }
+  const paged = usePagedAppend<IssueListPageData>(paginationKey);
 
   const items = useMemo(
-    () => [...page.items, ...extraPages.flatMap((p) => p.items)],
-    [page.items, extraPages],
+    () => [...page.items, ...paged.pages.flatMap((next) => next.items)],
+    [page.items, paged.pages],
   );
   const shown = useMemo(
     () => (narrowing ? narrowByTitle(items, typed) : items),
@@ -768,21 +779,22 @@ export function IssueList({
   // `??` would resurrect page 1's cursor there and Load More would re-append
   // page 2 forever.
   const lastCursor =
-    extraPages.length === 0
+    paged.pages.length === 0
       ? page.next_cursor
-      : (extraPages.at(-1)?.next_cursor ?? null);
+      : (paged.pages.at(-1)?.next_cursor ?? null);
 
-  async function loadMore() {
+  function loadMore() {
     if (!lastCursor) return;
-    const next = await queryClient.fetchQuery({
-      ...issuesEntry(["issues", slug, search, lastCursor], {
-        kind: "page",
-        filter: listFilter(search, lastCursor),
+    paged.append(() =>
+      queryClient.fetchQuery({
+        ...issuesEntry(["issues", slug, search, lastCursor], {
+          kind: "page",
+          filter: listFilter(search, lastCursor),
+        }),
+        queryFn: () =>
+          api.listIssues(slug, { ...listParams(search), cursor: lastCursor }),
       }),
-      queryFn: () =>
-        api.listIssues(slug, { ...listParams(search), cursor: lastCursor }),
-    });
-    setExtraPages((prev) => [...prev, next]);
+    );
   }
 
   // Only once the server has answered may the screen say there is nothing:
@@ -814,11 +826,11 @@ export function IssueList({
         />
       </ul>
       {!narrowing && lastCursor && (
-        <div className="text-center">
-          <Button variant="outline" size="sm" onClick={loadMore}>
-            Load more
-          </Button>
-        </div>
+        <LoadMoreFooter
+          pending={paged.pending}
+          error={paged.error}
+          onLoadMore={loadMore}
+        />
       )}
     </div>
   );
