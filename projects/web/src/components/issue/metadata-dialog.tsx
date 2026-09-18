@@ -1,7 +1,7 @@
 import type { EditorView } from "@codemirror/view";
 import { useQuery } from "@tanstack/react-query";
 import type { IssueMetadataWriteEntry } from "@todou/shared";
-import { type ComponentProps, type RefObject, useRef, useState } from "react";
+import { type ComponentProps, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   conflictsOf,
@@ -91,7 +91,7 @@ export function MetadataDialog({
   issueNumber: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  restoreFocusTo?: RefObject<HTMLElement | null>;
+  restoreFocusTo?: () => HTMLElement | null;
 }) {
   const metadata = useQuery(issueMetadataQuery(slug, issueNumber));
   const canWrite = useCan(slug, "metadata.write");
@@ -405,13 +405,15 @@ export function MetadataDialog({
         className="max-h-[85vh] overflow-y-auto sm:max-w-3xl"
         aria-describedby={undefined}
         onCloseAutoFocus={(event) => {
-          const trigger = restoreFocusTo?.current;
-          if (!trigger) return;
+          const trigger = restoreFocusTo?.() ?? null;
+          // With no live target, leave focus restoration to Radix.
+          if (trigger === null) return;
           // Radix takes the focus back after this handler runs, so handing it
           // over synchronously here would be overwritten; a frame later the
           // dialog is gone and the trigger keeps it.
           event.preventDefault();
-          requestAnimationFrame(() => trigger.focus());
+          // Bare focus can scroll the trigger into view via html scroll-padding (T-388).
+          requestAnimationFrame(() => trigger.focus({ preventScroll: true }));
         }}
       >
         <DialogHeader>

@@ -422,3 +422,46 @@ describe("the metadata dialog", () => {
     });
   });
 });
+
+describe("the metadata dialog's focus restore (T-413)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("hands focus back to the summary block it was opened from", async () => {
+    mount([entry("orch", "phase", "plan")]);
+    const summary = await screen.findByTestId("metadata-open");
+    summary.focus();
+    fireEvent.click(summary);
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(summary));
+  });
+
+  it("falls back to the heading button when that summary block is gone", async () => {
+    vi.spyOn(api, "writeIssueMetadata").mockResolvedValue({ entries: [] });
+    const get = vi
+      .spyOn(api, "getIssueMetadata")
+      .mockResolvedValue({ entries: [entry("orch", "phase", "plan")] });
+    mount([entry("orch", "phase", "plan")]);
+    const summary = await screen.findByTestId("metadata-open");
+    summary.focus();
+    fireEvent.click(summary);
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+
+    get.mockResolvedValue({ entries: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Delete orch/phase" }));
+    await waitFor(() =>
+      expect(screen.queryByTestId("metadata-open")).toBeNull(),
+    );
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // hideOthers marks the rest of the page aria-hidden while the dialog is
+    // open, so getByRole can only find the heading button after it closes.
+    const heading = screen.getByRole("button", { name: "Edit metadata" });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+  });
+});

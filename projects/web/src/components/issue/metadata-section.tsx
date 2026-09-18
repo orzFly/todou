@@ -52,7 +52,8 @@ export function MetadataSection({
   const [open, setOpen] = useState(false);
   // Two controls open the same dialog, so the one to hand focus back to is
   // whichever was clicked, not a ref bound to either of them.
-  const opener = useRef<HTMLButtonElement>(null);
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const heading = useRef<HTMLButtonElement>(null);
   const metadata = useQuery(issueMetadataQuery(slug, issueNumber));
   const canWrite = useCan(slug, "metadata.write");
   const groups = groupMetadata(metadata.data?.entries ?? []);
@@ -75,6 +76,7 @@ export function MetadataSection({
       action={
         canOpen && (
           <Button
+            ref={heading}
             variant="ghost"
             size="icon-xs"
             aria-label="Edit metadata"
@@ -133,7 +135,12 @@ export function MetadataSection({
         issueNumber={issueNumber}
         open={open}
         onOpenChange={setOpen}
-        restoreFocusTo={opener}
+        restoreFocusTo={() => {
+          // The clicked node may have unmounted after deleting every entry.
+          // Unlike opener, heading is managed by React and cleared on unmount.
+          const clicked = opener.current;
+          return clicked?.isConnected === true ? clicked : heading.current;
+        }}
       />
     </SidebarSection>
   );
