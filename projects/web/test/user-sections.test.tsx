@@ -22,7 +22,10 @@ import type {
 } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
-import { referenceConfigQuery } from "../src/api/references.ts";
+import {
+  referenceConfigQuery,
+  referenceDirectoryQuery,
+} from "../src/api/references.ts";
 import {
   userIssuesQuery,
   userProjectsQuery,
@@ -181,6 +184,10 @@ function clientWithUser(): QueryClient {
     format: { prefix: "K", history: [] },
     autolinks: [],
   });
+  client.setQueryData(referenceDirectoryQuery.queryKey, {
+    entries: [],
+    contested: [],
+  });
   return client;
 }
 
@@ -188,6 +195,7 @@ const noProjects = (): UserProjects => ({ items: [] });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("UserIssuesSection (T-374)", () => {
@@ -200,6 +208,37 @@ describe("UserIssuesSection (T-374)", () => {
     const view = renderAt("/users/alice", clientWithUser());
     expect(await view.findByText("T-12")).toBeTruthy();
     expect(view.getByText("K-5")).toBeTruthy();
+  });
+
+  it("draws the project icon beside a card row's project name", async () => {
+    class LoadedImage extends EventTarget {
+      complete = true;
+      naturalWidth = 20;
+      crossOrigin: string | null = null;
+      referrerPolicy = "";
+      src = "";
+    }
+    vi.stubGlobal("Image", LoadedImage);
+    const iconUrl = "/api/projects/5/icon?v=user-row";
+    vi.spyOn(api, "listUserIssues").mockResolvedValue(
+      page([
+        makeItem("todou", 12, {
+          project: {
+            id: 5,
+            slug: "todou",
+            name: "Project todou",
+            icon_url: iconUrl,
+          },
+        }),
+      ]),
+    );
+    vi.spyOn(api, "listUserProjects").mockResolvedValue(noProjects());
+
+    const view = renderAt("/users/alice", clientWithUser());
+    const name = await view.findByText("Project todou");
+    expect(name.parentElement?.querySelector("img")?.getAttribute("src")).toBe(
+      iconUrl,
+    );
   });
 
   it("links each row into its own project, not a page-level one", async () => {

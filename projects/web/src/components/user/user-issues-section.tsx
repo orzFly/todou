@@ -4,7 +4,7 @@ import type {
   UserIssueState,
   UserIssuesPage,
 } from "@todou/shared";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { userIssuesPageQuery, userIssuesQuery } from "@/api/users.ts";
 import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
@@ -12,8 +12,10 @@ import {
   LoadFailure,
   RefreshFailure,
 } from "@/components/shared/load-failure.tsx";
+import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { cn } from "@/lib/utils";
 
@@ -108,10 +110,18 @@ export function UserIssuesSection({
     hasContent,
     query.queryKey,
   );
-  const items = [
-    ...(first.data?.items ?? []),
-    ...extraPages.flatMap((p) => p.items),
-  ];
+  const items = useMemo(
+    () => [
+      ...(first.data?.items ?? []),
+      ...extraPages.flatMap((p) => p.items),
+    ],
+    [extraPages, first.data?.items],
+  );
+  const projects = useMemo(
+    () => items.map((item) => item.project),
+    [items],
+  );
+  const refs = useProjectRefs(projects);
   // The newest loaded page decides. Falling back to page 1's cursor would
   // resurrect it at the end of the list and re-append that page forever.
   const lastPage = extraPages.at(-1) ?? first.data;
@@ -185,6 +195,14 @@ export function UserIssuesSection({
                 trailing={
                   <span className="ml-auto flex shrink-0 items-center gap-2 max-sm:hidden">
                     <StatusPill status={item.status} />
+                    <ProjectIcon
+                      project={{
+                        name: item.project.name,
+                        prefix: refs.get(item.project.slug)?.prefix ?? null,
+                        icon_url: item.project.icon_url,
+                      }}
+                      className="size-5"
+                    />
                     <span className="text-xs text-muted-foreground">
                       {item.project.name}
                     </span>
