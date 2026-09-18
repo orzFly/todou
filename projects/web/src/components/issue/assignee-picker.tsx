@@ -33,7 +33,7 @@ export function AssigneePicker({
       <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
       {/* Name plus login needs more room than the trigger's width, which
           is what the menu defaults to. */}
-      <DropdownMenuContent className="w-auto">
+      <DropdownMenuContent className="w-auto" collisionPadding={8.5}>
         {members.map((member) => {
           const active = selectedIds.includes(member.user.id);
           return (

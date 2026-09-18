@@ -30,18 +30,17 @@
  * into view) is precisely what a synthetic event cannot reproduce, and it is
  * the prime suspect this check exists to rule out.
  *
- * T-424 owns extracting the duplicated isolated-stack and CDP transport used
- * here and by user-baseline-smoke.mjs; keep them separate until that lands.
+ * T-424's shared isolated-stack and CDP modules own process supervision,
+ * locking, pipe framing, and browser target lifecycle. This file keeps only
+ * overlay-specific scan, probe, fault, and reporting behavior.
  */
-import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { evaluate, startBrowser } from "./lib/browser-cdp.mjs";
+import { createBrowserStack } from "./lib/browser-stack.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const CHROMIUM = process.env.CHROMIUM ?? "/usr/bin/chromium";
 
 /** Clear space demanded on every side of an open overlay. */
 const EDGE_PADDING = 8;
@@ -175,116 +174,6 @@ function fail(message) {
   process.exit(2);
 }
 
-// ------------------------------------------------------------- the isolated stack
-
-async function freePort() {
-  return await new Promise((ok, no) => {
-    const probe = createServer();
-    probe.on("error", no);
-    probe.listen(0, "127.0.0.1", () => {
-      const { port } = probe.address();
-      probe.close(() => ok(port));
-    });
-  });
-}
-
-/** Poll `url` until it answers or the budget runs out. */
-async function waitForHttp(url, what, budgetMs = 60000) {
-  const deadline = Date.now() + budgetMs;
-  while (Date.now() < deadline) {
-    try {
-      await fetch(url);
-      return;
-    } catch {
-      await sleep(250);
-    }
-  }
-  throw new Error(`${what} never answered at ${url}`);
-}
-
-async function startStack(opts, dir) {
-  const serverPort = opts.serverPort || (await freePort());
-  const webPort = opts.webPort || (await freePort());
-
-  writeFileSync(
-    join(dir, "config.toml"),
-    [
-      "[auth]",
-      'mode = "single"',
-      "",
-      "[http]",
-      `port = ${serverPort}`,
-      "",
-      "[database]",
-      `system = "pglite://${join(dir, "db")}"`,
-      "auto_migrate = true",
-      "",
-      "[storage]",
-      `path = "${join(dir, "attachments")}"`,
-      "",
-    ].join("\n"),
-  );
-
-  const server = spawn(
-    process.execPath,
-    [
-      "projects/server/src/index.ts",
-      "serve",
-      "--config",
-      join(dir, "config.toml"),
-    ],
-    // Its own process group, because `pnpm dev` is a wrapper around vite and
-    // `pnpm exec` around tsx: killing the child this handle names leaves the
-    // real listener holding the port for the next run to collide with.
-    { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], detached: true },
-  );
-  const web = spawn(
-    "pnpm",
-    [
-      "--filter",
-      "@todou/web",
-      "dev",
-      "--port",
-      String(webPort),
-      "--strictPort",
-      "--host",
-      "127.0.0.1",
-    ],
-    {
-      cwd: ROOT,
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: true,
-      env: { ...process.env, TODOU_API: `http://127.0.0.1:${serverPort}` },
-    },
-  );
-
-  const log = (child, name) => {
-    let tail = "";
-    for (const stream of [child.stdout, child.stderr]) {
-      stream.on("data", (chunk) => {
-        tail = (tail + chunk).slice(-4000);
-      });
-    }
-    child.on("exit", (code) => {
-      if (code !== null && code !== 0)
-        console.error(`${name} exited ${code}\n${tail}`);
-    });
-    return () => tail;
-  };
-  const serverTail = log(server, "server");
-  const webTail = log(web, "web");
-
-  try {
-    await waitForHttp(`http://127.0.0.1:${serverPort}/api/auth/mode`, "server");
-    await waitForHttp(`http://127.0.0.1:${webPort}/`, "web dev server");
-  } catch (error) {
-    console.error(`server log:\n${serverTail()}\nweb log:\n${webTail()}`);
-    throw error;
-  }
-
-  return { serverPort, webPort, children: [server, web] };
-}
-
 // -------------------------------------------------------------------- seeding
 
 /** Enough body and timeline that the sidebar sits far below the fold. */
@@ -350,103 +239,6 @@ async function seed(serverPort) {
   return { slug, number: issue.number, cookie, status: shipped.name };
 }
 
-// ------------------------------------------------------------ CDP over a pipe
-
-class Cdp {
-  #child;
-  #pending = new Map();
-  #handlers = new Map();
-  #nextId = 1;
-  #buffer = Buffer.alloc(0);
-
-  constructor(child) {
-    this.#child = child;
-    child.stdio[4].on("data", (chunk) => this.#consume(chunk));
-  }
-
-  #consume(chunk) {
-    this.#buffer = Buffer.concat([this.#buffer, chunk]);
-    for (;;) {
-      // Chrome delimits pipe messages with NUL and splits them across reads.
-      const end = this.#buffer.indexOf(0);
-      if (end === -1) return;
-      const message = JSON.parse(
-        this.#buffer.subarray(0, end).toString("utf8"),
-      );
-      this.#buffer = this.#buffer.subarray(end + 1);
-      if (message.id !== undefined) {
-        const settle = this.#pending.get(message.id);
-        this.#pending.delete(message.id);
-        if (!settle) continue;
-        if (message.error) settle.no(new Error(JSON.stringify(message.error)));
-        else settle.ok(message.result);
-      } else {
-        for (const handler of this.#handlers.get(message.method) ?? [])
-          handler(message.params);
-      }
-    }
-  }
-
-  on(method, handler) {
-    const list = this.#handlers.get(method) ?? [];
-    list.push(handler);
-    this.#handlers.set(method, list);
-  }
-
-  send(method, params = {}, sessionId) {
-    const id = this.#nextId++;
-    const payload = { id, method, params, ...(sessionId ? { sessionId } : {}) };
-    this.#child.stdio[3].write(`${JSON.stringify(payload)}\0`);
-    return new Promise((ok, no) => this.#pending.set(id, { ok, no }));
-  }
-}
-
-async function startBrowser(dir) {
-  const child = spawn(
-    CHROMIUM,
-    [
-      "--remote-debugging-pipe",
-      "--headless=new",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-gpu",
-      "--hide-scrollbars",
-      `--user-data-dir=${join(dir, "chrome")}`,
-      "about:blank",
-    ],
-    { stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"] },
-  );
-  const cdp = new Cdp(child);
-  const { targetId } = await cdp.send("Target.createTarget", {
-    url: "about:blank",
-  });
-  const { sessionId } = await cdp.send("Target.attachToTarget", {
-    targetId,
-    flatten: true,
-  });
-  await cdp.send("Page.enable", {}, sessionId);
-  await cdp.send("Runtime.enable", {}, sessionId);
-  await cdp.send("Network.enable", {}, sessionId);
-  return { child, cdp, sessionId };
-}
-
-/** Run `fn` in the page with JSON-serialisable arguments, and return its value. */
-async function evaluate(page, fn, ...args) {
-  const expression = `(${fn.toString()})(...${JSON.stringify(args)})`;
-  const { result, exceptionDetails } = await page.cdp.send(
-    "Runtime.evaluate",
-    { expression, awaitPromise: true, returnByValue: true },
-    page.sessionId,
-  );
-  if (exceptionDetails) {
-    throw new Error(
-      exceptionDetails.exception?.description ??
-        JSON.stringify(exceptionDetails),
-    );
-  }
-  return result.value;
-}
-
 // ------------------------------------------------------------- the page probes
 
 /**
@@ -470,9 +262,9 @@ function pageHelpers() {
         );
       }
       case "labels":
-        return byText("button", "Edit labels");
+        return document.querySelector('button[aria-label="Edit labels"]');
       case "assignees":
-        return byText("button", "Edit assignees");
+        return document.querySelector('button[aria-label="Edit assignees"]');
       case "notifications":
         return byText("button", "Notifying");
       case "more":
@@ -542,13 +334,23 @@ function pageHelpers() {
         .filter((element) => element.getAttribute("data-state") === "open")
         .map((element) => {
           const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
           return {
             slot: element.getAttribute("data-slot"),
             top: rect.top,
             left: rect.left,
             bottom: rect.bottom,
             right: rect.right,
-            visibility: getComputedStyle(element).visibility,
+            width: rect.width,
+            height: rect.height,
+            visibility: style.visibility,
+            devicePixelRatio,
+            innerWidth,
+            visualViewportWidth: visualViewport?.width ?? null,
+            availableWidth: style.getPropertyValue(
+              "--radix-popper-available-width",
+            ),
+            transform: style.transform,
           };
         });
     },
@@ -802,7 +604,12 @@ function clipped(overlays, viewport, where) {
       {
         invariant: "I2",
         key: `I2 ${where} ${overlay.slot}`,
-        detail: `${overlay.slot} outside the viewport — ${problems.join(", ")}`,
+        detail:
+          `${overlay.slot} outside the viewport — ${problems.join(", ")}; ` +
+          `rect=${overlay.left},${overlay.top}..${overlay.right},${overlay.bottom} ` +
+          `layout=${overlay.innerWidth} visual=${overlay.visualViewportWidth} ` +
+          `dpr=${overlay.devicePixelRatio} available=${overlay.availableWidth} ` +
+          `transform=${overlay.transform}`,
       },
     ];
   });
@@ -1034,8 +841,29 @@ async function runPass(page, target, opts, { stopWhen = null } = {}) {
     );
     const deadline = Date.now() + 30000;
     while (!(await evaluate(page, () => window.__smoke?.ready() ?? false))) {
-      if (Date.now() > deadline)
-        throw new Error("the issue page never rendered");
+      if (Date.now() > deadline) {
+        const state = await evaluate(page, () => {
+          const names = [
+            "status",
+            "labels",
+            "assignees",
+            "notifications",
+            "more",
+            "comment",
+          ];
+          return {
+            url: location.href,
+            title: document.title,
+            helper: typeof window.__smoke,
+            missing: names.filter(
+              (name) => window.__smoke?.tapPoint(name) === null,
+            ),
+          };
+        });
+        throw new Error(
+          `the issue page never rendered: ${JSON.stringify(state)}`,
+        );
+      }
       await sleep(200);
     }
 
@@ -1167,34 +995,34 @@ function reportStale(tally) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  if (Number(process.versions.node.split(".")[0]) < 24) {
-    fail(
-      `needs Node 24 (the server entry is run as TypeScript); this is ${process.version}. ` +
-        "Use the devshell's node.",
-    );
-  }
-
-  const dir = mkdtempSync(join(ROOT, ".tmp", "overlay-smoke-"));
-  const started = [];
-  let browser = null;
+  let stack = null;
   try {
-    const stack = await startStack(opts, dir);
-    started.push(...stack.children);
+    stack = await createBrowserStack({
+      root: ROOT,
+      prefix: "overlay-smoke-",
+      keep: opts.keep,
+      serverPort: opts.serverPort,
+      webPort: opts.webPort,
+    });
     const seeded = await seed(stack.serverPort);
 
-    browser = await startBrowser(dir);
-    const page = { cdp: browser.cdp, sessionId: browser.sessionId };
-    const url = `http://127.0.0.1:${stack.webPort}`;
-    await page.cdp.send(
-      "Network.setCookie",
-      {
-        name: seeded.cookie.split("=")[0],
-        value: seeded.cookie.split(/=(.*)/s)[1],
+    const browser = await startBrowser({
+      dir: stack.dir,
+      chromium: stack.chromium,
+      registerChild: stack.registerChild,
+    });
+    stack.addCleanup(() => browser.close());
+    const context = await browser.newContext();
+    const equals = seeded.cookie.indexOf("=");
+    const page = await context.newPage({
+      cookie: {
+        name: seeded.cookie.slice(0, equals),
+        value: seeded.cookie.slice(equals + 1),
         domain: "127.0.0.1",
         path: "/",
       },
-      page.sessionId,
-    );
+    });
+    const url = stack.webUrl;
     const target = { url, slug: seeded.slug, number: seeded.number };
     console.log(
       `issue ${seeded.slug}#${seeded.number} on ${seeded.status}, web ${url}, ` +
@@ -1265,23 +1093,7 @@ async function main() {
       console.log(`${held ? "ok  " : "FAIL"} ${what}`);
     return verdicts.every(([, held]) => held) ? 0 : 1;
   } finally {
-    if (browser) {
-      browser.child.kill();
-      await Promise.race([
-        new Promise((ok) => browser.child.once("exit", ok)),
-        sleep(5000).then(() => browser.child.kill("SIGKILL")),
-      ]);
-    }
-    for (const child of started) {
-      try {
-        process.kill(-child.pid, "SIGTERM");
-      } catch {
-        child.kill("SIGKILL");
-      }
-    }
-    await sleep(500);
-    if (!opts.keep) rmSync(dir, { recursive: true, force: true });
-    else console.log(`kept ${dir}`);
+    await stack?.cleanup();
   }
 }
 

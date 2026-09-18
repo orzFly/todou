@@ -13,7 +13,9 @@
     "build": "pnpm -r build",
     "build:cli": "scripts/build-cli.sh",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r --workspace-concurrency=1 test"
+    "test": "pnpm -r --workspace-concurrency=1 test",
+    "test:browser": "node scripts/browser-layout-smoke.mjs",
+    "test:browser:overlay": "node scripts/overlay-viewport-smoke.mjs"
   },
   "devEngines": {
     "packageManager": {

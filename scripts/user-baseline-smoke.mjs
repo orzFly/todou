@@ -8,24 +8,20 @@
  * but is deliberately reported as a guard and never promoted to a browser hit.
  * The low-frequency private spec-view rows are reached through the real
  * production spec route; the Vite-only fixture covers the exported components.
- * Stack/CDP helper extraction is tracked separately by T-424.
+ * Shared stack/CDP infrastructure owns locking, process supervision, pipe
+ * framing, and browser target lifecycle; this file retains the fixture,
+ * source guards, measurement cases, and fault proofs.
  *
  * Run manually (this intentionally is not part of the happy-dom test suite):
  *   node scripts/user-baseline-smoke.mjs
  *   node scripts/user-baseline-smoke.mjs --self-test
  */
-import { execFileSync, spawn } from "node:child_process";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { createServer } from "node:net";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { evaluate, startBrowser } from "./lib/browser-cdp.mjs";
+import { createBrowserStack } from "./lib/browser-stack.mjs";
 import {
   assessT359FreshPageRestore,
   assessT416FreshPageRestore,
@@ -34,19 +30,8 @@ import {
 } from "./user-baseline-faults.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const CHROMIUM = process.env.CHROMIUM ?? "/usr/bin/chromium";
 const FIXTURE_URL = "/test/browser/user-baseline.html";
 const EPSILON = 0.125;
-const SOURCE_VERSION = (() => {
-  try {
-    return execFileSync("git", ["describe", "--tags", "--always", "--dirty"], {
-      cwd: ROOT,
-      encoding: "utf8",
-    }).trim();
-  } catch {
-    return "unknown";
-  }
-})();
 const VIEWPORTS = [
   { name: "390-mobile", width: 390, height: 844 },
   { name: "639-mobile-boundary", width: 639, height: 844 },
@@ -182,146 +167,6 @@ function usage(message) {
   process.exit(2);
 }
 
-async function freePort() {
-  return await new Promise((ok, no) => {
-    const socket = createServer();
-    socket.on("error", no);
-    socket.listen(0, "127.0.0.1", () => {
-      const address = socket.address();
-      socket.close(() => ok(address.port));
-    });
-  });
-}
-
-async function waitForOwnedLog(child, tail, label, pattern, budget = 60_000) {
-  const deadline = Date.now() + budget;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null || child.signalCode !== null) {
-      throw new Error(`${label} exited before its readiness log\n${tail()}`);
-    }
-    if (pattern.test(tail())) return;
-    await sleep(100);
-  }
-  throw new Error(`${label} did not emit its readiness log\n${tail()}`);
-}
-
-async function waitForOwnedHttp(url, label, tail, child, budget = 60_000) {
-  const deadline = Date.now() + budget;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null || child.signalCode !== null) {
-      throw new Error(`${label} exited before readiness at ${url}\n${tail()}`);
-    }
-    try {
-      const response = await fetch(url);
-      if (response.ok) return;
-    } catch {}
-    await sleep(200);
-  }
-  throw new Error(`${label} did not answer at ${url}\n${tail()}`);
-}
-
-function capture(child, label) {
-  let text = "";
-  for (const stream of [child.stdout, child.stderr]) {
-    stream?.on("data", (chunk) => {
-      text = (text + chunk).slice(-6000);
-    });
-  }
-  child.on("exit", (code, signal) => {
-    if (code && code !== 0)
-      console.error(
-        `${label} exited ${code}${signal ? ` (${signal})` : ""}\n${text}`,
-      );
-  });
-  return () => text;
-}
-
-async function startStack(dir, children) {
-  const serverPort = await freePort();
-  let webPort = await freePort();
-  while (webPort === serverPort) webPort = await freePort();
-  const config = join(dir, "config.toml");
-  writeFileSync(
-    config,
-    [
-      "[auth]",
-      'mode = "single"',
-      "",
-      "[http]",
-      `port = ${serverPort}`,
-      "",
-      "[database]",
-      `system = "pglite://${join(dir, "db")}"`,
-      "auto_migrate = true",
-      "",
-      "[storage]",
-      `path = "${join(dir, "attachments")}"`,
-      "",
-    ].join("\n"),
-  );
-
-  // Use the interpreter that launched this script. In particular, `pnpm exec
-  // node` may select Node 24 while a bare `node` on PATH is older.
-  const server = spawn(
-    process.execPath,
-    ["projects/server/src/index.ts", "serve", "--config", config],
-    {
-      cwd: ROOT,
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
-  children.push(server);
-  const viteBin = resolve(ROOT, "projects/web/node_modules/vite/bin/vite.js");
-  const web = spawn(
-    process.execPath,
-    [
-      viteBin,
-      "--config",
-      "vite.config.ts",
-      "--host",
-      "127.0.0.1",
-      "--port",
-      String(webPort),
-      "--strictPort",
-    ],
-    {
-      cwd: resolve(ROOT, "projects/web"),
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, TODOU_API: `http://127.0.0.1:${serverPort}` },
-    },
-  );
-  children.push(web);
-  const serverTail = capture(server, "server");
-  const webTail = capture(web, "vite");
-  await waitForOwnedLog(
-    server,
-    serverTail,
-    "server",
-    new RegExp(`todou server listening on :${serverPort}\\b`),
-  );
-  await waitForOwnedHttp(
-    `http://127.0.0.1:${serverPort}/api/auth/mode`,
-    "server",
-    serverTail,
-    server,
-  );
-  await waitForOwnedLog(
-    web,
-    webTail,
-    "fixture",
-    new RegExp(`Local:.*127\\.0\\.0\\.1:${webPort}`),
-  );
-  await waitForOwnedHttp(
-    `http://127.0.0.1:${webPort}${FIXTURE_URL}`,
-    "fixture",
-    webTail,
-    web,
-  );
-  return { serverPort, webPort };
-}
-
 async function seed(serverPort) {
   const base = `http://127.0.0.1:${serverPort}/api`;
   let cookie = "";
@@ -443,111 +288,21 @@ async function seed(serverPort) {
   };
 }
 
-class Cdp {
-  #child;
-  #buffer = Buffer.alloc(0);
-  #next = 1;
-  #pending = new Map();
-  #handlers = new Map();
-  constructor(child) {
-    this.#child = child;
-    child.stdio[4].on("data", (chunk) => this.#consume(chunk));
-  }
-  #consume(chunk) {
-    this.#buffer = Buffer.concat([this.#buffer, chunk]);
-    for (;;) {
-      const end = this.#buffer.indexOf(0);
-      if (end < 0) return;
-      const message = JSON.parse(
-        this.#buffer.subarray(0, end).toString("utf8"),
-      );
-      this.#buffer = this.#buffer.subarray(end + 1);
-      if (message.id !== undefined) {
-        const pending = this.#pending.get(message.id);
-        this.#pending.delete(message.id);
-        if (message.error)
-          pending?.reject(new Error(JSON.stringify(message.error)));
-        else pending?.resolve(message.result);
-      } else
-        for (const fn of this.#handlers.get(message.method) ?? []) {
-          fn(message.params, message.sessionId);
-        }
-    }
-  }
-  on(method, fn) {
-    this.#handlers.set(method, [...(this.#handlers.get(method) ?? []), fn]);
-  }
-  send(method, params = {}, sessionId) {
-    const id = this.#next++;
-    this.#child.stdio[3].write(
-      `${JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })}\0`,
-    );
-    return new Promise((resolve, reject) =>
-      this.#pending.set(id, { resolve, reject }),
-    );
-  }
-}
-
-async function startBrowser(dir) {
-  const child = spawn(
-    CHROMIUM,
-    [
-      "--remote-debugging-pipe",
-      "--headless=new",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-gpu",
-      "--hide-scrollbars",
-      `--user-data-dir=${join(dir, "chrome")}`,
-      "about:blank",
-    ],
-    { detached: true, stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"] },
-  );
-  const cdp = new Cdp(child);
-  return { child, cdp };
-}
-
 async function pageFor(browser, viewport, cookie, url) {
-  const { targetId } = await browser.cdp.send("Target.createTarget", {
-    url: "about:blank",
-  });
-  const { sessionId } = await browser.cdp.send("Target.attachToTarget", {
-    targetId,
-    flatten: true,
-  });
-  await browser.cdp.send("Page.enable", {}, sessionId);
-  await browser.cdp.send("Runtime.enable", {}, sessionId);
-  await browser.cdp.send("Network.enable", {}, sessionId);
-  await browser.cdp.send(
-    "Emulation.setDeviceMetricsOverride",
-    {
+  const equals = cookie.indexOf("=");
+  return await browser.newPage({
+    viewport: {
       width: viewport.width,
       height: viewport.height,
       deviceScaleFactor: 1,
       mobile: viewport.width < 640,
     },
-    sessionId,
-  );
-  const equals = cookie.indexOf("=");
-  const name = cookie.slice(0, equals);
-  const value = cookie.slice(equals + 1);
-  await browser.cdp.send("Network.setCookie", { name, value, url }, sessionId);
-  return { ...browser, targetId, sessionId };
-}
-
-async function evaluate(page, fn, ...args) {
-  const expression = `(${fn.toString()})(...${JSON.stringify(args)})`;
-  const answer = await page.cdp.send(
-    "Runtime.evaluate",
-    { expression, awaitPromise: true, returnByValue: true },
-    page.sessionId,
-  );
-  if (answer.exceptionDetails)
-    throw new Error(
-      answer.exceptionDetails.exception?.description ??
-        JSON.stringify(answer.exceptionDetails),
-    );
-  return answer.result.value;
+    cookie: {
+      name: cookie.slice(0, equals),
+      value: cookie.slice(equals + 1),
+      url,
+    },
+  });
 }
 
 async function load(page, url) {
@@ -827,8 +582,7 @@ async function armAvatarNetwork(page) {
   );
   let delayedRequest = null;
   const immediate = [];
-  page.cdp.on("Fetch.requestPaused", (event, sessionId) => {
-    if (sessionId !== page.sessionId) return;
+  const unsubscribe = page.on("Fetch.requestPaused", (event) => {
     const url = new URL(event.request.url);
     if (url.pathname.endsWith("/avatar-delayed.svg")) {
       delayedRequest = event.requestId;
@@ -859,18 +613,23 @@ async function armAvatarNetwork(page) {
   });
   return {
     release: async () => {
-      const deadline = Date.now() + 5_000;
-      while (delayedRequest === null && Date.now() < deadline) await sleep(25);
-      if (delayedRequest === null)
-        throw new Error("delayed avatar request never paused");
-      await Promise.all(immediate);
-      await page.cdp.send(
-        "Fetch.continueRequest",
-        {
-          requestId: delayedRequest,
-        },
-        page.sessionId,
-      );
+      try {
+        const deadline = Date.now() + 5_000;
+        while (delayedRequest === null && Date.now() < deadline)
+          await sleep(25);
+        if (delayedRequest === null)
+          throw new Error("delayed avatar request never paused");
+        await Promise.all(immediate);
+        await page.cdp.send(
+          "Fetch.continueRequest",
+          {
+            requestId: delayedRequest,
+          },
+          page.sessionId,
+        );
+      } finally {
+        unsubscribe();
+      }
     },
   };
 }
@@ -1009,7 +768,7 @@ async function browserRun(browser, base, seeded, viewport, fault = null) {
     }
     return result;
   } finally {
-    await browser.cdp.send("Target.closeTarget", { targetId: page.targetId });
+    await page.close();
   }
 }
 
@@ -1134,7 +893,7 @@ async function untouchedRun(browser, base, seeded, viewport) {
     const errors = await load(page, url);
     return { errors, rows: await measureUntouched(page) };
   } finally {
-    await browser.cdp.send("Target.closeTarget", { targetId: page.targetId });
+    await page.close();
   }
 }
 
@@ -1150,7 +909,7 @@ async function revisionRun(browser, base, seeded, viewport, fault = null) {
       rows: await measure(page, fault, REVISION_CASES),
     };
   } finally {
-    await browser.cdp.send("Target.closeTarget", { targetId: page.targetId });
+    await page.close();
   }
 }
 
@@ -1237,7 +996,7 @@ async function specRouteRun(
       ),
     };
   } finally {
-    await browser.cdp.send("Target.closeTarget", { targetId: page.targetId });
+    await page.close();
   }
 }
 async function historicalFaultRun(browser, base, seeded, kind, mode) {
@@ -1258,7 +1017,7 @@ async function historicalFaultRun(browser, base, seeded, kind, mode) {
       { mode },
     );
   } finally {
-    await browser.cdp.send("Target.closeTarget", { targetId: page.targetId });
+    await page.close();
   }
 }
 
@@ -1311,33 +1070,8 @@ function printRun(run) {
     console.log(`  fixture failure: ${error}`);
 }
 
-async function stopGroup(child) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
-  const exited = new Promise((resolveExit) => child.once("exit", resolveExit));
-  try {
-    process.kill(-child.pid, "SIGTERM");
-  } catch (error) {
-    if (error.code !== "ESRCH") throw error;
-  }
-  const stopped = await Promise.race([
-    exited.then(() => true),
-    sleep(3000).then(() => false),
-  ]);
-  if (!stopped) {
-    try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch (error) {
-      if (error.code !== "ESRCH") throw error;
-    }
-    await Promise.race([exited, sleep(1000)]);
-  }
-}
-
 const options = parseArgs(process.argv.slice(2));
-const artifactRoot = resolve(ROOT, ".tmp");
-mkdirSync(artifactRoot, { recursive: true });
-const dir = mkdtempSync(join(artifactRoot, "user-baseline-"));
-const children = [];
+let stack = null;
 let fatal = false;
 try {
   const guards = sourceGuards();
@@ -1346,14 +1080,26 @@ try {
     console.log(`  ${item.pass ? "pass" : "FAIL"} ${item.id}: ${item.file}`);
   if (guards.some((item) => !item.pass)) fatal = true;
 
-  const stack = await startStack(dir, children);
+  stack = await createBrowserStack({
+    root: ROOT,
+    prefix: "user-baseline-",
+    webReadyPath: FIXTURE_URL,
+    keep: options.keep
+      ? { remove: ["db", "attachments", "chrome", "config.toml"] }
+      : false,
+  });
+  const dir = stack.dir;
   const seeded = await seed(stack.serverPort);
-  const browser = await startBrowser(dir);
-  children.push(browser.child);
-  const base = `http://127.0.0.1:${stack.webPort}`;
-  const browserVersion = await browser.cdp.send("Browser.getVersion");
+  const browser = await startBrowser({
+    dir,
+    chromium: stack.chromium,
+    registerChild: stack.registerChild,
+  });
+  stack.addCleanup(() => browser.close());
+  const base = stack.webUrl;
+  const browserVersion = await browser.send("Browser.getVersion");
   console.log(
-    `ENV source=${SOURCE_VERSION} chromium=${browserVersion.product} userAgent=${browserVersion.userAgent} ` +
+    `ENV source=${stack.versions.source} chromium=${browserVersion.product} userAgent=${browserVersion.userAgent} ` +
       `dpr=1 font="Geist Variable" epsilon=${EPSILON}`,
   );
   const cleanRuns = [];
@@ -1465,14 +1211,11 @@ try {
   fatal = true;
   console.error(`user-baseline-smoke: ${error.stack ?? error}`);
 } finally {
-  for (const child of children.reverse()) await stopGroup(child);
-  if (options.keep) {
-    for (const name of ["db", "attachments", "chrome", "config.toml"]) {
-      rmSync(join(dir, name), { recursive: true, force: true });
-    }
-    console.log(`kept sanitized screenshots only: ${dir}`);
-  } else {
-    rmSync(dir, { recursive: true, force: true });
+  try {
+    await stack?.cleanup();
+  } catch (error) {
+    fatal = true;
+    console.error(`user-baseline-smoke cleanup: ${error.stack ?? error}`);
   }
 }
 process.exitCode = fatal ? 1 : 0;
