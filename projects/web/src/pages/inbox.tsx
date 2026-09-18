@@ -46,8 +46,9 @@ export function InboxPage() {
   const data = inbox.data;
   const hasContent = data !== undefined;
   const { replace, notice } = useReadFailure(
-    inbox.isError ? inbox.error : null,
+    [inbox.isError ? inbox.error : null],
     hasContent,
+    inboxQuery.queryKey,
   );
 
   if (replace) {

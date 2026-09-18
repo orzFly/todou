@@ -36,12 +36,14 @@ export function UserProfilePage({
   onFilters?: (next: { role?: UserIssueRole; state?: UserIssueState }) => void;
   redirectToLogin?: boolean;
 }) {
-  const user = useQuery(userQuery(ref));
+  const query = userQuery(ref);
+  const user = useQuery(query);
   const data = user.data;
   const hasContent = data !== undefined;
   const { replace, notice } = useReadFailure(
-    user.isError ? user.error : null,
+    [user.isError ? user.error : null],
     hasContent,
+    query.queryKey,
   );
 
   if (!replace && !hasContent) {

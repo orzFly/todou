@@ -563,8 +563,11 @@ export function GrantAccessPage() {
     meData !== undefined &&
     agentsData !== undefined &&
     projectsData !== undefined;
-  const failure = me.error ?? agents.error ?? projects.error;
-  const { replace, notice } = useReadFailure(failure, hasContent);
+  const { replace, notice } = useReadFailure(
+    [me.error, agents.error, projects.error],
+    hasContent,
+    [meQuery.queryKey, agentsQuery.queryKey, projectsQuery.queryKey],
+  );
   const retry = () =>
     void Promise.all([me.refetch(), agents.refetch(), projects.refetch()]);
   const retrying = me.isFetching || agents.isFetching || projects.isFetching;

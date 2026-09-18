@@ -1244,6 +1244,54 @@ describe("the results page · saved data (T-415)", () => {
     expect(view.queryByText("Fresh result")).toBeNull();
     expect(view.queryByText("1 hit")).toBeNull();
   });
+
+  it("shows a new search's loading state instead of the previous query's failure", async () => {
+    const beta = deferred<SearchPage>();
+    const search = vi
+      .spyOn(api, "search")
+      .mockRejectedValueOnce(
+        Object.assign(new Error("failure only for alpha"), { status: 503 }),
+      )
+      .mockReturnValue(beta.promise);
+    const client = seedJumpContext(testQueryClient());
+    const root = createRootRoute();
+    const route = createRoute({
+      getParentRoute: () => root,
+      path: "/",
+      validateSearch: (value: Record<string, unknown>) => ({
+        q: String(value.q ?? ""),
+      }),
+      component: () => (
+        <SearchResults slug="todou" search={route.useSearch()} />
+      ),
+    });
+    const router = createRouter({
+      routeTree: root.addChildren([route]),
+      history: createMemoryHistory({ initialEntries: ["/?q=alpha"] }),
+    });
+    const view = render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    await view.findByText("Search failed: failure only for alpha");
+
+    await act(async () => {
+      await router.navigate({ to: "/", search: { q: "beta" } });
+    });
+    await view.findByText("Results for “beta”");
+    await waitFor(() => expect(search).toHaveBeenCalledTimes(2));
+    expect(
+      client.getQueryState(searchQuery("todou", { q: "beta" }).queryKey)
+        ?.status,
+    ).toBe("pending");
+    expect(
+      view.queryByText("Search failed: failure only for alpha"),
+    ).toBeNull();
+    expect(
+      view.container.querySelectorAll('[data-slot="skeleton"]'),
+    ).toHaveLength(2);
+  });
 });
 
 describe("SearchBox · qualifier completion", () => {

@@ -592,6 +592,37 @@ describe("GrantAccessPage · saved core data", () => {
     expect(screen.queryByText(/Couldn't refresh your projects/)).toBeNull();
   });
 
+  it("lets a projects 403 replace cache even when me also failed with 500", async () => {
+    const { client, getMe, getProjects } = renderPage({ cached: true });
+    await screen.findByRole("checkbox", { name: "include mine" });
+    expect(screen.getByText("Mine")).toBeTruthy();
+    getMe.mockRejectedValue(
+      Object.assign(new Error("me temporarily unavailable"), { status: 500 }),
+    );
+    getProjects.mockRejectedValue(
+      Object.assign(new Error("projects forbidden"), { status: 403 }),
+    );
+
+    await act(async () => {
+      await Promise.all([
+        client.refetchQueries({ queryKey: meQuery.queryKey, exact: true }),
+        client.refetchQueries({
+          queryKey: projectsQuery.queryKey,
+          exact: true,
+        }),
+      ]);
+    });
+    await waitFor(() => {
+      expect(client.getQueryState(meQuery.queryKey)?.status).toBe("error");
+      expect(client.getQueryState(projectsQuery.queryKey)?.status).toBe(
+        "error",
+      );
+    });
+    await screen.findByText("Could not load your projects: projects forbidden");
+    expect(screen.queryByText("Mine")).toBeNull();
+    expect(screen.queryByText(/Couldn't refresh your projects/)).toBeNull();
+  });
+
   it("keeps a cold 500 LoadFailure during a deferred Retry, then shows the fetched card", async () => {
     const { getProjects, getMembers } = renderPage({
       projectsFailure: Object.assign(new Error("projects unavailable"), {

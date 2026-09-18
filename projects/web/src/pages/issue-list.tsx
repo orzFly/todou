@@ -394,15 +394,17 @@ export function FlatIssueList({
   typed: string;
   onCreateLabel?: (name: string) => Promise<Label>;
 }) {
+  const query = issuesQuery(slug, search);
   const issues = useQuery({
-    ...issuesQuery(slug, search),
+    ...query,
     placeholderData: keepPreviousData,
   });
   const data = issues.data;
   const hasContent = data !== undefined;
   const { replace, notice } = useReadFailure(
-    issues.isError ? issues.error : null,
+    [issues.isError ? issues.error : null],
     hasContent,
+    query.queryKey,
   );
 
   if (replace) {

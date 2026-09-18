@@ -1,3 +1,4 @@
+import { hashKey, type QueryKey } from "@tanstack/react-query";
 import { useState } from "react";
 import { classifyReadFailure, type ReadFailureKind } from "@/lib/http-status";
 
@@ -9,40 +10,71 @@ function messageOf(error: unknown): string {
   return message.trim().length > 0 ? message : "Unknown error";
 }
 
+type Failure = { kind: ReadFailureKind; message: string };
+
+function dominantFailure(errors: readonly (unknown | null)[]): Failure | null {
+  const failures = errors
+    .filter((error) => error !== null)
+    .map((error) => ({
+      kind: classifyReadFailure(error),
+      message: messageOf(error),
+    }));
+  return (
+    failures.find(({ kind }) => kind === "refused") ??
+    failures.find(({ kind }) => kind === "transient") ??
+    failures.find(({ kind }) => kind === "session") ??
+    null
+  );
+}
+
 /**
- * Chooses the mutually exclusive page-level treatment for a failed read.
- * `replace` occupies an empty or refused surface; `notice` accompanies cached
- * content after a transient failure. Session failures belong to AuthedLayout.
+ * Chooses one page-level treatment for all reads owned by a content surface.
+ * Refusal wins over transient failure so a 5xx cannot leave data visible after
+ * another read revoked it; session loss stays silent when it is the only kind.
  *
- * The cold failure message is latched until content arrives or session loss
- * supersedes it, so its surface survives a retry without outliving its owner.
+ * `identity` is part of the public lifecycle contract: pass the query key, or
+ * a composite of every query key represented by this surface. It must stay
+ * equal through a retry of the same reads and change whenever their data scope
+ * changes. That keeps a cold failure mounted for Retry without leaking its
+ * latched message into a different query. T-420's secondary surfaces use the
+ * same rule rather than inventing another failure-state shape.
  */
 export function useReadFailure(
-  error: unknown | null,
+  errors: readonly (unknown | null)[],
   hasContent: boolean,
+  identity: QueryKey,
 ): { replace: string | null; notice: string | null } {
-  const failure: { kind: ReadFailureKind; message: string } | null =
-    error === null
+  const failure = dominantFailure(errors);
+  const identityHash = hashKey(identity);
+  const [coldFailure, setColdFailure] = useState<{
+    identity: string;
+    message: string;
+  } | null>(null);
+  const latchedMessage =
+    coldFailure?.identity === identityHash ? coldFailure.message : null;
+  const nextLatchedMessage =
+    hasContent || failure?.kind === "session"
       ? null
-      : { kind: classifyReadFailure(error), message: messageOf(error) };
-  const [coldFailure, setColdFailure] = useState<string | null>(null);
+      : (failure?.message ?? latchedMessage);
 
-  if (hasContent) {
-    if (coldFailure !== null) setColdFailure(null);
-  } else if (
-    failure !== null &&
-    failure.kind !== "session" &&
-    failure.message !== coldFailure
+  if (
+    (nextLatchedMessage === null && coldFailure !== null) ||
+    (nextLatchedMessage !== null &&
+      (coldFailure?.identity !== identityHash ||
+        coldFailure.message !== nextLatchedMessage))
   ) {
-    setColdFailure(failure.message);
+    setColdFailure(
+      nextLatchedMessage === null
+        ? null
+        : { identity: identityHash, message: nextLatchedMessage },
+    );
   }
 
   if (failure?.kind === "session") {
-    if (coldFailure !== null) setColdFailure(null);
     return { replace: null, notice: null };
   }
-  if (coldFailure !== null) {
-    return { replace: coldFailure, notice: null };
+  if (nextLatchedMessage !== null) {
+    return { replace: nextLatchedMessage, notice: null };
   }
   if (failure?.kind === "refused") {
     return { replace: failure.message, notice: null };

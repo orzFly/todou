@@ -81,13 +81,15 @@ export function SearchResults({
   search: SearchPageSearch;
 }) {
   const q = (search.q ?? "").trim();
-  const results = useQuery(searchQuery(slug, search));
+  const query = searchQuery(slug, search);
+  const results = useQuery(query);
   const prefix = useRefPrefix(slug);
   const data = results.data;
   const hasContent = data !== undefined;
   const { replace, notice } = useReadFailure(
-    results.isError ? results.error : null,
+    [results.isError ? results.error : null],
     hasContent,
+    query.queryKey,
   );
 
   return (

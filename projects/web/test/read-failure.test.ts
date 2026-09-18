@@ -114,7 +114,9 @@ describe("useReadFailure", () => {
       expected: { replace: null, notice: null },
     },
   ])("$label", ({ error, hasContent, expected }) => {
-    const { result } = renderHook(() => useReadFailure(error, hasContent));
+    const { result } = renderHook(() =>
+      useReadFailure([error], hasContent, ["read"]),
+    );
 
     expect(result.current).toEqual(expected);
     expect(
@@ -122,9 +124,34 @@ describe("useReadFailure", () => {
     ).toBe(true);
   });
 
+  it.each([
+    {
+      label: "refused wins when a transient failure arrived first",
+      errors: [transient, refused],
+      expected: { replace: "forbidden", notice: null },
+    },
+    {
+      label: "transient wins when session loss arrived first",
+      errors: [session, transient],
+      expected: { replace: null, notice: "server failure" },
+    },
+    {
+      label: "session stays silent when it is the only failure kind",
+      errors: [session],
+      expected: { replace: null, notice: null },
+    },
+  ])("$label", ({ errors, expected }) => {
+    const { result } = renderHook(() =>
+      useReadFailure(errors, true, ["combined"]),
+    );
+    expect(result.current).toEqual(expected);
+  });
+
   it("normalizes blank failures to nonempty render guards", () => {
-    const blankError = renderHook(() => useReadFailure(new Error(""), false));
-    const blankValue = renderHook(() => useReadFailure("", false));
+    const blankError = renderHook(() =>
+      useReadFailure([new Error("")], false, ["read"]),
+    );
+    const blankValue = renderHook(() => useReadFailure([""], false, ["read"]));
 
     expect(blankError.result.current).toEqual({
       replace: "Error",
@@ -139,7 +166,7 @@ describe("useReadFailure", () => {
   it("keeps a cold failure latched while its retry clears the live error", () => {
     const hook = renderHook(
       ({ error, hasContent }: { error: Error | null; hasContent: boolean }) =>
-        useReadFailure(error, hasContent),
+        useReadFailure([error], hasContent, ["read"]),
       { initialProps: { error: transient as Error | null, hasContent: false } },
     );
 
@@ -151,10 +178,27 @@ describe("useReadFailure", () => {
     });
   });
 
+  it("drops a cold latch when the represented query identity changes", () => {
+    const hook = renderHook(
+      ({ error, identity }: { error: Error | null; identity: string }) =>
+        useReadFailure([error], false, ["search", identity]),
+      {
+        initialProps: {
+          error: transient as Error | null,
+          identity: "alpha",
+        },
+      },
+    );
+    expect(hook.result.current.replace).toBe("server failure");
+
+    hook.rerender({ error: null, identity: "beta" });
+    expect(hook.result.current).toEqual({ replace: null, notice: null });
+  });
+
   it("clears the cold failure latch when content arrives", () => {
     const hook = renderHook(
       ({ error, hasContent }: { error: Error | null; hasContent: boolean }) =>
-        useReadFailure(error, hasContent),
+        useReadFailure([error], hasContent, ["read"]),
       { initialProps: { error: transient as Error | null, hasContent: false } },
     );
     hook.rerender({ error: null, hasContent: false });
@@ -167,7 +211,7 @@ describe("useReadFailure", () => {
   it("keeps session loss silent after a cold failure was latched", () => {
     const hook = renderHook(
       ({ error, hasContent }: { error: Error | null; hasContent: boolean }) =>
-        useReadFailure(error, hasContent),
+        useReadFailure([error], hasContent, ["read"]),
       { initialProps: { error: transient as Error | null, hasContent: false } },
     );
 

@@ -60,8 +60,9 @@ export function Timeline({
   const head = useTimelineHead(slug, issueNumber, headEnabled);
   const hasContent = tail.data?.pages !== undefined;
   const { replace, notice } = useReadFailure(
-    tail.isError ? tail.error : head.isError ? head.error : null,
+    [tail.error, head.error],
     hasContent,
+    ["timeline", slug, issueNumber],
   );
   const retryFailed = () => {
     // Only retry failing reads: a healthy half keeps its pages and position.

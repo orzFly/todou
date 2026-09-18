@@ -337,8 +337,11 @@ function LoopbackFlow({
   const meData = me.data;
   const agentsData = agents.data;
   const hasContent = meData !== undefined && agentsData !== undefined;
-  const failure = me.error ?? agents.error;
-  const { replace, notice } = useReadFailure(failure, hasContent);
+  const { replace, notice } = useReadFailure(
+    [me.error, agents.error],
+    hasContent,
+    [meQuery.queryKey, agentsQuery.queryKey],
+  );
   const retry = () => void Promise.all([me.refetch(), agents.refetch()]);
   const retrying = me.isFetching || agents.isFetching;
 
@@ -387,9 +390,16 @@ function CodeFlow({ code }: { code: string }) {
   const agentsData = agents.data;
   const hasRequest = requestData !== undefined;
   const requestError = request.isError ? request.error : null;
-  const requestFailure = useReadFailure(requestError, hasRequest);
+  const requestFailure = useReadFailure(
+    [requestError],
+    hasRequest,
+    cliAuthRequestQuery(code).queryKey,
+  );
   const hasAgents = meData !== undefined && agentsData !== undefined;
-  const agentsFailure = useReadFailure(me.error ?? agents.error, hasAgents);
+  const agentsFailure = useReadFailure([me.error, agents.error], hasAgents, [
+    meQuery.queryKey,
+    agentsQuery.queryKey,
+  ]);
   const retryRequest = () => void request.refetch();
   const retryAgents = () => void Promise.all([me.refetch(), agents.refetch()]);
   const retryingAgents = me.isFetching || agents.isFetching;
