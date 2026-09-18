@@ -940,3 +940,28 @@ describe("a group header's actor links to their page (T-391)", () => {
     expect(headerLinksIn(group)).toEqual(["/users/bot-one"]);
   });
 });
+
+describe("the assignment summary names people you can reach (T-391)", () => {
+  it("links each person the summary sentence names", async () => {
+    const { findByTestId, getByTitle } = renderWithProviders(
+      <EventGroup
+        family="assignees"
+        events={handOff()}
+        slug="p"
+        issueNumber={1}
+      />,
+      memberClient(),
+    );
+    await findByTestId("event-group");
+
+    // The summary sentence alone. The group header's actor chip is an anchor
+    // of its own sitting right beside it, and would answer for these if the
+    // whole header were searched. Two different logins for the same reason.
+    const summary = getByTitle("reassigned Alice → Newcomer");
+    expect(
+      [...summary.querySelectorAll('a[href^="/users/"]')].map((a) =>
+        a.getAttribute("href"),
+      ),
+    ).toEqual(["/users/alice", "/users/newcomer"]);
+  });
+});

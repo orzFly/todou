@@ -307,3 +307,42 @@ describe("issue hover preview (T-408)", () => {
     expect(cards()).toHaveLength(0);
   });
 });
+
+describe("the preview's assignees reach their own pages (T-391)", () => {
+  it("links them, and outside the reference anchor the reader is on", async () => {
+    const bob = {
+      id: 2,
+      login: "bob",
+      display_name: "Bob Ray",
+      kind: "human" as const,
+      avatar_url: null,
+      owner: null,
+    };
+    const target: IssueListItem = {
+      ...refItem(7, "Target"),
+      assignees: [bob],
+    };
+    const client = seeded();
+    client.setQueryData(issueRefQuery("todou", 7).queryKey, target);
+    countingFetch();
+    const view = renderWithProviders(
+      <MarkdownView slug="todou">{REF}</MarkdownView>,
+      client,
+    );
+    const trigger = await linkToSeven(view.container);
+    hover(trigger);
+    const card = await opened();
+
+    // The card's whole anchor list: its author is plain text, so the one
+    // assignee's chip is the only user link the preview should hold.
+    expect(
+      [...card.querySelectorAll('a[href^="/users/"]')].map((a) =>
+        a.getAttribute("href"),
+      ),
+    ).toEqual(["/users/bob"]);
+    // `HoverCardContent` goes through a portal, so this anchor is not a
+    // descendant of the reference anchor being hovered — nesting one inside
+    // the other would be invalid content and an ambiguous click.
+    expect(trigger.contains(card)).toBe(false);
+  });
+});
