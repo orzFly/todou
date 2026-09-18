@@ -1,4 +1,4 @@
-import { completionStatus } from "@codemirror/autocomplete";
+import { completionStatus, startCompletion } from "@codemirror/autocomplete";
 import { QueryClient } from "@tanstack/react-query";
 import { act, render, waitFor } from "@testing-library/react";
 import type {
@@ -26,7 +26,7 @@ import {
 } from "../src/lib/editor/ref-completion.ts";
 import { commandCompletionSource } from "../src/lib/editor/slash-commands.ts";
 import { buildCommandRegistry } from "../src/lib/slash-commands.ts";
-import { cmGetValue, cmPressKey, cmType, cmView } from "./cm.ts";
+import { cmGetValue, cmInput, cmPressKey, cmType, cmView } from "./cm.ts";
 import { renderWithProviders } from "./render.tsx";
 
 /**
@@ -152,6 +152,21 @@ describe("the completion panel's keys", () => {
     const event = cmPressKey(view.container, "Tab");
     expect(cmGetValue(view.container)).toBe("see T-1 ");
     expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("keeps the pending space through completion's effect transactions", async () => {
+    const view = editor();
+    await panelFor(view.container, "see T-");
+    cmPressKey(view.container, "Tab");
+    await waitFor(() =>
+      expect(completionStatus(cmView(view.container).state)).toBeNull(),
+    );
+    await settle();
+    startCompletion(cmView(view.container));
+
+    const handled = cmInput(view.container, "，");
+    expect(cmGetValue(view.container)).toBe("see T-1，");
+    expect(handled).toBe(true);
   });
 
   it("leaves Tab to the browser with no panel open", async () => {

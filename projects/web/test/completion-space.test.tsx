@@ -169,14 +169,17 @@ describe("pending completion spaces", () => {
 });
 
 describe("IME composition boundaries", () => {
-  it("does not handle even the composition-started, not-yet-composing stage", () => {
+  it("does not handle a DOM change during active composition", () => {
     const view = accepted();
     fireEvent.compositionStart(view.contentDOM);
     expect(view.compositionStarted).toBe(true);
+    // Observable before the first DOM change, but the helper mirrors
+    // applyDOMChangeInner's increment before it invokes input handlers.
     expect(view.composing).toBe(false);
 
     const dispatch = vi.spyOn(view, "dispatch");
     expect(handleViewInput(view, "，")).toBe(false);
+    expect(view.composing).toBe(true);
     expect(dispatch).not.toHaveBeenCalled();
     expect(docOf(view)).toBe("@alice ");
     expect(pendingSpaceAt(view.state)).toBe(6);

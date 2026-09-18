@@ -62,6 +62,13 @@ export function handleViewInput(view: EditorView, text: string): boolean {
       selection: { anchor: from + text.length },
       userEvent: "input.type",
     });
+  // @codemirror/view does not expose inputState, so this test-only cast is
+  // the boundary needed to mirror 6.43.9's applyDOMChangeInner ordering.
+  const internalView = view as unknown as {
+    inputState: { composing: number };
+  };
+  const { inputState } = internalView;
+  if (inputState.composing >= 0) inputState.composing += 1;
   return view.state
     .facet(EditorView.inputHandler)
     .some((handler) => handler(view, from, to, text, defaultInsert));
