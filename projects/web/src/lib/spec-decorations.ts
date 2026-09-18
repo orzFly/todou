@@ -23,6 +23,10 @@ import {
   sourceRangesOfText,
   tableOf,
 } from "./spec-source-index.ts";
+import {
+  planStructuralDeletions,
+  predecessorPriorityOrder,
+} from "./spec-structure.ts";
 import { alignFrontmatter, alignTable } from "./table-align.ts";
 import { bagWith, coalescedWordDiff } from "./word-diff.ts";
 
@@ -261,46 +265,6 @@ function matchImages(olds: SourceImage[], news: SourceImage[]): ImageMatching {
   };
 }
 
-/** A position in a paired table's final order: one the new side kept, or one
- * spliced back in because it went (T-221). */
-type Slot = { kept: number } | { gone: number };
-
-/**
- * Where the removed rows — or columns — of a paired table sit once they are
- * put back beside what they used to stand next to (T-221). Each removed entry
- * goes after the new position of the nearest old entry above it that survived,
- * or at the front when nothing above it did; several landing in one place keep
- * their old order.
- *
- * `skip` is the header row, which is placed before any of this and can never
- * be the entry a removed row follows.
- */
-function finalOrder(
-  count: number,
-  skip: number,
-  pairs: Array<[number, number]>,
-  removed: number[],
-): Slot[] {
-  const back = new Map(pairs.map(([old, nu]) => [nu, old]));
-  const kept = pairs.map(([old]) => old).sort((a, b) => a - b);
-  const slots: Slot[] = [];
-  for (let j = 0; j < skip; j++) slots.push({ kept: j });
-  const first = kept[0] ?? Number.POSITIVE_INFINITY;
-  for (const index of removed) {
-    if (index < first) slots.push({ gone: index });
-  }
-  for (let j = skip; j < count; j++) {
-    slots.push({ kept: j });
-    const old = back.get(j);
-    if (old === undefined) continue;
-    const next = kept.find((k) => k > old) ?? Number.POSITIVE_INFINITY;
-    for (const index of removed) {
-      if (index > old && index < next) slots.push({ gone: index });
-    }
-  }
-  return slots;
-}
-
 /**
  * Which code blocks were edited in place, as the old body each new one
  * replaced — keyed by the new block's opening source line, which is what
@@ -375,6 +339,7 @@ export function changeDecorations(
   const blocks: SourceRange[] = [];
   const tables: TableOverlay[] = [];
   const images: ImageSwap[] = [];
+  const structures: Decorations["structures"] = [];
 
   const insert = (from: number, to: number) => {
     for (const range of sourceRangesOfText(current, from, to)) {
@@ -498,26 +463,24 @@ export function changeDecorations(
         blocks.push({ start: cell.block.start, end: cell.block.end });
       }
     }
-
-    const columnOrder = finalOrder(
+    const columnOrder = predecessorPriorityOrder(
       to.rows[0]?.cells.length ?? 0,
       0,
       aligned.columns.pairs,
-      aligned.columns.oldOnly,
+      aligned.columns.oldOnly.map((index) => [index, index] as const),
     );
     // Frontmatter has no header row: its row 0 is a field like any other, so
     // nothing is placed ahead of the rest and the 0 pair stays in — dropping
     // it would leave a removed first field with no surviving row above it to
     // follow, and the stand-in would be spliced somewhere else entirely.
     const headRows = isFrontmatter ? 0 : 1;
-    const rowOrder = finalOrder(
+    const rowOrder = predecessorPriorityOrder(
       to.rows.length,
       headRows,
-      // Without the header pair, which is placed first and is nobody's anchor.
       headRows === 0
         ? aligned.rows.pairs
         : aligned.rows.pairs.filter(([ro]) => ro !== 0),
-      aligned.rows.oldOnly,
+      aligned.rows.oldOnly.map((index) => [index, index] as const),
     );
 
     /**
@@ -636,7 +599,16 @@ export function changeDecorations(
     parts: DeletionPart[];
   }> = [];
   const covered = new Set<number>();
-  for (const block of blocksWhollyInGroups(baseline, gone)) {
+  const planned = planStructuralDeletions(baseline, current, alignment, gone);
+  structures.push(...planned.planned);
+  for (const entry of planned.planned) {
+    const block = baseline.blocks[entry.old.index];
+    if (block === undefined) continue;
+    for (let group = block.firstGroup; group <= block.lastGroup; group++) {
+      covered.add(group);
+    }
+  }
+  for (const block of planned.unplanned) {
     let seam: number | undefined;
     for (let g = block.firstGroup; g <= block.lastGroup; g++) {
       covered.add(g);
@@ -677,7 +649,16 @@ export function changeDecorations(
       ...(cluster.parts === null ? {} : { parts: cluster.parts }),
     });
   }
-  return { spans, deletions, blocks, tables, images };
+  return {
+    spans,
+    deletions,
+    blocks,
+    tables,
+    images,
+    structures,
+    baselineIndex: baseline,
+    currentIndex: current,
+  };
 }
 
 /**
@@ -839,5 +820,9 @@ export function mergeDecorations(
     blocks: changes.blocks,
     tables: changes.tables,
     images: changes.images,
+    structures: changes.structures,
+    baselineIndex: changes.baselineIndex,
+    currentIndex: changes.currentIndex,
+    baselineTree: changes.baselineTree,
   };
 }

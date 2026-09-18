@@ -1,8 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ComponentProps, type ReactNode, useMemo } from "react";
 import Markdown from "react-markdown";
-import remarkFrontmatter from "remark-frontmatter";
-import remarkGfm from "remark-gfm";
 import { projectsQuery } from "@/api/queries.ts";
 import {
   refConfigFor,
@@ -21,22 +19,18 @@ import {
 } from "@/components/shared/pierre.tsx";
 import { isTextEmbedName } from "@/lib/attachment-preview.ts";
 import { parseAttachmentHref } from "@/lib/attachment-refs.ts";
+import { MARKDOWN_SYNTAX_PLUGINS } from "@/lib/markdown-processor.ts";
 import { rehypeDetails } from "@/lib/rehype-details.ts";
 import {
   CODE_CONTENT_START_ATTR,
   parseSourceLoc,
   SOURCE_LINE_ATTR,
 } from "@/lib/rehype-source-lines.ts";
-import {
-  FRONTMATTER_FLAVOURS,
-  remarkFrontmatterTable,
-} from "@/lib/remark-frontmatter-table.ts";
 import { remarkIssueRefs } from "@/lib/remark-issue-refs.ts";
 import {
   REF_REPEAT_ATTR,
   remarkRefOccurrences,
 } from "@/lib/remark-ref-occurrences.ts";
-import { remarkRejectedUrlsAsText } from "@/lib/remark-rejected-urls.ts";
 
 /**
  * A fence rendered as a diff of two versions (T-343). It keeps `.spec-changed`
@@ -128,7 +122,12 @@ function MarkdownPre({
     );
   const wrapperProps =
     loc === null
-      ? { className: "markdown-fence" }
+      ? {
+          // Restored old fences keep deletion identity without a current loc.
+          className: ["markdown-fence", props.className]
+            .filter(Boolean)
+            .join(" "),
+        }
       : {
           [SOURCE_LINE_ATTR]: stamp,
           [CODE_CONTENT_START_ATTR]: (() => {
@@ -153,15 +152,7 @@ function MarkdownPre({
   return <div {...wrapperProps}>{block}</div>;
 }
 
-export function MarkdownView({
-  children,
-  slug,
-  issueNumber,
-  embedded = false,
-  preview = false,
-  rehypePlugins,
-  fenceBaselines,
-}: {
+type MarkdownViewProps = {
   children: string;
   /** Enables #N → issue link rendering; omit where there is no project. */
   slug?: string;
@@ -202,7 +193,72 @@ export function MarkdownView({
    * the two versions instead of as its own contents.
    */
   fenceBaselines?: Map<number, string>;
-}) {
+};
+
+export type MarkdownRemarkPlugins = NonNullable<
+  ComponentProps<typeof Markdown>["remarkPlugins"]
+>;
+
+/**
+ * Project-aware syntax shared by the current document and its baseline.
+ * React-markdown receives this array directly: unrelated renders must retain
+ * its reference so they neither reparse the document nor disturb selections.
+ */
+export function useMarkdownRemarkPlugins(
+  slug?: string,
+  preview = false,
+): MarkdownRemarkPlugins {
+  const refQuery = useQuery({
+    ...referenceConfigQuery(slug ?? ""),
+    enabled: slug !== undefined,
+  });
+  const directoryQuery = useQuery({
+    ...referenceDirectoryQuery,
+    enabled: slug !== undefined,
+  });
+  const readableQuery = useQuery({
+    ...projectsQuery,
+    enabled: slug !== undefined,
+  });
+  return useMemo(() => {
+    if (slug === undefined) return MARKDOWN_SYNTAX_PLUGINS;
+    const directory = directoryQuery.data;
+    const readable = readableQuery.data;
+    const config = {
+      ...refConfigFor(
+        refQuery.data,
+        directory == null || readable === undefined
+          ? undefined
+          : { slugs: readable.map((project) => project.slug), directory },
+      ),
+      // Draft previews resolve @mentions; stored reading surfaces do not.
+      mentions: preview,
+    };
+    return [
+      ...MARKDOWN_SYNTAX_PLUGINS,
+      // Its position relative to frontmatter is not a constraint: issue refs
+      // treat frontmatter as opaque regardless of this order.
+      [remarkIssueRefs, config, { autolinksOnly: !preview }],
+      // Count after tokenization, including the links it just created.
+      remarkRefOccurrences,
+    ] as MarkdownRemarkPlugins;
+  }, [slug, preview, refQuery.data, directoryQuery.data, readableQuery.data]);
+}
+
+export function MarkdownView(props: MarkdownViewProps) {
+  const remarkPlugins = useMarkdownRemarkPlugins(props.slug, props.preview);
+  return <MarkdownViewWithPlugins {...props} remarkPlugins={remarkPlugins} />;
+}
+
+export function MarkdownViewWithPlugins({
+  children,
+  slug,
+  issueNumber,
+  embedded = false,
+  rehypePlugins,
+  fenceBaselines,
+  remarkPlugins,
+}: MarkdownViewProps & { remarkPlugins: MarkdownRemarkPlugins }) {
   // The override map must be referentially stable across re-renders: every
   // entry is an anonymous component, and a fresh map makes React treat each
   // one as a NEW component type, unmounting and rebuilding those DOM
@@ -312,63 +368,6 @@ export function MarkdownView({
     }),
     [fenceBaselines, slug, issueNumber, embedded],
   );
-
-  const refQuery = useQuery({
-    ...referenceConfigQuery(slug ?? ""),
-    enabled: slug !== undefined,
-  });
-  // Cross-project resolution is the viewer's own: which projects they can
-  // name, and which prefixes were unambiguously held when this was written.
-  const directoryQuery = useQuery({
-    ...referenceDirectoryQuery,
-    enabled: slug !== undefined,
-  });
-  const readableQuery = useQuery({
-    ...projectsQuery,
-    enabled: slug !== undefined,
-  });
-  // Stable references: react-markdown gets this array verbatim, and the
-  // tokenizer config must not churn identity on unrelated re-renders.
-  //
-  // `remarkFrontmatterTable` has to follow `remarkFrontmatter` (T-240): the
-  // `yaml` / `toml` nodes it consumes are the other one's output. Its position
-  // relative to `remarkIssueRefs` carries no meaning — the `OPAQUE` entry in
-  // remark-issue-refs.ts is what keeps refs out of a frontmatter value, not
-  // this order.
-  const remarkPlugins = useMemo(() => {
-    const base = [
-      remarkGfm,
-      // Before the tokenizers: what it replaces is a link the renderer was
-      // going to blank anyway, and `spec-source-index.ts` has to register it
-      // in the same place (T-240's rule).
-      remarkRejectedUrlsAsText,
-      [remarkFrontmatter, FRONTMATTER_FLAVOURS],
-      remarkFrontmatterTable,
-    ];
-    if (slug === undefined)
-      return base as ComponentProps<typeof Markdown>["remarkPlugins"];
-    const directory = directoryQuery.data;
-    const readable = readableQuery.data;
-    const config = {
-      ...refConfigFor(
-        refQuery.data,
-        directory == null || readable === undefined
-          ? undefined
-          : { slugs: readable.map((p) => p.slug), directory },
-      ),
-      // The editor preview shows a draft's @mentions as chips before the
-      // resolve pass anchors them; reading mode never sees a mention token,
-      // because a stored one is already a link.
-      mentions: preview,
-    };
-    return [
-      ...base,
-      [remarkIssueRefs, config, { autolinksOnly: !preview }],
-      // After the tokenizer: the links it just created are half of what gets
-      // counted.
-      remarkRefOccurrences,
-    ] as ComponentProps<typeof Markdown>["remarkPlugins"];
-  }, [slug, preview, refQuery.data, directoryQuery.data, readableQuery.data]);
 
   // `rehypeDetails` goes first so that every later pass — the caller's stamp,
   // decoration and fold passes included — walks the tree the reader will get,

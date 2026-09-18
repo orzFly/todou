@@ -107,6 +107,8 @@ const DECORATION_CLASSES = new Set([
   "spec-del-block",
   "spec-ins",
   "spec-del",
+  // Restored old semantic subtrees have no current-source position.
+  "spec-del-structure",
   // A removed row or column is spliced back into the table it left (T-221),
   // so it carries no source line the diff could have reported either.
   "spec-del-cell",

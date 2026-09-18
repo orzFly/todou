@@ -943,6 +943,26 @@ diffs-container {
     vertical-align: middle;
   }
 
+  /* Compared ordered lists draw both versions' independent numerals. A
+     deleted item from an old ol inside a current ul keeps its old number in
+     that slot, without acquiring an unrelated new bullet as well. */
+  .markdown-body ol.spec-numbered-ol > li,
+  .markdown-body ul > li.spec-old-ordered-item {
+    position: relative;
+    list-style-type: none;
+  }
+  .markdown-body ol.spec-numbered-ol > li > .spec-list-number,
+  .markdown-body ul > li.spec-old-ordered-item > .spec-list-number {
+    position: absolute;
+    left: -2em;
+    width: 1.7em;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .markdown-body ol.spec-numbered-ol > li.spec-old-unordered-item {
+    list-style-type: disc;
+  }
+
   .markdown-body blockquote {
     padding: 0 1em;
     border-left: 0.25em solid var(--border);
@@ -1211,6 +1231,36 @@ diffs-container {
     color: color-mix(in oklab, var(--foreground) 55%, var(--color-red-500));
     font-size: 0.85em;
     text-decoration-thickness: 1px;
+  }
+  /* Removed semantic nodes retain their native paragraph/list/code layout.
+     Decoration must reach each nested inline node: links and inline code
+     otherwise paint over a strike set only on their block ancestor. */
+  .markdown-body :is(.spec-del-structure, .spec-del-structure :where(*)) {
+    color: color-mix(in oklab, var(--foreground) 55%, var(--color-red-500));
+    text-decoration-line: line-through;
+    text-decoration-color: var(--color-red-500);
+    text-decoration-thickness: 1px;
+  }
+  .markdown-body .spec-del-structure {
+    border-left: 3px solid
+      color-mix(in oklab, var(--color-red-500) 60%, transparent);
+    border-radius: var(--radius-sm);
+    background-color: color-mix(
+      in oklab,
+      var(--color-red-500) 10%,
+      transparent
+    );
+  }
+  .markdown-body .spec-del-structure img {
+    filter: grayscale(0.85);
+    opacity: 0.65;
+  }
+  .markdown-body pre.spec-del-structure {
+    background-color: color-mix(
+      in oklab,
+      var(--color-red-500) 12%,
+      var(--muted)
+    );
   }
   /* A swapped image and the one it replaced, side by side (T-223). Two
      `inline-block`s rather than a flex container, because the two `<img>`s

@@ -15,7 +15,10 @@ import {
   useState,
 } from "react";
 import type Markdown from "react-markdown";
-import { MarkdownView } from "@/components/shared/markdown-view.tsx";
+import {
+  MarkdownViewWithPlugins,
+  useMarkdownRemarkPlugins,
+} from "@/components/shared/markdown-view.tsx";
 import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import {
@@ -43,6 +46,7 @@ import {
   SOURCE_LINE_ATTR,
 } from "@/lib/rehype-source-lines.ts";
 import { revealBlock } from "@/lib/scroll-insets.ts";
+import { buildBaselineTree } from "@/lib/spec-baseline-tree.ts";
 import { type LineRange, rangesIntersect } from "@/lib/spec-changes.ts";
 import {
   annotationDecorations,
@@ -121,6 +125,19 @@ function elementNear(node: Node): Element | null {
   return node instanceof Element ? node : node.parentElement;
 }
 
+/** Restored old structure and explicit old list numbers have no current source. */
+function isOldEndpoint(node: Node): boolean {
+  let el = elementNear(node);
+  while (el !== null) {
+    if (el.closest(".spec-del-structure, .spec-list-number") !== null) {
+      return true;
+    }
+    const root = el.getRootNode();
+    el = root instanceof ShadowRoot ? root.host : null;
+  }
+  return false;
+}
+
 /**
  * The block a selection endpoint sits in, when that block can carry column
  * precision. Code blocks are excluded on purpose: their text reaches the
@@ -153,7 +170,9 @@ function sourceTextWalker(block: Element): TreeWalker {
         const el = node as Element;
         return el.hasAttribute("data-annotation-ui") ||
           el.classList.contains("spec-del") ||
-          el.classList.contains("spec-del-block")
+          el.classList.contains("spec-del-block") ||
+          el.classList.contains("spec-del-structure") ||
+          el.classList.contains("spec-list-number")
           ? NodeFilter.FILTER_REJECT
           : NodeFilter.FILTER_SKIP;
       },
@@ -192,7 +211,7 @@ function sourceOffsetOfEndpoint(
   offset: number,
   edge: "start" | "end",
 ): number | null {
-  if (node.nodeType !== Node.TEXT_NODE) return null;
+  if (isOldEndpoint(node) || node.nodeType !== Node.TEXT_NODE) return null;
   const block = columnBlockOf(node);
   if (block === null) return null;
   const segments = segmentsInLines(index, block.loc);
@@ -269,6 +288,7 @@ const DELETION_LINE_TYPE = "change-deletion";
 export function anchorRangeForNode(
   node: Node,
 ): { start: number; end: number } | null {
+  if (isOldEndpoint(node)) return null;
   let el = elementNear(node);
   let row: Element | null = null;
   while (el !== null) {
@@ -444,6 +464,10 @@ export function anchorForSelection(
   index: SegmentIndex,
   ends: SelectionEndpoints,
 ): AnchorRange | null {
+  // Old semantic blocks and explicit old list numbers have no line in the
+  // current source; a line fallback would silently attach to nearby prose.
+  if (isOldEndpoint(ends.start.node) || isOldEndpoint(ends.end.node))
+    return null;
   const startSide = sideOf(container, ends.start.node, ends.start.offset);
   const endSide = sideOf(container, ends.end.node, ends.end.offset);
   if (startSide === null || endSide === null) return null;
@@ -609,18 +633,32 @@ export function AnnotatedMarkdown({
   const pressTimerRef = useRef<number | null>(null);
   const pendingRef = useRef<PendingSelection | null>(null);
   const pointerFine = useMediaQuery(POINTER_FINE);
+  const remarkPlugins = useMarkdownRemarkPlugins(slug);
 
   const index = useMemo(() => buildSegmentIndex(body), [body]);
   const baselineIndex = useMemo(
     () => (baselineBody === undefined ? null : buildSegmentIndex(baselineBody)),
     [baselineBody],
   );
+  const changes = useMemo(
+    () =>
+      baselineIndex === null
+        ? NO_DECORATIONS
+        : changeDecorations(baselineIndex, index),
+    [baselineIndex, index],
+  );
+  const hasStructures = changes.structures.length > 0;
+  const baselineTree = useMemo(
+    () =>
+      baselineBody === undefined || !hasStructures
+        ? undefined
+        : buildBaselineTree(baselineBody, { remarkPlugins }),
+    [baselineBody, hasStructures, remarkPlugins],
+  );
   const decorations = useMemo(
     () =>
       mergeDecorations(
-        baselineIndex === null
-          ? NO_DECORATIONS
-          : changeDecorations(baselineIndex, index),
+        { ...changes, baselineTree },
         annotationDecorations(
           index,
           annotations.map((a) => ({
@@ -633,7 +671,7 @@ export function AnnotatedMarkdown({
           })),
         ),
       ),
-    [index, baselineIndex, annotations],
+    [index, changes, baselineTree, annotations],
   );
   const fenceBaselines = useMemo(
     () =>
@@ -655,7 +693,8 @@ export function AnnotatedMarkdown({
       decorations.deletions.length > 0 ||
       decorations.blocks.length > 0 ||
       decorations.tables.length > 0 ||
-      decorations.images.length > 0;
+      decorations.images.length > 0 ||
+      decorations.structures.length > 0;
     // Annotations alone used to take this exit: they always come with
     // decorations to paint. A `<details>` that has to be opened for them does
     // not, and skipping the array would leave the chip pointing into a fold
@@ -964,14 +1003,15 @@ export function AnnotatedMarkdown({
       onClick={onClick}
       data-testid="annotated-markdown"
     >
-      <MarkdownView
+      <MarkdownViewWithPlugins
         slug={slug}
         issueNumber={issueNumber}
         rehypePlugins={rehypePlugins}
         fenceBaselines={fenceBaselines}
+        remarkPlugins={remarkPlugins}
       >
         {body}
-      </MarkdownView>
+      </MarkdownViewWithPlugins>
 
       {chips.map((chip) => (
         <AnnotationChip

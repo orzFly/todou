@@ -114,6 +114,17 @@ async function renderDiff(
 const texts = (container: HTMLElement, selector: string) =>
   [...container.querySelectorAll(selector)].map((el) => el.textContent);
 
+/** A legal whole-block placement restores one semantic node, not its source. */
+function restoredBlock(container: HTMLElement, tag: string): Element {
+  const restored = container.querySelectorAll(`${tag}.spec-del-structure`);
+  expect(restored).toHaveLength(1);
+  expect(container.querySelectorAll(".spec-del-structure")).toHaveLength(1);
+  expect(container.querySelector("del.spec-del-block")).toBeNull();
+  const node = restored.item(0);
+  if (node === null) throw new Error(`no restored ${tag}`);
+  return node;
+}
+
 /** T-163's repro, verbatim from the card: a paragraph replaced by a table. */
 const REPRO_BEFORE =
   "## 结论\n\n这一段会被整段删掉，用来看纯删除的 marker 还在不在。\n";
@@ -171,14 +182,19 @@ describe("word-level diff in the rendered view (T-142)", () => {
     expect(texts(container, "del.spec-del")).toEqual(["二"]);
   });
 
-  it("shows a marker where a whole paragraph was removed", async () => {
+  it("restores a removed paragraph after the retained paragraph", async () => {
     const { container } = await renderDiff(
       "# 设计\n\n第一段。\n\n第二段。\n",
       "# 设计\n\n第一段。\n",
     );
-    const marker = container.querySelector("del.spec-del-block");
-    expect(marker).not.toBeNull();
-    expect(marker?.textContent).toBe("第二段。");
+    const removed = restoredBlock(container, "p");
+    expect(removed.textContent).toBe("第二段。");
+    expect(removed.previousElementSibling?.textContent).toBe("第一段。");
+    expect(removed.parentElement).toBe(
+      container.querySelector("h1")?.parentElement,
+    );
+    expect(removed.nextElementSibling).toBeNull();
+    expect(texts(container, "p")).toEqual(["第一段。", "第二段。"]);
   });
 
   it("leaves code fences alone", async () => {
@@ -187,7 +203,11 @@ describe("word-level diff in the rendered view (T-142)", () => {
       "outro\n\n```ts\nconst a = 2;\n```\n",
     );
     expect(container.querySelector("pre .spec-ins")).toBeNull();
-    expect(container.querySelector("pre")?.textContent).toBe("const a = 2;");
+    await waitFor(() => {
+      expect(
+        container.querySelector("[data-testid='fence-diff']")?.textContent,
+      ).toBe("const a = 2;\n");
+    });
     expect(texts(container, "ins.spec-ins")).toEqual(["outro"]);
   });
 
@@ -325,17 +345,19 @@ describe("wholly-new blocks get one highlight (T-158)", () => {
     expect(texts(container, "h2 ins.spec-ins")).toEqual(["与渠道"]);
   });
 
-  it("degrades a whole paragraph removed inside a rewrite to a marker", async () => {
+  it("restores a whole paragraph removed inside a rewrite", async () => {
     const { container } = await renderDiff(
       "段落甲。\n\n段落乙。\n",
       "段落甲改。\n",
     );
-    const marker = container.querySelector("del.spec-del-block");
-    expect(marker?.textContent).toContain("段落乙");
+    const removed = restoredBlock(container, "p");
+    expect(removed.textContent).toBe("段落乙。");
     expect(texts(container, "del.spec-del")).not.toContain("段落乙。");
-    // Nothing new follows it, so it settles after the block that stayed —
-    // which is where the paragraph it stands for used to be.
-    expect(marker?.previousElementSibling?.textContent).toBe("段落甲改。");
+    // Nothing new follows it, so it settles after the block that stayed.
+    expect(removed.previousElementSibling?.textContent).toBe("段落甲改。");
+    expect(removed.previousElementSibling?.tagName).toBe("P");
+    expect(removed.nextElementSibling).toBeNull();
+    expect(texts(container, "p")).toEqual(["段落甲改。", "段落乙。"]);
   });
 
   it("carries the block class across the pre → CodeBlock swap", async () => {
@@ -354,9 +376,15 @@ describe("wholly-new blocks get one highlight (T-158)", () => {
     // boxes behind and striking the paragraph through the header row.
     expect(container.querySelector("table .spec-ins")).toBeNull();
     expect(container.querySelector("table .spec-del")).toBeNull();
-    const markers = container.querySelectorAll("del.spec-del-block");
-    expect(markers).toHaveLength(1);
-    expect(markers[0]?.textContent).toContain("纯删除的 marker");
+    const removed = restoredBlock(container, "p");
+    expect(removed.textContent).toBe(REPRO_BEFORE.trimEnd().split("\n")[2]);
+    expect(removed.previousElementSibling).toBe(container.querySelector("h2"));
+    expect(removed.nextElementSibling).toBe(
+      container.querySelector("table.spec-ins-block"),
+    );
+    expect(removed.parentElement).toBe(
+      container.querySelector("table")?.parentElement,
+    );
   });
 
   it("still paints an annotation anchored inside a wholly-new block", async () => {
@@ -384,25 +412,39 @@ describe("wholly-new blocks get one highlight (T-158)", () => {
 });
 
 describe("what the engine emits for T-163's repro", () => {
-  it("has one block deletion, one whole block, and no word marks", () => {
-    // The card measured 11 word boxes on T-142 and 4 on T-158, with the same
-    // 4 inline `<del>`s throughout. Aligning the two sides first takes all of
-    // them: nothing pairs a paragraph with a cell, so nothing is left to mark.
+  it("plans one restored paragraph, one new table, and no word marks", () => {
+    // A paragraph never pairs with a table cell, so no word marks leak into
+    // the new table when the old paragraph is restored beside it.
     const decorations = changeDecorations(
       buildSegmentIndex(REPRO_BEFORE),
       buildSegmentIndex(REPRO_AFTER),
     );
     expect(decorations.spans).toEqual([]);
-    expect(decorations.deletions).toHaveLength(1);
-    expect(decorations.deletions[0]?.block).toBe(true);
-    expect(decorations.deletions[0]?.text).toContain("纯删除的 marker");
+    expect(decorations.deletions).toEqual([]);
+    expect(decorations.structures).toHaveLength(1);
+    const structure = decorations.structures[0];
+    expect(structure).toMatchObject({
+      old: {
+        type: "paragraph",
+        start: REPRO_BEFORE.indexOf("这一段"),
+        end: REPRO_BEFORE.trimEnd().length,
+      },
+      parent: null,
+      after: { type: "heading", start: 0, end: "## 结论".length },
+      order: 1,
+      fallback: {
+        at: "## 结论".length,
+        text: REPRO_BEFORE.trimEnd().split("\n")[2],
+      },
+    });
+    expect(structure?.fallback.parts).toBeUndefined();
     expect(decorations.blocks).toHaveLength(1);
     const block = decorations.blocks[0];
     expect(REPRO_AFTER.slice(block?.start ?? 0, block?.end ?? 0)).toBe(
       REPRO_AFTER.trimEnd().split("\n").slice(2).join("\n"),
     );
-    // The marker goes at the table's top-level seam, never inside it.
-    expect(decorations.deletions[0]?.at).toBe(block?.start);
+    // The fallback caret is the predecessor's end, not the table's start.
+    expect(structure?.fallback.at).toBeLessThan(block?.start ?? 0);
   });
 });
 
@@ -501,7 +543,15 @@ describe("removals read as removals (T-209)", () => {
     expect(texts(container, "h3 del.spec-del")).toEqual(["5.5"]);
     expect(texts(container, "h3 ins.spec-ins")).toEqual(["5.6"]);
     expect(container.querySelector(".spec-ins-block")).toBeNull();
-    expect(texts(container, "del.spec-del-block")).toEqual([T209_PARA]);
+    const removed = restoredBlock(container, "p");
+    expect(removed.textContent).toBe(T209_PARA);
+    expect(removed.previousElementSibling?.textContent).toBe("5.4 服务端");
+    expect(removed.nextElementSibling).toBe(
+      container.querySelectorAll("h3")[1],
+    );
+    expect(removed.parentElement).toBe(
+      container.querySelector("h3")?.parentElement,
+    );
   });
 
   it("shows a removed paragraph whole, well past the old 48-character cut", async () => {
@@ -509,9 +559,12 @@ describe("removals read as removals (T-209)", () => {
       `## 结论\n\n${T209_PARA}\n\n留下的一段。\n`,
       "## 结论\n\n留下的一段。\n",
     );
-    const marker = container.querySelector("del.spec-del-block");
-    expect(marker?.textContent).toBe(T209_PARA);
-    expect(marker?.textContent).not.toContain("…");
+    const removed = restoredBlock(container, "p");
+    expect(removed.textContent).toBe(T209_PARA);
+    expect(removed.textContent).not.toContain("…");
+    expect(removed.previousElementSibling).toBe(container.querySelector("h2"));
+    expect(removed.nextElementSibling?.textContent).toBe("留下的一段。");
+    expect(texts(container, "p")).toEqual([T209_PARA, "留下的一段。"]);
   });
 
   it("shows a removed table row in place (T-221)", async () => {
@@ -534,14 +587,213 @@ describe("removals read as removals (T-209)", () => {
     expect([...(body?.children ?? [])].at(-1)).toBe(removed[0]);
   });
 
-  it("shows every row of a removed table, each on its own line", async () => {
+  it("restores every row and the formatting of a removed table in place", async () => {
     const { container } = await renderDiff(
       T209_TABLE_BEFORE,
       "## 矩阵\n\n后面还有一段话。\n",
     );
-    expect(container.querySelector("table")).toBeNull();
-    const marker = container.querySelector("del.spec-del-block");
-    expect(marker?.textContent).toBe(T209_TABLE_ROWS.join("\n"));
+    const removed = restoredBlock(container, "table");
+    expect(container.querySelectorAll("table")).toHaveLength(1);
+    expect(texts(container, "table thead th")).toEqual([
+      "引擎",
+      "渠道",
+      "判定",
+    ]);
+    const rows = removed.querySelectorAll("tbody > tr");
+    expect(rows).toHaveLength(3);
+    expect(
+      [...rows].map((row) =>
+        [...row.querySelectorAll("td")].map((cell) => cell.textContent),
+      ),
+    ).toEqual([
+      ["行证据", "纯新增 pair", "blocksFullyInLines"],
+      ["覆盖证据", "重写 pair", "blocksFullyCoveredByText"],
+      ["第三行", "会被删掉", "用来看删行"],
+    ]);
+    expect(texts(container, "table code")).toEqual([
+      "blocksFullyInLines",
+      "blocksFullyCoveredByText",
+    ]);
+    expect(removed.querySelector(".spec-del-row, .spec-del-cell")).toBeNull();
+    expect(removed.previousElementSibling).toBe(container.querySelector("h2"));
+    expect(removed.nextElementSibling?.textContent).toBe("后面还有一段话。");
+    expect(removed.parentElement).toBe(
+      container.querySelector("h2")?.parentElement,
+    );
+  });
+});
+
+describe("whole-block deletions preserve semantic structure", () => {
+  it("restores paragraph formatting and links once between retained siblings", async () => {
+    const { container } = await renderDiff(
+      "## Section\n\nRemoved **bold** and *emphasis*, `code`, [reference](/guide).\n\nRetained body.\n",
+      "## Section\n\nRetained body.\n",
+    );
+    const removed = restoredBlock(container, "p");
+    expect(removed.textContent).toBe(
+      "Removed bold and emphasis, code, reference.",
+    );
+    expect(removed.querySelector("strong")?.textContent).toBe("bold");
+    expect(removed.querySelector("em")?.textContent).toBe("emphasis");
+    expect(removed.querySelector("code")?.textContent).toBe("code");
+    expect(removed.querySelector("a")?.textContent).toBe("reference");
+    expect(removed.querySelector("a")?.getAttribute("href")).toBe("/guide");
+    expect(removed.previousElementSibling).toBe(container.querySelector("h2"));
+    expect(removed.nextElementSibling?.textContent).toBe("Retained body.");
+    expect(removed.parentElement).toBe(
+      container.querySelector("h2")?.parentElement,
+    );
+    expect(texts(container, "p")).toEqual([
+      "Removed bold and emphasis, code, reference.",
+      "Retained body.",
+    ]);
+  });
+
+  it("restores a removed heading at its original level with inline formatting", async () => {
+    const { container } = await renderDiff(
+      "Retained intro.\n\n### Removed **heading** with `code`\n\nRetained body.\n",
+      "Retained intro.\n\nRetained body.\n",
+    );
+    const removed = restoredBlock(container, "h3");
+    expect(removed.textContent).toBe("Removed heading with code");
+    expect(removed.querySelector("strong")?.textContent).toBe("heading");
+    expect(removed.querySelector("code")?.textContent).toBe("code");
+    expect(container.querySelectorAll("h3")).toHaveLength(1);
+    expect(removed.previousElementSibling?.textContent).toBe("Retained intro.");
+    expect(removed.nextElementSibling?.textContent).toBe("Retained body.");
+    expect(removed.parentElement).toBe(
+      container.querySelector("p")?.parentElement,
+    );
+  });
+
+  it.each([
+    ["unordered", "- **First**\n- *Second*", "ul"],
+    ["ordered", "3. **First**\n4. *Second*", "ol"],
+  ])(
+    "restores a whole %s list once, preserving items and formatting",
+    async (_kind, source, tag) => {
+      const { container } = await renderDiff(
+        `## Section\n\n${source}\n\nRetained body.\n`,
+        "## Section\n\nRetained body.\n",
+      );
+      const removed = restoredBlock(container, tag);
+      expect(container.querySelectorAll(tag)).toHaveLength(1);
+      expect(removed.querySelectorAll(":scope > li")).toHaveLength(2);
+      expect(removed.querySelector("li strong")?.textContent).toBe("First");
+      expect(removed.querySelector("li em")?.textContent).toBe("Second");
+      expect(removed.querySelector("li.spec-del-structure")).toBeNull();
+      expect(removed.previousElementSibling).toBe(
+        container.querySelector("h2"),
+      );
+      expect(removed.nextElementSibling?.textContent).toBe("Retained body.");
+      expect(removed.parentElement).toBe(
+        container.querySelector("h2")?.parentElement,
+      );
+      if (tag === "ol") {
+        expect(removed.getAttribute("start")).toBe("3");
+        expect(
+          [...removed.querySelectorAll(":scope > li")].map((item) =>
+            item.getAttribute("value"),
+          ),
+        ).toEqual(["3", "4"]);
+        expect(texts(container, "ol .spec-list-number-old")).toEqual([
+          "3. ",
+          "4. ",
+        ]);
+        expect(texts(container, "ol > li")).toEqual(["3. First", "4. Second"]);
+      } else {
+        expect(texts(container, "ul > li")).toEqual(["First", "Second"]);
+      }
+    },
+  );
+
+  it("keeps the source-marker fallback when a retained list splits into two containers", async () => {
+    // Both retained items match, but their old list maps to two current lists.
+    // A table separates them without pairing with the deleted prose item.
+    // There is no unique legal list parent for the removed li.
+    const before = "- retained alpha\n- **deleted middle**\n- retained omega\n";
+    const after =
+      "- retained alpha\n\n| separator |\n| --- |\n| divider |\n\n- retained omega\n";
+    const decorations = changeDecorations(
+      buildSegmentIndex(before),
+      buildSegmentIndex(after),
+    );
+    expect(decorations.structures).toEqual([]);
+    expect(decorations.deletions).toEqual([
+      {
+        at: after.indexOf("| separator |"),
+        text: "- **deleted middle**",
+        block: true,
+      },
+    ]);
+    const { container } = await renderDiff(before, after);
+    const markers = container.querySelectorAll("del.spec-del-block");
+    expect(markers).toHaveLength(1);
+    expect(markers[0]?.textContent).toBe("- **deleted middle**");
+    expect(markers[0]?.querySelector("strong, li")).toBeNull();
+    expect(markers[0]?.previousElementSibling).toBe(
+      container.querySelector("ul"),
+    );
+    expect(markers[0]?.nextElementSibling).toBe(
+      container.querySelector("table"),
+    );
+    expect(markers[0]?.parentElement).toBe(
+      container.querySelector("ul")?.parentElement,
+    );
+    expect(container.querySelector(".spec-del-structure")).toBeNull();
+    expect(texts(container, "ul > li")).toEqual([
+      "retained alpha",
+      "retained omega",
+    ]);
+  });
+
+  it("keeps image parts and source order in an unmapped-list marker fallback", async () => {
+    const imageUrl = "/retired-shot.png";
+    const removedSource = `- **deleted middle** ![shot](${imageUrl})`;
+    const before = `- retained alpha\n${removedSource}\n- retained omega\n`;
+    const after =
+      "- retained alpha\n\n| separator |\n| --- |\n| divider |\n\n- retained omega\n";
+    const decorations = changeDecorations(
+      buildSegmentIndex(before),
+      buildSegmentIndex(after),
+    );
+    expect(decorations.structures).toEqual([]);
+    expect(decorations.deletions).toEqual([
+      {
+        at: after.indexOf("| separator |"),
+        text: removedSource,
+        block: true,
+        parts: [
+          { kind: "text", text: "- **deleted middle** " },
+          { kind: "image", url: imageUrl, alt: "shot" },
+        ],
+      },
+    ]);
+    const { container } = await renderDiff(before, after);
+    const markers = container.querySelectorAll("del.spec-del-block");
+    expect(markers).toHaveLength(1);
+    const marker = markers[0];
+    expect(marker?.textContent).toBe("- **deleted middle** ");
+    expect(
+      [...(marker?.childNodes ?? [])].map((node) =>
+        node.nodeType === 1 ? (node as Element).tagName : node.textContent,
+      ),
+    ).toEqual(["- **deleted middle** ", "IMG"]);
+    expect(marker?.querySelector("img")?.getAttribute("src")).toBe(imageUrl);
+    expect(marker?.querySelector("img")?.getAttribute("alt")).toBe("shot");
+    expect(container.querySelectorAll(`img[src="${imageUrl}"]`)).toHaveLength(
+      1,
+    );
+    expect(marker?.previousElementSibling).toBe(container.querySelector("ul"));
+    expect(marker?.nextElementSibling).toBe(container.querySelector("table"));
+    expect(marker?.parentElement).toBe(
+      container.querySelector("ul")?.parentElement,
+    );
+    expect(container.querySelector(".spec-del-structure")).toBeNull();
+    expect(texts(container, "ul > li")).toEqual([
+      "retained alpha",
+      "retained omega",
+    ]);
   });
 });
 
@@ -656,6 +908,7 @@ describe("what the engine emits for table edits (T-221)", () => {
     // each quoting one cell's source with its leading pipe.
     const decorations = decorationsOf(T221_BEFORE, T221_DROP_MIDDLE);
     expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+    expect(decorations.structures).toEqual([]);
     expect(decorations.blocks).toEqual([]);
     expect(decorations.tables).toHaveLength(1);
     expect(decorations.tables[0]?.columns).toEqual([
@@ -689,6 +942,9 @@ describe("what the engine emits for table edits (T-221)", () => {
       blocks: [],
       tables: [],
       images: [],
+      structures: [],
+      baselineIndex: buildSegmentIndex(T221_BEFORE),
+      currentIndex: buildSegmentIndex(T221_SWAP),
     });
   });
 
@@ -712,6 +968,7 @@ describe("what the engine emits for table edits (T-221)", () => {
       { at: 2, cells: proseCells("覆盖证据", "重写", "B") },
     ]);
     expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+    expect(decorations.structures).toEqual([]);
   });
 
   it("never lets one table's cells answer for another's (N)", () => {
@@ -741,19 +998,31 @@ describe("what the engine emits for table edits (T-221)", () => {
       { row: 2, col: 1, parts: [{ kind: "text", text: "4" }] },
     ]);
     expect(decorations.deletions).toEqual([]);
+    expect(decorations.structures).toEqual([]);
   });
 
-  it("still quotes a whole removed table as a marker", () => {
-    // Nothing is left on the page to splice a column into, so this stays
-    // exactly what T-209 settled: the source, in full, at the seam.
+  it("plans a whole removed table at the root, retaining source as fallback", () => {
+    // The deleted table has no counterpart for an overlay, but the retained
+    // heading supplies a legal predecessor at the document root.
     const decorations = decorationsOf(
       T209_TABLE_BEFORE,
       "## 矩阵\n\n后面还有一段话。\n",
     );
     expect(decorations.tables).toEqual([]);
-    expect(decorations.deletions.map((d) => [d.block, d.text])).toEqual([
-      [true, T209_TABLE_ROWS.join("\n")],
-    ]);
+    expect(decorations.deletions).toEqual([]);
+    expect(decorations.structures).toHaveLength(1);
+    expect(decorations.structures[0]).toMatchObject({
+      old: {
+        type: "table",
+        start: T209_TABLE_BEFORE.indexOf("| 引擎"),
+        end: T209_TABLE_BEFORE.indexOf("\n\n后面"),
+      },
+      parent: null,
+      after: { type: "heading", start: 0, end: "## 矩阵".length },
+      order: 1,
+      fallback: { at: "## 矩阵".length, text: T209_TABLE_ROWS.join("\n") },
+    });
+    expect(decorations.structures[0]?.fallback.parts).toBeUndefined();
   });
 });
 
@@ -886,7 +1155,17 @@ describe("the whole document is one alignment (T-211)", () => {
     // Two runs, two 5.x pairs, and the paragraph is the only thing that went.
     expect(texts(container, "h3 del.spec-del")).toEqual(["5.5", "5.6"]);
     expect(texts(container, "h3 ins.spec-ins")).toEqual(["5.6", "5.7"]);
-    expect(texts(container, "del.spec-del-block")).toEqual([T209_PARA]);
+    const removed = restoredBlock(container, "p");
+    expect(removed.textContent).toBe(T209_PARA);
+    expect(removed.previousElementSibling?.textContent).toBe("5.4 服务端");
+    expect(removed.nextElementSibling).toBe(
+      container.querySelectorAll("h3")[1],
+    );
+    expect(texts(container, "p")).toEqual([
+      T209_PARA,
+      "CLI 侧只加一个等待命令。",
+      "页面照旧。",
+    ]);
   });
 
   it("pairs a short pointer with the paragraph that replaced it", async () => {
@@ -920,15 +1199,42 @@ describe("the whole document is one alignment (T-211)", () => {
     expect(texts(container, "ins.spec-ins")).toEqual(["改"]);
   });
 
-  it("shows a removed list item whole, fence included", async () => {
+  it("restores a removed list item inside its retained list, fence included", async () => {
+    const decorations = changeDecorations(
+      buildSegmentIndex(LIST_TWO),
+      buildSegmentIndex(LIST_ONE),
+    );
+    expect(decorations.structures).toHaveLength(1);
+    expect(decorations.structures[0]).toMatchObject({
+      old: {
+        type: "listItem",
+        start: LIST_TWO.indexOf("- 乙项"),
+        end: LIST_TWO.trimEnd().length,
+      },
+      parent: { type: "list", start: 0, end: LIST_ONE.trimEnd().length },
+      after: { type: "listItem", start: 0, end: LIST_ONE.trimEnd().length },
+      order: 1,
+      fallback: {
+        at: LIST_ONE.trimEnd().length,
+        text: LIST_TWO.trimEnd().slice(LIST_TWO.indexOf("- 乙项")),
+      },
+    });
+    expect(
+      decorations.deletions.map((deletion) => [deletion.block, deletion.text]),
+    ).toEqual([[false, "改"]]);
     const { container } = await renderDiff(LIST_TWO, LIST_ONE);
-    const markers = container.querySelectorAll("del.spec-del-block");
-    expect(markers).toHaveLength(1);
-    expect(markers[0]?.textContent).toContain("乙项");
-    expect(markers[0]?.textContent).toContain("x();");
-    // The marker quotes source as plain text; nothing re-renders it, so the
-    // fence it carries does not come back as a code block.
-    expect(container.querySelectorAll("pre")).toHaveLength(0);
+    const removed = restoredBlock(container, "li");
+    expect(container.querySelectorAll("ul > li")).toHaveLength(2);
+    expect(removed.parentElement).toBe(container.querySelector("ul"));
+    expect(removed.previousElementSibling?.textContent).toContain("甲项说明");
+    expect(removed.nextElementSibling).toBeNull();
+    expect(removed.querySelector("p")?.textContent).toBe("乙项：");
+    expect(removed.querySelectorAll("pre")).toHaveLength(1);
+    expect(removed.querySelector("pre code")?.textContent?.trimEnd()).toBe(
+      "x();",
+    );
+    expect(container.querySelectorAll("pre")).toHaveLength(1);
+    expect(removed.querySelector('[data-testid="fence-diff"]')).toBeNull();
     expect(texts(container, "del.spec-del")).toEqual(["改"]);
   });
 
@@ -943,6 +1249,9 @@ describe("the whole document is one alignment (T-211)", () => {
       blocks: [],
       tables: [],
       images: [],
+      structures: [],
+      baselineIndex: before,
+      currentIndex: after,
     });
     // The empty object alone proves nothing: a fence's text never enters
     // `segments`, so any decoration computed for one is dropped in silence
@@ -951,7 +1260,7 @@ describe("the whole document is one alignment (T-211)", () => {
     expect([...pairedFences(before, after)]).toEqual([[1, "a = 1;"]]);
   });
 
-  it("emits one marker and one word pair for T-209's repro", () => {
+  it("emits one structural paragraph plan and one word pair for T-209's repro", () => {
     const before = buildSegmentIndex(T209_BEFORE);
     const after = buildSegmentIndex(T209_AFTER);
     const decorations = changeDecorations(before, after);
@@ -960,8 +1269,19 @@ describe("the whole document is one alignment (T-211)", () => {
     expect(T209_AFTER.slice(span?.start ?? 0, span?.end ?? 0)).toBe("5.6");
     expect(decorations.deletions.map((d) => [d.block, d.text])).toEqual([
       [false, "5.5"],
-      [true, T209_PARA],
     ]);
+    expect(decorations.structures).toHaveLength(1);
+    expect(decorations.structures[0]).toMatchObject({
+      old: {
+        type: "paragraph",
+        start: T209_BEFORE.indexOf(T209_PARA),
+        end: T209_BEFORE.indexOf(T209_PARA) + T209_PARA.length,
+      },
+      parent: null,
+      after: { type: "heading", start: 0, end: "### 5.4 服务端".length },
+      order: 1,
+      fallback: { at: "### 5.4 服务端".length, text: T209_PARA },
+    });
     expect(decorations.blocks).toEqual([]);
   });
 });
@@ -1152,9 +1472,10 @@ describe("what the engine emits for image edits (T-223)", () => {
           decorations.deletions,
           decorations.blocks,
           decorations.tables,
+          decorations.structures,
         ],
         context,
-      ).toEqual([[], [], [], []]);
+      ).toEqual([[], [], [], [], []]);
     }
   });
 
@@ -1177,16 +1498,30 @@ describe("what the engine emits for image edits (T-223)", () => {
     ]);
   });
 
-  it("puts a removed image into the marker as an image", () => {
+  it("plans a removed image paragraph with an image-bearing fallback", () => {
+    const source = `![](${IMG_A})`;
     const decorations = decorationsFor(
-      `## 图\n\n![](${IMG_A})\n\n正文。\n`,
+      `## 图\n\n${source}\n\n正文。\n`,
       "## 图\n\n正文。\n",
     );
-    expect(decorations.deletions).toHaveLength(1);
-    expect(decorations.deletions[0]?.block).toBe(true);
-    expect(decorations.deletions[0]?.parts).toEqual([
-      { kind: "image", url: IMG_A, alt: "" },
-    ]);
+    expect(decorations.deletions).toEqual([]);
+    expect(decorations.structures).toHaveLength(1);
+    expect(decorations.structures[0]).toMatchObject({
+      old: {
+        type: "paragraph",
+        start: "## 图\n\n".length,
+        end: "## 图\n\n".length + source.length,
+      },
+      parent: null,
+      after: { type: "heading", start: 0, end: "## 图".length },
+      order: 1,
+      fallback: {
+        at: "## 图".length,
+        text: source,
+        parts: [{ kind: "image", url: IMG_A, alt: "" }],
+      },
+    });
+    expect(decorations.images).toEqual([]);
   });
 
   it("keeps the prose around a removed image in order", () => {
@@ -1194,22 +1529,42 @@ describe("what the engine emits for image edits (T-223)", () => {
       `## 图\n\n看这张 ![](${IMG_A}) 就懂了。\n\n正文。\n`,
       "## 图\n\n正文。\n",
     );
-    expect(decorations.deletions[0]?.parts).toEqual([
+    expect(decorations.deletions).toEqual([]);
+    expect(decorations.structures).toHaveLength(1);
+    expect(decorations.structures[0]).toMatchObject({
+      old: { type: "paragraph" },
+      parent: null,
+      after: { type: "heading", start: 0, end: "## 图".length },
+      fallback: { at: "## 图".length, text: `看这张 ![](${IMG_A}) 就懂了。` },
+    });
+    expect(decorations.structures[0]?.fallback.parts).toEqual([
       { kind: "text", text: "看这张 " },
       { kind: "image", url: IMG_A, alt: "" },
       { kind: "text", text: " 就懂了。" },
     ]);
   });
 
-  it("leaves a deletion holding no image on its byte-for-byte path", () => {
-    // A paragraph replaced by an image: the two never pair, so the paragraph
-    // gets the marker it always got — no parts, nothing to render differently.
+  it("retains an image-free paragraph's source only as structural fallback", () => {
+    // A paragraph never pairs with an image. Restore it at the root before
+    // the new image paragraph, without inventing image parts for its fallback.
     const decorations = decorationsFor(
       "这里本来是一段文字说明。\n",
       `![](${IMG_B})\n`,
     );
-    expect(decorations.deletions).toHaveLength(1);
-    expect(decorations.deletions[0]?.parts).toBeUndefined();
+    expect(decorations.deletions).toEqual([]);
+    expect(decorations.structures).toHaveLength(1);
+    expect(decorations.structures[0]).toMatchObject({
+      old: {
+        type: "paragraph",
+        start: 0,
+        end: "这里本来是一段文字说明。".length,
+      },
+      parent: null,
+      after: null,
+      order: 0,
+      fallback: { at: 0, text: "这里本来是一段文字说明。" },
+    });
+    expect(decorations.structures[0]?.fallback.parts).toBeUndefined();
     expect(decorations.blocks).toHaveLength(1);
     expect(decorations.images).toEqual([]);
   });
@@ -1248,7 +1603,8 @@ describe("what the engine emits for image edits (T-223)", () => {
       decorations.blocks,
       decorations.tables,
       decorations.images,
-    ]).toEqual([[], [], [], [], []]);
+      decorations.structures,
+    ]).toEqual([[], [], [], [], [], []]);
   });
 });
 
@@ -1308,16 +1664,24 @@ describe("how image edits render (T-223)", () => {
     expect(container.querySelector(".spec-img-del")).toBeNull();
   });
 
-  it("shows a removed image in the marker rather than its url", async () => {
+  it("restores a removed image in its semantic paragraph, not as source", async () => {
     const { container } = await renderDiff(
       `## 图\n\n![](${IMG_A})\n\n正文。\n`,
       "## 图\n\n正文。\n",
     );
-    const marker = container.querySelector("del.spec-del-block");
-    expect(marker?.textContent).toBe("");
-    expect(marker?.children).toHaveLength(1);
-    expect(marker?.children[0]?.tagName).toBe("IMG");
-    expect(marker?.children[0]?.getAttribute("src")).toBe(IMG_A);
+    const removed = restoredBlock(container, "p");
+    expect(removed.textContent).toBe("");
+    expect(removed.children).toHaveLength(1);
+    expect(removed.children[0]?.tagName).toBe("IMG");
+    expect(removed.children[0]?.getAttribute("src")).toBe(IMG_A);
+    expect(removed.children[0]?.getAttribute("alt")).toBe("");
+    expect(container.querySelectorAll(`img[src="${IMG_A}"]`)).toHaveLength(1);
+    expect(removed.previousElementSibling).toBe(container.querySelector("h2"));
+    expect(removed.nextElementSibling?.textContent).toBe("正文。");
+    expect(removed.parentElement).toBe(
+      container.querySelector("h2")?.parentElement,
+    );
+    expect(container.querySelector(".spec-img-del, .spec-img-new")).toBeNull();
   });
 
   it("keeps a swap inside the table cell it happened in", async () => {
@@ -1336,22 +1700,37 @@ describe("how image edits render (T-223)", () => {
       `## 图\n\n看这张 ![](${IMG_A}) 就懂了。\n\n正文。\n`,
       "## 图\n\n正文。\n",
     );
-    const marker = container.querySelector("del.spec-del-block");
+    const removed = restoredBlock(container, "p");
     expect(
-      [...(marker?.childNodes ?? [])].map((node) =>
+      [...removed.childNodes].map((node) =>
         node.nodeType === 1 ? (node as Element).tagName : node.textContent,
       ),
     ).toEqual(["看这张 ", "IMG", " 就懂了。"]);
+    expect(removed.querySelector("img")?.getAttribute("src")).toBe(IMG_A);
+    expect(container.querySelectorAll(`img[src="${IMG_A}"]`)).toHaveLength(1);
+    expect(removed.previousElementSibling).toBe(container.querySelector("h2"));
+    expect(removed.nextElementSibling?.textContent).toBe("正文。");
+    expect(removed.parentElement).toBe(
+      container.querySelector("h2")?.parentElement,
+    );
   });
 
-  it("leaves an image-free removal reading byte for byte as before", async () => {
+  it("restores an image-free paragraph before the new image paragraph", async () => {
     const { container } = await renderDiff(
       "这里本来是一段文字说明。\n",
       `![](${IMG_B})\n`,
     );
-    const marker = container.querySelector("del.spec-del-block");
-    expect(marker?.textContent).toBe("这里本来是一段文字说明。");
-    expect(marker?.querySelector("img")).toBeNull();
+    const removed = restoredBlock(container, "p");
+    expect(removed.textContent).toBe("这里本来是一段文字说明。");
+    expect(removed.querySelector("img")).toBeNull();
+    expect(removed.previousElementSibling).toBeNull();
+    expect(removed.nextElementSibling).toBe(
+      container.querySelector("p.spec-ins-block"),
+    );
+    expect(
+      removed.nextElementSibling?.querySelector("img")?.getAttribute("src"),
+    ).toBe(IMG_B);
+    expect(texts(container, "p")).toEqual(["这里本来是一段文字说明。", ""]);
   });
 });
 
@@ -1439,6 +1818,7 @@ describe("what the engine emits for a removed cell's image (T-229)", () => {
     // The card's second finding: the same image also floated out of the table
     // as a marker quoting the cell's source, pipe and all.
     expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+    expect(decorations.structures).toEqual([]);
   });
 
   it("puts the image of a removed row into the stand-in row", () => {
@@ -1453,6 +1833,7 @@ describe("what the engine emits for a removed cell's image (T-229)", () => {
       },
     ]);
     expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+    expect(decorations.structures).toEqual([]);
   });
 
   it("keeps an image and the words beside it in source order", () => {
@@ -1462,6 +1843,7 @@ describe("what the engine emits for a removed cell's image (T-229)", () => {
       { kind: "text", text: "旧形态" },
     ]);
     expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+    expect(decorations.structures).toEqual([]);
   });
 
   it("puts an image back into a cell that stayed and lost only that", () => {
@@ -1470,6 +1852,7 @@ describe("what the engine emits for a removed cell's image (T-229)", () => {
       { row: 1, col: 1, parts: [{ kind: "image", url: IMG_A, alt: "" }] },
     ]);
     expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+    expect(decorations.structures).toEqual([]);
   });
 
   it("leaves a swapped image to the swap, even when the words moved too", () => {
@@ -1741,6 +2124,7 @@ describe("pictures pair by identity, inside their own table (T-239)", () => {
     // overlay, one table quoted whole as a marker, and one declared new.
     const decorations = decorationsOf(T239_TWO_TABLES, T239_TWO_TABLES_AFTER);
     expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+    expect(decorations.structures).toEqual([]);
     expect(decorations.tables).toHaveLength(2);
     expect(decorations.tables[0]?.columns).toEqual([
       {
@@ -1767,10 +2151,27 @@ describe("pictures pair by identity, inside their own table (T-239)", () => {
       T239_ALL_IMAGE_TABLES,
       T239_ALL_IMAGE_SURVIVOR,
     );
-    const markers = decorations.deletions.filter((d) => d.block);
-    expect(markers).toHaveLength(1);
-    expect(markers[0]?.text).toContain(IMG_A);
-    expect(markers[0]?.text).not.toContain(IMG_C);
+    expect(decorations.deletions).toEqual([]);
+    expect(decorations.structures).toHaveLength(1);
+    const structure = decorations.structures[0];
+    expect(structure).toMatchObject({
+      old: { type: "table" },
+      parent: null,
+      after: null,
+      order: 0,
+    });
+    expect(structure?.fallback).toMatchObject({
+      at: 0,
+      text: T239_ALL_IMAGE_TABLES.split("\n\n")[0],
+    });
+    expect(structure?.fallback.text).toContain(IMG_A);
+    expect(structure?.fallback.text).not.toContain(IMG_C);
+    expect(
+      structure?.fallback.parts?.filter((part) => part.kind === "image"),
+    ).toEqual([
+      { kind: "image", url: IMG_A, alt: "" },
+      { kind: "image", url: IMG_B, alt: "" },
+    ]);
   });
 
   it("does the same for tables with no prose at all", () => {
@@ -1778,11 +2179,67 @@ describe("pictures pair by identity, inside their own table (T-239)", () => {
       T239_IMAGE_HEADERS,
       T239_IMAGE_HEADERS_SURVIVOR,
     );
-    const markers = decorations.deletions.filter((d) => d.block);
-    expect(markers).toHaveLength(1);
-    expect(markers[0]?.text).toContain(IMG_A);
-    expect(markers[0]?.text).not.toContain(IMG_C);
+    expect(decorations.deletions).toEqual([]);
+    expect(decorations.structures).toHaveLength(1);
+    const structure = decorations.structures[0];
+    expect(structure).toMatchObject({
+      old: { type: "table" },
+      parent: null,
+      after: null,
+      order: 0,
+    });
+    expect(structure?.fallback).toMatchObject({
+      at: 0,
+      text: T239_IMAGE_HEADERS.split("\n\n")[0],
+    });
+    expect(structure?.fallback.text).toContain(IMG_A);
+    expect(structure?.fallback.text).not.toContain(IMG_C);
+    expect(
+      structure?.fallback.parts?.filter((part) => part.kind === "image"),
+    ).toEqual([
+      { kind: "image", url: IMG_A, alt: "" },
+      { kind: "image", url: IMG_B, alt: "" },
+    ]);
   });
+
+  it.each<[string, string, string, number]>([
+    ["prose headers", T239_ALL_IMAGE_TABLES, T239_ALL_IMAGE_SURVIVOR, 2],
+    ["image headers", T239_IMAGE_HEADERS, T239_IMAGE_HEADERS_SURVIVOR, 1],
+  ])(
+    "restores the removed image table with %s before its own survivor",
+    async (_context, before, after, bodyRows) => {
+      const { container } = await renderDiff(before, after);
+      const restored = container.querySelectorAll("table.spec-del-structure");
+      expect(restored).toHaveLength(1);
+      expect(container.querySelectorAll(".spec-del-structure")).toHaveLength(1);
+      expect(container.querySelectorAll("table")).toHaveLength(2);
+      const removed = restored[0];
+      expect(removed?.querySelectorAll("thead > tr")).toHaveLength(1);
+      expect(removed?.querySelectorAll("tbody > tr")).toHaveLength(bodyRows);
+      expect(
+        [...(removed?.querySelectorAll("img") ?? [])].map((image) =>
+          image.getAttribute("src"),
+        ),
+      ).toEqual([IMG_A, IMG_B]);
+      expect(container.querySelectorAll(`img[src="${IMG_A}"]`)).toHaveLength(1);
+      expect(container.querySelectorAll(`img[src="${IMG_B}"]`)).toHaveLength(1);
+      expect(removed?.querySelector(`img[src="${IMG_C}"]`)).toBeNull();
+      expect(removed?.previousElementSibling).toBeNull();
+      const survivor = container.querySelectorAll("table")[1];
+      expect(removed?.nextElementSibling).toBe(survivor);
+      expect(removed?.parentElement).toBe(survivor?.parentElement);
+      expect(survivor?.querySelectorAll(`img[src="${IMG_C}"]`)).toHaveLength(1);
+      expect(survivor?.classList.contains("spec-del-structure")).toBe(false);
+      // A surviving cell's image swap may still use its dedicated image del;
+      // neither table's source may be quoted as a whole-block marker.
+      expect(
+        container.querySelector("del.spec-del-block:not(.spec-img-del)"),
+      ).toBeNull();
+      expect(
+        removed?.querySelector(".spec-del-row, .spec-del-cell, .spec-img-del"),
+      ).toBeNull();
+    },
+  );
 
   it("separates a paragraph's picture from the same one in a cell", () => {
     // A picture inside a table used to be cut as a document-level leaf too,
@@ -1796,6 +2253,7 @@ describe("pictures pair by identity, inside their own table (T-239)", () => {
       T239_SHARED_IMAGE_AFTER,
     );
     expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+    expect(decorations.structures).toEqual([]);
     expect(decorations.images).toHaveLength(1);
     expect(decorations.images[0]?.old?.url).toBe(IMG_A);
     expect(decorations.tables[0]?.columns).toEqual([
@@ -1828,6 +2286,7 @@ describe("pictures pair by identity, inside their own table (T-239)", () => {
     ).toBe(`![](${IMG_C})`);
     expect(decorations.blocks).toEqual([]);
     expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+    expect(decorations.structures).toEqual([]);
   });
 
   it("swaps two pictures whose alts were rewritten with them", () => {
@@ -1841,6 +2300,7 @@ describe("pictures pair by identity, inside their own table (T-239)", () => {
       `![丙](${IMG_B})\n\n![丁](${IMG_D})\n`,
     );
     expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+    expect(decorations.structures).toEqual([]);
     expect(decorations.images.map((swap) => swap.old?.url)).toEqual([
       IMG_A,
       IMG_C,
@@ -1854,9 +2314,19 @@ describe("pictures pair by identity, inside their own table (T-239)", () => {
     const decorations = decorationsOf(T239_ALTS, `![乙](${IMG_D})\n`);
     expect(decorations.images).toHaveLength(1);
     expect(decorations.images[0]?.old?.url).toBe(IMG_C);
-    const markers = decorations.deletions.filter((d) => d.block);
-    expect(markers).toHaveLength(1);
-    expect(markers[0]?.text).toContain(IMG_A);
+    expect(decorations.deletions).toEqual([]);
+    expect(decorations.structures).toHaveLength(1);
+    expect(decorations.structures[0]).toMatchObject({
+      old: { type: "paragraph", start: 0, end: `![甲](${IMG_A})`.length },
+      parent: null,
+      after: null,
+      order: 0,
+      fallback: {
+        at: 0,
+        text: `![甲](${IMG_A})`,
+        parts: [{ kind: "image", url: IMG_A, alt: "甲" }],
+      },
+    });
   });
 
   it("pairs two fences that were replaced by two unrelated ones", () => {
@@ -1870,6 +2340,7 @@ describe("pictures pair by identity, inside their own table (T-239)", () => {
       "```sh\ngamma\n```\n\n```sh\ndelta\n```\n",
     );
     expect(decorations.deletions.filter((d) => d.block)).toEqual([]);
+    expect(decorations.structures).toEqual([]);
     expect(decorations.blocks).toEqual([]);
   });
 });
