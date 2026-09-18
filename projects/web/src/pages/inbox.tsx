@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { InboxItem } from "@todou/shared";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { groupInboxItems, type InboxGroup, inboxQuery } from "@/api/inbox.ts";
 import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
@@ -10,7 +10,10 @@ import {
   LoadFailure,
   RefreshFailure,
 } from "@/components/shared/load-failure.tsx";
+import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
+import type { ProjectRefOption } from "@/lib/project-spellings.ts";
+import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { cn } from "@/lib/utils";
 
@@ -42,6 +45,12 @@ export function matchesTab(item: InboxItem, tab: InboxTab): boolean {
  */
 export function InboxPage() {
   const inbox = useQuery(inboxQuery);
+  const items = inbox.data?.items;
+  const projects = useMemo(
+    () => items?.map((item) => item.project),
+    [items],
+  );
+  const refs = useProjectRefs(projects);
   const [tab, setTab] = useState<InboxTab>("all");
   const data = inbox.data;
   const hasContent = data !== undefined;
@@ -119,7 +128,11 @@ export function InboxPage() {
       ) : (
         <div className="space-y-6">
           {groups.map((group) => (
-            <InboxGroupSection key={group.project.slug} group={group} />
+            <InboxGroupSection
+              key={group.project.slug}
+              group={group}
+              refs={refs}
+            />
           ))}
         </div>
       )}
@@ -134,17 +147,31 @@ export function InboxPage() {
   );
 }
 
-function InboxGroupSection({ group }: { group: InboxGroup }) {
+function InboxGroupSection({
+  group,
+  refs,
+}: {
+  group: InboxGroup;
+  refs: Map<string, ProjectRefOption>;
+}) {
   const grid = useIssueListGrid();
   return (
     <section className="overflow-hidden rounded-lg border">
       <header className="flex items-center justify-between gap-2 border-b bg-muted/50 px-3.5 py-2">
-        <div className="flex items-baseline gap-2">
+        <div className="flex items-center gap-2">
           <Link
             to="/projects/$slug"
             params={{ slug: group.project.slug }}
-            className="font-semibold hover:underline"
+            className="flex items-center gap-1.5 font-semibold hover:underline"
           >
+            <ProjectIcon
+              project={{
+                name: group.project.name,
+                prefix: refs.get(group.project.slug)?.prefix ?? null,
+                icon_url: group.project.icon_url,
+              }}
+              className="size-5"
+            />
             {group.project.name}
           </Link>
           <span className="text-xs text-muted-foreground">

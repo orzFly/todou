@@ -8,6 +8,7 @@ import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function makeItem(
@@ -62,6 +63,17 @@ function makeItem(
 
 function mockInbox(page: InboxPageData) {
   vi.spyOn(api, "getInbox").mockResolvedValue(page);
+  vi.spyOn(api, "getReferenceDirectory").mockResolvedValue({
+    entries: [
+      {
+        prefix: "GH",
+        slug: "greenhouse",
+        from: "2020-01-01T00:00:00.000Z",
+        to: null,
+      },
+    ],
+    contested: [],
+  });
   vi.spyOn(api, "getMyPrefs").mockResolvedValue({
     show_weak_unread: true,
     ref_placement_list: "before",
@@ -119,6 +131,44 @@ describe("InboxPage", () => {
         name: "3 new comments — mark as read",
       }),
     ).toBeTruthy();
+  });
+
+  it("draws the project's uploaded icon in the group header", async () => {
+    class LoadedImage extends EventTarget {
+      complete = true;
+      naturalWidth = 20;
+      crossOrigin: string | null = null;
+      referrerPolicy = "";
+      src = "";
+    }
+    vi.stubGlobal("Image", LoadedImage);
+    const iconUrl = "/api/projects/1/icon?v=inbox";
+    mockInbox({
+      items: [makeItem("greenhouse", 42, { project: {
+        id: 1,
+        slug: "greenhouse",
+        name: "Project greenhouse",
+        icon_url: iconUrl,
+      } })],
+      truncated: false,
+    });
+    const view = renderWithProviders(<InboxPage />);
+
+    const name = await view.findByText("Project greenhouse");
+    expect(name.closest("a")?.querySelector("img")?.getAttribute("src")).toBe(
+      iconUrl,
+    );
+  });
+
+  it("falls back to the project's REF prefix in the group header", async () => {
+    mockInbox({
+      items: [makeItem("greenhouse", 42)],
+      truncated: false,
+    });
+    const view = renderWithProviders(<InboxPage />);
+
+    const name = await view.findByText("Project greenhouse");
+    expect(name.closest("a")?.textContent).toContain("GH");
   });
 
   it("keeps the reason badges out of the desktop-only meta group", async () => {
