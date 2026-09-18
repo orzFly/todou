@@ -1,7 +1,15 @@
-import { Link, useNavigate, useParams } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  type ErrorComponentProps,
+  Link,
+  useNavigate,
+  useParams,
+} from "@tanstack/react-router";
 import { GoneError, MovedError } from "@todou/shared";
 import { useEffect, useState } from "react";
 import { api } from "@/api/queries.ts";
+import { SpecReadError } from "@/api/spec.ts";
+import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { parseTimelineAnchor } from "@/lib/timeline-anchors.ts";
 
@@ -87,16 +95,62 @@ function FollowMove({ error }: { error: MovedError }) {
  * rather than a child — so `IssueRouteError` never sees its errors, and an
  * old spec deep link used to reach the router's generic crash screen.
  */
-export function SpecRouteError({ error }: { error: Error }) {
+export function SpecRouteError({ error, reset }: ErrorComponentProps<Error>) {
   if (error instanceof MovedError) return <FollowMoveToSpec error={error} />;
   if (error instanceof GoneError) return <MovedAwayPage error={error} />;
-  if ((error as { status?: number }).status !== 404) throw error;
+  if (error instanceof SpecReadError) {
+    return <SpecReadFailure error={error} reset={reset} />;
+  }
+  if (error && typeof error === "object" && "status" in error) {
+    if (error.status !== 404) throw error;
+  } else {
+    throw error;
+  }
   return (
     <Empty>
       <p className="text-muted-foreground">
         This spec does not exist, or you do not have access to it.
       </p>
     </Empty>
+  );
+}
+
+function SpecReadFailure({
+  error,
+  reset,
+}: {
+  error: Error;
+  reset: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const { slug, number } = useParams({
+    from: "/authed/projects/$slug/issues/$number/spec",
+  });
+  const issueNumber = Number(number);
+  const [retrying, setRetrying] = useState(false);
+  const retry = async () => {
+    setRetrying(true);
+    await Promise.all([
+      queryClient.resetQueries({
+        queryKey: ["spec", slug, issueNumber],
+      }),
+      queryClient.resetQueries({
+        queryKey: ["spec-files", slug, issueNumber],
+      }),
+    ]);
+    reset();
+  };
+
+  return (
+    <div className="py-20">
+      <LoadFailure
+        message="Couldn't load this spec."
+        detail={error.message}
+        onRetry={() => void retry()}
+        retrying={retrying}
+        className="justify-center"
+      />
+    </div>
   );
 }
 

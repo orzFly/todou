@@ -108,6 +108,47 @@ describe("the unsaved-work registry", () => {
     hook.rerender({ dirty: true });
     expect(hasUnsavedWork()).toBe(true);
   });
+
+  it("skips only a dirty source that survives this navigation", () => {
+    const spec = registerDirtySource(
+      () => true,
+      ({ current, next }) =>
+        current.routeId === "spec" &&
+        next.routeId === "spec" &&
+        current.params.slug === next.params.slug &&
+        current.params.number === next.params.number,
+    );
+    expect(
+      hasUnsavedWork({
+        current: {
+          routeId: "spec",
+          params: { slug: "p", number: "7", v: 1 },
+        },
+        next: {
+          routeId: "spec",
+          params: { slug: "p", number: "7", v: 2 },
+        },
+      }),
+    ).toBe(false);
+    expect(hasUnsavedWork()).toBe(true);
+    spec();
+  });
+
+  it("still blocks a surviving spec draft when another dirty source would be lost", () => {
+    const spec = registerDirtySource(
+      () => true,
+      () => true,
+    );
+    const ordinary = registerDirtySource(() => true);
+    expect(
+      hasUnsavedWork({
+        current: { routeId: "spec", params: { slug: "p", number: "7" } },
+        next: { routeId: "spec", params: { slug: "p", number: "7" } },
+      }),
+    ).toBe(true);
+    ordinary();
+    spec();
+  });
 });
 
 /**

@@ -1,5 +1,9 @@
 import type { TodouClient } from "@todou/shared";
-import { TimelineFilterType, TodouError } from "@todou/shared";
+import {
+  TimelineFilterType,
+  TodouError,
+  TodouNetworkError,
+} from "@todou/shared";
 import { type Clock, systemClock } from "./clock.ts";
 import { CliError, RetriesExhaustedError } from "./errors.ts";
 import { formatDuration } from "./format.ts";
@@ -28,15 +32,15 @@ export function normalizeTypes(raw: string): string {
 
 /**
  * Errors worth retrying: the request may succeed verbatim a moment later.
- * 5xx/408/429 are server-side or throttling hiccups; undici surfaces every
- * connection-level failure (refused, DNS, reset, mid-body termination) as a
- * TypeError. Everything else — 4xx, parse errors, bugs — is fatal.
+ * 5xx/408/429 are server-side or throttling hiccups; the shared client
+ * marks fetch and body-stream failures. Legacy TypeErrors remain retryable.
+ * Everything else — 4xx, parse errors, bugs, cancellations — is fatal.
  */
 export function isTransientError(error: unknown): boolean {
   if (error instanceof TodouError) {
     return error.status >= 500 || error.status === 408 || error.status === 429;
   }
-  return error instanceof TypeError;
+  return error instanceof TodouNetworkError || error instanceof TypeError;
 }
 
 export function describeError(error: unknown): string {
@@ -45,8 +49,12 @@ export function describeError(error: unknown): string {
       ? `HTTP ${error.status}`
       : `HTTP ${error.status} — ${error.message}`;
   }
-  if (error instanceof TypeError) {
-    return (error.cause as Error | undefined)?.message ?? error.message;
+  if (error instanceof TodouNetworkError || error instanceof TypeError) {
+    const cause = error.cause;
+    if (cause instanceof Error) {
+      return cause.cause instanceof Error ? cause.cause.message : cause.message;
+    }
+    return error.message;
   }
   return String(error);
 }

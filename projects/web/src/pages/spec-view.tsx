@@ -67,6 +67,10 @@ import {
   type ComposerStaging,
   SpecComposer,
 } from "@/components/spec/spec-composer.tsx";
+import {
+  SpecReviewSessionScope,
+  useSpecReviewSession,
+} from "@/components/spec/spec-review-session-provider.tsx";
 import { SpecVersionPicker } from "@/components/spec/spec-version-picker.tsx";
 import { SpecViewToggle } from "@/components/spec/spec-view-toggle.tsx";
 import { useLinkedTriggerWidths } from "@/components/spec/use-linked-trigger-widths.ts";
@@ -105,7 +109,6 @@ import {
   specMode,
   specSearchFor,
 } from "@/lib/spec-search.ts";
-import { beginEdit, retarget, type Staging } from "@/lib/spec-staging.ts";
 import {
   computeVersionStats,
   type SpecFileStat,
@@ -294,7 +297,9 @@ export function SpecViewPage() {
     );
   }
   return (
-    <SpecViewBody slug={slug} issueNumber={issueNumber} spec={spec.data} />
+    <SpecReviewSessionScope slug={slug} issueNumber={issueNumber}>
+      <SpecViewBody slug={slug} issueNumber={issueNumber} spec={spec.data} />
+    </SpecReviewSessionScope>
   );
 }
 
@@ -382,8 +387,11 @@ function SpecViewBody({
   const files = useSuspenseQuery(specFilesQuery(slug, issueNumber, version));
   const comments = useSuspenseQuery(specCommentsQuery(slug, issueNumber));
   const drafts = useSpecReviewDrafts(slug, issueNumber);
-  const [staging, setStaging] = useState<Staging | null>(null);
-  const [finishOpen, setFinishOpen] = useState(false);
+  const {
+    session,
+    state: reviewSession,
+    submitReview,
+  } = useSpecReviewSession(slug, issueNumber);
   // The compare toggle's "off" position: a reading stance for this session,
   // which is why it stays out of the URL. A link that pins a baseline still
   // wins over it, so shared diff links open as their sender saw them (T-192).
@@ -396,7 +404,6 @@ function SpecViewBody({
   const [filesOpen, setFilesOpen] = useState(false);
   const [position, setPosition] = useState<ChangePosition | null>(null);
   const contentRef = useRef<HTMLElement>(null);
-  const sessionRef = useRef(0);
   const rowBRef = useRef<HTMLDivElement>(null);
 
   const { baseline, view: urlView } = specMode(search, version, compareOff);
@@ -442,12 +449,9 @@ function SpecViewBody({
   const navigate = useNavigate();
 
   /** Every anchor gesture — selection, line drag, "Comment file". */
-  const stage = (next: ComposerStaging) => {
-    const session = ++sessionRef.current;
-    setStaging((prev) => retarget(prev, next, session));
-  };
-  const editDraft = (draft: SpecReviewDraft) =>
-    setStaging(beginEdit(draft, ++sessionRef.current));
+  const stage = (next: ComposerStaging) => session.retarget(next);
+  const editDraft = (draft: SpecReviewDraft) => session.editDraft(draft);
+  const staging = reviewSession.staging;
   const editingDraft = drafts.drafts.find((d) => d.id === staging?.draftId);
 
   // The source diff stacks every differing file at once, so the rail marks a
@@ -1125,7 +1129,7 @@ function SpecViewBody({
                   ? `Finish review (${drafts.drafts.length} staged)`
                   : "Finish review"
               }
-              onClick={() => setFinishOpen(true)}
+              onClick={() => session.setFinishOpen(true)}
             >
               Finish review
               {/* T-190 reserved this box so staging the first draft would not
@@ -1531,15 +1535,14 @@ function SpecViewBody({
 
       {staging !== null && (
         <SpecComposer
-          // A new composer session gets a fresh editor; re-aiming the anchor
-          // within one session keeps what has been typed (T-159).
-          key={staging.session}
+          key={`${staging.session}:${version}`}
           slug={slug}
           staging={staging}
           hostRef={composerRef}
-          initialBody={editingDraft?.body}
+          body={reviewSession.composerBody}
           editing={staging.draftId !== undefined}
-          onCancel={() => setStaging(null)}
+          onCancel={session.clearComposer}
+          onBodyChange={session.setComposerBody}
           onStage={(body) => {
             const next = {
               anchor: {
@@ -1553,11 +1556,9 @@ function SpecViewBody({
               quote: staging.quote,
               body,
             };
-            // Discarded from under the edit: keep the text rather than the
-            // identity, and stage it as a new draft.
             if (editingDraft === undefined) drafts.add(next);
             else drafts.update(editingDraft.id, next);
-            setStaging(null);
+            session.clearComposer();
           }}
         />
       )}
@@ -1567,12 +1568,18 @@ function SpecViewBody({
         issueNumber={issueNumber}
         currentVersion={spec.current_version}
         drafts={drafts.drafts}
-        open={finishOpen}
-        onClose={() => setFinishOpen(false)}
-        onSubmitted={() => {
-          drafts.clear();
-          setFinishOpen(false);
-        }}
+        summary={reviewSession.summary}
+        open={reviewSession.finishOpen}
+        pendingVerdict={reviewSession.pending?.verdict ?? null}
+        onSummaryChange={session.setSummary}
+        onClose={() => session.setFinishOpen(false)}
+        onSubmit={(verdict) =>
+          submitReview({
+            currentVersion: spec.current_version,
+            verdict,
+            drafts: drafts.drafts,
+          })
+        }
       />
     </div>
   );

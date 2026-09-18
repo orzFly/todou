@@ -63,6 +63,8 @@ export type MarkdownEditorProps = {
   ariaLabel?: string;
   autoFocus?: boolean;
   readOnly?: boolean;
+  /** Dirty state is registered by a stable owner outside this editor. */
+  ownerManagedDirty?: boolean;
   /**
    * Mod-Enter. Receives the current document so callers need no ref.
    *
@@ -146,6 +148,7 @@ export const MarkdownEditor = forwardRef<
     ariaLabel,
     autoFocus,
     readOnly,
+    ownerManagedDirty,
     onSubmit,
     onCancel,
     onChange,
@@ -174,6 +177,7 @@ export const MarkdownEditor = forwardRef<
       ariaLabel={ariaLabel}
       autoFocus={autoFocus}
       readOnly={readOnly}
+      ownerManagedDirty={ownerManagedDirty}
       keymap={[
         {
           key: "Mod-Enter",

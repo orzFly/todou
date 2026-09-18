@@ -1,6 +1,7 @@
-import { TodouError } from "@todou/shared";
+import { Writable } from "node:stream";
+import { TodouClient, TodouError, TodouNetworkError } from "@todou/shared";
 import { describe, expect, it } from "vitest";
-import { CliError, RetriesExhaustedError } from "../src/errors.ts";
+import { CliError, RetriesExhaustedError, reportError } from "../src/errors.ts";
 import {
   isTransientError,
   type RetryOptions,
@@ -136,6 +137,75 @@ describe("retryTransient", () => {
     );
     expect((error as Error).message).toContain("ECONNREFUSED");
     expect(calls).toBe(3);
+  });
+
+  it("retries a real client fetch failure and reports its cause", async () => {
+    let calls = 0;
+    const notes: string[] = [];
+    const client = new TodouClient({
+      fetch: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new TypeError("fetch failed", {
+            cause: new Error("ECONNREFUSED"),
+          });
+        }
+        return new Response("{}");
+      },
+    });
+    await expect(
+      retryTransient(
+        () => client.me(),
+        fastRetry({ onRetry: (line) => notes.push(line) }),
+      ),
+    ).resolves.toEqual({});
+    expect(calls).toBe(2);
+    expect(notes[0]).toContain("ECONNREFUSED");
+  });
+
+  it("prints the real client's network error without losing the cause", async () => {
+    const client = new TodouClient({
+      fetch: async () => {
+        throw new TypeError("fetch failed", {
+          cause: new Error("ECONNREFUSED"),
+        });
+      },
+    });
+    const error = await client.me().catch((caught) => caught);
+    expect(error).toBeInstanceOf(TodouNetworkError);
+    expect(isTransientError(error)).toBe(true);
+    const lines: string[] = [];
+    const stderr = new Writable({
+      write(chunk, _encoding, done) {
+        lines.push(String(chunk));
+        done();
+      },
+    });
+    expect(reportError(error, stderr, "http://todou.example")).toBe(1);
+    expect(lines.join("")).toContain("cannot reach");
+    expect(lines.join("")).toContain("ECONNREFUSED");
+  });
+
+  it("does not retry or report an aborted client request as a network outage", async () => {
+    const abort = new DOMException("cancelled", "AbortError");
+    const client = new TodouClient({
+      fetch: async () => {
+        throw abort;
+      },
+    });
+    const error = await retryTransient(() => client.me(), fastRetry()).catch(
+      (caught) => caught,
+    );
+    expect(error).toBe(abort);
+    expect(isTransientError(error)).toBe(false);
+    const stderr = new Writable({
+      write(_chunk, _encoding, done) {
+        done();
+      },
+    });
+    expect(() => reportError(error, stderr, "http://todou.example")).toThrow(
+      abort,
+    );
   });
 
   it("keeps going on an infinite budget, and drops the denominator", async () => {

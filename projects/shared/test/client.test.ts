@@ -5,6 +5,7 @@ import {
   MovedError,
   TodouClient,
   TodouError,
+  TodouNetworkError,
 } from "../src/client.ts";
 
 type Captured = { url: string; init: RequestInit };
@@ -662,6 +663,99 @@ describe("TodouClient redirects (T-231)", () => {
       moved: true,
       title: "Old card",
     });
+  });
+
+  it("marks an error thrown by fetch as a transport failure", async () => {
+    const cause = new TypeError("fetch failed");
+    const client = new TodouClient({
+      fetch: (async () => {
+        throw cause;
+      }) as typeof fetch,
+    });
+
+    const error = await client.getSpecFiles("a", 1).catch((caught) => caught);
+    expect(error).toBeInstanceOf(TodouNetworkError);
+    expect((error as TodouNetworkError).cause).toBe(cause);
+  });
+
+  it("marks a response body stream reset, but not invalid JSON, as transport failure", async () => {
+    const cause = new TypeError("body stream reset");
+    const client = new TodouClient({
+      fetch: async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(cause);
+            },
+          }),
+          { status: 200 },
+        ),
+    });
+    const error = await client.getSpecFiles("a", 1).catch((caught) => caught);
+    expect(error).toBeInstanceOf(TodouNetworkError);
+    expect((error as TodouNetworkError).cause).toBe(cause);
+
+    const malformed = new TodouClient({
+      fetch: async () => new Response("{broken", { status: 200 }),
+    });
+    await expect(malformed.getSpecFiles("a", 1)).rejects.toBeInstanceOf(
+      SyntaxError,
+    );
+
+    const bug = new Error("body adapter bug");
+    const response = new Response("{}");
+    response.text = async () => {
+      throw bug;
+    };
+    const buggy = new TodouClient({ fetch: async () => response });
+    await expect(buggy.getSpecFiles("a", 1)).rejects.toBe(bug);
+  });
+
+  it("does not label query serialization or synchronous adapter bugs as network failures", async () => {
+    let calls = 0;
+    const client = new TodouClient({
+      fetch: async () => {
+        calls += 1;
+        return new Response("{}");
+      },
+    });
+    const query = Object.defineProperty({}, "version", {
+      enumerable: true,
+      get() {
+        throw new TypeError("query getter bug");
+      },
+    });
+    const error = await client
+      .requestRaw("GET", "/me", { query })
+      .catch((caught) => caught);
+    expect(calls).toBe(0);
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error).not.toBeInstanceOf(TodouNetworkError);
+
+    const adapterBug = new TypeError("adapter bug");
+    const adapter = new TodouClient({
+      fetch: (() => {
+        throw adapterBug;
+      }) as typeof fetch,
+    });
+    const thrown = await adapter.me().catch((caught) => caught);
+    expect(thrown).toBe(adapterBug);
+  });
+
+  it("keeps aborted fetches as cancellations", async () => {
+    const abort = new DOMException("cancelled", "AbortError");
+    const client = new TodouClient({
+      fetch: async () => {
+        throw abort;
+      },
+    });
+    await expect(client.me()).rejects.toBe(abort);
+    const response = new Response("{}");
+    response.text = async () => {
+      throw abort;
+    };
+    const bodyAbort = new TodouClient({ fetch: async () => response });
+    await expect(bodyAbort.me()).rejects.toBe(abort);
   });
 
   it("still returns bytes from requestRaw after following a redirect", async () => {

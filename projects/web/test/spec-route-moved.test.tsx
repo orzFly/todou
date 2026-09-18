@@ -9,6 +9,7 @@ import {
 import { render, screen, waitFor } from "@testing-library/react";
 import type { Project, SpecInfo } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { api } from "../src/api/queries.ts";
 import { parseSpecSearch } from "../src/lib/spec-search.ts";
 import { SpecRouteError } from "../src/pages/issue-route-error.tsx";
 import {
@@ -161,6 +162,7 @@ function renderAt(url: string) {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -287,5 +289,16 @@ describe("an old spec deep link (T-245)", () => {
     // for is not ours to dress up as an empty state.
     expect(await screen.findByText(ABOVE)).toBeTruthy();
     expect(screen.queryByText(SPEC_MISS)).toBeNull();
+  });
+
+  it("lets a programming TypeError from the files reader reach the outer boundary", async () => {
+    stubFetch(specServed("a", 1));
+    vi.spyOn(api, "getSpecFiles").mockRejectedValue(
+      new TypeError("Cannot read properties of undefined (reading 'version')"),
+    );
+    renderAt("/projects/a/issues/1/spec");
+
+    expect(await screen.findByText(ABOVE)).toBeTruthy();
+    expect(screen.queryByText("Couldn't load this spec.")).toBeNull();
   });
 });
