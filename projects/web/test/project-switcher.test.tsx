@@ -8,7 +8,12 @@ import {
   useParams,
 } from "@tanstack/react-router";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { InboxItem, Project, ReferenceDirectory } from "@todou/shared";
+import type {
+  InboxItem,
+  InboxPage,
+  Project,
+  ReferenceDirectory,
+} from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
 import { referenceDirectoryQuery } from "../src/api/references.ts";
@@ -40,7 +45,7 @@ const me = {
   created_at: "2026-01-01T00:00:00Z",
 };
 
-/** One inbox row, trimmed to what the switcher's per-slug tally reads. */
+/** A returned row; exact badge counts come from unread_counts, not this list. */
 function inboxItem(slug: string, number: number): InboxItem {
   return {
     id: number,
@@ -86,7 +91,7 @@ function inboxItem(slug: string, number: number): InboxItem {
 function renderSwitcher(
   projects: Project[],
   at = "/",
-  inbox?: InboxItem[],
+  inbox?: InboxPage,
   directory?: ReferenceDirectory,
 ) {
   const c = testQueryClient();
@@ -100,11 +105,10 @@ function renderSwitcher(
   // Left unseeded elsewhere on purpose: the shell owns this query in the app,
   // so a switcher rendered alone sees exactly the loading/failed shape.
   if (inbox) {
-    c.setQueryData(["inbox"], { items: inbox, truncated: false });
-    vi.spyOn(api, "getInbox").mockResolvedValue({
-      items: inbox,
-      truncated: false,
-    });
+    c.setQueryData(["inbox"], inbox);
+    vi.spyOn(api, "getInbox").mockResolvedValue(inbox);
+  } else {
+    vi.spyOn(api, "getInbox").mockReturnValue(new Promise<InboxPage>(() => {}));
   }
 
   function SwitcherAtSlug() {
@@ -354,12 +358,12 @@ function badgeOf(name: string) {
 }
 
 describe("ProjectSwitcher unread badges (T-202)", () => {
-  it("counts the project's inbox rows, and leaves quiet projects bare", async () => {
-    renderSwitcher(fewProjects, "/", [
-      inboxItem("alpha", 1),
-      inboxItem("beta", 2),
-      inboxItem("alpha", 3),
-    ]);
+  it("reads exact unread_counts despite trimmed rows, and leaves quiet projects bare", async () => {
+    renderSwitcher(fewProjects, "/", {
+      items: [inboxItem("alpha", 1), inboxItem("beta", 2)],
+      truncated: true,
+      unread_counts: { alpha: 2, beta: 1 },
+    });
     await openSwitcher();
     expect(badgeOf("alpha")).toBe("2");
     expect(badgeOf("beta")).toBe("1");
@@ -381,10 +385,11 @@ describe("ProjectSwitcher unread badges (T-202)", () => {
   });
 
   it("announces the count only on rows that have one", async () => {
-    renderSwitcher(fewProjects, "/", [
-      inboxItem("beta", 1),
-      inboxItem("beta", 2),
-    ]);
+    renderSwitcher(fewProjects, "/", {
+      items: [inboxItem("beta", 1)],
+      truncated: true,
+      unread_counts: { beta: 2 },
+    });
     await openSwitcher();
     expect(screen.getByRole("option", { name: "beta — 2 未读" })).toBeTruthy();
     // No count means no aria-label, so this row is announced by its own

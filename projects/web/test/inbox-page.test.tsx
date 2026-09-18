@@ -61,7 +61,15 @@ function makeItem(
   };
 }
 
-function mockInbox(page: InboxPageData) {
+type InboxFixture = Omit<InboxPageData, "unread_counts"> &
+  Partial<Pick<InboxPageData, "unread_counts">>;
+
+function inboxFixture(fixture: InboxFixture): InboxPageData {
+  return { ...fixture, unread_counts: fixture.unread_counts ?? {} };
+}
+
+function mockInbox(fixture: InboxFixture): InboxPageData {
+  const page = inboxFixture(fixture);
   vi.spyOn(api, "getInbox").mockResolvedValue(page);
   vi.spyOn(api, "getReferenceDirectory").mockResolvedValue({
     entries: [
@@ -84,6 +92,7 @@ function mockInbox(page: InboxPageData) {
     truncate_ref_title: true,
     show_repeated_ref_title: false,
   });
+  return page;
 }
 
 describe("InboxPage", () => {
@@ -251,8 +260,10 @@ describe("InboxPage", () => {
 
 describe("InboxPage · saved data (T-415)", () => {
   it("keeps an inbox issue on a failed refresh and Retry fetches new content", async () => {
-    const cached = { items: [makeItem("a", 42)], truncated: false };
-    mockInbox(cached);
+    const cached = mockInbox({
+      items: [makeItem("a", 42)],
+      truncated: false,
+    });
     const get = vi.mocked(api.getInbox);
     const client = testQueryClient();
     client.setQueryData(inboxQuery.queryKey, cached);
@@ -268,7 +279,9 @@ describe("InboxPage · saved data (T-415)", () => {
     await view.findByText(/Couldn't refresh the inbox/);
     expect(view.getByText("issue 42")).toBeTruthy();
 
-    get.mockResolvedValue({ items: [makeItem("a", 43)], truncated: false });
+    get.mockResolvedValue(
+      inboxFixture({ items: [makeItem("a", 43)], truncated: false }),
+    );
     fireEvent.click(view.getByRole("button", { name: "Retry" }));
     await view.findByText("issue 43");
     expect(view.queryByText(/Couldn't refresh the inbox/)).toBeNull();
@@ -299,7 +312,7 @@ describe("InboxPage · saved data (T-415)", () => {
       view.getByText(/Could not load the inbox: cold inbox unavailable/),
     ).toBeTruthy();
     await act(async () => {
-      finish({ items: [makeItem("a", 44)], truncated: false });
+      finish(inboxFixture({ items: [makeItem("a", 44)], truncated: false }));
     });
     await view.findByText("issue 44");
     expect(view.queryByText(/Could not load the inbox/)).toBeNull();
@@ -332,7 +345,7 @@ describe("InboxPage · load failure (T-376)", () => {
     // The old control was underlined text; its label is gone for good.
     expect(view.queryByText("Try again")).toBeNull();
 
-    get.mockResolvedValueOnce({ items: [], truncated: false });
+    get.mockResolvedValueOnce(inboxFixture({ items: [], truncated: false }));
     fireEvent.click(view.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
     await view.findByText("收件箱清空了 🥔");

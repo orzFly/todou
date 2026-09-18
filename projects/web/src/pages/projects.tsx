@@ -1,5 +1,6 @@
 import {
   useMutation,
+  useQuery,
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
@@ -8,6 +9,7 @@ import { formatRef } from "@todou/shared";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { inboxQuery, unreadCounts } from "@/api/inbox.ts";
 import { api, projectsQuery } from "@/api/queries.ts";
 import { useProjectOrder } from "@/api/useProjectOrder.ts";
 import {
@@ -26,10 +28,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { UnreadBadge } from "@/components/unread-badge.tsx";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 
 export function ProjectsPage() {
   const projects = useSuspenseQuery(projectsQuery);
+  const inbox = useQuery(inboxQuery);
+  const counts = unreadCounts(inbox.data);
   // Same frecency order as the navbar switcher (T-76).
   const ordered = useProjectOrder(projects.data);
   const refs = useProjectRefs(projects.data);
@@ -46,21 +51,32 @@ export function ProjectsPage() {
         </div>
       ) : (
         <ProjectCardGrid>
-          {ordered.map(({ project, neverVisited }) => (
-            <ProjectCard
-              key={project.id}
-              project={{
-                slug: project.slug,
-                name: project.name,
-                prefix: refs.get(project.slug)?.prefix ?? null,
-                icon_url: project.icon_url,
-              }}
-              muted={neverVisited}
-            >
-              {project.slug}
-              {project.description ? ` — ${project.description}` : ""}
-            </ProjectCard>
-          ))}
+          {ordered.map(({ project, neverVisited }) => {
+            const count = counts[project.slug] ?? 0;
+            return (
+              <ProjectCard
+                key={project.id}
+                project={{
+                  slug: project.slug,
+                  name: project.name,
+                  prefix: refs.get(project.slug)?.prefix ?? null,
+                  icon_url: project.icon_url,
+                }}
+                muted={neverVisited}
+                action={
+                  count > 0 ? (
+                    <>
+                      <UnreadBadge count={count} />
+                      <span className="sr-only">{count} 未读</span>
+                    </>
+                  ) : undefined
+                }
+              >
+                {project.slug}
+                {project.description ? ` — ${project.description}` : ""}
+              </ProjectCard>
+            );
+          })}
         </ProjectCardGrid>
       )}
     </div>

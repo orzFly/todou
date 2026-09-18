@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { InboxIcon } from "lucide-react";
-import { inboxQuery } from "@/api/inbox.ts";
+import { inboxQuery, unreadTotal } from "@/api/inbox.ts";
 import { Button } from "@/components/ui/button";
 import { UnreadBadge } from "@/components/unread-badge.tsx";
 
@@ -12,7 +12,7 @@ import { UnreadBadge } from "@/components/unread-badge.tsx";
  */
 export function InboxButton() {
   const inbox = useQuery(inboxQuery);
-  const count = inbox.data?.items.length ?? 0;
+  const count = unreadTotal(inbox.data);
   const label = count > 0 ? `Inbox — ${count} unread` : "Inbox";
 
   return (

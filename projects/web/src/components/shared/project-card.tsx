@@ -4,6 +4,7 @@ import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { RefWatermark } from "@/components/shared/ref-watermark.tsx";
 import {
   Card,
+  CardAction,
   CardDescription,
   CardHeader,
   CardTitle,
@@ -38,6 +39,7 @@ export function ProjectCard({
   project,
   muted = false,
   badge,
+  action,
   children,
 }: {
   project: {
@@ -50,6 +52,8 @@ export function ProjectCard({
   muted?: boolean;
   /** Trailing element of the title row. */
   badge?: ReactNode;
+  /** Optional header action; omitted means no action wrapper or layout change. */
+  action?: ReactNode;
   /** The description slot. */
   children?: ReactNode;
 }) {
@@ -95,6 +99,7 @@ export function ProjectCard({
               height: measured, one five-line description takes every card to
               176px against the 136px the clamp holds them to. */}
           <CardDescription className="line-clamp-3">{children}</CardDescription>
+          {action !== undefined && <CardAction>{action}</CardAction>}
         </CardHeader>
         {project.prefix && <RefWatermark prefix={project.prefix} />}
       </Card>

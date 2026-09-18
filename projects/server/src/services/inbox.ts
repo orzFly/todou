@@ -39,7 +39,7 @@ import { toProjectBrief } from "./projects.ts";
 import { ensureFrontiers, frontierJoin, unreadIssueState } from "./reads.ts";
 import { live } from "./trash.ts";
 
-type GroupSlice = { items: InboxItem[]; truncated: boolean };
+type GroupSlice = { items: InboxItem[]; counts: Map<string, number> };
 
 /**
  * What the keep-check already decided about a row, held while the group waits
@@ -366,7 +366,7 @@ export async function groupInbox(
     ...pendingRows.map((r) => r.id),
     ...mentionCand.map((r) => r.issueId),
   ]);
-  if (candidateIds.size === 0) return { items: [], truncated: false };
+  if (candidateIds.size === 0) return { items: [], counts: new Map() };
   const ids = [...candidateIds];
 
   // The one choke point for the trash (T-145): candidates arrive from four
@@ -493,9 +493,9 @@ export async function groupInbox(
     eventRows.flatMap((r) => (r.latest ? [[r.issueId, r.latest]] : [])),
   );
 
-  // `limit` is per project and `truncated` is "some project was cut", so the
-  // group's rows split back apart before they are sorted and sliced. One sort
-  // over the whole group would let a busy project eat a quiet one's rows.
+  // `limit` is per project, so the group's rows split back apart before
+  // they are sorted and sliced. Count each project's full kept slice first:
+  // one sort over the group would let a busy project eat a quiet one's rows.
   const slices = new Map<number, { item: InboxItem; at: Date }[]>();
   for (const { bundle, state } of kept) {
     const row = bundle.row;
@@ -529,13 +529,17 @@ export async function groupInbox(
   }
 
   const items: InboxItem[] = [];
-  let truncated = false;
-  for (const slice of slices.values()) {
+  const projectCounts = new Map<string, number>();
+  for (const [projectId, slice] of slices) {
+    const project = projectById.get(projectId);
+    if (!project) {
+      throw new Error(`project ${projectId} is outside the inbox group`);
+    }
+    projectCounts.set(project.slug, slice.length);
     slice.sort((a, b) => b.at.getTime() - a.at.getTime());
     items.push(...slice.slice(0, limit).map((s) => s.item));
-    truncated ||= slice.length > limit;
   }
-  return { items, truncated };
+  return { items, counts: projectCounts };
 }
 
 /**
@@ -772,5 +776,12 @@ export async function getInbox(
 
   const items = slices.flatMap((s) => s.items);
   items.sort((a, b) => b.last_activity_at.localeCompare(a.last_activity_at));
-  return { items, truncated: slices.some((s) => s.truncated) };
+  const counts = new Map<string, number>(
+    slices.flatMap((slice) => [...slice.counts]),
+  );
+  return {
+    items,
+    unread_counts: Object.fromEntries(counts),
+    truncated: [...counts.values()].some((n) => n > query.limit),
+  };
 }

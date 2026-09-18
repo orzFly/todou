@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { ChevronsUpDownIcon } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
-import { inboxQuery } from "@/api/inbox.ts";
+import { inboxQuery, unreadCounts } from "@/api/inbox.ts";
 import { projectsQuery } from "@/api/queries.ts";
 import { useProjectOrder } from "@/api/useProjectOrder.ts";
 import {
@@ -38,13 +38,7 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
   // and the per-row counts can never drift from the navbar badge they are
   // summed out of (T-202). Loading or failed inbox = empty map = no badges.
   const inbox = useQuery(inboxQuery);
-  const unreadCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const item of inbox.data?.items ?? []) {
-      counts.set(item.project.slug, (counts.get(item.project.slug) ?? 0) + 1);
-    }
-    return counts;
-  }, [inbox.data]);
+  const counts = unreadCounts(inbox.data);
 
   // Keep the current nav module across the switch. Pages deeper than the nav
   // (issue detail, spec view) have no cross-project counterpart, so they fall
@@ -57,7 +51,7 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
   const options = useMemo<ProjectListboxOption[]>(
     () =>
       ordered.map((item) => {
-        const count = unreadCounts.get(item.project.slug) ?? 0;
+        const count = counts[item.project.slug] ?? 0;
         return {
           project: item.project,
           link: { to: target, params: { slug: item.project.slug } },
@@ -72,7 +66,7 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
             count > 0 ? `${item.project.name} — ${count} 未读` : undefined,
         };
       }),
-    [ordered, unreadCounts, target],
+    [ordered, counts, target],
   );
 
   // A modified click hands the link to the browser (new tab/window), so leave

@@ -110,6 +110,9 @@ function client(projects: Project[], directory?: ReferenceDirectory) {
   c.setQueryData(["me"], reader);
   c.setQueryData(["projects"], projects);
   c.setQueryData(userQuery(alice.login).queryKey, alice);
+  const inbox = { items: [], truncated: false, unread_counts: {} };
+  c.setQueryData(["inbox"], inbox);
+  vi.spyOn(api, "getInbox").mockResolvedValue(inbox);
   if (directory) {
     c.setQueryData(referenceDirectoryQuery.queryKey, directory);
   }
@@ -261,7 +264,7 @@ afterEach(() => {
 });
 
 describe("the project card, drawn by both pages (T-390)", () => {
-  it("comes out with the same structure on each", async () => {
+  it("comes out with the same structure on each, with no action wrappers on quiet home or user cards", async () => {
     const homelab = project(
       "homelab",
       "Homelab",
@@ -273,6 +276,22 @@ describe("the project card, drawn by both pages (T-390)", () => {
       DIRECTORY,
     );
     const card = await bothCards(containers, "homelab");
+    // Equal signatures alone cannot catch an empty action added to both
+    // pages: it silently activates CardHeader's two-column layout on both.
+    for (const page of ["user", "home"] as const) {
+      const header = card[page].querySelector('[data-slot="card-header"]');
+      expect(header, `${page} card header`).not.toBeNull();
+      expect(
+        header?.querySelector('[data-slot="card-action"]'),
+        `${page} must not activate the action layout`,
+      ).toBeNull();
+    }
+    const role = card.user.querySelector('[data-slot="project-card-badge"]');
+    expect(role?.textContent).toBe("admin");
+    expect(role?.parentElement?.getAttribute("data-slot")).toBe("card-title");
+    expect(
+      card.home.querySelector('[data-slot="project-card-badge"]'),
+    ).toBeNull();
 
     // Rooted at the link, not at the card: the anchor is part of what the
     // component owns, and a page that hung a class of its own on it would

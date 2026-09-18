@@ -191,6 +191,7 @@ describe("cross-project inbox T-97", () => {
     const page = await items();
     expect(page.items).toEqual([]);
     expect(page.truncated).toBe(false);
+    expect(page.unread_counts).toEqual({});
     await settle();
   });
 
@@ -217,9 +218,24 @@ describe("cross-project inbox T-97", () => {
     expect(rowB).toMatchObject({ unread: true, unread_comments: 1 });
     // B's comment is newer, so B sorts first.
     expect(page.items.indexOf(rowB)).toBeLessThan(page.items.indexOf(rowA));
+    expect(page.unread_counts).toEqual({ [PA]: 1, [PB]: 1 });
+    expect(page.truncated).toBe(false);
+    const counts = Object.values(page.unread_counts) as number[];
+    expect(counts.reduce((sum, n) => sum + n, 0)).toBe(page.items.length);
 
     await markRead(PA, a1);
     await markRead(PB, b1);
+  });
+
+  it("omits projects with no inbox rows from unread_counts", async () => {
+    const n = await createIssue(PA, "only A is active");
+    await comment(PA, n, bob.headers, "for A");
+
+    const page = await items();
+    expect(page.unread_counts[PA]).toBe(1);
+    expect(PB in page.unread_counts).toBe(false);
+
+    await markRead(PA, n);
   });
 
   it("my own activity never lands in my inbox", async () => {
@@ -462,7 +478,7 @@ describe("cross-project inbox T-97", () => {
     await markRead(PB, b);
   });
 
-  it("caps per project and reports truncation", async () => {
+  it("counts before the per-project limit and derives truncation from counts", async () => {
     const nums: number[] = [];
     for (let i = 0; i < 3; i++) {
       const n = await createIssue(PB, `bulk ${i}`);
@@ -476,6 +492,9 @@ describe("cross-project inbox T-97", () => {
       (i: { project: { slug: string } }) => i.project.slug === PB,
     );
     expect(pbRows).toHaveLength(2);
+    expect(page.unread_counts[PB]).toBe(3);
+    const limitedCounts = Object.values(page.unread_counts) as number[];
+    expect(page.truncated).toBe(limitedCounts.some((n) => n > 2));
     expect(page.truncated).toBe(true);
     // Newest two of the three survive the cut.
     expect(pbRows.map((r: { number: number }) => r.number)).toEqual([
@@ -485,6 +504,10 @@ describe("cross-project inbox T-97", () => {
 
     const full = await items();
     expect(full.truncated).toBe(false);
+    expect(full.unread_counts[PB]).toBe(3);
+    const fullCounts = Object.values(full.unread_counts) as number[];
+    expect(fullCounts.reduce((sum, n) => sum + n, 0)).toBe(full.items.length);
+    expect(full.truncated).toBe(fullCounts.some((n) => n > 50));
     for (const n of nums) await markRead(PB, n);
   });
 
@@ -1026,7 +1049,7 @@ describe("cross-project inbox T-97", () => {
       project = row;
     });
 
-    it("agrees on rows, counters, order and truncation", async () => {
+    it("agrees on rows, counters, order and counts across limits", async () => {
       // One card per reason a card stays, so an equal comparison is a
       // comparison of something. Alice is the foreign actor, bob the reader.
       const foreignComment = await createIssueAs(PT, bob.headers, "bob asked");
@@ -1087,7 +1110,7 @@ describe("cross-project inbox T-97", () => {
       for (const limit of [50, 2]) {
         expect(await page(false, limit)).toEqual(await page(true, limit));
       }
-      expect((await page(false, 2)).truncated).toBe(true);
+      expect((await page(false, 2)).counts.get(PT)).toBeGreaterThan(2);
 
       // The rest only establishes that the pages compared above had the
       // fixtures in them. Update these if a keep reason changes; the loop

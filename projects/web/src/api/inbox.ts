@@ -1,5 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
-import type { InboxItem } from "@todou/shared";
+import type { InboxItem, InboxPage } from "@todou/shared";
 import { api } from "@/api/queries.ts";
 
 export const inboxQuery = queryOptions({
@@ -29,6 +29,21 @@ export function groupInboxItems(items: InboxItem[]): InboxGroup[] {
     }
   }
   return [...groups.values()];
+}
+
+/** Exact per-project row counts, even when the payload is trimmed. */
+export function unreadCounts(
+  page: InboxPage | undefined,
+): Record<string, number> {
+  return page?.unread_counts ?? {};
+}
+
+/** Cross-project total for the navbar; unavailable inbox data counts as zero. */
+export function unreadTotal(page: InboxPage | undefined): number {
+  return Object.values(unreadCounts(page)).reduce(
+    (sum, count) => sum + count,
+    0,
+  );
 }
 
 // The 30s /activity poll that used to signal this query (T-112) is gone:

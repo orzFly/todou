@@ -9,7 +9,7 @@ const inboxRoute = createRoute({
   summary:
     "Cross-project attention list: unread foreign activity, specs " +
     "awaiting my review, open questions. Sorted by last_activity_at " +
-    "descending; `limit` applies per project.",
+    "descending; `limit` applies per project to `items` only, not `unread_counts`.",
   request: { query: InboxQuery },
   responses: {
     200: {

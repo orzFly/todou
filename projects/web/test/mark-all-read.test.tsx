@@ -216,6 +216,7 @@ describe("clearInboxUnread", () => {
       inboxItem("orchard", 4),
     ],
     truncated: false,
+    unread_counts: { greenhouse: 3, orchard: 1 },
   });
 
   it("drops rows whose only reason was unread activity", () => {

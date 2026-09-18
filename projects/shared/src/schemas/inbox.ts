@@ -49,6 +49,13 @@ export const InboxPage = z.object({
   items: z.array(InboxItem),
   /** True when any project hit the per-project limit. */
   truncated: z.boolean(),
+  /**
+   * Number of inbox rows per project slug before `limit` trims `items`.
+   * Projects with no rows are omitted.
+   */
+  unread_counts: z
+    .record(z.string(), z.number().int().nonnegative())
+    .default({}),
 });
 export type InboxPage = z.infer<typeof InboxPage>;
 
