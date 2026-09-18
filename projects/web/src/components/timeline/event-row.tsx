@@ -1,9 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
+  formatAnchorRange,
   formatRef,
+  isHidden,
   resolveSlugAt,
   type SlugClaimEntry,
+  type SpecCommentItem,
+  SpecCommentsResolvedPayload,
   type TimelineEvent,
 } from "@todou/shared";
 import {
@@ -27,18 +31,21 @@ import {
   UserMinusIcon,
   UserPlusIcon,
 } from "lucide-react";
-import { type ReactNode, useMemo } from "react";
+import { Fragment, type ReactNode, useMemo } from "react";
+import { issueQuery } from "@/api/issues.ts";
 import { projectsQuery } from "@/api/queries.ts";
 import {
   refConfigFor,
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "@/api/references.ts";
+import { specCommentsQuery } from "@/api/spec.ts";
 import { AttachmentEventLink } from "@/components/issue/attachment-list.tsx";
 import { LabelChip } from "@/components/issue/label-chip.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
 import { IssueLink } from "@/components/shared/issue-link.tsx";
+import { SpecAnnotationHoverCard } from "@/components/shared/spec-annotation-hover-card.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import {
   type EventEntities,
@@ -63,6 +70,12 @@ export type EventRenderContext = {
   /** Project id → current slug, preferred over the payload's slug. */
   slugOfProject?: (id: number) => string | undefined;
   entities: EventEntities;
+  /**
+   * Spec annotations of this issue, by comment id. Optional because a context
+   * built off an issue page has none, and a resolution row degrades to its
+   * anchor path rather than waiting for one.
+   */
+  specAnnotations?: Map<number, SpecCommentItem>;
 };
 
 export function useEventRenderContext(
@@ -78,12 +91,30 @@ export function useEventRenderContext(
   const directory = useQuery(referenceDirectoryQuery);
   const projects = useQuery(projectsQuery);
   const entities = useEventEntities(slug);
+  const onIssue = slug !== undefined && issueNumber !== undefined;
+  // Gated the way useIssueSpec gates its own surfaces (T-23): the page holds
+  // the issue by the time a timeline renders, so a card with no spec never
+  // asks for annotations it cannot have. One entry serves every resolution
+  // row on the page, and SpecVersionCard has usually filled it already.
+  const issue = useQuery({
+    ...issueQuery(slug ?? "", issueNumber ?? 0),
+    enabled: onIssue,
+  });
+  const annotations = useQuery({
+    ...specCommentsQuery(slug ?? "", issueNumber ?? 0),
+    enabled: onIssue && issue.data?.spec_version != null,
+  });
   const slugById = useMemo(() => {
     const map = new Map<number, string>();
     for (const project of projects.data ?? [])
       map.set(project.id, project.slug);
     return map;
   }, [projects.data]);
+  const specAnnotations = useMemo(
+    () =>
+      new Map((annotations.data?.items ?? []).map((i) => [i.comment_id, i])),
+    [annotations.data],
+  );
   return {
     slug,
     issueNumber,
@@ -91,7 +122,107 @@ export function useEventRenderContext(
     slugEntries: directory.data?.slug_entries ?? [],
     slugOfProject: (id) => slugById.get(id),
     entities,
+    specAnnotations,
   };
+}
+
+/** How much of an annotation body a row carries. */
+const SNIPPET_MAX = 60;
+
+/**
+ * Markdown source rather than rendered text: stripping emphasis off sixty
+ * characters would cost the timeline a markdown-to-text pass neither package
+ * has, so a body opening with `**why**` shows its asterisks. The cut is here
+ * and not in CSS because a list-group row wraps instead of truncating.
+ */
+function snippetOf(body: string): string {
+  const line = body.split("\n").find((l) => l.trim() !== "") ?? "";
+  const collapsed = line.replace(/\s+/g, " ").trim();
+  return collapsed.length > SNIPPET_MAX
+    ? `${collapsed.slice(0, SNIPPET_MAX)}…`
+    : collapsed;
+}
+
+/** One resolved annotation, as the row naming it and its plain-text mirror. */
+export type ResolvedAnnotation = {
+  id: number;
+  hidden: boolean;
+  node: ReactNode;
+  text: string;
+};
+
+/**
+ * One annotation's row. The listing supplies the anchor range and the body;
+ * without it the payload's own path still names the file, and without that
+ * the comment id does — each level keeps the link to the annotation, which
+ * is the whole of what the row has to answer.
+ *
+ * A hidden annotation keeps its anchor and loses its snippet: revealing
+ * where it pointed never puts back the words the reader asked to be rid of.
+ */
+function annotationRow(
+  id: number,
+  path: string | undefined,
+  item: SpecCommentItem | undefined,
+  ctx: EventRenderContext,
+): ResolvedAnnotation {
+  const { slug, issueNumber } = ctx;
+  const hidden = item !== undefined && isHidden(item);
+  const where =
+    item !== undefined
+      ? `${item.anchor.path} ${formatAnchorRange(item.anchor)}`
+      : (path ?? `spec comment #${id}`);
+  const snippet = item === undefined || hidden ? null : snippetOf(item.body);
+  const text = snippet === null ? where : `${where} "${snippet}"`;
+  if (slug === undefined || issueNumber === undefined) {
+    return { id, hidden, node: text, text };
+  }
+  const link = (
+    <Link
+      to="/projects/$slug/issues/$number"
+      params={{ slug, number: String(issueNumber) }}
+      hash={commentAnchor(id)}
+      hashScrollIntoView={false}
+      className="hover:underline"
+    >
+      {where}
+    </Link>
+  );
+  return {
+    id,
+    hidden,
+    node: (
+      <>
+        {item === undefined ? (
+          link
+        ) : (
+          <SpecAnnotationHoverCard
+            slug={slug}
+            issueNumber={issueNumber}
+            annotation={item}
+          >
+            {link}
+          </SpecAnnotationHoverCard>
+        )}
+        {snippet !== null && (
+          <span className="ml-2 text-muted-foreground/70">“{snippet}”</span>
+        )}
+      </>
+    ),
+    text,
+  };
+}
+
+/** Every annotation a `spec_comments_resolved` event settled, as its rows. */
+export function resolvedAnnotations(
+  event: TimelineEvent,
+  ctx: EventRenderContext,
+): ResolvedAnnotation[] {
+  const parsed = SpecCommentsResolvedPayload.safeParse(event.payload);
+  if (!parsed.success) return [];
+  return parsed.data.comment_ids.map((id, i) =>
+    annotationRow(id, parsed.data.paths[i], ctx.specAnnotations?.get(id), ctx),
+  );
 }
 
 /**
@@ -299,9 +430,30 @@ export function renderEvent(
       return plain(`${verdict} spec v${String(payload.version)}${suffix}`);
     }
     case "spec_comments_resolved": {
-      const ids = payload.comment_ids as unknown[] | undefined;
-      const count = ids?.length ?? 0;
-      return plain(`resolved ${count} spec comment${count === 1 ? "" : "s"}`);
+      // A list family always reaches the group path, so this case is not what
+      // the app draws — SpecResolvedGroup is. It stays in step because the
+      // sentence is cheapest to assert here, and a case saying something else
+      // would be a trap for the next reader.
+      const rows = resolvedAnnotations(event, ctx);
+      if (rows.length === 0) {
+        const ids = payload.comment_ids as unknown[] | undefined;
+        const count = ids?.length ?? 0;
+        return plain(`resolved ${count} spec comment${count === 1 ? "" : "s"}`);
+      }
+      return {
+        node: (
+          <>
+            {"resolved "}
+            {rows.map((row, i) => (
+              <Fragment key={row.id}>
+                {i > 0 && ", "}
+                {row.node}
+              </Fragment>
+            ))}
+          </>
+        ),
+        text: `resolved ${rows.map((row) => row.text).join(", ")}`,
+      };
     }
     case "deleted":
       return plain("moved this to the trash");

@@ -24,10 +24,11 @@ export type MergeFamily =
   | "labels"
   | "referenced"
   | "attachments"
-  | "assignees";
+  | "assignees"
+  | "spec_resolved";
 
-/** The families whose runs render as one row per event. */
-export type ListFamily = "referenced" | "attachments";
+/** The families whose runs render as always-visible rows under a header. */
+export type ListFamily = "referenced" | "attachments" | "spec_resolved";
 /** The rest: a summary row with an expander behind it. */
 export type CollapsedFamily = Exclude<MergeFamily, ListFamily>;
 
@@ -39,7 +40,11 @@ export type CollapsedFamily = Exclude<MergeFamily, ListFamily>;
  * group shell or a row with no header over it.
  */
 export function rendersAsList(family: MergeFamily): family is ListFamily {
-  return family === "referenced" || family === "attachments";
+  return (
+    family === "referenced" ||
+    family === "attachments" ||
+    family === "spec_resolved"
+  );
 }
 
 /**
@@ -57,9 +62,10 @@ export function windowMsFor(family: MergeFamily): number {
  * collapsed family's lone event passes straight through groupTimeline, so
  * one `assigned` on its own still renders as the hand-off it is, and what
  * the standard judges is a burst of them.
- * Milestones (opened/closed/reopened), spec events (spec_pushed renders a
- * version card that a collapsed group would hide), and rare types stay
- * standalone.
+ * Milestones (opened/closed/reopened) and rare types stay standalone, and so
+ * does any type whose row is not the whole of what it renders: spec_pushed
+ * hangs a version card below its row, and a group that folds the row takes
+ * the card with it.
  * label_added and label_removed share a family on purpose: one triage
  * gesture often does both, and GitHub renders that as a single row. assigned
  * and unassigned are the second such pair, with a stronger claim than
@@ -77,6 +83,7 @@ const FAMILY_BY_TYPE: Partial<Record<IssueEventType, MergeFamily>> = {
   attachment_added: "attachments",
   assigned: "assignees",
   unassigned: "assignees",
+  spec_comments_resolved: "spec_resolved",
 };
 
 export function familyOf(type: IssueEventType): MergeFamily | null {

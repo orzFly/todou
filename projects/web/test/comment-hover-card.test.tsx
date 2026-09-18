@@ -2,10 +2,12 @@ import type { QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, waitFor } from "@testing-library/react";
 import type {
   Attachment,
+  Issue,
   IssueListItem,
   MePrefs,
   ReferenceConfig,
   ReferenceDirectory,
+  SpecCommentItem,
   TimelineComment,
   TimelineEvent,
 } from "@todou/shared";
@@ -15,13 +17,16 @@ import {
   attachmentTextQuery,
 } from "../src/api/attachments.ts";
 import { commentRefQuery, issueRefQuery } from "../src/api/issue-refs.ts";
+import { issueQuery } from "../src/api/issues.ts";
 import { prefsQuery } from "../src/api/prefs.ts";
 import { projectsQuery } from "../src/api/queries.ts";
 import {
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
+import { specCommentsQuery } from "../src/api/spec.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
+import { EventGroup } from "../src/components/timeline/event-group.tsx";
 import { EventRow } from "../src/components/timeline/event-row.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
@@ -368,5 +373,132 @@ describe("comment hover card (T-371)", () => {
       expect(view.container.querySelector("section")).not.toBeNull();
     });
     expect(view.container.querySelector("img")).toBeNull();
+  });
+});
+
+describe("spec annotation hover card (T-406)", () => {
+  const QUOTE = "one read-time count";
+  const REVIEW = "why not a column, though?";
+
+  const annotationOf = (hiddenAt: string | null = null): SpecCommentItem => ({
+    comment_id: 4631,
+    author,
+    created_at: "2026-08-13T11:00:00Z",
+    body: REVIEW,
+    hidden_at: hiddenAt,
+    anchor: {
+      path: "design.md",
+      version: 2,
+      line_start: 42,
+      line_end: 48,
+      col_start: null,
+      col_end: null,
+      quote: QUOTE,
+    },
+    resolved: null,
+    outdated: false,
+    current_line_start: 42,
+    current_line_end: 48,
+  });
+
+  const resolvedEvent = (via?: "hide"): TimelineEvent => ({
+    type: "event",
+    id: 1,
+    event_type: "spec_comments_resolved",
+    actor: author,
+    agent_context: null,
+    payload: {
+      comment_ids: [4631],
+      paths: ["design.md"],
+      ...(via === undefined ? {} : { via }),
+    },
+    created_at: "2026-08-13T12:00:00Z",
+  });
+
+  const specSeeded = (item: SpecCommentItem): QueryClient => {
+    const client = seeded();
+    client.setQueryData(issueQuery("todou", 7).queryKey, {
+      spec_version: 2,
+    } as Issue);
+    client.setQueryData(specCommentsQuery("todou", 7).queryKey, {
+      current_version: 2,
+      items: [item],
+    });
+    return client;
+  };
+
+  /** The row's anchor, opening the hidden block first when it is in there. */
+  const rowTrigger = async (item: SpecCommentItem, via?: "hide") => {
+    const view = renderWithProviders(
+      <EventGroup
+        family="spec_resolved"
+        events={[resolvedEvent(via)]}
+        slug="todou"
+        issueNumber={7}
+      />,
+      specSeeded(item),
+    );
+    const toggle = await waitFor(() => {
+      const group = view.container.querySelector('[data-testid="event-group"]');
+      expect(group).not.toBeNull();
+      return group?.querySelector('[data-testid="spec-hidden-toggle"]');
+    });
+    if (toggle) fireEvent.click(toggle);
+    return await waitFor(() => {
+      const el = view.container.querySelector("ul li a");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+  };
+
+  it("previews the reviewer's words beside the source they point at", async () => {
+    hover(await rowTrigger(annotationOf()));
+    const card = await opened();
+    expect(card.textContent).toContain("design.md");
+    expect(card.textContent).toContain("L42–48");
+    expect(card.textContent).toContain(QUOTE);
+    expect(card.textContent).toContain(REVIEW);
+  });
+
+  it("withholds a hidden annotation's body, keeping anchor and source", async () => {
+    hover(await rowTrigger(annotationOf("2026-08-13T12:30:00Z"), "hide"));
+    const card = await opened();
+    // The pair that occurs in practice: hiding the comment is what settled
+    // the annotation, and the listing is what says it is hidden.
+    expect(card.textContent).not.toContain(REVIEW);
+    expect(card.textContent).toContain("hidden");
+    expect(card.textContent).toContain("design.md");
+    expect(card.textContent).toContain(QUOTE);
+  });
+});
+
+describe("referenced-by rows carry the issue preview (T-408)", () => {
+  it("opens a card off a referenced by row", async () => {
+    const event: TimelineEvent = {
+      type: "event",
+      id: 1,
+      event_type: "referenced",
+      actor: author,
+      agent_context: null,
+      payload: { by_issue: 7 },
+      created_at: "2026-08-12T00:00:00Z",
+    };
+    const view = renderWithProviders(
+      <EventGroup
+        family="referenced"
+        events={[event]}
+        slug="todou"
+        issueNumber={1}
+      />,
+      seeded(),
+    );
+    const trigger = await waitFor(() => {
+      const el = view.container.querySelector("ul li a[data-issue-link='7']");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    hover(trigger);
+    const card = await opened();
+    expect(card.textContent).toContain("Target");
   });
 });

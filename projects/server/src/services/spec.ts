@@ -1001,6 +1001,7 @@ export async function listSpecComments(
       author,
       created_at: row.createdAt.toISOString(),
       body: row.body,
+      hidden_at: row.hiddenAt?.toISOString() ?? null,
       anchor,
       resolved,
       outdated,

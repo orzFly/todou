@@ -292,6 +292,72 @@ describe("hidden comments", () => {
       expect((await bodies(number))[annotationId as number]).toBe("");
     });
 
+    it("marks which annotation is hidden and leaves its neighbour alone", async () => {
+      const number = await newCard("one of two annotations hidden");
+      const push = await req(
+        `/projects/${slug}/issues/${number}/spec/push`,
+        writer,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            files: [{ path: "design.md", body: "line one\nline two\n" }],
+          }),
+        },
+      );
+      expect(push.status).toBe(200);
+      const review = await req(
+        `/projects/${slug}/issues/${number}/spec/reviews`,
+        owner,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            version: 1,
+            verdict: "request_changes",
+            comments: [
+              {
+                anchor: {
+                  path: "design.md",
+                  version: 1,
+                  line_start: 1,
+                  line_end: 1,
+                },
+                body: "say why",
+              },
+              {
+                anchor: {
+                  path: "design.md",
+                  version: 1,
+                  line_start: 2,
+                  line_end: 2,
+                },
+                body: "and here",
+              },
+            ],
+          }),
+        },
+      );
+      expect(review.status).toBe(201);
+
+      const listing = async (): Promise<
+        Record<string, { comment_id: number; hidden_at?: string | null }>
+      > => {
+        const listed = await json(
+          await req(`/projects/${slug}/issues/${number}/spec/comments`, writer),
+        );
+        return Object.fromEntries(
+          listed.items.map((i: { body: string }) => [i.body, i]),
+        );
+      };
+
+      const before = await listing();
+      expect(Object.keys(before).sort()).toEqual(["and here", "say why"]);
+      await hide(number, [before["say why"].comment_id]);
+
+      const after = await listing();
+      expect(after["say why"].hidden_at).toEqual(expect.any(String));
+      expect(after["and here"].hidden_at).toBeNull();
+    });
+
     it("still finds the body through search, and says it is hidden", async () => {
       const number = await newCard("searchable while hidden");
       const id = await say(number, "the parakeet migration plan");
