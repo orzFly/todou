@@ -1,4 +1,4 @@
-import { QueryClientProvider } from "@tanstack/react-query";
+import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
   fireEvent,
@@ -8,7 +8,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import type { SpecReviewSubmitInput } from "@todou/shared";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import {
   anchorRangeForNode,
@@ -27,6 +27,9 @@ import { buildSegmentIndex } from "../src/lib/spec-source-index.ts";
 import { cmGetValue, cmPressKey, cmSetValue } from "./cm.ts";
 import { FENCE_SHAPES } from "./fence-shapes.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
+import { reviewViewport } from "./review-viewport.ts";
+
+beforeEach(() => reviewViewport(390));
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -531,6 +534,8 @@ async function openReviewMenu() {
 const reviewItem = (name: string) => screen.getByRole("menuitem", { name });
 
 describe("ReviewSubmitDialog", () => {
+  beforeEach(() => reviewViewport(640));
+
   it("submits verdict, summary, and every staged draft in one POST", async () => {
     const posts = stubFetch();
 
@@ -563,8 +568,7 @@ describe("ReviewSubmitDialog", () => {
     await view.findByLabelText("Review summary");
 
     cmSetValue(view.baseElement, "overall fine");
-    await openReviewMenu();
-    fireEvent.click(reviewItem("Request changes"));
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
 
     await waitFor(() => expect(onSubmitted).toHaveBeenCalled());
     expect(posts).toHaveLength(1);
@@ -615,8 +619,7 @@ describe("ReviewSubmitDialog", () => {
     expect((await view.findByText(/design\.md/)).textContent).toContain(
       "L5:12–34",
     );
-    await openReviewMenu();
-    fireEvent.click(reviewItem("Approve"));
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(onSubmitted).toHaveBeenCalled());
     expect(posts).toHaveLength(1);
     expect(posts[0]?.body).toMatchObject({
@@ -636,8 +639,179 @@ describe("ReviewSubmitDialog", () => {
   });
 });
 
+describe("ReviewSubmitDialog: responsive controls (T-443)", () => {
+  function mount(drafts: Array<typeof DRAFT> = [], pendingVerdict?: "approve") {
+    const client = testQueryClient();
+    const onClose = vi.fn();
+    render(
+      <QueryClientProvider client={client}>
+        <ReviewSubmitDialog
+          slug="p"
+          issueNumber={23}
+          currentVersion={3}
+          drafts={drafts}
+          open
+          pendingVerdict={pendingVerdict}
+          onClose={onClose}
+        />
+      </QueryClientProvider>,
+    );
+    return { client, onClose };
+  }
+
+  async function settled(client: QueryClient) {
+    await waitFor(() => {
+      expect(client.getQueryState(["spec", "p", 23])?.status).toBe("success");
+      expect(client.getQueryState(["me"])?.status).toBe("success");
+    });
+  }
+
+  it.each([640, 1280])(
+    "at %ipx restores four controls and excludes the dropdown entry",
+    async (width) => {
+      reviewViewport(width);
+      const posts = stubFetch();
+      const { onClose } = mount([DRAFT]);
+      for (const name of ["Cancel", "Comment", "Request changes", "Approve"]) {
+        expect(screen.getByRole("button", { name })).toBeTruthy();
+      }
+      expect(screen.queryByRole("button", { name: "Submit" })).toBeNull();
+      const request = screen.getByRole("button", { name: "Request changes" });
+      expect(request.className).toContain("border-red-500/60");
+      expect(request.className).toContain("text-red-700");
+      expect(request.className).toContain("dark:text-red-400");
+      expect(
+        screen.getByRole("button", { name: "Approve" }).className,
+      ).toContain("bg-green-700 text-white hover:bg-green-800");
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(posts).toHaveLength(0);
+    },
+  );
+
+  it.each([390, 639])(
+    "at %ipx exposes only Submit and the ordered verdict menu",
+    async (width) => {
+      reviewViewport(width);
+      stubFetch();
+      mount([DRAFT]);
+      expect(screen.getByRole("button", { name: "Submit" })).toBeTruthy();
+      for (const name of ["Cancel", "Comment", "Request changes", "Approve"]) {
+        expect(screen.queryByRole("button", { name })).toBeNull();
+      }
+      await openReviewMenu();
+      expect(
+        screen.getAllByRole("menuitem").map((item) => item.textContent),
+      ).toEqual(["Comment only", "Request changes", "Approve"]);
+    },
+  );
+
+  it.each([390, 640])(
+    "at %ipx an empty review disables only Comment",
+    async (width) => {
+      reviewViewport(width);
+      stubFetch();
+      const { client } = mount();
+      await settled(client);
+      if (width < 640) await openReviewMenu();
+      const action = (name: string) =>
+        screen.getByRole(width < 640 ? "menuitem" : "button", { name });
+      const disabled = (element: HTMLElement) =>
+        element.hasAttribute("disabled") ||
+        element.getAttribute("aria-disabled") === "true";
+      const comment = action(width < 640 ? "Comment only" : "Comment");
+      expect(disabled(comment)).toBe(true);
+      expect(comment.title).toBe("Write a summary or stage a comment first");
+      expect(disabled(action("Request changes"))).toBe(false);
+      expect(disabled(action("Approve"))).toBe(false);
+    },
+  );
+
+  it.each([390, 640])(
+    "at %ipx the pusher can Comment but cannot submit either verdict",
+    async (width) => {
+      reviewViewport(width);
+      stubFetch(READER);
+      const { client } = mount([DRAFT]);
+      await settled(client);
+      if (width < 640) await openReviewMenu();
+      const action = (name: string) =>
+        screen.getByRole(width < 640 ? "menuitem" : "button", { name });
+      const disabled = (element: HTMLElement) =>
+        element.hasAttribute("disabled") ||
+        element.getAttribute("aria-disabled") === "true";
+      expect(disabled(action(width < 640 ? "Comment only" : "Comment"))).toBe(
+        false,
+      );
+      for (const name of ["Request changes", "Approve"]) {
+        expect(disabled(action(name))).toBe(true);
+        expect(action(name).title).toBe(
+          "You pushed this version — its verdict has to come from someone else",
+        );
+      }
+    },
+  );
+
+  it("sends one POST when desktop buttons re-enter in the same tick", async () => {
+    reviewViewport(640);
+    let resolveResponse!: (response: Response) => void;
+    const posts = stubFetch(
+      PUSHER,
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveResponse = resolve;
+        }),
+    );
+    const { client } = mount([DRAFT]);
+    await settled(client);
+    const request = screen.getByRole("button", { name: "Request changes" });
+    const approve = screen.getByRole("button", { name: "Approve" });
+    const reenter = vi.fn(() => {
+      expect(request.hasAttribute("disabled")).toBe(false);
+      expect(approve.hasAttribute("disabled")).toBe(false);
+      approve.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    request.addEventListener("click", reenter, { capture: true, once: true });
+    act(() => {
+      request.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(reenter).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]?.body.verdict).toBe("approve");
+    const submitting = await screen.findByRole("button", {
+      name: "Submitting…",
+    });
+    expect(submitting.hasAttribute("disabled")).toBe(true);
+    for (const name of ["Comment", "Request changes"]) {
+      expect(
+        screen.getByRole("button", { name }).hasAttribute("disabled"),
+      ).toBe(true);
+    }
+    await act(async () => {
+      resolveResponse(
+        Response.json({ event_id: 9, comment_ids: [412] }, { status: 201 }),
+      );
+    });
+    await screen.findByRole("button", { name: "Approve" });
+    expect(posts).toHaveLength(1);
+  });
+
+  it.each([390, 640])(
+    "at %ipx respects the session's pending verdict",
+    (width) => {
+      reviewViewport(width);
+      const posts = stubFetch();
+      mount([DRAFT], "approve");
+      const submitting = screen.getByRole("button", { name: "Submitting…" });
+      expect(submitting.hasAttribute("disabled")).toBe(true);
+      fireEvent.click(submitting);
+      expect(posts).toHaveLength(0);
+    },
+  );
+});
+
 // T-277: the comment verdict remains available to the version's pusher.
-describe("ReviewSubmitDialog: the comment verdict", () => {
+describe("ReviewSubmitDialog: narrow-screen comment verdict", () => {
   function mount(drafts: Array<typeof DRAFT>, onSubmitted = vi.fn()) {
     const client = testQueryClient();
     const onClose = vi.fn();

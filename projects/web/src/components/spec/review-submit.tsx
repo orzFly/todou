@@ -221,7 +221,47 @@ export function ReviewSubmitDialog({
           extensions={refCompletion}
         />
 
-        <div className="flex min-w-0 justify-end">
+        <div className="hidden justify-end gap-2 sm:flex">
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={pending || saysNothing}
+            title={
+              saysNothing
+                ? "Write a summary or stage a comment first"
+                : undefined
+            }
+            onClick={() => submit("comment")}
+          >
+            {pendingVerdict === "comment" ? "Submitting…" : "Comment"}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-red-500/60 text-red-700 dark:text-red-400"
+            disabled={pending || isPusher}
+            title={isPusher ? PUSHER_TITLE : undefined}
+            onClick={() => submit("request_changes")}
+          >
+            {pendingVerdict === "request_changes"
+              ? "Submitting…"
+              : "Request changes"}
+          </Button>
+          <Button
+            size="sm"
+            className="bg-green-700 text-white hover:bg-green-800"
+            disabled={pending || isPusher}
+            title={isPusher ? PUSHER_TITLE : undefined}
+            onClick={() => submit("approve")}
+          >
+            {pendingVerdict === "approve" ? "Submitting…" : "Approve"}
+          </Button>
+        </div>
+
+        <div className="flex min-w-0 justify-end sm:hidden">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button size="sm" disabled={pending}>

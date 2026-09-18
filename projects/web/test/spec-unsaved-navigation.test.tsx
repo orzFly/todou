@@ -24,6 +24,7 @@ import { parseSpecSearch } from "../src/lib/spec-search.ts";
 import { hasUnsavedWork } from "../src/lib/unsaved-guard.ts";
 import { SpecViewPage } from "../src/pages/spec-view.tsx";
 import { testQueryClient } from "./render.tsx";
+import { reviewViewport } from "./review-viewport.ts";
 
 vi.mock("@pierre/diffs/react", () => ({
   MultiFileDiff: () => <div data-testid="diff" />,
@@ -321,6 +322,7 @@ describe("spec review drafts across navigation", () => {
   });
 
   it("keeps a pending staged review occupied after leaving and reentering", async () => {
+    reviewViewport(390);
     const response = held<{
       version: number;
       verdict: "comment";
