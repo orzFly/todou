@@ -115,6 +115,11 @@ export type TodouClientOptions = {
    * authorization and content-type cannot be overridden.
    */
   headers?: Record<string, string>;
+  /**
+   * Fetch-compatible adapter: synchronous throws are adapter/program errors.
+   * Reject the returned promise with a TypeError for transport failure, or
+   * AbortError for cancellation. Other rejections pass through unchanged.
+   */
   fetch?: typeof fetch;
   /**
    * Coalesce same-tick GETs into one POST /api/batch exchange (T-91).
@@ -161,7 +166,7 @@ export class TodouError extends Error {
   }
 }
 
-/** A request that failed before any HTTP response reached the client. */
+/** A transport failure while awaiting headers or consuming response bytes. */
 export class TodouNetworkError extends Error {
   constructor(cause: unknown) {
     super(cause instanceof Error ? cause.message : "Network request failed");
@@ -387,14 +392,28 @@ export class TodouClient {
       body = init.form;
     }
 
+    // Build the request before the transport boundary. A query getter or
+    // synchronous custom fetch adapter bug must keep its original identity.
+    const url = `${this.#baseUrl}/api${path}${queryString(init?.query)}`;
+    const request = {
+      method,
+      headers,
+      body,
+      credentials: "same-origin" as const,
+    };
+    const response = this.#fetch(url, request);
     let res: Response;
     try {
-      res = await this.#fetch(
-        `${this.#baseUrl}/api${path}${queryString(init?.query)}`,
-        { method, headers, body, credentials: "same-origin" },
-      );
+      res = await response;
     } catch (error) {
-      throw new TodouNetworkError(error);
+      if (
+        error instanceof TypeError ||
+        (error instanceof DOMException &&
+          (error.name === "TimeoutError" || error.name === "NetworkError"))
+      ) {
+        throw new TodouNetworkError(error);
+      }
+      throw error;
     }
     if (!res.ok) {
       let parsed: unknown = null;
@@ -434,7 +453,26 @@ export class TodouClient {
       if (movedTo !== null) throw new MovedError(movedTo);
     }
     if (res.status === 204) return undefined as T;
-    return (await res.json()) as T;
+    // Consume the response stream before parsing. Only rejected body reads
+    // shaped like transport failures get network identity; JSON syntax and
+    // application errors remain outside this I/O boundary.
+    const bodyRead = res.text();
+    let text: string;
+    try {
+      text = await bodyRead;
+    } catch (error) {
+      if (
+        error instanceof TypeError ||
+        (error instanceof DOMException &&
+          (error.name === "EncodingError" ||
+            error.name === "NetworkError" ||
+            error.name === "TimeoutError"))
+      ) {
+        throw new TodouNetworkError(error);
+      }
+      throw error;
+    }
+    return JSON.parse(text) as T;
   }
 
   /**

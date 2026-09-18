@@ -78,7 +78,7 @@ const filesFor = (version: number): SpecFiles => ({
   ],
 });
 
-type FailureMode = "none" | "forbidden" | "network";
+type FailureMode = "none" | "forbidden" | "network" | "body-reset";
 
 function appFixture() {
   const calls: string[] = [];
@@ -162,6 +162,21 @@ function appFixture() {
     const url = new URL(raw, "http://localhost");
     if (url.pathname !== "/api/batch") {
       const result = await answer(raw);
+      if (
+        url.pathname.endsWith("/spec/files") &&
+        failure === "body-reset" &&
+        Number(url.searchParams.get("version")) === failureVersion
+      ) {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"version":'));
+              controller.error(new TypeError("body stream reset"));
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
       return new Response(JSON.stringify(result.body), {
         status: result.status,
         headers: { "content-type": "application/json" },
@@ -222,7 +237,7 @@ afterEach(() => {
 afterAll(teardownAppRouter);
 
 describe("spec drafts on the application browser-history router", () => {
-  it("keeps both drafts and the original anchor through cold 403 and network failures", async () => {
+  it("keeps both drafts through HTTP, pre-header, and body-stream failures", async () => {
     const fixture = appFixture();
     vi.stubGlobal("fetch", fixture.fetch);
     const batchedApi = new TodouClient({ batch: true });
@@ -313,9 +328,41 @@ describe("spec drafts on the application browser-history router", () => {
       fireEvent.click(screen.getByRole("button", { name: /finish review/i }));
       await screen.findByLabelText("Review summary");
       expect(cmGetValue(document.body, 1)).toBe("P1 hidden summary\nline two");
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await waitFor(() =>
+        expect(screen.queryByLabelText("Review summary")).toBeNull(),
+      );
+
+      fixture.failWith("body-reset", 4);
+      void router.navigate({
+        to: "/projects/$slug/issues/$number/spec",
+        params: { slug: "demo", number: "7" },
+        search: { v: 4, file: "a.md" },
+      });
+      expect(await screen.findByText("Couldn't load this spec.")).toBeTruthy();
+      expect(router.state.location.search).toMatchObject({ v: 4 });
+      expect(fixture.batchCalls.flat()).not.toContain(
+        "/projects/demo/issues/7/spec/files?version=4",
+      );
+      expect(hasUnsavedWork()).toBe(true);
+      expect(beforeUnloadPrevented()).toBe(true);
+      expect(screen.getByRole("banner")).toBeTruthy();
+
+      fixture.recover();
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      await screen.findByText("Version 4");
+      expect(cmGetValue(mounted.container)).toBe(
+        "P1 unsaved composer\nline two",
+      );
+      expect(mounted.container.querySelector("main")?.textContent).toContain(
+        "a.mdfile comment · v1",
+      );
+      fireEvent.click(screen.getByRole("button", { name: /finish review/i }));
+      await screen.findByLabelText("Review summary");
+      expect(cmGetValue(document.body, 1)).toBe("P1 hidden summary\nline two");
     } finally {
       mounted.unmount();
       restoreAppRouterPage();
     }
-  }, 15_000);
+  }, 20_000);
 });

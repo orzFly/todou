@@ -1,5 +1,10 @@
 import type { Writable } from "node:stream";
-import { GoneError, MovedError, TodouError } from "@todou/shared";
+import {
+  GoneError,
+  MovedError,
+  TodouError,
+  TodouNetworkError,
+} from "@todou/shared";
 import { ConfigError } from "@todou/shared/config";
 
 /** A user-facing failure: printed as one line, optionally with a hint. */
@@ -84,12 +89,16 @@ function renderError(
     return error.exitCode;
   } else if (error instanceof ConfigError) {
     stderr.write(`error: ${error.message}\n`);
-  } else if (error instanceof TypeError) {
-    // Undici surfaces connection failures as TypeError("fetch failed").
+  } else if (error instanceof TodouNetworkError || error instanceof TypeError) {
+    const cause = error.cause;
+    const detail =
+      cause instanceof Error
+        ? cause.cause instanceof Error
+          ? cause.cause.message
+          : cause.message
+        : error.message;
     stderr.write(
-      `error: cannot reach ${serverHint ?? "the server"} — ${
-        (error.cause as Error | undefined)?.message ?? error.message
-      }\n`,
+      `error: cannot reach ${serverHint ?? "the server"} — ${detail}\n`,
     );
   } else {
     throw error;
