@@ -72,7 +72,7 @@ const inboxItem = (
   overrides: Partial<InboxItem> = {},
 ): InboxItem => ({
   ...listItem(number),
-  project: { slug, name: `Project ${slug}` },
+  project: { id: slug.length, slug, name: `Project ${slug}` },
   last_activity_at: "2026-08-12T00:00:00Z",
   pending_spec_review: false,
   mentions_you: false,

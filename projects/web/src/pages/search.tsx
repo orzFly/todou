@@ -28,6 +28,7 @@ import {
   LoadFailure,
   RefreshFailure,
 } from "@/components/shared/load-failure.tsx";
+import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
@@ -320,6 +321,15 @@ function JumpBanner({ slug, q }: { slug: string; q: string }) {
               <span className="shrink-0 font-mono text-xs text-muted-foreground">
                 {row.spelled}
               </span>
+              <ProjectIcon
+                project={{
+                  name: row.name,
+                  prefix: row.prefix,
+                  icon_url: row.icon_url,
+                }}
+                className="size-5"
+                aria-hidden
+              />
               <span className="truncate font-medium">{row.name}</span>
             </Link>
           );

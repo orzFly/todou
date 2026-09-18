@@ -121,6 +121,7 @@ function seedContext(
         id: 1,
         slug,
         name: slug,
+        icon_url: slug === "mirror" ? "/api/projects/2/icon?v=jump-row" : null,
         description: "",
         created_at: "2026-01-01T00:00:00.000Z",
       }),
@@ -408,7 +409,14 @@ describe("useJumpRows", () => {
     // needed a lookup would be stuck pending here instead of ready.
     const client = seedContext(testQueryClient());
     expect(await rowsOf(client, "M-")).toEqual([
-      { kind: "project", slug: "mirror", spelled: "M-", name: "mirror" },
+      {
+        kind: "project",
+        slug: "mirror",
+        spelled: "M-",
+        name: "mirror",
+        icon_url: "/api/projects/2/icon?v=jump-row",
+        prefix: "M",
+      },
     ]);
   });
 

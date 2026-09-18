@@ -22,6 +22,7 @@ import {
 } from "@/api/references.ts";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import { qualifiedRefSpelling } from "@/lib/issue-refs.ts";
+import { projectSpellings } from "@/lib/project-spellings.ts";
 import {
   couldBeRef,
   couldNameProject,
@@ -71,7 +72,14 @@ export type JumpRow =
    * there (T-263). No state: the name comes from a list the box has already
    * read, so this row is either there at once or not at all.
    */
-  | { kind: "project"; slug: string; spelled: string; name: string }
+  | {
+      kind: "project";
+      slug: string;
+      spelled: string;
+      name: string;
+      icon_url: string | null;
+      prefix: string | null;
+    }
   | { kind: "external"; href: string; text: string; host: string };
 
 /** `checkQualifiedPrefix`'s rule (T-214): what the project writes now, or ever wrote. */
@@ -148,6 +156,10 @@ export function useJumpRows(slug: string, q: string): JumpRow[] {
       jumpContext(slug, config.data, directory.data, projects.data),
     );
   }, [q, slug, config.data, directory.data, projects.data]);
+  const projectRefs = useMemo(
+    () => projectSpellings(projects.data, directory.data),
+    [projects.data, directory.data],
+  );
 
   const direct = candidates.find(isCard);
   // Asked only once the context has landed, and only when it settled
@@ -282,15 +294,21 @@ export function useJumpRows(slug: string, q: string): JumpRow[] {
   }
   for (const candidate of candidates) {
     if (candidate.kind === "project") {
+      const project = projects.data?.find(
+        (project) => project.slug === candidate.slug,
+      );
+      const projectRef = projectRefs.find(
+        (project) => project.slug === candidate.slug,
+      );
       rows.push({
         kind: "project",
         slug: candidate.slug,
         // What the reader typed, in the spelling the project actually has:
         // `MIRROR/` is offered back as `mirror/`.
         spelled: foldRefSpelling(q.trim()),
-        name:
-          projects.data?.find((project) => project.slug === candidate.slug)
-            ?.name ?? candidate.slug,
+        icon_url: project?.icon_url ?? null,
+        prefix: projectRef?.prefix ?? null,
+        name: project?.name ?? candidate.slug,
       });
     }
     if (candidate.kind === "external") {
