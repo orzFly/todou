@@ -1,4 +1,4 @@
-import { useBlocker } from "@tanstack/react-router";
+import { type ShouldBlockFn, useBlocker } from "@tanstack/react-router";
 import { useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,10 +24,14 @@ import { hasUnsavedWork } from "@/lib/unsaved-guard.ts";
  * block on every keystroke. They close over nothing but the registry.
  */
 export function UnsavedChangesGuard() {
-  const shouldBlock = useCallback(() => hasUnsavedWork(), []);
+  const shouldBlock = useCallback<ShouldBlockFn>(
+    ({ current, next }) => hasUnsavedWork({ current, next }),
+    [],
+  );
+  const shouldBlockUnload = useCallback(() => hasUnsavedWork(), []);
   const blocker = useBlocker({
     shouldBlockFn: shouldBlock,
-    enableBeforeUnload: shouldBlock,
+    enableBeforeUnload: shouldBlockUnload,
     withResolver: true,
   });
 

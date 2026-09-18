@@ -30,23 +30,29 @@ export function SpecComposer({
   slug,
   staging,
   initialBody,
+  body: ownedBody,
   editing = false,
   hostRef,
   onCancel,
+  onBodyChange,
   onStage,
 }: {
   slug: string;
   staging: ComposerStaging;
   /** Body to open with — the draft being edited (T-159). Read at mount. */
   initialBody?: string;
+  /** Stable owner value; omitted only by standalone legacy consumers/tests. */
+  body?: string;
   /** Rewriting a staged draft rather than staging a new one. */
   editing?: boolean;
   /** The sticky strip, for the page's scroll insets (T-299). */
   hostRef?: RefObject<HTMLDivElement | null>;
   onCancel: () => void;
+  onBodyChange?: (body: string) => void;
   onStage: (body: string) => void;
 }) {
-  const [body, setBody] = useState(initialBody ?? "");
+  const [localBody, setLocalBody] = useState(initialBody ?? "");
+  const body = ownedBody ?? localBody;
   const refCompletion = useRefCompletion(slug);
   const fileLevel = staging.lineStart === null;
   const lines = fileLevel
@@ -96,8 +102,12 @@ export function SpecComposer({
             autoFocus
             ariaLabel="Spec comment"
             className="min-h-16"
-            initialValue={initialBody}
-            onChange={setBody}
+            initialValue={body}
+            ownerManagedDirty={ownedBody !== undefined}
+            onChange={(value) => {
+              setLocalBody(value);
+              onBodyChange?.(value);
+            }}
             placeholder={
               fileLevel
                 ? "Comment on this file (markdown)… staged locally until you finish the review"

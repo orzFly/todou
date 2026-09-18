@@ -56,6 +56,11 @@ export type CodeEditorProps = {
   autoFocus?: boolean;
   readOnly?: boolean;
   /**
+   * The caller owns both the live value and its dirty baseline. This editor
+   * then acts only as a view and does not register a duplicate dirty source.
+   */
+  ownerManagedDirty?: boolean;
+  /**
    * Caller's own key bindings, placed ahead of the base keymap. The order is
    * load-bearing: defaultKeymap binds Mod-Enter to insertBlankLine, so a
    * submit binding listed after it never fires.
@@ -157,6 +162,7 @@ export function CodeEditor({
   ariaLabel,
   autoFocus = false,
   readOnly = false,
+  ownerManagedDirty = false,
   keymap: callerKeymap,
   language,
   highlightStyle,
@@ -174,10 +180,12 @@ export function CodeEditor({
   // Suspense rebuilds the document — which is also why the baseline cannot
   // come from the EditorView, whose doc may already be the rebuilt one.
   const baseline = useRef(initialValue);
+  const latestInitialValue = useRef(initialValue);
+  latestInitialValue.current = initialValue;
   // Keymap and DOM handlers are built once but must always call today's
   // props, not the ones captured at mount.
-  const handlers = useRef({ onChange });
-  handlers.current = { onChange };
+  const handlers = useRef({ onChange, ownerManagedDirty });
+  handlers.current = { onChange, ownerManagedDirty };
   // One compartment per mutable extension, so a prop change reconfigures
   // that slice instead of rebuilding the view (and losing undo history).
   const placeholderSlot = useRef(new Compartment()).current;
@@ -189,6 +197,7 @@ export function CodeEditor({
   // that. Whitespace-only differences are not worth a confirmation.
   useDirtySource(
     () =>
+      !handlers.current.ownerManagedDirty &&
       !readOnly &&
       (view.current?.state.doc.toString() ?? baseline.current).trim() !==
         baseline.current.trim(),
@@ -242,7 +251,7 @@ export function CodeEditor({
     const instance = new EditorView({
       parent,
       state: EditorState.create({
-        doc: initialValue,
+        doc: latestInitialValue.current,
         extensions: [
           history(),
           drawSelection(),

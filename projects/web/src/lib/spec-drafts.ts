@@ -63,6 +63,41 @@ function write(key: string, drafts: SpecReviewDraft[]): void {
   for (const notify of listeners) notify();
 }
 
+function sameDraft(left: SpecReviewDraft, right: SpecReviewDraft): boolean {
+  return (
+    left.id === right.id &&
+    left.body === right.body &&
+    left.quote === right.quote &&
+    left.anchor.path === right.anchor.path &&
+    left.anchor.version === right.anchor.version &&
+    left.anchor.line_start === right.anchor.line_start &&
+    left.anchor.line_end === right.anchor.line_end &&
+    left.anchor.col_start === right.anchor.col_start &&
+    left.anchor.col_end === right.anchor.col_end
+  );
+}
+
+/**
+ * Removes only drafts that are still byte-for-byte the ones a completed
+ * review submitted. Edits and additions made while the request was in flight
+ * belong to the next review and stay in the bucket.
+ */
+export function confirmSubmittedSpecReviewDrafts(
+  slug: string,
+  issueNumber: number,
+  submitted: SpecReviewDraft[],
+): void {
+  const key = storageKey(slug, issueNumber);
+  const byId = new Map(submitted.map((draft) => [draft.id, draft]));
+  write(
+    key,
+    read(key).filter((draft) => {
+      const snapshot = byId.get(draft.id);
+      return snapshot === undefined || !sameDraft(draft, snapshot);
+    }),
+  );
+}
+
 export function useSpecReviewDrafts(slug: string, issueNumber: number) {
   const key = storageKey(slug, issueNumber);
   const drafts = useSyncExternalStore(
