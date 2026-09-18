@@ -124,7 +124,9 @@ function MarkdownPre({
     loc === null
       ? {
           // Restored old fences keep deletion identity without a current loc.
-          className: ["markdown-fence", props.className].filter(Boolean).join(" "),
+          className: ["markdown-fence", props.className]
+            .filter(Boolean)
+            .join(" "),
         }
       : {
           [SOURCE_LINE_ATTR]: stamp,
@@ -197,7 +199,11 @@ export type MarkdownRemarkPlugins = NonNullable<
   ComponentProps<typeof Markdown>["remarkPlugins"]
 >;
 
-/** Project-aware syntax shared by the current document and its baseline. */
+/**
+ * Project-aware syntax shared by the current document and its baseline.
+ * React-markdown receives this array directly: unrelated renders must retain
+ * its reference so they neither reparse the document nor disturb selections.
+ */
 export function useMarkdownRemarkPlugins(
   slug?: string,
   preview = false,
@@ -230,7 +236,10 @@ export function useMarkdownRemarkPlugins(
     };
     return [
       ...MARKDOWN_SYNTAX_PLUGINS,
+      // Its position relative to frontmatter is not a constraint: issue refs
+      // treat frontmatter as opaque regardless of this order.
       [remarkIssueRefs, config, { autolinksOnly: !preview }],
+      // Count after tokenization, including the links it just created.
       remarkRefOccurrences,
     ] as MarkdownRemarkPlugins;
   }, [slug, preview, refQuery.data, directoryQuery.data, readableQuery.data]);
