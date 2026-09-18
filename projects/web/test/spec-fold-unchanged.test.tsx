@@ -1,10 +1,12 @@
 import { fireEvent, waitFor } from "@testing-library/react";
 import type { SpecCommentItem } from "@todou/shared";
+import type { Element } from "hast";
 import { describe, expect, it, vi } from "vitest";
 import {
   AnnotatedMarkdown,
   type DisplayedAnnotation,
 } from "../src/components/spec/annotated-markdown.tsx";
+import { reviewInterestOf } from "../src/lib/rehype-fold-unchanged.ts";
 import { changedLineRanges } from "../src/lib/spec-changes.ts";
 import { renderWithProviders } from "./render.tsx";
 
@@ -214,22 +216,57 @@ describe("folding the unchanged blocks of a comparison (T-222)", () => {
     expect(marked?.closest("p")?.classList.contains("spec-folded")).toBe(false);
   });
 
-  it("keeps a structural deletion marker and its neighbours open", async () => {
-    // The marker carries no source position at all, so only its decoration
-    // class can save it from the fold.
+  it("keeps a restored structural deletion and its neighbours open", async () => {
+    // The old semantic node carries no source position, so only its deletion
+    // identity can save it from the fold.
     const after = V1.replace("段落 8 的原文说明。\n\n", "").replace(
       "段落 20 的原文说明。",
       rewritten(20),
     );
     const { container } = await renderFold(V1, after);
-    const marker = container.querySelector("del.spec-del-block");
-    expect(marker?.textContent).toBe("段落 8 的原文说明。");
-    expect(marker?.classList.contains("spec-folded")).toBe(false);
-    expect(
-      marker?.previousElementSibling?.classList.contains("spec-folded"),
-    ).toBe(false);
-    expect(marker?.nextElementSibling?.classList.contains("spec-folded")).toBe(
+    const old = container.querySelector("p.spec-del-structure");
+    expect(old?.textContent).toBe("段落 8 的原文说明。");
+    expect(old?.classList.contains("spec-folded")).toBe(false);
+    expect(old?.previousElementSibling?.classList.contains("spec-folded")).toBe(
       false,
+    );
+    expect(old?.nextElementSibling?.classList.contains("spec-folded")).toBe(
+      false,
+    );
+    expect(container.querySelector("del.spec-del-block")).toBeNull();
+  });
+
+  it("treats an old semantic item as review interest without a current diff range", () => {
+    const list: Element = {
+      type: "element",
+      tagName: "ol",
+      properties: {},
+      children: [
+        {
+          type: "element",
+          tagName: "li",
+          properties: { className: ["spec-del-structure"] },
+          children: [],
+        },
+      ],
+    };
+    expect(
+      reviewInterestOf(list, { changedRanges: [], annotationRanges: [] }),
+    ).toEqual({ changed: true, annotated: false });
+  });
+
+  it("keeps a restored old list item and its ordered list visible", async () => {
+    const before = V1.replace(
+      "段落 8 的原文说明。",
+      "1. removed item\n2. surviving item",
+    );
+    const after = before.replace("1. removed item\n", "");
+    const { container } = await renderFold(before, after);
+    const old = container.querySelector("li.spec-del-structure");
+    expect(old?.textContent).toContain("removed item");
+    expect(old?.closest("ol")?.classList.contains("spec-folded")).toBe(false);
+    expect(old?.closest("ol")?.classList.contains("spec-numbered-ol")).toBe(
+      true,
     );
   });
 

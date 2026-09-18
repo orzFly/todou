@@ -1,5 +1,17 @@
 import type { Element, ElementContent, Root, RootContent, Text } from "hast";
-import type { CellPart, SourceRange } from "./spec-source-index.ts";
+import {
+  type BaselineTree,
+  extractBaselineNode,
+} from "./spec-baseline-tree.ts";
+import type {
+  CellPart,
+  SegmentIndex,
+  SourceRange,
+} from "./spec-source-index.ts";
+import type {
+  StructuralBlockRef,
+  StructuralDeletion,
+} from "./spec-structure.ts";
 
 /**
  * What a decorated run of text means. `ins` is word-level diff output;
@@ -85,6 +97,12 @@ export type Decorations = {
   blocks: SourceRange[];
   tables: TableOverlay[];
   images: ImageSwap[];
+  /** Whole removed blocks rendered from the baseline tree when possible. */
+  structures: StructuralDeletion[];
+  baselineTree?: BaselineTree;
+  /** The old and new indices retain independent ordered-list ordinals. */
+  baselineIndex?: SegmentIndex;
+  currentIndex?: SegmentIndex;
 };
 
 export const NO_DECORATIONS: Decorations = {
@@ -93,6 +111,7 @@ export const NO_DECORATIONS: Decorations = {
   blocks: [],
   tables: [],
   images: [],
+  structures: [],
 };
 
 /** Carries the annotation key so the popover can flash its exact mark. */
@@ -430,6 +449,352 @@ function applyOverlay(tree: Root, overlay: TableOverlay): void {
     });
   }
 }
+function hasClass(element: Element, name: string): boolean {
+  const classes = element.properties.className;
+  return Array.isArray(classes) && classes.includes(name);
+}
+
+/** Offset and semantic identity together, never just the matching tag name. */
+function matchesBlock(element: Element, ref: StructuralBlockRef): boolean {
+  if (
+    element.position?.start.offset !== ref.start ||
+    element.position?.end.offset !== ref.end
+  )
+    return false;
+  switch (ref.type) {
+    case "list":
+      return element.tagName === "ol" || element.tagName === "ul";
+    case "listItem":
+      return element.tagName === "li";
+    case "heading":
+      return /^h[1-6]$/.test(element.tagName);
+    case "code":
+      return element.tagName === "pre";
+    case "frontmatter":
+      return (
+        element.tagName === "table" && hasClass(element, "markdown-frontmatter")
+      );
+    case "tableCell":
+      return element.tagName === "td" || element.tagName === "th";
+    default:
+      return (
+        element.tagName ===
+        (
+          {
+            paragraph: "p",
+            table: "table",
+            tableRow: "tr",
+            blockquote: "blockquote",
+            image: "img",
+          } as Record<string, string>
+        )[ref.type]
+      );
+  }
+}
+
+function locatedBlock(
+  tree: Root | Element,
+  ref: StructuralBlockRef,
+): { node: Element; parent: Root | Element } | null {
+  for (const child of tree.children) {
+    if (child.type !== "element") continue;
+    if (matchesBlock(child, ref)) return { node: child, parent: tree };
+    const nested = locatedBlock(child, ref);
+    if (nested !== null) return nested;
+  }
+  return null;
+}
+
+/** HTML content models matter: in particular, an ol may only receive li. */
+function legalChild(parent: Root | Element, child: Element): boolean {
+  const tag = child.tagName;
+  if (parent.type === "root") {
+    return !["li", "tr", "td", "th", "thead", "tbody", "tfoot"].includes(tag);
+  }
+  switch (parent.tagName) {
+    case "ol":
+    case "ul":
+      return tag === "li";
+    case "thead":
+    case "tbody":
+    case "tfoot":
+      return tag === "tr";
+    case "tr":
+      return tag === "td" || tag === "th";
+    case "table":
+      return ["thead", "tbody", "tfoot"].includes(tag);
+    case "p":
+    case "a":
+    case "h1":
+    case "h2":
+    case "h3":
+    case "h4":
+    case "h5":
+    case "h6":
+      return tag === "img";
+    case "pre":
+    case "code":
+    case "img":
+      return false;
+    case "blockquote":
+    case "li":
+    case "td":
+    case "th":
+    case "div":
+    case "section":
+    case "details":
+      return !["li", "tr", "td", "th", "thead", "tbody", "tfoot"].includes(tag);
+    default:
+      return false;
+  }
+}
+
+/** Preserve independent ordinal values despite splicing old li into a new ol. */
+function numberItem(item: Element, value: number, old = false): void {
+  item.properties.value = String(value);
+  // The explicit number is visible and selectable; the li's value carries
+  // the accessible ordinal without announcing the same number twice.
+  item.children.unshift({
+    type: "element",
+    tagName: "span",
+    properties: {
+      className: old
+        ? ["spec-list-number", "spec-list-number-old"]
+        : ["spec-list-number"],
+      dataAnnotationUi: "",
+      ariaHidden: "true",
+    },
+    children: [{ type: "text", value: `${value}. ` }],
+  });
+}
+
+function numberList(
+  list: Element,
+  values?: ReadonlyMap<Element, number>,
+  old = false,
+): void {
+  if (list.tagName !== "ol") return;
+  addClass(list, "spec-numbered-ol");
+  const start = Number(list.properties.start ?? 1);
+  let ordinal = 0;
+  for (const child of list.children) {
+    if (child.type !== "element" || child.tagName !== "li") continue;
+    const value = values?.get(child) ?? start + ordinal;
+    if (
+      !child.children.some(
+        (node) => node.type === "element" && hasClass(node, "spec-list-number"),
+      )
+    )
+      numberItem(child, value, old);
+    ordinal++;
+  }
+}
+
+/** Deleted subtrees lack locations; their own ordered lists still carry start. */
+function numberClonedLists(node: Element): void {
+  if (node.tagName === "ol") numberList(node, undefined, true);
+  for (const child of node.children) {
+    if (child.type === "element") numberClonedLists(child);
+  }
+}
+
+function numberCurrentList(
+  list: Element,
+  ref: StructuralBlockRef,
+  current?: SegmentIndex,
+): void {
+  const values = new Map<Element, number>();
+  if (current !== undefined) {
+    for (const block of current.blocks) {
+      if (block.parent !== ref.index || block.listItemValue === null) continue;
+      const child = list.children.find(
+        (node) =>
+          node.type === "element" &&
+          node.tagName === "li" &&
+          node.position?.start.offset === block.start &&
+          node.position?.end.offset === block.end,
+      );
+      if (child?.type === "element") values.set(child, block.listItemValue);
+    }
+  }
+  numberList(list, values);
+}
+
+/** For a table row the indexed table has an unindexed thead/tbody between. */
+function insertionParent(
+  tree: Root,
+  record: StructuralDeletion,
+  oldNode: Element,
+  current?: SegmentIndex,
+): { parent: Root | Element; predecessor: Element | null } | null {
+  if (current !== undefined) {
+    for (const ref of [record.parent, record.after]) {
+      if (ref === null) continue;
+      const block = current.blocks[ref.index];
+      if (
+        block === undefined ||
+        block.type !== ref.type ||
+        block.start !== ref.start ||
+        block.end !== ref.end
+      )
+        return null;
+    }
+    if (
+      record.after !== null &&
+      current.blocks[record.after.index]?.parent !==
+        (record.parent?.index ?? null)
+    )
+      return null;
+  }
+  const target =
+    record.parent === null
+      ? { node: tree as Root | Element }
+      : locatedBlock(tree, record.parent);
+  if (target === null) return null;
+  let parent = target.node;
+  if (record.parent?.type === "list" && parent.type === "element") {
+    const ordered = current?.blocks[record.parent.index]?.listOrdered;
+    if (
+      ordered !== null &&
+      ordered !== undefined &&
+      (parent.tagName === "ol") !== ordered
+    )
+      return null;
+  }
+  let predecessor: Element | null = null;
+  if (record.after !== null) {
+    const located = locatedBlock(tree, record.after);
+    if (located === null) return null;
+    predecessor = located.node;
+    if (
+      record.parent !== null &&
+      target.node.type === "element" &&
+      target.node.tagName === "table" &&
+      oldNode.tagName === "tr"
+    ) {
+      if (
+        located.parent.type !== "element" ||
+        !["thead", "tbody", "tfoot"].includes(located.parent.tagName) ||
+        !target.node.children.includes(located.parent)
+      )
+        return null;
+      parent = located.parent;
+    } else if (located.parent !== parent) return null;
+  } else if (
+    record.parent !== null &&
+    target.node.type === "element" &&
+    target.node.tagName === "table" &&
+    oldNode.tagName === "tr"
+  ) {
+    if (parent.type !== "element") return null;
+    const section = parent.children.find(
+      (child) =>
+        child.type === "element" &&
+        (oldNode.children.some(
+          (cell) => cell.type === "element" && cell.tagName === "th",
+        )
+          ? child.tagName === "thead"
+          : child.tagName === "tbody"),
+    );
+    if (section?.type !== "element") return null;
+    parent = section;
+  }
+  return legalChild(parent, oldNode) ? { parent, predecessor } : null;
+}
+
+/** A root seam is legal even when a proposed nested parent or slot is gone. */
+function fallbackStructure(
+  tree: Root,
+  record: StructuralDeletion,
+  previous: Map<number, Element>,
+): void {
+  const marker = blockDeletion({ ...record.fallback, block: true });
+  const at = record.fallback.at;
+  const last = previous.get(at);
+  const lastIndex = last === undefined ? -1 : tree.children.indexOf(last);
+  const nextIndex = tree.children.findIndex(
+    (child) => (child.position?.start.offset ?? -1) >= at,
+  );
+  const index = lastIndex >= 0 ? lastIndex + 1 : nextIndex;
+  if (index === -1) tree.children.push(marker);
+  else tree.children.splice(index, 0, marker);
+  previous.set(at, marker);
+}
+
+function applyStructures(tree: Root, options: Decorations): void {
+  const { baselineTree, baselineIndex, currentIndex } = options;
+  const consumed = new Set<number>();
+  const planned = new Set(options.structures.map((record) => record.old.index));
+  const lastAtSeam = new Map<string, Element>();
+  const fallbackAtSeam = new Map<number, Element>();
+  const records = [...options.structures].sort(
+    (a, b) =>
+      (a.parent?.index ?? -1) - (b.parent?.index ?? -1) ||
+      (a.after?.index ?? -1) - (b.after?.index ?? -1) ||
+      a.order - b.order ||
+      a.old.start - b.old.start,
+  );
+  for (const record of records) {
+    // A parent's semantic clone (or its fallback) already contains its children.
+    let ancestor = baselineIndex?.blocks[record.old.index]?.parent ?? null;
+    let covered = false;
+    while (ancestor !== null && baselineIndex !== undefined) {
+      if (planned.has(ancestor) || consumed.has(ancestor)) {
+        covered = true;
+        break;
+      }
+      ancestor = baselineIndex.blocks[ancestor]?.parent ?? null;
+    }
+    if (covered || consumed.has(record.old.index)) continue;
+    consumed.add(record.old.index);
+    const oldBlock = baselineIndex?.blocks[record.old.index];
+    const oldNode =
+      baselineTree !== undefined &&
+      (oldBlock === undefined ||
+        (oldBlock.start === record.old.start &&
+          oldBlock.end === record.old.end &&
+          oldBlock.type === record.old.type))
+        ? extractBaselineNode(baselineTree, record.old)
+        : null;
+    if (oldNode === null) {
+      fallbackStructure(tree, record, fallbackAtSeam);
+      continue;
+    }
+    const slot = insertionParent(tree, record, oldNode, currentIndex);
+    if (slot === null) {
+      fallbackStructure(tree, record, fallbackAtSeam);
+      continue;
+    }
+    const seam = `${record.parent?.index ?? "root"}:${record.after?.index ?? "front"}`;
+    const preceding = lastAtSeam.get(seam) ?? slot.predecessor;
+    const at =
+      preceding === null ? 0 : slot.parent.children.indexOf(preceding) + 1;
+    if (
+      at < 0 ||
+      (preceding !== null && !slot.parent.children.includes(preceding))
+    ) {
+      fallbackStructure(tree, record, fallbackAtSeam);
+      continue;
+    }
+    addClass(oldNode, "spec-del-structure");
+    if (
+      oldNode.tagName === "li" &&
+      slot.parent.type === "element" &&
+      slot.parent.tagName === "ol"
+    ) {
+      const value = oldBlock?.listItemValue;
+      if (value === null || value === undefined || record.parent === null) {
+        fallbackStructure(tree, record, fallbackAtSeam);
+        continue;
+      }
+      numberCurrentList(slot.parent, record.parent, currentIndex);
+      numberItem(oldNode, value, true);
+    }
+    numberClonedLists(oldNode);
+    slot.parent.children.splice(at, 0, oldNode);
+    lastAtSeam.set(seam, oldNode);
+  }
+}
 
 /**
  * Split one text node around the decorations that touch it. Returns null
@@ -562,9 +927,8 @@ function markBlockClass(
 
 /**
  * Rehype plugin painting source-offset decorations onto the rendered tree
- * (T-142). Everything it does is additive: a decoration that finds no text
- * node to land on is dropped in silence, and the document then reads
- * exactly as it did before — block-level highlight and all.
+ * (T-142). Text spans without a host are left alone, but structural removals
+ * that cannot be restored as semantic nodes leave one source marker instead.
  *
  * Two kinds of element are decorated whole instead of entered — code
  * blocks, whose contents belong to pierre, and links, whose contents
@@ -591,7 +955,8 @@ export function rehypeDecorations(options: Decorations = NO_DECORATIONS) {
       deletions.length === 0 &&
       blocks.length === 0 &&
       tables.length === 0 &&
-      images.length === 0
+      images.length === 0 &&
+      options.structures.length === 0
     ) {
       return;
     }
@@ -692,5 +1057,6 @@ export function rehypeDecorations(options: Decorations = NO_DECORATIONS) {
     }
 
     for (const overlay of tables) applyOverlay(tree, overlay);
+    applyStructures(tree, options);
   };
 }

@@ -143,6 +143,22 @@ export type SourceBlock = {
   endLine: number;
   /** Index into `SegmentIndex.blocks`; null at the top level. */
   parent: number | null;
+  /**
+   * Zero-based position among the indexed blocks with the same `parent`.
+   * Unlike source offsets this remains useful after a block is mapped to the
+   * corresponding container in another version.
+   */
+  childIndex: number;
+  /** Whether this block is an ordered list; null for every non-list block. */
+  listOrdered: boolean | null;
+  /** Parsed first visible number of an ordered list; null otherwise. */
+  listStart: number | null;
+  /**
+   * Number a reader sees beside this item. Markdown only takes the first
+   * marker's numeral into account, so later values are derived from that
+   * parsed start and the item's direct-child position.
+   */
+  listItemValue: number | null;
   /** Leaf-block groups this subtree owns, inclusive; -1 when it owns none. */
   firstGroup: number;
   lastGroup: number;
@@ -202,11 +218,16 @@ export function buildSegmentIndex(source: string): SegmentIndex {
   let group = -1;
   let lastGroup: number | null = null;
   let parent: number | null = null;
+  const childCounts = new Map<number | null, number>();
 
   const pushBlock = (node: Nodes, type: SourceBlockType): number | null => {
     const start = node.position?.start.offset;
     const end = node.position?.end.offset;
     if (start === undefined || end === undefined) return null;
+    const childIndex = childCounts.get(parent) ?? 0;
+    childCounts.set(parent, childIndex + 1);
+    const list = node.type === "list" ? node : null;
+    const parentBlock = parent === null ? undefined : blocks[parent];
     blocks.push({
       type,
       start,
@@ -214,6 +235,13 @@ export function buildSegmentIndex(source: string): SegmentIndex {
       line: node.position?.start.line ?? 1,
       endLine: node.position?.end.line ?? 1,
       parent,
+      childIndex,
+      listOrdered: list?.ordered ?? null,
+      listStart: list?.start ?? null,
+      listItemValue:
+        type === "listItem" && parentBlock?.listOrdered === true
+          ? (parentBlock.listStart ?? 1) + childIndex
+          : null,
       firstGroup: -1,
       lastGroup: -1,
       opaque: false,

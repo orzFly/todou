@@ -2,7 +2,7 @@ import type { Nodes } from "mdast";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
-import { unified } from "unified";
+import { type PluggableList, unified } from "unified";
 import {
   FRONTMATTER_FLAVOURS,
   remarkFrontmatterTable,
@@ -10,24 +10,24 @@ import {
 import { remarkRejectedUrlsAsText } from "./remark-rejected-urls.ts";
 
 /**
- * This list has to stay the same one `MarkdownView` renders with. Let the two
- * diverge and a reader of this tree sees a `heading` leaf where the DOM has a
- * table: every offset computed from it then lands on a node that is not there,
- * and `rehypeDecorations` drops what it cannot place *in silence*. The symptom
- * is decorations quietly vanishing, not an error — so plugins go in both
- * places at once (T-240).
+ * Static Markdown syntax shared by every parser and renderer.
  *
- * One module rather than one chain per caller, because the same list also
- * decides which lines `canonicalForDiff` may rewrite: without
- * `remarkFrontmatter` a frontmatter line starting with a digit parses as an
- * ordered list and gets a list marker stamped over it (T-383).
+ * Keep runtime-dependent plugins (issue references and occurrence counting)
+ * in the caller: their options belong to the project/viewer context. Keeping
+ * this array at module scope also lets renderers retain plugin-list identity
+ * instead of rebuilding the invariant prefix on every render.
+ *
+ * The order is significant. Rejected URLs are restored to source text before
+ * later tokenizers see them, and `remarkFrontmatterTable` consumes the nodes
+ * produced by `remarkFrontmatter`.
  */
-const processor = unified()
-  .use(remarkParse)
-  .use(remarkGfm)
-  .use(remarkRejectedUrlsAsText)
-  .use(remarkFrontmatter, FRONTMATTER_FLAVOURS)
-  .use(remarkFrontmatterTable);
+export const MARKDOWN_SYNTAX_PLUGINS: PluggableList = [
+  remarkGfm,
+  remarkRejectedUrlsAsText,
+  [remarkFrontmatter, FRONTMATTER_FLAVOURS],
+  remarkFrontmatterTable,
+];
+const processor = unified().use(remarkParse).use(MARKDOWN_SYNTAX_PLUGINS);
 
 /**
  * `runSync`, not `parse` alone: `parse` stops at the tokenizer and runs no
@@ -35,5 +35,5 @@ const processor = unified()
  * and the caller would hold the `yaml` leaf while the DOM held a table.
  */
 export function parseMarkdown(source: string): Nodes {
-  return processor.runSync(processor.parse(source), source);
+  return processor.runSync(processor.parse(source), source) as Nodes;
 }

@@ -1,8 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { type ComponentProps, type ReactNode, useMemo } from "react";
+import { type ComponentProps, type ReactNode, useEffect, useMemo } from "react";
 import Markdown from "react-markdown";
-import remarkFrontmatter from "remark-frontmatter";
-import remarkGfm from "remark-gfm";
 import { projectsQuery } from "@/api/queries.ts";
 import {
   refConfigFor,
@@ -21,22 +19,18 @@ import {
 } from "@/components/shared/pierre.tsx";
 import { isTextEmbedName } from "@/lib/attachment-preview.ts";
 import { parseAttachmentHref } from "@/lib/attachment-refs.ts";
+import { MARKDOWN_SYNTAX_PLUGINS } from "@/lib/markdown-processor.ts";
 import { rehypeDetails } from "@/lib/rehype-details.ts";
 import {
   CODE_CONTENT_START_ATTR,
   parseSourceLoc,
   SOURCE_LINE_ATTR,
 } from "@/lib/rehype-source-lines.ts";
-import {
-  FRONTMATTER_FLAVOURS,
-  remarkFrontmatterTable,
-} from "@/lib/remark-frontmatter-table.ts";
 import { remarkIssueRefs } from "@/lib/remark-issue-refs.ts";
 import {
   REF_REPEAT_ATTR,
   remarkRefOccurrences,
 } from "@/lib/remark-ref-occurrences.ts";
-import { remarkRejectedUrlsAsText } from "@/lib/remark-rejected-urls.ts";
 
 /**
  * A fence rendered as a diff of two versions (T-343). It keeps `.spec-changed`
@@ -128,7 +122,10 @@ function MarkdownPre({
     );
   const wrapperProps =
     loc === null
-      ? { className: "markdown-fence" }
+      ? {
+          // Restored old fences keep deletion identity without a current loc.
+          className: ["markdown-fence", props.className].filter(Boolean).join(" "),
+        }
       : {
           [SOURCE_LINE_ATTR]: stamp,
           [CODE_CONTENT_START_ATTR]: (() => {
@@ -160,6 +157,7 @@ export function MarkdownView({
   embedded = false,
   preview = false,
   rehypePlugins,
+  onRemarkPlugins,
   fenceBaselines,
 }: {
   children: string;
@@ -196,6 +194,14 @@ export function MarkdownView({
    * T-23). Pass a stable reference — this goes straight to react-markdown.
    */
   rehypePlugins?: ComponentProps<typeof Markdown>["rehypePlugins"];
+  /**
+   * Receives the stable, fully resolved remark plugin list used for this
+   * render. Baseline consumers use it to build the same tree without
+   * duplicating the reference queries owned by this component.
+   */
+  onRemarkPlugins?: (
+    plugins: ComponentProps<typeof Markdown>["remarkPlugins"],
+  ) => void;
   /**
    * The baseline body of each code block that was edited in place, by the
    * source line it opens on (T-343). A fence found here renders as a diff of
@@ -336,17 +342,10 @@ export function MarkdownView({
   // remark-issue-refs.ts is what keeps refs out of a frontmatter value, not
   // this order.
   const remarkPlugins = useMemo(() => {
-    const base = [
-      remarkGfm,
-      // Before the tokenizers: what it replaces is a link the renderer was
-      // going to blank anyway, and `spec-source-index.ts` has to register it
-      // in the same place (T-240's rule).
-      remarkRejectedUrlsAsText,
-      [remarkFrontmatter, FRONTMATTER_FLAVOURS],
-      remarkFrontmatterTable,
-    ];
     if (slug === undefined)
-      return base as ComponentProps<typeof Markdown>["remarkPlugins"];
+      return MARKDOWN_SYNTAX_PLUGINS as ComponentProps<
+        typeof Markdown
+      >["remarkPlugins"];
     const directory = directoryQuery.data;
     const readable = readableQuery.data;
     const config = {
@@ -362,13 +361,17 @@ export function MarkdownView({
       mentions: preview,
     };
     return [
-      ...base,
+      ...MARKDOWN_SYNTAX_PLUGINS,
       [remarkIssueRefs, config, { autolinksOnly: !preview }],
       // After the tokenizer: the links it just created are half of what gets
       // counted.
       remarkRefOccurrences,
     ] as ComponentProps<typeof Markdown>["remarkPlugins"];
   }, [slug, preview, refQuery.data, directoryQuery.data, readableQuery.data]);
+
+  useEffect(() => {
+    onRemarkPlugins?.(remarkPlugins);
+  }, [onRemarkPlugins, remarkPlugins]);
 
   // `rehypeDetails` goes first so that every later pass — the caller's stamp,
   // decoration and fold passes included — walks the tree the reader will get,

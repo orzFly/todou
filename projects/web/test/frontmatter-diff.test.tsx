@@ -108,6 +108,7 @@ describe("frontmatter field-level diff", () => {
         ],
       },
     ]);
+    expect(decorations.structures).toEqual([]);
   });
 
   it("draws nothing at all when the fields only changed order", () => {
@@ -119,6 +120,7 @@ describe("frontmatter field-level diff", () => {
     expect(decorations.deletions).toEqual([]);
     expect(decorations.blocks).toEqual([]);
     expect(decorations.tables).toEqual([]);
+    expect(decorations.structures).toEqual([]);
   });
 
   // The boundary with `alignTable`: one field out and one in is two events.
@@ -144,11 +146,48 @@ describe("frontmatter as a whole block", () => {
     expect(wholly(before, after)).toEqual(["---\ntitle: Design\n---"]);
   });
 
-  it("quotes the whole block, fences included, when one is removed", () => {
-    const decorations = decorate(fm("title: Design"), "Body text.\n");
-    const blockMarkers = decorations.deletions.filter((d) => d.block);
-    expect(blockMarkers).toHaveLength(1);
-    expect(blockMarkers[0]?.text).toBe("---\ntitle: Design\n---");
+  it("plans and restores removed frontmatter as a semantic field table", async () => {
+    const before = fm("title: Design");
+    const after = "Body text.\n";
+    const decorations = decorate(before, after);
+    expect(decorations.deletions).toEqual([]);
+    expect(decorations.tables).toEqual([]);
+    expect(decorations.spans).toEqual([]);
+    expect(decorations.blocks).toEqual([]);
+    expect(decorations.images).toEqual([]);
+    expect(decorations.structures).toHaveLength(1);
+    expect(decorations.structures[0]).toMatchObject({
+      old: {
+        type: "frontmatter",
+        start: 0,
+        end: "---\ntitle: Design\n---".length,
+      },
+      parent: null,
+      after: null,
+      order: 0,
+      fallback: { at: 0, text: "---\ntitle: Design\n---" },
+    });
+    expect(decorations.structures[0]?.fallback.parts).toBeUndefined();
+
+    const container = await renderDiff(before, after);
+    const restored = container.querySelectorAll(
+      "table.markdown-frontmatter.spec-del-structure",
+    );
+    expect(restored).toHaveLength(1);
+    expect(container.querySelectorAll("table")).toHaveLength(1);
+    const table = restored[0];
+    expect(table?.querySelectorAll("tbody > tr")).toHaveLength(1);
+    expect(table?.querySelector("th")?.textContent).toBe("title");
+    expect(table?.querySelector("td")?.textContent).toBe("Design");
+    expect(table?.textContent).not.toContain("---");
+    expect(table?.previousElementSibling).toBeNull();
+    expect(table?.nextElementSibling?.tagName).toBe("P");
+    expect(table?.nextElementSibling?.textContent).toBe("Body text.");
+    expect(table?.parentElement).toBe(
+      container.querySelector("p")?.parentElement,
+    );
+    expect(container.querySelector("del.spec-del-block")).toBeNull();
+    expect(table?.querySelector(".spec-del-row, .spec-del-cell")).toBeNull();
   });
 });
 

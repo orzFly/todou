@@ -197,6 +197,71 @@ describe("buildSegmentIndex", () => {
   });
 });
 
+describe("list structure metadata", () => {
+  const source = [
+    "7. first",
+    "",
+    "   3. nested",
+    "   99. nested again",
+    "42. second",
+    "5. [ ] task",
+    "",
+    "   loose continuation",
+    "   - unordered child",
+    "",
+  ].join("\n");
+  const index = buildSegmentIndex(source);
+
+  it("uses parsed starts and direct ordinals instead of later source numerals", () => {
+    const lists = index.blocks
+      .filter((block) => block.type === "list")
+      .map((block) => ({
+        parent: block.parent,
+        childIndex: block.childIndex,
+        ordered: block.listOrdered,
+        start: block.listStart,
+      }));
+    expect(lists).toEqual([
+      { parent: null, childIndex: 0, ordered: true, start: 7 },
+      { parent: 1, childIndex: 1, ordered: true, start: 3 },
+      { parent: 10, childIndex: 2, ordered: false, start: null },
+    ]);
+
+    const items = index.blocks
+      .filter((block) => block.type === "listItem")
+      .map((block) => ({
+        parent: block.parent,
+        childIndex: block.childIndex,
+        value: block.listItemValue,
+      }));
+    expect(items).toEqual([
+      { parent: 0, childIndex: 0, value: 7 },
+      { parent: 3, childIndex: 0, value: 3 },
+      { parent: 3, childIndex: 1, value: 4 },
+      { parent: 0, childIndex: 1, value: 8 },
+      { parent: 0, childIndex: 2, value: 9 },
+      { parent: 13, childIndex: 0, value: null },
+    ]);
+  });
+
+  it("does not change flattened prose or segment source offsets", () => {
+    expect(index.text).toBe(
+      [
+        "first",
+        "nested",
+        "nested again",
+        "second",
+        "task",
+        "loose continuation",
+        "unordered child",
+      ].join("\n"),
+    );
+    for (const segment of index.segments) {
+      expect(source.slice(segment.start, segment.end)).toBe(segment.text);
+    }
+  });
+});
+
 describe("the block table (T-158)", () => {
   const source = [
     "# 标题",

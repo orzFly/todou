@@ -14,6 +14,7 @@ import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import {
   AnnotatedMarkdown,
   anchorForSelection,
+  anchorRangeForNode,
   selectionEndpoints,
 } from "../src/components/spec/annotated-markdown.tsx";
 import { buildSegmentIndex } from "../src/lib/spec-source-index.ts";
@@ -1058,5 +1059,194 @@ describe("AnnotatedMarkdown entry placement and shadow fallback (T-384)", () => 
     } finally {
       container.remove();
     }
+  });
+});
+
+describe("selection around restored old structure", () => {
+  it("rejects both pure-old and mixed selections instead of falling back to a current line", () => {
+    const container = document.createElement("div");
+    const current = document.createElement("p");
+    current.setAttribute("data-loc", "1-1");
+    current.textContent = "Current text";
+    const old = document.createElement("p");
+    old.className = "spec-del-structure";
+    // An old node may still carry a stamp from its original source tree.
+    old.setAttribute("data-loc", "1-1");
+    old.textContent = "Removed text";
+    container.append(current, old);
+    document.body.append(container);
+    try {
+      const index = buildSegmentIndex("Current text\n");
+      const currentText = current.firstChild as Node;
+      const oldText = old.firstChild as Node;
+      const ends = (start: Node, end: Node) => ({
+        start: { node: start, offset: 0 },
+        end: { node: end, offset: 4 },
+        collapsed: false,
+      });
+      expect(
+        anchorForSelection(container, index, ends(oldText, oldText)),
+      ).toBeNull();
+      expect(
+        anchorForSelection(container, index, ends(oldText, currentText)),
+      ).toBeNull();
+      expect(
+        anchorForSelection(container, index, ends(currentText, oldText)),
+      ).toBeNull();
+    } finally {
+      container.remove();
+    }
+  });
+
+  it("rejects explicit list numbers without rejecting prose beside them", () => {
+    const container = document.createElement("div");
+    const item = document.createElement("li");
+    item.setAttribute("data-loc", "1-1");
+    const number = document.createElement("span");
+    number.className = "spec-list-number";
+    number.textContent = "1. ";
+    const prose = document.createTextNode("fresh prose");
+    item.append(number, prose);
+    container.append(item);
+    document.body.append(container);
+    try {
+      const index = buildSegmentIndex("1. fresh prose\n");
+      expect(
+        anchorForSelection(container, index, {
+          start: { node: number.firstChild as Node, offset: 0 },
+          end: { node: prose, offset: 5 },
+          collapsed: false,
+        }),
+      ).toBeNull();
+      // The explicit number does not shift offsets for live text in the item.
+      expect(
+        anchorForSelection(container, index, {
+          start: { node: prose, offset: 0 },
+          end: { node: prose, offset: 5 },
+          collapsed: false,
+        }),
+      ).toEqual({
+        lineStart: 1,
+        lineEnd: 1,
+        colStart: 4,
+        colEnd: 8,
+      });
+    } finally {
+      container.remove();
+    }
+  });
+
+  it("rejects an endpoint inside old code through its shadow host", () => {
+    const container = document.createElement("div");
+    const current = document.createElement("p");
+    current.setAttribute("data-loc", "1-1");
+    current.textContent = "Current";
+    const oldCode = document.createElement("pre");
+    oldCode.className = "spec-del-structure";
+    const host = document.createElement("div");
+    const shadow = host.attachShadow({ mode: "open" });
+    const row = document.createElement("span");
+    row.textContent = "removed()";
+    shadow.append(row);
+    oldCode.append(host);
+    container.append(current, oldCode);
+    document.body.append(container);
+    try {
+      expect(
+        anchorForSelection(container, buildSegmentIndex("Current\n"), {
+          start: { node: current.firstChild as Node, offset: 0 },
+          end: { node: row.firstChild as Node, offset: 4 },
+          collapsed: false,
+        }),
+      ).toBeNull();
+    } finally {
+      container.remove();
+    }
+  });
+
+  it("keeps current line and columns after an old subtree inside a stamped block", () => {
+    const container = document.createElement("div");
+    const paragraph = document.createElement("p");
+    paragraph.setAttribute("data-loc", "3-3");
+    const before = document.createTextNode("Fresh ");
+    const old = document.createElement("span");
+    old.className = "spec-del-structure";
+    old.textContent = "obsolete words ";
+    const number = document.createElement("span");
+    number.className = "spec-list-number";
+    number.textContent = "9. ";
+    const after = document.createTextNode("prose");
+    paragraph.append(before, old, number, after);
+    container.append(paragraph);
+    document.body.append(container);
+    try {
+      expect(
+        anchorForSelection(
+          container,
+          buildSegmentIndex("First\n\nFresh prose\n"),
+          {
+            start: { node: after, offset: 0 },
+            end: { node: after, offset: 5 },
+            collapsed: false,
+          },
+        ),
+      ).toEqual({
+        lineStart: 3,
+        lineEnd: 3,
+        colStart: 7,
+        colEnd: 11,
+      });
+    } finally {
+      container.remove();
+    }
+  });
+});
+
+describe("existing deletion selection behavior", () => {
+  it("keeps the whole-line fallback for an old inline deletion", () => {
+    const container = document.createElement("div");
+    const paragraph = document.createElement("p");
+    paragraph.setAttribute("data-loc", "1-1");
+    const removed = document.createElement("del");
+    removed.className = "spec-del";
+    removed.textContent = "former";
+    paragraph.append(removed, document.createTextNode("present"));
+    container.append(paragraph);
+    document.body.append(container);
+    try {
+      const oldText = removed.firstChild as Node;
+      expect(
+        anchorForSelection(container, buildSegmentIndex("present\n"), {
+          start: { node: oldText, offset: 0 },
+          end: { node: oldText, offset: 6 },
+          collapsed: false,
+        }),
+      ).toEqual({
+        lineStart: 1,
+        lineEnd: 1,
+        colStart: null,
+        colEnd: null,
+      });
+    } finally {
+      container.remove();
+    }
+  });
+
+  it("keeps a paired code diff's old row on the whole current fence", () => {
+    const code = document.createElement("div");
+    code.setAttribute("data-loc", "2-4");
+    code.setAttribute("data-loc-content-start", "3");
+    const host = document.createElement("div");
+    const shadow = host.attachShadow({ mode: "open" });
+    const row = document.createElement("span");
+    row.setAttribute("data-line", "1");
+    row.setAttribute("data-line-type", "change-deletion");
+    row.textContent = "old code";
+    shadow.append(row);
+    code.append(host);
+    expect(anchorRangeForNode(row.firstChild as Node)).toEqual({
+      start: 2,
+      end: 4,
+    });
   });
 });
