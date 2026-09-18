@@ -50,6 +50,80 @@ function renderSettings(prefs: Partial<MePrefs> = {}) {
   return within(container);
 }
 
+describe("profile after moving Muted (T-380)", () => {
+  it("preserves identity and preference sections without fetching the muted list", async () => {
+    const getMutes = vi
+      .spyOn(api, "getMutes")
+      .mockResolvedValue({ projects: [], issues: [] });
+    const view = renderSettings();
+    const heading = await view.findByRole("heading", {
+      level: 1,
+      name: "Profile",
+    });
+    const page = heading.parentElement?.parentElement;
+    expect(page).not.toBeNull();
+    expect(page?.classList.contains("max-w-lg")).toBe(true);
+    expect(page?.classList.contains("space-y-6")).toBe(true);
+    expect(
+      view.getAllByRole("heading").map((node) => node.textContent),
+    ).toEqual([
+      "Profile",
+      "Unread indicators",
+      "Issue number placement",
+      "References in text",
+    ]);
+
+    const displayName = view.getByRole<HTMLInputElement>("textbox", {
+      name: "Display name",
+    });
+    const login = view.getByRole<HTMLInputElement>("textbox", {
+      name: "Login",
+    });
+    expect(displayName.value).toBe(me.display_name);
+    expect(login.value).toBe(me.login);
+    const avatar = view.getByRole("group", { name: "avatar" });
+    expect(within(avatar).getByRole("button", { name: "Upload" })).toBeTruthy();
+    const save = view.getByRole<HTMLButtonElement>("button", {
+      name: "Save changes",
+    });
+    expect(save.disabled).toBe(true);
+    fireEvent.change(displayName, { target: { value: "Updated user" } });
+    expect(save.disabled).toBe(false);
+
+    const sections = view.getAllByRole("heading", { level: 2 }).map((node) => {
+      const section = node.closest(".border-t");
+      expect(section?.parentElement).toBe(page);
+      expect(section?.classList.contains("pt-6")).toBe(true);
+      return section;
+    });
+    expect(displayName.closest("form")?.classList.contains("space-y-4")).toBe(
+      true,
+    );
+    expect(displayName.closest("form")?.nextElementSibling).toBe(sections[0]);
+    expect(sections[0]?.classList.contains("space-y-3")).toBe(true);
+    expect(sections[0]?.nextElementSibling).toBe(sections[1]);
+    expect(sections[1]?.classList.contains("space-y-4")).toBe(true);
+    expect(sections[1]?.nextElementSibling).toBe(sections[2]);
+    expect(sections[2]?.classList.contains("space-y-4")).toBe(true);
+    expect(sections[2]?.nextElementSibling).toBeNull();
+
+    expect(
+      view.getByRole("switch", { name: "Weak unread hints" }),
+    ).toBeTruthy();
+    expect(view.getAllByRole("combobox")).toHaveLength(4);
+    for (const name of [
+      "Bordered references",
+      "Shorten long titles",
+      "Title on every mention",
+    ]) {
+      expect(view.getByRole("switch", { name })).toBeTruthy();
+    }
+    expect(view.queryByText(/muted/i)).toBeNull();
+    expect(view.queryByRole("button", { name: "Unmute" })).toBeNull();
+    expect(getMutes).not.toHaveBeenCalled();
+  });
+});
+
 describe("profile display preferences (T-157)", () => {
   it("shows every surface's own placement", async () => {
     const view = renderSettings({ ref_placement_list: "after" });

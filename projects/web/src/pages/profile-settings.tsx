@@ -4,7 +4,6 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import type {
   BoardRefPlacement,
   Me,
@@ -13,7 +12,6 @@ import type {
 } from "@todou/shared";
 import { useState } from "react";
 import { toast } from "sonner";
-import { mutesQuery, useUnmuteIssue, useUnmuteProject } from "@/api/mutes.ts";
 import {
   prefsQuery,
   useBoxedRefLinks,
@@ -135,7 +133,6 @@ export function ProfileSettingsPage() {
       </form>
 
       <UnreadIndicatorsSection />
-      <MutedSection />
       <DisplaySection />
       <BodyReferencesSection />
     </div>
@@ -172,93 +169,6 @@ function UnreadIndicatorsSection() {
           }
         />
       </div>
-    </div>
-  );
-}
-
-/**
- * The mute ledger (T-372): every project and card the reader has quieted,
- * each with its way back. Without this section a mute is a black hole —
- * the lists stop showing the card, and nothing says where it went.
- */
-export function MutedSection() {
-  const { data: mutes, isPending } = useQuery(mutesQuery);
-  const unmuteProject = useUnmuteProject();
-  const unmuteIssue = useUnmuteIssue();
-
-  return (
-    <div className="space-y-3 border-t pt-6">
-      <h2 className="font-medium">Muted</h2>
-      {isPending || mutes === undefined ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
-      ) : mutes.projects.length === 0 && mutes.issues.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          Nothing is muted. A muted card or project stays out of the Inbox and
-          its unread markers go grey.
-        </p>
-      ) : (
-        <>
-          {mutes.projects.length > 0 && (
-            <ul className="space-y-1">
-              {mutes.projects.map((p) => (
-                <li
-                  key={p.slug}
-                  className="flex items-center justify-between gap-4"
-                >
-                  <Link
-                    to="/projects/$slug"
-                    params={{ slug: p.slug }}
-                    className="truncate text-sm underline-offset-2 hover:underline"
-                  >
-                    {p.name}
-                  </Link>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-muted-foreground"
-                    disabled={unmuteProject.isPending}
-                    onClick={() => unmuteProject.mutate({ slug: p.slug })}
-                  >
-                    Unmute
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {mutes.issues.length > 0 && (
-            <ul className="space-y-1">
-              {mutes.issues.map((i) => (
-                <li
-                  key={`${i.project.slug}-${i.number}`}
-                  className="flex items-center justify-between gap-4"
-                >
-                  <Link
-                    to="/projects/$slug/issues/$number"
-                    params={{ slug: i.project.slug, number: String(i.number) }}
-                    className="truncate text-sm underline-offset-2 hover:underline"
-                  >
-                    {i.project.name} #{i.number} — {i.title}
-                  </Link>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-muted-foreground"
-                    disabled={unmuteIssue.isPending}
-                    onClick={() =>
-                      unmuteIssue.mutate({
-                        slug: i.project.slug,
-                        number: i.number,
-                      })
-                    }
-                  >
-                    Unmute
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
-      )}
     </div>
   );
 }

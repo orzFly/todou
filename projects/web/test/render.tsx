@@ -64,6 +64,14 @@ export function renderWithProviders(
     path: "/users/$ref",
     validateSearch: userSearchSchema,
   });
+  const inboxRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/inbox",
+  });
+  const mutedRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/inbox/muted",
+  });
   const issueRoute = createRoute({
     getParentRoute: () => projectRoute,
     path: "issues/$number",
@@ -86,6 +94,8 @@ export function renderWithProviders(
     routeTree: rootRoute.addChildren([
       indexRoute,
       userRoute,
+      inboxRoute,
+      mutedRoute,
       projectRoute.addChildren([
         issueRoute,
         specRoute,

@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import type { IssueMuteMode } from "@todou/shared";
 import { BellOffIcon, BellRingIcon, CheckIcon } from "lucide-react";
 import {
+  issueMuteLabels,
   muteOf,
   mutesQuery,
   useMuteIssue,
@@ -64,14 +65,14 @@ export function MuteMenu({
     {
       key: "until_activity",
       icon: BellOffIcon,
-      text: "Quiet until new activity",
+      text: issueMuteLabels.until_activity,
       pick: () =>
         muteIssue.mutate({ slug, number: issueNumber, mode: "until_activity" }),
     },
     {
       key: "forever",
       icon: BellOffIcon,
-      text: "Quiet until unmuted",
+      text: issueMuteLabels.forever,
       pick: () =>
         muteIssue.mutate({ slug, number: issueNumber, mode: "forever" }),
     },
@@ -87,11 +88,9 @@ export function MuteMenu({
             ) : (
               <BellOffIcon className="size-3.5" />
             )}
-            {mode === "forever"
-              ? "Quiet until unmuted"
-              : mode === "until_activity"
-                ? "Quiet until new activity"
-                : "Notifying"}
+            {mode === undefined || mode === null
+              ? "Notifying"
+              : issueMuteLabels[mode]}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-auto" align="start">

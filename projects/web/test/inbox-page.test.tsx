@@ -2,6 +2,7 @@ import { act, fireEvent, waitFor } from "@testing-library/react";
 import type { InboxItem, InboxPage as InboxPageData } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { inboxQuery } from "../src/api/inbox.ts";
+import { mutesQuery } from "../src/api/mutes.ts";
 import { api } from "../src/api/queries.ts";
 import { InboxPage } from "../src/pages/inbox.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
@@ -70,6 +71,7 @@ function inboxFixture(fixture: InboxFixture): InboxPageData {
 
 function mockInbox(fixture: InboxFixture): InboxPageData {
   const page = inboxFixture(fixture);
+  vi.spyOn(api, "getMutes").mockResolvedValue({ issues: [], projects: [] });
   vi.spyOn(api, "getInbox").mockResolvedValue(page);
   vi.spyOn(api, "getReferenceDirectory").mockResolvedValue({
     entries: [
@@ -256,6 +258,81 @@ describe("InboxPage", () => {
     // The badge sits on the mentioned row, not the other one.
     expect(badge.closest("li")?.textContent).toContain("issue 1");
   });
+
+  it("keeps the Muted link outside the reason tabs when the list is empty", async () => {
+    mockInbox({ items: [], truncated: false });
+    const view = renderWithProviders(<InboxPage />);
+    const link = await view.findByRole("link", { name: "Muted" });
+    expect(link.getAttribute("href")).toBe("/inbox/muted");
+    expect(link.closest('[role="tablist"]')).toBeNull();
+    expect(link.querySelector("span")).toBeNull();
+    expect(view.queryByRole("tab", { name: /Muted/ })).toBeNull();
+    expect(link.parentElement?.classList.contains("max-sm:ml-auto")).toBe(true);
+    expect(link.parentElement?.textContent).toContain("Mark all read");
+  });
+
+  it("counts projects and issues with plain text, and updates with the shared cache", async () => {
+    mockInbox({ items: [], truncated: false });
+    const client = testQueryClient();
+    const issue = {
+      project: { slug: "p", name: "Project" },
+      number: 7,
+      title: "quiet",
+      mode: "forever" as const,
+      muted_at: "2026-01-01T00:00:00Z",
+    };
+    const mutes = {
+      issues: [issue, { ...issue, number: 8 }],
+      projects: [{ slug: "q", name: "Quiet", muted_at: issue.muted_at }],
+    };
+    vi.mocked(api.getMutes).mockResolvedValue(mutes);
+    client.setQueryData(mutesQuery.queryKey, mutes);
+    const view = renderWithProviders(<InboxPage />, client);
+    const link = await view.findByRole("link", { name: "Muted 3" });
+    const count = link.querySelector("span");
+    expect(count?.className).toBe("text-xs text-muted-foreground");
+    expect(count?.getAttribute("title")).toBeNull();
+    await act(async () => {
+      client.setQueryData(mutesQuery.queryKey, {
+        issues: [issue],
+        projects: [],
+      });
+    });
+    await view.findByRole("link", { name: "Muted 1" });
+    await act(async () => {
+      client.setQueryData(mutesQuery.queryKey, { issues: [], projects: [] });
+    });
+    expect(
+      (await view.findByRole("link", { name: "Muted" })).querySelector("span"),
+    ).toBeNull();
+  });
+
+  it.each(["pending", "failed"] as const)(
+    "keeps the Muted link without a count when mutes are %s",
+    async (state) => {
+      mockInbox({ items: [], truncated: false });
+      const get = vi.mocked(api.getMutes);
+      if (state === "pending") {
+        get.mockReturnValue(Promise.race([]));
+      } else {
+        get.mockRejectedValue(new Error("mutes unavailable"));
+      }
+      const client = testQueryClient();
+      const view = renderWithProviders(<InboxPage />, client);
+      const link = await view.findByRole("link", { name: "Muted" });
+      if (state === "failed") {
+        await waitFor(() =>
+          expect(client.getQueryState(mutesQuery.queryKey)?.status).toBe(
+            "error",
+          ),
+        );
+      }
+      expect(link.getAttribute("href")).toBe("/inbox/muted");
+      expect(link.querySelector("span")).toBeNull();
+      expect(view.queryByRole("button", { name: "Retry" })).toBeNull();
+      expect(view.queryByText(/mutes unavailable/)).toBeNull();
+    },
+  );
 });
 
 describe("InboxPage · saved data (T-415)", () => {

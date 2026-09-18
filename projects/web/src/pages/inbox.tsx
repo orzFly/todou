@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import type { InboxItem } from "@todou/shared";
 import { useMemo, useState } from "react";
 import { groupInboxItems, type InboxGroup, inboxQuery } from "@/api/inbox.ts";
+import { mutesQuery } from "@/api/mutes.ts";
 import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
@@ -45,6 +46,9 @@ export function matchesTab(item: InboxItem, tab: InboxTab): boolean {
  */
 export function InboxPage() {
   const inbox = useQuery(inboxQuery);
+  const { data: mutes } = useQuery(mutesQuery);
+  const mutedCount =
+    (mutes?.issues.length ?? 0) + (mutes?.projects.length ?? 0);
   const items = inbox.data?.items;
   const projects = useMemo(() => items?.map((item) => item.project), [items]);
   const refs = useProjectRefs(projects);
@@ -106,7 +110,20 @@ export function InboxPage() {
         {/* max-sm only: below the tabs' breakpoint this wraps onto a line
             of its own, where justify-between leaves it stranded at the
             left edge — every other sweep control sits on the right. */}
-        <MarkAllReadButton scopeName="the inbox" className="max-sm:ml-auto" />
+        <div className="flex items-center gap-1 max-sm:ml-auto">
+          <Link
+            to="/inbox/muted"
+            className="flex items-center gap-1.5 rounded-md px-3 py-1 text-sm text-muted-foreground hover:text-foreground"
+          >
+            Muted
+            {mutedCount > 0 && (
+              <span className="text-xs text-muted-foreground">
+                {mutedCount}
+              </span>
+            )}
+          </Link>
+          <MarkAllReadButton scopeName="the inbox" />
+        </div>
       </div>
 
       {notice && (

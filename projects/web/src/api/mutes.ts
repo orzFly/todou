@@ -5,14 +5,19 @@ import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
 /**
  * The stored mute settings (T-372), one query for the whole account: the
- * card-detail control reads its row out of it, and the settings page's
- * "muted" section renders both lists from it. Cached, because the `mutes`
- * me-event invalidates it the moment any tab writes.
+ * card-detail control reads its row out of it, and the Muted page renders
+ * both lists from it. Inbox uses it for the muted count. Cached, because the
+ * `mutes` me-event invalidates it the moment any tab writes.
  */
 export const mutesQuery = {
   queryKey: ["mutes"],
   queryFn: () => api.getMutes(),
 } as const;
+
+export const issueMuteLabels: Record<IssueMuteMode, string> = {
+  forever: "Quiet until unmuted",
+  until_activity: "Quiet until new activity",
+};
 
 /**
  * The setting one card carries, looked up out of the cached list.

@@ -45,6 +45,7 @@ import { IssueDetailPage } from "@/pages/issue-detail.tsx";
 import { IssueListPage } from "@/pages/issue-list.tsx";
 import { IssueRouteError, SpecRouteError } from "@/pages/issue-route-error.tsx";
 import { LoginPage } from "@/pages/login.tsx";
+import { MutedPage } from "@/pages/muted.tsx";
 import { NewIssuePage } from "@/pages/new-issue.tsx";
 import { ProfileSettingsPage } from "@/pages/profile-settings.tsx";
 import { ProjectLayout, ProjectRouteError } from "@/pages/project-layout.tsx";
@@ -375,6 +376,12 @@ const inboxRoute = createRoute({
   component: InboxPage,
 });
 
+const mutedRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/inbox/muted",
+  component: MutedPage,
+});
+
 // One path, two spellings: `$ref` all-digits is the permanent id form
 // stored text links on, anything else is a login. The page component
 // dispatches; the id half redirects to the login half after one lookup.
@@ -460,6 +467,7 @@ const routeTree = rootRoute.addChildren([
   authedRoute.addChildren([
     indexRoute,
     inboxRoute,
+    mutedRoute,
     projectsRoute,
     projectRoute.addChildren([
       projectIndexRoute,

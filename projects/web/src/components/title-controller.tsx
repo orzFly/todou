@@ -42,6 +42,8 @@ function titleFor(
       return `${ref} spec · ${ctx.projectName}`;
     case "/authed/inbox":
       return "Inbox · todou";
+    case "/authed/inbox/muted":
+      return "Muted · todou";
     case "/authed/settings/profile":
       return "Profile · todou";
     case "/authed/settings/agents":
