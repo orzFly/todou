@@ -37,6 +37,16 @@ const DECLARED: Record<string, string> = {
   "services/inbox.ts": "reads the status for the keep-check",
   "services/search.ts": "reads the status for the facets",
   "services/user-issues.ts": "reads the status to render someone's card list",
+  "services/insights.ts": "reads each card's status to seed the burn replay",
+  "services/insights/replay.ts":
+    "walks a card's status history backwards; the field is that walk's " +
+    "cursor, never a write",
+  "services/insights/aggregate.ts":
+    "`state.statusId` is the replay's own in-memory cursor as it steps " +
+    "through the days, not the stored column",
+  "services/insights-settings.ts":
+    "`statusId` here is a filter parameter over the project's own status " +
+    "ids, deciding which ones the chart counts",
   "services/move/plan.ts": "decides the mapping; copy.ts performs the write",
   "services/move/copy.ts":
     "writes the mapped status into the destination; execute.ts re-evaluates " +

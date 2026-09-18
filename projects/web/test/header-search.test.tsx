@@ -313,7 +313,7 @@ describe("the header's project row", () => {
     const labels = [...project.querySelectorAll("nav a")].map((a) =>
       a.textContent?.trim(),
     );
-    expect(labels).toEqual(["List", "Board", "Settings"]);
+    expect(labels).toEqual(["List", "Board", "Insights", "Settings"]);
     // The search is this project's, so it keeps the project's own company
     // rather than the account cluster's.
     const icon = toggle(project) as Element;
