@@ -2,9 +2,9 @@ import { OverlayScrollbars, type PartialOptions } from "overlayscrollbars";
 import { useEffect, useRef } from "react";
 
 /**
- * Nothing here varies between renders, so the effect below can honestly take
- * an empty dependency array. Making an option follow state means
- * `instance.options()`, not a re-initialization.
+ * Module-level so `ready` is the only thing the effect below closes over that
+ * moves. Making an option follow state means `instance.options()`, not a
+ * re-initialization.
  */
 const OPTIONS: PartialOptions = {
   scrollbars: {
@@ -34,15 +34,21 @@ const OPTIONS: PartialOptions = {
  * reaches them; leaving out the slot leaves the bars inside the scroll
  * container, where they scroll away with the content. A slot further out than
  * the immediate parent draws the bar over whatever else it spans.
+ *
+ * `ready` withholds the instance until the caller's content is in the DOM.
+ * `autoHideSuspend` shows the bar once on arrival — but it only arms when the
+ * element already overflows at the moment the instance is created, and a
+ * column whose cards are still in flight does not. Initializing on mount
+ * costs that one reveal outright. Until then the element scrolls natively.
  */
-export function useOverlayScrollbars() {
+export function useOverlayScrollbars(ready: boolean) {
   const slot = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const slotElement = slot.current;
     const viewportElement = viewport.current;
-    if (slotElement === null || viewportElement === null) return;
+    if (!ready || slotElement === null || viewportElement === null) return;
     const instance = OverlayScrollbars(
       {
         target: viewportElement,
@@ -52,7 +58,7 @@ export function useOverlayScrollbars() {
       OPTIONS,
     );
     return () => instance.destroy();
-  }, []);
+  }, [ready]);
 
   return { slot, viewport };
 }

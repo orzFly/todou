@@ -138,7 +138,7 @@ export function BoardPage() {
 function BoardColumn({ slug, status }: { slug: string; status: Status }) {
   const column = useQuery(boardColumnQuery(slug, status.id));
   const { setNodeRef, isOver } = useDroppable({ id: status.id });
-  const { slot, viewport } = useOverlayScrollbars();
+  const { slot, viewport } = useOverlayScrollbars(column.data !== undefined);
 
   return (
     <div

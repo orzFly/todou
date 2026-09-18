@@ -7,12 +7,17 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { render, screen, waitFor } from "@testing-library/react";
-import type { IssueListItem, ReferenceConfig, Status } from "@todou/shared";
+import type {
+  IssueListItem,
+  IssueListPage,
+  ReferenceConfig,
+  Status,
+} from "@todou/shared";
 import { OverlayScrollbars } from "overlayscrollbars";
 import { Suspense } from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { boardColumnQuery } from "../src/api/board.ts";
-import { statusesQuery } from "../src/api/queries.ts";
+import { api, statusesQuery } from "../src/api/queries.ts";
 import { referenceConfigQuery } from "../src/api/references.ts";
 import { BoardPage } from "../src/pages/board.tsx";
 import { testQueryClient } from "./render.tsx";
@@ -75,17 +80,22 @@ const card = (number: number, title: string): IssueListItem => ({
   moves: [],
 });
 
-function boardTree(): { container: HTMLElement; client: QueryClient } {
+function boardTree({ seedColumns = true } = {}): {
+  container: HTMLElement;
+  client: QueryClient;
+} {
   const client = testQueryClient();
   client.setQueryData(statusesQuery("p").queryKey, STATUSES);
-  client.setQueryData(boardColumnQuery("p", 1).queryKey, {
-    items: [],
-    next_cursor: null,
-  });
-  client.setQueryData(boardColumnQuery("p", 2).queryKey, {
-    items: [card(7, "first"), card(8, "second")],
-    next_cursor: null,
-  });
+  if (seedColumns) {
+    client.setQueryData(boardColumnQuery("p", 1).queryKey, {
+      items: [],
+      next_cursor: null,
+    });
+    client.setQueryData(boardColumnQuery("p", 2).queryKey, {
+      items: [card(7, "first"), card(8, "second")],
+      next_cursor: null,
+    });
+  }
   client.setQueryData(referenceConfigQuery("p").queryKey, {
     format: { prefix: "T", history: [] },
     autolinks: [],
@@ -190,5 +200,43 @@ describe("the board columns' overlay scrollbars", () => {
     // Detaching the element is not destroying it: the instance survives an
     // unmount that skips the effect's cleanup, which is what this asks about.
     expect(OverlayScrollbars(viewport)).toBeUndefined();
+  });
+});
+
+describe("a column initializes only once its cards are there", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * The reveal this buys cannot be asserted here — happy-dom lays nothing out,
+   * so the element never overflows and the bar never has cause to appear. What
+   * this holds is the timing the reveal rests on; the appearance itself is a
+   * browser check.
+   */
+  it("holds the instance back while the column query is still in flight", async () => {
+    let deliver: (page: IssueListPage) => void = () => {};
+    vi.spyOn(api, "listIssues").mockReturnValue(
+      new Promise<IssueListPage>((resolve) => {
+        deliver = resolve;
+      }),
+    );
+
+    const { container } = boardTree({ seedColumns: false });
+    await screen.findByTestId("column-Next");
+    const viewport = viewportOf(container, "Next");
+    expect(OverlayScrollbars(viewport)).toBeUndefined();
+
+    deliver({
+      items: [card(7, "first"), card(8, "second")],
+      next_cursor: null,
+    });
+    await screen.findByText("first");
+
+    // Same element throughout: React reuses the div, so this is the instance
+    // arriving late rather than a different container being measured.
+    await waitFor(() => {
+      expect(OverlayScrollbars(viewport)).toBeDefined();
+    });
   });
 });
