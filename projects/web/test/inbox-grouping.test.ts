@@ -45,7 +45,7 @@ function makeItem(
     blocked_by: [],
     blocks: [],
     moves: [],
-    project: { slug, name: slug },
+    project: { id: slug.length, slug, name: slug },
     last_activity_at: "2026-01-02T00:00:00Z",
     pending_spec_review: false,
     mentions_you: false,

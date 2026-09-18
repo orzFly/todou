@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Timestamp } from "./common.ts";
 import { IssueListItem } from "./issue.ts";
-import { ProjectSlug } from "./project.ts";
+import { ProjectBrief, ProjectSlug } from "./project.ts";
 
 const csvSlugs = z
   .string()
@@ -19,11 +19,11 @@ export type InboxQuery = z.infer<typeof InboxQuery>;
 /**
  * One inbox row (T-97): an issue that currently needs the caller's
  * attention — unread foreign activity, a spec version awaiting their
- * review, or open questions. Reuses the issue-list fields so row
- * rendering and the mark-read flow work unchanged across projects.
+ * review, or open questions. Reuses the issue-list fields and ProjectBrief so
+ * row rendering and the mark-read flow work unchanged across projects.
  */
 export const InboxItem = IssueListItem.extend({
-  project: z.object({ slug: ProjectSlug, name: z.string() }),
+  project: ProjectBrief,
   /**
    * Newest activity among the row's qualifying reasons; the response is
    * sorted by this, descending. Grouping is the client's business.

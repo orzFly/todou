@@ -1130,4 +1130,30 @@ describe("cross-project inbox T-97", () => {
     const after = await items("", agent.headers);
     expect(rowOf(after, PA, n)).toBeDefined();
   });
+
+  it("names each row's project with its icon", async () => {
+    const form = new FormData();
+    form.set(
+      "file",
+      new File(
+        [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a])],
+        "icon.png",
+        { type: "image/png" },
+      ),
+    );
+    const uploaded = await t.app.request(`/api/projects/${PA}/icon`, {
+      method: "POST",
+      headers: { cookie },
+      body: form,
+    });
+    expect(uploaded.status).toBe(200);
+    const { icon_url } = await json(uploaded);
+
+    const n = await createIssue(PA, "project icon in inbox");
+    await comment(PA, n, bob.headers, "ping");
+    await settle();
+
+    expect(rowOf(await items(), PA, n)?.project).toMatchObject({ icon_url });
+    await markRead(PA, n);
+  });
 });

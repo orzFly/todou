@@ -33,6 +33,7 @@ import {
   visibleProjects,
 } from "./cross-references.ts";
 import { bundleIssues, type IssueBundle, toIssue } from "./issues.ts";
+import { toProjectBrief } from "./projects.ts";
 import { loadIssueMutes, loadMuteContext, loadMutedProjects } from "./mutes.ts";
 import { readPrefs } from "./prefs.ts";
 import { ensureFrontiers, frontierJoin, unreadIssueState } from "./reads.ts";
@@ -518,7 +519,7 @@ export async function groupInbox(
         ...listItem,
         unread: state.isUnread,
         unread_comments: state.unreadComments,
-        project: { slug: project.slug, name: project.name },
+        project: toProjectBrief(project),
         last_activity_at: at.toISOString(),
         pending_spec_review: state.pendingSpecReview,
         mentions_you: state.mentionsYou,
