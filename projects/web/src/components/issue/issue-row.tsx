@@ -158,7 +158,12 @@ export function IssueRow({
           <QuestionBadge count={issue.open_questions} className="shrink-0" />
         )}
         {specAwaitingReview && (
-          <SpecReviewBadge version={issue.spec_version} className="shrink-0" />
+          <SpecReviewBadge
+            slug={slug}
+            issueNumber={issue.number}
+            version={issue.spec_version}
+            className="shrink-0"
+          />
         )}
         {mentionsYou && <MentionBadge className="shrink-0" />}
         {blockedBy > 0 && (

@@ -110,6 +110,11 @@ const IssueRoute = createRoute({
   path: "issues/$number",
 });
 
+const SpecRoute = createRoute({
+  getParentRoute: () => ProjectRoute,
+  path: "issues/$number/spec",
+});
+
 function UserRoutePage() {
   const { ref } = UserRoute.useParams();
   const { role = "any", state = "open" } = UserRoute.useSearch();
@@ -138,7 +143,7 @@ function renderAt(path: string, client: QueryClient) {
   const router = createRouter({
     routeTree: Root.addChildren([
       UserRoute,
-      ProjectRoute.addChildren([IssueRoute]),
+      ProjectRoute.addChildren([IssueRoute, SpecRoute]),
     ]),
     history: createMemoryHistory({ initialEntries: [path] }),
   });
@@ -197,6 +202,24 @@ describe("UserIssuesSection (T-374)", () => {
     expect(
       view.getByRole("link", { name: "issue kela 5" }).getAttribute("href"),
     ).toBe("/projects/kela/issues/5");
+  });
+
+  it("links spec badges into each row's own project (T-421)", async () => {
+    const spec = {
+      spec_version: 2,
+      spec_review_status: "unreviewed" as const,
+    };
+    vi.spyOn(api, "listUserIssues").mockResolvedValue(
+      page([makeItem("todou", 12, spec), makeItem("kela", 5, spec)]),
+    );
+    vi.spyOn(api, "listUserProjects").mockResolvedValue(noProjects());
+
+    const view = renderAt("/users/alice", clientWithUser());
+    const links = await view.findAllByRole("link", { name: "spec" });
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "/projects/todou/issues/12/spec",
+      "/projects/kela/issues/5/spec",
+    ]);
   });
 
   it("puts the role filter in the URL and refetches under it", async () => {

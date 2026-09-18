@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import {
   AtSignIcon,
   BookOpenTextIcon,
@@ -88,24 +89,33 @@ export function BlockedBadge({
 }
 
 export function SpecReviewBadge({
+  slug,
+  issueNumber,
   version,
   className,
 }: {
+  slug: string;
+  issueNumber: number;
   version: number | null;
   className?: string;
 }) {
   return (
-    <AttentionBadge
-      title={
-        version === null
-          ? "a spec is awaiting review"
-          : `spec v${version} is awaiting review`
-      }
-      className={className}
+    <Link
+      to="/projects/$slug/issues/$number/spec"
+      params={{ slug, number: String(issueNumber) }}
+      className={cn("inline-flex rounded-full hover:brightness-95", className)}
     >
-      <BookOpenTextIcon className="size-3.5" />
-      spec
-    </AttentionBadge>
+      <AttentionBadge
+        title={
+          version === null
+            ? "a spec is awaiting review"
+            : `spec v${version} is awaiting review`
+        }
+      >
+        <BookOpenTextIcon className="size-3.5" />
+        spec
+      </AttentionBadge>
+    </Link>
   );
 }
 

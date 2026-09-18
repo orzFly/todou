@@ -303,7 +303,11 @@ export function BoardCardContent({
             <QuestionBadge count={issue.open_questions} />
           )}
           {issue.spec_review_status === "unreviewed" && (
-            <SpecReviewBadge version={issue.spec_version} />
+            <SpecReviewBadge
+              slug={slug}
+              issueNumber={issue.number}
+              version={issue.spec_version}
+            />
           )}
           {openBlockCount(issue.blocked_by) > 0 && (
             <BlockedBadge count={openBlockCount(issue.blocked_by)} />

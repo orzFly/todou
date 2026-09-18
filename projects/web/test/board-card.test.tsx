@@ -418,6 +418,83 @@ describe("BoardCardContent spec badge (T-53)", () => {
   });
 });
 
+describe.each(["board", "list"] as const)(
+  "spec links on %s (T-421)",
+  (surface) => {
+    const renderIssue = () => {
+      const item = issue(0, {
+        spec_version: 3,
+        spec_review_status: "unreviewed",
+      });
+      return renderWithProviders(
+        surface === "board" ? (
+          <BoardCardContent slug="p" issue={item} />
+        ) : (
+          <ul>
+            <IssueRow slug="p" issue={item} />
+          </ul>
+        ),
+      );
+    };
+
+    it("renders a real spec href for the card", async () => {
+      const view = renderIssue();
+      const link = await view.findByRole("link", { name: "spec" });
+      expect(link.tagName).toBe("A");
+      expect(link.getAttribute("href")).toBe("/projects/p/issues/1/spec");
+    });
+
+    it("navigates a plain click to the spec page", async () => {
+      const view = renderIssue();
+      fireEvent.click(await view.findByRole("link", { name: "spec" }));
+      await waitFor(() =>
+        expect(view.router.state.location.pathname).toBe(
+          "/projects/p/issues/1/spec",
+        ),
+      );
+    });
+
+    it("leaves modified and middle clicks to the browser", async () => {
+      const view = renderIssue();
+      const link = await view.findByRole("link", { name: "spec" });
+      for (const init of [
+        { metaKey: true },
+        { ctrlKey: true },
+        { shiftKey: true },
+        { altKey: true },
+        { button: 1 },
+      ]) {
+        const event = new MouseEvent("click", {
+          bubbles: true,
+          cancelable: true,
+          ...init,
+        });
+        fireEvent(link, event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(view.router.state.location.pathname).toBe("/");
+      }
+      const middle = new MouseEvent("auxclick", {
+        bubbles: true,
+        cancelable: true,
+        button: 1,
+      });
+      fireEvent(link, middle);
+      expect(middle.defaultPrevented).toBe(false);
+      expect(view.router.state.location.pathname).toBe("/");
+    });
+
+    it("keeps the spec link outside the issue title link", async () => {
+      const view = renderIssue();
+      const spec = await view.findByRole("link", { name: "spec" });
+      const title = view.getByRole("link", { name: /issue 1/ });
+      expect(title.getAttribute("href")).toBe("/projects/p/issues/1");
+      expect(title.contains(spec)).toBe(false);
+      expect(spec.parentElement?.closest("a")).toBeNull();
+      expect(view.container.querySelector("a a")).toBeNull();
+    });
+  },
+);
+
 describe("BoardCardContent assignees reach their own pages (T-391)", () => {
   const person = (id: number, login: string, name: string) => ({
     id,
