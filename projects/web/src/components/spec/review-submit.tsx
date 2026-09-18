@@ -4,6 +4,7 @@ import {
   type SpecReviewSubmitInput,
   type SpecReviewVerdict,
 } from "@todou/shared";
+import { ChevronDownIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/api/queries.ts";
@@ -19,6 +20,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 import type { SpecReviewDraft } from "@/lib/spec-drafts.ts";
 
@@ -93,6 +100,7 @@ export function ReviewSubmitDialog({
     null,
   );
   const editor = useRef<MarkdownEditorHandle>(null);
+  const localSubmitting = useRef(false);
   const refCompletion = useRefCompletion(slug);
   const queryClient = useQueryClient();
   const isPusher = useIsVersionPusher(slug, issueNumber, currentVersion);
@@ -117,10 +125,12 @@ export function ReviewSubmitDialog({
       setLocalSummary("");
       editor.current?.setValue("");
       setLocalVerdict(null);
+      localSubmitting.current = false;
       onSubmitted?.();
     },
     onError: (error) => {
       setLocalVerdict(null);
+      localSubmitting.current = false;
       toast.error(error.message);
     },
   });
@@ -129,10 +139,13 @@ export function ReviewSubmitDialog({
   const pending = pendingVerdict !== null;
   const saysNothing = summary.trim() === "" && drafts.length === 0;
   const submit = (verdict: SpecReviewVerdict) => {
+    if (pending) return;
     if (onSubmit !== undefined) {
       onSubmit(verdict);
       return;
     }
+    if (localSubmitting.current) return;
+    localSubmitting.current = true;
     setLocalVerdict(verdict);
     const body = (
       controlledSummary === undefined
@@ -157,21 +170,21 @@ export function ReviewSubmitDialog({
       }}
     >
       <DialogContent
-        className="sm:max-w-lg"
+        className="grid-cols-1 max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg"
         onEscapeKeyDown={(event) => {
           if (editor.current?.dismissCompletion() === true) {
             event.preventDefault();
           }
         }}
       >
-        <DialogHeader>
-          <DialogTitle className="text-sm font-medium">
+        <DialogHeader className="min-w-0 pr-7">
+          <DialogTitle className="min-w-0 text-sm leading-normal font-medium [overflow-wrap:anywhere]">
             Finish review — spec v{currentVersion}
           </DialogTitle>
         </DialogHeader>
 
         {drafts.length > 0 && (
-          <ul className="max-h-48 space-y-1 overflow-y-auto text-xs">
+          <ul className="min-w-0 max-h-48 space-y-1 overflow-y-auto text-xs [overflow-wrap:anywhere]">
             {drafts.map((draft) => (
               <li key={draft.id} className="rounded border px-2 py-1">
                 <span className="font-mono">
@@ -197,7 +210,7 @@ export function ReviewSubmitDialog({
         <MarkdownEditor
           ref={editor}
           ariaLabel="Review summary"
-          className="min-h-16"
+          className="min-h-16 max-h-48"
           initialValue={summary}
           ownerManagedDirty={controlledSummary !== undefined}
           onChange={(value) => {
@@ -208,44 +221,45 @@ export function ReviewSubmitDialog({
           extensions={refCompletion}
         />
 
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={pending || saysNothing}
-            title={
-              saysNothing
-                ? "Write a summary or stage a comment first"
-                : undefined
-            }
-            onClick={() => submit("comment")}
-          >
-            {pendingVerdict === "comment" ? "Submitting…" : "Comment"}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="border-red-500/60 text-red-700 dark:text-red-400"
-            disabled={pending || isPusher}
-            title={isPusher ? PUSHER_TITLE : undefined}
-            onClick={() => submit("request_changes")}
-          >
-            {pendingVerdict === "request_changes"
-              ? "Submitting…"
-              : "Request changes"}
-          </Button>
-          <Button
-            size="sm"
-            className="bg-green-700 text-white hover:bg-green-800"
-            disabled={pending || isPusher}
-            title={isPusher ? PUSHER_TITLE : undefined}
-            onClick={() => submit("approve")}
-          >
-            {pendingVerdict === "approve" ? "Submitting…" : "Approve"}
-          </Button>
+        <div className="flex min-w-0 justify-end">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" disabled={pending}>
+                {pending ? "Submitting…" : "Submit"}
+                <ChevronDownIcon aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="w-48 max-w-[calc(100vw-1rem)]"
+            >
+              <DropdownMenuItem
+                disabled={pending || saysNothing}
+                title={
+                  saysNothing
+                    ? "Write a summary or stage a comment first"
+                    : undefined
+                }
+                onSelect={() => submit("comment")}
+              >
+                Comment only
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={pending || isPusher}
+                title={isPusher ? PUSHER_TITLE : undefined}
+                onSelect={() => submit("request_changes")}
+              >
+                Request changes
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={pending || isPusher}
+                title={isPusher ? PUSHER_TITLE : undefined}
+                onSelect={() => submit("approve")}
+              >
+                Approve
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </DialogContent>
     </Dialog>

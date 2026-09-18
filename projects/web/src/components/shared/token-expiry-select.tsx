@@ -5,6 +5,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -27,13 +28,18 @@ export function expiresAtFrom(choice: string): string | null {
 export function TokenExpirySelect({
   value,
   onChange,
+  className,
 }: {
   value: string;
   onChange: (value: string) => void;
+  className?: string;
 }) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger aria-label="Token expiration" className="w-36">
+      <SelectTrigger
+        aria-label="Token expiration"
+        className={cn("w-36", className)}
+      >
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

@@ -141,6 +141,49 @@ async function tableSurface() {
 }
 
 describe("agent projects column (T-227)", () => {
+  it("keeps a legal long login in the title and requires Add to grant a project", async () => {
+    const longAgent = { ...BOT, login: "a".repeat(64) };
+    const setMember = vi.spyOn(api, "setMember").mockResolvedValue(undefined);
+    renderPage(
+      {
+        memberships: [
+          membership(longAgent, ALPHA, "writer"),
+          membership(longAgent, OUTSIDE, "reader"),
+        ],
+        manageable_projects: [manageable(ALPHA), manageable(BETA)],
+      },
+      [longAgent],
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: `Manage ${longAgent.login}'s projects`,
+      }),
+    );
+    const dialog = within(
+      await screen.findByRole("dialog", {
+        name: `Projects for ${longAgent.login}`,
+      }),
+    );
+    expect(dialog.getByText("read-only")).toBeTruthy();
+    expect(
+      dialog.queryByRole("combobox", { name: "role in Bobland" }),
+    ).toBeNull();
+    fireEvent.keyDown(
+      dialog.getByRole("combobox", { name: "Project to add" }),
+      { key: "ArrowDown" },
+    );
+    fireEvent.click(await screen.findByRole("option", { name: "Beta" }));
+    expect(setMember).not.toHaveBeenCalled();
+    fireEvent.click(dialog.getByRole("button", { name: "Add" }));
+    await waitFor(() =>
+      expect(setMember).toHaveBeenCalledExactlyOnceWith(
+        BETA.slug,
+        longAgent.id,
+        "writer",
+      ),
+    );
+  });
+
   it("badges each project with its role and counts the overflow", async () => {
     renderPage({
       memberships: [

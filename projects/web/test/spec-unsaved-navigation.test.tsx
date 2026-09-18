@@ -198,7 +198,7 @@ describe("spec review drafts across navigation", () => {
     );
     act(() => setEditorValue(firstEditor, "summary survives close"));
 
-    fireEvent.click(view.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(view.getByRole("button", { name: "Close" }));
     await waitFor(() =>
       expect(view.queryByLabelText("Review summary")).toBeNull(),
     );
@@ -226,7 +226,7 @@ describe("spec review drafts across navigation", () => {
       (await view.findByLabelText("Review summary")) as HTMLElement,
     );
     act(() => setEditorValue(firstSummary, "summary marker in full"));
-    fireEvent.click(view.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(view.getByRole("button", { name: "Close" }));
 
     const versionTrigger = view.getByRole("button", {
       name: /switch version/i,
@@ -267,7 +267,7 @@ describe("spec review drafts across navigation", () => {
       (await view.findByLabelText("Review summary")) as HTMLElement,
     );
     expect(restoredSummary.state.doc.toString()).toBe("summary marker in full");
-    fireEvent.click(view.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(view.getByRole("button", { name: "Close" }));
 
     act(() => setEditorValue(restoredComposer, "composer marker in full!"));
     fireEvent.click(view.getByRole("button", { name: "Stage comment" }));
@@ -341,9 +341,15 @@ describe("spec review drafts across navigation", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Stage comment" }));
     fireEvent.click(screen.getByRole("button", { name: /finish review/i }));
-    fireEvent.click(await screen.findByRole("button", { name: /^Comment$/ }));
+    fireEvent.pointerDown(
+      await screen.findByRole("button", { name: "Submit" }),
+      { button: 0, pointerType: "mouse" },
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Comment only" }),
+    );
     expect(submit).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     void view.router.navigate({
       to: "/projects/$slug/issues/$number",
@@ -378,10 +384,19 @@ describe("spec review drafts across navigation", () => {
     });
     await waitFor(() =>
       expect(
-        screen
-          .getByRole("button", { name: /^Comment$/ })
-          .hasAttribute("disabled"),
-      ).toBe(true),
+        screen.getByRole("button", { name: "Submit" }).hasAttribute("disabled"),
+      ).toBe(false),
     );
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Submit" }), {
+      button: 0,
+      pointerType: "mouse",
+    });
+    expect(
+      (
+        await screen.findByRole("menuitem", {
+          name: "Comment only",
+        })
+      ).getAttribute("aria-disabled"),
+    ).toBe("true");
   });
 });

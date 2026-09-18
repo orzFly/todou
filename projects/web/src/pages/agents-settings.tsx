@@ -287,15 +287,17 @@ function EditAgentDialog({ agent }: { agent: Agent }) {
           <PencilIcon className="size-3.5" /> Edit
         </Button>
       </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Edit {agent.login}</DialogTitle>
+      <DialogContent className="grid-cols-1 max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <DialogHeader className="min-w-0 pr-7">
+          <DialogTitle className="min-w-0 leading-normal [overflow-wrap:anywhere]">
+            Edit {agent.login}
+          </DialogTitle>
           <DialogDescription>
             Renames apply everywhere immediately; scripts using the old login by
             hand (e.g. --assignee) need updating.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <AvatarEditor
             subject={{
               name: agent.display_name,
@@ -306,7 +308,7 @@ function EditAgentDialog({ agent }: { agent: Agent }) {
             pending={upload.isPending || removeAvatar.isPending}
           />
           <form
-            className="space-y-4"
+            className="min-w-0 space-y-4"
             onSubmit={(e) => {
               e.preventDefault();
               if (dirty) save.mutate();
@@ -474,9 +476,14 @@ function AgentTokensDialogState({ agent }: { agent: Agent }) {
           <KeyIcon className="size-3.5" /> Tokens
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-2xl" aria-describedby={undefined}>
-        <DialogHeader>
-          <DialogTitle>Tokens for {agent.login}</DialogTitle>
+      <DialogContent
+        className="grid-cols-1 max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[min(42rem,calc(100%-2rem))]"
+        aria-describedby={undefined}
+      >
+        <DialogHeader className="min-w-0 pr-7">
+          <DialogTitle className="min-w-0 leading-normal [overflow-wrap:anywhere]">
+            Tokens for {agent.login}
+          </DialogTitle>
         </DialogHeader>
 
         {replace !== null ? (
@@ -510,7 +517,7 @@ function AgentTokensDialogState({ agent }: { agent: Agent }) {
         {created && <TokenReveal token={created} />}
 
         <form
-          className="flex items-center gap-2"
+          className="flex min-w-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center"
           onSubmit={(e) => {
             e.preventDefault();
             if (name.trim()) issue.mutate();
@@ -524,11 +531,20 @@ function AgentTokensDialogState({ agent }: { agent: Agent }) {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="New token name (e.g. ci)"
-            className="w-56"
+            className="w-full sm:w-56"
             required
           />
-          <TokenExpirySelect value={expiry} onChange={setExpiry} />
-          <Button type="submit" size="sm" disabled={issue.isPending}>
+          <TokenExpirySelect
+            value={expiry}
+            onChange={setExpiry}
+            className="w-full sm:w-36"
+          />
+          <Button
+            type="submit"
+            size="sm"
+            className="w-full sm:w-auto"
+            disabled={issue.isPending}
+          >
             <PlusIcon className="size-3.5" /> Issue
           </Button>
         </form>

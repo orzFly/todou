@@ -4,8 +4,10 @@ import {
   fireEvent,
   render,
   renderHook,
+  screen,
   waitFor,
 } from "@testing-library/react";
+import type { SpecReviewSubmitInput } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import {
@@ -443,22 +445,94 @@ describe("SpecCommentAnchorCard", () => {
   });
 });
 
+const READER = { id: 5, login: "user", display_name: "User", kind: "human" };
+const PUSHER = {
+  id: 7,
+  login: "claude-agent",
+  display_name: "Claude Agent",
+  kind: "machine",
+};
+
+const DRAFT = {
+  id: "d1",
+  anchor: {
+    path: "design.md",
+    version: 3,
+    line_start: 3,
+    line_end: 4,
+    col_start: null,
+    col_end: null,
+  },
+  quote: "…",
+  body: "Which diff library?",
+};
+
+/** GETs never count as reviews, including the spec refetch after success. */
+function stubFetch(
+  pushedBy = PUSHER,
+  respond?: (
+    body: SpecReviewSubmitInput,
+    attempt: number,
+  ) => Response | Promise<Response>,
+) {
+  const posts: Array<{ url: string; body: SpecReviewSubmitInput }> = [];
+  vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (method === "GET" && url.endsWith("/api/me")) {
+      return Response.json(READER);
+    }
+    if (method === "GET" && url.endsWith("/spec")) {
+      return Response.json({
+        current_version: 3,
+        current_version_cursor: "cv3",
+        review_status: "unreviewed",
+        unresolved_comments: 0,
+        unresolved_carried_comments: 0,
+        files: [{ path: "design.md", size: 10 }],
+        versions: [
+          {
+            number: 3,
+            author: pushedBy,
+            message: null,
+            created_at: "2026-09-07T00:00:00.000Z",
+          },
+        ],
+      });
+    }
+    if (method === "POST" && url.endsWith("/issues/23/spec/reviews")) {
+      const body: SpecReviewSubmitInput = JSON.parse(String(init?.body));
+      posts.push({ url, body });
+      return respond
+        ? respond(body, posts.length)
+        : Response.json(
+            {
+              event_id: 9,
+              version: 3,
+              verdict: body.verdict,
+              summary_comment_id: body.body ? 88 : null,
+              comment_ids: body.comments.map((_, index) => 412 + index),
+            },
+            { status: 201 },
+          );
+    }
+    throw new Error(`unstubbed request: ${method} ${url}`);
+  });
+  return posts;
+}
+
+async function openReviewMenu() {
+  const trigger = await screen.findByRole("button", { name: "Submit" });
+  fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+  await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
+  return trigger;
+}
+
+const reviewItem = (name: string) => screen.getByRole("menuitem", { name });
+
 describe("ReviewSubmitDialog", () => {
   it("submits verdict, summary, and every staged draft in one POST", async () => {
-    const posts: Array<{ url: string; body: unknown }> = [];
-    vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
-      posts.push({ url: String(input), body: JSON.parse(String(init?.body)) });
-      return Response.json(
-        {
-          event_id: 9,
-          version: 3,
-          verdict: "request_changes",
-          summary_comment_id: 88,
-          comment_ids: [412],
-        },
-        { status: 201 },
-      );
-    });
+    const posts = stubFetch();
 
     const onSubmitted = vi.fn();
     const view = renderWithProviders(
@@ -486,12 +560,14 @@ describe("ReviewSubmitDialog", () => {
         onSubmitted={onSubmitted}
       />,
     );
+    await view.findByLabelText("Review summary");
 
-    await view.findByText("Request changes");
     cmSetValue(view.baseElement, "overall fine");
-    fireEvent.click(view.getByText("Request changes"));
+    await openReviewMenu();
+    fireEvent.click(reviewItem("Request changes"));
 
     await waitFor(() => expect(onSubmitted).toHaveBeenCalled());
+    expect(posts).toHaveLength(1);
     expect(posts[0]?.url).toContain("/issues/23/spec/reviews");
     expect(posts[0]?.body).toEqual({
       version: 3,
@@ -507,20 +583,7 @@ describe("ReviewSubmitDialog", () => {
   });
 
   it("sends columns when the draft carries them (T-142)", async () => {
-    const posts: Array<{ body: unknown }> = [];
-    vi.stubGlobal("fetch", async (_input: unknown, init?: RequestInit) => {
-      posts.push({ body: JSON.parse(String(init?.body)) });
-      return Response.json(
-        {
-          event_id: 9,
-          version: 3,
-          verdict: "approve",
-          summary_comment_id: null,
-          comment_ids: [412],
-        },
-        { status: 201 },
-      );
-    });
+    const posts = stubFetch();
 
     const onSubmitted = vi.fn();
     const view = renderWithProviders(
@@ -552,8 +615,10 @@ describe("ReviewSubmitDialog", () => {
     expect((await view.findByText(/design\.md/)).textContent).toContain(
       "L5:12–34",
     );
-    fireEvent.click(view.getByText("Approve"));
+    await openReviewMenu();
+    fireEvent.click(reviewItem("Approve"));
     await waitFor(() => expect(onSubmitted).toHaveBeenCalled());
+    expect(posts).toHaveLength(1);
     expect(posts[0]?.body).toMatchObject({
       comments: [
         {
@@ -571,105 +636,393 @@ describe("ReviewSubmitDialog", () => {
   });
 });
 
-// T-277: the third button. These stubs route by URL because the dialog now
-// reads who pushed the version — a catch-all stub would answer the spec and
-// /me reads with a review result and leave `isPusher` false by accident.
+// T-277: the comment verdict remains available to the version's pusher.
 describe("ReviewSubmitDialog: the comment verdict", () => {
-  const READER = { id: 5, login: "user", display_name: "User", kind: "human" };
-  const PUSHER = {
-    id: 7,
-    login: "claude-agent",
-    display_name: "Claude Agent",
-    kind: "machine",
-  };
+  function mount(drafts: Array<typeof DRAFT>, onSubmitted = vi.fn()) {
+    const client = testQueryClient();
+    const onClose = vi.fn();
+    const dialog = (staged: Array<typeof DRAFT>) => (
+      <QueryClientProvider client={client}>
+        <ReviewSubmitDialog
+          slug="p"
+          issueNumber={23}
+          currentVersion={3}
+          drafts={staged}
+          open
+          onClose={onClose}
+          onSubmitted={onSubmitted}
+        />
+      </QueryClientProvider>
+    );
+    const view = render(dialog(drafts));
+    return {
+      view,
+      client,
+      onClose,
+      onSubmitted,
+      updateDrafts: (staged: Array<typeof DRAFT>) =>
+        view.rerender(dialog(staged)),
+    };
+  }
 
-  const DRAFT = {
-    id: "d1",
-    anchor: {
-      path: "design.md",
-      version: 3,
-      line_start: 3,
-      line_end: 4,
-      col_start: null,
-      col_end: null,
-    },
-    quote: "…",
-    body: "Which diff library?",
-  };
+  it("opens and dismisses without posting; Escape restores Submit focus without closing the dialog", async () => {
+    const posts = stubFetch();
+    const { view, onClose, onSubmitted } = mount([DRAFT]);
+    cmSetValue(view.baseElement, "keep this summary");
+    const dialog = screen.getByRole("dialog");
+    const outside = screen.getByText("Which diff library?");
 
-  /** Routed stub; `pushedBy` is the author of v3, i.e. who may not judge. */
-  function stubFetch(pushedBy: typeof READER) {
-    const posts: Array<{ url: string; body: unknown }> = [];
-    vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
-      const url = String(input);
-      if (url.endsWith("/api/me")) return Response.json(READER);
-      if (url.endsWith("/spec")) {
-        return Response.json({
-          current_version: 3,
-          current_version_cursor: "cv3",
-          review_status: "unreviewed",
-          unresolved_comments: 0,
-          unresolved_carried_comments: 0,
-          files: [{ path: "design.md", size: 10 }],
-          versions: [
-            {
-              number: 3,
-              author: pushedBy,
-              message: null,
-              created_at: "2026-09-07T00:00:00.000Z",
-            },
-          ],
-        });
+    const trigger = await openReviewMenu();
+    expect(posts).toHaveLength(0);
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    expect(screen.getByRole("dialog")).toBe(dialog);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSubmitted).not.toHaveBeenCalled();
+    expect(posts).toHaveLength(0);
+
+    await openReviewMenu();
+    // A real DOM target outside the menu but inside its parent dialog.
+    fireEvent.pointerDown(outside, { button: 0, pointerType: "mouse" });
+    fireEvent.pointerUp(outside, { button: 0, pointerType: "mouse" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(screen.getByRole("dialog")).toBe(dialog);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSubmitted).not.toHaveBeenCalled();
+    expect(cmGetValue(view.baseElement)).toBe("keep this summary");
+    expect(screen.getByText("Which diff library?")).toBeTruthy();
+    expect(posts).toHaveLength(0);
+  });
+
+  it.each([
+    ["Comment only", "comment", "pointer"],
+    ["Request changes", "request_changes", "Enter"],
+    ["Approve", "approve", "Space"],
+  ] as const)(
+    "selects %s (%s) using %s with the latest summary and every current draft",
+    async (name, verdict, activation) => {
+      const posts = stubFetch();
+      const { view, onSubmitted, updateDrafts } = mount([DRAFT]);
+      cmSetValue(view.baseElement, "superseded summary");
+      const key = activation === "Space" ? " " : activation;
+      const trigger = screen.getByRole("button", { name: "Submit" });
+      if (activation === "pointer") {
+        await openReviewMenu();
+      } else {
+        act(() => trigger.focus());
+        fireEvent.keyDown(trigger, { key });
+        await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
       }
-      if (url.includes("/spec/reviews")) {
-        posts.push({ url, body: JSON.parse(String(init?.body)) });
-        return Response.json(
+      expect(posts).toHaveLength(0);
+
+      const updatedDraft = { ...DRAFT, body: "Use the updated diff library?" };
+      const secondDraft = {
+        ...DRAFT,
+        id: "d2",
+        anchor: {
+          ...DRAFT.anchor,
+          path: "api.md",
+          line_start: 8,
+          line_end: 9,
+        },
+        body: "Document the API too",
+      };
+      updateDrafts([updatedDraft, secondDraft]);
+      cmSetValue(view.baseElement, "  latest summary  ");
+      const item = reviewItem(name);
+      if (activation === "pointer") {
+        fireEvent.pointerDown(item, { button: 0, pointerType: "mouse" });
+        fireEvent.pointerUp(item, { button: 0, pointerType: "mouse" });
+        fireEvent.click(item);
+      } else {
+        const menu = screen.getByRole("menu");
+        fireEvent.keyDown(menu, {
+          key: verdict === "approve" ? "End" : "Home",
+        });
+        if (verdict === "request_changes") {
+          await waitFor(() =>
+            expect(document.activeElement).toBe(reviewItem("Comment only")),
+          );
+          fireEvent.keyDown(reviewItem("Comment only"), { key: "ArrowDown" });
+        }
+        await waitFor(() => expect(document.activeElement).toBe(item));
+        fireEvent.keyDown(item, { key });
+      }
+
+      await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1));
+      expect(posts).toEqual([
+        {
+          url: expect.stringContaining("/issues/23/spec/reviews"),
+          body: {
+            version: 3,
+            verdict,
+            body: "latest summary",
+            comments: [
+              {
+                anchor: {
+                  path: "design.md",
+                  version: 3,
+                  line_start: 3,
+                  line_end: 4,
+                },
+                body: "Use the updated diff library?",
+              },
+              {
+                anchor: {
+                  path: "api.md",
+                  version: 3,
+                  line_start: 8,
+                  line_end: 9,
+                },
+                body: "Document the API too",
+              },
+            ],
+          },
+        },
+      ]);
+      expect(screen.queryByRole("menu")).toBeNull();
+    },
+  );
+
+  it("keeps an all-disabled menu openable without allowing any submission", async () => {
+    const posts = stubFetch(READER);
+    const { view, onSubmitted } = mount([]);
+    cmSetValue(view.baseElement, " \n ");
+    const trigger = await openReviewMenu();
+    await waitFor(() =>
+      expect(reviewItem("Approve").getAttribute("aria-disabled")).toBe("true"),
+    );
+    expect(trigger.hasAttribute("disabled")).toBe(false);
+    expect(screen.getAllByRole("menuitem")).toHaveLength(3);
+    for (const item of screen.getAllByRole("menuitem")) {
+      expect(item.getAttribute("aria-disabled")).toBe("true");
+      fireEvent.click(item);
+      fireEvent.keyDown(item, { key: "Enter" });
+      fireEvent.keyDown(item, { key: " " });
+    }
+    await act(async () => {});
+    expect(posts).toHaveLength(0);
+    expect(onSubmitted).not.toHaveBeenCalled();
+    expect(screen.getByRole("menu")).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await openReviewMenu();
+    expect(posts).toHaveLength(0);
+    expect(
+      screen
+        .getAllByRole("menuitem")
+        .every((item) => item.getAttribute("aria-disabled") === "true"),
+    ).toBe(true);
+  });
+
+  it("sends one POST for two enabled menuitem activations before rerender", async () => {
+    let resolveResponse!: (response: Response) => void;
+    const response = new Promise<Response>((resolve) => {
+      resolveResponse = resolve;
+    });
+    const posts = stubFetch(PUSHER, () => response);
+    const { view, client, onSubmitted } = mount([DRAFT]);
+    cmSetValue(view.baseElement, "same-tick summary");
+    await openReviewMenu();
+    await waitFor(() => {
+      expect(client.getQueryState(["spec", "p", 23])?.status).toBe("success");
+      expect(client.getQueryState(["me"])?.status).toBe("success");
+    });
+    const requestChanges = reviewItem("Request changes");
+    const approve = reviewItem("Approve");
+    expect(requestChanges.getAttribute("aria-disabled")).not.toBe("true");
+    expect(approve.getAttribute("aria-disabled")).not.toBe("true");
+
+    // Radix flushes discrete selection events synchronously. Re-enter during
+    // the first select's capture phase so both real clicks start on mounted,
+    // enabled items, rather than clicking a detached item after menu closure.
+    // Approve submits first; the original Request changes callback is stale
+    // when it resumes and must be stopped by the synchronous submission latch.
+    const activateAgain = vi.fn(() => {
+      expect(requestChanges.isConnected).toBe(true);
+      expect(approve.isConnected).toBe(true);
+      expect(requestChanges.getAttribute("aria-disabled")).not.toBe("true");
+      expect(approve.getAttribute("aria-disabled")).not.toBe("true");
+      fireEvent.click(approve);
+    });
+    requestChanges.addEventListener("menu.itemSelect", activateAgain, {
+      capture: true,
+      once: true,
+    });
+    act(() => {
+      fireEvent.click(requestChanges);
+    });
+    expect(activateAgain).toHaveBeenCalledTimes(1);
+    await act(async () => {});
+    const submitting = await screen.findByRole("button", {
+      name: "Submitting…",
+    });
+    expect(submitting.hasAttribute("disabled")).toBe(true);
+    expect(onSubmitted).not.toHaveBeenCalled();
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.body).toEqual({
+      version: 3,
+      verdict: "approve",
+      body: "same-tick summary",
+      comments: [
+        {
+          anchor: { path: "design.md", version: 3, line_start: 3, line_end: 4 },
+          body: "Which diff library?",
+        },
+      ],
+    });
+
+    await act(async () => {
+      resolveResponse(
+        Response.json(
           {
             event_id: 9,
             version: 3,
-            verdict: "comment",
+            verdict: "approve",
             summary_comment_id: 88,
             comment_ids: [412],
           },
           { status: 201 },
-        );
-      }
-      throw new Error(`unstubbed request: ${url}`);
+        ),
+      );
     });
-    return posts;
-  }
+    await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1));
+    expect(posts).toHaveLength(1);
+  });
 
-  const mount = (drafts: Array<typeof DRAFT>, onSubmitted = vi.fn()) => ({
-    onSubmitted,
-    view: renderWithProviders(
-      <ReviewSubmitDialog
-        slug="p"
-        issueNumber={23}
-        currentVersion={3}
-        drafts={drafts}
-        open
-        onClose={() => {}}
-        onSubmitted={onSubmitted}
-      />,
-    ),
+  it("disables Submitting while a response is delayed and ignores duplicate activation", async () => {
+    let resolveResponse!: (response: Response) => void;
+    const response = new Promise<Response>((resolve) => {
+      resolveResponse = resolve;
+    });
+    const posts = stubFetch(PUSHER, () => response);
+    const { view, onSubmitted } = mount([DRAFT]);
+    cmSetValue(view.baseElement, "held summary");
+    await openReviewMenu();
+    fireEvent.click(reviewItem("Request changes"));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const submitting = await screen.findByRole("button", {
+      name: "Submitting…",
+    });
+    expect(submitting.hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.click(submitting);
+    fireEvent.keyDown(submitting, { key: "Enter" });
+    fireEvent.keyDown(submitting, { key: " " });
+    await act(async () => {});
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.body).toEqual({
+      version: 3,
+      verdict: "request_changes",
+      body: "held summary",
+      comments: [
+        {
+          anchor: { path: "design.md", version: 3, line_start: 3, line_end: 4 },
+          body: "Which diff library?",
+        },
+      ],
+    });
+    expect(onSubmitted).not.toHaveBeenCalled();
+    await act(async () => {
+      resolveResponse(
+        Response.json(
+          {
+            event_id: 9,
+            version: 3,
+            verdict: "request_changes",
+            summary_comment_id: 88,
+            comment_ids: [412],
+          },
+          { status: 201 },
+        ),
+      );
+    });
+    await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1));
+    expect(posts).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: "Submit" }).hasAttribute("disabled"),
+    ).toBe(false);
+  });
+
+  it("retains the summary and drafts after failure and posts them on retry", async () => {
+    const posts = stubFetch(PUSHER, (body, attempt) =>
+      attempt === 1
+        ? Response.json(
+            { error: { code: "internal_error", message: "Try again" } },
+            { status: 500 },
+          )
+        : Response.json(
+            {
+              event_id: 9,
+              version: 3,
+              verdict: body.verdict,
+              summary_comment_id: 88,
+              comment_ids: [412],
+            },
+            { status: 201 },
+          ),
+    );
+    const { view, onSubmitted, onClose } = mount([DRAFT]);
+    cmSetValue(view.baseElement, "retain this summary");
+    await openReviewMenu();
+    fireEvent.click(reviewItem("Comment only"));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", {
+            name: "Submit",
+          })
+          .hasAttribute("disabled"),
+      ).toBe(false),
+    );
+    expect(onSubmitted).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(cmGetValue(view.baseElement)).toBe("retain this summary");
+    expect(screen.getByText("Which diff library?")).toBeTruthy();
+
+    await openReviewMenu();
+    fireEvent.click(reviewItem("Comment only"));
+    await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1));
+    expect(posts).toHaveLength(2);
+    const expected = {
+      version: 3,
+      verdict: "comment",
+      body: "retain this summary",
+      comments: [
+        {
+          anchor: { path: "design.md", version: 3, line_start: 3, line_end: 4 },
+          body: "Which diff library?",
+        },
+      ],
+    };
+    expect(posts.map((post) => post.body)).toEqual([expected, expected]);
   });
 
   it("posts verdict comment with the summary and every staged draft", async () => {
     const posts = stubFetch(PUSHER);
     const { view, onSubmitted } = mount([DRAFT]);
 
-    // All three, in the order a reader scans them.
-    const comment = await view.findByText("Comment");
-    expect(view.getByText("Request changes")).toBeTruthy();
-    expect(view.getByText("Approve")).toBeTruthy();
+    await openReviewMenu();
+    const entries = screen.getAllByRole("menuitem");
+    expect(entries.map((entry) => entry.textContent)).toEqual([
+      "Comment only",
+      "Request changes",
+      "Approve",
+    ]);
 
     cmSetValue(view.baseElement, "three spots I am unsure of");
+    const comment = reviewItem("Comment only");
     await waitFor(() =>
-      expect(comment.closest("button")?.disabled).toBe(false),
+      expect(comment.getAttribute("aria-disabled")).not.toBe("true"),
     );
     fireEvent.click(comment);
 
     await waitFor(() => expect(onSubmitted).toHaveBeenCalled());
+    expect(posts).toHaveLength(1);
     expect(posts[0]?.body).toEqual({
       version: 3,
       verdict: "comment",
@@ -684,72 +1037,119 @@ describe("ReviewSubmitDialog: the comment verdict", () => {
   });
 
   it("disables the two verdicts for the account that pushed the version", async () => {
-    stubFetch(READER);
-    const { view } = mount([DRAFT]);
+    const posts = stubFetch(READER);
+    const { onSubmitted } = mount([DRAFT]);
 
-    const approve = await view.findByText("Approve");
-    await waitFor(() => expect(approve.closest("button")?.disabled).toBe(true));
-    const requestChanges = view.getByText("Request changes").closest("button");
-    expect(requestChanges?.disabled).toBe(true);
-    expect(approve.closest("button")?.title).toContain(
-      "verdict has to come from someone else",
+    await openReviewMenu();
+    const approve = reviewItem("Approve");
+    await waitFor(() =>
+      expect(approve.getAttribute("aria-disabled")).toBe("true"),
     );
+    const requestChanges = reviewItem("Request changes");
+    expect(requestChanges.getAttribute("aria-disabled")).toBe("true");
+    expect(approve.title).toContain("verdict has to come from someone else");
     // The one form that account may submit stays open to it.
-    expect(view.getByText("Comment").closest("button")?.disabled).toBe(false);
+    expect(reviewItem("Comment only").getAttribute("aria-disabled")).not.toBe(
+      "true",
+    );
+    for (const item of [approve, requestChanges]) {
+      fireEvent.click(item);
+      fireEvent.keyDown(item, { key: "Enter" });
+      fireEvent.keyDown(item, { key: " " });
+    }
+    await act(async () => {});
+    expect(posts).toHaveLength(0);
+    expect(screen.getByRole("menu")).toBeTruthy();
+    expect(onSubmitted).not.toHaveBeenCalled();
+    fireEvent.click(reviewItem("Comment only"));
+    await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1));
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.body).toEqual({
+      version: 3,
+      verdict: "comment",
+      comments: [
+        {
+          anchor: { path: "design.md", version: 3, line_start: 3, line_end: 4 },
+          body: "Which diff library?",
+        },
+      ],
+    });
   });
 
   it("leaves the two verdicts enabled for anyone else", async () => {
     stubFetch(PUSHER);
-    const { view } = mount([DRAFT]);
+    const { client } = mount([DRAFT]);
 
-    const approve = await view.findByText("Approve");
+    await openReviewMenu();
+    await waitFor(() => {
+      expect(client.getQueryState(["spec", "p", 23])?.status).toBe("success");
+      expect(client.getQueryState(["me"])?.status).toBe("success");
+    });
+    const approve = reviewItem("Approve");
     // The disable is driven by an async read, so a passing assertion has to
     // outlast it rather than beat it.
     await waitFor(() =>
       expect(
-        view.getByText("Request changes").closest("button")?.disabled,
-      ).toBe(false),
+        reviewItem("Request changes").getAttribute("aria-disabled"),
+      ).not.toBe("true"),
     );
-    expect(approve.closest("button")?.disabled).toBe(false);
-    expect(approve.closest("button")?.title).toBeFalsy();
+    expect(approve.getAttribute("aria-disabled")).not.toBe("true");
+    expect(approve.title).toBeFalsy();
   });
 
   it("disables Comment while it would say nothing", async () => {
-    stubFetch(PUSHER);
+    const posts = stubFetch(PUSHER);
     const { view } = mount([]);
 
-    const comment = await view.findByText("Comment");
-    const button = comment.closest("button");
-    expect(button?.disabled).toBe(true);
-    expect(button?.title).toContain("Write a summary or stage a comment");
+    await openReviewMenu();
+    const comment = reviewItem("Comment only");
+    expect(comment.getAttribute("aria-disabled")).toBe("true");
+    expect(comment.title).toContain("Write a summary or stage a comment");
+    fireEvent.click(comment);
+    fireEvent.keyDown(comment, { key: "Enter" });
+    fireEvent.keyDown(comment, { key: " " });
+    await act(async () => {});
+    expect(posts).toHaveLength(0);
+    expect(screen.getByRole("menu")).toBeTruthy();
 
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     cmSetValue(view.baseElement, "something");
-    await waitFor(() => expect(button?.disabled).toBe(false));
+    await openReviewMenu();
+    await waitFor(() =>
+      expect(reviewItem("Comment only").getAttribute("aria-disabled")).not.toBe(
+        "true",
+      ),
+    );
+    fireEvent.click(reviewItem("Comment only"));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]?.body).toEqual({
+      version: 3,
+      verdict: "comment",
+      body: "something",
+      comments: [],
+    });
   });
 
   /**
-   * The summary box deliberately gets no `onSubmit`: the form ends in three
-   * verdicts and has no primary action, so binding the key to any one of them
-   * would choose for the user. Nothing in the source says so — it is the
-   * absence of a prop — so this guards it against being "completed" later.
+   * The summary box deliberately gets no `onSubmit`: opening the action menu
+   * is how a reviewer chooses a verdict, so Ctrl-Enter must not choose one.
    */
-  it("leaves Ctrl-Enter dead: three verdicts, no primary action", async () => {
+  it("leaves Ctrl-Enter dead: the menu has no default verdict", async () => {
     const posts = stubFetch(PUSHER);
     const { view } = mount([DRAFT]);
 
-    await view.findByText("Approve");
+    await view.findByRole("button", { name: "Submit" });
     cmSetValue(view.baseElement, "a summary with no verdict picked");
-    await waitFor(() =>
-      expect(view.getByText("Comment").closest("button")?.disabled).toBe(false),
-    );
 
     cmPressKey(view.baseElement, "Enter", { ctrlKey: true });
 
     await act(async () => {});
     expect(posts).toEqual([]);
-    // The dialog is still standing…
-    expect(view.getByText("Approve")).toBeTruthy();
-    // …and the blank line did not land on Ctrl-Enter either.
+    // The dialog is still standing and the menu remains closed.
+    expect(view.getByRole("button", { name: "Submit" })).toBeTruthy();
+    expect(screen.queryByRole("menu")).toBeNull();
+    // The blank line did not land on Ctrl-Enter either.
     expect(cmGetValue(view.baseElement)).toBe(
       "a summary with no verdict picked",
     );

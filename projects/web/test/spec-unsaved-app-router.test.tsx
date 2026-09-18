@@ -263,7 +263,7 @@ describe("spec drafts on the application browser-history router", () => {
       fireEvent.click(screen.getByRole("button", { name: /finish review/i }));
       await screen.findByLabelText("Review summary");
       cmSetValue(document.body, "P1 hidden summary\nline two", 1);
-      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
       await waitFor(() =>
         expect(screen.queryByLabelText("Review summary")).toBeNull(),
       );
@@ -301,7 +301,7 @@ describe("spec drafts on the application browser-history router", () => {
       fireEvent.click(screen.getByRole("button", { name: /finish review/i }));
       await screen.findByLabelText("Review summary");
       expect(cmGetValue(document.body, 1)).toBe("P1 hidden summary\nline two");
-      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
       await waitFor(() =>
         expect(screen.queryByLabelText("Review summary")).toBeNull(),
       );
@@ -328,7 +328,7 @@ describe("spec drafts on the application browser-history router", () => {
       fireEvent.click(screen.getByRole("button", { name: /finish review/i }));
       await screen.findByLabelText("Review summary");
       expect(cmGetValue(document.body, 1)).toBe("P1 hidden summary\nline two");
-      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
       await waitFor(() =>
         expect(screen.queryByLabelText("Review summary")).toBeNull(),
       );

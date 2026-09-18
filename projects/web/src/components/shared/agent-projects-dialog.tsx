@@ -83,11 +83,18 @@ export function AgentProjectsCell({ agent }: { agent: Agent }) {
           )}
         </button>
       </DialogTrigger>
-      <DialogContent aria-describedby={undefined}>
-        <DialogHeader>
-          <DialogTitle>Projects for {agent.login}</DialogTitle>
+      <DialogContent
+        className="grid-cols-1 max-h-[calc(100dvh-2rem)] overflow-y-auto"
+        aria-describedby={undefined}
+      >
+        <DialogHeader className="min-w-0 pr-7">
+          <DialogTitle className="min-w-0 leading-normal [overflow-wrap:anywhere]">
+            Projects for {agent.login}
+          </DialogTitle>
         </DialogHeader>
-        <AgentProjectsBody key={agent.id} agent={agent} />
+        <div className="min-w-0">
+          <AgentProjectsBody key={agent.id} agent={agent} />
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -266,11 +273,11 @@ function AgentProjectsBody({ agent }: { agent: Agent }) {
             </p>
           ) : (
             <>
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 items-center gap-2">
                 <Select value={toAdd} onValueChange={setToAdd}>
                   <SelectTrigger
                     size="sm"
-                    className="w-56"
+                    className="min-w-0 w-56"
                     aria-label="Project to add"
                   >
                     <SelectValue placeholder="Choose a project" />
@@ -287,6 +294,7 @@ function AgentProjectsBody({ agent }: { agent: Agent }) {
                     would otherwise hand out a real grant. */}
                 <Button
                   size="sm"
+                  className="shrink-0"
                   disabled={
                     toAdd === "" || addRole === null || setRole.isPending
                   }

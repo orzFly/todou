@@ -147,6 +147,78 @@ describe("agents settings page (T-205)", () => {
   });
 });
 
+describe("agent dialog forms with a legal 64-character login", () => {
+  const longAgent = makeAgent("a".repeat(64), "Long Login Bot");
+
+  it("keeps the complete edit title and saves only the changed field", async () => {
+    const update = vi
+      .spyOn(api, "updateAgent")
+      .mockResolvedValue({ ...longAgent, display_name: "Renamed Bot" });
+    const view = renderAgents([longAgent]);
+    fireEvent.click(await view.findByRole("button", { name: "Edit" }));
+    const dialog = within(
+      await screen.findByRole("dialog", { name: `Edit ${longAgent.login}` }),
+    );
+    expect(
+      (dialog.getByRole("textbox", { name: "Login" }) as HTMLInputElement)
+        .value,
+    ).toBe(longAgent.login);
+    const save = dialog.getByRole("button", {
+      name: "Save changes",
+    }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.change(dialog.getByRole("textbox", { name: "Display name" }), {
+      target: { value: "Renamed Bot" },
+    });
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledExactlyOnceWith(longAgent.id, {
+        display_name: "Renamed Bot",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("issues with the selected expiration without changing the agent target", async () => {
+    const now = Date.parse("2026-09-18T00:00:00Z");
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    vi.spyOn(api, "listAgentTokens").mockResolvedValue([]);
+    const issue = vi.spyOn(api, "issueAgentToken").mockResolvedValue({
+      id: 73,
+      name: "ci",
+      prefix: "fake_ci",
+      token: "todou_at_fake_ci",
+      expires_at: new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    renderWithProviders(
+      <AgentTokensDialog agent={longAgent} />,
+      testQueryClient(),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Tokens" }));
+    const dialog = within(
+      await screen.findByRole("dialog", {
+        name: `Tokens for ${longAgent.login}`,
+      }),
+    );
+    fireEvent.change(dialog.getByRole("textbox", { name: "Token name" }), {
+      target: { value: "ci" },
+    });
+    fireEvent.keyDown(
+      dialog.getByRole("combobox", { name: "Token expiration" }),
+      { key: "ArrowDown" },
+    );
+    fireEvent.click(await screen.findByRole("option", { name: "30 days" }));
+    fireEvent.click(dialog.getByRole("button", { name: "Issue" }));
+    await waitFor(() =>
+      expect(issue).toHaveBeenCalledExactlyOnceWith(longAgent.id, {
+        name: "ci",
+        expires_at: new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      }),
+    );
+  });
+});
+
 describe("agent tokens dialog · load failure (T-376)", () => {
   afterEach(() => vi.restoreAllMocks());
 

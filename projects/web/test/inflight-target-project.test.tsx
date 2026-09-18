@@ -911,10 +911,14 @@ describe("a review submit the dialog then left", () => {
   it("posts the verdict onto the issue the dialog opened on", async () => {
     const calls = stubReviewFetch();
     const view = reviewView();
-    await view.findByText("Request changes");
+    const trigger = await view.findByRole("button", { name: "Submit" });
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    const requestChanges = await view.findByRole("menuitem", {
+      name: "Request changes",
+    });
 
     onlineManager.setOnline(false);
-    fireEvent.click(view.getByText("Request changes"));
+    fireEvent.click(requestChanges);
     await letTheLoopRun();
     expect(writeCalls(calls).length).toBe(0);
 
@@ -942,11 +946,15 @@ describe("a review submit the dialog then left", () => {
   it("carries the summary the reviewer submitted, not a later one", async () => {
     const calls = stubReviewFetch();
     const view = reviewView();
-    await view.findByText("Request changes");
+    const trigger = await view.findByRole("button", { name: "Submit" });
     cmSetValue(view.baseElement, "overall fine");
 
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    const requestChanges = await view.findByRole("menuitem", {
+      name: "Request changes",
+    });
     onlineManager.setOnline(false);
-    fireEvent.click(view.getByText("Request changes"));
+    fireEvent.click(requestChanges);
     await letTheLoopRun();
     expect(writeCalls(calls).length).toBe(0);
     cmSetValue(view.baseElement, "Edited While Paused");
