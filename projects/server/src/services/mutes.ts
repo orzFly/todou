@@ -238,7 +238,7 @@ export async function clearProjectMute(
 /**
  * The stored settings, not today's verdicts: a card whose `until_activity`
  * mute has relit is still listed, because the control on the card and the
- * "muted" section of the settings page both describe what the reader set.
+ * `/inbox/muted` list both describe what the reader set.
  *
  * Scope is `accessibleProjectRows`, like an unscoped /me/inbox: a mute on a
  * project the caller can no longer read does not appear. Issue mutes are

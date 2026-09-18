@@ -62,8 +62,14 @@ describe("profile after moving Muted (T-380)", () => {
     });
     const page = heading.parentElement?.parentElement;
     expect(page).not.toBeNull();
-    expect(page?.classList.contains("max-w-lg")).toBe(true);
-    expect(page?.classList.contains("space-y-6")).toBe(true);
+    expect(
+      page?.classList.contains("max-w-lg"),
+      "Profile page keeps its width constraint",
+    ).toBe(true);
+    expect(
+      page?.classList.contains("space-y-6"),
+      "Profile page keeps its vertical spacing",
+    ).toBe(true);
     expect(
       view.getAllByRole("heading").map((node) => node.textContent),
     ).toEqual([
@@ -92,8 +98,14 @@ describe("profile after moving Muted (T-380)", () => {
 
     const sections = view.getAllByRole("heading", { level: 2 }).map((node) => {
       const section = node.closest(".border-t");
-      expect(section?.parentElement).toBe(page);
-      expect(section?.classList.contains("pt-6")).toBe(true);
+      expect(
+        section?.parentElement,
+        `${node.textContent} keeps its bordered section wrapper`,
+      ).toBe(page);
+      expect(
+        section?.classList.contains("pt-6"),
+        `${node.textContent} keeps its top padding`,
+      ).toBe(true);
       return section;
     });
     expect(displayName.closest("form")?.classList.contains("space-y-4")).toBe(
