@@ -1071,6 +1071,34 @@ describe("EventGroup", () => {
     expect(rows[0]?.getAttribute("id")).toBe(`event-${old.id}`);
   });
 
+  it("keeps drawing a payload that carries a key the schema has no name for", async () => {
+    // `paths` is present, so this case turns on strictness alone: the sibling
+    // case above turns on `paths` being optional, and a mutation that changes
+    // both at once would look like either one had been guarded.
+    const odd = event({
+      event_type: "spec_comments_resolved",
+      payload: {
+        comment_ids: [4601],
+        paths: ["design.md"],
+        settled_by: "cleanup",
+      },
+    });
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="spec_resolved"
+        events={[odd]}
+        slug="p"
+        issueNumber={1}
+      />,
+      specClient([]),
+    );
+    const group = await findByTestId("event-group");
+    const rows = [...group.querySelectorAll("li")];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("design.md");
+    expect(rows[0]?.getAttribute("id")).toBe(`event-${odd.id}`);
+  });
+
   it("opens the hidden block for an #event-N anchor inside it", async () => {
     const buried = annotation({
       line: 7,
