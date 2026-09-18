@@ -384,6 +384,14 @@ function FenceDiff({
       setDegraded(true);
     });
     READY_HANDLERS.set(node, () => setReady(true));
+    // A warm pierre cache can synchronously render and emitPostRender from
+    // the child's ref before this parent ref registers its handlers. Replay
+    // any state already present in the shadow root so that signal is not lost.
+    for (const container of node.querySelectorAll<HTMLElement>(
+      "diffs-container",
+    )) {
+      handlePostRender(container);
+    }
   }, []);
   if (degraded) return <PlainCodeFallback contents={after} />;
   return (

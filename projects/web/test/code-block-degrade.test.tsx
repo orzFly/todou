@@ -4,16 +4,18 @@ import { CodeBlock, CodeDiffBlock } from "../src/components/shared/pierre.tsx";
 
 const STACK = "InternalError: too much recursion\n  at regexConstructor@bundle";
 
-// The suite drives one mock through four postures, so the factory reads the
-// mode at render time rather than capturing it.
+// The suite drives one mock through four postures and both notification
+// timings, so the factory reads them at render time rather than capturing them.
 const mock = vi.hoisted(() => ({
   mode: "ready" as "ready" | "pending" | "paints-error" | "throws",
+  notification: "sync" as "sync" | "microtask",
 }));
 
 /**
  * Stands in for pierre closely enough for both lifecycle signals: each
- * surface owns a shadow root, then onPostRender runs with either no line, a
- * rendered line, or pierre's error wrapper inside it.
+ * surface owns a shadow root, then onPostRender runs with either no line,
+ * rendered lines, or pierre's error wrapper inside it. A warmed diff cache
+ * can render and notify synchronously from the child's ref callback.
  */
 vi.mock("@pierre/diffs/react", () => {
   type Options = {
@@ -23,7 +25,11 @@ vi.mock("@pierre/diffs/react", () => {
       phase: string,
     ) => void;
   };
-  const renderShadow = (node: HTMLDivElement | null, options: Options) => {
+  const renderShadow = (
+    node: HTMLDivElement | null,
+    options: Options,
+    contents: string[],
+  ) => {
     if (node === null) return;
     const inner = document.createElement("diffs-container");
     node.appendChild(inner);
@@ -37,11 +43,18 @@ vi.mock("@pierre/diffs/react", () => {
       wrapper.appendChild(stack);
       shadow.appendChild(wrapper);
     } else if (mock.mode === "ready") {
-      const line = document.createElement("div");
-      line.dataset.line = "1";
-      shadow.appendChild(line);
+      for (const [index, content] of contents.entries()) {
+        const line = document.createElement("div");
+        line.dataset.line = String(index + 1);
+        line.textContent = content;
+        shadow.appendChild(line);
+      }
     }
-    options.onPostRender?.(inner, {}, "mount");
+    if (mock.notification === "microtask") {
+      queueMicrotask(() => options.onPostRender?.(inner, {}, "mount"));
+    } else {
+      options.onPostRender?.(inner, {}, "mount");
+    }
   };
   return {
     CodeView: ({
@@ -56,7 +69,9 @@ vi.mock("@pierre/diffs/react", () => {
       if (mock.mode === "throws") throw new Error("chunk boom");
       const attach = (node: HTMLDivElement | null) => {
         containerRef?.(node);
-        renderShadow(node, options);
+        renderShadow(node, options, [
+          items.map((item) => item.file.contents).join("\n"),
+        ]);
       };
       return (
         <div ref={attach} data-testid="code-view">
@@ -65,13 +80,20 @@ vi.mock("@pierre/diffs/react", () => {
       );
     },
     MultiFileDiff: ({
+      oldFile,
       newFile,
       options,
     }: {
+      oldFile: { contents: string };
       newFile: { contents: string };
       options: Options;
     }) => (
-      <div ref={(node) => renderShadow(node, options)} data-testid="fence-diff">
+      <div
+        ref={(node) =>
+          renderShadow(node, options, [oldFile.contents, newFile.contents])
+        }
+        data-testid="fence-diff"
+      >
         {newFile.contents}
       </div>
     ),
@@ -89,6 +111,7 @@ function deepText(root: Element | DocumentFragment): string {
 
 afterEach(() => {
   mock.mode = "ready";
+  mock.notification = "sync";
   vi.restoreAllMocks();
 });
 
@@ -151,6 +174,81 @@ describe("CodeBlock highlighting failures", () => {
     expect(
       screen.getByTestId("fence-diff").parentElement?.style.visibility,
     ).toBe("");
+  });
+
+  it("reveals a synchronously rendered fence diff after a hot-cache remount", async () => {
+    const before = "const oldValue = 1;";
+    const after = "const newValue = 2;";
+    mock.notification = "microtask";
+    const view = render(
+      <CodeDiffBlock
+        key="cold"
+        filename="snippet.ts"
+        before={before}
+        after={after}
+      />,
+    );
+    await waitFor(() => {
+      expect(view.container.querySelector("pre code")).toBeNull();
+    });
+
+    mock.notification = "sync";
+    view.rerender(
+      <CodeDiffBlock
+        key="warm"
+        filename="snippet.ts"
+        before={before}
+        after={after}
+      />,
+    );
+    const diff = await screen.findByTestId("fence-diff");
+    const host = diff.querySelector("diffs-container");
+    expect(
+      [...(host?.shadowRoot?.querySelectorAll("[data-line]") ?? [])].map(
+        (line) => line.textContent?.trim(),
+      ),
+    ).toEqual([before, after]);
+    await waitFor(() => {
+      expect(view.container.querySelector("pre code")).toBeNull();
+    });
+    expect(diff.parentElement?.style.visibility).toBe("");
+  });
+
+  it("degrades a synchronously failed fence diff after a hot-cache remount", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mock.notification = "microtask";
+    const view = render(
+      <CodeDiffBlock
+        key="cold"
+        filename="snippet.ts"
+        before="const oldValue = 1;"
+        after="const newValue = 2;"
+      />,
+    );
+    await waitFor(() => {
+      expect(view.container.querySelector("pre code")).toBeNull();
+    });
+
+    mock.mode = "paints-error";
+    mock.notification = "sync";
+    view.rerender(
+      <CodeDiffBlock
+        key="warm"
+        filename="snippet.ts"
+        before="const oldValue = 1;"
+        after="const newValue = 2;"
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.queryByTestId("fence-diff")).toBeNull();
+    });
+    expect(view.container.querySelector("pre code")?.textContent).toBe(
+      "const newValue = 2;",
+    );
+    expect(deepText(document.body)).not.toContain("too much recursion");
+    expect(deepText(document.body)).not.toContain("regexConstructor");
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]?.[0]).toContain("snippet.ts");
   });
 
   it("swaps in plain text when pierre paints an error into the shadow root", async () => {

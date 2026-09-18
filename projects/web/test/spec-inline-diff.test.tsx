@@ -20,8 +20,8 @@ import { FENCE_SHAPES } from "./fence-shapes.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 // Same pin as spec-review-web: fences go through pierre's lazy surfaces. The
-// ref callback also emits pierre's first-line lifecycle signal so the tested
-// tree advances past the readable fallback exactly as the real component does.
+// ref callback emits pierre's first-line lifecycle signal synchronously, as
+// its hot-cache path does before the parent wrapper's ref has run.
 vi.mock("@pierre/diffs/react", () => {
   type Options = {
     onPostRender?: (
@@ -37,7 +37,7 @@ vi.mock("@pierre/diffs/react", () => {
     line.dataset.line = "1";
     host.attachShadow({ mode: "open" }).appendChild(line);
     node.appendChild(host);
-    queueMicrotask(() => options.onPostRender?.(host, {}, "mount"));
+    options.onPostRender?.(host, {}, "mount");
   };
   return {
     CodeView: ({
