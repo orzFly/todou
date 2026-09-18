@@ -599,8 +599,13 @@ function CollapsedGroup({
           context={first.agent_context}
           className="align-middle"
         />{" "}
+        {/* The same pair the event row's summary span carries: a UserChip's
+            bot badge is drawn outside its line box, and truncate's
+            overflow:hidden shears 4px off it unless the clipping box is given
+            that room back. The negative margin hands the row its original
+            height again. */}
         <span
-          className={cn("min-w-0 flex-1 sm:truncate", dim)}
+          className={cn("min-w-0 flex-1 sm:-my-1 sm:truncate sm:py-1", dim)}
           title={summary.text}
         >
           {summary.node}

@@ -485,6 +485,33 @@ describe("timeline rendering", () => {
     );
     expect(container.querySelector('[aria-label="agent"]')).toBeTruthy();
   });
+
+  /**
+   * The same shape as the collapsed-summary criterion in
+   * timeline-group-render.test.tsx, guarding the twin pair on the event row's
+   * own summary span: the two spans share a skeleton, and this row's
+   * compensation went unguarded until a copy of it was missing next door,
+   * which is how T-416 happened. happy-dom has no layout, so this can only
+   * pin the classes down; the browser reading behind them is on that card.
+   */
+  it("reserves room for the bot badge in the event row summary (T-416)", async () => {
+    const { findByTitle } = renderWithRouter(
+      <EventRow
+        event={{
+          type: "event",
+          id: 1,
+          event_type: "closed",
+          actor: bot,
+          payload: { to: { name: "Done" } },
+          created_at: "2026-08-11T00:00:00Z",
+          agent_context: null,
+        }}
+      />,
+    );
+    const summary = await findByTitle("closed this (Done)");
+    expect(summary.className).toContain("sm:py-1");
+    expect(summary.className).toContain("sm:-my-1");
+  });
 });
 
 const SLUG = "p";

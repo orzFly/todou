@@ -782,6 +782,31 @@ describe("EventGroup", () => {
     expect(summary.textContent).not.toContain("unassigned");
   });
 
+  /**
+   * happy-dom has no layout, so this can only pin the classes down. The
+   * geometry they produce was measured in a browser: before the fix the badge
+   * was clipped by 4.00px at the bottom and 0.00px on the right at every width
+   * from 641px to 1440px, and both read 0.00 afterwards (T-416).
+   */
+  it("reserves room for the bot badge in the collapsed summary (T-416)", async () => {
+    const { findByTestId, getByTitle } = renderWithProviders(
+      <EventGroup
+        family="assignees"
+        events={[
+          assign("assigned", agent, "2026-08-13T12:00:33.000Z"),
+          assign("assigned", newcomer, "2026-08-13T12:00:34.000Z"),
+        ]}
+        slug="p"
+        issueNumber={1}
+      />,
+      memberClient(),
+    );
+    await findByTestId("event-group");
+    const summary = getByTitle("assigned Claude Agent, Newcomer");
+    expect(summary.className).toContain("sm:py-1");
+    expect(summary.className).toContain("sm:-my-1");
+  });
+
   it("prints a run that cancels out in full, dimmed", async () => {
     const { findByTestId, getByTitle } = renderWithProviders(
       <EventGroup
