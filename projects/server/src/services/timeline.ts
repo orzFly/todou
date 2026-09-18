@@ -153,7 +153,7 @@ type Filters = {
 
 /**
  * What an event naming another project may say to this reader — moves, and
- * the block edges that name their far end (T-377).
+ * block edges named with the far end's current slug at read time (T-419).
  *
  * Blanking fields rather than hiding rows is why this is post-processing
  * while `crossRefVisibleCondition` is a SQL predicate: dropping rows would
@@ -172,12 +172,26 @@ type Filters = {
  */
 export function redactEventPayloads<T extends TimelineItem>(
   items: T[],
-  visibleProjectIds: Set<number>,
+  visible: VisibleProjects,
 ): T[] {
-  const seen = (id: unknown) =>
-    typeof id === "number" && visibleProjectIds.has(id);
+  const seen = (id: unknown) => typeof id === "number" && visible.ids.has(id);
   const blank = (payload: Record<string, unknown>, keys: string[]) => {
     for (const key of keys) payload[key] = null;
+  };
+  const nameBlockEnd = (
+    payload: Record<string, unknown>,
+    idKey: string,
+    numberKey: string,
+    slugKey: string,
+  ) => {
+    const id = payload[idKey];
+    if (!seen(id)) {
+      blank(payload, [idKey, numberKey, slugKey]);
+    } else {
+      // Always override a stored slug: an old name may now belong to a
+      // different project. A missing map entry leaves the numeric address.
+      payload[slugKey] = visible.currentSlugs.get(id as number) ?? null;
+    }
   };
 
   return items.map((item) => {
@@ -200,15 +214,21 @@ export function redactEventPayloads<T extends TimelineItem>(
       // fact about this card, and dropping the line would show it as free.
       case "block_added":
       case "block_removed":
-        if (!seen(payload.other_project_id)) {
-          blank(payload, ["other_project_id", "other_number"]);
-        }
+        nameBlockEnd(
+          payload,
+          "other_project_id",
+          "other_number",
+          "other_project",
+        );
         break;
       case "block_cleared":
       case "block_reblocked":
-        if (!seen(payload.blocker_project_id)) {
-          blank(payload, ["blocker_project_id", "blocker_number"]);
-        }
+        nameBlockEnd(
+          payload,
+          "blocker_project_id",
+          "blocker_number",
+          "blocker_project",
+        );
         break;
       default:
         return item;
@@ -470,7 +490,7 @@ export async function getTimeline(
   const refs = await actorRefs(ctx, merged);
   const items: TimelineItem[] = redactEventPayloads(
     merged.map((m) => toItem(m, refs, !query.include_hidden)),
-    visible.ids,
+    visible,
   );
 
   const first = merged[0];
@@ -646,7 +666,7 @@ export async function getProjectActivity(
       ...toItem(m, refs, !query.include_hidden),
       issue_number: m.number,
     })),
-    visible.ids,
+    visible,
   );
 
   const last = page.at(-1);
@@ -832,7 +852,7 @@ export async function getCrossActivity(
       issue_number: m.number,
       project: m.slug,
     })),
-    visible.ids,
+    visible,
   );
   const next_cursor =
     page.length > 0 ? await encodeMultiCursor(positions) : null;

@@ -339,5 +339,69 @@ describe.each(["shared", "dedicated"] as const)(
       const positions = await decodeMultiCursor(body.next_cursor);
       expect(Object.keys(positions ?? {})).toEqual([pa]);
     });
+
+    it("keeps an unwatched readable block endpoint visible in a one-project watch", async () => {
+      const res = await t.app.request(
+        `/api/projects/${pa}/issues/${issueA}/blocked-by`,
+        {
+          method: "POST",
+          headers: admin(),
+          body: JSON.stringify({ ref: `${pb}#${issueB}` }),
+        },
+      );
+      expect(res.status).toBe(200);
+      const edgeId = (await json(res)).blocked_by[0].edge_id as number;
+      const far = await t.app.request(`/api/projects/${pb}`, {
+        headers: { cookie },
+      });
+      expect(far.status).toBe(200);
+      const farId = (await json(far)).id as number;
+
+      const onlyA = await addUserWithToken(t.ctx, `only-a-${suffix}`);
+      await addMember(pa, onlyA.user.id);
+      const eventFrom = async (path: string, who: Record<string, string>) => {
+        const page = await t.app.request(path, { headers: who });
+        expect(page.status).toBe(200);
+        return (await json(page)).items.find(
+          (item: { payload?: { edge_id?: number } }) =>
+            item.payload?.edge_id === edgeId,
+        );
+      };
+      const timeline = `/api/projects/${pa}/issues/${issueA}/timeline?types=block_added`;
+      const activity = `/api/projects/${pa}/activity?types=block_added`;
+      const watched = `/api/activity?projects=${pa}&types=block_added`;
+      for (const path of [timeline, activity, watched]) {
+        const visible = await eventFrom(path, bob.headers);
+        expect(visible).toMatchObject({
+          event_type: "block_added",
+          payload: {
+            role: "blocked",
+            other_project_id: farId,
+            other_project: pb,
+            other_number: issueB,
+          },
+        });
+        if (path !== timeline) expect(visible.issue_number).toBe(issueA);
+        if (path === watched) expect(visible.project).toBe(pa);
+
+        const hidden = await eventFrom(path, onlyA.headers);
+        expect(hidden).toMatchObject({
+          event_type: "block_added",
+          payload: {
+            edge_id: edgeId,
+            role: "blocked",
+            other_project_id: null,
+            other_project: null,
+            other_number: null,
+          },
+        });
+      }
+      const watchPage = await json(
+        await cross({ projects: pa, types: "block_added" }),
+      );
+      expect(itemsOf(watchPage).every((item) => item.project === pa)).toBe(
+        true,
+      );
+    });
   },
 );

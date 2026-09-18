@@ -115,6 +115,22 @@ describe("issue block edges T-377", () => {
       .map((i: { event_type: string }) => i.event_type);
   }
 
+  async function blockEvents(
+    slug: string,
+    number: number,
+    who?: Record<string, string>,
+  ) {
+    const res = await t.app.request(
+      `/api/projects/${slug}/issues/${number}/timeline?limit=100`,
+      { headers: who ?? { cookie } },
+    );
+    expect(res.status).toBe(200);
+    const page = await json(res);
+    return page.items.filter((i: { event_type?: string }) =>
+      i.event_type?.startsWith("block_"),
+    );
+  }
+
   async function setClearLine(
     slug: string,
     statusName: string | null,
@@ -358,6 +374,67 @@ describe("issue block edges T-377", () => {
       other_project_id: null,
       other_number: null,
     });
+    expect(added.payload.other_project).toBeNull();
+  });
+
+  it("names both ends and all four block events from the same visible project set", async () => {
+    const directory = await json(
+      await t.app.request("/api/projects", { headers: { cookie } }),
+    );
+    const otherId = directory.find((p: { slug: string }) => p.slug === PB).id;
+    expect((await setClearLine(PA, "Shipped")).status).toBe(200);
+    expect((await setClearLine(PB, "Shipped")).status).toBe(200);
+    const blocked = await createIssue(PA, "timeline waiting");
+    const blocker = await createIssue(PB, "timeline prerequisite");
+    const a = await json(
+      await block(PA, blocked, "blocked-by", `${PB}#${blocker}`),
+    );
+    expect(a.blocked_by).toHaveLength(1);
+    const edgeId = a.blocked_by[0].edge_id;
+
+    await setStatus(PB, blocker, "Shipped");
+    await setStatus(PB, blocker, "In Progress");
+    const blockedEvents = await blockEvents(PA, blocked);
+    expect(
+      blockedEvents.map((e: { event_type: string }) => e.event_type),
+    ).toEqual(["block_added", "block_cleared", "block_reblocked"]);
+    for (const event of blockedEvents) {
+      expect(event.payload).toMatchObject(
+        event.event_type === "block_added"
+          ? {
+              edge_id: edgeId,
+              role: "blocked",
+              other_project: PB,
+              other_project_id: otherId,
+              other_number: blocker,
+            }
+          : {
+              edge_id: edgeId,
+              blocker_project: PB,
+              blocker_project_id: otherId,
+              blocker_number: blocker,
+            },
+      );
+    }
+    expect((await blockEvents(PB, blocker))[0].payload).toMatchObject({
+      edge_id: edgeId,
+      role: "blocker",
+      other_project: PA,
+      other_number: blocked,
+    });
+
+    expect((await unblock(PA, blocked, "blocked-by", edgeId)).status).toBe(204);
+    expect((await blockEvents(PA, blocked)).at(-1).payload).toMatchObject({
+      role: "blocked",
+      other_project: PB,
+      other_number: blocker,
+    });
+    expect((await blockEvents(PB, blocker)).at(-1).payload).toMatchObject({
+      role: "blocker",
+      other_project: PA,
+      other_number: blocked,
+    });
+    expect((await setClearLine(PB, null)).status).toBe(200);
   });
 
   it("clears when the blocker reaches the closed category, with no line set", async () => {

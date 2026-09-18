@@ -206,6 +206,142 @@ describe("watch: the cards an entry is about (T-286)", () => {
   });
 });
 
+describe("single-project block watches", () => {
+  const blockEntries = [
+    {
+      ...opened(146),
+      id: 71,
+      event_type: "block_added",
+      payload: {
+        edge_id: 301,
+        role: "blocked",
+        other_project_id: 7,
+        other_project: "acme",
+        other_number: 9,
+      },
+    },
+    {
+      ...opened(146),
+      id: 72,
+      event_type: "block_removed",
+      payload: {
+        edge_id: 302,
+        role: "blocker",
+        other_project_id: 7,
+        other_number: 10,
+      },
+    },
+    {
+      ...opened(146),
+      id: 73,
+      event_type: "block_cleared",
+      payload: {
+        edge_id: 303,
+        blocker_project_id: null,
+        blocker_project: null,
+        blocker_number: null,
+      },
+    },
+    {
+      ...opened(146),
+      id: 74,
+      event_type: "block_reblocked",
+      payload: {
+        edge_id: 304,
+        blocker_project_id: 7,
+        blocker_project: "acme",
+        blocker_number: 11,
+      },
+    },
+  ];
+
+  it.each([
+    { label: "project watch", command: ["watch", "-p", "todou"] },
+    { label: "issue watch", command: ["issue", "watch", "146"] },
+  ])(
+    "$label renders relations without reading the other endpoint or changing NDJSON",
+    async ({ command }) => {
+      const run = async (json: boolean) => {
+        const { fetchImpl, calls } = fakeFetch([
+          ["GET", "/api/me", me],
+          [
+            "GET",
+            "/api/projects/todou/activity",
+            (_init: RequestInit, url: URL) =>
+              url.searchParams.get("after") === "a0"
+                ? { items: blockEntries, next_cursor: "a1", has_more: false }
+                : { items: [], next_cursor: null },
+          ],
+          [
+            "GET",
+            "/api/projects/todou/issues/146/timeline",
+            (_init: RequestInit, url: URL) =>
+              url.searchParams.get("after") === "a0"
+                ? {
+                    items: blockEntries,
+                    prev_cursor: null,
+                    next_cursor: "a1",
+                    has_more: false,
+                  }
+                : {
+                    items: [],
+                    prev_cursor: null,
+                    next_cursor: null,
+                    has_more: false,
+                  },
+          ],
+          ...cardRoutes,
+        ]);
+        const result = await runCli(
+          [...command, "--poll", "--since", "a0", ...(json ? ["--json"] : [])],
+          { fetchImpl, env: loggedInEnv("todou") },
+        );
+        expect(result.exitCode).toBe(0);
+        // Fetching the prefix/directory was already part of watch; block
+        // events must not add a project-list request or read the other cards.
+        expect(
+          calls.filter((c) => new URL(c.url).pathname === "/api/projects"),
+        ).toHaveLength(1);
+        expect(issueReads(calls).map((read) => read.split("?")[0])).toEqual(
+          command[0] === "issue"
+            ? ["/api/projects/todou/issues/146/timeline"]
+            : [],
+        );
+        expect(calls.some((c) => c.url.includes("/blocks"))).toBe(false);
+        return result.stdout;
+      };
+
+      const human = await run(false);
+      expect(human).toContain("T-146 User block_added (blocked by acme/9)");
+      expect(human).toContain(
+        "T-146 User block_removed (removed block on 7/10)",
+      );
+      expect(human).toContain(
+        "T-146 User block_cleared (block by a card you cannot see cleared)",
+      );
+      expect(human).toContain(
+        "T-146 User block_reblocked (block by acme/11 active again)",
+      );
+      expect(human).not.toContain("D-9");
+
+      const json = await run(true);
+      const { items, cursor, lines } = parseNdjson(json);
+      expect(items).toEqual(
+        blockEntries.map((entry) =>
+          command[0] === "issue"
+            ? entry
+            : { ...entry, issue_ref: "T-146", project: "todou" },
+        ),
+      );
+      expect(items[1]?.payload).not.toHaveProperty("other_project");
+      expect(cursor.next_cursor).toBe("a1");
+      expect(lines).toBe(blockEntries.length + 1);
+      expect(json).not.toContain("a card you cannot see");
+      expect(json).not.toContain("removed block on");
+    },
+  );
+});
+
 /** How a standing watch is stopped in a test: the drain turns fatal. */
 const FATAL = { __status: 404, body: { code: "not_found", message: "gone" } };
 const udsEnv = {

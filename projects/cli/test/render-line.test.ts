@@ -58,6 +58,121 @@ const event = (over: Partial<TimelineEvent> = {}): TimelineEvent => ({
   ...over,
 });
 
+describe("block event details (T-419)", () => {
+  const edge = {
+    edge_id: 9,
+    role: "blocked",
+    other_project_id: 1,
+    other_number: 366,
+    other_project: "acme",
+    extra: 44,
+  };
+  const cleared = {
+    edge_id: 9,
+    blocker_project_id: 1,
+    blocker_number: 366,
+    blocker_project: "acme",
+    extra: 44,
+  };
+  const cases = [
+    ["block_added", edge, "blocked by acme/366"],
+    ["block_added", { ...edge, role: "blocker" }, "blocks acme/366"],
+    ["block_removed", edge, "removed block by acme/366"],
+    [
+      "block_removed",
+      { ...edge, role: "blocker" },
+      "removed block on acme/366",
+    ],
+    ["block_cleared", cleared, "block by acme/366 cleared"],
+    ["block_reblocked", cleared, "block by acme/366 active again"],
+  ] as const;
+
+  it.each(cases)(
+    "renders %s relation %s in both formats",
+    (kind, payload, detail) => {
+      const item = event({
+        event_type: kind,
+        payload: structuredClone(payload),
+      });
+      const stale = { ...ctx, slugOfProject: () => "old-slug" };
+      const before = structuredClone(item);
+      for (const line of [
+        renderTimelineItem(item, paint, stale),
+        renderActivityLine(item, paint, stale),
+      ]) {
+        expect(line).toContain(`${kind} (${detail})`);
+        expect(line).not.toMatch(
+          /edge_id|other_project_id|blocker_project_id|extra|todou issue view/,
+        );
+      }
+      expect(item).toEqual(before);
+    },
+  );
+
+  it.each([
+    ["block_added", { ...edge, other_project: undefined }, "blocked by 1/366"],
+    [
+      "block_removed",
+      { ...edge, other_project: "Acme" },
+      "removed block by 1/366",
+    ],
+    [
+      "block_cleared",
+      { ...cleared, blocker_project: null },
+      "block by 1/366 cleared",
+    ],
+    [
+      "block_reblocked",
+      { ...cleared, blocker_project: 42 },
+      "block by 1/366 active again",
+    ],
+    [
+      "block_added",
+      { ...edge, other_project_id: null, other_number: null },
+      "blocked by a card you cannot see",
+    ],
+    [
+      "block_cleared",
+      { ...cleared, blocker_project_id: null, blocker_number: null },
+      "block by a card you cannot see cleared",
+    ],
+  ] as const)("degrades %s with payload %j", (kind, payload, detail) => {
+    const item = event({ event_type: kind, payload });
+    for (const line of [
+      renderTimelineItem(item, paint, {
+        ...ctx,
+        slugOfProject: () => "old-slug",
+      }),
+      renderActivityLine(item, paint, {
+        ...ctx,
+        slugOfProject: () => "old-slug",
+      }),
+    ]) {
+      expect(line).toContain(`${kind} (${detail})`);
+      expect(line).not.toContain("old-slug");
+    }
+  });
+  it.each([
+    ["block_added", { ...edge, role: "wrong" }],
+    ["block_added", { ...edge, other_project_id: 0 }],
+    ["block_added", { ...edge, other_number: -1 }],
+    ["block_removed", { ...edge, other_number: 1.5 }],
+    ["block_added", { ...edge, other_number: null }],
+    ["block_added", { edge_id: 9, role: "blocked", other_project_id: 1 }],
+    ["block_cleared", { ...cleared, blocker_project_id: null }],
+    ["block_reblocked", { ...cleared, blocker_number: 0 }],
+  ] as const)("does not guess from invalid %s fields: %j", (kind, payload) => {
+    const item = event({ event_type: kind, payload });
+    for (const line of [
+      renderTimelineItem(item, paint, ctx),
+      renderActivityLine(item, paint, ctx),
+    ]) {
+      expect(line).toContain(`${kind} (details unavailable)`);
+      expect(line).not.toMatch(/edge_id|other_project_id|other_number|acme/);
+    }
+  });
+});
+
 describe("renderActivityLine", () => {
   it("shows a comment body — the point of the exercise", () => {
     const line = renderActivityLine(

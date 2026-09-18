@@ -99,22 +99,28 @@ export type ReferencedPayload = z.infer<typeof ReferencedPayload>;
 
 /**
  * `block_added` / `block_removed` (T-377). `role` is what this end of the
- * edge is, so one event type serves both timelines; the `other_*` pair names
- * the end the reader is not on, and goes null when they may not read it.
+ * edge is, so one event type serves both timelines; the `other_*` fields name
+ * the end the reader is not on. The slug is resolved at read time, null when
+ * redacted, and optional so new clients can still read an older server.
  */
 export const BlockEdgePayload = z.object({
   edge_id: Id,
   role: z.enum(["blocked", "blocker"]),
   other_project_id: Id.nullable(),
   other_number: Id.nullable(),
+  other_project: ProjectSlug.nullable().optional(),
 });
 export type BlockEdgePayload = z.infer<typeof BlockEdgePayload>;
 
-/** `block_cleared` / `block_reblocked`, which only ever reach the blocked end. */
+/**
+ * `block_cleared` / `block_reblocked`, which only ever reach the blocked end.
+ * The read-time slug follows the same redaction and compatibility rules.
+ */
 export const BlockClearedPayload = z.object({
   edge_id: Id,
   blocker_project_id: Id.nullable(),
   blocker_number: Id.nullable(),
+  blocker_project: ProjectSlug.nullable().optional(),
 });
 export type BlockClearedPayload = z.infer<typeof BlockClearedPayload>;
 

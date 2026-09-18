@@ -6,8 +6,11 @@ import type {
   TodouClient,
 } from "@todou/shared";
 import {
+  BlockClearedPayload,
+  BlockEdgePayload,
   formatRef,
   isHidden,
+  ProjectSlug,
   SpecPushedPayload,
   SpecReviewPayload,
 } from "@todou/shared";
@@ -471,6 +474,40 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
           : "";
       return `by ${target.ref}${title}${where}`;
     }
+    case "block_added":
+    case "block_removed": {
+      // Validate the required shape independently: an old or malformed
+      // optional slug must not throw away a usable numeric address.
+      const base = BlockEdgePayload.omit({ other_project: true }).safeParse(
+        payload,
+      );
+      if (!base.success) return "details unavailable";
+      const { other_project_id: id, other_number: number, role } = base.data;
+      const target = blockTarget(id, number, payload.other_project);
+      if (target === null) return "details unavailable";
+      if (event.event_type === "block_added") {
+        return role === "blocked" ? `blocked by ${target}` : `blocks ${target}`;
+      }
+      return role === "blocked"
+        ? `removed block by ${target}`
+        : `removed block on ${target}`;
+    }
+    case "block_cleared":
+    case "block_reblocked": {
+      const base = BlockClearedPayload.omit({
+        blocker_project: true,
+      }).safeParse(payload);
+      if (!base.success) return "details unavailable";
+      const target = blockTarget(
+        base.data.blocker_project_id,
+        base.data.blocker_number,
+        payload.blocker_project,
+      );
+      if (target === null) return "details unavailable";
+      return event.event_type === "block_cleared"
+        ? `block by ${target} cleared`
+        : `block by ${target} active again`;
+    }
     case "moved_in": {
       const from =
         typeof payload.from_project === "string" &&
@@ -550,6 +587,18 @@ function eventDetail(event: TimelineEvent, ctx: TimelineRenderContext): string {
     default:
       return scalarDetail(payload);
   }
+}
+
+/** A null pair is redacted; a partial pair is malformed, not a direction. */
+function blockTarget(
+  id: number | null,
+  number: number | null,
+  slug: unknown,
+): string | null {
+  if (id === null && number === null) return "a card you cannot see";
+  if (id === null || number === null) return null;
+  const parsed = ProjectSlug.safeParse(slug);
+  return `${parsed.success ? parsed.data : id}/${number}`;
 }
 
 /** Which card a reference event points at, and how this reader spells it. */

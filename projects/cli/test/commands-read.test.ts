@@ -1658,6 +1658,414 @@ describe("issue events", () => {
   });
 });
 
+describe("block relationships in issue reads", () => {
+  const clearedAt = "2026-08-11T11:30:00Z";
+  const blockedBy = [
+    {
+      edge_id: 41,
+      project_id: 2,
+      project: "todou",
+      number: 7,
+      ref: "T-7",
+      hidden: false,
+      cleared_at: null,
+      blocker_deleted: false,
+    },
+    {
+      edge_id: 42,
+      project_id: 7,
+      project: "acme",
+      number: 9,
+      ref: "#9",
+      hidden: false,
+      cleared_at: clearedAt,
+      blocker_deleted: false,
+    },
+    {
+      edge_id: 43,
+      project_id: 2,
+      project: "todou",
+      number: 8,
+      ref: "T-8",
+      hidden: false,
+      cleared_at: null,
+      blocker_deleted: true,
+    },
+    {
+      edge_id: 44,
+      project_id: null,
+      project: null,
+      number: null,
+      ref: null,
+      hidden: true,
+      cleared_at: null,
+      blocker_deleted: false,
+    },
+    {
+      edge_id: 45,
+      project_id: null,
+      project: null,
+      number: null,
+      ref: null,
+      hidden: true,
+      cleared_at: clearedAt,
+      blocker_deleted: false,
+    },
+  ];
+  const blocks = [
+    {
+      edge_id: 46,
+      project_id: 7,
+      project: "acme",
+      number: 5,
+      ref: "D-5",
+      hidden: false,
+      cleared_at: null,
+      blocker_deleted: false,
+    },
+    {
+      edge_id: 47,
+      project_id: 2,
+      project: "todou",
+      number: 10,
+      ref: "T-10",
+      hidden: false,
+      cleared_at: clearedAt,
+      blocker_deleted: false,
+    },
+  ];
+  const blockEvent = (
+    id: number,
+    event_type: string,
+    payload: Record<string, unknown>,
+  ) => ({
+    type: "event",
+    id,
+    event_type,
+    actor: me,
+    payload,
+    created_at: "2026-08-11T10:45:00Z",
+  });
+  const events = [
+    blockEvent(51, "block_added", {
+      edge_id: 41,
+      role: "blocked",
+      other_project_id: 7,
+      other_project: "acme",
+      other_number: 9,
+    }),
+    blockEvent(52, "block_added", {
+      edge_id: 46,
+      role: "blocker",
+      other_project_id: 2,
+      other_project: "todou",
+      other_number: 5,
+    }),
+    blockEvent(53, "block_removed", {
+      edge_id: 41,
+      role: "blocked",
+      other_project_id: 7,
+      other_project: "acme",
+      other_number: 9,
+    }),
+    blockEvent(54, "block_removed", {
+      edge_id: 46,
+      role: "blocker",
+      other_project_id: 2,
+      other_project: "todou",
+      other_number: 5,
+    }),
+    blockEvent(55, "block_cleared", {
+      edge_id: 41,
+      blocker_project_id: 7,
+      blocker_project: null,
+      blocker_number: 9,
+    }),
+    blockEvent(56, "block_reblocked", {
+      edge_id: 41,
+      blocker_project_id: 7,
+      blocker_number: 9,
+    }),
+    blockEvent(57, "block_added", {
+      edge_id: 48,
+      role: "blocked",
+      other_project_id: null,
+      other_project: null,
+      other_number: null,
+    }),
+    blockEvent(58, "block_removed", {
+      edge_id: 49,
+      role: "blocker",
+      other_project_id: 7,
+      other_number: null,
+    }),
+    blockEvent(59, "block_added", {
+      edge_id: 50,
+      role: "blocked",
+      other_project_id: 7,
+      other_project: "invalid slug",
+      other_number: 11,
+    }),
+    blockEvent(60, "block_cleared", {
+      edge_id: 51,
+      blocker_project_id: 7,
+      blocker_project: "new-acme",
+      blocker_number: 12,
+    }),
+  ];
+  const timeline = { items: events, prev_cursor: null, next_cursor: null };
+  // The directory's old slug must not replace the slug supplied by the API.
+  const directory: Route = [
+    "GET",
+    "/api/projects",
+    [
+      { id: 2, slug: "todou" },
+      { id: 7, slug: "old-acme" },
+    ],
+  ];
+  const config: Route = [
+    "GET",
+    "/api/projects/todou/references/config",
+    { format: { prefix: "T", history: [] }, autolinks: [] },
+  ];
+
+  it("shows both directions, hidden counts, cleared edges and trashed blockers in issue view", async () => {
+    const card = { ...issue, blocked_by: blockedBy, blocks };
+    const { fetchImpl, calls } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3", card],
+      ["GET", "/api/projects/todou/issues/3/timeline", timeline],
+      directory,
+      config,
+    ]);
+    const result = await runCli(["issue", "view", "3"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("T-3 Fix the potato");
+    expect(result.stdout).toContain(
+      "blocked by: T-7, acme#9 (cleared), T-8 (in the trash), 1 card you cannot see, 1 card you cannot see (cleared)",
+    );
+    expect(result.stdout).toContain("blocks: D-5, T-10 (cleared)");
+    expect(result.stdout).toContain("Claude block_added (blocked by acme/9)");
+    expect(result.stdout).toContain(
+      "Claude block_reblocked (block by 7/9 active again)",
+    );
+    expect(result.stdout).not.toContain("old-acme/12");
+    expect(
+      calls.filter((c) => new URL(c.url).pathname === "/api/projects"),
+    ).toHaveLength(1);
+    expect(
+      calls.filter((c) => /\/issues\/(?!3(?:\/|$))\d+/.test(c.url)),
+    ).toEqual([]);
+    expect(calls.some((c) => c.url.includes("/blocks"))).toBe(false);
+
+    const json = await runCli(["issue", "view", "3", "--json"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(json.exitCode).toBe(0);
+    const parsed = JSON.parse(json.stdout) as {
+      issue: { blocked_by: unknown[]; blocks: unknown[] };
+      timeline: typeof events;
+    };
+    expect(parsed.issue.blocked_by).toEqual(blockedBy);
+    expect(parsed.issue.blocks).toEqual(blocks);
+    expect(parsed.timeline).toEqual(events);
+    expect(json.stdout).not.toContain("a card you cannot see");
+    expect(json.stdout).not.toContain("block by 7/9");
+    expect(
+      calls.filter((c) => new URL(c.url).pathname === "/api/projects"),
+    ).toHaveLength(2);
+    expect(
+      calls.filter((c) => /\/issues\/(?!3(?:\/|$))\d+/.test(c.url)),
+    ).toEqual([]);
+  });
+
+  it("spells every block transition in issue events, keeping ids and raw JSON payloads", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3/timeline", timeline],
+      directory,
+      config,
+    ]);
+    const human = await runCli(["issue", "events", "3"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(human.exitCode).toBe(0);
+    for (const line of [
+      "event 51 · Claude block_added (blocked by acme/9)",
+      "event 52 · Claude block_added (blocks todou/5)",
+      "event 53 · Claude block_removed (removed block by acme/9)",
+      "event 54 · Claude block_removed (removed block on todou/5)",
+      "event 55 · Claude block_cleared (block by 7/9 cleared)",
+      "event 56 · Claude block_reblocked (block by 7/9 active again)",
+      "event 57 · Claude block_added (blocked by a card you cannot see)",
+      "event 58 · Claude block_removed (details unavailable)",
+      "event 59 · Claude block_added (blocked by 7/11)",
+      "event 60 · Claude block_cleared (block by new-acme/12 cleared)",
+    ]) {
+      expect(human.stdout).toContain(line);
+    }
+    expect(human.stdout).not.toContain("old-acme/12");
+    expect(
+      calls.filter((c) => new URL(c.url).pathname === "/api/projects"),
+    ).toHaveLength(1);
+    expect(
+      calls.some(
+        (c) => c.url.includes("/issues/9") || c.url.includes("/blocks"),
+      ),
+    ).toBe(false);
+
+    const json = await runCli(["issue", "events", "3", "--json"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(json.exitCode).toBe(0);
+    const parsed = JSON.parse(json.stdout) as { events: typeof events };
+    expect(parsed.events).toEqual(events);
+    expect(json.stdout).not.toContain("blocked by acme/9");
+    expect(json.stdout).not.toContain("details unavailable");
+    expect(
+      calls.filter((c) => new URL(c.url).pathname === "/api/projects"),
+    ).toHaveLength(2);
+    expect(
+      calls.some(
+        (c) => c.url.includes("/issues/9") || c.url.includes("/blocks"),
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps API slugs when the project directory fails", async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      ["GET", "/api/projects/todou/issues/3/timeline", timeline],
+      ["GET", "/api/projects", { __status: 503 }],
+      config,
+    ]);
+    const result = await runCli(["issue", "events", "3"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "event 51 · Claude block_added (blocked by acme/9)",
+    );
+    expect(result.stdout).toContain(
+      "event 60 · Claude block_cleared (block by new-acme/12 cleared)",
+    );
+    expect(
+      calls.filter((c) => new URL(c.url).pathname === "/api/projects"),
+    ).toHaveLength(1);
+  });
+
+  it("uses a qualified numeric project id even when the default project has that number too", async () => {
+    const otherCard = {
+      ...issue,
+      id: 158,
+      number: 9,
+      title: "Card in project 68",
+    };
+    const { fetchImpl, calls } = fakeFetch([
+      directory,
+      config,
+      [
+        "GET",
+        "/api/projects/todou/issues/3/timeline",
+        {
+          ...timeline,
+          items: [
+            {
+              ...events[0],
+              payload: {
+                edge_id: 301,
+                role: "blocked",
+                other_project_id: 68,
+                other_number: 9,
+              },
+            },
+          ],
+        },
+      ],
+      ["GET", "/api/projects/68/issues/9", otherCard],
+      [
+        "GET",
+        "/api/projects/68/issues/9/timeline",
+        { items: [], prev_cursor: null, next_cursor: null },
+      ],
+      [
+        "GET",
+        "/api/projects/todou/issues/9",
+        { ...issue, number: 9, title: "Wrong default card" },
+      ],
+    ]);
+    const fallback = await runCli(["issue", "events", "3"], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(fallback.exitCode).toBe(0);
+    const address = fallback.stdout.match(/blocked by (\d+\/\d+)/)?.[1];
+    expect(address).toBe("68/9");
+    const result = await runCli(["issue", "view", address as string], {
+      fetchImpl,
+      env: loggedInEnv("todou"),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("#9 Card in project 68");
+    expect(result.stdout).not.toContain("Wrong default card");
+    expect(
+      calls.some((c) => c.url.includes("/api/projects/todou/issues/9")),
+    ).toBe(false);
+    expect(
+      calls.filter((c) =>
+        [
+          "/api/projects/68/issues/9",
+          "/api/projects/68/issues/9/timeline",
+        ].includes(new URL(c.url).pathname),
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("adds no HTTP requests for zero, one or twenty block events", async () => {
+    const records: string[][] = [];
+    for (const size of [0, 1, 20]) {
+      const batch = Array.from({ length: size }, (_, i) => ({
+        ...events[0],
+        id: i + 1,
+      }));
+      const { fetchImpl, calls } = fakeFetch([
+        [
+          "GET",
+          "/api/projects/todou/issues/3/timeline",
+          {
+            ...timeline,
+            items: batch,
+          },
+        ],
+        directory,
+        config,
+      ]);
+      const result = await runCli(["issue", "events", "3"], {
+        fetchImpl,
+        env: loggedInEnv("todou"),
+      });
+      expect(result.exitCode).toBe(0);
+      records.push(
+        calls
+          .map((c) => `${c.init.method ?? "GET"} ${new URL(c.url).pathname}`)
+          .sort(),
+      );
+      if (size > 0) expect(result.stdout).toContain("blocked by acme/9");
+    }
+    expect(records[1]).toEqual(records[0]);
+    expect(records[2]).toEqual(records[0]);
+    expect(records[0]).toEqual([
+      "GET /api/projects",
+      "GET /api/projects/todou/issues/3/timeline",
+      "GET /api/projects/todou/references/config",
+    ]);
+  });
+});
+
 describe("project members", () => {
   const members = [
     { user: me, role: "admin", created_at: "2026-08-01T00:00:00Z" },

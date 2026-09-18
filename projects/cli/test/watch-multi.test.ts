@@ -191,6 +191,144 @@ describe("watch: multi-project mode over GET /activity", () => {
     expect(result.stdout).toContain(`cursor: ${ENV2}`);
   });
 
+  it("renders block relations per project without resolving other cards or rewriting NDJSON", async () => {
+    const block = (
+      id: number,
+      project: string,
+      issue_number: number,
+      event_type: string,
+      payload: Record<string, unknown>,
+    ) => ({
+      type: "event",
+      id,
+      actor: author,
+      event_type,
+      payload,
+      created_at: "2026-08-11T12:00:00Z",
+      issue_number,
+      project,
+    });
+    const items = [
+      block(81, "backend", 7, "block_added", {
+        edge_id: 401,
+        role: "blocked",
+        other_project_id: 7,
+        other_project: "current-acme",
+        other_number: 9,
+      }),
+      block(82, "frontend", 3, "block_removed", {
+        edge_id: 402,
+        role: "blocker",
+        other_project_id: 7,
+        other_project: null,
+        other_number: 10,
+      }),
+      block(83, "frontend", 3, "block_cleared", {
+        edge_id: 403,
+        blocker_project_id: null,
+        blocker_project: null,
+        blocker_number: null,
+      }),
+      block(84, "backend", 7, "block_reblocked", {
+        edge_id: 404,
+        blocker_project_id: 7,
+        blocker_number: 11,
+      }),
+    ];
+    const run = async (json: boolean) => {
+      const { fetchImpl, calls } = fakeFetch([
+        ["GET", "/api/me", me],
+        [
+          "GET",
+          "/api/projects",
+          [
+            { id: 2, slug: "backend" },
+            { id: 3, slug: "frontend" },
+            { id: 7, slug: "stale-acme" },
+          ],
+        ],
+        [
+          "GET",
+          "/api/projects/backend/references/config",
+          {
+            format: { prefix: "B", history: [] },
+            autolinks: [],
+          },
+        ],
+        [
+          "GET",
+          "/api/projects/frontend/references/config",
+          {
+            format: { prefix: "F", history: [] },
+            autolinks: [],
+          },
+        ],
+        [
+          "GET",
+          "/api/activity",
+          (_init: RequestInit, url: URL) =>
+            url.searchParams.get("after") === ENV1
+              ? { items, next_cursor: ENV2, has_more: false }
+              : { items: [], next_cursor: null },
+        ],
+      ]);
+      const result = await runCli(
+        [
+          "watch",
+          "-p",
+          "frontend,backend",
+          "--poll",
+          "--since",
+          ENV1,
+          ...(json ? ["--json"] : []),
+        ],
+        { fetchImpl, env: loggedInEnv() },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(
+        calls.filter((c) => new URL(c.url).pathname === "/api/projects"),
+      ).toHaveLength(1);
+      expect(
+        calls.some(
+          (c) => c.url.includes("/issues") || c.url.includes("/blocks"),
+        ),
+      ).toBe(false);
+      return result.stdout;
+    };
+
+    const human = await run(false);
+    expect(human).toContain("B-7 User block_added (blocked by current-acme/9)");
+    expect(human).toContain("F-3 User block_removed (removed block on 7/10)");
+    expect(human).toContain(
+      "F-3 User block_cleared (block by a card you cannot see cleared)",
+    );
+    expect(human).toContain(
+      "B-7 User block_reblocked (block by 7/11 active again)",
+    );
+    expect(human).not.toContain("stale-acme/9");
+    expect(human).toContain(`cursor: ${ENV2}`);
+
+    const json = await run(true);
+    const {
+      items: got,
+      cursor,
+      lines,
+    } = parseNdjson<{
+      payload: Record<string, unknown>;
+    }>(json);
+    expect(got).toEqual(
+      items.map((entry) => ({
+        ...entry,
+        issue_ref: entry.project === "backend" ? "B-7" : "F-3",
+      })),
+    );
+    expect(got[3]?.payload).not.toHaveProperty("blocker_project");
+    expect(cursor).toEqual({ type: "cursor", next_cursor: ENV2 });
+    expect(lines).toBe(items.length + 1);
+    expect(json).not.toContain("a card you cannot see");
+    expect(json).not.toContain("removed block on");
+  });
+
   it("keeps single-project mode on the per-project endpoint, adding the project field", async () => {
     const item = {
       type: "comment",

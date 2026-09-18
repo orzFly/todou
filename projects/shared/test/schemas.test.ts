@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   AgentCreateInput,
   AgentUpdateInput,
+  BlockClearedPayload,
+  BlockEdgePayload,
   ChangeEvent,
   IssueCreateInput,
   IssueListQuery,
@@ -12,6 +14,7 @@ import {
   MeUpdateInput,
   ProjectSlug,
   TimelineComment,
+  TimelineEvent,
   TimelineItem,
   TokenCreateInput,
 } from "../src/index.ts";
@@ -129,6 +132,71 @@ describe("TimelineItem", () => {
       created_at: "2026-08-11T12:00:00Z",
     });
     expect(bad.success).toBe(false);
+  });
+});
+
+describe("block timeline payloads (T-419)", () => {
+  const edge = {
+    edge_id: 9,
+    role: "blocked" as const,
+    other_project_id: 1,
+    other_number: 366,
+  };
+  const cleared = {
+    edge_id: 9,
+    blocker_project_id: 1,
+    blocker_number: 366,
+  };
+
+  it.each([
+    ["old payload", edge, undefined],
+    ["current slug", { ...edge, other_project: "acme" }, "acme"],
+    ["redacted slug", { ...edge, other_project: null }, null],
+  ])("accepts a block edge %s", (_name, payload, expected) => {
+    expect(BlockEdgePayload.parse(payload).other_project).toBe(expected);
+  });
+
+  it.each([
+    ["old payload", cleared, undefined],
+    ["current slug", { ...cleared, blocker_project: "acme" }, "acme"],
+    ["redacted slug", { ...cleared, blocker_project: null }, null],
+  ])("accepts a block cleared %s", (_name, payload, expected) => {
+    expect(BlockClearedPayload.parse(payload).blocker_project).toBe(expected);
+  });
+
+  it("rejects invalid slugs in the strict block payload schemas", () => {
+    expect(
+      BlockEdgePayload.safeParse({ ...edge, other_project: "Acme" }).success,
+    ).toBe(false);
+    expect(
+      BlockEdgePayload.safeParse({ ...edge, other_project: 1 }).success,
+    ).toBe(false);
+    expect(
+      BlockClearedPayload.safeParse({
+        ...cleared,
+        blocker_project: "-acme",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps TimelineEvent payload loose when an optional slug is invalid", () => {
+    const event = TimelineEvent.parse({
+      type: "event",
+      id: 2,
+      event_type: "block_added",
+      actor: {
+        id: 1,
+        login: "user",
+        display_name: "User",
+        kind: "human",
+        avatar_url: null,
+        owner: null,
+      },
+      payload: { ...edge, other_project: "Acme" },
+      created_at: "2026-08-11T12:00:01Z",
+      agent_context: null,
+    });
+    expect(event.payload.other_project).toBe("Acme");
   });
 });
 

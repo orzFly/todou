@@ -75,12 +75,17 @@ export async function visibleSlugsWithHistory(
 }
 
 /**
- * The readable projects named both ways at once: by every slug they have
- * ever held (what the visibility predicate matches on) and by id (what
- * redaction and the newer `by_project_id` payloads compare against). One
- * `accessibleProjectRows` walk serves both — they are the same question.
+ * The readable projects named three ways at once: by every slug they have
+ * ever held (what the visibility predicate matches on), by id (what
+ * redaction compares against), and by each id's current slug (what read-time
+ * payload enrichment returns). One `accessibleProjectRows` walk serves all
+ * three — they are the same question.
  */
-export type VisibleProjects = { slugs: string[]; ids: Set<number> };
+export type VisibleProjects = {
+  slugs: string[];
+  ids: Set<number>;
+  currentSlugs: Map<number, string>;
+};
 
 export async function visibleProjects(
   ctx: AppContext,
@@ -88,7 +93,8 @@ export async function visibleProjects(
 ): Promise<VisibleProjects> {
   const rows = await accessibleProjectRows(ctx, user);
   const ids = new Set(rows.map((row) => row.id));
-  if (rows.length === 0) return { slugs: [], ids };
+  const currentSlugs = new Map(rows.map((row) => [row.id, row.slug]));
+  if (rows.length === 0) return { slugs: [], ids, currentSlugs };
   const slugs = new Set(rows.map((row) => row.slug));
   const history = await ctx.router
     .system()
@@ -101,7 +107,7 @@ export async function visibleProjects(
       ),
     );
   for (const row of history) slugs.add(row.slug);
-  return { slugs: [...slugs], ids };
+  return { slugs: [...slugs], ids, currentSlugs };
 }
 
 /** Everything the grammar needs beyond the text itself, loaded once per write. */
