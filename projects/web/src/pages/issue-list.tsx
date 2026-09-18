@@ -611,6 +611,7 @@ function IssueGroup({
   // would mix stale rows into the group.
   const paginationKey = JSON.stringify([slug, search, status.id]);
   const paged = usePagedAppend<IssueListPageData>(paginationKey);
+  const focusRequested = useRef(false);
 
   const items = useMemo(
     () => [
@@ -635,6 +636,7 @@ function IssueGroup({
 
   function loadMore() {
     if (!lastCursor) return;
+    focusRequested.current = true;
     const base = issueGroupQuery(slug, status.id, search);
     paged.append(() =>
       queryClient.fetchQuery({
@@ -720,6 +722,7 @@ function IssueGroup({
                 error={paged.error}
                 onRetry={loadMore}
                 retrying={paged.pending}
+                focusRequested={focusRequested}
               />
             ) : (
               <button
@@ -766,6 +769,7 @@ export function IssueList({
   // mix e.g. closed rows into the open list after a category switch.
   const paginationKey = JSON.stringify([slug, search]);
   const paged = usePagedAppend<IssueListPageData>(paginationKey);
+  const focusRequested = useRef(false);
 
   const items = useMemo(
     () => [...page.items, ...paged.pages.flatMap((next) => next.items)],
@@ -785,6 +789,7 @@ export function IssueList({
 
   function loadMore() {
     if (!lastCursor) return;
+    focusRequested.current = true;
     paged.append(() =>
       queryClient.fetchQuery({
         ...issuesEntry(["issues", slug, search, lastCursor], {
@@ -830,6 +835,7 @@ export function IssueList({
           pending={paged.pending}
           error={paged.error}
           onLoadMore={loadMore}
+          focusRequested={focusRequested}
         />
       )}
     </div>

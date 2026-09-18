@@ -232,6 +232,55 @@ describe("issue list Load More pagination state", () => {
     expect(document.activeElement).toBe(retry);
   });
 
+  it("keeps search focus when an existing failure remounts after narrowing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), "http://test");
+        return new Response("{}", {
+          status: url.pathname.endsWith("/issues") ? 500 : 404,
+        });
+      }),
+    );
+
+    function Harness() {
+      const [typed, setTyped] = useState("");
+      return (
+        <>
+          <input
+            aria-label="search"
+            value={typed}
+            onChange={(event) => setTyped(event.target.value)}
+          />
+          <IssueList
+            slug="p"
+            page={{ items: [item(1, "first", open)], next_cursor: "c1" }}
+            statuses={[open, done]}
+            allLabels={[]}
+            search={{}}
+            typed={typed}
+            narrowing={typed.trim() !== ""}
+          />
+        </>
+      );
+    }
+
+    const view = renderWithProviders(<Harness />);
+    fireEvent.click(await view.findByText("Load more"));
+    const retry = await view.findByRole("button", { name: "Retry" });
+    expect(document.activeElement).toBe(retry);
+
+    const search = view.getByRole("textbox", { name: "search" });
+    search.focus();
+    // Both edits happen before a debounced URL update: resetKey stays fixed,
+    // while the actual narrowing gate unmounts and remounts the failure.
+    fireEvent.change(search, { target: { value: "f" } });
+    expect(view.queryByRole("button", { name: "Retry" })).toBeNull();
+    fireEvent.change(search, { target: { value: "" } });
+    expect(view.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(document.activeElement).toBe(search);
+  });
+
   it("clears an append failure when the filter state changes", async () => {
     // This is a state-reset guard, not standalone regression evidence: the
     // old tree had no append failure UI, so reverting the feature cannot make

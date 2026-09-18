@@ -4,7 +4,7 @@ import type {
   UserIssueState,
   UserIssuesPage,
 } from "@todou/shared";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { userIssuesPageQuery, userIssuesQuery } from "@/api/users.ts";
 import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
@@ -98,6 +98,7 @@ export function UserIssuesSection({
   // current first page, even while the new query is still loading.
   const paginationKey = JSON.stringify(query.queryKey);
   const paged = usePagedAppend<UserIssuesPage>(paginationKey);
+  const focusRequested = useRef(false);
   const hasContent = first.data !== undefined || paged.pages.length > 0;
   const { replace, notice } = useReadFailure(
     [first.isError ? first.error : null],
@@ -120,6 +121,7 @@ export function UserIssuesSection({
 
   function loadMore() {
     if (!lastCursor) return;
+    focusRequested.current = true;
     paged.append(() =>
       queryClient.fetchQuery(userIssuesPageQuery(filters, lastCursor)),
     );
@@ -203,6 +205,7 @@ export function UserIssuesSection({
               pending={paged.pending}
               error={paged.error}
               onLoadMore={loadMore}
+              focusRequested={focusRequested}
             />
           )}
         </>
