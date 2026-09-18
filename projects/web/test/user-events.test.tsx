@@ -189,7 +189,6 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       ["timeline", "todou", 7],
       ["questions", "todou", 7],
       ["issues", "todou"],
-      ["insights-burn", "todou"],
       ["comment-ref"],
       ["comment-location"],
     ]);

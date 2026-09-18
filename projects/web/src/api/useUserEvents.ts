@@ -166,11 +166,7 @@ export function invalidationsFor(
           ];
     case "comment":
       return event.issue_number === undefined
-        ? [
-            refetch(insightsKeys.burn(slug)),
-            refetch(["comment-ref"]),
-            refetch(["comment-location"]),
-          ]
+        ? [refetch(["comment-ref"]), refetch(["comment-location"])]
         : [
             refetch(["timeline", slug, event.issue_number]),
             refetch(["questions", slug, event.issue_number]),
@@ -178,7 +174,6 @@ export function invalidationsFor(
               verdict: "contains",
               number: event.issue_number,
             }),
-            refetch(insightsKeys.burn(slug)),
             refetch(["comment-ref"]),
             refetch(["comment-location"]),
           ];
@@ -193,6 +188,8 @@ export function invalidationsFor(
               number: event.issue_number,
             }),
             refetch(insightsKeys.burn(slug)),
+            refetch(["comment-ref"]),
+            refetch(["comment-location"]),
           ];
     case "attachment":
       return event.issue_number === undefined
