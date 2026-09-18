@@ -81,6 +81,7 @@ describe("the stable spec review session", () => {
     expect(session.isDirty()).toBe(true);
 
     const pending = session.beginSubmit("comment");
+    if (pending === null) throw new Error("submit was not started");
     expect(session.isDirty()).toBe(true);
     session.finishSubmit(pending.id, "summary marker");
     expect(session.getSnapshot()).toMatchObject({
@@ -95,6 +96,7 @@ describe("the stable spec review session", () => {
     const session = createSpecReviewSession({ slug: "p", issueNumber: 7 });
     session.setSummary("submitted summary");
     const pending = session.beginSubmit("approve");
+    if (pending === null) throw new Error("submit was not started");
     session.setSummary("next review summary");
 
     session.finishSubmit(pending.id, "submitted summary");
@@ -104,6 +106,35 @@ describe("the stable spec review session", () => {
       pending: null,
     });
     expect(session.isDirty()).toBe(true);
+  });
+
+  it("shares a pending submit across a later visit to the same card", () => {
+    const first = createSpecReviewSession({ slug: "pending", issueNumber: 7 });
+    const disconnectFirst = first.connect();
+    const pending = first.beginSubmit("request_changes");
+    if (pending === null) throw new Error("submit was not started");
+    disconnectFirst();
+
+    const returned = createSpecReviewSession({
+      slug: "pending",
+      issueNumber: 7,
+    });
+    const disconnectReturned = returned.connect();
+    const other = createSpecReviewSession({ slug: "pending", issueNumber: 8 });
+    const disconnectOther = other.connect();
+
+    expect(returned.getSnapshot().pending).toEqual(pending);
+    expect(returned.beginSubmit("request_changes")).toBeNull();
+    expect(other.getSnapshot().pending).toBeNull();
+
+    first.failSubmit(pending.id);
+    expect(returned.getSnapshot().pending).toBeNull();
+    expect(returned.beginSubmit("request_changes")).not.toBeNull();
+    const retried = returned.getSnapshot().pending;
+    if (retried === null) throw new Error("retry was not started");
+    returned.failSubmit(retried.id);
+    disconnectReturned();
+    disconnectOther();
   });
 
   it("updates dirty state synchronously before a React render", () => {
@@ -145,9 +176,12 @@ describe("the stable spec review session", () => {
 
   it("isolates another card and a later visit to the same card", () => {
     const first = createSpecReviewSession({ slug: "p", issueNumber: 7 });
+    const disconnectFirst = first.connect();
     first.setSummary("old visit");
     const other = createSpecReviewSession({ slug: "p", issueNumber: 8 });
+    const disconnectOther = other.connect();
     const returned = createSpecReviewSession({ slug: "p", issueNumber: 7 });
+    const disconnectReturned = returned.connect();
 
     expect(other.getSnapshot().summary).toBe("");
     expect(returned.getSnapshot().summary).toBe("");
@@ -164,5 +198,8 @@ describe("the stable spec review session", () => {
         returned.getSnapshot().token,
       ),
     ).toBe(true);
+    disconnectFirst();
+    disconnectOther();
+    disconnectReturned();
   });
 });

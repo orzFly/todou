@@ -1,11 +1,49 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
-import { SpecPushedPayload, TodouError } from "@todou/shared";
+import {
+  GoneError,
+  MovedError,
+  SpecPushedPayload,
+  TodouError,
+} from "@todou/shared";
 import { issueQuery } from "@/api/issues.ts";
 import { api, meQuery } from "@/api/queries.ts";
 import {
   computeVersionStats,
   type SpecFileStat,
 } from "@/lib/spec-version-stats.ts";
+
+export class SpecReadError extends Error {
+  readonly status?: number;
+
+  constructor(error: unknown) {
+    super(error instanceof Error ? error.message : "Could not load spec");
+    this.name = "SpecReadError";
+    this.cause = error;
+    this.status = error instanceof TodouError ? error.status : undefined;
+  }
+}
+
+async function readSpecFiles(
+  slug: string,
+  issueNumber: number,
+  version?: number,
+) {
+  try {
+    return await api.getSpecFiles(slug, issueNumber, version);
+  } catch (error) {
+    if (
+      error instanceof MovedError ||
+      error instanceof GoneError ||
+      (error instanceof TodouError && error.status === 404)
+    ) {
+      throw error;
+    }
+    if (error instanceof TodouError || error instanceof TypeError) {
+      throw new SpecReadError(error);
+    }
+    throw error;
+  }
+}
 
 /** Spec overview; resolves null (not an error) when the issue has no spec. */
 export const specQuery = (slug: string, issueNumber: number) =>
@@ -30,7 +68,7 @@ export const specFilesQuery = (
     // Version snapshots are immutable, so old versions can cache forever;
     // "current" (undefined) must follow pushes via SSE invalidation.
     queryKey: ["spec-files", slug, issueNumber, version ?? "current"],
-    queryFn: () => api.getSpecFiles(slug, issueNumber, version),
+    queryFn: () => readSpecFiles(slug, issueNumber, version),
     staleTime: version === undefined ? 5_000 : Number.POSITIVE_INFINITY,
   });
 

@@ -52,9 +52,10 @@ export type SpecReviewSession = {
   clearComposer: () => void;
   setSummary: (summary: string) => void;
   setFinishOpen: (open: boolean) => void;
-  beginSubmit: (verdict: SpecReviewVerdict) => PendingSpecReview;
+  beginSubmit: (verdict: SpecReviewVerdict) => PendingSpecReview | null;
   finishSubmit: (pendingId: number, submittedSummary: string) => void;
   failSubmit: (pendingId: number) => void;
+  connect: () => () => void;
 };
 
 let nextSessionNumber = 0;
@@ -64,6 +65,39 @@ const latestToken = new Map<string, symbol>();
 
 const identityKey = (identity: SpecReviewIdentity) =>
   `${identity.slug}:${identity.issueNumber}`;
+
+type PendingStore = {
+  pending: PendingSpecReview | null;
+  listeners: Set<(pending: PendingSpecReview | null) => void>;
+};
+
+const pendingStores = new Map<string, PendingStore>();
+
+function pendingStore(identity: SpecReviewIdentity): PendingStore {
+  const key = identityKey(identity);
+  const existing = pendingStores.get(key);
+  if (existing !== undefined) return existing;
+  const created: PendingStore = { pending: null, listeners: new Set() };
+  pendingStores.set(key, created);
+  return created;
+}
+
+function releasePending(
+  identity: SpecReviewIdentity,
+  store: PendingStore,
+  pendingId: number,
+): boolean {
+  if (store.pending?.id !== pendingId) return false;
+  store.pending = null;
+  for (const notify of store.listeners) notify(null);
+  if (
+    store.listeners.size === 0 &&
+    pendingStores.get(identityKey(identity)) === store
+  ) {
+    pendingStores.delete(identityKey(identity));
+  }
+  return true;
+}
 
 export function isCurrentSpecReviewSession(
   identity: SpecReviewIdentity,
@@ -88,8 +122,8 @@ export function createSpecReviewSession(
   identity: SpecReviewIdentity,
 ): SpecReviewSession {
   const token = Symbol(`${identity.slug}:${identity.issueNumber}`);
-  latestToken.set(identityKey(identity), token);
   const listeners = new Set<() => void>();
+  let sharedPending = pendingStore(identity);
   let baseline: ComposerBaseline | null = null;
   let snapshot: SpecReviewSessionSnapshot = {
     identity,
@@ -98,7 +132,7 @@ export function createSpecReviewSession(
     composerBody: "",
     summary: "",
     finishOpen: false,
-    pending: null,
+    pending: sharedPending.pending,
   };
 
   const update = (
@@ -106,6 +140,9 @@ export function createSpecReviewSession(
   ) => {
     snapshot = { ...snapshot, ...patch };
     for (const notify of listeners) notify();
+  };
+  const syncPending = (pending: PendingSpecReview | null) => {
+    update({ pending });
   };
 
   return {
@@ -143,12 +180,15 @@ export function createSpecReviewSession(
     setSummary: (summary) => update({ summary }),
     setFinishOpen: (finishOpen) => update({ finishOpen }),
     beginSubmit: (verdict) => {
+      if (sharedPending.pending !== null) return null;
       const pending = { id: ++nextSubmitNumber, verdict };
-      update({ pending });
+      sharedPending.pending = pending;
+      for (const notify of sharedPending.listeners) notify(pending);
+      if (snapshot.pending?.id !== pending.id) update({ pending });
       return pending;
     },
     finishSubmit: (pendingId, submittedSummary) => {
-      if (snapshot.pending?.id !== pendingId) return;
+      if (!releasePending(identity, sharedPending, pendingId)) return;
       const summaryUnchanged = snapshot.summary === submittedSummary;
       update({
         pending: null,
@@ -156,7 +196,33 @@ export function createSpecReviewSession(
       });
     },
     failSubmit: (pendingId) => {
-      if (snapshot.pending?.id === pendingId) update({ pending: null });
+      if (
+        releasePending(identity, sharedPending, pendingId) &&
+        snapshot.pending?.id === pendingId
+      ) {
+        update({ pending: null });
+      }
+    },
+    connect: () => {
+      latestToken.set(identityKey(identity), token);
+      // StrictMode reconnects every effect once. Rejoin the canonical store
+      // in case the first cleanup retired an empty one.
+      sharedPending = pendingStore(identity);
+      const connected = sharedPending;
+      connected.listeners.add(syncPending);
+      syncPending(connected.pending);
+      return () => {
+        connected.listeners.delete(syncPending);
+        queueMicrotask(() => {
+          if (
+            connected.pending === null &&
+            connected.listeners.size === 0 &&
+            pendingStores.get(identityKey(identity)) === connected
+          ) {
+            pendingStores.delete(identityKey(identity));
+          }
+        });
+      };
     },
   };
 }

@@ -319,4 +319,69 @@ describe("spec review drafts across navigation", () => {
     );
     expect(composer.state.doc.toString()).toBe("file navigation marker");
   });
+
+  it("keeps a pending staged review occupied after leaving and reentering", async () => {
+    const response = held<{
+      version: number;
+      verdict: "comment";
+      event_id: number;
+      summary_comment_id: null;
+      comment_ids: number[];
+    }>();
+    const submit = vi
+      .spyOn(api, "submitSpecReview")
+      .mockReturnValue(response.promise);
+    const view = renderColdSpec();
+    fireEvent.click(await view.findByRole("button", { name: "Comment file" }));
+    act(() =>
+      setEditorValue(
+        editorFromElement(screen.getByLabelText("Spec comment") as HTMLElement),
+        "duplicate probe",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Stage comment" }));
+    fireEvent.click(screen.getByRole("button", { name: /finish review/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Comment$/ }));
+    expect(submit).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    void view.router.navigate({
+      to: "/projects/$slug/issues/$number",
+      params: { slug: "demo", number: "7" },
+    });
+    await screen.findByText("Leave with unsaved changes?");
+    fireEvent.click(screen.getByRole("button", { name: "Discard and leave" }));
+    await screen.findByText("issue detail");
+    await view.router.navigate({
+      to: "/projects/$slug/issues/$number/spec",
+      params: { slug: "demo", number: "7" },
+      search: { v: 1, file: "a.md" },
+    });
+    fireEvent.click(
+      await screen.findByRole("button", { name: /finish review/i }),
+    );
+
+    const pending = await screen.findByRole("button", {
+      name: "Submitting…",
+    });
+    expect(pending.hasAttribute("disabled")).toBe(true);
+    expect(submit).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      response.release({
+        version: 1,
+        verdict: "comment",
+        event_id: 9,
+        summary_comment_id: null,
+        comment_ids: [1],
+      });
+    });
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: /^Comment$/ })
+          .hasAttribute("disabled"),
+      ).toBe(true),
+    );
+  });
 });

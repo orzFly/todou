@@ -6,6 +6,7 @@ import {
   type ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useSyncExternalStore,
 } from "react";
@@ -78,6 +79,7 @@ function SessionOwner({
     () => createSpecReviewSession({ slug, issueNumber }),
     [slug, issueNumber],
   );
+  useEffect(() => session.connect(), [session]);
   const survivesNavigation = useCallback(
     (navigation: NavigationContext) =>
       specReviewSessionSurvivesNavigation({ slug, issueNumber }, navigation),
@@ -97,6 +99,7 @@ function SessionOwner({
       const submittedSummary = state.summary;
       const body = submittedSummary.trim();
       const pending = session.beginSubmit(verdict);
+      if (pending === null) return;
 
       void api
         .submitSpecReview(slug, issueNumber, {
@@ -116,9 +119,7 @@ function SessionOwner({
             } spec v${result.version}`,
           );
           confirmSubmittedSpecReviewDrafts(slug, issueNumber, submittedDrafts);
-          if (isCurrentSpecReviewSession(state.identity, state.token)) {
-            session.finishSubmit(pending.id, submittedSummary);
-          }
+          session.finishSubmit(pending.id, submittedSummary);
           for (const key of [
             ["spec", slug, issueNumber],
             ["timeline", slug, issueNumber],
@@ -129,8 +130,8 @@ function SessionOwner({
           }
         })
         .catch((error: unknown) => {
+          session.failSubmit(pending.id);
           if (isCurrentSpecReviewSession(state.identity, state.token)) {
-            session.failSubmit(pending.id);
             toast.error(
               error instanceof Error ? error.message : "Review failed",
             );

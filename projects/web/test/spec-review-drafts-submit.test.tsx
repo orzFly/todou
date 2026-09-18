@@ -14,6 +14,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/queries.ts";
 import {
@@ -78,10 +79,12 @@ function DraftHarness({ slug }: { slug: string }) {
 
 function held<T>() {
   let release: (value: T) => void = () => {};
-  const promise = new Promise<T>((resolve) => {
+  let reject: (reason?: unknown) => void = () => {};
+  const promise = new Promise<T>((resolve, rejectPromise) => {
     release = resolve;
+    reject = rejectPromise;
   });
-  return { promise, release };
+  return { promise, release, reject };
 }
 
 function SessionHarness() {
@@ -93,6 +96,9 @@ function SessionHarness() {
         {JSON.stringify(drafts.drafts)}
       </output>
       <output data-testid="session-summary">{state.summary}</output>
+      <output data-testid="session-pending">
+        {state.pending?.verdict ?? "idle"}
+      </output>
       <button
         type="button"
         onClick={() =>
@@ -104,6 +110,9 @@ function SessionHarness() {
         }
       >
         submit
+      </button>
+      <button type="button" onClick={() => drafts.add(original)}>
+        stage original
       </button>
       <button
         type="button"
@@ -152,9 +161,11 @@ function renderReentrySession() {
     }),
   });
   render(
-    <QueryClientProvider client={testQueryClient()}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>,
+    <StrictMode>
+      <QueryClientProvider client={testQueryClient()}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </StrictMode>,
   );
   return router;
 }
@@ -216,6 +227,9 @@ describe("confirming an atomic spec review", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "write new summary" }),
     );
+    expect(screen.getByTestId("session-pending").textContent).toBe("comment");
+    fireEvent.click(screen.getByRole("button", { name: "submit" }));
+    expect(api.submitSpecReview).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       response.release({
@@ -233,5 +247,73 @@ describe("confirming an atomic spec review", () => {
     expect(screen.getByTestId("session-summary").textContent).toBe(
       "new visit summary",
     );
+  });
+
+  it("finishes the current session successfully under StrictMode", async () => {
+    vi.spyOn(api, "submitSpecReview").mockResolvedValue({
+      version: 1,
+      verdict: "comment",
+      event_id: 10,
+      summary_comment_id: 2,
+      comment_ids: [],
+    });
+    renderReentrySession();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "write new summary" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "submit" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("session-pending").textContent).toBe("idle");
+      expect(screen.getByTestId("session-summary").textContent).toBe("");
+    });
+  });
+
+  it("allows a retry only after the shared pending request fails", async () => {
+    const first = held<never>();
+    const submit = vi
+      .spyOn(api, "submitSpecReview")
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce({
+        version: 1,
+        verdict: "comment",
+        event_id: 10,
+        summary_comment_id: 2,
+        comment_ids: [1],
+      });
+    const router = renderReentrySession();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "stage original" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "submit" }));
+    await router.navigate({
+      to: "/projects/$slug/issues/$number",
+      params: { slug: "reentry", number: "7" },
+    });
+    await screen.findByText("issue detail");
+    await router.navigate({
+      to: "/projects/$slug/issues/$number/spec",
+      params: { slug: "reentry", number: "7" },
+    });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "write new summary" }),
+    );
+    expect(screen.getByTestId("session-pending").textContent).toBe("comment");
+
+    await act(async () => {
+      first.reject(new Error("first request failed"));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("session-pending").textContent).toBe("idle"),
+    );
+    expect(screen.getByTestId("session-summary").textContent).toBe(
+      "new visit summary",
+    );
+    expect(screen.getByTestId("session-drafts").textContent).toContain(
+      "first body",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "submit" }));
+    expect(submit).toHaveBeenCalledTimes(2);
   });
 });
