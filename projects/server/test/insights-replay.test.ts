@@ -352,6 +352,23 @@ describe("insights replay and aggregate", () => {
     expect(
       result.buckets.map((bucket) => bucket.stock?.open_total.value),
     ).toEqual(INSIGHTS_REPLAY_ORACLE.map((day) => day.open_total));
+    expect(
+      result.buckets.map((bucket) => bucket.flow?.category_closed.value),
+    ).toEqual(INSIGHTS_REPLAY_ORACLE.map((day) => day.category_closed));
+    expect(
+      result.buckets.map((bucket) => bucket.flow?.category_reopened.value),
+    ).toEqual(INSIGHTS_REPLAY_ORACLE.map((day) => day.category_reopened));
+    expect(
+      result.buckets.map((bucket) =>
+        Object.fromEntries(
+          (bucket.flow?.closed_by_status ?? []).map((entry) => [
+            statuses.find((status) => status.status_id === entry.status_id)
+              ?.name,
+            entry.count.value,
+          ]),
+        ),
+      ),
+    ).toEqual(INSIGHTS_REPLAY_ORACLE.map((day) => day.closed_by_status));
 
     // Mutation sentinels: these values go red if A completion follows
     // category=closed, D follows A roles, flow becomes a stock delta, or
@@ -423,5 +440,232 @@ describe("insights replay and aggregate", () => {
     expect(flow?.scope_added).toEqual({ value: null, known: 0, unknown: 1 });
     expect(flow?.created_open).toEqual({ value: null, known: 0, unknown: 1 });
     expect(flow?.open_entered).toEqual({ value: null, known: 0, unknown: 1 });
+  });
+
+  it("reports a deleted intermediate status only in the bucket it crosses", () => {
+    const start = new Date("2026-01-01T00:00:00Z");
+    const issue = replayIssue({ id: 1, createdAt: start, statusId: 3 }, [
+      { id: 1, createdAt: start, type: "opened", payload: {} },
+      {
+        id: 2,
+        createdAt: new Date("2026-01-02T08:00:00Z"),
+        type: "status_changed",
+        payload: { from: { id: 1 }, to: { id: 2 } },
+      },
+      {
+        id: 3,
+        createdAt: new Date("2026-01-02T09:00:00Z"),
+        type: "closed",
+        payload: { from: { id: 2 }, to: { id: 3 } },
+      },
+    ]);
+    const result = aggregateInsights({
+      statuses: [
+        {
+          status_id: 1,
+          name: "Todo",
+          category: "open",
+          color: "#336699",
+          position: 0,
+          role: "remaining",
+        },
+        {
+          status_id: 3,
+          name: "Done",
+          category: "closed",
+          color: "#22aa66",
+          position: 2,
+          role: "completed",
+        },
+      ],
+      issues: [issue],
+      from: start,
+      projectCreatedAt: start,
+      buckets: [1, 2, 3].map((day) => ({
+        start: new Date(`2026-01-0${day}T00:00:00Z`),
+        end: new Date(`2026-01-0${day + 1}T00:00:00Z`),
+        partial: false,
+        current: false,
+      })),
+    });
+    expect(result.buckets.map((bucket) => bucket.quality)).toEqual([
+      "exact",
+      "mixed",
+      "exact",
+    ]);
+    expect(result.buckets.map((bucket) => bucket.reasons)).toEqual([
+      [],
+      ["missing_status_definition"],
+      [],
+    ]);
+    expect(result.buckets[1]?.flow?.completed).toEqual({
+      value: null,
+      known: 0,
+      unknown: 2,
+    });
+    expect(result.reasons).toEqual(["missing_status_definition"]);
+  });
+
+  it("attributes an uncertain earlier interval to a later broken chain", () => {
+    const start = new Date("2026-01-01T00:00:00Z");
+    const issue = replayIssue({ id: 1, createdAt: start, statusId: 2 }, [
+      { id: 1, createdAt: start, type: "opened", payload: {} },
+      {
+        id: 2,
+        createdAt: new Date("2026-01-04T12:00:00Z"),
+        type: "closed",
+        payload: { from: { id: 1 }, to: { id: 3 } },
+      },
+    ]);
+    const result = aggregateInsights({
+      statuses: [
+        {
+          status_id: 1,
+          name: "Todo",
+          category: "open",
+          color: "#336699",
+          position: 0,
+          role: "remaining",
+        },
+        {
+          status_id: 2,
+          name: "Shipped",
+          category: "open",
+          color: "#22aa66",
+          position: 1,
+          role: "completed",
+        },
+        {
+          status_id: 3,
+          name: "Done",
+          category: "closed",
+          color: "#445566",
+          position: 2,
+          role: "completed",
+        },
+      ],
+      issues: [issue],
+      from: start,
+      projectCreatedAt: start,
+      buckets: [1, 2, 3, 4].map((day) => ({
+        start: new Date(`2026-01-0${day}T00:00:00Z`),
+        end: new Date(`2026-01-0${day + 1}T00:00:00Z`),
+        partial: false,
+        current: false,
+      })),
+    });
+    expect(result.buckets.map((bucket) => bucket.reasons)).toEqual([
+      ["broken_transition_chain"],
+      ["broken_transition_chain"],
+      ["broken_transition_chain"],
+      ["broken_transition_chain"],
+    ]);
+    expect(result.buckets[0]?.stock?.remaining.unknown).toBe(1);
+    expect(result.buckets[3]?.stock?.remaining).toEqual({
+      value: 0,
+      known: 0,
+      unknown: 0,
+    });
+    expect(result.reasons).toEqual(["broken_transition_chain"]);
+  });
+
+  it("starts at the latest moved_in and excludes copied events at the same millisecond", () => {
+    const moveAt = new Date("2026-01-02T08:00:00Z");
+    const moved = replayIssue(
+      { id: 1, createdAt: new Date("2026-01-01T08:00:00Z"), statusId: 2 },
+      [
+        {
+          id: 1,
+          type: "opened",
+          createdAt: new Date("2026-01-01T08:00:00Z"),
+          payload: {},
+        },
+        {
+          id: 4,
+          type: "status_changed",
+          createdAt: moveAt,
+          payload: { from: { id: 99 }, to: { id: 1 } },
+        },
+        {
+          id: 5,
+          type: "moved_in",
+          createdAt: moveAt,
+          payload: { move_token: "fixture-move" },
+        },
+        {
+          id: 6,
+          type: "status_changed",
+          createdAt: moveAt,
+          payload: { from: { id: 1 }, to: { id: 2 } },
+        },
+      ],
+    );
+    expect(moved.membershipStart).toEqual(moveAt);
+    expect(moved.membershipStartEventId).toBe(5);
+    expect(moved.initialStatusId).toBe(1);
+    expect(moved.points.map((point) => point.id)).toEqual([5, 6]);
+    expect(moved.reasons).toEqual([]);
+
+    const unknownBoundary = replayIssue(
+      { id: 2, createdAt: moveAt, statusId: 1 },
+      [{ id: 7, type: "moved_in", createdAt: moveAt, payload: {} }],
+    );
+    expect(unknownBoundary.points[0]).toMatchObject({
+      known: false,
+      reason: "membership_boundary_unknown",
+    });
+    expect(unknownBoundary.reasons).toContain("membership_boundary_unknown");
+  });
+
+  it("removes temporarily deleted stock and restores without a completion", () => {
+    const created = new Date("2026-01-01T08:00:00Z");
+    const issue = replayIssue({ id: 1, createdAt: created, statusId: 1 }, [
+      { id: 1, type: "opened", createdAt: created, payload: {} },
+      {
+        id: 2,
+        type: "deleted",
+        createdAt: new Date("2026-01-02T08:00:00Z"),
+        payload: {},
+      },
+      {
+        id: 3,
+        type: "restored",
+        createdAt: new Date("2026-01-03T08:00:00Z"),
+        payload: {},
+      },
+    ]);
+    const result = aggregateInsights({
+      statuses: [
+        {
+          status_id: 1,
+          name: "Todo",
+          category: "open",
+          color: "#336699",
+          position: 0,
+          role: "remaining",
+        },
+      ],
+      issues: [issue],
+      from: new Date("2026-01-01T00:00:00Z"),
+      projectCreatedAt: new Date("2026-01-01T00:00:00Z"),
+      buckets: [1, 2, 3].map((day) => ({
+        start: new Date(`2026-01-0${day}T00:00:00Z`),
+        end: new Date(`2026-01-0${day + 1}T00:00:00Z`),
+        partial: false,
+        current: false,
+      })),
+    });
+    expect(
+      result.buckets.map((bucket) => bucket.stock?.remaining.value),
+    ).toEqual([1, 0, 1]);
+    expect(
+      result.buckets.map((bucket) => bucket.flow?.deleted_remaining.value),
+    ).toEqual([0, 1, 0]);
+    expect(
+      result.buckets.map((bucket) => bucket.flow?.restored_remaining.value),
+    ).toEqual([0, 0, 1]);
+    expect(
+      result.buckets.map((bucket) => bucket.flow?.completed.value),
+    ).toEqual([0, 0, 0]);
   });
 });

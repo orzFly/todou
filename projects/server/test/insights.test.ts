@@ -119,4 +119,88 @@ describe.each(PLACEMENTS)("insights burn API (%s placement)", (placement) => {
       expect(response.status).toBe(400);
     }
   });
+
+  it("exposes coverage when a card traversed a now-deleted status", async () => {
+    const projectSlug = `${slug}-deleted-status`;
+    const from = new Date(Date.now() - 60 * 60_000);
+    expect(
+      (
+        await t.app.request("/api/projects", {
+          method: "POST",
+          headers: { cookie, "content-type": "application/json" },
+          body: JSON.stringify({ slug: projectSlug, name: projectSlug }),
+        })
+      ).status,
+    ).toBe(201);
+    const statusRows = (await json(
+      await t.app.request(`/api/projects/${projectSlug}/statuses`, {
+        headers: { cookie },
+      }),
+    )) as Array<{ id: number; name: string }>;
+    const todo = statusRows.find((status) => status.name === "Todo");
+    const shipped = statusRows.find((status) => status.name === "Shipped");
+    const done = statusRows.find((status) => status.name === "Done");
+    if (!todo || !shipped || !done) throw new Error("seeded statuses missing");
+    const created = await t.app.request(`/api/projects/${projectSlug}/issues`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ title: "historical path", status_id: todo.id }),
+    });
+    expect(created.status).toBe(201);
+    const issue = (await json(created)) as { number: number };
+    for (const statusId of [shipped.id, done.id]) {
+      expect(
+        (
+          await t.app.request(
+            `/api/projects/${projectSlug}/issues/${issue.number}`,
+            {
+              method: "PATCH",
+              headers: { cookie, "content-type": "application/json" },
+              body: JSON.stringify({ status_id: statusId }),
+            },
+          )
+        ).status,
+      ).toBe(200);
+    }
+    expect(
+      (
+        await t.app.request(
+          `/api/projects/${projectSlug}/statuses/${shipped.id}`,
+          { method: "DELETE", headers: { cookie } },
+        )
+      ).status,
+    ).toBe(204);
+    const query = new URLSearchParams({
+      from: from.toISOString(),
+      to: new Date(Date.now() + 60 * 60_000).toISOString(),
+      grain: "1h",
+      tz: "UTC",
+    });
+    const response = await t.app.request(
+      `/api/projects/${projectSlug}/insights/burn?${query}`,
+      { headers: { cookie } },
+    );
+    expect(response.status).toBe(200);
+    const body = (await json(response)) as {
+      history_coverage: { has_unknown: boolean; reasons: string[] };
+      buckets: Array<{
+        quality: string;
+        reasons: string[];
+        flow: { completed: { value: number | null } } | null;
+      }>;
+    };
+    expect(body.history_coverage).toMatchObject({
+      has_unknown: true,
+      reasons: ["missing_status_definition"],
+    });
+    expect(body.buckets).toContainEqual(
+      expect.objectContaining({
+        quality: "mixed",
+        reasons: ["missing_status_definition"],
+        flow: expect.objectContaining({
+          completed: expect.objectContaining({ value: null }),
+        }),
+      }),
+    );
+  });
 });

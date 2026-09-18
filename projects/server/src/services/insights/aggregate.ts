@@ -24,7 +24,11 @@ export type AggregateInput = {
   projectCreatedAt: Date;
 };
 
-type State = { present: boolean; statusId: number | null };
+type State = {
+  present: boolean;
+  statusId: number | null;
+  reason?: CoverageReason;
+};
 type MutableFlow = {
   [K in Exclude<keyof Flow, "closed_by_status">]: number;
 } & {
@@ -33,6 +37,7 @@ type MutableFlow = {
   unknownClosedByStatus: Map<number, number>;
   completedIssueIds: Set<number>;
   unknownCompletedIssueIds: Set<number>;
+  reasons: Set<CoverageReason>;
 };
 
 type TimedPoint = ReplayPoint & { issueId: number };
@@ -67,6 +72,8 @@ const FLOW_KEYS = [
 
 type NumericFlowKey = (typeof FLOW_KEYS)[number];
 
+// A Measure reports count uncertainty independently of its bucket's
+// quality; attach the cause to the event that made it uncertain.
 
 function measured(value: number, unknown: number): Measure {
   return unknown === 0
@@ -106,6 +113,7 @@ function emptyFlow(): MutableFlow {
     unknownClosedByStatus: new Map(),
     completedIssueIds: new Set(),
     unknownCompletedIssueIds: new Set(),
+    reasons: new Set(),
   };
 }
 
@@ -300,6 +308,16 @@ function stockOf(
   };
 }
 
+function unknownStateReason(
+  state: State,
+  statusById: Map<number, RoleEntry>,
+): CoverageReason {
+  if (state.statusId !== null && !statusById.has(state.statusId)) {
+    return "missing_status_definition";
+  }
+  return state.reason ?? "broken_transition_chain";
+}
+
 function applyPoint(
   point: TimedPoint,
   state: State,
@@ -309,11 +327,18 @@ function applyPoint(
   if (point.kind === "created" || point.kind === "moved_in") {
     state.present = true;
     state.statusId = point.afterStatusId;
+    state.reason =
+      point.afterStatusId === null
+        ? (point.reason ?? "broken_transition_chain")
+        : statusById.has(point.afterStatusId)
+          ? undefined
+          : "missing_status_definition";
     if (flow !== undefined) {
       const status =
         state.statusId === null ? undefined : statusById.get(state.statusId);
       if (status === undefined) {
         markUnknown(flow, ENTRY_UNKNOWN_KEYS[point.kind]);
+        flow.reasons.add(unknownStateReason(state, statusById));
       } else
         classifyEntry(
           flow,
@@ -336,6 +361,7 @@ function applyPoint(
           "deleted_open",
           "open_exited",
         ]);
+        flow.reasons.add(unknownStateReason(state, statusById));
       } else classifyExit(flow, status.role, status.category === "open");
     }
     state.present = false;
@@ -348,6 +374,7 @@ function applyPoint(
         state.statusId === null ? undefined : statusById.get(state.statusId);
       if (status === undefined) {
         markUnknown(flow, ENTRY_UNKNOWN_KEYS.restored);
+        flow.reasons.add(unknownStateReason(state, statusById));
       } else
         classifyEntry(
           flow,
@@ -370,6 +397,16 @@ function applyPoint(
         : statusById.get(point.afterStatusId);
     if (!point.known || from === undefined || to === undefined) {
       markUnknown(flow, TRANSITION_UNKNOWN_KEYS, point.issueId);
+      const missingDefinition =
+        (point.beforeStatusId !== null &&
+          !statusById.has(point.beforeStatusId)) ||
+        (point.afterStatusId !== null && !statusById.has(point.afterStatusId));
+      flow.reasons.add(
+        point.reason ??
+          (missingDefinition
+            ? "missing_status_definition"
+            : (state.reason ?? "broken_transition_chain")),
+      );
       const closedTargets =
         to?.category === "closed"
           ? [to.status_id]
@@ -387,13 +424,19 @@ function applyPoint(
     }
   }
   state.statusId = point.afterStatusId;
+  state.reason =
+    state.statusId === null
+      ? (point.reason ?? state.reason ?? "broken_transition_chain")
+      : statusById.has(state.statusId)
+        ? undefined
+        : "missing_status_definition";
 }
 
-function qualityOf(
-  stock: StockSnapshot,
-  reasons: CoverageReason[],
-): Bucket["quality"] {
-  if (stock.unknown_cards === 0 && reasons.length === 0) return "exact";
+function qualityOf(stock: StockSnapshot, flow: Flow): Bucket["quality"] {
+  const hasUnknownFlow =
+    FLOW_KEYS.some((key) => flow[key].unknown > 0) ||
+    flow.closed_by_status.some((entry) => entry.count.unknown > 0);
+  if (stock.unknown_cards === 0 && !hasUnknownFlow) return "exact";
   const known = stock.by_status.reduce((sum, item) => sum + item.count, 0);
   return known === 0 ? "unknown" : "mixed";
 }
@@ -412,7 +455,7 @@ export function aggregateInsights(input: AggregateInput): {
       issue.points.map((point) => ({ ...point, issueId: issue.issueId })),
     )
     .sort((a, b) => a.at.getTime() - b.at.getTime() || a.id - b.id);
-  const reasons = [...new Set(input.issues.flatMap((issue) => issue.reasons))];
+  const reasons = new Set<CoverageReason>();
   let cursor = 0;
   while (cursor < points.length && points[cursor].at < input.from) {
     const point = points[cursor];
@@ -461,24 +504,25 @@ export function aggregateInsights(input: AggregateInput): {
       cursor += 1;
     }
     const stock = stockOf(states, input.statuses);
-    const bucketReasons = [
-      ...new Set([
-        ...reasons,
-        ...(stock.unknown_cards > 0
-          ? (["missing_status_definition"] as const)
-          : []),
-      ]),
-    ];
+    const bucketReasons = new Set<CoverageReason>(flow.reasons);
+    for (const state of states.values()) {
+      if (!state.present) continue;
+      if (state.statusId === null || !statusById.has(state.statusId)) {
+        bucketReasons.add(unknownStateReason(state, statusById));
+      }
+    }
+    const finishedFlow = finishFlow(flow, input.statuses);
+    for (const reason of bucketReasons) reasons.add(reason);
     buckets.push({
       start: boundary.start.toISOString(),
       end: boundary.end.toISOString(),
       partial: boundary.partial || boundary.start < input.projectCreatedAt,
       current: boundary.current,
-      quality: qualityOf(stock, bucketReasons),
-      reasons: bucketReasons,
+      quality: qualityOf(stock, finishedFlow),
+      reasons: [...bucketReasons],
       stock,
-      flow: finishFlow(flow, input.statuses),
+      flow: finishedFlow,
     });
   }
-  return { opening, buckets, reasons };
+  return { opening, buckets, reasons: [...reasons] };
 }

@@ -83,6 +83,13 @@ export function replayIssue(
   const movedIn = events.filter((event) => event.type === "moved_in").at(-1);
   const membershipStart = movedIn?.createdAt ?? issue.createdAt;
   const membershipStartEventId = movedIn?.id ?? null;
+  const boundaryKnown =
+    movedIn === undefined ||
+    (typeof movedIn.payload === "object" &&
+      movedIn.payload !== null &&
+      "move_token" in movedIn.payload &&
+      typeof movedIn.payload.move_token === "string" &&
+      movedIn.payload.move_token.length > 0);
   const inMembership = events.filter((event) => {
     const delta = event.createdAt.getTime() - membershipStart.getTime();
     if (delta > 0) return true;
@@ -96,11 +103,13 @@ export function replayIssue(
   );
   const reasons = new Set<ReplayReason>();
   const statusPoints = new Map<number, ReplayPoint>();
+  let uncertaintyReason: ReplayReason | undefined;
   let cursor: number | null = issue.statusId;
 
   for (const event of [...transitions].reverse()) {
     const pair = statusPair(event.payload);
     if (pair === null) {
+      uncertaintyReason = "malformed_event";
       reasons.add("malformed_event");
       statusPoints.set(event.id, {
         id: event.id,
@@ -115,6 +124,7 @@ export function replayIssue(
       continue;
     }
     if (cursor !== null && pair.to !== cursor) {
+      uncertaintyReason = "broken_transition_chain";
       reasons.add("broken_transition_chain");
       statusPoints.set(event.id, {
         id: event.id,
@@ -136,21 +146,25 @@ export function replayIssue(
       afterStatusId: pair.to,
       known: cursor !== null,
       ...(cursor === null
-        ? { reason: "broken_transition_chain" as const }
+        ? { reason: uncertaintyReason ?? "broken_transition_chain" }
         : {}),
     });
-    if (cursor === null) reasons.add("broken_transition_chain");
     cursor = cursor === null ? null : pair.from;
   }
 
+  if (!boundaryKnown) reasons.add("membership_boundary_unknown");
   const entry: ReplayPoint = {
     id: membershipStartEventId ?? Number.MIN_SAFE_INTEGER,
     at: membershipStart,
     kind: movedIn === undefined ? "created" : "moved_in",
     beforeStatusId: null,
-    afterStatusId: cursor,
-    known: cursor !== null,
-    ...(cursor === null ? { reason: "broken_transition_chain" as const } : {}),
+    afterStatusId: boundaryKnown ? cursor : null,
+    known: boundaryKnown && cursor !== null,
+    ...(!boundaryKnown
+      ? { reason: "membership_boundary_unknown" as const }
+      : cursor === null
+        ? { reason: uncertaintyReason ?? "broken_transition_chain" }
+        : {}),
   };
   const lifecycle = inMembership.flatMap((event): ReplayPoint[] => {
     if (event.type !== "deleted" && event.type !== "restored") return [];

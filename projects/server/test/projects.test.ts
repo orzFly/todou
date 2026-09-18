@@ -1,5 +1,6 @@
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { issues } from "../src/db/project-schema.ts";
+import { insightsSettings, issues } from "../src/db/project-schema.ts";
 import { projects } from "../src/db/system-schema.ts";
 import {
   addUserWithToken,
@@ -627,9 +628,40 @@ describe.each(PLACEMENTS)("projects domain (%s placement)", (placement) => {
     });
   });
 
-  it("deletes a project and stops routing to it", async () => {
+  it("deletes a project and its insights roles before it stops routing", async () => {
     const s = slug();
-    await createProject(s);
+    const project = await createProject(s);
+    const db = await t.ctx.router.forProject({
+      id: project.id,
+      slug: s,
+      database_url: null,
+    });
+    const settings = await json(
+      await t.app.request(`/api/projects/${s}/insights/settings`, {
+        headers: { cookie },
+      }),
+    );
+    const saved = await t.app.request(`/api/projects/${s}/insights/settings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({
+        version: settings.version,
+        roles: settings.roles.map(
+          (entry: { status_id: number; role: string }, index: number) => ({
+            status_id: entry.status_id,
+            role: index === 0 ? "excluded" : entry.role,
+          }),
+        ),
+      }),
+    });
+    expect(saved.status).toBe(200);
+    const stored = () =>
+      db
+        .select()
+        .from(insightsSettings)
+        .where(eq(insightsSettings.projectId, project.id));
+    expect(await stored()).toHaveLength(1);
+
     const del = await t.app.request(`/api/projects/${s}`, {
       method: "DELETE",
       headers: { cookie },
@@ -639,6 +671,7 @@ describe.each(PLACEMENTS)("projects domain (%s placement)", (placement) => {
       (await t.app.request(`/api/projects/${s}`, { headers: { cookie } }))
         .status,
     ).toBe(404);
+    expect(await stored()).toHaveLength(0);
   });
 });
 

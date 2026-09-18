@@ -1,7 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import type { BurnResponse } from "@todou/shared";
-import { Grain } from "@todou/shared";
+import {
+  type BurnResponse,
+  Grain,
+  type Grain as GrainValue,
+} from "@todou/shared";
 import { useState } from "react";
 import { insightsBurnQuery, insightsSettingsQuery } from "@/api/insights.ts";
 import { BucketInspector } from "@/components/insights/bucket-inspector.tsx";
@@ -20,7 +23,6 @@ import type {
   ResolvedInsightsSearch,
 } from "@/lib/insights-search.ts";
 import {
-  INSIGHTS_PRESETS,
   insightsPresetRequest,
   insightsRequest,
   resolveInsightsSearch,
@@ -63,6 +65,8 @@ export function InsightsPage() {
         key={`${resolved.range}/${resolved.from}/${resolved.to}/${resolved.grain}/${resolved.tz}`}
         search={resolved}
         context={context}
+        resolvedGrain={result.data?.resolved_grain}
+        bucketCount={result.data?.buckets.length}
         onChange={(next) => {
           const { invalid: _invalid, ...validated } = next;
           void navigate({
@@ -122,14 +126,61 @@ export function InsightsPage() {
   );
 }
 
+const RANGE_OPTIONS = [
+  ["24h", "24h"],
+  ["7d", "7天"],
+  ["30d", "30天"],
+  ["90d", "90天"],
+  ["custom", "自定义"],
+] as const;
+
+const GRAIN_LABELS: Record<GrainValue, string> = {
+  auto: "自动",
+  "1h": "1h",
+  "6h": "6h",
+  "12h": "12h",
+  "1d": "1天",
+  "1w": "1周",
+};
+
+const HOUR_MS = 60 * 60 * 1000;
+
+// A conservative lower bound, never an approximation of a local midnight:
+// the server alone decides actual IANA calendar boundaries and the 400 limit.
+// Subtracting three days for date inputs leaves even skipped dates and DST
+// changes to the server while disabling clearly impossible hourly choices.
+function minimumHourlyBuckets(
+  search: ResolvedInsightsSearch,
+  context: InsightsSearchContext,
+  grain: "1h" | "6h" | "12h",
+): number | null {
+  const request = insightsRequest(search, context);
+  if (request === null) return null;
+  const dates = !request.from.includes("T");
+  const from = Date.parse(dates ? `${request.from}T00:00:00Z` : request.from);
+  const to = Date.parse(dates ? `${request.to}T00:00:00Z` : request.to);
+  const hours = (to - from) / HOUR_MS - (dates ? 72 : 0);
+  const step = { "1h": 1, "6h": 6, "12h": 12 }[grain];
+  return Math.max(0, Math.floor(hours / step));
+}
+
+const segmentClass =
+  "inline-flex max-w-full flex-wrap gap-0.5 rounded-lg border bg-muted p-1";
+const segmentButtonClass =
+  "min-h-9 rounded-md border border-transparent px-3 text-sm font-medium transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-40";
+
 export function InsightsControls({
   search,
   context,
   onChange,
+  resolvedGrain,
+  bucketCount,
 }: {
   search: ResolvedInsightsSearch;
   context: InsightsSearchContext;
   onChange: (search: InsightsSearch) => void;
+  resolvedGrain?: string;
+  bucketCount?: number;
 }) {
   const defaultRange = insightsPresetRequest(
     "30d",
@@ -146,10 +197,16 @@ export function InsightsControls({
   const [error, setError] = useState<string | null>(null);
   const timezones = [...new Set([search.tz, context.timezone, "UTC"])];
   const controlClass = "h-9 rounded-md border bg-background px-2 text-sm";
+  const unavailable = Grain.options.flatMap((grain) => {
+    if (grain !== "1h" && grain !== "6h" && grain !== "12h") return [];
+    return (minimumHourlyBuckets(search, context, grain) ?? 0) > 400
+      ? [GRAIN_LABELS[grain]]
+      : [];
+  });
 
   return (
     <form
-      className="flex flex-wrap items-end gap-3"
+      className="space-y-3"
       onSubmit={(event) => {
         event.preventDefault();
         const next = { ...search, range: "custom" as const, from, to };
@@ -161,35 +218,75 @@ export function InsightsControls({
         onChange(next);
       }}
     >
-      <label className="grid gap-1 text-sm">
-        Range
-        <select
-          className={controlClass}
-          value={search.range}
-          onChange={(event) => {
-            const range = event.target.value;
-            if (range === "custom") {
-              onChange({ ...search, range, from, to });
-            } else {
-              const preset = INSIGHTS_PRESETS.find((value) => value === range);
-              if (preset)
-                onChange({ range: preset, grain: search.grain, tz: search.tz });
-            }
-          }}
-        >
-          <option value="24h">Last 24 hours</option>
-          <option value="7d">Last 7 days</option>
-          <option value="30d">Last 30 days</option>
-          <option value="90d">Last 90 days</option>
-          <option value="custom">Custom</option>
-        </select>
-      </label>
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:justify-between">
+        <fieldset aria-label="时间范围" className="min-w-0 space-y-2">
+          <legend className="text-sm text-muted-foreground">时间范围</legend>
+          <div className={segmentClass}>
+            {RANGE_OPTIONS.map(([range, label]) => (
+              <button
+                key={range}
+                type="button"
+                aria-pressed={search.range === range}
+                className={`${segmentButtonClass} ${
+                  search.range === range
+                    ? "border-border bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground"
+                }`}
+                onClick={() =>
+                  range === "custom"
+                    ? onChange({ ...search, range, from, to })
+                    : onChange({ range, grain: search.grain, tz: search.tz })
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+        <fieldset aria-label="统计粒度" className="min-w-0 space-y-2">
+          <legend className="text-sm text-muted-foreground">统计粒度</legend>
+          <div className={segmentClass}>
+            {Grain.options.map((grain) => {
+              const label = GRAIN_LABELS[grain];
+              const exceeds =
+                (grain === "1h" || grain === "6h" || grain === "12h") &&
+                (minimumHourlyBuckets(search, context, grain) ?? 0) > 400;
+              return (
+                <button
+                  key={grain}
+                  type="button"
+                  aria-pressed={search.grain === grain}
+                  aria-label={
+                    exceeds
+                      ? `${label}, unavailable: more than 400 buckets`
+                      : undefined
+                  }
+                  title={
+                    exceeds
+                      ? "More than 400 buckets; shorten the range or choose a coarser grain"
+                      : undefined
+                  }
+                  disabled={exceeds}
+                  className={`${segmentButtonClass} ${
+                    search.grain === grain
+                      ? "border-border bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground"
+                  }`}
+                  onClick={() => onChange({ ...search, grain })}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
+      </div>
       {search.range === "custom" && (
-        <>
+        <div className="flex flex-wrap items-end gap-2">
           <label className="grid gap-1 text-sm">
-            From
+            开始日期
             <input
-              className={controlClass}
+              className={`${controlClass} max-w-32`}
               type="date"
               required
               value={from}
@@ -197,9 +294,9 @@ export function InsightsControls({
             />
           </label>
           <label className="grid gap-1 text-sm">
-            To (inclusive)
+            结束日期
             <input
-              className={controlClass}
+              className={`${controlClass} max-w-32`}
               type="date"
               required
               value={to}
@@ -207,43 +304,46 @@ export function InsightsControls({
             />
           </label>
           <Button type="submit" variant="outline" size="sm">
-            Apply range
+            应用日期
           </Button>
-        </>
+          <span className="w-full text-xs text-muted-foreground">
+            包含所选结束日期
+          </span>
+        </div>
       )}
-      <label className="grid gap-1 text-sm">
-        Grain
-        <select
-          className={controlClass}
-          value={search.grain}
-          onChange={(event) =>
-            onChange({ ...search, grain: Grain.parse(event.target.value) })
-          }
-        >
-          <option value="auto">Auto</option>
-          <option value="1h">1 hour</option>
-          <option value="6h">6 hours</option>
-          <option value="12h">12 hours</option>
-          <option value="1d">1 day</option>
-          <option value="1w">1 week</option>
-        </select>
-      </label>
-      <label className="grid gap-1 text-sm">
-        Timezone
-        <select
-          className={controlClass}
-          value={search.tz}
-          onChange={(event) => onChange({ ...search, tz: event.target.value })}
-        >
-          {timezones.map((timezone) => (
-            <option key={timezone} value={timezone}>
-              {timezone}
-            </option>
-          ))}
-        </select>
-      </label>
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <label className="grid gap-1 text-sm">
+          Timezone
+          <select
+            className={controlClass}
+            value={search.tz}
+            onChange={(event) =>
+              onChange({ ...search, tz: event.target.value })
+            }
+          >
+            {timezones.map((timezone) => (
+              <option key={timezone} value={timezone}>
+                {timezone}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="text-xs text-muted-foreground">
+          {search.grain === "auto" && resolvedGrain
+            ? `自动 → ${GRAIN_LABELS[resolvedGrain as Exclude<GrainValue, "auto">] ?? resolvedGrain}`
+            : GRAIN_LABELS[search.grain]}
+          {bucketCount === undefined ? "" : ` · ${bucketCount} buckets`}
+          {" · "}最多 400 桶
+        </span>
+      </div>
+      {unavailable.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          {unavailable.join("、")} exceeds 400 buckets for this range; shorten
+          the range or choose a coarser grain.
+        </p>
+      )}
       {error && (
-        <p role="alert" className="w-full text-sm text-destructive">
+        <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
       )}
@@ -271,7 +371,10 @@ export function InsightsResults({ data }: { data: BurnResponse }) {
       <div className="space-y-1 text-sm text-muted-foreground">
         <p>
           Current cohort: {data.cohort.count} cards currently in this project.
-          Historical membership outside this cohort is not included.
+          Historical membership outside this cohort is not included. Deleting or
+          moving a card out changes past chart values; a card moved in counts
+          only from its latest arrival. Changing status roles also reinterprets
+          the past.
         </p>
         <p>
           As of <time dateTime={data.as_of}>{data.as_of}</time> ·{" "}
