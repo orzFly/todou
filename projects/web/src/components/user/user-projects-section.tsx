@@ -2,7 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { projectsQuery } from "@/api/queries.ts";
 import { userProjectsQuery } from "@/api/users.ts";
-import { LoadFailure } from "@/components/shared/load-failure.tsx";
+import {
+  LoadFailure,
+  RefreshFailure,
+} from "@/components/shared/load-failure.tsx";
 import {
   ProjectCard,
   ProjectCardGrid,
@@ -11,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ROLE_DOT } from "@/lib/roles.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
+import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { cn } from "@/lib/utils";
 
 /** Cards to occupy the grid while the seats load, at the height one holds. */
@@ -21,8 +25,16 @@ const SKELETONS = [0, 1, 2];
  * projects the reader can see, drawn on the projects home's own card (T-390).
  */
 export function UserProjectsSection({ login }: { login: string }) {
-  const projects = useQuery(userProjectsQuery(login));
-  const items = projects.data?.items;
+  const query = userProjectsQuery(login);
+  const projects = useQuery(query);
+  const data = projects.data;
+  const items = data?.items;
+  const hasContent = data !== undefined;
+  const { replace, notice } = useReadFailure(
+    [projects.isError ? projects.error : null],
+    hasContent,
+    query.queryKey,
+  );
   // `useProjectRefs` memoizes on the array's identity, so a `map` taken fresh
   // per render would rematch the whole directory on every one of them.
   const seats = useMemo(() => items?.map((item) => item.project), [items]);
@@ -32,29 +44,38 @@ export function UserProjectsSection({ login }: { login: string }) {
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-semibold">Ta 的项目</h2>
-      {projects.isPending ? (
-        <ProjectCardGrid>
-          {SKELETONS.map((i) => (
-            <Skeleton key={i} className="h-34" />
-          ))}
-        </ProjectCardGrid>
-      ) : projects.isError ? (
+      {notice && (
+        <RefreshFailure
+          what="these projects"
+          detail={notice}
+          onRetry={() => projects.refetch()}
+          retrying={projects.isFetching}
+        />
+      )}
+
+      {replace ? (
         <div className="rounded-lg border border-dashed p-10 text-center">
           <LoadFailure
-            message={`Could not load these projects: ${projects.error.message}`}
-            detail={projects.error.message}
+            message={`Could not load these projects: ${replace}`}
+            detail={replace}
             onRetry={() => projects.refetch()}
             retrying={projects.isFetching}
             className="justify-center"
           />
         </div>
-      ) : projects.data.items.length === 0 ? (
+      ) : !hasContent ? (
+        <ProjectCardGrid>
+          {SKELETONS.map((i) => (
+            <Skeleton key={i} className="h-34" />
+          ))}
+        </ProjectCardGrid>
+      ) : data.items.length === 0 ? (
         <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
           没有你们都在的项目 🥔
         </div>
       ) : (
         <ProjectCardGrid>
-          {projects.data.items.map((item) => {
+          {data.items.map((item) => {
             const description = descriptions.get(item.project.slug);
             return (
               <ProjectCard

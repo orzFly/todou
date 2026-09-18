@@ -1,5 +1,11 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type {
   Agent,
   AgentMembership,
@@ -12,6 +18,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentMembershipsQuery, agentsQuery, api } from "../src/api/queries.ts";
 import { AgentsSettingsPage } from "../src/pages/agents-settings.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
+import { expectVisible } from "./visibility.ts";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -26,6 +33,12 @@ const BOT: Agent = {
   is_instance_admin: false,
   created_at: "2026-08-28T00:00:00Z",
   disabled_at: null,
+};
+const OTHER_BOT: Agent = {
+  ...BOT,
+  id: 43,
+  login: "other-bot",
+  display_name: "Other Bot",
 };
 
 const ALPHA: ProjectBrief = { id: 1, slug: "alpha", name: "Alpha" };
@@ -45,20 +58,28 @@ const manageable = (
 ): ManageableProject => ({ ...project, my_role });
 
 const membership = (
-  project: ProjectBrief,
-  role: MemberRole,
-): AgentMembership => ({
-  agent_id: BOT.id,
-  project,
-  role,
-  created_at: "2026-08-28T00:00:00Z",
-});
+  ...args:
+    | [project: ProjectBrief, role: MemberRole]
+    | [agent: Agent, project: ProjectBrief, role: MemberRole]
+): AgentMembership => {
+  const [agent, project, role]: [Agent, ProjectBrief, MemberRole] =
+    args.length === 2 ? [BOT, args[0], args[1]] : args;
+  return {
+    agent_id: agent.id,
+    project,
+    role,
+    created_at: "2026-08-28T00:00:00Z",
+  };
+};
 
-function renderPage(data: AgentMemberships | "error"): QueryClient {
+function renderPage(
+  data: AgentMemberships | "error",
+  agents: Agent[] = [BOT],
+): QueryClient {
   const client = testQueryClient();
   // Seeded, not fetched: useSuspenseQuery would otherwise suspend on a
   // boundary this bare render does not provide.
-  client.setQueryData(agentsQuery.queryKey, [BOT]);
+  client.setQueryData(agentsQuery.queryKey, agents);
   if (data === "error") {
     vi.spyOn(api, "listAgentMemberships").mockRejectedValue(
       new Error("upstream is down"),
@@ -81,6 +102,43 @@ const invalidatedKeys = (spy: { mock: { calls: unknown[][] } }): string[] =>
   spy.mock.calls.map((call) =>
     JSON.stringify((call[0] as { queryKey?: unknown } | undefined)?.queryKey),
   );
+
+async function failWarmMemberships(
+  client: QueryClient,
+  status: number,
+  message: string,
+) {
+  await waitFor(() =>
+    expect(
+      client.getQueryState(agentMembershipsQuery.queryKey)?.fetchStatus,
+    ).toBe("idle"),
+  );
+  const memberships = vi
+    .spyOn(api, "listAgentMemberships")
+    .mockRejectedValue(Object.assign(new Error(message), { status }));
+  await act(async () => {
+    await client.refetchQueries({
+      queryKey: agentMembershipsQuery.queryKey,
+      exact: true,
+    });
+  });
+  expect(memberships).toHaveBeenCalledTimes(1);
+  await waitFor(() =>
+    expect(client.getQueryState(agentMembershipsQuery.queryKey)?.status).toBe(
+      "error",
+    ),
+  );
+  return memberships;
+}
+
+function agentRow(login: string) {
+  return within(screen.getByText(`@${login}`).closest("tr") as HTMLElement);
+}
+
+async function tableSurface() {
+  const table = await screen.findByRole("table");
+  return within(table.closest(".space-y-4") as HTMLElement);
+}
 
 describe("agent projects column (T-227)", () => {
   it("badges each project with its role and counts the overflow", async () => {
@@ -115,6 +173,330 @@ describe("agent projects column (T-227)", () => {
     expect(cell.textContent).toBe("—");
     // The rest of the row is untouched.
     expect(screen.getByText("@probe-bot")).toBeTruthy();
+  });
+
+  it("keeps each agent's project badges after a warm-cache transient refetch failure", async () => {
+    const client = renderPage(
+      {
+        memberships: [
+          membership(BOT, ALPHA, "admin"),
+          membership(OTHER_BOT, ALPHA, "admin"),
+        ],
+        manageable_projects: [manageable(ALPHA)],
+      },
+      [BOT, OTHER_BOT],
+    );
+    const table = await screen.findByRole("table");
+    const tableSurface = within(table.closest(".space-y-4") as HTMLElement);
+    const probeRow = within(
+      screen.getByText("@probe-bot").closest("tr") as HTMLElement,
+    );
+    const otherRow = within(
+      screen.getByText("@other-bot").closest("tr") as HTMLElement,
+    );
+    expect(probeRow.getByTitle("Alpha · admin")).toBeTruthy();
+    expect(otherRow.getByTitle("Alpha · admin")).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        client.getQueryState(agentMembershipsQuery.queryKey)?.fetchStatus,
+      ).toBe("idle"),
+    );
+
+    const memberships = vi.spyOn(api, "listAgentMemberships").mockRejectedValue(
+      Object.assign(new Error("memberships temporarily unavailable"), {
+        status: 500,
+      }),
+    );
+    await act(async () => {
+      await client.refetchQueries({
+        queryKey: agentMembershipsQuery.queryKey,
+        exact: true,
+      });
+    });
+    expect(memberships).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(client.getQueryState(agentMembershipsQuery.queryKey)?.status).toBe(
+        "error",
+      ),
+    );
+
+    // Both rows have an identical badge: a badge in the other row cannot
+    // accidentally satisfy the assertion for probe-bot.
+    expectVisible(probeRow.getByTitle("Alpha · admin"));
+    expectVisible(otherRow.getByTitle("Alpha · admin"));
+    const notice = await tableSurface.findByRole("status");
+    expect(notice.textContent).toMatch(/Couldn't refresh.*projects/i);
+    expect(notice.textContent).toContain("memberships temporarily unavailable");
+    expect(tableSurface.getAllByRole("status")).toHaveLength(1);
+    expect(tableSurface.getAllByRole("button", { name: "Retry" })).toHaveLength(
+      1,
+    );
+  });
+
+  it("keeps the open dialog's own project and role after a warm-cache transient refetch failure", async () => {
+    const client = renderPage(
+      {
+        memberships: [
+          membership(BOT, ALPHA, "writer"),
+          membership(OTHER_BOT, ALPHA, "admin"),
+        ],
+        manageable_projects: [manageable(ALPHA)],
+      },
+      [BOT, OTHER_BOT],
+    );
+    const dialog = await openDialog();
+    expect(dialog.getByText("Alpha")).toBeTruthy();
+    expect(
+      dialog.getByRole("combobox", { name: "role in Alpha" }).textContent,
+    ).toContain("writer");
+    await waitFor(() =>
+      expect(
+        client.getQueryState(agentMembershipsQuery.queryKey)?.fetchStatus,
+      ).toBe("idle"),
+    );
+
+    const memberships = vi.spyOn(api, "listAgentMemberships").mockRejectedValue(
+      Object.assign(new Error("memberships temporarily unavailable"), {
+        status: 500,
+      }),
+    );
+    await act(async () => {
+      await client.refetchQueries({
+        queryKey: agentMembershipsQuery.queryKey,
+        exact: true,
+      });
+    });
+    expect(memberships).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(client.getQueryState(agentMembershipsQuery.queryKey)?.status).toBe(
+        "error",
+      ),
+    );
+
+    // A badge in the table or another agent's row does not count as the
+    // open dialog's membership surviving this failure.
+    expectVisible(dialog.getByText("Alpha"));
+    expect(
+      dialog.getByRole("combobox", { name: "role in Alpha" }).textContent,
+    ).toContain("writer");
+    const notice = await dialog.findByRole("status");
+    expect(notice.textContent).toContain("memberships temporarily unavailable");
+    expect(dialog.getByRole("button", { name: "Retry" })).toBeTruthy();
+  });
+
+  it("retries the shared query from the dialog once and updates both rows and the open dialog", async () => {
+    const client = renderPage(
+      {
+        memberships: [
+          membership(BOT, ALPHA, "writer"),
+          membership(OTHER_BOT, BETA, "admin"),
+        ],
+        manageable_projects: [manageable(ALPHA), manageable(BETA)],
+      },
+      [BOT, OTHER_BOT],
+    );
+    const table = await tableSurface();
+    const dialog = await openDialog();
+    const probeRow = agentRow("probe-bot");
+    const otherRow = agentRow("other-bot");
+    expect(probeRow.getByTitle("Alpha · writer")).toBeTruthy();
+    expect(otherRow.getByTitle("Beta · admin")).toBeTruthy();
+    expect(
+      dialog.getByRole("combobox", { name: "role in Alpha" }).textContent,
+    ).toContain("writer");
+
+    const memberships = await failWarmMemberships(
+      client,
+      500,
+      "memberships temporarily unavailable",
+    );
+    expect(dialog.getAllByRole("status")).toHaveLength(1);
+    expect(dialog.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
+    memberships.mockResolvedValue({
+      memberships: [
+        membership(BOT, ALPHA, "admin"),
+        membership(OTHER_BOT, BETA, "reader"),
+      ],
+      manageable_projects: [manageable(ALPHA), manageable(BETA)],
+    });
+
+    const beforeRetry = memberships.mock.calls.length;
+    fireEvent.click(dialog.getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(memberships.mock.calls.length - beforeRetry).toBe(1),
+    );
+    await waitFor(() =>
+      expect(probeRow.getByTitle("Alpha · admin")).toBeTruthy(),
+    );
+    expect(otherRow.getByTitle("Beta · reader")).toBeTruthy();
+    expect(probeRow.queryByTitle("Alpha · writer")).toBeNull();
+    expect(otherRow.queryByTitle("Beta · admin")).toBeNull();
+    expect(
+      dialog.getByRole("combobox", { name: "role in Alpha" }).textContent,
+    ).toContain("admin");
+    expect(dialog.queryByRole("status")).toBeNull();
+    expect(table.queryByRole("status")).toBeNull();
+    expect(memberships.mock.calls.length - beforeRetry).toBe(1);
+  });
+
+  it("disables both retry controls during one pending refetch without hiding saved memberships", async () => {
+    const client = renderPage(
+      {
+        memberships: [
+          membership(BOT, ALPHA, "writer"),
+          membership(OTHER_BOT, BETA, "reader"),
+        ],
+        manageable_projects: [manageable(ALPHA), manageable(BETA)],
+      },
+      [BOT, OTHER_BOT],
+    );
+    const table = await tableSurface();
+    const dialog = await openDialog();
+    const probeRow = agentRow("probe-bot");
+    const otherRow = agentRow("other-bot");
+    const memberships = await failWarmMemberships(
+      client,
+      500,
+      "temporary outage",
+    );
+    let finishRetry!: (data: AgentMemberships) => void;
+    memberships.mockImplementationOnce(
+      () =>
+        new Promise<AgentMemberships>((resolve) => {
+          finishRetry = resolve;
+        }),
+    );
+
+    const beforeRetry = memberships.mock.calls.length;
+    fireEvent.click(dialog.getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(memberships.mock.calls.length - beforeRetry).toBe(1),
+    );
+    await waitFor(() => {
+      expect(
+        (
+          table.getByRole("button", {
+            name: "Retry",
+            hidden: true,
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(true);
+      expect(
+        (dialog.getByRole("button", { name: "Retry" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true);
+    });
+    expect(probeRow.getByTitle("Alpha · writer")).toBeTruthy();
+    expect(otherRow.getByTitle("Beta · reader")).toBeTruthy();
+    expect(
+      dialog.getByRole("combobox", { name: "role in Alpha" }).textContent,
+    ).toContain("writer");
+    expect(table.getAllByRole("status", { hidden: true })).toHaveLength(1);
+    expect(dialog.getAllByRole("status")).toHaveLength(1);
+    await act(async () => {
+      finishRetry({
+        memberships: [
+          membership(BOT, ALPHA, "writer"),
+          membership(OTHER_BOT, BETA, "reader"),
+        ],
+        manageable_projects: [manageable(ALPHA), manageable(BETA)],
+      });
+    });
+    await waitFor(() => expect(dialog.queryByRole("status")).toBeNull());
+    expect(table.queryByRole("status")).toBeNull();
+    expect(memberships.mock.calls.length - beforeRetry).toBe(1);
+  });
+
+  it.each([403, 404])(
+    "removes both rows' badges and the open dialog's rows on a %i refusal",
+    async (status) => {
+      const client = renderPage(
+        {
+          memberships: [
+            membership(BOT, ALPHA, "writer"),
+            membership(OTHER_BOT, BETA, "admin"),
+          ],
+          manageable_projects: [manageable(ALPHA), manageable(BETA)],
+        },
+        [BOT, OTHER_BOT],
+      );
+      const table = await tableSurface();
+      const dialog = await openDialog();
+      const probeRow = agentRow("probe-bot");
+      const otherRow = agentRow("other-bot");
+      expect(probeRow.getByTitle("Alpha · writer")).toBeTruthy();
+      expect(otherRow.getByTitle("Beta · admin")).toBeTruthy();
+      expect(
+        dialog.getByRole("combobox", { name: "role in Alpha" }),
+      ).toBeTruthy();
+
+      await failWarmMemberships(
+        client,
+        status,
+        `membership access refused (${status})`,
+      );
+      await waitFor(() => {
+        expect(probeRow.queryByTitle("Alpha · writer")).toBeNull();
+        expect(otherRow.queryByTitle("Beta · admin")).toBeNull();
+        expect(
+          dialog.queryByRole("combobox", { name: "role in Alpha" }),
+        ).toBeNull();
+      });
+      expect(probeRow.getByTitle(/^Could not load projects:/)).toBeTruthy();
+      expect(otherRow.getByTitle(/^Could not load projects:/)).toBeTruthy();
+      expect(dialog.queryByText("Alpha")).toBeNull();
+      expect(
+        dialog.getByText(`membership access refused (${status})`),
+      ).toBeTruthy();
+      expect(dialog.queryByText("Not a member of any project yet.")).toBeNull();
+      expect(table.queryByRole("status")).toBeNull();
+    },
+  );
+
+  it("keeps No projects and a single table notice after an empty success followed by a 500", async () => {
+    const client = renderPage({ memberships: [], manageable_projects: [] }, [
+      BOT,
+      OTHER_BOT,
+    ]);
+    const table = await tableSurface();
+    const probeRow = agentRow("probe-bot");
+    const otherRow = agentRow("other-bot");
+    expect(probeRow.getByText("No projects")).toBeTruthy();
+    expect(otherRow.getByText("No projects")).toBeTruthy();
+
+    await failWarmMemberships(
+      client,
+      500,
+      "empty catalog temporarily unavailable",
+    );
+    expect(probeRow.getByText("No projects")).toBeTruthy();
+    expect(otherRow.getByText("No projects")).toBeTruthy();
+    const notice = await table.findByRole("status");
+    expect(notice.textContent).toContain(
+      "empty catalog temporarily unavailable",
+    );
+    expect(table.getAllByRole("status")).toHaveLength(1);
+    expect(table.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
+  });
+
+  it("has no memberships notice after switching to an empty agent segment", async () => {
+    const client = renderPage({
+      memberships: [membership(ALPHA, "writer")],
+      manageable_projects: [manageable(ALPHA)],
+    });
+    const table = await tableSurface();
+    await failWarmMemberships(
+      client,
+      500,
+      "memberships temporarily unavailable",
+    );
+    expect(await table.findByRole("status")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Deactivated 0" }));
+    expect(await screen.findByText(/No deactivated agents/)).toBeTruthy();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 
   it("collects the dialog's retry into the unified control (T-376)", async () => {

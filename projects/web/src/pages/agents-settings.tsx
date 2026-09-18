@@ -16,9 +16,15 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 import { agentsQuery, api } from "@/api/queries.ts";
-import { AgentProjectsCell } from "@/components/shared/agent-projects-dialog.tsx";
+import {
+  AgentProjectsCell,
+  AgentProjectsNotice,
+} from "@/components/shared/agent-projects-dialog.tsx";
 import { AvatarEditor } from "@/components/shared/avatar-editor.tsx";
-import { LoadFailure } from "@/components/shared/load-failure.tsx";
+import {
+  LoadFailure,
+  RefreshFailure,
+} from "@/components/shared/load-failure.tsx";
 import {
   expiresAtFrom,
   TokenExpirySelect,
@@ -46,6 +52,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { cn } from "@/lib/utils";
 
 type AgentSegment = "active" | "deactivated";
@@ -97,23 +104,26 @@ export function AgentsSettingsPage() {
                 : "No active agents."}
             </div>
           ) : (
-            <div className="rounded-lg border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Agent</TableHead>
-                    <TableHead>Handle</TableHead>
-                    <TableHead>Projects</TableHead>
-                    <TableHead className="w-56" />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {shown.map((agent) => (
-                    <AgentRow key={agent.id} agent={agent} />
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            <>
+              <AgentProjectsNotice />
+              <div className="rounded-lg border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Agent</TableHead>
+                      <TableHead>Handle</TableHead>
+                      <TableHead>Projects</TableHead>
+                      <TableHead className="w-56" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {shown.map((agent) => (
+                      <AgentRow key={agent.id} agent={agent} />
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           )}
         </div>
       )}
@@ -403,19 +413,29 @@ function CreateAgentDialog() {
 }
 
 export function AgentTokensDialog({ agent }: { agent: Agent }) {
+  return <AgentTokensDialogState key={agent.id} agent={agent} />;
+}
+
+function AgentTokensDialogState({ agent }: { agent: Agent }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [expiry, setExpiry] = useState("never");
   const [created, setCreated] = useState<TokenCreated | null>(null);
   const queryClient = useQueryClient();
+  const tokenQueryKey = ["agent-tokens", agent.id] as const;
 
   const tokens = useQuery({
-    queryKey: ["agent-tokens", agent.id],
+    queryKey: tokenQueryKey,
     queryFn: () => api.listAgentTokens(agent.id),
     enabled: open,
   });
+  const { replace, notice } = useReadFailure(
+    [tokens.isError ? tokens.error : null],
+    tokens.data !== undefined,
+    tokenQueryKey,
+  );
   const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: ["agent-tokens", agent.id] });
+    queryClient.invalidateQueries({ queryKey: tokenQueryKey });
 
   const issue = useMutation({
     mutationFn: () =>
@@ -459,22 +479,32 @@ export function AgentTokensDialog({ agent }: { agent: Agent }) {
           <DialogTitle>Tokens for {agent.login}</DialogTitle>
         </DialogHeader>
 
-        {tokens.isPending ? (
-          <p className="py-3 text-sm text-muted-foreground">loading…</p>
-        ) : tokens.isError ? (
+        {replace !== null ? (
           <div className="py-3">
             <LoadFailure
-              message={tokens.error.message}
-              detail={tokens.error.message}
+              message={replace}
+              detail={replace}
               onRetry={() => tokens.refetch()}
               retrying={tokens.isFetching}
             />
           </div>
+        ) : tokens.data === undefined ? (
+          <p className="py-3 text-sm text-muted-foreground">loading…</p>
         ) : (
-          <TokenTable
-            tokens={tokens.data}
-            onRevoke={(id) => revoke.mutate(id)}
-          />
+          <>
+            {notice !== null && (
+              <RefreshFailure
+                what={`tokens for ${agent.login}`}
+                detail={notice}
+                onRetry={() => tokens.refetch()}
+                retrying={tokens.isFetching}
+              />
+            )}
+            <TokenTable
+              tokens={tokens.data}
+              onRevoke={(id) => revoke.mutate(id)}
+            />
+          </>
         )}
 
         {created && <TokenReveal token={created} />}

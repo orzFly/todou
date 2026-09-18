@@ -10,7 +10,10 @@ import { PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { agentMembershipsQuery, api } from "@/api/queries.ts";
-import { LoadFailure } from "@/components/shared/load-failure.tsx";
+import {
+  LoadFailure,
+  RefreshFailure,
+} from "@/components/shared/load-failure.tsx";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,6 +34,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { cappedRole, ROLE_DOT } from "@/lib/roles.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
+import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { cn } from "@/lib/utils";
 
 const MAX_BADGES = 3;
@@ -46,6 +50,11 @@ const MAX_BADGES = 3;
  */
 export function AgentProjectsCell({ agent }: { agent: Agent }) {
   const memberships = useQuery(agentMembershipsQuery);
+  const { replace } = useReadFailure(
+    [memberships.isError ? memberships.error : null],
+    memberships.data !== undefined,
+    agentMembershipsQuery.queryKey,
+  );
   const mine = (memberships.data?.memberships ?? []).filter(
     (m) => m.agent_id === agent.id,
   );
@@ -58,15 +67,15 @@ export function AgentProjectsCell({ agent }: { agent: Agent }) {
           aria-label={`Manage ${agent.login}'s projects`}
           className="flex w-full cursor-pointer flex-wrap items-center gap-1 rounded-md px-1.5 py-1 text-left hover:bg-muted"
         >
-          {memberships.isPending ? (
-            <Skeleton className="h-5 w-28" />
-          ) : memberships.isError ? (
+          {replace !== null ? (
             <span
               className="text-sm text-muted-foreground"
-              title={`Could not load projects: ${memberships.error.message}`}
+              title={`Could not load projects: ${replace}`}
             >
               —
             </span>
+          ) : memberships.data === undefined ? (
+            <Skeleton className="h-5 w-28" />
           ) : mine.length === 0 ? (
             <span className="text-sm text-muted-foreground">No projects</span>
           ) : (
@@ -78,9 +87,29 @@ export function AgentProjectsCell({ agent }: { agent: Agent }) {
         <DialogHeader>
           <DialogTitle>Projects for {agent.login}</DialogTitle>
         </DialogHeader>
-        <AgentProjectsBody agent={agent} />
+        <AgentProjectsBody key={agent.id} agent={agent} />
       </DialogContent>
     </Dialog>
+  );
+}
+
+export function AgentProjectsNotice() {
+  const memberships = useQuery(agentMembershipsQuery);
+  const { notice } = useReadFailure(
+    [memberships.isError ? memberships.error : null],
+    memberships.data !== undefined,
+    agentMembershipsQuery.queryKey,
+  );
+
+  if (notice === null) return null;
+
+  return (
+    <RefreshFailure
+      what="agent projects"
+      detail={notice}
+      onRetry={() => memberships.refetch()}
+      retrying={memberships.isFetching}
+    />
   );
 }
 
@@ -130,6 +159,11 @@ function ProjectBadges({ memberships }: { memberships: AgentMembership[] }) {
 function AgentProjectsBody({ agent }: { agent: Agent }) {
   const memberships = useQuery(agentMembershipsQuery);
   const queryClient = useQueryClient();
+  const { replace, notice } = useReadFailure(
+    [memberships.isError ? memberships.error : null],
+    memberships.data !== undefined,
+    agentMembershipsQuery.queryKey,
+  );
   const [toAdd, setToAdd] = useState("");
 
   // Both caches, always: the project settings page shows the same rows from
@@ -160,22 +194,22 @@ function AgentProjectsBody({ agent }: { agent: Agent }) {
   );
   const refs = useProjectRefs(known);
 
-  if (memberships.isPending) {
+  if (replace !== null) {
+    return (
+      <LoadFailure
+        message={replace}
+        detail={replace}
+        onRetry={() => memberships.refetch()}
+        retrying={memberships.isFetching}
+      />
+    );
+  }
+  if (memberships.data === undefined) {
     return (
       <div className="space-y-2">
         <Skeleton className="h-9 w-full" />
         <Skeleton className="h-9 w-full" />
       </div>
-    );
-  }
-  if (memberships.isError) {
-    return (
-      <LoadFailure
-        message={memberships.error.message}
-        detail={memberships.error.message}
-        onRetry={() => memberships.refetch()}
-        retrying={memberships.isFetching}
-      />
     );
   }
 
@@ -196,6 +230,14 @@ function AgentProjectsBody({ agent }: { agent: Agent }) {
 
   return (
     <div className="space-y-3">
+      {notice !== null && (
+        <RefreshFailure
+          what={`projects for ${agent.login}`}
+          detail={notice}
+          onRetry={() => memberships.refetch()}
+          retrying={memberships.isFetching}
+        />
+      )}
       {mine.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           Not a member of any project yet.

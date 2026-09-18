@@ -8,9 +8,13 @@ import { useState } from "react";
 import { userIssuesPageQuery, userIssuesQuery } from "@/api/users.ts";
 import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
-import { LoadFailure } from "@/components/shared/load-failure.tsx";
+import {
+  LoadFailure,
+  RefreshFailure,
+} from "@/components/shared/load-failure.tsx";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { cn } from "@/lib/utils";
 
 const ROLES: { key: UserIssueRole; label: string }[] = [
@@ -82,20 +86,28 @@ export function UserIssuesSection({
   onFilters: (next: { role?: UserIssueRole; state?: UserIssueState }) => void;
 }) {
   const filters = { ref: login, role, state };
-  const first = useQuery(userIssuesQuery(filters));
+  const query = userIssuesQuery(filters);
+  const first = useQuery(query);
   const grid = useIssueListGrid();
   const queryClient = useQueryClient();
-  const [extraPages, setExtraPages] = useState<UserIssuesPage[]>([]);
 
-  // Pages appended under the previous filters would otherwise stay mixed
-  // into the list — closed rows surviving a switch back to Open.
-  const paginationKey = JSON.stringify([login, role, state]);
-  const [loadedFor, setLoadedFor] = useState(paginationKey);
-  if (loadedFor !== paginationKey) {
-    setLoadedFor(paginationKey);
-    setExtraPages([]);
+  // Pages appended under another login or filter must never appear with the
+  // current first page, even while the new query is still loading.
+  const paginationKey = JSON.stringify(query.queryKey);
+  const [pagination, setPagination] = useState<{
+    key: string;
+    pages: UserIssuesPage[];
+  }>(() => ({ key: paginationKey, pages: [] }));
+  if (pagination.key !== paginationKey) {
+    setPagination({ key: paginationKey, pages: [] });
   }
-
+  const extraPages = pagination.key === paginationKey ? pagination.pages : [];
+  const hasContent = first.data !== undefined || extraPages.length > 0;
+  const { replace, notice } = useReadFailure(
+    [first.isError ? first.error : null],
+    hasContent,
+    query.queryKey,
+  );
   const items = [
     ...(first.data?.items ?? []),
     ...extraPages.flatMap((p) => p.items),
@@ -110,7 +122,11 @@ export function UserIssuesSection({
     const next = await queryClient.fetchQuery(
       userIssuesPageQuery(filters, lastCursor),
     );
-    setExtraPages((prev) => [...prev, next]);
+    setPagination((current) =>
+      current.key === paginationKey
+        ? { key: current.key, pages: [...current.pages, next] }
+        : current,
+    );
   }
 
   return (
@@ -133,18 +149,27 @@ export function UserIssuesSection({
         </div>
       </div>
 
-      {first.isPending ? (
-        <Skeleton className="h-32 w-full" />
-      ) : first.isError ? (
+      {notice && (
+        <RefreshFailure
+          what="these cards"
+          detail={notice}
+          onRetry={() => first.refetch()}
+          retrying={first.isFetching}
+        />
+      )}
+
+      {replace ? (
         <div className="rounded-lg border border-dashed p-10 text-center">
           <LoadFailure
-            message={`Could not load these cards: ${first.error.message}`}
-            detail={first.error.message}
+            message={`Could not load these cards: ${replace}`}
+            detail={replace}
             onRetry={() => first.refetch()}
             retrying={first.isFetching}
             className="justify-center"
           />
         </div>
+      ) : !hasContent ? (
+        <Skeleton className="h-32 w-full" />
       ) : items.length === 0 ? (
         <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
           没有你能看到的卡 🥔

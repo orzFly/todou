@@ -1,8 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
+import { hashKey, useQuery } from "@tanstack/react-query";
 import type { Revision, RevisionPage } from "@todou/shared";
 import { Suspense, useMemo, useState } from "react";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
-import { LoadFailure } from "@/components/shared/load-failure.tsx";
+import {
+  LoadFailure,
+  RefreshFailure,
+} from "@/components/shared/load-failure.tsx";
 import {
   LazyMultiFileDiff,
   PIERRE_HIGHLIGHTER,
@@ -21,6 +24,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { useReadFailure } from "@/lib/use-read-failure.ts";
 
 /** Both sides of one edit as diff inputs; .md names give markdown highlighting. */
 export function toDiffFiles(revision: Revision, filename: string) {
@@ -30,25 +34,31 @@ export function toDiffFiles(revision: Revision, filename: string) {
   };
 }
 
+type RevisionHistoryProps = {
+  label: string;
+  editedAt: string;
+  filename: string;
+  queryKey: Array<string | number>;
+  fetchRevisions: () => Promise<RevisionPage>;
+};
+
 /**
  * GitHub-style edit history: a clickable "(edited)" marker opening the
  * revision list, each entry opening a diff dialog. History is fetched only
  * when the popover opens, so it is always fresh without invalidation
  * wiring. An edited item with no revisions predates history tracking.
  */
-export function RevisionHistory({
+export function RevisionHistory(props: RevisionHistoryProps) {
+  return <KeyedRevisionHistory key={hashKey(props.queryKey)} {...props} />;
+}
+
+function KeyedRevisionHistory({
   label,
   editedAt,
   filename,
   queryKey,
   fetchRevisions,
-}: {
-  label: string;
-  editedAt: string;
-  filename: string;
-  queryKey: Array<string | number>;
-  fetchRevisions: () => Promise<RevisionPage>;
-}) {
+}: RevisionHistoryProps) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Revision | null>(null);
   const history = useQuery({
@@ -57,6 +67,13 @@ export function RevisionHistory({
     enabled: open,
     staleTime: 0,
   });
+  const data = history.data;
+  const hasContent = data !== undefined;
+  const { replace, notice } = useReadFailure(
+    [history.isError ? history.error : null],
+    hasContent,
+    queryKey,
+  );
 
   return (
     <>
@@ -68,49 +85,64 @@ export function RevisionHistory({
           (edited)
         </PopoverTrigger>
         <PopoverContent className="max-h-80 w-96 overflow-y-auto">
-          {history.isPending ? (
-            <p className="px-2 py-1.5 text-xs text-muted-foreground">
-              Loading history…
-            </p>
-          ) : history.isError ? (
+          {replace ? (
             <div className="px-2 py-1.5">
               <LoadFailure
-                message={`Failed to load history: ${history.error.message}`}
-                detail={history.error.message}
+                message={`Failed to load history: ${replace}`}
+                detail={replace}
                 onRetry={() => history.refetch()}
                 retrying={history.isFetching}
                 size="xs"
               />
             </div>
-          ) : history.data.items.length === 0 ? (
-            <p className="px-2 py-1.5 text-xs text-muted-foreground italic">
-              This edit history predates tracking.
+          ) : data === undefined ? (
+            <p className="px-2 py-1.5 text-xs text-muted-foreground">
+              Loading history…
             </p>
           ) : (
-            history.data.items.map((revision) => (
-              <button
-                key={revision.id}
-                type="button"
-                className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted"
-                onClick={() => setSelected(revision)}
-              >
-                <UserChip
-                  user={revision.actor}
-                  nameClassName="font-medium text-foreground/80"
-                  link={false}
-                />
-                <AgentContextBadge
-                  context={revision.agent_context}
-                  className="shrink"
-                />
-                <span
-                  className="ml-auto shrink-0 text-xs text-muted-foreground/70"
-                  title={revision.created_at}
-                >
-                  {new Date(revision.created_at).toLocaleString()}
-                </span>
-              </button>
-            ))
+            <>
+              {notice && (
+                <div className="px-2 py-1.5">
+                  <RefreshFailure
+                    what="this edit history"
+                    detail={notice}
+                    onRetry={() => history.refetch()}
+                    retrying={history.isFetching}
+                    size="xs"
+                  />
+                </div>
+              )}
+              {data.items.length === 0 ? (
+                <p className="px-2 py-1.5 text-xs text-muted-foreground italic">
+                  This edit history predates tracking.
+                </p>
+              ) : (
+                data.items.map((revision) => (
+                  <button
+                    key={revision.id}
+                    type="button"
+                    className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted"
+                    onClick={() => setSelected(revision)}
+                  >
+                    <UserChip
+                      user={revision.actor}
+                      nameClassName="font-medium text-foreground/80"
+                      link={false}
+                    />
+                    <AgentContextBadge
+                      context={revision.agent_context}
+                      className="shrink"
+                    />
+                    <span
+                      className="ml-auto shrink-0 text-xs text-muted-foreground/70"
+                      title={revision.created_at}
+                    >
+                      {new Date(revision.created_at).toLocaleString()}
+                    </span>
+                  </button>
+                ))
+              )}
+            </>
           )}
         </PopoverContent>
       </Popover>
