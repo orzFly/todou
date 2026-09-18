@@ -993,7 +993,7 @@ function reportStale(tally) {
 
 // ----------------------------------------------------------------------- main
 
-async function main() {
+async function run() {
   const opts = parseArgs(process.argv.slice(2));
   let stack = null;
   try {
@@ -1094,6 +1094,14 @@ async function main() {
     return verdicts.every(([, held]) => held) ? 0 : 1;
   } finally {
     await stack?.cleanup();
+  }
+}
+async function main() {
+  try {
+    return await run();
+  } catch (error) {
+    console.error(`overlay-viewport-smoke: ${error.stack ?? error}`);
+    return 2;
   }
 }
 

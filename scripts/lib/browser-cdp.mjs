@@ -1,3 +1,7 @@
+/** CDP pipe transport shared by the manual browser smokes.
+ * After changing scripts/lib/, run `pnpm test:browser --self-test-cdp`
+ * and all three browser self-tests listed in `pnpm test:browser --help`.
+ */
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { join } from "node:path";

@@ -3,7 +3,7 @@
  * Manual real-Chromium layout smoke for board overlay scrollbars and collapsed
  * assignee badge clipping. It is intentionally independent of `pnpm test`/CI.
  *
- * Usage: node scripts/browser-layout-smoke.mjs [--self-test] [--keep] [--help]
+ * Usage: node scripts/browser-layout-smoke.mjs [--self-test|--self-test-cdp] [--keep] [--help]
  * Preconditions: the devshell's Node 24+, installed workspace dependencies,
  * `flock`, and CHROMIUM (default /usr/bin/chromium). The runner starts one
  * isolated API/Vite stack and one browser, then gives each sequential case a
@@ -12,13 +12,17 @@
  * CLI input, missing prerequisite, startup failure, or cleanup failure.
  * Limitations: headless Chromium measures CSS geometry/opacity, not painted
  * pixel antialiasing, platform scrollbar themes, touch, or mobile browser UI.
+ * After editing scripts/lib/, run --self-test-cdp, then all three browser
+ * self-tests: pnpm test:browser --self-test;
+ * pnpm test:browser:overlay --self-test;
+ * pnpm exec node scripts/user-baseline-smoke.mjs --self-test.
  */
 import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runBadgeClip } from "./browser/badge-clip.mjs";
 import { runBoardScrollbars } from "./browser/board-scrollbars.mjs";
-import { startBrowser } from "./lib/browser-cdp.mjs";
+import { selfCheckCdpPipe, startBrowser } from "./lib/browser-cdp.mjs";
 import { createBrowserStack } from "./lib/browser-stack.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -27,11 +31,19 @@ const HELP = `browser-layout-smoke — manual real-browser layout assertions
 Usage:
   node scripts/browser-layout-smoke.mjs
   pnpm test:browser --self-test
+  pnpm test:browser --self-test-cdp
 
 Options:
   --self-test  Prove each checker with an injected fault and a fresh clean page.
+  --self-test-cdp  Check CDP pipe framing, failures, timeouts, and sessions without Chromium.
   --keep       Keep the complete isolated stack directory after the run.
   --help       Print this help and exit.
+
+After changing scripts/lib/:
+  pnpm test:browser --self-test-cdp
+  pnpm test:browser --self-test
+  pnpm test:browser:overlay --self-test
+  pnpm exec node scripts/user-baseline-smoke.mjs --self-test
 
 Preconditions:
   Node 24+ from the devshell, workspace dependencies, flock, and Chromium at
@@ -47,13 +59,23 @@ Limitations:
 `;
 
 function parseArgs(argv) {
-  const options = { selfTest: false, keep: false, help: false };
+  const options = {
+    selfTest: false,
+    selfTestCdp: false,
+    keep: false,
+    help: false,
+  };
   for (const arg of argv) {
     if (arg === "--self-test") options.selfTest = true;
+    else if (arg === "--self-test-cdp") options.selfTestCdp = true;
     else if (arg === "--keep") options.keep = true;
     else if (arg === "--help") options.help = true;
     else throw new Error(`unknown argument: ${arg}`);
   }
+  if (options.selfTestCdp && (options.selfTest || options.keep))
+    throw new Error(
+      "--self-test-cdp cannot be combined with --self-test or --keep",
+    );
   return options;
 }
 
@@ -121,6 +143,17 @@ async function main() {
   if (options.help) {
     process.stdout.write(HELP);
     return 0;
+  }
+  if (options.selfTestCdp) {
+    try {
+      console.log(`CDP ${JSON.stringify(await selfCheckCdpPipe())}`);
+      return 0;
+    } catch (error) {
+      console.error(
+        `browser-layout-smoke CDP self-test: ${error.stack ?? error}`,
+      );
+      return 2;
+    }
   }
 
   const startedAt = Date.now();

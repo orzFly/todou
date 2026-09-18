@@ -1,3 +1,8 @@
+/** Isolated stack and cross-worktree lock for the manual browser smokes.
+ * After changing scripts/lib/, run `pnpm test:browser --self-test-cdp`
+ * and all three browser self-tests listed in `pnpm test:browser --help`.
+ * None run in CI.
+ */
 import { execFileSync, spawn } from "node:child_process";
 import {
   accessSync,

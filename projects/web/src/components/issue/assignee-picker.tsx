@@ -33,6 +33,13 @@ export function AssigneePicker({
       <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
       {/* Name plus login needs more room than the trigger's width, which
           is what the menu defaults to. */}
+      {/* Floating UI positions with roundByDPR = Math.round(value * dpr) / dpr.
+          At DPR 1, rounding the 144.5px menu's half-pixel position right
+          reduces the shared 8px collision padding to 7.5px of real clearance.
+          The extra 0.5px bounds the rightward rounding error for DPR >= 1
+          and preserves the overlay's measured 8px edge contract. Below DPR 1
+          that bound does not hold: DPR 0.5 has a 2px rounding grid, so even
+          padding 8.5 can leave 7.5px clearance. The smoke measures DPR 1. */}
       <DropdownMenuContent className="w-auto" collisionPadding={8.5}>
         {members.map((member) => {
           const active = selectedIds.includes(member.user.id);

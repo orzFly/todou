@@ -1073,6 +1073,7 @@ function printRun(run) {
 const options = parseArgs(process.argv.slice(2));
 let stack = null;
 let fatal = false;
+let environmentFailure = false;
 try {
   const guards = sourceGuards();
   console.log("SOURCE GUARDS (never browser hits)");
@@ -1208,14 +1209,16 @@ try {
     }
   }
 } catch (error) {
+  environmentFailure = true;
   fatal = true;
   console.error(`user-baseline-smoke: ${error.stack ?? error}`);
 } finally {
   try {
     await stack?.cleanup();
   } catch (error) {
+    environmentFailure = true;
     fatal = true;
     console.error(`user-baseline-smoke cleanup: ${error.stack ?? error}`);
   }
 }
-process.exitCode = fatal ? 1 : 0;
+process.exitCode = environmentFailure ? 2 : fatal ? 1 : 0;
