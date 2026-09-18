@@ -134,10 +134,9 @@ function AuthedLayout() {
     // The account arrived, so the latch is what retires the panel — and the
     // only thing that does. Reading `me.data === undefined` at the branch
     // below as well would put two guards on one condition, each passing the
-    // suite with the other deleted; one of them has to be the guard.
-    // Clearing, rather than gating, is the one that also survives a logout:
-    // `shell.tsx` clears the whole cache before it redirects, and a latch
-    // left set would flash a stale failure over that render.
+    // suite with the other deleted; one of them has to be the guard. Delete
+    // this branch and "drops the panel when a retry finally brings the
+    // account" goes red.
     setColdStartFailure(null);
   }
 
