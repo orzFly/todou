@@ -19,7 +19,8 @@ import { remarkRejectedUrlsAsText } from "./remark-rejected-urls.ts";
  *
  * The order is significant. Rejected URLs are restored to source text before
  * later tokenizers see them, and `remarkFrontmatterTable` consumes the nodes
- * produced by `remarkFrontmatter`.
+ * produced by `remarkFrontmatter`. Without that tokenizer, frontmatter lines
+ * that begin with digits are parsed as ordered-list items (T-383).
  */
 export const MARKDOWN_SYNTAX_PLUGINS: PluggableList = [
   remarkGfm,

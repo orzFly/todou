@@ -15,7 +15,10 @@ import {
   useState,
 } from "react";
 import type Markdown from "react-markdown";
-import { MarkdownView } from "@/components/shared/markdown-view.tsx";
+import {
+  MarkdownViewWithPlugins,
+  useMarkdownRemarkPlugins,
+} from "@/components/shared/markdown-view.tsx";
 import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
 import {
@@ -630,17 +633,7 @@ export function AnnotatedMarkdown({
   const pressTimerRef = useRef<number | null>(null);
   const pendingRef = useRef<PendingSelection | null>(null);
   const pointerFine = useMediaQuery(POINTER_FINE);
-  const [remarkPlugins, setRemarkPlugins] = useState<
-    ComponentProps<typeof Markdown>["remarkPlugins"] | null
-  >(null);
-  const onRemarkPlugins = useCallback(
-    (plugins: ComponentProps<typeof Markdown>["remarkPlugins"]) => {
-      setRemarkPlugins((previous) =>
-        previous === plugins ? previous : plugins,
-      );
-    },
-    [],
-  );
+  const remarkPlugins = useMarkdownRemarkPlugins(slug);
 
   const index = useMemo(() => buildSegmentIndex(body), [body]);
   const baselineIndex = useMemo(
@@ -657,7 +650,7 @@ export function AnnotatedMarkdown({
   const hasStructures = changes.structures.length > 0;
   const baselineTree = useMemo(
     () =>
-      baselineBody === undefined || !hasStructures || remarkPlugins === null
+      baselineBody === undefined || !hasStructures
         ? undefined
         : buildBaselineTree(baselineBody, { remarkPlugins }),
     [baselineBody, hasStructures, remarkPlugins],
@@ -1010,15 +1003,15 @@ export function AnnotatedMarkdown({
       onClick={onClick}
       data-testid="annotated-markdown"
     >
-      <MarkdownView
+      <MarkdownViewWithPlugins
         slug={slug}
         issueNumber={issueNumber}
         rehypePlugins={rehypePlugins}
         fenceBaselines={fenceBaselines}
-        onRemarkPlugins={onRemarkPlugins}
+        remarkPlugins={remarkPlugins}
       >
         {body}
-      </MarkdownView>
+      </MarkdownViewWithPlugins>
 
       {chips.map((chip) => (
         <AnnotationChip

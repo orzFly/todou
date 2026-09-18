@@ -203,9 +203,11 @@ describe("word-level diff in the rendered view (T-142)", () => {
       "outro\n\n```ts\nconst a = 2;\n```\n",
     );
     expect(container.querySelector("pre .spec-ins")).toBeNull();
-    expect(
-      container.querySelector("[data-testid='fence-diff']")?.textContent,
-    ).toBe("const a = 2;\n");
+    await waitFor(() => {
+      expect(
+        container.querySelector("[data-testid='fence-diff']")?.textContent,
+      ).toBe("const a = 2;\n");
+    });
     expect(texts(container, "ins.spec-ins")).toEqual(["outro"]);
   });
 

@@ -5,6 +5,7 @@ import type {
   Project,
   ReferenceConfig,
   ReferenceDirectory,
+  SpecCommentItem,
 } from "@todou/shared";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -20,6 +21,7 @@ import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import {
   AnnotatedMarkdown,
   anchorForSelection,
+  type DisplayedAnnotation,
 } from "../src/components/spec/annotated-markdown.tsx";
 import type * as BaselineTreeModule from "../src/lib/spec-baseline-tree.ts";
 import { buildSegmentIndex } from "../src/lib/spec-source-index.ts";
@@ -385,19 +387,22 @@ describe("T-405 structural deletions in the rendered document", () => {
     return client;
   };
 
-  it("builds the baseline once across parent rerenders and comparison close", async () => {
+  it("builds the baseline once across rerenders, comments, and comparison close", async () => {
     buildBaselineTreeSpy.mockClear();
     const before = "Alpha.\n\nRemoved.\n";
     const after = "Alpha.\n";
     const client = stableClient();
-    const tree = (baselineBody?: string) => (
+    const tree = (
+      baselineBody?: string,
+      annotations: DisplayedAnnotation[] = [],
+    ) => (
       <QueryClientProvider client={client}>
         <AnnotatedMarkdown
           slug="p"
           issueNumber={1}
           body={after}
           baselineBody={baselineBody}
-          annotations={[]}
+          annotations={annotations}
           onStage={() => {}}
           onEditDraft={() => {}}
           onRemoveDraft={() => {}}
@@ -411,6 +416,51 @@ describe("T-405 structural deletions in the rendered document", () => {
       expect(buildBaselineTreeSpy).toHaveBeenCalledTimes(1);
     });
     view.rerender(tree(before));
+    expect(buildBaselineTreeSpy).toHaveBeenCalledTimes(1);
+    const comment: SpecCommentItem = {
+      comment_id: 1,
+      author: {
+        id: 1,
+        login: "alice",
+        display_name: "Alice",
+        kind: "human",
+        avatar_url: null,
+        owner: null,
+      },
+      created_at: "2026-09-18T00:00:00Z",
+      body: "note",
+      anchor: {
+        path: "plan.md",
+        version: 1,
+        line_start: 1,
+        line_end: 1,
+        col_start: 1,
+        col_end: 5,
+        quote: "Alpha",
+      },
+      resolved: null,
+      outdated: false,
+      current_line_start: null,
+      current_line_end: null,
+    };
+    view.rerender(
+      tree(before, [
+        {
+          key: "c1",
+          kind: "comment",
+          item: comment,
+          start: 1,
+          end: 1,
+          colStart: 1,
+          colEnd: 5,
+        },
+      ]),
+    );
+    await waitFor(() => {
+      expect(
+        view.container.querySelector("mark.spec-mark-comment"),
+      ).not.toBeNull();
+    });
     expect(buildBaselineTreeSpy).toHaveBeenCalledTimes(1);
     view.rerender(tree());
     await waitFor(() => {
