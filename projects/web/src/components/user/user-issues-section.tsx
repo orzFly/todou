@@ -4,7 +4,7 @@ import type {
   UserIssueState,
   UserIssuesPage,
 } from "@todou/shared";
-import { useMemo, useState } from "react";
+import { useMemo, useRef } from "react";
 import { userIssuesPageQuery, userIssuesQuery } from "@/api/users.ts";
 import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
@@ -12,9 +12,10 @@ import {
   LoadFailure,
   RefreshFailure,
 } from "@/components/shared/load-failure.tsx";
+import { LoadMoreFooter } from "@/components/shared/load-more.tsx";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { usePagedAppend } from "@/lib/use-paged-append.ts";
 import { useProjectRefs } from "@/lib/use-project-refs.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { cn } from "@/lib/utils";
@@ -96,40 +97,33 @@ export function UserIssuesSection({
   // Pages appended under another login or filter must never appear with the
   // current first page, even while the new query is still loading.
   const paginationKey = JSON.stringify(query.queryKey);
-  const [pagination, setPagination] = useState<{
-    key: string;
-    pages: UserIssuesPage[];
-  }>(() => ({ key: paginationKey, pages: [] }));
-  if (pagination.key !== paginationKey) {
-    setPagination({ key: paginationKey, pages: [] });
-  }
-  const extraPages = pagination.key === paginationKey ? pagination.pages : [];
-  const hasContent = first.data !== undefined || extraPages.length > 0;
+  const paged = usePagedAppend<UserIssuesPage>(paginationKey);
+  const focusRequested = useRef(false);
+  const hasContent = first.data !== undefined || paged.pages.length > 0;
   const { replace, notice } = useReadFailure(
     [first.isError ? first.error : null],
     hasContent,
     query.queryKey,
   );
   const items = useMemo(
-    () => [...(first.data?.items ?? []), ...extraPages.flatMap((p) => p.items)],
-    [extraPages, first.data?.items],
+    () => [
+      ...(first.data?.items ?? []),
+      ...paged.pages.flatMap((page) => page.items),
+    ],
+    [paged.pages, first.data?.items],
   );
   const projects = useMemo(() => items.map((item) => item.project), [items]);
   const refs = useProjectRefs(projects);
   // The newest loaded page decides. Falling back to page 1's cursor would
   // resurrect it at the end of the list and re-append that page forever.
-  const lastPage = extraPages.at(-1) ?? first.data;
+  const lastPage = paged.pages.at(-1) ?? first.data;
   const lastCursor = lastPage?.has_more ? lastPage.next_cursor : null;
 
-  async function loadMore() {
+  function loadMore() {
     if (!lastCursor) return;
-    const next = await queryClient.fetchQuery(
-      userIssuesPageQuery(filters, lastCursor),
-    );
-    setPagination((current) =>
-      current.key === paginationKey
-        ? { key: current.key, pages: [...current.pages, next] }
-        : current,
+    focusRequested.current = true;
+    paged.append(() =>
+      queryClient.fetchQuery(userIssuesPageQuery(filters, lastCursor)),
     );
   }
 
@@ -207,11 +201,12 @@ export function UserIssuesSection({
             ))}
           </ul>
           {lastCursor && (
-            <div className="text-center">
-              <Button variant="outline" size="sm" onClick={loadMore}>
-                Load more
-              </Button>
-            </div>
+            <LoadMoreFooter
+              pending={paged.pending}
+              error={paged.error}
+              onLoadMore={loadMore}
+              focusRequested={focusRequested}
+            />
           )}
         </>
       )}
