@@ -843,11 +843,13 @@ export function assessT416FreshPageRestore(fault, restored, epsilon = 0.125) {
           !Number.isFinite(sample.clipping?.after?.positiveClippedCssPx) ||
           sample.clipping.after.positiveClippedCssPx <= epsilon ||
           !Number.isFinite(sample.rowHeightCssPx?.before) ||
-          !Number.isFinite(sample.rowHeightCssPx?.after),
+          !Number.isFinite(sample.rowHeightCssPx?.after) ||
+          Math.abs(sample.rowHeightCssPx.before - sample.rowHeightCssPx.after) >
+            epsilon,
       )
     ) {
       reasons.push(
-        `${surface}: py-1 fault did not produce confirmed positive clipping and row heights`,
+        `${surface}: py-1 fault did not produce confirmed positive clipping with stable row height`,
       );
     }
     if (
@@ -857,11 +859,13 @@ export function assessT416FreshPageRestore(fault, restored, epsilon = 0.125) {
           !Number.isFinite(sample.clipping?.after?.positiveClippedCssPx) ||
           sample.clipping.after.positiveClippedCssPx > epsilon ||
           !Number.isFinite(sample.rowHeightCssPx?.before) ||
-          !Number.isFinite(sample.rowHeightCssPx?.after),
+          !Number.isFinite(sample.rowHeightCssPx?.after) ||
+          Math.abs(sample.rowHeightCssPx.before - sample.rowHeightCssPx.after) >
+            epsilon,
       )
     ) {
       reasons.push(
-        `${surface}: fresh page retained clipping or lacks row heights`,
+        `${surface}: fresh page retained clipping or changed row height`,
       );
     }
   }

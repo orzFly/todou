@@ -6,9 +6,9 @@
  * parents.  A hit means Chromium measured two inline baselines in a real
  * exported production component.  Reading the source is useful drift evidence,
  * but is deliberately reported as a guard and never promoted to a browser hit.
- * Private spec-view rows cannot honestly be reconstructed in the fixture; they
- * therefore remain visible, fatal "missing" cases until a public route can
- * reach them deterministically or their production parent is exported.
+ * The low-frequency private spec-view rows are reached through the real
+ * production spec route; the Vite-only fixture covers the exported components.
+ * Stack/CDP helper extraction is tracked separately by T-424.
  *
  * Run manually (this intentionally is not part of the happy-dom test suite):
  *   node scripts/user-baseline-smoke.mjs
@@ -610,6 +610,9 @@ async function measure(page, faultId = null, cases = CASES) {
               span.classList.contains("ml-1.5"),
             )
           : null;
+        // The first participant must be UserChip's visible name. Falling back
+        // to the whole chip can silently measure avatar initials instead.
+        if (preferName && !name) return null;
         const host = name ?? element;
         const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
         let node = walker.nextNode();
@@ -717,11 +720,15 @@ async function measure(page, faultId = null, cases = CASES) {
         for (const [index, element] of participants.entries()) {
           const node = textLeaf(element, index === 0);
           if (!node) {
-            invalid = "participant lacks text";
+            invalid =
+              index === 0
+                ? "author UserChip visible name span (.ml-1.5) is missing"
+                : "peer participant lacks text";
             break;
           }
           const host = node.parentNode;
           const range = document.createRange();
+          range.selectNodeContents(node);
           const textBefore = [...range.getClientRects()].map(rect);
           const participantBefore = rect(element.getBoundingClientRect());
           const rowBeforeMarker = rect(root.getBoundingClientRect());

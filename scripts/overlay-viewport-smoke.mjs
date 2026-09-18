@@ -29,6 +29,9 @@
  * own tap behaviour (focusing what was tapped, scrolling the focused element
  * into view) is precisely what a synthetic event cannot reproduce, and it is
  * the prime suspect this check exists to rule out.
+ *
+ * T-424 owns extracting the duplicated isolated-stack and CDP transport used
+ * here and by user-baseline-smoke.mjs; keep them separate until that lands.
  */
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
