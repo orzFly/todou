@@ -285,6 +285,7 @@ export function ReviewSubmitDialog({
                 Comment only
               </DropdownMenuItem>
               <DropdownMenuItem
+                className="text-red-700 focus:bg-red-50 focus:text-red-700 data-disabled:text-muted-foreground dark:text-red-400 dark:focus:bg-red-950 dark:focus:text-red-400 dark:data-disabled:text-muted-foreground"
                 disabled={pending || isPusher}
                 title={isPusher ? PUSHER_TITLE : undefined}
                 onSelect={() => submit("request_changes")}
@@ -292,6 +293,7 @@ export function ReviewSubmitDialog({
                 Request changes
               </DropdownMenuItem>
               <DropdownMenuItem
+                className="text-green-700 focus:bg-green-50 focus:text-green-700 data-disabled:text-muted-foreground dark:text-green-400 dark:focus:bg-green-950 dark:focus:text-green-400 dark:data-disabled:text-muted-foreground"
                 disabled={pending || isPusher}
                 title={isPusher ? PUSHER_TITLE : undefined}
                 onSelect={() => submit("approve")}

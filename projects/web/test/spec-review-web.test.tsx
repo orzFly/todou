@@ -706,6 +706,63 @@ describe("ReviewSubmitDialog: responsive controls (T-443)", () => {
     },
   );
 
+  it.each([
+    ["Request changes", "red"],
+    ["Approve", "green"],
+  ])(
+    "colors the narrow %s action and its focus states %s",
+    async (name, color) => {
+      stubFetch();
+      mount([DRAFT]);
+      await openReviewMenu();
+      const item = reviewItem(name);
+      for (const className of [
+        `text-${color}-700`,
+        `focus:bg-${color}-50`,
+        `focus:text-${color}-700`,
+        `dark:text-${color}-400`,
+        `dark:focus:bg-${color}-950`,
+        `dark:focus:text-${color}-400`,
+      ]) {
+        expect(item.classList.contains(className)).toBe(true);
+      }
+    },
+  );
+
+  it.each([
+    ["empty comment", PUSHER, [], ["Comment only"]],
+    ["pusher verdicts", READER, [DRAFT], ["Request changes", "Approve"]],
+  ] as const)(
+    "visibly disables %s in the narrow menu",
+    async (_case, author, drafts, names) => {
+      const posts = stubFetch(author);
+      const { client } = mount([...drafts]);
+      await settled(client);
+      await openReviewMenu();
+      for (const name of names) {
+        const item = reviewItem(name);
+        expect(item.hasAttribute("data-disabled")).toBe(true);
+        expect(item.getAttribute("aria-disabled")).toBe("true");
+        expect(item.classList.contains("data-disabled:opacity-50")).toBe(true);
+        expect(
+          item.classList.contains("data-disabled:pointer-events-none"),
+        ).toBe(true);
+        if (name !== "Comment only") {
+          expect(
+            item.classList.contains("data-disabled:text-muted-foreground"),
+          ).toBe(true);
+          expect(
+            item.classList.contains("dark:data-disabled:text-muted-foreground"),
+          ).toBe(true);
+        }
+        fireEvent.click(item);
+        fireEvent.keyDown(item, { key: "Enter" });
+      }
+      await act(async () => {});
+      expect(posts).toHaveLength(0);
+    },
+  );
+
   it.each([390, 640])(
     "at %ipx an empty review disables only Comment",
     async (width) => {
