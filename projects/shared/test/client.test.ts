@@ -5,6 +5,7 @@ import {
   MovedError,
   TodouClient,
   TodouError,
+  TodouNetworkError,
 } from "../src/client.ts";
 
 type Captured = { url: string; init: RequestInit };
@@ -662,6 +663,19 @@ describe("TodouClient redirects (T-231)", () => {
       moved: true,
       title: "Old card",
     });
+  });
+
+  it("marks an error thrown by fetch as a transport failure", async () => {
+    const cause = new TypeError("fetch failed");
+    const client = new TodouClient({
+      fetch: (async () => {
+        throw cause;
+      }) as typeof fetch,
+    });
+
+    const error = await client.getSpecFiles("a", 1).catch((caught) => caught);
+    expect(error).toBeInstanceOf(TodouNetworkError);
+    expect((error as TodouNetworkError).cause).toBe(cause);
   });
 
   it("still returns bytes from requestRaw after following a redirect", async () => {

@@ -161,6 +161,15 @@ export class TodouError extends Error {
   }
 }
 
+/** A request that failed before any HTTP response reached the client. */
+export class TodouNetworkError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : "Network request failed");
+    this.name = "TodouNetworkError";
+    this.cause = cause;
+  }
+}
+
 type Query = Record<
   string,
   string | number | boolean | Array<string | number> | undefined
@@ -378,10 +387,15 @@ export class TodouClient {
       body = init.form;
     }
 
-    const res = await this.#fetch(
-      `${this.#baseUrl}/api${path}${queryString(init?.query)}`,
-      { method, headers, body, credentials: "same-origin" },
-    );
+    let res: Response;
+    try {
+      res = await this.#fetch(
+        `${this.#baseUrl}/api${path}${queryString(init?.query)}`,
+        { method, headers, body, credentials: "same-origin" },
+      );
+    } catch (error) {
+      throw new TodouNetworkError(error);
+    }
     if (!res.ok) {
       let parsed: unknown = null;
       try {

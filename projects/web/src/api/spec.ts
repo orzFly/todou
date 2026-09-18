@@ -4,6 +4,7 @@ import {
   MovedError,
   SpecPushedPayload,
   TodouError,
+  TodouNetworkError,
 } from "@todou/shared";
 import { issueQuery } from "@/api/issues.ts";
 import { api, meQuery } from "@/api/queries.ts";
@@ -38,7 +39,7 @@ async function readSpecFiles(
     ) {
       throw error;
     }
-    if (error instanceof TodouError || error instanceof TypeError) {
+    if (error instanceof TodouError || error instanceof TodouNetworkError) {
       throw new SpecReadError(error);
     }
     throw error;
