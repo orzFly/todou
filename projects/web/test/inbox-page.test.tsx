@@ -1,9 +1,10 @@
-import { fireEvent, waitFor } from "@testing-library/react";
+import { act, fireEvent, waitFor } from "@testing-library/react";
 import type { InboxItem, InboxPage as InboxPageData } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { inboxQuery } from "../src/api/inbox.ts";
 import { api } from "../src/api/queries.ts";
 import { InboxPage } from "../src/pages/inbox.tsx";
-import { renderWithProviders } from "./render.tsx";
+import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -191,6 +192,63 @@ describe("InboxPage", () => {
     const badge = badges[0] as SVGElement;
     // The badge sits on the mentioned row, not the other one.
     expect(badge.closest("li")?.textContent).toContain("issue 1");
+  });
+});
+
+describe("InboxPage · saved data (T-415)", () => {
+  it("keeps an inbox issue on a failed refresh and Retry fetches new content", async () => {
+    const cached = { items: [makeItem("a", 42)], truncated: false };
+    mockInbox(cached);
+    const get = vi.mocked(api.getInbox);
+    const client = testQueryClient();
+    client.setQueryData(inboxQuery.queryKey, cached);
+    const view = renderWithProviders(<InboxPage />, client);
+    await view.findByText("issue 42");
+
+    get.mockRejectedValue(
+      Object.assign(new Error("feed unavailable"), { status: 500 }),
+    );
+    await act(async () => {
+      await client.refetchQueries({ queryKey: inboxQuery.queryKey });
+    });
+    await view.findByText(/Couldn't refresh the inbox/);
+    expect(view.getByText("issue 42")).toBeTruthy();
+
+    get.mockResolvedValue({ items: [makeItem("a", 43)], truncated: false });
+    fireEvent.click(view.getByRole("button", { name: "Retry" }));
+    await view.findByText("issue 43");
+    expect(view.queryByText(/Couldn't refresh the inbox/)).toBeNull();
+  });
+
+  it("keeps the cold failure and its message visible during Retry, then clears it", async () => {
+    mockInbox({ items: [], truncated: false });
+    const get = vi.mocked(api.getInbox);
+    get.mockRejectedValue(
+      Object.assign(new Error("cold inbox unavailable"), { status: 500 }),
+    );
+    const view = renderWithProviders(<InboxPage />);
+    await view.findByText(/Could not load the inbox: cold inbox unavailable/);
+
+    let finish: (data: InboxPageData) => void = () => undefined;
+    const retry = new Promise<InboxPageData>((resolve) => {
+      finish = resolve;
+    });
+    get.mockReturnValue(retry);
+    fireEvent.click(view.getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(
+        (view.getByRole("button", { name: "Retry" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true),
+    );
+    expect(
+      view.getByText(/Could not load the inbox: cold inbox unavailable/),
+    ).toBeTruthy();
+    await act(async () => {
+      finish({ items: [makeItem("a", 44)], truncated: false });
+    });
+    await view.findByText("issue 44");
+    expect(view.queryByText(/Could not load the inbox/)).toBeNull();
   });
 });
 

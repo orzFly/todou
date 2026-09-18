@@ -1,15 +1,29 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
-import type { Agent, Me, ReferenceDirectory } from "@todou/shared";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import type {
+  Agent,
+  Me,
+  Member,
+  Project,
+  ReferenceDirectory,
+} from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  agentsQuery,
+  api,
+  meQuery,
+  projectsQuery,
+} from "../src/api/queries.ts";
+import { referenceDirectoryQuery } from "../src/api/references.ts";
 import { resolveGrantTarget } from "../src/lib/grant-target.ts";
 import {
   GrantAccessCard,
+  GrantAccessPage,
   type GrantSearch,
   grantFailure,
   parseGrantSearch,
   readReason,
 } from "../src/pages/grant-access.tsx";
-import { renderWithProviders } from "./render.tsx";
+import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 const SINCE = "2026-01-01T00:00:00.000Z";
 const NOW = "2026-06-01T00:00:00.000Z";
@@ -64,7 +78,7 @@ const DIRECTORY: ReferenceDirectory = {
 const memberRow = (
   user: { id: number; login: string },
   role: "admin" | "writer" | "reader",
-) => ({
+): Member => ({
   user: {
     id: user.id,
     login: user.login,
@@ -131,8 +145,20 @@ function renderCard(
   );
 }
 
+function withResolvers<T>() {
+  const promiseConstructor = Promise as unknown as {
+    withResolvers<U>(): {
+      promise: Promise<U>;
+      resolve: (value: U | PromiseLike<U>) => void;
+      reject: (reason?: unknown) => void;
+    };
+  };
+  return promiseConstructor.withResolvers<T>();
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("resolveGrantTarget", () => {
@@ -453,5 +479,201 @@ describe("the refusal Grant can now walk into (T-340)", () => {
     expect(grantFailure("acme", new Error("requires admin role"))).toBe(
       "acme: requires admin role",
     );
+  });
+});
+
+const PAGE_PROJECTS: Project[] = PROJECTS.map((project) => ({
+  ...project,
+  description: "",
+  created_at: SINCE,
+}));
+
+function renderPage({
+  cached = false,
+  projectsFailure,
+  directoryFailure,
+}: {
+  cached?: boolean;
+  projectsFailure?: Error;
+  directoryFailure?: Error;
+} = {}) {
+  const getMe = vi.spyOn(api, "me").mockResolvedValue(me);
+  const getAgents = vi
+    .spyOn(api, "listAgents")
+    .mockResolvedValue([agent(5, "bot")]);
+  const getProjects = vi
+    .spyOn(api, "listProjects")
+    .mockResolvedValue(PAGE_PROJECTS);
+  const getDirectory = vi
+    .spyOn(api, "getReferenceDirectory")
+    .mockResolvedValue(DIRECTORY);
+  const getMembers = vi
+    .spyOn(api, "listMembers")
+    .mockImplementation(async (slug) => {
+      if (slug === "mine")
+        return [
+          memberRow(me, "admin"),
+          memberRow({ id: 5, login: "bot" }, "reader"),
+        ];
+      if (slug === "theirs") return [memberRow(me, "reader")];
+      throw new Error(`Unexpected members request for ${slug}`);
+    });
+  if (projectsFailure) getProjects.mockRejectedValueOnce(projectsFailure);
+  if (directoryFailure) getDirectory.mockRejectedValueOnce(directoryFailure);
+
+  const client = testQueryClient();
+  if (cached) {
+    client.setQueryData(meQuery.queryKey, me);
+    client.setQueryData(agentsQuery.queryKey, [agent(5, "bot")]);
+    client.setQueryData(projectsQuery.queryKey, PAGE_PROJECTS);
+    client.setQueryData(referenceDirectoryQuery.queryKey, DIRECTORY);
+  }
+  const view = renderWithProviders(<GrantAccessPage />, client, {
+    initialEntry: "/?target=mine&login=bot",
+  });
+  return {
+    ...view,
+    client,
+    getMe,
+    getAgents,
+    getProjects,
+    getDirectory,
+    getMembers,
+  };
+}
+
+describe("GrantAccessPage · saved core data", () => {
+  it("keeps the concrete project card on a 500 refresh and Retry replaces it with fresh data", async () => {
+    const { client, getMe, getAgents, getProjects, getDirectory, getMembers } =
+      renderPage({ cached: true });
+    expect(
+      await screen.findByRole("checkbox", { name: "include mine" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Mine")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Add to project" })).toBeTruthy();
+    expect(getMembers).toHaveBeenCalledWith("mine");
+
+    getProjects.mockRejectedValueOnce(
+      Object.assign(new Error("projects unavailable"), { status: 500 }),
+    );
+    await act(async () => {
+      await client.refetchQueries({ queryKey: projectsQuery.queryKey });
+    });
+    const notice = await screen.findByText(/Couldn't refresh your projects/);
+    expect(notice.textContent).toContain("projects unavailable");
+    expect(screen.getByText("Mine")).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "include mine" })).toBeTruthy();
+    expect(screen.queryByText(/Could not load your projects/)).toBeNull();
+
+    const updated = withResolvers<Project[]>();
+    getProjects.mockReturnValueOnce(updated.promise);
+    const directoryCalls = getDirectory.mock.calls.length;
+    const meCalls = getMe.mock.calls.length;
+    const agentCalls = getAgents.mock.calls.length;
+    const projectCalls = getProjects.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(getProjects).toHaveBeenCalledTimes(projectCalls + 1),
+    );
+    expect(getMe.mock.calls.length).toBeGreaterThan(meCalls);
+    expect(getAgents.mock.calls.length).toBeGreaterThan(agentCalls);
+    expect(getDirectory).toHaveBeenCalledTimes(directoryCalls);
+    await act(async () => {
+      updated.resolve(
+        PAGE_PROJECTS.map((project) =>
+          project.slug === "mine"
+            ? { ...project, name: "Mine after retry" }
+            : project,
+        ),
+      );
+    });
+    expect(await screen.findByText("Mine after retry")).toBeTruthy();
+    expect(screen.queryByText("Mine")).toBeNull();
+    expect(screen.queryByText(/Couldn't refresh your projects/)).toBeNull();
+  });
+
+  it("keeps a cold 500 LoadFailure during a deferred Retry, then shows the fetched card", async () => {
+    const { getProjects, getMembers } = renderPage({
+      projectsFailure: Object.assign(new Error("projects unavailable"), {
+        status: 500,
+      }),
+    });
+    expect(
+      await screen.findByText(
+        /Could not load your projects: projects unavailable/,
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("Mine")).toBeNull();
+
+    const recovered = withResolvers<Project[]>();
+    getProjects.mockReturnValueOnce(recovered.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "Retry" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true),
+    );
+    expect(
+      screen.getByText(/Could not load your projects: projects unavailable/),
+    ).toBeTruthy();
+    await act(async () => {
+      recovered.resolve(
+        PAGE_PROJECTS.map((project) =>
+          project.slug === "mine"
+            ? { ...project, name: "Recovered Mine" }
+            : project,
+        ),
+      );
+    });
+    expect(await screen.findByText("Recovered Mine")).toBeTruthy();
+    expect(
+      await screen.findByRole("checkbox", { name: "include mine" }),
+    ).toBeTruthy();
+    expect(getMembers).toHaveBeenCalledWith("mine");
+    expect(screen.queryByText(/Could not load your projects/)).toBeNull();
+  });
+
+  it("does not gate the concrete page on a failed reference directory", async () => {
+    const { client, getDirectory, getMembers } = renderPage({
+      directoryFailure: Object.assign(new Error("directory unavailable"), {
+        status: 500,
+      }),
+    });
+    expect(
+      await screen.findByRole("checkbox", { name: "include mine" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Mine")).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        client.getQueryState(referenceDirectoryQuery.queryKey)?.status,
+      ).toBe("error"),
+    );
+    expect(getDirectory).toHaveBeenCalledTimes(1);
+    expect(getMembers).toHaveBeenCalledWith("mine");
+    expect(screen.queryByText(/Could not load your projects/)).toBeNull();
+    expect(screen.queryByText(/Couldn't refresh your projects/)).toBeNull();
+  });
+
+  it("keeps cached content on a me 401 without a page failure notice", async () => {
+    const { client, getMe, getMembers } = renderPage({ cached: true });
+    expect(
+      await screen.findByRole("checkbox", { name: "include mine" }),
+    ).toBeTruthy();
+    getMe.mockRejectedValueOnce(
+      Object.assign(new Error("session expired"), { status: 401 }),
+    );
+    await act(async () => {
+      await client.refetchQueries({ queryKey: meQuery.queryKey });
+    });
+    await waitFor(() =>
+      expect(client.getQueryState(meQuery.queryKey)?.status).toBe("error"),
+    );
+    expect(getMembers).toHaveBeenCalledWith("mine");
+    await waitFor(() => expect(screen.getByText("Mine")).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Add to project" })).toBeTruthy();
+    expect(screen.queryByText(/Could not load your projects/)).toBeNull();
+    expect(screen.queryByText(/Couldn't refresh your projects/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 });

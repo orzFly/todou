@@ -24,9 +24,13 @@ import {
 import { StatusPill } from "@/components/issue/status-pill.tsx";
 import { hasQualifier } from "@/components/search/suggestions.ts";
 import { SearchHighlight } from "@/components/search-highlight.tsx";
-import { LoadFailure } from "@/components/shared/load-failure.tsx";
+import {
+  LoadFailure,
+  RefreshFailure,
+} from "@/components/shared/load-failure.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
+import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { cn } from "@/lib/utils";
 
 const DOMAIN_LABELS: Array<{ value: SearchDomain; label: string }> = [
@@ -79,6 +83,12 @@ export function SearchResults({
   const q = (search.q ?? "").trim();
   const results = useQuery(searchQuery(slug, search));
   const prefix = useRefPrefix(slug);
+  const data = results.data;
+  const hasContent = data !== undefined;
+  const { replace, notice } = useReadFailure(
+    results.isError ? results.error : null,
+    hasContent,
+  );
 
   return (
     <div className="space-y-5">
@@ -86,13 +96,11 @@ export function SearchResults({
         <h2 className="font-heading text-lg font-medium">
           {q === "" ? "Search" : `Results for “${q}”`}
         </h2>
-        {results.data && (
+        {hasContent && !replace && (
           <p className="text-sm text-muted-foreground">
-            {results.data.items.length}
-            {results.data.has_more ? "+" : ""} hit
-            {results.data.items.length === 1 && !results.data.has_more
-              ? ""
-              : "s"}
+            {data?.items.length}
+            {data?.has_more ? "+" : ""} hit
+            {data?.items.length === 1 && !data.has_more ? "" : "s"}
           </p>
         )}
       </div>
@@ -101,62 +109,76 @@ export function SearchResults({
 
       <JumpBanner slug={slug} q={q} />
 
-      {results.data && <Diagnostics items={results.data.diagnostics} />}
+      {hasContent && !replace && (
+        <Diagnostics items={data?.diagnostics ?? []} />
+      )}
 
       {q === "" ? (
         <SyntaxHelp />
-      ) : results.isPending ? (
-        <div className="space-y-3">
-          <Skeleton className="h-20 w-full" />
-          <Skeleton className="h-20 w-full" />
-        </div>
-      ) : results.isError ? (
+      ) : replace ? (
         <Empty>
           <LoadFailure
-            message={`Search failed: ${results.error.message}`}
-            detail={results.error.message}
+            message={`Search failed: ${replace}`}
+            detail={replace}
             onRetry={() => results.refetch()}
             retrying={results.isFetching}
           />
         </Empty>
-      ) : results.data.items.length === 0 ? (
-        <Empty>
-          Nothing matched. Trashed cards, and every spec version but the newest,
-          are deliberately not searchable.
-        </Empty>
+      ) : !hasContent ? (
+        <div className="space-y-3">
+          <Skeleton className="h-20 w-full" />
+          <Skeleton className="h-20 w-full" />
+        </div>
       ) : (
-        <ul className="space-y-4">
-          {groupByIssue(results.data.items).map((group) => (
-            <li
-              key={group.issue.number}
-              className="overflow-hidden rounded-lg border"
-            >
-              <Link
-                to="/projects/$slug/issues/$number"
-                params={{ slug, number: String(group.issue.number) }}
-                className="flex items-center gap-2 border-b bg-muted/40 px-4 py-2 hover:bg-accent"
-              >
-                <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                  {formatRef(prefix, group.issue.number)}
-                </span>
-                <span className="truncate font-medium">
-                  {group.issue.title}
-                </span>
-                <StatusPill
-                  status={group.issue.status}
-                  className="ml-auto shrink-0"
-                />
-              </Link>
-              <ul>
-                {group.hits.map((hit) => (
-                  <li key={hitKey(hit)}>
-                    <HitRow slug={slug} hit={hit} />
-                  </li>
-                ))}
-              </ul>
-            </li>
-          ))}
-        </ul>
+        <>
+          {notice && (
+            <RefreshFailure
+              what="these results"
+              detail={notice}
+              onRetry={() => results.refetch()}
+              retrying={results.isFetching}
+            />
+          )}
+          {data.items.length === 0 ? (
+            <Empty>
+              Nothing matched. Trashed cards, and every spec version but the
+              newest, are deliberately not searchable.
+            </Empty>
+          ) : (
+            <ul className="space-y-4">
+              {groupByIssue(data.items).map((group) => (
+                <li
+                  key={group.issue.number}
+                  className="overflow-hidden rounded-lg border"
+                >
+                  <Link
+                    to="/projects/$slug/issues/$number"
+                    params={{ slug, number: String(group.issue.number) }}
+                    className="flex items-center gap-2 border-b bg-muted/40 px-4 py-2 hover:bg-accent"
+                  >
+                    <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                      {formatRef(prefix, group.issue.number)}
+                    </span>
+                    <span className="truncate font-medium">
+                      {group.issue.title}
+                    </span>
+                    <StatusPill
+                      status={group.issue.status}
+                      className="ml-auto shrink-0"
+                    />
+                  </Link>
+                  <ul>
+                    {group.hits.map((hit) => (
+                      <li key={hitKey(hit)}>
+                        <HitRow slug={slug} hit={hit} />
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </div>
   );

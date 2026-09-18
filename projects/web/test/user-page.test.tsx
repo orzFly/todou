@@ -7,7 +7,13 @@ import {
   RouterProvider,
   useParams,
 } from "@tanstack/react-router";
-import { act, fireEvent, render, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { PublicUser } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, queryClient } from "../src/api/queries.ts";
@@ -204,13 +210,9 @@ describe("UserProfilePage load failure (T-409)", () => {
     expect(getUser.mock.calls.map((c) => c[0])).toEqual(["bot-one", "bot-one"]);
   });
 
-  it("greys the button, not the screen, when the failure kept its data", async () => {
-    // The one path where `retrying` has something to describe. A refetch that
-    // fails with data already cached (window refocus past the 60s staleTime,
-    // server away) leaves status "error" with the data kept, so this branch
-    // renders and `fetchState` does not reset it to pending on the next
-    // fetch. With no cached data the panel unmounts into the skeleton
-    // instead and the button never gets to render disabled.
+  it("keeps Alice on screen and greys the refresh Retry while fetching saved data", async () => {
+    // A cached read can fail without losing its data. The warning must be
+    // a sibling of that identity, not a replacement for it.
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -224,26 +226,85 @@ describe("UserProfilePage load failure (T-409)", () => {
     await act(async () => {
       await client.refetchQueries({ queryKey: userQuery("alice").queryKey });
     });
-    await view.findByText(/Could not load this user/);
-
-    let release: (user: PublicUser) => void = () => undefined;
-    vi.spyOn(api, "getUser").mockImplementation(
-      () =>
-        new Promise<PublicUser>((resolve) => {
-          release = resolve;
-        }),
+    await waitFor(() =>
+      expect(client.getQueryState(userQuery("alice").queryKey)?.status).toBe(
+        "error",
+      ),
     );
-    fireEvent.click(view.getByRole("button", { name: "Retry" }));
-    await waitFor(() => {
-      expect(
-        view.getByRole("button", { name: "Retry" }).hasAttribute("disabled"),
-      ).toBe(true);
+    expect(view.getByText("Alice Potato")).toBeTruthy();
+    const warning = await view.findByText(/Couldn't refresh this user/);
+    const warningRow = warning.closest('[role="status"]');
+    expect(warningRow).not.toBeNull();
+    const retryButton = within(warningRow as HTMLElement).getByRole("button", {
+      name: "Retry",
     });
+
+    let resolveRetry: (user: PublicUser) => void = () => undefined;
+    const retry = new Promise<PublicUser>((resolve) => {
+      resolveRetry = resolve;
+    });
+    vi.spyOn(api, "getUser").mockReturnValue(retry);
+    fireEvent.click(retryButton);
+    await waitFor(() => {
+      expect(retryButton.hasAttribute("disabled")).toBe(true);
+    });
+    expect(view.getByText("Alice Potato")).toBeTruthy();
+    expect(view.getByText(/Couldn't refresh this user/)).toBeTruthy();
 
     await act(async () => {
-      release(alice);
+      resolveRetry({ ...alice, display_name: "Alice Recovered" });
     });
-    expect(await view.findByText("Alice Potato")).toBeTruthy();
+    expect(await view.findByText("Alice Recovered")).toBeTruthy();
+    expect(view.queryByText(/Couldn't refresh this user/)).toBeNull();
+  });
+});
+
+describe("UserProfilePage · saved data policy (T-415)", () => {
+  it.each([403, 404])(
+    "removes cached identity on a refused %s read",
+    async (status) => {
+      const client = clientWith(alice);
+      const view = renderAt("/users/alice", client);
+      await view.findByText("Alice Potato");
+      vi.spyOn(api, "getUser").mockRejectedValue(
+        Object.assign(new Error("access refused"), { status }),
+      );
+      await act(async () => {
+        await client.refetchQueries({ queryKey: userQuery("alice").queryKey });
+      });
+      if (status === 404) {
+        await view.findByText("No such user here");
+        expect(view.queryByRole("button", { name: "Retry" })).toBeNull();
+      } else {
+        await view.findByText(/Could not load this user: access refused/);
+      }
+      expect(view.queryByText("Alice Potato")).toBeNull();
+      expect(view.queryByText(/Couldn't refresh/)).toBeNull();
+    },
+  );
+
+  it("keeps cached identity on a network failure and Retry recovers", async () => {
+    const client = clientWith(alice);
+    const view = renderAt("/users/alice", client);
+    await view.findByText("Alice Potato");
+    const get = vi
+      .spyOn(api, "getUser")
+      .mockRejectedValue(new TypeError("offline"));
+    await act(async () => {
+      await client.refetchQueries({ queryKey: userQuery("alice").queryKey });
+    });
+    const warning = await view.findByText(
+      /Couldn't refresh this user \(offline\)/,
+    );
+    expect(view.getByText("Alice Potato")).toBeTruthy();
+    get.mockResolvedValue({ ...alice, display_name: "Alice Online" });
+    const warningRow = warning.closest('[role="status"]');
+    expect(warningRow).not.toBeNull();
+    fireEvent.click(
+      within(warningRow as HTMLElement).getByRole("button", { name: "Retry" }),
+    );
+    await view.findByText("Alice Online");
+    expect(view.queryByText(/Couldn't refresh/)).toBeNull();
   });
 });
 

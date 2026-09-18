@@ -24,6 +24,10 @@ import {
   type Selection,
   useTargetSelection,
 } from "@/components/shared/auth-target-picker.tsx";
+import {
+  LoadFailure,
+  RefreshFailure,
+} from "@/components/shared/load-failure.tsx";
 import { RolePermissionsDialog } from "@/components/shared/role-permissions-table.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { Button } from "@/components/ui/button";
@@ -37,6 +41,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type GrantTarget, resolveGrantTarget } from "@/lib/grant-target.ts";
+import { useReadFailure } from "@/lib/use-read-failure.ts";
 
 /**
  * Where the link a failed CLI command printed lands (T-280): an agent could
@@ -173,6 +178,7 @@ export function GrantAccessCard({
   agents,
   projects,
   directory,
+  refreshFailure,
 }: {
   search: GrantSearch;
   reason: string | null;
@@ -180,6 +186,7 @@ export function GrantAccessCard({
   agents: Agent[];
   projects: readonly ProjectBriefRow[];
   directory: ReferenceDirectory | null;
+  refreshFailure?: React.ReactNode;
 }) {
   const found = search.targets.map((raw) => ({
     raw,
@@ -290,6 +297,7 @@ export function GrantAccessCard({
 
   return (
     <PageShell>
+      {refreshFailure}
       <div className="flex flex-col gap-2">
         <h1 className="text-lg font-semibold">Access request</h1>
         <p className="text-sm text-muted-foreground">
@@ -548,6 +556,18 @@ export function GrantAccessPage() {
   const agents = useQuery(agentsQuery);
   const projects = useQuery(projectsQuery);
   const directory = useQuery(referenceDirectoryQuery);
+  const meData = me.data;
+  const agentsData = agents.data;
+  const projectsData = projects.data;
+  const hasContent =
+    meData !== undefined &&
+    agentsData !== undefined &&
+    projectsData !== undefined;
+  const failure = me.error ?? agents.error ?? projects.error;
+  const { replace, notice } = useReadFailure(failure, hasContent);
+  const retry = () =>
+    void Promise.all([me.refetch(), agents.refetch(), projects.refetch()]);
+  const retrying = me.isFetching || agents.isFetching || projects.isFetching;
 
   if (search.targets.length === 0) {
     return (
@@ -558,12 +578,19 @@ export function GrantAccessPage() {
       </PageShell>
     );
   }
-  if (
-    me.isPending ||
-    agents.isPending ||
-    projects.isPending ||
-    directory.isPending
-  ) {
+  if (replace) {
+    return (
+      <PageShell>
+        <LoadFailure
+          message={`Could not load your projects: ${replace}`}
+          detail={replace}
+          onRetry={retry}
+          retrying={retrying}
+        />
+      </PageShell>
+    );
+  }
+  if (!hasContent || directory.isPending) {
     return (
       <div className="mx-auto max-w-2xl space-y-3 px-4 py-16">
         <Skeleton className="h-8 w-2/3" />
@@ -571,24 +598,24 @@ export function GrantAccessPage() {
       </div>
     );
   }
-  const failure = me.error ?? agents.error ?? projects.error;
-  if (failure || me.isError || agents.isError || projects.isError) {
-    return (
-      <PageShell>
-        <p className="text-sm text-destructive">
-          Could not load your projects: {failure?.message ?? "unknown error"}
-        </p>
-      </PageShell>
-    );
-  }
   return (
     <GrantAccessCard
       search={search}
       reason={reason}
-      me={me.data}
-      agents={agents.data}
-      projects={projects.data}
+      me={meData}
+      agents={agentsData}
+      projects={projectsData}
       directory={directory.data ?? null}
+      refreshFailure={
+        notice ? (
+          <RefreshFailure
+            what="your projects"
+            detail={notice}
+            onRetry={retry}
+            retrying={retrying}
+          />
+        ) : null
+      }
     />
   );
 }

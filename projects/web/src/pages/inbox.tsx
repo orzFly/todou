@@ -6,8 +6,12 @@ import { groupInboxItems, type InboxGroup, inboxQuery } from "@/api/inbox.ts";
 import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
 import { MarkAllReadButton } from "@/components/issue/mark-all-read-button.tsx";
 import { StatusPill } from "@/components/issue/status-pill.tsx";
-import { LoadFailure } from "@/components/shared/load-failure.tsx";
+import {
+  LoadFailure,
+  RefreshFailure,
+} from "@/components/shared/load-failure.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { cn } from "@/lib/utils";
 
 const TABS = [
@@ -39,21 +43,19 @@ export function matchesTab(item: InboxItem, tab: InboxTab): boolean {
 export function InboxPage() {
   const inbox = useQuery(inboxQuery);
   const [tab, setTab] = useState<InboxTab>("all");
+  const data = inbox.data;
+  const hasContent = data !== undefined;
+  const { replace, notice } = useReadFailure(
+    inbox.isError ? inbox.error : null,
+    hasContent,
+  );
 
-  if (inbox.isPending) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-40" />
-        <Skeleton className="h-32 w-full" />
-      </div>
-    );
-  }
-  if (inbox.isError) {
+  if (replace) {
     return (
       <div className="rounded-lg border border-dashed p-10 text-center">
         <LoadFailure
-          message={`Could not load the inbox: ${inbox.error.message}`}
-          detail={inbox.error.message}
+          message={`Could not load the inbox: ${replace}`}
+          detail={replace}
           onRetry={() => inbox.refetch()}
           retrying={inbox.isFetching}
           className="justify-center"
@@ -61,8 +63,16 @@ export function InboxPage() {
       </div>
     );
   }
+  if (!hasContent) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-8 w-40" />
+        <Skeleton className="h-32 w-full" />
+      </div>
+    );
+  }
 
-  const filtered = inbox.data.items.filter((item) => matchesTab(item, tab));
+  const filtered = data.items.filter((item) => matchesTab(item, tab));
   const groups = groupInboxItems(filtered);
 
   return (
@@ -92,6 +102,15 @@ export function InboxPage() {
         <MarkAllReadButton scopeName="the inbox" className="max-sm:ml-auto" />
       </div>
 
+      {notice && (
+        <RefreshFailure
+          what="the inbox"
+          detail={notice}
+          onRetry={() => inbox.refetch()}
+          retrying={inbox.isFetching}
+        />
+      )}
+
       {groups.length === 0 ? (
         <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
           收件箱清空了 🥔
@@ -104,7 +123,7 @@ export function InboxPage() {
         </div>
       )}
 
-      {inbox.data.truncated && (
+      {data.truncated && (
         <p className="text-center text-sm text-muted-foreground">
           Some projects have more unread than shown — consider marking older
           issues as read.

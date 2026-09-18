@@ -69,10 +69,14 @@ import {
   PageSkeleton,
 } from "@/components/page-skeleton.tsx";
 import { ProjectMuteButton } from "@/components/project-mute-button.tsx";
-import { LoadFailure } from "@/components/shared/load-failure.tsx";
+import {
+  LoadFailure,
+  RefreshFailure,
+} from "@/components/shared/load-failure.tsx";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useHeaderHeight } from "@/lib/use-header-height.ts";
+import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -372,9 +376,10 @@ export function TrashView({
 
 /**
  * The flat page query lives below the grouped/flat fork so the grouped view
- * never pays for a list page it does not render.
+ * never pays for a list page it does not render. Exported for tests, matching
+ * GroupedIssueList.
  */
-function FlatIssueList({
+export function FlatIssueList({
   slug,
   statuses,
   allLabels,
@@ -393,30 +398,49 @@ function FlatIssueList({
     ...issuesQuery(slug, search),
     placeholderData: keepPreviousData,
   });
-  if (issues.isError) {
+  const data = issues.data;
+  const hasContent = data !== undefined;
+  const { replace, notice } = useReadFailure(
+    issues.isError ? issues.error : null,
+    hasContent,
+  );
+
+  if (replace) {
     return (
       <LoadFailure
-        message={`Could not load the issues: ${issues.error.message}`}
-        detail={issues.error.message}
+        message={`Could not load the issues: ${replace}`}
+        detail={replace}
         onRetry={() => issues.refetch()}
         retrying={issues.isFetching}
       />
     );
   }
-  // Only the very first load: from here on `keepPreviousData` holds the
-  // previous page while the next one is on the wire.
-  if (issues.data === undefined) return <IssueListBodySkeleton />;
+  // On a key change, `keepPreviousData` is valid only while the new filter is
+  // in flight. Query core drops that placeholder if the new request fails:
+  // rows answered for the old filter are not content for the failed key and
+  // must not survive underneath a refresh notice.
+  if (!hasContent) return <IssueListBodySkeleton />;
   return (
-    <IssueList
-      slug={slug}
-      page={issues.data}
-      statuses={statuses}
-      allLabels={allLabels}
-      search={search}
-      typed={typed}
-      narrowing={isNarrowing(typed, search, issues.isPlaceholderData)}
-      onCreateLabel={onCreateLabel}
-    />
+    <div className="space-y-3">
+      {notice && (
+        <RefreshFailure
+          what="the issues"
+          detail={notice}
+          onRetry={() => issues.refetch()}
+          retrying={issues.isFetching}
+        />
+      )}
+      <IssueList
+        slug={slug}
+        page={data}
+        statuses={statuses}
+        allLabels={allLabels}
+        search={search}
+        typed={typed}
+        narrowing={isNarrowing(typed, search, issues.isPlaceholderData)}
+        onCreateLabel={onCreateLabel}
+      />
+    </div>
   );
 }
 

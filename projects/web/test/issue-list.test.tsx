@@ -1,16 +1,26 @@
-import { render } from "@testing-library/react";
+import type { QueryClient } from "@tanstack/react-query";
+import {
+  act,
+  fireEvent,
+  render,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { IssueListPage, Status } from "@todou/shared";
-import { describe, expect, it } from "vitest";
+import { useState } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   csvToIds,
   effectiveCategory,
   effectiveSort,
   idsToCsv,
   issueSearchSchema,
+  issuesQuery,
   listParams,
   patchIssueStatus,
   toggleId,
 } from "../src/api/issues.ts";
+import { api } from "../src/api/queries.ts";
 import {
   LabelChip,
   LabelChips,
@@ -18,8 +28,22 @@ import {
   splitLabelName,
 } from "../src/components/issue/label-chip.tsx";
 import { StatusPill } from "../src/components/issue/status-pill.tsx";
-import { groupStickyTop } from "../src/pages/issue-list.tsx";
+import { FlatIssueList, groupStickyTop } from "../src/pages/issue-list.tsx";
+import { renderWithProviders, testQueryClient } from "./render.tsx";
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 describe("issueSearchSchema (filter state ↔ URL)", () => {
   it("accepts an empty search", () => {
     expect(issueSearchSchema.parse({})).toEqual({});
@@ -274,5 +298,210 @@ describe("groupStickyTop (offsets follow the measured header)", () => {
     // the header measures, so a header that regains a row above `sm` needs
     // no change here.
     expect(groupStickyTop(97, 118, true)).toBe(215);
+  });
+});
+
+const flatStatus: Status = {
+  id: 1,
+  name: "Todo",
+  category: "open",
+  color: "#123456",
+  position: 1,
+  is_default: true,
+};
+
+function flatPage(number: number, title: string): IssueListPage {
+  return {
+    items: [
+      {
+        id: number,
+        number,
+        title,
+        status: flatStatus,
+        author: {
+          id: 1,
+          login: "user",
+          display_name: "User",
+          kind: "human",
+          avatar_url: null,
+          owner: null,
+        },
+        assignees: [],
+        labels: [],
+        created_at: "2026-08-11T00:00:00Z",
+        updated_at: "2026-08-11T00:00:00Z",
+        body_edited_at: null,
+        open_questions: 0,
+        spec_version: null,
+        spec_review_status: null,
+        spec_unresolved_comments: 0,
+        deleted_at: null,
+        deleted_by: null,
+        unread: false,
+        unread_comments: 0,
+        muted: null,
+        blocked_by: [],
+        blocks: [],
+        moves: [],
+      },
+    ],
+    next_cursor: null,
+  };
+}
+
+function seedFlatRowContext(client: QueryClient) {
+  client.setQueryData(["me-prefs"], {
+    show_weak_unread: true,
+    ref_placement_list: "before",
+    ref_placement_board: "own_line",
+    ref_placement_detail: "before",
+    ref_placement_reference: "before",
+    boxed_ref_links: true,
+    truncate_ref_title: true,
+    show_repeated_ref_title: false,
+  });
+  client.setQueryData(["reference-config", "todou"], {
+    format: { prefix: "T", history: [] },
+    autolinks: [],
+  });
+}
+
+const flatProps = {
+  slug: "todou",
+  statuses: [flatStatus],
+  allLabels: [],
+  search: { category: "all" as const, group: "none" as const },
+  typed: "",
+};
+
+describe("FlatIssueList · read failures (T-415)", () => {
+  it("keeps a cold transient failure through Retry, then replaces it with the list", async () => {
+    const first = deferred<IssueListPage>();
+    const list = vi.spyOn(api, "listIssues").mockReturnValue(first.promise);
+    const client = testQueryClient();
+    seedFlatRowContext(client);
+    const view = renderWithProviders(<FlatIssueList {...flatProps} />, client);
+    expect(await view.findByTestId("issue-list-body-skeleton")).toBeTruthy();
+    await act(async () => {
+      first.reject(
+        Object.assign(new Error("issues unavailable"), { status: 500 }),
+      );
+    });
+    const message = await view.findByText(
+      "Could not load the issues: issues unavailable",
+    );
+
+    const retry = deferred<IssueListPage>();
+    list.mockReturnValue(retry.promise);
+    const failure = message.closest('[role="status"]');
+    fireEvent.click(
+      within(failure as HTMLElement).getByRole("button", { name: "Retry" }),
+    );
+    await waitFor(() =>
+      expect(
+        (
+          within(failure as HTMLElement).getByRole("button", {
+            name: "Retry",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(true),
+    );
+    expect(view.getByText(/Could not load the issues/)).toBeTruthy();
+
+    await act(async () => {
+      retry.resolve(flatPage(42, "Recovered issue"));
+    });
+    await view.findByText("Recovered issue");
+    expect(view.queryByText(/Could not load the issues/)).toBeNull();
+  });
+
+  it("keeps a cached issue under a transient refresh notice, recovers, and refuses stale content", async () => {
+    const search = flatProps.search;
+    const cached = flatPage(42, "Cached issue");
+    const client = testQueryClient();
+    seedFlatRowContext(client);
+    client.setQueryData(issuesQuery("todou", search).queryKey, cached);
+    const list = vi.spyOn(api, "listIssues").mockResolvedValue(cached);
+    const view = renderWithProviders(
+      <FlatIssueList {...flatProps} search={search} />,
+      client,
+    );
+    await view.findByText("Cached issue");
+
+    list.mockRejectedValue(
+      Object.assign(new Error("issue refresh failed"), { status: 500 }),
+    );
+    await act(async () => {
+      await client.refetchQueries({
+        queryKey: issuesQuery("todou", search).queryKey,
+      });
+    });
+    const warning = await view.findByText(/Couldn't refresh the issues/);
+    expect(view.getByText("Cached issue")).toBeTruthy();
+
+    list.mockResolvedValue(flatPage(43, "Fresh issue"));
+    const notice = warning.closest('[role="status"]');
+    fireEvent.click(
+      within(notice as HTMLElement).getByRole("button", { name: "Retry" }),
+    );
+    await view.findByText("Fresh issue");
+    expect(view.queryByText(/Couldn't refresh the issues/)).toBeNull();
+
+    list.mockRejectedValue(
+      Object.assign(new Error("issues forbidden"), { status: 403 }),
+    );
+    await act(async () => {
+      await client.refetchQueries({
+        queryKey: issuesQuery("todou", search).queryKey,
+      });
+    });
+    await view.findByText("Could not load the issues: issues forbidden");
+    expect(view.queryByText("Fresh issue")).toBeNull();
+  });
+
+  it("does not show old-filter placeholder rows after the new filter fails", async () => {
+    const oldSearch = flatProps.search;
+    const nextSearch = { ...oldSearch, status: "2" };
+    const client = testQueryClient();
+    seedFlatRowContext(client);
+    client.setQueryData(
+      issuesQuery("todou", oldSearch).queryKey,
+      flatPage(42, "Old filter issue"),
+    );
+    client.setQueryDefaults(issuesQuery("todou", oldSearch).queryKey, {
+      staleTime: Infinity,
+    });
+    const request = deferred<IssueListPage>();
+    const list = vi.spyOn(api, "listIssues").mockReturnValue(request.promise);
+
+    function SwitchingList() {
+      const [search, setSearch] = useState(oldSearch);
+      return (
+        <>
+          <button type="button" onClick={() => setSearch(nextSearch)}>
+            Change filter
+          </button>
+          <FlatIssueList {...flatProps} search={search} />
+        </>
+      );
+    }
+    const view = renderWithProviders(<SwitchingList />, client);
+    await view.findByText("Old filter issue");
+    fireEvent.click(view.getByRole("button", { name: "Change filter" }));
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+    // Previous-filter data is only a loading placeholder, not an answer to
+    // the new key. Query core removes it when the new filter fails.
+    await act(async () => {
+      request.reject(
+        Object.assign(new Error("filtered issues unavailable"), {
+          status: 500,
+        }),
+      );
+    });
+    await view.findByText(
+      "Could not load the issues: filtered issues unavailable",
+    );
+    expect(view.queryByText("Old filter issue")).toBeNull();
+    expect(view.queryByText(/Couldn't refresh the issues/)).toBeNull();
   });
 });

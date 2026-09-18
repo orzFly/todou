@@ -19,9 +19,15 @@ import {
   rememberLastAgent,
   useTargetSelection,
 } from "@/components/shared/auth-target-picker.tsx";
+import {
+  LoadFailure,
+  RefreshFailure,
+} from "@/components/shared/load-failure.tsx";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { classifyReadFailure } from "@/lib/http-status.ts";
+import { useReadFailure } from "@/lib/use-read-failure.ts";
 
 export type CliAuthRequest = { port: number; state: string; name: string };
 
@@ -109,6 +115,7 @@ export function CliAuthCard({
   lastAgentId = null,
   onCancel,
   mint = mintToken,
+  refreshFailure,
   deliver = (url) => window.location.assign(url),
 }: {
   request: CliAuthRequest;
@@ -117,6 +124,7 @@ export function CliAuthCard({
   lastAgentId?: number | null;
   onCancel: () => void;
   /** Test seams; production uses the real API and a top-level navigation. */
+  refreshFailure?: React.ReactNode;
   mint?: (
     target: AuthTarget,
     tokenName: string,
@@ -140,6 +148,7 @@ export function CliAuthCard({
     <div className="mx-auto max-w-lg px-4 py-20">
       <Card>
         <CardContent className="flex flex-col gap-5 pt-6">
+          {refreshFailure}
           <div className="flex flex-col items-center gap-4 text-center">
             <span className="text-4xl" aria-hidden>
               🥔
@@ -195,12 +204,14 @@ export function CliAuthCodeCard({
   lastAgentId = null,
   approve = (id, target) => api.approveCliAuthRequest(id, { target }),
   refuse = (id) => api.denyCliAuthRequest(id),
+  refreshFailures,
 }: {
   request: CliAuthRequestInfo;
   me: Me;
   agents: Agent[];
   lastAgentId?: number | null;
   /** Test seams; production talks to the API. */
+  refreshFailures?: React.ReactNode;
   approve?: (
     id: number,
     target: AuthTarget,
@@ -244,6 +255,7 @@ export function CliAuthCodeCard({
     <div className="mx-auto max-w-lg px-4 py-20">
       <Card>
         <CardContent className="flex flex-col gap-5 pt-6">
+          {refreshFailures}
           <div className="flex flex-col items-center gap-4 text-center">
             <span className="text-4xl" aria-hidden>
               🥔
@@ -322,22 +334,46 @@ function LoopbackFlow({
 }) {
   const me = useQuery(meQuery);
   const agents = useQuery(agentsQuery);
-  if (me.isPending || agents.isPending) return <LoadingCard />;
+  const meData = me.data;
+  const agentsData = agents.data;
+  const hasContent = meData !== undefined && agentsData !== undefined;
   const failure = me.error ?? agents.error;
-  if (failure || me.isError || agents.isError) {
+  const { replace, notice } = useReadFailure(failure, hasContent);
+  const retry = () => void Promise.all([me.refetch(), agents.refetch()]);
+  const retrying = me.isFetching || agents.isFetching;
+
+  if (replace) {
     return (
       <PageError>
-        Could not load your agents: {failure?.message ?? "unknown error"}
+        <LoadFailure
+          message={`Could not load your agents: ${replace}`}
+          detail={replace}
+          onRetry={retry}
+          retrying={retrying}
+          className="justify-center"
+        />
       </PageError>
     );
   }
+  if (!hasContent) return <LoadingCard />;
   return (
     <CliAuthCard
       request={request}
-      me={me.data}
-      agents={agents.data}
+      me={meData}
+      agents={agentsData}
       lastAgentId={readLastAgentId()}
       onCancel={onCancel}
+      refreshFailure={
+        notice ? (
+          <RefreshFailure
+            what="your agents"
+            detail={notice}
+            onRetry={retry}
+            retrying={retrying}
+            className="justify-center"
+          />
+        ) : null
+      }
     />
   );
 }
@@ -346,10 +382,22 @@ function CodeFlow({ code }: { code: string }) {
   const me = useQuery(meQuery);
   const agents = useQuery(agentsQuery);
   const request = useQuery(cliAuthRequestQuery(code));
-  if (me.isPending || agents.isPending || request.isPending) {
-    return <LoadingCard />;
-  }
-  if (request.isError) {
+  const requestData = request.data;
+  const meData = me.data;
+  const agentsData = agents.data;
+  const hasRequest = requestData !== undefined;
+  const requestError = request.isError ? request.error : null;
+  const requestFailure = useReadFailure(requestError, hasRequest);
+  const hasAgents = meData !== undefined && agentsData !== undefined;
+  const agentsFailure = useReadFailure(me.error ?? agents.error, hasAgents);
+  const retryRequest = () => void request.refetch();
+  const retryAgents = () => void Promise.all([me.refetch(), agents.refetch()]);
+  const retryingAgents = me.isFetching || agents.isFetching;
+
+  if (
+    requestError !== null &&
+    classifyReadFailure(requestError) === "refused"
+  ) {
     return (
       <PageError>
         This authorization request is unknown or has expired. Re-run `todou
@@ -357,20 +405,61 @@ function CodeFlow({ code }: { code: string }) {
       </PageError>
     );
   }
-  const failure = me.error ?? agents.error;
-  if (failure || me.isError || agents.isError) {
+  if (requestFailure.replace) {
     return (
       <PageError>
-        Could not load your agents: {failure?.message ?? "unknown error"}
+        <LoadFailure
+          message={`Could not load this request: ${requestFailure.replace}`}
+          detail={requestFailure.replace}
+          onRetry={retryRequest}
+          retrying={request.isFetching}
+          className="justify-center"
+        />
       </PageError>
     );
   }
+  if (agentsFailure.replace) {
+    return (
+      <PageError>
+        <LoadFailure
+          message={`Could not load your agents: ${agentsFailure.replace}`}
+          detail={agentsFailure.replace}
+          onRetry={retryAgents}
+          retrying={retryingAgents}
+          className="justify-center"
+        />
+      </PageError>
+    );
+  }
+  if (!hasRequest || !hasAgents) return <LoadingCard />;
   return (
     <CliAuthCodeCard
-      request={request.data}
-      me={me.data}
-      agents={agents.data}
+      request={requestData}
+      me={meData}
+      agents={agentsData}
       lastAgentId={readLastAgentId()}
+      refreshFailures={
+        <>
+          {requestFailure.notice ? (
+            <RefreshFailure
+              what="this request"
+              detail={requestFailure.notice}
+              onRetry={retryRequest}
+              retrying={request.isFetching}
+              className="justify-center"
+            />
+          ) : null}
+          {agentsFailure.notice ? (
+            <RefreshFailure
+              what="your agents"
+              detail={agentsFailure.notice}
+              onRetry={retryAgents}
+              retrying={retryingAgents}
+              className="justify-center"
+            />
+          ) : null}
+        </>
+      }
     />
   );
 }

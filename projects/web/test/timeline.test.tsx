@@ -1,4 +1,4 @@
-import { fireEvent, waitFor } from "@testing-library/react";
+import { act, fireEvent, waitFor } from "@testing-library/react";
 import type {
   Issue,
   Label,
@@ -805,7 +805,7 @@ describe("timeline load failure (T-376)", () => {
   });
   function stubTimeline(
     tailPage: () => Response | Promise<Response>,
-    headPage: () => Response | Promise<Response> = () =>
+    headPage: (url: string) => Response | Promise<Response> = () =>
       Response.json(aPage([1])),
   ) {
     const calls: string[] = [];
@@ -814,7 +814,7 @@ describe("timeline load failure (T-376)", () => {
       const method = init?.method ?? "GET";
       if (method === "GET" && /\/projects\/p\/issues\/19\/timeline/.test(url)) {
         calls.push(url);
-        return url.includes("last=1") ? tailPage() : headPage();
+        return url.includes("last=1") ? tailPage() : headPage(url);
       }
       if (method === "GET" && url.includes("/references/config")) {
         return Response.json(DEFAULT_REFERENCE_CONFIG);
@@ -877,12 +877,14 @@ describe("timeline load failure (T-376)", () => {
           ),
         ),
     );
-    const { findByText, findByRole } = renderWithRouter(
+    const { findByText, findByRole, getByText } = renderWithRouter(
       <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
       testQueryClient(),
     );
-    await findByText(/Failed to load timeline: /);
+    await findByText(/Couldn't refresh the timeline/);
+    expect(getByText("c8")).toBeTruthy();
     const tailCallsBefore = calls.filter((u) => u.includes("last=1")).length;
+    expect(tailCallsBefore).toBe(1);
     fireEvent.click(await findByRole("button", { name: "Retry" }));
     // The retried head fetch resolves 500 again; wait for it to land so
     // the call count is settled before comparing.
@@ -892,6 +894,120 @@ describe("timeline load failure (T-376)", () => {
     expect(calls.filter((u) => u.includes("last=1"))).toHaveLength(
       tailCallsBefore,
     );
+    expect(getByText("c8")).toBeTruthy();
+  });
+
+  it("keeps a cold failure on screen during Retry and renders recovered data", async () => {
+    let retryResponse: Promise<Response> | null = null;
+    const calls = stubTimeline(
+      () =>
+        retryResponse ??
+        Response.json(
+          { error: { code: "internal", message: "cold timeline gone" } },
+          { status: 500 },
+        ),
+    );
+    const view = renderWithRouter(
+      <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
+      testQueryClient(),
+    );
+    await view.findByText("Failed to load timeline: cold timeline gone");
+    expect(view.queryByTestId("timeline-scroll")).toBeNull();
+
+    let resolveRetry: (response: Response) => void = () => undefined;
+    retryResponse = new Promise<Response>((resolve) => {
+      resolveRetry = resolve;
+    });
+    fireEvent.click(view.getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(
+        (view.getByRole("button", { name: "Retry" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true),
+    );
+    expect(
+      view.getByText("Failed to load timeline: cold timeline gone"),
+    ).toBeTruthy();
+    await act(async () => {
+      resolveRetry(Response.json(aPage([9])));
+    });
+    await view.findByText("c9");
+    expect(view.queryByText(/Failed to load timeline/)).toBeNull();
+    expect(calls.filter((u) => u.includes("last=1"))).toHaveLength(2);
+    expect(calls.filter((u) => !u.includes("last=1"))).toHaveLength(0);
+  });
+
+  it("keeps both 150-comment windows after a failed head expansion and retries that page", async () => {
+    const total = 150;
+    const tailPage = {
+      ...aPage(Array.from({ length: 50 }, (_, i) => i + 101)),
+      prev_cursor: "P1",
+      total_count: total,
+    };
+    const headFirst = {
+      ...aPage(Array.from({ length: 50 }, (_, i) => i + 1)),
+      next_cursor: "H1",
+      total_count: total,
+    };
+    const headSecond = {
+      ...aPage(Array.from({ length: 50 }, (_, i) => i + 51)),
+      next_cursor: "H2",
+      total_count: total,
+    };
+    let headFails = true;
+    const calls = stubTimeline(
+      () => Response.json(tailPage),
+      (url) => {
+        const after = new URL(url, "http://todou.example").searchParams.get(
+          "after",
+        );
+        if (after === "H1") {
+          return headFails
+            ? Response.json(
+                { error: { code: "internal", message: "expanded head gone" } },
+                { status: 500 },
+              )
+            : Response.json(headSecond);
+        }
+        if (after !== null) throw new Error(`unexpected head cursor: ${after}`);
+        return Response.json(headFirst);
+      },
+    );
+    const client = testQueryClient();
+    const view = renderWithRouter(
+      <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
+      client,
+    );
+    await view.findByText("c1");
+    expect(view.getByText("c150")).toBeTruthy();
+    expect((await view.findByTestId("fold-block")).textContent).toContain(
+      "50 remaining items",
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Load more" }));
+    await view.findByText(
+      /Couldn't refresh the timeline \(expanded head gone\)/,
+    );
+    expect(view.queryByText("c100")).toBeNull();
+    expect(view.getByText("c1")).toBeTruthy();
+    expect(view.getByText("c150")).toBeTruthy();
+    expect(view.getByTestId("fold-block")).toBeTruthy();
+    expect(calls.filter((u) => u.includes("last=1"))).toHaveLength(1);
+    expect(calls.filter((u) => !u.includes("last=1"))).toHaveLength(2);
+
+    headFails = false;
+    fireEvent.click(view.getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(calls.filter((u) => !u.includes("last=1"))).toHaveLength(3),
+    );
+    await waitFor(() =>
+      expect(view.queryByText(/Couldn't refresh the timeline/)).toBeNull(),
+    );
+    expect(view.getByText("c1")).toBeTruthy();
+    expect(view.getByText("c100")).toBeTruthy();
+    expect(view.getByText("c150")).toBeTruthy();
+    expect(view.queryByTestId("fold-block")).toBeNull();
+    expect(calls.filter((u) => u.includes("last=1"))).toHaveLength(1);
   });
 });
 

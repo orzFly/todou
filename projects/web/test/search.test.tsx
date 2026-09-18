@@ -7,7 +7,14 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type {
   Autolink,
   IssueListItem,
@@ -47,7 +54,20 @@ import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 // The box remembers what it was asked to search (T-270), and one case's
 // searches would otherwise turn up as history rows in the next one's panel.
-afterEach(() => localStorage.clear());
+afterEach(() => {
+  localStorage.clear();
+  vi.restoreAllMocks();
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 const status = {
   id: 1,
@@ -1105,6 +1125,124 @@ describe("the results page · load failure (T-376)", () => {
     // The recovered list renders the hit; nothing else on the page had
     // to reload for that to happen (the one spy counts the requests).
     expect(screen.queryByText(/Search failed:/)).toBeNull();
+  });
+});
+
+describe("the results page · saved data (T-415)", () => {
+  it("keeps a cold failed search and disabled Retry in place until the answer arrives", async () => {
+    const params = { q: "全文搜索" };
+    const first = deferred<SearchPage>();
+    const search = vi.spyOn(api, "search").mockReturnValue(first.promise);
+    const client = seedJumpContext(testQueryClient());
+    const view = renderWithProviders(
+      <SearchResults slug="todou" search={params} />,
+      client,
+    );
+    await waitFor(() => expect(search).toHaveBeenCalledTimes(1));
+    expect(view.queryByText("1 hit")).toBeNull();
+    await act(async () => {
+      first.reject(
+        Object.assign(new Error("cold search unavailable"), { status: 500 }),
+      );
+    });
+    const message = await view.findByText(
+      "Search failed: cold search unavailable",
+    );
+    expect(view.queryByText("1 hit")).toBeNull();
+
+    const retry = deferred<SearchPage>();
+    search.mockReturnValue(retry.promise);
+    const failure = message.closest('[role="status"]') as HTMLElement;
+    fireEvent.click(within(failure).getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(
+        (
+          within(failure).getByRole("button", {
+            name: "Retry",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(true),
+    );
+    expect(
+      view.getByText("Search failed: cold search unavailable"),
+    ).toBeTruthy();
+
+    await act(async () => {
+      retry.resolve({ diagnostics: [], items: [hit()], has_more: false });
+    });
+    await view.findByText("1 hit");
+    expect(
+      view.container.querySelector('li > a[href="/projects/todou/issues/141"]'),
+    ).not.toBeNull();
+    expect(view.queryByText(/Search failed:/)).toBeNull();
+  });
+
+  it("keeps the hit count and concrete hit under a failed 500 refresh, then Retry recovers them", async () => {
+    const { client, params } = seeded({
+      diagnostics: [],
+      items: [hit()],
+      has_more: false,
+    });
+    const search = vi.spyOn(api, "search").mockResolvedValue({
+      diagnostics: [],
+      items: [hit()],
+      has_more: false,
+    });
+    const view = renderWithProviders(
+      <SearchResults slug="todou" search={params} />,
+      client,
+    );
+    await view.findByText("1 hit");
+    expect(
+      view.container.querySelector('li > a[href="/projects/todou/issues/141"]'),
+    ).not.toBeNull();
+
+    search.mockRejectedValue(
+      Object.assign(new Error("index rebuilding"), { status: 500 }),
+    );
+    await act(async () => {
+      await client.refetchQueries({
+        queryKey: searchQuery("todou", params).queryKey,
+      });
+    });
+    const warning = await view.findByText(/Couldn't refresh these results/);
+    expect(view.getByText("1 hit")).toBeTruthy();
+    const cachedHit = view.container.querySelector(
+      'a[href="/projects/todou/issues/141"]',
+    );
+    expect(cachedHit?.textContent).toContain("全文搜索");
+    expect(view.container.textContent).toContain("增加项目内全文搜索功能");
+
+    search.mockResolvedValue({
+      diagnostics: [],
+      items: [
+        hit({
+          issue: { number: 142, title: "Fresh result", status },
+          snippet: { text: "New matching text", ranges: [[0, 3]] },
+        }),
+      ],
+      has_more: false,
+    });
+    const notice = warning.closest('[role="status"]') as HTMLElement;
+    fireEvent.click(within(notice).getByRole("button", { name: "Retry" }));
+    await view.findByText("Fresh result");
+    expect(view.getByText("1 hit")).toBeTruthy();
+    expect(view.queryByText(/Couldn't refresh these results/)).toBeNull();
+    expect(
+      view.container.querySelector('li > a[href="/projects/todou/issues/141"]'),
+    ).toBeNull();
+
+    search.mockRejectedValue(
+      Object.assign(new Error("search forbidden"), { status: 403 }),
+    );
+    await act(async () => {
+      await client.refetchQueries({
+        queryKey: searchQuery("todou", params).queryKey,
+      });
+    });
+    await view.findByText("Search failed: search forbidden");
+    expect(view.queryByText("Fresh result")).toBeNull();
+    expect(view.queryByText("1 hit")).toBeNull();
   });
 });
 

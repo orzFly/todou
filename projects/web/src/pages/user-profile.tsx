@@ -3,11 +3,16 @@ import { Navigate } from "@tanstack/react-router";
 import type { UserIssueRole, UserIssueState } from "@todou/shared";
 import { CalendarIcon } from "lucide-react";
 import { userQuery } from "@/api/users.ts";
-import { LoadFailure } from "@/components/shared/load-failure.tsx";
+import {
+  LoadFailure,
+  RefreshFailure,
+} from "@/components/shared/load-failure.tsx";
 import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UserIssuesSection } from "@/components/user/user-issues-section.tsx";
 import { UserProjectsSection } from "@/components/user/user-projects-section.tsx";
+import { statusOf } from "@/lib/http-status";
+import { useReadFailure } from "@/lib/use-read-failure.ts";
 
 /**
  * The user page: who this is (T-373), then the cards they are involved in
@@ -32,8 +37,14 @@ export function UserProfilePage({
   redirectToLogin?: boolean;
 }) {
   const user = useQuery(userQuery(ref));
+  const data = user.data;
+  const hasContent = data !== undefined;
+  const { replace, notice } = useReadFailure(
+    user.isError ? user.error : null,
+    hasContent,
+  );
 
-  if (user.isPending) {
+  if (!replace && !hasContent) {
     return (
       <div className="space-y-4">
         <Skeleton className="size-16 rounded-full" />
@@ -43,8 +54,8 @@ export function UserProfilePage({
     );
   }
 
-  if (user.isError) {
-    const status = (user.error as { status?: number }).status;
+  if (user.isError || replace) {
+    const status = statusOf(user.error);
     // 404 is an empty state, not a failure: there is nothing to retry into.
     if (status === 404) {
       return (
@@ -56,20 +67,22 @@ export function UserProfilePage({
         </div>
       );
     }
-    return (
-      <div className="rounded-lg border border-dashed p-10 text-center">
-        <LoadFailure
-          message={`Could not load this user: ${user.error.message}`}
-          detail={user.error.message}
-          onRetry={() => user.refetch()}
-          retrying={user.isFetching}
-          className="justify-center"
-        />
-      </div>
-    );
+    if (replace) {
+      return (
+        <div className="rounded-lg border border-dashed p-10 text-center">
+          <LoadFailure
+            message={`Could not load this user: ${replace}`}
+            detail={replace}
+            onRetry={() => user.refetch()}
+            retrying={user.isFetching}
+            className="justify-center"
+          />
+        </div>
+      );
+    }
   }
 
-  const me = user.data;
+  const me = data as NonNullable<typeof data>;
   if (redirectToLogin) {
     return (
       <Navigate to="/users/$ref" params={{ ref: me.login }} search replace />
@@ -78,6 +91,14 @@ export function UserProfilePage({
 
   return (
     <div className="space-y-8">
+      {notice && (
+        <RefreshFailure
+          what="this user"
+          detail={notice}
+          onRetry={() => user.refetch()}
+          retrying={user.isFetching}
+        />
+      )}
       <div className="max-w-lg space-y-6">
         <div className="flex items-center gap-4">
           <UserAvatar

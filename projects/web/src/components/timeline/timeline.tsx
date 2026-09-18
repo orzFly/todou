@@ -18,7 +18,10 @@ import {
   useTimelineHead,
   useTimelineTail,
 } from "@/api/timeline.ts";
-import { LoadFailure } from "@/components/shared/load-failure.tsx";
+import {
+  LoadFailure,
+  RefreshFailure,
+} from "@/components/shared/load-failure.tsx";
 import {
   CommentItem,
   type Viewer,
@@ -39,6 +42,7 @@ import { useTimelineAnchor } from "@/components/timeline/use-timeline-anchor.ts"
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { parseTimelineAnchor } from "@/lib/timeline-anchors.ts";
+import { useReadFailure } from "@/lib/use-read-failure.ts";
 
 export function Timeline({
   slug,
@@ -54,6 +58,20 @@ export function Timeline({
   const tail = useTimelineTail(slug, issueNumber);
   const headEnabled = needsHead(tail.data?.pages[0]);
   const head = useTimelineHead(slug, issueNumber, headEnabled);
+  const hasContent = tail.data?.pages !== undefined;
+  const { replace, notice } = useReadFailure(
+    tail.isError ? tail.error : head.isError ? head.error : null,
+    hasContent,
+  );
+  const retryFailed = () => {
+    // Only retry failing reads: a healthy half keeps its pages and position.
+    if (tail.isError) void tail.refetch();
+    if (head.isFetchNextPageError) {
+      void head.fetchNextPage({ cancelRefetch: false });
+    } else if (head.isError) {
+      void head.refetch();
+    }
+  };
   const anchorHash = useRouterState({ select: (s) => s.location.hash });
   const atBottomRef = useRef(true);
   const [newBelow, setNewBelow] = useState(false);
@@ -285,28 +303,23 @@ export function Timeline({
     );
   };
 
-  if (tail.isPending) {
+  if (replace) {
+    return (
+      <div className="rounded-lg border border-destructive/40 p-4 text-sm">
+        <LoadFailure
+          message={`Failed to load timeline: ${replace}`}
+          detail={replace}
+          onRetry={retryFailed}
+          retrying={tail.isFetching || head.isFetching}
+        />
+      </div>
+    );
+  }
+  if (!hasContent) {
     return (
       <div className="space-y-3">
         <Skeleton className="h-20 w-full" />
         <Skeleton className="h-20 w-full" />
-      </div>
-    );
-  }
-  if (tail.isError || head.isError) {
-    return (
-      <div className="rounded-lg border border-destructive/40 p-4 text-sm">
-        <LoadFailure
-          message={`Failed to load timeline: ${(tail.error ?? head.error)?.message}`}
-          detail={(tail.error ?? head.error)?.message}
-          onRetry={() => {
-            // Only the failed half: refetching a healthy query would
-            // flash its content away for nothing.
-            if (tail.isError) void tail.refetch();
-            if (head.isError) void head.refetch();
-          }}
-          retrying={tail.isFetching || head.isFetching}
-        />
       </div>
     );
   }
@@ -316,6 +329,15 @@ export function Timeline({
     // above, adjusting the viewport a second time for the same insertion.
     <TimelineAnswersProvider answers={answers}>
       <div className="[overflow-anchor:none]" data-testid="timeline-scroll">
+        {notice && (
+          <RefreshFailure
+            what="the timeline"
+            detail={notice}
+            onRetry={retryFailed}
+            retrying={tail.isFetching || head.isFetching}
+            className="mb-3"
+          />
+        )}
         {headEnabled && head.isPending && (
           <div className="space-y-3 pb-2">
             <Skeleton className="h-16 w-full" />
