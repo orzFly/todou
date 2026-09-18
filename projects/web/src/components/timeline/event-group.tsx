@@ -17,6 +17,7 @@ import {
   ICONS,
   IN_SENTENCE,
   referenceSource,
+  resolvedAnnotations,
   useEventRenderContext,
 } from "@/components/timeline/event-row.tsx";
 import {
@@ -36,6 +37,15 @@ import {
 } from "@/components/timeline/use-event-entities.ts";
 import { eventAnchor } from "@/lib/timeline-anchors.ts";
 import { cn } from "@/lib/utils";
+
+type ListRow = {
+  key: string | number;
+  /** The `#event-N` target, on the one row that stands for that event. */
+  id?: string;
+  /** The row's own timestamp, which survives as its tooltip. */
+  title?: string;
+  node: ReactNode;
+};
 
 /** Collapsed summary: the rich node for the row plus a plain-text mirror
     for the truncation tooltip (the EventRow pattern). `icon` is for the
@@ -236,9 +246,26 @@ export function EventGroup({
   anchorEventId?: number;
 }) {
   if (rendersAsList(family)) {
-    return family === "attachments" ? (
-      <AttachmentsGroup events={events} slug={slug} issueNumber={issueNumber} />
-    ) : (
+    if (family === "attachments") {
+      return (
+        <AttachmentsGroup
+          events={events}
+          slug={slug}
+          issueNumber={issueNumber}
+        />
+      );
+    }
+    if (family === "spec_resolved") {
+      return (
+        <SpecResolvedGroup
+          events={events}
+          slug={slug}
+          issueNumber={issueNumber}
+          anchorEventId={anchorEventId}
+        />
+      );
+    }
+    return (
       <ReferencedGroup events={events} slug={slug} issueNumber={issueNumber} />
     );
   }
@@ -262,8 +289,8 @@ export function EventGroup({
  * so deep links land without any expansion; each row's created_at survives
  * only as its tooltip.
  *
- * Both families that render as a list share this one component rather than
- * a copied skeleton, which is what keeps "one per line" from growing two
+ * Every family that renders as a list shares this one component rather than
+ * a copied skeleton, which is what keeps "one per line" from growing several
  * slightly different faces.
  */
 function ListGroup({
@@ -271,14 +298,18 @@ function ListGroup({
   slug,
   issueNumber,
   headline,
-  renderRow,
+  rows,
 }: {
   events: TimelineEvent[];
   slug: string;
   issueNumber: number;
   /** The header's sentence, in the family's own words. */
   headline: ReactNode;
-  renderRow: (event: TimelineEvent) => ReactNode;
+  /**
+   * Built by the caller rather than mapped from `events`: a resolve call
+   * settles several annotations, and each of those is a row.
+   */
+  rows: ListRow[];
 }) {
   const first = events[0];
   const last = events[events.length - 1];
@@ -315,14 +346,14 @@ function ListGroup({
         </Link>
       </div>
       <ul className="ml-7 text-sm text-muted-foreground">
-        {events.map((event) => (
+        {rows.map((row) => (
           <li
-            key={event.id}
-            id={eventAnchor(event.id)}
-            title={event.created_at}
+            key={row.key}
+            id={row.id}
+            title={row.title}
             className="py-1 wrap-anywhere"
           >
-            {renderRow(event)}
+            {row.node}
           </li>
         ))}
       </ul>
@@ -350,7 +381,12 @@ function ReferencedGroup({
           referenced {events.length} time{events.length === 1 ? "" : "s"}
         </>
       }
-      renderRow={(event) => referenceSource(event, ctx).node}
+      rows={events.map((event) => ({
+        key: event.id,
+        id: eventAnchor(event.id),
+        title: event.created_at,
+        node: referenceSource(event, ctx).node,
+      }))}
     />
   );
 }
@@ -383,22 +419,124 @@ function AttachmentsGroup({
           attached {events.length} file{events.length === 1 ? "" : "s"}
         </>
       }
-      renderRow={(event) => {
+      rows={events.map((event) => {
         const file = event.payload.attachment as
           | { id?: number; filename?: string }
           | undefined;
         const filename = file?.filename ?? "a file";
-        return file?.id === undefined ? (
-          filename
-        ) : (
-          <AttachmentEventLink
-            slug={slug}
-            issueNumber={issueNumber}
-            attachmentId={file.id}
-            filename={filename}
-          />
-        );
-      }}
+        return {
+          key: event.id,
+          id: eventAnchor(event.id),
+          title: event.created_at,
+          node:
+            file?.id === undefined ? (
+              filename
+            ) : (
+              <AttachmentEventLink
+                slug={slug}
+                issueNumber={issueNumber}
+                attachmentId={file.id}
+                filename={filename}
+              />
+            ),
+        };
+      })}
+    />
+  );
+}
+
+/**
+ * A review round's resolutions, one row per annotation (T-406). A resolve
+ * call settles up to a hundred at once, so rows are per annotation and not
+ * per event: a row reading "3 annotations" inside a list whose whole purpose
+ * is naming them would be the defect this shape exists to fix.
+ *
+ * Hidden annotations are drawn apart, behind a closed chevron. Where one
+ * pointed is the spec document's own text and stays readable; the reviewer's
+ * words are what the hide took away, and opening this block does not give
+ * them back.
+ */
+function SpecResolvedGroup({
+  events,
+  slug,
+  issueNumber,
+  anchorEventId,
+}: {
+  events: TimelineEvent[];
+  slug: string;
+  issueNumber: number;
+  anchorEventId?: number;
+}) {
+  const ctx = useEventRenderContext(slug, issueNumber);
+  const [open, setOpen] = useState(false);
+
+  const shown: ListRow[] = [];
+  const hidden: ListRow[] = [];
+  let anchorInside = false;
+  let total = 0;
+  for (const event of events) {
+    // Counted off the payload, not off the rows: a payload too malformed to
+    // name its annotations still knows how many there were.
+    const ids = event.payload.comment_ids;
+    total += Array.isArray(ids) ? ids.length : 0;
+
+    const annotations = resolvedAnnotations(event, ctx);
+    // The event's `#event-N` target goes on its first visible row, and on the
+    // hidden side only when it has no visible one — a permalink should land
+    // on something already on screen wherever that is possible.
+    const anchored = annotations.find((a) => !a.hidden) ?? annotations[0];
+    if (event.id === anchorEventId && anchored?.hidden === true) {
+      anchorInside = true;
+    }
+    for (const annotation of annotations) {
+      (annotation.hidden ? hidden : shown).push({
+        key: annotation.id,
+        id: annotation === anchored ? eventAnchor(event.id) : undefined,
+        title: event.created_at,
+        node: annotation.node,
+      });
+    }
+  }
+
+  useEffect(() => {
+    if (anchorInside) setOpen(true);
+  }, [anchorInside]);
+
+  const rows = [...shown];
+  if (hidden.length > 0) {
+    rows.push({
+      key: "hidden",
+      node: (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+          className="inline-flex items-center gap-0.5 text-muted-foreground/70 hover:text-foreground hover:underline"
+          data-testid="spec-hidden-toggle"
+        >
+          {hidden.length} hidden comment{hidden.length === 1 ? "" : "s"}
+          {open ? (
+            <ChevronDownIcon className="size-3" />
+          ) : (
+            <ChevronRightIcon className="size-3" />
+          )}
+        </button>
+      ),
+    });
+    if (open) rows.push(...hidden);
+  }
+
+  return (
+    <ListGroup
+      events={events}
+      slug={slug}
+      issueNumber={issueNumber}
+      headline={
+        <>
+          resolved {total} spec comment{total === 1 ? "" : "s"}
+        </>
+      }
+      rows={rows}
     />
   );
 }

@@ -411,10 +411,21 @@ export type SpecCommentsResolveInput = z.infer<typeof SpecCommentsResolveInput>;
  * gate keeps reading it — so this field is the only way a later reader can
  * tell the two apart. Optional because every event written before T-307 has
  * no such key.
+ *
+ * The two arrays are positionally aligned — `paths[i]` anchors
+ * `comment_ids[i]` — which readers rely on to name an annotation the listing
+ * cannot supply, and which the shape above cannot state. `paths` is optional
+ * because events written before it existed carry no such key; a reader with
+ * neither it nor the listing falls back to the comment id.
+ *
+ * Not strict, though the header speaks for everything an agent sends: no
+ * agent sends this one. Both emitters write the row as a literal, and the
+ * only reader is a timeline row that draws nothing at all when the payload
+ * is rejected — so an unknown key costs less ignored than fatal.
  */
-export const SpecCommentsResolvedPayload = z.strictObject({
+export const SpecCommentsResolvedPayload = z.object({
   comment_ids: z.array(Id),
-  paths: z.array(z.string()),
+  paths: z.array(z.string()).optional(),
   via: z.literal("hide").optional(),
 });
 export type SpecCommentsResolvedPayload = z.infer<
@@ -429,6 +440,11 @@ export const SpecCommentItem = z.object({
   created_at: Timestamp,
   /** Markdown body of the comment. */
   body: z.string(),
+  /**
+   * Ask `isHidden`, never `!== null`: a server predating this key sends none,
+   * and every annotation of its would then read as hidden.
+   */
+  hidden_at: Timestamp.nullable().optional(),
   anchor: SpecCommentAnchor,
   resolved: z.object({ by: UserRef, at: Timestamp }).nullable(),
   /**

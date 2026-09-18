@@ -1,7 +1,9 @@
 import { fireEvent, waitFor } from "@testing-library/react";
 import type {
+  Issue,
   Label,
   QuestionsComponent,
+  SpecCommentItem,
   Status,
   TimelineComment,
   TimelineEvent,
@@ -11,7 +13,9 @@ import type {
 } from "@todou/shared";
 import { DEFAULT_REFERENCE_CONFIG } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { issueQuery } from "../src/api/issues.ts";
 import { refConfigFor } from "../src/api/references.ts";
+import { specCommentsQuery } from "../src/api/spec.ts";
 import {
   flattenTimeline,
   latestNextCursor,
@@ -96,6 +100,36 @@ const textOf = (
   payload: Record<string, unknown> = {},
   ctx: EventRenderContext = BARE_CTX,
 ) => renderEvent(eventOf(type, payload), ctx).text;
+
+const annotation = (
+  id: number,
+  over: Partial<SpecCommentItem> = {},
+): SpecCommentItem => ({
+  comment_id: id,
+  author: user,
+  created_at: "2026-08-11T00:00:00Z",
+  body: "why not a column?",
+  hidden_at: null,
+  anchor: {
+    path: "design.md",
+    version: 2,
+    line_start: 42,
+    line_end: 48,
+    col_start: null,
+    col_end: null,
+    quote: "one read-time count",
+  },
+  resolved: null,
+  outdated: false,
+  current_line_start: 42,
+  current_line_end: 48,
+  ...over,
+});
+
+const ctxWith = (...items: SpecCommentItem[]): EventRenderContext => ({
+  ...BARE_CTX,
+  specAnnotations: new Map(items.map((i) => [i.comment_id, i])),
+});
 
 describe("renderEvent text mirror", () => {
   it("covers the GitHub-style action vocabulary", () => {
@@ -189,9 +223,80 @@ describe("renderEvent text mirror", () => {
         annotation_count: 0,
       }),
     ).toBe("commented on spec v3");
-    expect(textOf("spec_comments_resolved", { comment_ids: [4, 5] })).toBe(
-      "resolved 2 spec comments",
+    // Ids that are not ids: nothing to name, so the sentence falls back to
+    // the count, which the payload still carries. The app never draws this
+    // face — the group does — so the group path has its own case.
+    expect(textOf("spec_comments_resolved", { comment_ids: ["four"] })).toBe(
+      "resolved 1 spec comment",
     );
+  });
+
+  it("names each resolved annotation, not how many there were", () => {
+    expect(
+      textOf(
+        "spec_comments_resolved",
+        { comment_ids: [4], paths: ["design.md"] },
+        ctxWith(annotation(4)),
+      ),
+    ).toBe('resolved design.md L42–48 "why not a column?"');
+  });
+
+  it("cuts a snippet at sixty characters and skips blank opening lines", () => {
+    expect(
+      textOf(
+        "spec_comments_resolved",
+        { comment_ids: [4], paths: ["design.md"] },
+        ctxWith(annotation(4, { body: "x".repeat(200) })),
+      ),
+    ).toBe(`resolved design.md L42–48 "${"x".repeat(60)}…"`);
+    expect(
+      textOf(
+        "spec_comments_resolved",
+        { comment_ids: [4], paths: ["design.md"] },
+        ctxWith(annotation(4, { body: "\n\n  the   second   line  \nthird" })),
+      ),
+    ).toBe('resolved design.md L42–48 "the second line"');
+  });
+
+  it("falls back to the payload's path, then to the comment id", () => {
+    // The listing has not answered (or the annotation is gone): the file is
+    // still named, and the link to it is what the next assertion holds on to.
+    expect(
+      textOf("spec_comments_resolved", {
+        comment_ids: [4],
+        paths: ["design.md"],
+      }),
+    ).toBe("resolved design.md");
+    expect(
+      textOf("spec_comments_resolved", { comment_ids: [4], paths: [] }),
+    ).toBe("resolved spec comment #4");
+    // An event written before `paths` existed carries no such key at all.
+    expect(textOf("spec_comments_resolved", { comment_ids: [4] })).toBe(
+      "resolved spec comment #4",
+    );
+  });
+
+  it("keeps the annotation's anchor through both degrades", async () => {
+    // BARE_CTX has no project, and a router Link needs one — so the href is
+    // asserted against a context that names the card but holds no listing,
+    // which is the degrade the app actually reaches.
+    for (const payload of [
+      { comment_ids: [4], paths: ["design.md"] },
+      { comment_ids: [4], paths: [] },
+    ]) {
+      const { unmount, findByRole } = renderWithRouter(
+        <EventRow
+          event={eventOf("spec_comments_resolved", payload)}
+          slug="p"
+          issueNumber={7}
+        />,
+      );
+      const link = await findByRole("link", {
+        name: /design\.md|spec comment/,
+      });
+      expect(link.getAttribute("href")).toContain("#comment-4");
+      unmount();
+    }
   });
 
   it("names the assignee the way the rest of the app does (T-171)", () => {
@@ -463,6 +568,108 @@ describe("timeline entities render like the rest of the app (T-171)", () => {
     const before = await findByText("old");
     expect(before.className).toContain("line-through");
     expect((await findByText("new")).className).toContain("font-medium");
+  });
+});
+
+describe("a run of spec resolutions on the page (T-406)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const resolution = (id: number, commentId: number): TimelineEvent => ({
+    type: "event",
+    id,
+    event_type: "spec_comments_resolved",
+    actor: user,
+    payload: { comment_ids: [commentId], paths: ["design.md"] },
+    // Inside one window, one after another: the shape the card reported.
+    created_at: `2026-08-11T00:0${id - 1}:00Z`,
+    agent_context: {
+      agent: "claude-code",
+      model: "model-alpha",
+      session_id: "session-a",
+    },
+  });
+
+  /** Timeline fetches served from `page`, with every GET recorded. */
+  const stubFetch = (page: TimelinePage, urls: string[]) => {
+    vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method !== "GET")
+        throw new Error(`unexpected fetch: ${method} ${url}`);
+      urls.push(url);
+      if (/\/issues\/19\/timeline/.test(url)) return Response.json(page);
+      if (url.includes("/references/config"))
+        return Response.json(DEFAULT_REFERENCE_CONFIG);
+      if (url.includes("/spec/comments"))
+        return Response.json({ current_version: 2, items: [] });
+      return Response.json([]);
+    });
+  };
+
+  it("draws five resolutions as one group, each row linking its annotation", async () => {
+    const events = [1, 2, 3, 4, 5].map((n) => resolution(n, 4600 + n));
+    const page: TimelinePage = {
+      items: events,
+      prev_cursor: null,
+      next_cursor: null,
+      total_count: events.length,
+    };
+    const urls: string[] = [];
+    stubFetch(page, urls);
+    const client = testQueryClient();
+    client.setQueryData(issueQuery("p", 19).queryKey, {
+      spec_version: 2,
+    } as Issue);
+    client.setQueryData(specCommentsQuery("p", 19).queryKey, {
+      current_version: 2,
+      items: events.map((_, i) => annotation(4601 + i)),
+    });
+
+    const { container, findByTestId } = renderWithRouter(
+      <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
+      client,
+    );
+    await findByTestId("event-group");
+    // Steps 3 and 6 can both be right while the page never routes the
+    // family — five separate rows is what that failure looks like.
+    expect(
+      container.querySelectorAll('[data-testid="event-group"]'),
+    ).toHaveLength(1);
+    const hrefs = [...container.querySelectorAll("ul li a")].map((a) =>
+      a.getAttribute("href"),
+    );
+    expect(hrefs).toEqual(
+      [1, 2, 3, 4, 5].map((n) => `/projects/p/issues/19#comment-${4600 + n}`),
+    );
+  });
+
+  it("asks for no annotations on an issue that has no spec", async () => {
+    const page: TimelinePage = {
+      items: [resolution(1, 4601)],
+      prev_cursor: null,
+      next_cursor: null,
+      total_count: 1,
+    };
+    const urls: string[] = [];
+    stubFetch(page, urls);
+    const client = testQueryClient();
+    client.setQueryData(issueQuery("p", 19).queryKey, {
+      spec_version: null,
+    } as Issue);
+
+    const { findByTestId } = renderWithRouter(
+      <Timeline slug="p" issueNumber={19} pendingComments={[]} />,
+      client,
+    );
+    await findByTestId("event-group");
+    // Reading the `enabled` expression back proves nothing about what
+    // mounted: the request and the cache entry are the evidence.
+    expect(urls.filter((u) => u.includes("/spec/comments"))).toEqual([]);
+    expect(
+      client.getQueryData(specCommentsQuery("p", 19).queryKey),
+    ).toBeUndefined();
   });
 });
 

@@ -15,6 +15,7 @@ import {
   netAssignees,
   netStatusChain,
   type RenderUnit,
+  rendersAsList,
   windowMsFor,
 } from "../src/components/timeline/group-events.ts";
 
@@ -107,6 +108,19 @@ const pickerGesture = () => [
   assign("assigned", assignees.newcomer, 2000),
 ];
 
+/** One resolve call, `ids.length` annotations in it, all on design.md. */
+const resolve = (
+  atMs: number,
+  ids: number[],
+  overrides: Partial<TimelineEvent> = {},
+) =>
+  event({
+    event_type: "spec_comments_resolved",
+    payload: { comment_ids: ids, paths: ids.map(() => "design.md") },
+    atMs,
+    ...overrides,
+  });
+
 describe("familyOf", () => {
   it("maps the mergeable vocabulary and nothing else", () => {
     expect(familyOf("status_changed")).toBe("status");
@@ -117,6 +131,7 @@ describe("familyOf", () => {
     expect(familyOf("attachment_added")).toBe("attachments");
     expect(familyOf("assigned")).toBe("assignees");
     expect(familyOf("unassigned")).toBe("assignees");
+    expect(familyOf("spec_comments_resolved")).toBe("spec_resolved");
     // Every remaining type, so "nothing else" is a claim and not a sample —
     // cross_referenced sat outside both lists and merged nowhere for two
     // releases without a single test going red (T-256).
@@ -128,7 +143,6 @@ describe("familyOf", () => {
       "question_answered",
       "spec_pushed",
       "spec_review",
-      "spec_comments_resolved",
       "deleted",
       "restored",
       "moved_in",
@@ -136,6 +150,20 @@ describe("familyOf", () => {
     ] as const) {
       expect(familyOf(standalone)).toBeNull();
     }
+  });
+});
+
+describe("rendersAsList", () => {
+  // Asked separately from familyOf because a family can be mapped and still
+  // be missing here, which leaves a run folding behind an expander with no
+  // other assertion in this file noticing.
+  it("names every family whose rows are always visible", () => {
+    expect(rendersAsList("referenced")).toBe(true);
+    expect(rendersAsList("attachments")).toBe(true);
+    expect(rendersAsList("spec_resolved")).toBe(true);
+    expect(rendersAsList("status")).toBe(false);
+    expect(rendersAsList("labels")).toBe(false);
+    expect(rendersAsList("assignees")).toBe(false);
   });
 });
 
@@ -303,8 +331,8 @@ describe("groupTimeline", () => {
     ]);
     expect(kinds(loneFile)).toEqual(["group:1"]);
 
-    // Still only those two families: the summary row is what a lone status
-    // or label change is for.
+    // The collapsed families keep their plain row: a summary with an
+    // expander behind it is what a lone status or label change is for.
     const loneLabel = groupTimeline([event({ atMs: 0 })]);
     expect(kinds(loneLabel)).toEqual(["item"]);
   });
@@ -418,6 +446,53 @@ describe("groupTimeline · assignees", () => {
       assign("assigned", assignees.newcomer, 1000, { agent_context: sessionB }),
     ]);
     expect(kinds(twoSessions)).toEqual(["item", "item"]);
+  });
+});
+
+describe("groupTimeline · spec_resolved", () => {
+  it("folds a review round answered one annotation at a time", () => {
+    // The card's own report: an agent resolving a round singly used to leave
+    // a column of identical rows.
+    const units = groupTimeline([
+      resolve(0, [11]),
+      resolve(120_000, [12]),
+      resolve(240_000, [13]),
+    ]);
+    expect(kinds(units)).toEqual(["group:3"]);
+  });
+
+  it("takes the shared window rather than the reference exemption", () => {
+    expect(windowMsFor("spec_resolved")).toBe(MERGE_WINDOW_MS);
+    expect(windowMsFor("spec_resolved")).not.toBe(windowMsFor("referenced"));
+  });
+
+  // Each case below isolates one reason a run stops. They say what does not
+  // merge, so the fold above is the only demonstration that merging happens;
+  // a reader looking for evidence of the feature wants that one.
+  it("leaves resolutions twenty minutes apart as their own units", () => {
+    const units = groupTimeline([
+      resolve(0, [11]),
+      resolve(1_200_000, [12]),
+      resolve(2_400_000, [13]),
+    ]);
+    expect(kinds(units)).toEqual(["group:1", "group:1", "group:1"]);
+  });
+
+  it("splits two resolutions a second apart across sessions", () => {
+    const units = groupTimeline([
+      resolve(0, [11], { agent_context: sessionA }),
+      resolve(1000, [12], { agent_context: sessionB }),
+    ]);
+    expect(kinds(units)).toEqual(["group:1", "group:1"]);
+  });
+
+  it("splits a run on a comment written between two resolutions", () => {
+    const units = groupTimeline([
+      resolve(0, [11]),
+      comment(1000),
+      resolve(2000, [12]),
+    ]);
+    expect(kinds(units)).toEqual(["group:1", "item", "group:1"]);
   });
 });
 

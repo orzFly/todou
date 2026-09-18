@@ -2,21 +2,25 @@ import { QueryClient } from "@tanstack/react-query";
 import { fireEvent, waitFor } from "@testing-library/react";
 import type {
   AgentContext,
+  Issue,
   IssueListItem,
   Project,
   ReferenceConfig,
   ReferenceDirectory,
+  SpecCommentItem,
   TimelineEvent,
   UserRef,
 } from "@todou/shared";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
+import { issueQuery } from "../src/api/issues.ts";
 import { membersQuery, projectsQuery } from "../src/api/queries.ts";
 import {
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
+import { specCommentsQuery } from "../src/api/spec.ts";
 import { EventGroup } from "../src/components/timeline/event-group.tsx";
 import { renderWithProviders } from "./render.tsx";
 
@@ -211,6 +215,59 @@ function crossClient(
   for (const [slug, item] of targets) {
     client.setQueryData(issueRefQuery(slug, item.number).queryKey, item);
   }
+  return client;
+}
+
+let nextAnnotationId = 4600;
+const annotation = (
+  over: Partial<SpecCommentItem> & { path?: string; line?: number } = {},
+): SpecCommentItem => {
+  const { path = "design.md", line = 42, ...rest } = over;
+  return {
+    comment_id: nextAnnotationId++,
+    author: alice,
+    created_at: "2026-08-13T11:00:00.000Z",
+    body: "why not a column?",
+    hidden_at: null,
+    anchor: {
+      path,
+      version: 2,
+      line_start: line,
+      line_end: line,
+      col_start: null,
+      col_end: null,
+      quote: "one read-time count",
+    },
+    resolved: null,
+    outdated: false,
+    current_line_start: line,
+    current_line_end: line,
+    ...rest,
+  };
+};
+
+/** One resolve call, settling the annotations it is given. */
+const resolveEvent = (items: SpecCommentItem[]) =>
+  event({
+    event_type: "spec_comments_resolved",
+    payload: {
+      comment_ids: items.map((i) => i.comment_id),
+      paths: items.map((i) => i.anchor.path),
+    },
+  });
+
+/** An issue whose spec listing the annotation rows can read. */
+function specClient(items: SpecCommentItem[]): QueryClient {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  client.setQueryData(issueQuery("p", 1).queryKey, {
+    spec_version: 2,
+  } as Issue);
+  client.setQueryData(specCommentsQuery("p", 1).queryKey, {
+    current_version: 2,
+    items,
+  });
   return client;
 }
 
@@ -894,6 +951,180 @@ describe("EventGroup", () => {
     // absolute values are pinned one test above.
     expect(onReferences).not.toHaveLength(0);
     expect(onAttachments).toEqual(onReferences);
+  });
+
+  it("gives every resolved annotation a row, counting annotations", async () => {
+    const a = annotation({ line: 42, body: "why not a column?" });
+    const b = annotation({ line: 91, body: "this reads two ways" });
+    const c = annotation({ path: "plan.md", line: 7, body: "no verification" });
+    const events = [resolveEvent([a, b]), resolveEvent([c])];
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="spec_resolved"
+        events={events}
+        slug="p"
+        issueNumber={1}
+      />,
+      specClient([a, b, c]),
+    );
+    const group = await findByTestId("event-group");
+    // Two events, three annotations: the header counts what the rows are.
+    expect(group.textContent).toContain("resolved 3 spec comments");
+    const rows = [...group.querySelectorAll("li")];
+    expect(rows.map((li) => li.textContent)).toEqual([
+      "design.md L42“why not a column?”",
+      "design.md L91“this reads two ways”",
+      "plan.md L7“no verification”",
+    ]);
+  });
+
+  it("puts each event's anchor on the first row it produced", async () => {
+    const a = annotation({ line: 42 });
+    const b = annotation({ line: 91 });
+    const c = annotation({ path: "plan.md", line: 7 });
+    const [first, second] = [resolveEvent([a, b]), resolveEvent([c])];
+    if (!first || !second) throw new Error("no events");
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="spec_resolved"
+        events={[first, second]}
+        slug="p"
+        issueNumber={1}
+      />,
+      specClient([a, b, c]),
+    );
+    const group = await findByTestId("event-group");
+    const ids = [...group.querySelectorAll("li")].map((li) =>
+      li.getAttribute("id"),
+    );
+    expect(ids).toEqual([`event-${first.id}`, null, `event-${second.id}`]);
+  });
+
+  it("folds hidden annotations into a closed block", async () => {
+    const shown = [annotation({ line: 42 }), annotation({ line: 91 })];
+    const buried = [7, 8, 9].map((line) =>
+      annotation({ line, hidden_at: "2026-08-13T12:30:00.000Z" }),
+    );
+    const all = [...shown, ...buried];
+    const { findByTestId, queryByText } = renderWithProviders(
+      <EventGroup
+        family="spec_resolved"
+        events={[resolveEvent(all)]}
+        slug="p"
+        issueNumber={1}
+      />,
+      specClient(all),
+    );
+    const group = await findByTestId("event-group");
+    expect(group.textContent).toContain("resolved 5 spec comments");
+    const rowsOf = () =>
+      [...group.querySelectorAll("li")].map((li) => li.textContent);
+    expect(rowsOf()).toEqual([
+      "design.md L42“why not a column?”",
+      "design.md L91“why not a column?”",
+      "3 hidden comments",
+    ]);
+    // Closed means absent, not merely unstyled: a hidden annotation's anchor
+    // must not be readable off the DOM before the reader asks for it.
+    expect(queryByText("design.md L7")).toBeNull();
+
+    fireEvent.click(await findByTestId("spec-hidden-toggle"));
+    await waitFor(() => {
+      expect(rowsOf()).toEqual([
+        "design.md L42“why not a column?”",
+        "design.md L91“why not a column?”",
+        "3 hidden comments",
+        "design.md L7",
+        "design.md L8",
+        "design.md L9",
+      ]);
+    });
+    // Revealed as anchors only — the body the hide took away stays away.
+    const revealed = [...group.querySelectorAll("li")].slice(3);
+    for (const li of revealed) {
+      expect(li.textContent).not.toContain("why not a column?");
+      expect(li.querySelector("a")).not.toBeNull();
+    }
+  });
+
+  it("names an annotation by id when the event predates paths", async () => {
+    // The group is the only face this family draws, so the degrade has to be
+    // asserted here: renderEvent's own fallback is never what the app shows.
+    const old = event({
+      event_type: "spec_comments_resolved",
+      payload: { comment_ids: [4601] },
+    });
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="spec_resolved"
+        events={[old]}
+        slug="p"
+        issueNumber={1}
+      />,
+      specClient([]),
+    );
+    const group = await findByTestId("event-group");
+    const rows = [...group.querySelectorAll("li")];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("spec comment #4601");
+    // The permalink is what a rejected payload used to lose outright.
+    expect(rows[0]?.getAttribute("id")).toBe(`event-${old.id}`);
+  });
+
+  it("keeps drawing a payload that carries a key the schema has no name for", async () => {
+    // `paths` is present, so this case turns on strictness alone: the sibling
+    // case above turns on `paths` being optional, and a mutation that changes
+    // both at once would look like either one had been guarded.
+    const odd = event({
+      event_type: "spec_comments_resolved",
+      payload: {
+        comment_ids: [4601],
+        paths: ["design.md"],
+        settled_by: "cleanup",
+      },
+    });
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="spec_resolved"
+        events={[odd]}
+        slug="p"
+        issueNumber={1}
+      />,
+      specClient([]),
+    );
+    const group = await findByTestId("event-group");
+    const rows = [...group.querySelectorAll("li")];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("design.md");
+    expect(rows[0]?.getAttribute("id")).toBe(`event-${odd.id}`);
+  });
+
+  it("opens the hidden block for an #event-N anchor inside it", async () => {
+    const buried = annotation({
+      line: 7,
+      hidden_at: "2026-08-13T12:30:00.000Z",
+    });
+    const only = resolveEvent([buried]);
+    const { findByTestId } = renderWithProviders(
+      <EventGroup
+        family="spec_resolved"
+        events={[only]}
+        slug="p"
+        issueNumber={1}
+        anchorEventId={only.id}
+      />,
+      specClient([buried]),
+    );
+    const group = await findByTestId("event-group");
+    await waitFor(() => {
+      const rows = [...group.querySelectorAll("li")];
+      // Singular, and the anchored row is out where the hash can reach it.
+      expect(rows.map((li) => li.textContent)).toEqual([
+        "1 hidden comment",
+        "design.md L7",
+      ]);
+      expect(rows[1]?.getAttribute("id")).toBe(`event-${only.id}`);
+    });
   });
 });
 
