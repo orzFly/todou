@@ -13,11 +13,16 @@ import type {
   ReferenceConfig,
   ReferenceDirectory,
   RefPlacement,
+  TimelineComment,
   TimelineEvent,
 } from "@todou/shared";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { issueRefQuery } from "../src/api/issue-refs.ts";
+import {
+  commentRefQuery,
+  issueRefQuery,
+  type ResolvedCommentRef,
+} from "../src/api/issue-refs.ts";
 import { prefsQuery } from "../src/api/prefs.ts";
 import { projectsQuery } from "../src/api/queries.ts";
 import {
@@ -77,6 +82,37 @@ const refItem = (number: number, title: string): IssueListItem => ({
   blocks: [],
   moves: [],
 });
+
+const refComment = (
+  id: number,
+  author = refItem(7, "").author,
+): TimelineComment => ({
+  type: "comment",
+  id,
+  author,
+  body: "Comment body",
+  created_at: "2026-08-12T00:00:00Z",
+  edited_at: null,
+  resolved_at: null,
+  hidden_at: null,
+  component: null,
+  agent_context: null,
+});
+
+function seedComment(
+  client: QueryClient,
+  slug: string,
+  number: number,
+  id: number,
+) {
+  client.setQueryData<ResolvedCommentRef | null>(
+    commentRefQuery(slug, number, id).queryKey,
+    () => ({
+      ...refComment(id),
+      at: { slug, number, commentId: id },
+    }),
+  );
+}
 
 /** todou switched from "#" to "T-" at noon; "#" now points at GitHub. */
 const SWITCH_AT = "2026-08-01T12:00:00.000Z";
@@ -314,7 +350,7 @@ function crossClient(opts: {
   });
   client.setQueryData(referenceConfigQuery("todou").queryKey, switchedConfig);
   client.setQueryData(referenceConfigQuery("mirror").queryKey, mirrorConfig);
-  client.setQueryData(
+  client.setQueryData<ReferenceDirectory>(
     referenceDirectoryQuery.queryKey,
     opts.dir ?? directory(),
   );
@@ -397,14 +433,26 @@ describe("cross-project references", () => {
     expect(view.container.querySelector("a")).toBeNull();
   });
 
-  it("degrades to plain text when the target lookup fails", async () => {
+  it("keeps a determinable preview ref as an ordinary href when the target lookup fails", async () => {
     // mirror is nameable but its issues answer 404 — the offline default.
     const client = crossClient({ readable: ["todou", "mirror"] });
     const view = crossView("see mirror#7 please", client);
     await waitFor(() => {
-      expect(view.container.textContent).toContain("mirror#7");
+      expect(
+        client.getQueryState(issueRefQuery("mirror", 7).queryKey)?.status,
+      ).toBe("success");
+      expect(
+        client.getQueryData(issueRefQuery("mirror", 7).queryKey),
+      ).toBeNull();
     });
-    expect(view.container.querySelector("a")).toBeNull();
+    const link = view.container.querySelector(
+      "a[href='/projects/mirror/issues/7']",
+    );
+    expect(link?.textContent).toBe("mirror#7");
+    expect(link?.getAttribute("data-issue-link")).toBeNull();
+    expect(link?.getAttribute("title")).toBeNull();
+    expect(link?.querySelector("svg")).toBeNull();
+    expect(view.container.textContent).toContain("see mirror#7 please");
   });
 
   it("deep-links a comment anchor riding on a qualified ref", async () => {
@@ -412,13 +460,18 @@ describe("cross-project references", () => {
       readable: ["todou", "mirror"],
       targets: [["mirror", refItem(7, "Anchored")]],
     });
+    seedComment(client, "mirror", 7, 42);
     const view = crossView("see mirror#7#comment-42", client);
     const link = await waitFor(() => {
       const el = view.container.querySelector("a[data-comment-link='42']");
       expect(el).not.toBeNull();
       return el as HTMLAnchorElement;
     });
-    expect(link.getAttribute("href")).toContain("comment-42");
+    expect(link.getAttribute("href")).toBe(
+      "/projects/mirror/issues/7#comment-42",
+    );
+    expect(link.getAttribute("data-issue-link")).toBe("7");
+    expect(link.textContent).toContain("Anchored");
   });
 
   it("names the source project on a cross_referenced event", async () => {
@@ -462,6 +515,7 @@ describe("IssueLink ref placement (T-153, T-157)", () => {
     const client = seededClient("todou", switchedConfig, [
       refItem(7, "Target issue"),
     ]);
+    seedComment(client, "todou", 7, 42);
     client.setQueryData(prefsQuery.queryKey, {
       show_weak_unread: true,
       // A link follows the reference surface alone.
@@ -507,10 +561,10 @@ describe("IssueLink ref placement (T-153, T-157)", () => {
 
   it("keeps the comment note trailing in either order", async () => {
     expect((await renderLink("before", 42)).textContent).toBe(
-      "T-7 Target issue · comment",
+      "T-7 Target issue · comment by User",
     );
     expect((await renderLink("after", 42)).textContent).toBe(
-      "Target issue T-7 · comment",
+      "Target issue T-7 · comment by User",
     );
   });
 });

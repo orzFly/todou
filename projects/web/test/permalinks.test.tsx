@@ -5,7 +5,11 @@ import type {
   TimelineEvent,
 } from "@todou/shared";
 import { describe, expect, it } from "vitest";
-import { commentRefQuery, issueRefQuery } from "../src/api/issue-refs.ts";
+import {
+  commentRefQuery,
+  issueRefQuery,
+  type ResolvedCommentRef,
+} from "../src/api/issue-refs.ts";
 import { IssueLink } from "../src/components/shared/issue-link.tsx";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { CommentItem } from "../src/components/timeline/comment-item.tsx";
@@ -147,7 +151,13 @@ describe("comment permalinks in the timeline", () => {
       issueRefQuery("p", 3).queryKey,
       refItem(3, "Source issue"),
     );
-    client.setQueryData(commentRefQuery("p", 3, 42).queryKey, commentOf(42));
+    client.setQueryData<ResolvedCommentRef | null>(
+      commentRefQuery("p", 3, 42).queryKey,
+      () => ({
+        ...commentOf(42),
+        at: { slug: "p", number: 3, commentId: 42 },
+      }),
+    );
     const event: TimelineEvent = {
       type: "event",
       id: 11,
@@ -178,9 +188,12 @@ describe("rich comment permalinks in markdown", () => {
       issueRefQuery("todou", 38).queryKey,
       refItem(38, "Permalink target"),
     );
-    client.setQueryData(
+    client.setQueryData<ResolvedCommentRef | null>(
       commentRefQuery("todou", 38, 136).queryKey,
-      commentOf(136),
+      () => ({
+        ...commentOf(136),
+        at: { slug: "todou", number: 38, commentId: 136 },
+      }),
     );
     const url = `${window.location.origin}/projects/todou/issues/38#comment-136`;
     const view = renderWithProviders(
@@ -199,11 +212,7 @@ describe("rich comment permalinks in markdown", () => {
     expect(link.textContent).toContain("comment by Alice");
   });
 
-  it("decorates a custom-text link to a card as well", async () => {
-    // Author-chosen text used to survive here, GitHub-style. Since T-266 the
-    // stored form of every reference is a custom-text link — `[#38](…)` —
-    // so the two shapes are indistinguishable in the document, and honouring
-    // the text would leave every migrated reference undecorated.
+  it("keeps custom text ordinary until a comment confirms the parent", async () => {
     const client = testQueryClient();
     client.setQueryData(
       issueRefQuery("todou", 38).queryKey,
@@ -215,11 +224,13 @@ describe("rich comment permalinks in markdown", () => {
       client,
     );
     const link = await waitFor(() => {
-      const el = view.container.querySelector("a[data-issue-link='38']");
+      const el = view.container.querySelector("a");
       expect(el).not.toBeNull();
       return el as HTMLAnchorElement;
     });
-    expect(link.textContent).toContain("Permalink target");
+    expect(link.getAttribute("href")).toBe(url);
+    expect(link.textContent).toBe("read this");
+    expect(link.getAttribute("data-issue-link")).toBeNull();
   });
 
   it("leaves a link to somewhere else untouched", async () => {

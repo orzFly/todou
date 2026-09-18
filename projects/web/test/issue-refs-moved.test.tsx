@@ -6,7 +6,12 @@ import {
   type ReferenceConfig,
 } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { issueRefQuery, type ResolvedIssueRef } from "../src/api/issue-refs.ts";
+import {
+  commentLocationQuery,
+  commentRefQuery,
+  issueRefQuery,
+  type ResolvedIssueRef,
+} from "../src/api/issue-refs.ts";
 import { prefsQuery } from "../src/api/prefs.ts";
 import { referenceConfigQuery } from "../src/api/references.ts";
 import { IssueLink } from "../src/components/shared/issue-link.tsx";
@@ -151,6 +156,131 @@ describe("references to a moved card", () => {
       "/api/projects/a/issues/102",
       "/api/projects/a/issues/103",
     ]);
+  });
+  it("probes unreadable source lists and resolves a numeric project ref at its authorized destination", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", (async (input: unknown) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.includes("numbers=")) {
+        return json({ error: { code: "forbidden", message: "no list" } }, 403);
+      }
+      if (url.includes("/projects/9/issues/123")) {
+        return json({ moved_to: { slug: "harbor", number: 30 } }, 301);
+      }
+      if (url.includes("/projects/harbor/issues/30")) {
+        return json(issue(30, "Authorized destination"));
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch);
+
+    const queries = client();
+    const [first, second] = await Promise.all([
+      queries.fetchQuery(issueRefQuery("9", 123)),
+      queries.fetchQuery(issueRefQuery("9", 123)),
+    ]);
+    expect(first).toEqual(second);
+    expect(first?.at).toEqual({ slug: "harbor", number: 30 });
+    expect(urls).toHaveLength(3);
+    expect(urls[0]).toContain("/projects/9/issues?");
+    expect(urls[0]).toContain("numbers=123");
+    expect(urls[1]).toBe("/api/projects/9/issues/123");
+    expect(urls[2]).toBe("/api/projects/harbor/issues/30");
+  });
+
+  it("does not confirm a redirect whose destination is unreadable", async () => {
+    vi.stubGlobal("fetch", (async (input: unknown) => {
+      const url = String(input);
+      if (url.includes("numbers="))
+        return json({ items: [], next_cursor: null });
+      if (url.includes("/projects/9/issues/123")) {
+        return json({ moved_to: { slug: "private", number: 30 } }, 301);
+      }
+      return json({ error: { code: "forbidden", message: "no" } }, 403);
+    }) as typeof fetch);
+    expect(await client().fetchQuery(issueRefQuery("9", 123))).toBeNull();
+  });
+  it("follows a moved comment and exposes its final full address", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", (async (input: unknown) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.includes("/projects/9/issues/123/comments/7")) {
+        return json(
+          { moved_to: { slug: "harbor", number: 30, comment_id: 8 } },
+          301,
+        );
+      }
+      if (url.includes("/projects/harbor/issues/30/comments/8")) {
+        return json({
+          type: "comment",
+          id: 8,
+          body: "final",
+          author: issue(30, "").author,
+          created_at: "2026-01-01T00:00:00Z",
+          edited_at: null,
+          resolved_at: null,
+          hidden_at: null,
+          component: null,
+          agent_context: null,
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch);
+    const queries = client();
+    const [first, repeated] = await Promise.all([
+      queries.fetchQuery(commentRefQuery("9", 123, 7)),
+      queries.fetchQuery(commentRefQuery("9", 123, 7)),
+    ]);
+    expect(first).toEqual(repeated);
+    expect(first?.at).toEqual({ slug: "harbor", number: 30, commentId: 8 });
+    expect(urls).toHaveLength(2);
+  });
+
+  it("does not confirm an unreadable moved comment target", async () => {
+    vi.stubGlobal("fetch", (async (input: unknown) => {
+      const url = String(input);
+      if (url.includes("/projects/9/issues/123/comments/7")) {
+        return json(
+          { moved_to: { slug: "private", number: 30, comment_id: 8 } },
+          301,
+        );
+      }
+      return json({ error: { code: "forbidden" } }, 403);
+    }) as typeof fetch);
+    expect(await client().fetchQuery(commentRefQuery("9", 123, 7))).toBeNull();
+  });
+  it("locates a moved bare comment at its final address", async () => {
+    vi.stubGlobal("fetch", (async (input: unknown) => {
+      const url = String(input);
+      if (url.includes("/projects/9/comments/7")) {
+        return json(
+          { moved_to: { slug: "harbor", number: 30, comment_id: 8 } },
+          301,
+        );
+      }
+      if (url.includes("/projects/harbor/issues/30/comments/8")) {
+        return json({
+          type: "comment",
+          id: 8,
+          body: "found",
+          author: issue(30, "").author,
+          created_at: "2026-01-01T00:00:00Z",
+          edited_at: null,
+          resolved_at: null,
+          hidden_at: null,
+          component: null,
+          agent_context: null,
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch);
+    const located = await client().fetchQuery(commentLocationQuery("9", 7));
+    expect(located).toMatchObject({
+      slug: "harbor",
+      issue_number: 30,
+      comment: { id: 8 },
+    });
   });
 });
 

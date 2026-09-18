@@ -423,6 +423,10 @@ class Resolver {
   private readonly projectByRef = new Map<string, ProjectRow | null>();
   private readonly readable = new Map<number, boolean>();
   private readonly issueLive = new Map<string, boolean>();
+  /** Exact final project/card/comment relations checked during this pass. */
+  private readonly commentTargets = new Map<string, boolean>();
+  /** Bare ids start in this project; cache both their answer and a miss. */
+  private readonly looseComments = new Map<number, Resolution | null>();
   /** logins asked of `world.here`'s member list, → user id or null. */
   private readonly memberByLogin = new Map<string, number | null>();
   /** User ids this pass's mentions resolved to, in encounter order. */
@@ -580,6 +584,44 @@ class Resolver {
     return there;
   }
 
+  /**
+   * Whether this exact comment belongs to this exact card at its final
+   * address. `known` is used only after loose-comment discovery has already
+   * returned the same joined row; recording that answer here keeps a later
+   * attached spelling from issuing the identical query again.
+   */
+  private async commentTarget(
+    project: ProjectRow,
+    number: number,
+    commentId: number,
+    known = false,
+  ): Promise<boolean> {
+    const key = `${project.id}/${number}/${commentId}`;
+    const cached = this.commentTargets.get(key);
+    if (cached !== undefined) return cached;
+    if (known) {
+      this.commentTargets.set(key, true);
+      return true;
+    }
+    const db = await this.dbOf(project);
+    const rows = await db
+      .select({ id: comments.id })
+      .from(comments)
+      .innerJoin(issues, eq(comments.issueId, issues.id))
+      .where(
+        and(
+          eq(comments.projectId, project.id),
+          eq(issues.projectId, project.id),
+          eq(issues.number, number),
+          eq(comments.id, commentId),
+          this.world.gate === "referenceable" ? referenceable : live,
+        ),
+      );
+    const there = rows.length > 0;
+    this.commentTargets.set(key, there);
+    return there;
+  }
+
   private async issue(
     named: ProjectRow,
     number: number,
@@ -600,6 +642,12 @@ class Resolver {
       if (alias === null || alias.projectId !== target.id) return null;
       anchor = alias.id;
     }
+    if (
+      anchor !== undefined &&
+      !(await this.commentTarget(target, address.number, anchor))
+    ) {
+      return null;
+    }
     return {
       target: {
         kind: "issue",
@@ -617,6 +665,16 @@ class Resolver {
    * alias table for a comment that has since moved away.
    */
   private async looseComment(commentId: number): Promise<Resolution | null> {
+    if (this.looseComments.has(commentId))
+      return this.looseComments.get(commentId) ?? null;
+    const found = await this.findLooseComment(commentId);
+    this.looseComments.set(commentId, found);
+    return found;
+  }
+
+  private async findLooseComment(
+    commentId: number,
+  ): Promise<Resolution | null> {
     const here = await this.db
       .select({ number: issues.number })
       .from(comments)
@@ -624,12 +682,14 @@ class Resolver {
       .where(
         and(
           eq(comments.projectId, this.project.id),
+          eq(issues.projectId, this.project.id),
           eq(comments.id, commentId),
           this.world.gate === "referenceable" ? referenceable : live,
         ),
       );
     const number = here[0]?.number;
     if (number !== undefined) {
+      await this.commentTarget(this.project, number, commentId, true);
       return {
         target: {
           kind: "issue",
@@ -658,12 +718,14 @@ class Resolver {
       .where(
         and(
           eq(comments.projectId, target.id),
+          eq(issues.projectId, target.id),
           eq(comments.id, alias.id),
           this.world.gate === "referenceable" ? referenceable : live,
         ),
       );
     const moved = rows[0]?.number;
     if (moved === undefined) return null;
+    await this.commentTarget(target, moved, alias.id, true);
     return {
       target: {
         kind: "issue",

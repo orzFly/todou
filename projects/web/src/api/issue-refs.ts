@@ -1,5 +1,13 @@
-import { queryOptions } from "@tanstack/react-query";
-import type { CommentLocation, IssueListItem } from "@todou/shared";
+import {
+  type Query,
+  type QueryClient,
+  queryOptions,
+} from "@tanstack/react-query";
+import type {
+  CommentLocation,
+  IssueListItem,
+  TimelineComment,
+} from "@todou/shared";
 import { MovedError } from "@todou/shared";
 import { api } from "@/api/queries.ts";
 
@@ -55,98 +63,159 @@ async function flush(slug: string): Promise<void> {
   if (!batch) return;
 
   const numbers = [...batch.keys()];
-  const settle = (fn: (waiter: Waiter, number: number) => void) => {
-    for (const [number, waiters] of batch) {
-      for (const waiter of waiters) fn(waiter, number);
-    }
-  };
-  try {
-    const byNumber = new Map<number, IssueListItem>();
-    for (let i = 0; i < numbers.length; i += BATCH_LIMIT) {
-      const chunk = numbers.slice(i, i + BATCH_LIMIT);
+  const byNumber = new Map<number, ResolvedIssueRef>();
+  const unresolved = new Set<number>();
+
+  // A project list can be unreadable even though one old address in it is
+  // allowed to disclose a redirect. Keep batching the normal path, but let
+  // each failed chunk fall through to the same single-target route used for
+  // list misses.
+  for (let i = 0; i < numbers.length; i += BATCH_LIMIT) {
+    const chunk = numbers.slice(i, i + BATCH_LIMIT);
+    try {
       const page = await api.listIssues(slug, {
         numbers: chunk,
         limit: chunk.length,
       });
       for (const item of page.items as IssueListItem[]) {
-        byNumber.set(item.number, item);
+        if (item.deleted_at == null) byNumber.set(item.number, item);
+      }
+      for (const number of chunk) {
+        if (!byNumber.has(number)) unresolved.add(number);
+      }
+    } catch {
+      for (const number of chunk) unresolved.add(number);
+    }
+  }
+
+  const outcomes = new Map<
+    number,
+    | { status: "fulfilled"; value: ResolvedIssueRef | null }
+    | { status: "rejected"; reason: unknown }
+  >();
+  await Promise.all(
+    [...unresolved].map(async (number) => {
+      try {
+        outcomes.set(number, {
+          status: "fulfilled",
+          value: await fetchSingleTarget(slug, number),
+        });
+      } catch (reason) {
+        outcomes.set(number, { status: "rejected", reason });
+      }
+    }),
+  );
+
+  for (const [number, waiters] of batch) {
+    const item = byNumber.get(number);
+    const outcome = outcomes.get(number);
+    for (const waiter of waiters) {
+      if (item !== undefined) {
+        waiter.resolve(item);
+      } else if (outcome?.status === "rejected") {
+        waiter.reject(outcome.reason);
+      } else {
+        waiter.resolve(outcome?.value ?? null);
       }
     }
-    // A miss is not the end of it: the list excludes tombstones, so a ref
-    // to a card that moved away looks exactly like a ref to a number nobody
-    // used. Probing the issue route is what turns the first case into a
-    // link to the new address instead of plain text (T-231).
-    const misses = numbers.filter((n) => !byNumber.has(n));
-    const relocated = await followMoved(slug, misses);
-    settle((waiter, number) =>
-      waiter.resolve(byNumber.get(number) ?? relocated.get(number) ?? null),
-    );
-  } catch (error) {
-    // Rejecting rather than resolving null keeps "no such issue" apart from
-    // "this project answered nothing": a cross-project <IssueLink> reads the
-    // difference and degrades to plain text on either (T-150).
-    settle((waiter) => waiter.reject(error));
   }
 }
 
+const isUnreadableTarget = (error: unknown): boolean => {
+  if (error === null || typeof error !== "object" || !("status" in error)) {
+    return false;
+  }
+  const status = error.status;
+  return status === 403 || status === 404 || status === 410;
+};
+
+const asListItem = (
+  issue: IssueListItem & { body?: unknown },
+  at?: { slug: string; number: number },
+): ResolvedIssueRef | null => {
+  if (issue.deleted_at != null) return null;
+  const { body: _body, ...item } = issue;
+  return {
+    ...(item as IssueListItem),
+    ...(at === undefined ? {} : { at }),
+  };
+};
+
 /**
- * The cards among `numbers` that moved, fetched from where they are now.
- *
- * Two rounds at most, both through the client's batcher: one to learn the
- * new addresses, one to read the cards there. Failures resolve to nothing —
- * a ref that cannot be resolved is plain text, which is what it was before.
+ * Resolve one permanent address. Numeric project refs and unreadable project
+ * lists deliberately come through here: the issue route may disclose a move
+ * to an authorized destination even when the source itself cannot be listed.
  */
-async function followMoved(
+async function fetchSingleTarget(
   slug: string,
-  numbers: number[],
-): Promise<Map<number, ResolvedIssueRef>> {
-  const found = new Map<number, ResolvedIssueRef>();
-  if (numbers.length === 0) return found;
+  number: number,
+): Promise<ResolvedIssueRef | null> {
+  try {
+    return asListItem(await api.getIssue(slug, number));
+  } catch (error) {
+    if (!(error instanceof MovedError)) {
+      if (isUnreadableTarget(error)) return null;
+      throw error;
+    }
 
-  const addresses = await Promise.all(
-    numbers.map(async (number) => {
-      try {
-        await api.getIssue(slug, number);
-        return null;
-      } catch (error) {
-        return error instanceof MovedError
-          ? { number, to: error.movedTo }
-          : null;
-      }
-    }),
-  );
+    const to = error.movedTo;
+    try {
+      return asListItem(await api.getIssue(to.slug, to.number), {
+        slug: to.slug,
+        number: to.number,
+      });
+    } catch (targetError) {
+      if (isUnreadableTarget(targetError)) return null;
+      throw targetError;
+    }
+  }
+}
 
-  await Promise.all(
-    addresses.map(async (address) => {
-      if (address === null) return;
-      try {
-        const issue = await api.getIssue(address.to.slug, address.to.number);
-        const { body: _body, ...item } = issue;
-        found.set(address.number, {
-          ...(item as IssueListItem),
-          at: { slug: address.to.slug, number: address.to.number },
-        });
-      } catch {
-        // Gone, or unreadable from here: plain text either way.
-      }
-    }),
-  );
-  return found;
+function activeRevalidation<T>() {
+  return {
+    staleTime: 60_000,
+    refetchInterval: (query: Query<T, Error, T, readonly unknown[]>) =>
+      query.state.fetchStatus === "fetching"
+        ? false
+        : Math.max(
+            1,
+            60_000 -
+              (Date.now() -
+                Math.max(
+                  query.state.dataUpdatedAt,
+                  query.state.errorUpdatedAt,
+                )),
+          ),
+  } as const;
 }
 
 export const issueRefQuery = (slug: string, number: number) =>
   queryOptions({
     queryKey: ["issue-ref", slug, number],
     queryFn: () => fetchIssueRef(slug, number),
-    // Title/status drift a little behind reality; refs are decoration, not
-    // the source of truth, so trade freshness for fewer refetch bursts.
-    staleTime: 60_000,
+    // Ref metadata is decoration, but an actively displayed ref should not
+    // stay confirmed forever after a move or deletion.
+    ...activeRevalidation<ResolvedIssueRef | null>(),
   });
 
+export type ResolvedCommentRef = TimelineComment & {
+  at: { slug: string; number: number; commentId: number };
+};
+
+const withCommentTarget = (
+  comment: TimelineComment,
+  slug: string,
+  number: number,
+  commentId: number,
+): ResolvedCommentRef => ({
+  ...comment,
+  at: { slug, number, commentId },
+});
+
 /**
- * Comment lookup for rich permalinks ("comment by @user"). Unbatched on
- * purpose: pasted comment permalinks are rare enough that a request per
- * distinct comment is fine, and the per-id cache still dedupes repeats.
+ * Comment lookup for rich permalinks ("comment by @user"). The response
+ * carries its final full address so a comment can only confirm the issue
+ * metadata for the parent it actually belongs to.
  */
 export const commentRefQuery = (
   slug: string,
@@ -155,22 +224,30 @@ export const commentRefQuery = (
 ) =>
   queryOptions({
     queryKey: ["comment-ref", slug, issueNumber, commentId],
-    queryFn: async () => {
+    queryFn: async (): Promise<ResolvedCommentRef | null> => {
       try {
-        return await api.getComment(slug, issueNumber, commentId);
+        const comment = await api.getComment(slug, issueNumber, commentId);
+        return withCommentTarget(comment, slug, issueNumber, commentId);
       } catch (error) {
-        // Deleted comments must not break the surrounding rich link.
-        if ((error as { status?: number }).status === 404) return null;
+        if (error instanceof MovedError) {
+          const { slug: to, number, comment_id } = error.movedTo;
+          if (comment_id === undefined) return null;
+          try {
+            const comment = await api.getComment(to, number, comment_id);
+            return withCommentTarget(comment, to, number, comment_id);
+          } catch (targetError) {
+            if (isUnreadableTarget(targetError)) return null;
+            throw targetError;
+          }
+        }
+        // Deleted or unreadable comments must not break the surrounding link.
+        if (isUnreadableTarget(error)) return null;
         throw error;
       }
     },
-    staleTime: 60_000,
+    ...activeRevalidation<ResolvedCommentRef | null>(),
   });
 
-/**
- * Where a bare `#comment-M` points. Unbatched like commentRefQuery: the
- * form is rare enough that one request per distinct id is fine.
- */
 /**
  * A located comment, plus the project it turned out to be in. `issue_number`
  * is only meaningful next to its project, and a redirect can change which
@@ -191,18 +268,84 @@ export const commentLocationQuery = (slug: string, commentId: number) =>
         if (error instanceof MovedError) {
           const { slug: to, number, comment_id } = error.movedTo;
           if (comment_id === undefined) return null;
-          return api.getComment(to, number, comment_id).then((comment) => ({
-            slug: to,
-            issue_number: number,
-            issue_ref: `${to}#${number}`,
-            comment,
-          }));
+          try {
+            const comment = await api.getComment(to, number, comment_id);
+            return {
+              slug: to,
+              issue_number: number,
+              issue_ref: `${to}#${number}`,
+              comment,
+            };
+          } catch (targetError) {
+            if (isUnreadableTarget(targetError)) return null;
+            throw targetError;
+          }
         }
         // Deleted comment, unreadable project, or a server predating the
         // endpoint — all three render as plain text.
-        if ((error as { status?: number }).status === 404) return null;
+        if (isUnreadableTarget(error)) return null;
         throw error;
       }
     },
-    staleTime: 60_000,
+    ...activeRevalidation<LocatedComment | null>(),
   });
+
+export type IssueRefInvalidationTarget = {
+  slug?: string;
+  issueNumber?: number;
+  commentId?: number;
+};
+
+const matchesIssueRefTarget = (
+  query: Query,
+  target: IssueRefInvalidationTarget,
+): boolean => {
+  const [kind, slug, issueOrComment, commentId] = query.queryKey;
+  if (
+    kind !== "issue-ref" &&
+    kind !== "comment-ref" &&
+    kind !== "comment-location"
+  ) {
+    return false;
+  }
+  if (target.slug !== undefined && slug !== target.slug) return false;
+  // A location key has no issue number. Invalidate all locations for this
+  // project when an issue changes, since any of them may now point elsewhere.
+  if (
+    target.issueNumber !== undefined &&
+    kind !== "comment-location" &&
+    issueOrComment !== target.issueNumber
+  ) {
+    return false;
+  }
+  if (target.commentId !== undefined) {
+    if (kind === "issue-ref") return false;
+    const candidate = kind === "comment-ref" ? commentId : issueOrComment;
+    if (candidate !== target.commentId) return false;
+  }
+  return true;
+};
+
+/**
+ * Make matching reference metadata stale immediately, discard any in-flight
+ * generation, then refresh observers that are currently active.
+ */
+export async function invalidateIssueRefQueries(
+  client: QueryClient,
+  target: IssueRefInvalidationTarget = {},
+  options: {
+    queryKey?: readonly unknown[];
+    refetchType?: "active" | "none";
+  } = {},
+): Promise<void> {
+  const filters = {
+    queryKey: options.queryKey,
+    predicate: (query: Query) => matchesIssueRefTarget(query, target),
+  };
+  const cancellation = client.cancelQueries(filters, { revert: false });
+  void client.invalidateQueries({ ...filters, refetchType: "none" });
+  await cancellation;
+  if (options.refetchType !== "none") {
+    await client.refetchQueries({ ...filters, type: "active" });
+  }
+}

@@ -7,17 +7,12 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { render, waitFor } from "@testing-library/react";
-import type {
-  Issue,
-  Label,
-  Me,
-  Member,
-  Project,
-  Status,
-  TimelineComment,
-} from "@todou/shared";
+import type { Issue, Label, Me, Member, Project, Status } from "@todou/shared";
 import { describe, expect, it } from "vitest";
-import { commentRefQuery } from "../src/api/issue-refs.ts";
+import {
+  commentRefQuery,
+  type ResolvedCommentRef,
+} from "../src/api/issue-refs.ts";
 import { issueQuery } from "../src/api/issues.ts";
 import {
   labelsQuery,
@@ -88,7 +83,7 @@ const ISSUE: Issue = {
   moves: [],
 };
 
-const COMMENT: TimelineComment = {
+const COMMENT: ResolvedCommentRef = {
   type: "comment",
   id: 4242,
   author,
@@ -99,6 +94,7 @@ const COMMENT: TimelineComment = {
   resolved_at: null,
   hidden_at: null,
   agent_context: null,
+  at: { slug: SLUG, number: 370, commentId: 4242 },
 };
 
 /** `seed` decides what the quoted content resolves to; leave it out to miss. */

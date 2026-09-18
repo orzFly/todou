@@ -5,6 +5,7 @@ import { can, isHidden } from "@todou/shared";
 import { EyeOffIcon, PencilIcon, Trash2Icon } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
+import { invalidateIssueRefQueries } from "@/api/issue-refs.ts";
 import { api } from "@/api/queries.ts";
 import {
   EntryActionsMenu,
@@ -93,29 +94,31 @@ export function CommentItem({
   const target: Target = { slug, issueNumber, commentId: comment.id };
   const mayHide = canHideComment(viewer) && !isHidden(comment);
   const mayDelete = canEditComment(viewer, comment.author.id);
+  const invalidateComment = (target: Target) => {
+    queryClient.invalidateQueries({
+      queryKey: ["timeline", target.slug, target.issueNumber],
+    });
+    // A migrated comment may be cached under any historical address. The
+    // mutation supplies only its current one, so withdraw refs conservatively.
+    void invalidateIssueRefQueries(queryClient);
+  };
   const save = useMutation({
     mutationFn: (vars: Target & { body: string }) =>
       api.updateComment(vars.slug, vars.issueNumber, vars.commentId, vars.body),
     onSuccess: (_updated, vars) => {
-      queryClient.invalidateQueries({
-        queryKey: ["timeline", vars.slug, vars.issueNumber],
-      });
+      invalidateComment(vars);
       setEditing(false);
       staging.clear();
     },
     onError: (error) => toast.error(error.message),
   });
-  const invalidateTimeline = (target: Target) =>
-    queryClient.invalidateQueries({
-      queryKey: ["timeline", target.slug, target.issueNumber],
-    });
   const setHidden = useMutation({
     mutationFn: (vars: Target & { hidden: boolean }) =>
       api.setCommentsHidden(vars.slug, vars.issueNumber, {
         hidden: vars.hidden,
         comment_ids: [vars.commentId],
       }),
-    onSuccess: (_result, vars) => invalidateTimeline(vars),
+    onSuccess: (_result, vars) => invalidateComment(vars),
     onError: (error) => toast.error(error.message),
   });
   const remove = useMutation({
@@ -123,7 +126,7 @@ export function CommentItem({
       api.deleteComment(vars.slug, vars.issueNumber, vars.commentId),
     onSuccess: (_result, vars) => {
       setConfirmingDelete(false);
-      return invalidateTimeline(vars);
+      return invalidateComment(vars);
     },
     onError: (error) => toast.error(error.message),
   });
