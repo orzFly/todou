@@ -59,6 +59,7 @@ import {
   type MarkdownEditorHandle,
 } from "@/components/shared/markdown-editor.tsx";
 import { MarkdownView } from "@/components/shared/markdown-view.tsx";
+import { IssueReturnLink } from "@/components/shared/return-link.tsx";
 import { RevisionHistory } from "@/components/shared/revision-history.tsx";
 import { displayNameOf, UserChip } from "@/components/shared/user-chip.tsx";
 import {
@@ -82,6 +83,7 @@ import { Input } from "@/components/ui/input";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 import { useScrollInsets } from "@/lib/scroll-insets.ts";
 import { useDirtySource } from "@/lib/unsaved-guard.ts";
+import { SM_UP, useMediaQuery, XL_UP } from "@/lib/use-media-query.ts";
 
 export function IssueDetailPage() {
   const { slug, number: numberParam } = useParams({
@@ -105,6 +107,11 @@ export function IssueDetailPage() {
   const rowRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   useScrollInsets({ top: [rowRef], bottom: [composerRef] });
+  // Which of the three homes the back control takes (T-461). The header's nav
+  // keeps it below `sm`; from there it travels with the heading, inside the
+  // column until the viewport leaves a gutter to hang it in.
+  const headingCarriesBack = useMediaQuery(SM_UP);
+  const backFloats = useMediaQuery(XL_UP);
   const membership = members.data.find((m) => m.user.id === me.data.id);
   const isAdmin = membership?.role === "admin";
   const viewer = {
@@ -132,8 +139,9 @@ export function IssueDetailPage() {
             entries live in and the Composer they write into. */}
         <QuoteReplyProvider>
           <div className="min-w-0">
-            {/* The wide-screen return link sits in the main container's gutter;
-                its title mirror overlays this column once the heading leaves. */}
+            {/* Reserves nothing: it overlays this column with a mirror of the
+                heading — and of the back control travelling with it — once the
+                real one has scrolled away. */}
             <IssueReturnRow
               slug={slug}
               issue={issue.data}
@@ -143,8 +151,31 @@ export function IssueDetailPage() {
             />
             <div className="space-y-4">
               {trashed && <TrashBanner slug={slug} issue={issue.data} />}
-              <div ref={titleRef}>
-                <TitleBlock slug={slug} issue={issue.data} readOnly={trashed} />
+              {/* The back control rides with the heading rather than with the
+                  sticky row above, so it scrolls away with the title it
+                  belongs to and comes back with the title mirror (T-461). It
+                  sits outside `TitleBlock` on purpose: that block swaps itself
+                  for a rename form, and a control nested inside would vanish
+                  for as long as the reader is editing. */}
+              <div
+                ref={titleRef}
+                data-testid="issue-title-block"
+                className="relative flex items-start gap-2"
+              >
+                {headingCarriesBack && (
+                  <IssueReturnLink
+                    slug={slug}
+                    scale="heading"
+                    floating={backFloats}
+                  />
+                )}
+                <div className="min-w-0 flex-1">
+                  <TitleBlock
+                    slug={slug}
+                    issue={issue.data}
+                    readOnly={trashed}
+                  />
+                </div>
               </div>
               <BodyBlock slug={slug} issue={issue.data} readOnly={trashed} />
               <SpecEntryRow slug={slug} issueNumber={issueNumber} />

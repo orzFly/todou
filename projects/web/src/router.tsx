@@ -20,6 +20,7 @@ import {
   type PageSkeletonKind,
 } from "@/components/page-skeleton.tsx";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
+import type { BackControlKind } from "@/components/shared/return-link.tsx";
 import { AppShell } from "@/components/shell.tsx";
 import { TitleController } from "@/components/title-controller.tsx";
 import { Button } from "@/components/ui/button";
@@ -282,7 +283,7 @@ const projectIndexRoute = createRoute({
   path: "/",
   component: IssueListPage,
   validateSearch: (search) => issueSearchSchema.parse(search),
-  staticData: { pageSkeleton: "list" },
+  staticData: { pageSkeleton: "list", backControl: "projects" },
 });
 
 declare module "@tanstack/react-router" {
@@ -302,6 +303,16 @@ declare module "@tanstack/react-router" {
      * see the note over `createRouter` (T-265).
      */
     pageSkeleton?: PageSkeletonKind;
+    /**
+     * Which back control the header wears on a phone, where no page has a
+     * gutter or a heading to hang one beside (T-461).
+     *
+     * The *kind* is static; the destination is not. A card's back goes
+     * wherever this history entry was opened from, which only
+     * `ReturnViewProvider` knows — so the control named here resolves that
+     * itself, exactly as it does on the page.
+     */
+    backControl?: BackControlKind;
   }
 }
 
@@ -309,7 +320,11 @@ const projectBoardRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "board",
   component: BoardPage,
-  staticData: { fillsViewport: true, pageSkeleton: "board" },
+  staticData: {
+    fillsViewport: true,
+    pageSkeleton: "board",
+    backControl: "projects",
+  },
 });
 
 const projectInsightsRoute = createRoute({
@@ -321,7 +336,7 @@ const projectInsightsRoute = createRoute({
   ),
   validateSearch: parseInsightsSearch,
   search: { middlewares: [activityDateSearchMiddleware] },
-  staticData: { pageSkeleton: "insights" },
+  staticData: { pageSkeleton: "insights", backControl: "projects" },
 });
 
 const projectSearchRoute = createRoute({
@@ -329,6 +344,7 @@ const projectSearchRoute = createRoute({
   path: "search",
   component: SearchPage,
   validateSearch: (search) => searchPageSchema.parse(search),
+  staticData: { backControl: "project" },
 });
 
 // Registered before issues/$number so the static segment wins the match.
@@ -337,7 +353,7 @@ const newIssueRoute = createRoute({
   path: "issues/new",
   component: NewIssuePage,
   validateSearch: (search) => newIssueSearchSchema.parse(search),
-  staticData: { pageSkeleton: "sections" },
+  staticData: { pageSkeleton: "sections", backControl: "project" },
 });
 
 const issueRoute = createRoute({
@@ -345,7 +361,11 @@ const issueRoute = createRoute({
   path: "issues/$number",
   component: IssueDetailPage,
   errorComponent: IssueRouteError,
-  staticData: { resolvesProjectMiss: true, pageSkeleton: "detail" },
+  staticData: {
+    resolvesProjectMiss: true,
+    pageSkeleton: "detail",
+    backControl: "issue",
+  },
 });
 
 // Lazy: the spec view drags @pierre/diffs and the annotation layer along —
@@ -363,14 +383,14 @@ const specViewRoute = createRoute({
   // Not lazy, unlike the component above: an error boundary that arrived in
   // the spec page's own chunk could not answer for a spec that is not here.
   errorComponent: SpecRouteError,
-  staticData: { pageSkeleton: "spec" },
+  staticData: { pageSkeleton: "spec", backControl: "spec" },
 });
 
 const projectSettingsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "settings",
   component: ProjectSettingsPage,
-  staticData: { pageSkeleton: "sections" },
+  staticData: { pageSkeleton: "sections", backControl: "projects" },
 });
 
 const inboxRoute = createRoute({

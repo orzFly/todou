@@ -27,6 +27,7 @@ import {
   RETURN_VIEW_VERSION,
   type ReturnTarget,
   type ReturnView,
+  returnLabelOf,
 } from "../src/lib/return-view.ts";
 import { writeReturnEntry } from "../src/lib/return-view-history.ts";
 import { useScrollInsets } from "../src/lib/scroll-insets.ts";
@@ -408,28 +409,33 @@ function InsetHarness() {
   );
 }
 
-describe("the way back (T-407)", () => {
-  it("has a destination before the reader has scrolled anywhere", async () => {
+describe("the way back (T-407, T-461)", () => {
+  it("carries a copy of the control the heading took away with it", async () => {
     const { view, bar } = await renderBar();
-    // The bar this row grew out of only existed past the threshold. A back
-    // control that appeared on scroll is the regression: the reader standing
-    // at the top of a card is exactly the one looking for the way out.
+    // Since T-461 the real control travels with the title block, so this row
+    // holds nothing until the title has gone — and must hold the way back
+    // from that moment on, or a reader who has scrolled has none at all.
     expect(bar.dataset.state).toBe("hidden");
 
-    const link = await view.findByRole("link", { name: "Back to Issues" });
+    const link = await view.findByRole("link", {
+      name: "Back to Issues",
+      hidden: true,
+    });
     expect(link.tagName).toBe("A");
     // Resolved at render, so it can be previewed, middle-clicked and
     // bookmarked without following it first.
     expect(link.getAttribute("href")).toBe("/projects/p");
-    expect(link.tabIndex).toBe(0);
-    // Worn identically to the spec page's control, which asserts the same
-    // three in spec-toolbar-slots.test.tsx.
+    // Sized to the title it stands beside, which in this bar is the compact
+    // one — the heading's copy is two steps larger.
     expect(link.dataset.slot).toBe("button");
     expect(link.dataset.variant).toBe("ghost");
-    expect(link.dataset.size).toBe("sm");
+    expect(link.dataset.size).toBe("icon-xs");
+    // The word it used to carry is the accessible name now and nothing else:
+    // the title beside it already says where this card is.
+    expect(link.textContent).toBe("");
   });
 
-  it("stands outside the mirror, at both ends of the threshold", async () => {
+  it("rides inside the mirror, which is what makes it a copy", async () => {
     const { view } = await renderBar();
     const hiding = (link: HTMLElement) =>
       ancestors(link)
@@ -438,20 +444,32 @@ describe("the way back (T-407)", () => {
         )
         .map(named);
 
-    const link = await view.findByRole("link", { name: "Back to Issues" });
-    expect(hiding(link)).toEqual([]);
-
-    // Moved into the mirror half, the one navigation on this row would be
-    // unreachable from assistive tech and out of the tab order — and past the
-    // threshold it would merely look like it worked.
+    const link = await view.findByRole("link", {
+      name: "Back to Issues",
+      hidden: true,
+    });
+    // Inside the `aria-hidden` half on purpose (T-461): the document still
+    // holds the real one up by the heading, reachable by tab and by screen
+    // reader whether or not it is in view, and announcing both would offer
+    // the same journey twice.
+    expect(hiding(link)).toEqual(["floating-title-bar"]);
+    // Inert as well until the bar is shown, so it never sits in the tab order
+    // of a bar nobody can see — and not inert once it is.
+    const bar = link.closest("[data-testid='floating-title-bar']");
+    expect(bar?.hasAttribute("inert")).toBe(true);
     setIntersecting(false);
-    expect(hiding(link)).toEqual([]);
+    expect(hiding(link)).toEqual(["floating-title-bar"]);
+    expect(bar?.hasAttribute("inert")).toBe(false);
   });
 
   it("does not answer its own click by scrolling to the top", async () => {
     const { view, bar } = await renderBar();
-    const link = await view.findByRole("link", { name: "Back to Issues" });
+    const link = await view.findByRole("link", {
+      name: "Back to Issues",
+      hidden: true,
+    });
 
+    setIntersecting(false);
     fireEvent.click(link);
     // The two halves share one row, so the failure mode is one inheriting the
     // other's handler: back would send the reader to the top of the card they
@@ -464,7 +482,6 @@ describe("the way back (T-407)", () => {
       behavior: "smooth",
     });
 
-    setIntersecting(false);
     fireEvent.click(bar);
     expect(window.scrollTo).toHaveBeenCalledWith({
       top: 0,
@@ -583,12 +600,17 @@ describe("where the way back goes (T-407)", () => {
     "returns to the %s",
     async (_what, origin, label, name, href) => {
       const view = renderWithOrigin(origin);
-      const link = await view.findByRole("link", { name });
-      expect(link.textContent).toBe(label);
+      const link = await view.findByRole("link", { name, hidden: true });
+      // Nothing on screen says the word any more (T-461), so the column that
+      // used to be the visible label is pinned where it still decides
+      // something: the accessible name is built out of it. The user entry is
+      // the exception the matrix already documents — it names the person.
+      expect(returnLabelOf(origin.target)).toBe(label);
+      expect(link.textContent).toBe("");
       // The styled slot must reach the anchor for remembered origins too.
       expect(link.dataset.slot).toBe("button");
       expect(link.dataset.variant).toBe("ghost");
-      expect(link.dataset.size).toBe("sm");
+      expect(link.dataset.size).toBe("icon-xs");
       expect(link.classList.contains("inline-flex")).toBe(true);
       expect(link.classList.contains("whitespace-nowrap")).toBe(true);
       // Exactly this, with nothing appended: the snapshot rides the
@@ -602,7 +624,10 @@ describe("where the way back goes (T-407)", () => {
     const view = renderWithOrigin(
       originOf({ kind: "user", ref: "alice", search: {} }),
     );
-    const link = await view.findByRole("link", { name: "Back to User" });
+    const link = await view.findByRole("link", {
+      name: "Back to User",
+      hidden: true,
+    });
     expect(link.getAttribute("href")).toBe("/users/alice");
   });
 
@@ -610,7 +635,10 @@ describe("where the way back goes (T-407)", () => {
     // A new tab, an external link, a bookmark and a pasted address all arrive
     // at an entry holding nothing, and all four land here.
     const view = renderWithOrigin(undefined);
-    const link = await view.findByRole("link", { name: "Back to Issues" });
+    const link = await view.findByRole("link", {
+      name: "Back to Issues",
+      hidden: true,
+    });
     expect(link.getAttribute("href")).toBe(`/projects/${SLUG}`);
   });
 
@@ -620,7 +648,10 @@ describe("where the way back goes (T-407)", () => {
     });
     // A history entry outlives a logout; the next reader must not be handed
     // the previous one's inbox.
-    const link = await view.findByRole("link", { name: "Back to Issues" });
+    const link = await view.findByRole("link", {
+      name: "Back to Issues",
+      hidden: true,
+    });
     expect(link.getAttribute("href")).toBe(`/projects/${SLUG}`);
   });
 });

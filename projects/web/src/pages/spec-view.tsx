@@ -44,6 +44,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { issueQuery } from "@/api/issues.ts";
+import { useRefPlacement } from "@/api/prefs.ts";
 import { api } from "@/api/queries.ts";
 import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
 import { SpecStatusBadge } from "@/components/issue/spec-entry.tsx";
@@ -56,6 +57,8 @@ import {
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import {
   CompactIssueIdentity,
+  SpecEmptyReturnButton,
+  SpecIssueReturnLink,
   SpecReturnLink,
 } from "@/components/shared/return-link.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
@@ -118,6 +121,7 @@ import {
   type SpecFileStat,
 } from "@/lib/spec-version-stats.ts";
 import { useElementHeight, useHeaderHeight } from "@/lib/use-header-height.ts";
+import { SM_UP, useMediaQuery, XL_UP } from "@/lib/use-media-query.ts";
 import { cn } from "@/lib/utils.ts";
 
 /** What ↑↓ stops on: both kinds of "changed since the baseline" mark (T-158). */
@@ -288,12 +292,13 @@ export function SpecViewPage() {
     return (
       <div className="mx-auto max-w-lg py-20 text-center text-muted-foreground">
         <p>This issue has no spec yet.</p>
-        {/* The same control the toolbar's back is. Two spellings of "go back"
-            on one page are two chances to disagree about where back is — and
-            this one also carries the entry's origin on to the issue, so a
-            reader who reached a spec-less spec from a search still gets the
-            rest of the way home (T-407). */}
-        <SpecReturnLink slug={slug} number={issueNumber} />
+        {/* The same destination the toolbar's back has, and it carries the
+            entry's origin on to the issue the same way, so a reader who
+            reached a spec-less spec from a search still gets the rest of the
+            way home (T-407). It keeps its words where the toolbar's dropped
+            them: there is no title beside this one to say where back goes
+            (T-461). */}
+        <SpecEmptyReturnButton slug={slug} number={issueNumber} />
       </div>
     );
   }
@@ -391,6 +396,17 @@ function SpecViewBody({
    * after their first click (T-407).
    */
   const returnState = useReturnLinkState();
+  // Below `sm` the header's nav carries the way back and this toolbar carries
+  // none; from there the arrow travels with the identity, and past 1440px it
+  // hangs in the gutter the centred column leaves (T-461).
+  const toolbarCarriesBack = useMediaQuery(SM_UP);
+  const backFloats = useMediaQuery(XL_UP);
+  // Back and the ref are the same destination here, so they are one button —
+  // but only while the ref leads. Placed after the title the two are not
+  // adjacent, and one button reaching across would put the whole title inside
+  // its hit area.
+  const refLeads = useRefPlacement("detail") === "before";
+  const mergedBack = toolbarCarriesBack && refLeads;
   const version = search.v ?? spec.current_version;
   const files = useSuspenseQuery(specFilesQuery(slug, issueNumber, version));
   const comments = useSuspenseQuery(specCommentsQuery(slug, issueNumber));
@@ -1036,12 +1052,24 @@ function SpecViewBody({
             identity is shrink-0: one shrinkable item cannot absorb a narrow
             viewport on its own, so a wrap is the only graceful answer left. */}
         <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
-          <SpecReturnLink
-            slug={slug}
-            number={issueNumber}
-            slot="back"
-            floating
-          />
+          {mergedBack ? (
+            <SpecIssueReturnLink
+              slug={slug}
+              number={issueNumber}
+              slot="back"
+              floating={backFloats}
+            />
+          ) : (
+            toolbarCarriesBack && (
+              <SpecReturnLink
+                slug={slug}
+                number={issueNumber}
+                slot="back"
+                scale="compact"
+                floating={backFloats}
+              />
+            )
+          )}
           {/* The row's one shrinkable item, and it must remain the only one:
               shrink-only (the flex default), not flex-1, so a short title lets
               the badge sit right beside it rather than stranding it. `flex-1
@@ -1063,6 +1091,7 @@ function SpecViewBody({
             title={issue.data?.title}
             slot="title"
             className="truncate"
+            omitRef={mergedBack}
           />
           <ToolbarSlot name="review-status">
             <SpecStatusBadge status={spec.review_status} />

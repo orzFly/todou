@@ -18,6 +18,7 @@ import { SearchBox } from "@/components/search-box.tsx";
 import { SearchToggle } from "@/components/search-toggle.tsx";
 import { ProjectIcon } from "@/components/shared/project-icon.tsx";
 import { ReturnViewProvider } from "@/components/shared/return-context.tsx";
+import { NavBackControl } from "@/components/shared/return-link.tsx";
 import { UnsavedChangesGuard } from "@/components/shared/unsaved-guard.tsx";
 import { UserChip } from "@/components/shared/user-chip.tsx";
 import { SpecReviewSessionProvider } from "@/components/spec/spec-review-session-provider.tsx";
@@ -93,9 +94,22 @@ export function AppShell({
     select: (matches) => matches.some((m) => m.staticData.fillsViewport),
   });
 
+  // Which back control this route asks the nav for, from the deepest match
+  // that names one (T-461). A primitive, so `select` can compare it and the
+  // whole shell is not re-rendered by every unrelated match change.
+  const backControl = useMatches({
+    select: (matches) => {
+      for (let i = matches.length - 1; i >= 0; i--) {
+        const kind = matches[i]?.staticData.backControl;
+        if (kind !== undefined) return kind;
+      }
+      return undefined;
+    },
+  });
   // Present on every route under /projects/$slug; the header morphs into a
-  // breadcrumb with the project nav there (T-62).
-  const { slug } = useParams({ strict: false });
+  // breadcrumb with the project nav there (T-62). `number` rides along for the
+  // spec route, whose way back is the card the spec belongs to.
+  const { slug, number } = useParams({ strict: false });
   // A behavioural split, not a visibility one: below `md` the search is a
   // disclosure with its own state and keyboard exits, so exactly one of the
   // two is mounted and `/` has exactly one place to land.
@@ -273,6 +287,22 @@ export function AppShell({
             the search expands over this row while it lives here. */}
             {slug != null && (
               <div className="relative mx-auto flex max-w-6xl items-center gap-2 px-4 pb-2 sm:hidden">
+                {/* Mounted rather than hidden by a class, because "exactly one
+                    back control on screen" is the rule this and the page's own
+                    copy have to keep between them, and a copy CSS has hidden
+                    is still a copy (T-461). */}
+                {hasProjectRow && backControl !== undefined && (
+                  <div className="flex shrink-0 items-center gap-1">
+                    <NavBackControl
+                      kind={backControl}
+                      slug={slug}
+                      number={number}
+                    />
+                    <span aria-hidden className="text-muted-foreground/50">
+                      |
+                    </span>
+                  </div>
+                )}
                 <ProjectNav slug={slug} className="flex-1" />
                 {hasProjectRow && <SearchToggle slug={slug} />}
                 <NewIssueButton slug={slug} />

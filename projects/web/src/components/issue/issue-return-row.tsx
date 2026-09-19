@@ -5,13 +5,18 @@ import {
   IssueReturnLink,
 } from "@/components/shared/return-link.tsx";
 import { useHeaderHeight } from "@/lib/use-header-height.ts";
+import { SM_UP, useMediaQuery } from "@/lib/use-media-query.ts";
 import { cn } from "@/lib/utils";
 
 /**
- * The return link floats in the main container's left gutter on wide screens.
- * Its sticky host reserves no space there; the title mirror only becomes
- * visible after the real heading scrolls away. Narrow screens keep an inline
- * row because there is no gutter for the link.
+ * The title mirror, which appears once the real heading has scrolled away and
+ * reserves no space until it does.
+ *
+ * It holds a copy of the back control too (T-461): the real one travels with
+ * the heading and leaves with it, so without this copy a reader who has
+ * scrolled has nothing to go back with. Not on a phone, where the header's own
+ * nav keeps a back control pinned at every scroll position and a second one
+ * here would put two arrows on screen at once.
  */
 export function IssueReturnRow({
   slug,
@@ -36,6 +41,7 @@ export function IssueReturnRow({
   mirror?: ReactNode;
 }) {
   const headerHeight = useHeaderHeight();
+  const carriesBack = useMediaQuery(SM_UP);
   const [shown, setShown] = useState(false);
 
   useEffect(() => {
@@ -50,10 +56,10 @@ export function IssueReturnRow({
   }, [headerHeight, watchTarget]);
 
   return (
-    <div
-      className="sticky z-30 -mx-2 mb-4 h-10 min-[1440px]:mb-0 min-[1440px]:h-0"
-      style={{ top: headerHeight }}
-    >
+    // Zero-height at every width since T-461 moved the back control out: with
+    // nothing left that is visible before the heading scrolls, a reserved row
+    // was 2.5rem of blank pushing the card down on arrival.
+    <div className="sticky z-30 -mx-2 h-0" style={{ top: headerHeight }}>
       <div
         ref={rowRef}
         data-testid="issue-return-row"
@@ -62,13 +68,15 @@ export function IssueReturnRow({
           shown && "border-b bg-background/95 backdrop-blur",
         )}
       >
-        <IssueReturnLink slug={slug} floating />
         <div
           aria-hidden
           // Opacity and `pointer-events` leave a button tabbable: without this
-          // the reveal eye would sit in the tab order of a bar nobody can see,
-          // between the back link and the card's own heading. Fading rather
-          // than unmounting is what makes the attribute necessary.
+          // the reveal eye and the back copy would sit in the tab order of a
+          // bar nobody can see. Fading rather than unmounting is what makes
+          // the attribute necessary. What `aria-hidden` costs is nothing here:
+          // everything in this bar is a copy of something the document still
+          // holds further up the page, reachable by tab and by screen reader
+          // whether or not it is in view.
           inert={!shown}
           data-testid="floating-title-bar"
           data-state={shown ? "shown" : "hidden"}
@@ -79,10 +87,14 @@ export function IssueReturnRow({
               : "pointer-events-none -translate-y-1 opacity-0",
           )}
           // On the half, never on the row: scroll-to-top is what this mirror
-          // offers in place of the heading it replaced, and the back link beside
-          // it goes somewhere else entirely.
+          // offers in place of the heading it replaced. The two controls it
+          // carries go somewhere else entirely and stop the click here
+          // themselves, which is the arrangement the reveal eye already used.
           onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
         >
+          {carriesBack && (
+            <IssueReturnLink slug={slug} scale="compact" mirrored />
+          )}
           <CompactIssueIdentity
             slug={slug}
             number={issue.number}

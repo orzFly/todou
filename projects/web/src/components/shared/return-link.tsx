@@ -1,7 +1,8 @@
 import { Link } from "@tanstack/react-router";
 import { formatRef } from "@todou/shared";
 import { ArrowLeftIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { Slot } from "radix-ui";
+import type { MouseEvent, ReactNode } from "react";
 import { useRefPlacement } from "@/api/prefs.ts";
 import { useRefPrefix } from "@/api/references.ts";
 import {
@@ -10,11 +11,7 @@ import {
   useReturnOrigin,
 } from "@/components/shared/return-context.tsx";
 import { Button } from "@/components/ui/button";
-import {
-  type ReturnView,
-  returnAccessibleName,
-  returnLabelOf,
-} from "@/lib/return-view.ts";
+import { type ReturnView, returnAccessibleName } from "@/lib/return-view.ts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -22,34 +19,95 @@ import { cn } from "@/lib/utils";
  * (T-407). The customer's complaint was that the two pages disagreed about
  * whether going back was even possible; one component is what stops them
  * disagreeing again.
+ *
+ * It says where it goes with an arrow and nothing else (T-461). The word it
+ * used to carry — `Issues`, `Board`, the name of a user — is still the
+ * accessible name, because a bare arrow announces nothing; what the word was
+ * doing on screen was repeating the title it sits beside.
  */
 
+/**
+ * Which title this control is standing next to, which is the whole of what
+ * decides its size (T-461): the icon matches that title's font size and the
+ * box its line height. There is no size of its own to pick — an arrow keeping
+ * its toolbar size beside a `text-2xl` heading reads as a different control
+ * that happens to point the same way, which is the complaint this answers.
+ */
+export type BackScale = "nav" | "heading" | "compact";
+
+/** Which back control a route wears; the destination is resolved at render. */
+export type BackControlKind = "issue" | "spec" | "project" | "projects";
+
+const ARROW: Record<BackScale, string> = {
+  nav: "size-4",
+  heading: "size-6",
+  compact: "size-4",
+};
+
+const BOX = { heading: "icon", compact: "icon-xs" } as const;
+
+/**
+ * The floating title bar reads a click on itself as "take me back to the top",
+ * and going back to the collection is not a request to stay on this page. Same
+ * remedy and same reason as the reveal eye that shares that bar — see
+ * `reveal-all-eye.tsx`.
+ */
+const stopBubbling = (event: MouseEvent) => event.stopPropagation();
+
 function BackButton({
+  scale,
   slot,
   floating,
+  mirrored,
   children,
 }: {
+  scale: BackScale;
   /** The spec toolbar addresses its controls by slot; the issue row does not. */
   slot?: string;
+  /** Hang in the gutter outside the column rather than take room inside it. */
   floating?: boolean;
+  /** This copy rides inside the floating title bar's click target. */
+  mirrored?: boolean;
   children: ReactNode;
 }) {
+  const onClick = mirrored ? stopBubbling : undefined;
+  // The tab strip dresses its own members, so this one wears their clothes
+  // rather than a button's: among four text tabs, a ghost button reads as
+  // something bolted onto the nav instead of one more thing in it.
+  if (scale === "nav") {
+    return (
+      <Slot.Root
+        data-toolbar-slot={slot}
+        className="shrink-0 rounded-md px-1 py-1 text-muted-foreground hover:text-foreground"
+        onClick={onClick}
+      >
+        {children}
+      </Slot.Root>
+    );
+  }
   return (
     <Button
       asChild
-      size="sm"
+      size={BOX[scale]}
       variant="ghost"
       className={cn(
         "pointer-events-auto shrink-0",
-        floating &&
-          "min-[1440px]:absolute min-[1440px]:right-full min-[1440px]:mr-6",
+        floating && "absolute right-full mr-2",
       )}
       data-toolbar-slot={slot}
+      onClick={onClick}
     >
       {children}
     </Button>
   );
 }
+
+type BackProps = {
+  scale: BackScale;
+  slot?: string;
+  floating?: boolean;
+  mirrored?: boolean;
+};
 
 /**
  * Back to wherever this card was opened from, or — for a card opened from a
@@ -63,52 +121,34 @@ function BackButton({
  */
 export function IssueReturnLink({
   slug,
-  slot,
-  floating,
-}: {
+  ...back
+}: BackProps & {
   /** The project to fall back to, which is the card's own. */
   slug: string;
-  slot?: string;
-  floating?: boolean;
 }) {
   const origin = useReturnOrigin();
   if (origin === undefined) {
     return (
-      <BackButton slot={slot} floating={floating}>
+      <BackButton {...back}>
         <Link
           to="/projects/$slug"
           params={{ slug }}
           aria-label="Back to Issues"
         >
-          <ArrowLeftIcon className="size-4" />
-          Issues
+          <ArrowLeftIcon className={ARROW[back.scale]} />
         </Link>
       </BackButton>
     );
   }
-  return <CollectionLink view={origin} slot={slot} floating={floating} />;
+  return <CollectionLink view={origin} {...back} />;
 }
 
-function CollectionLink({
-  view,
-  slot,
-  floating,
-}: {
-  view: ReturnView;
-  slot?: string;
-  floating?: boolean;
-}) {
-  const label = returnLabelOf(view.target);
+function CollectionLink({ view, ...back }: BackProps & { view: ReturnView }) {
   const name = returnAccessibleName(view);
   // The snapshot travels as state on this navigation, which is what the
   // collection page reads to rebuild its pages and its reading position.
   const state = restoreLinkState(view);
-  const body = (
-    <>
-      <ArrowLeftIcon className="size-4" />
-      {label}
-    </>
-  );
+  const body = <ArrowLeftIcon className={ARROW[back.scale]} />;
   // Slot props must reach the actual anchor, not stop at this component.
   const link = (() => {
     switch (view.target.kind) {
@@ -172,11 +212,7 @@ function CollectionLink({
         );
     }
   })();
-  return (
-    <BackButton slot={slot} floating={floating}>
-      {link}
-    </BackButton>
-  );
+  return <BackButton {...back}>{link}</BackButton>;
 }
 
 /**
@@ -184,8 +220,44 @@ function CollectionLink({
  * one step, even for a reader who arrived at the spec straight from a search
  * hit or a review badge. The card is where a spec is understood, and the
  * issue page carries the origin the rest of the way.
+ *
+ * This is the unmerged half of the pair: `SpecIssueReturnLink` is what the
+ * toolbar wears where the card's ref sits right beside the arrow.
  */
 export function SpecReturnLink({
+  slug,
+  number,
+  ...back
+}: BackProps & { slug: string; number: number }) {
+  const state = useReturnLinkState();
+  return (
+    <BackButton {...back}>
+      <Link
+        to="/projects/$slug/issues/$number"
+        params={{ slug, number: String(number) }}
+        state={state}
+        aria-label="Back to Issue"
+      >
+        <ArrowLeftIcon className={ARROW[back.scale]} />
+      </Link>
+    </BackButton>
+  );
+}
+
+/**
+ * The spec toolbar's back control and the card's ref as one button (T-461):
+ * the arrow hangs in the gutter, the ref stays at the pixel it would sit at
+ * without the button, and the title beside it stays outside the hit area.
+ *
+ * Only where the ref leads. With the ref placed after the title the two
+ * halves are not adjacent, and one button spanning them would swallow the
+ * whole title — see the caller, which is where that choice is made.
+ *
+ * No padding and no resting background, because the ref not moving is the
+ * requirement: hover tints both halves through `currentColor`, which is what
+ * says the arrow out in the margin and the number in the row are one control.
+ */
+export function SpecIssueReturnLink({
   slug,
   number,
   slot,
@@ -196,20 +268,112 @@ export function SpecReturnLink({
   slot?: string;
   floating?: boolean;
 }) {
+  const prefix = useRefPrefix(slug);
+  const state = useReturnLinkState();
+  const reference = formatRef(prefix, number);
+  return (
+    <Link
+      to="/projects/$slug/issues/$number"
+      params={{ slug, number: String(number) }}
+      state={state}
+      // The visible label is the ref, so the accessible name has to carry it:
+      // a name of "Back to Issue" over a control reading `T-1` leaves voice
+      // control with nothing to say (WCAG 2.5.3).
+      aria-label={`Back to ${reference}`}
+      data-toolbar-slot={slot}
+      className="inline-flex shrink-0 items-center gap-2 text-sm text-muted-foreground tabular-nums hover:text-foreground"
+    >
+      <ArrowLeftIcon
+        className={cn("size-4", floating && "absolute right-full mr-2")}
+      />
+      {reference}
+    </Link>
+  );
+}
+
+/**
+ * Back to the card, on the page that has no spec to show yet.
+ *
+ * The one place the arrow keeps its words. Every other host sits beside a
+ * title that says where back goes; a lone arrow centred under one sentence
+ * says nothing, so this one names the card and wears a border to look like
+ * the action it is (T-461).
+ */
+export function SpecEmptyReturnButton({
+  slug,
+  number,
+}: {
+  slug: string;
+  number: number;
+}) {
+  const prefix = useRefPrefix(slug);
   const state = useReturnLinkState();
   return (
-    <BackButton slot={slot} floating={floating}>
+    <Button asChild size="sm" variant="outline" className="mt-4">
       <Link
         to="/projects/$slug/issues/$number"
         params={{ slug, number: String(number) }}
         state={state}
-        aria-label="Back to Issue"
       >
         <ArrowLeftIcon className="size-4" />
-        Issue
+        Back to {formatRef(prefix, number)}
+      </Link>
+    </Button>
+  );
+}
+
+/** Back to this project's list, for the pages under it that are not tabs. */
+export function ProjectReturnLink({
+  slug,
+  ...back
+}: BackProps & { slug: string }) {
+  return (
+    <BackButton {...back}>
+      <Link to="/projects/$slug" params={{ slug }} aria-label="Back to Issues">
+        <ArrowLeftIcon className={ARROW[back.scale]} />
       </Link>
     </BackButton>
   );
+}
+
+/** Back out of the project, which is where the four project tabs go. */
+export function ProjectsReturnLink({ ...back }: BackProps) {
+  return (
+    <BackButton {...back}>
+      <Link to="/projects" aria-label="Back to Projects">
+        <ArrowLeftIcon className={ARROW[back.scale]} />
+      </Link>
+    </BackButton>
+  );
+}
+
+/**
+ * The back control the header wears on a phone, where no page has a gutter or
+ * a heading to hang one beside (T-461). The route says which kind; where the
+ * kind is a card's, the destination is still resolved by the control itself,
+ * from the origin frozen into this history entry.
+ */
+export function NavBackControl({
+  kind,
+  slug,
+  number,
+}: {
+  kind: BackControlKind;
+  slug: string;
+  number?: string;
+}) {
+  switch (kind) {
+    case "issue":
+      return <IssueReturnLink slug={slug} scale="nav" />;
+    case "spec":
+      return number === undefined ? null : (
+        <SpecReturnLink slug={slug} number={Number(number)} scale="nav" />
+      );
+    case "project":
+      return <ProjectReturnLink slug={slug} scale="nav" />;
+    case "projects":
+      return <ProjectsReturnLink scale="nav" />;
+  }
 }
 
 /**
@@ -227,16 +391,23 @@ export function CompactIssueIdentity({
   title,
   slot,
   className,
+  omitRef = false,
 }: {
   slug: string;
   number: number;
   title?: string;
   slot?: string;
   className?: string;
+  /**
+   * The ref is being drawn by the back control beside this one, which has
+   * absorbed it into its hit area. Saying the number twice on one row is
+   * worse than either place saying it alone.
+   */
+  omitRef?: boolean;
 }) {
   const prefix = useRefPrefix(slug);
   const refLeads = useRefPlacement("detail") === "before";
-  const reference = (
+  const reference = omitRef ? null : (
     <span className="shrink-0 text-sm text-muted-foreground tabular-nums">
       {formatRef(prefix, number)}
     </span>

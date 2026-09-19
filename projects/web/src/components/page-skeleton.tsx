@@ -209,9 +209,15 @@ const SPEC_TOOLBAR_ROWS: {
     className: "flex flex-wrap items-center gap-2 lg:flex-nowrap",
     left: [
       {
+        // Gone below `sm`, where the header's nav carries the way back
+        // instead. From there it is the arrow and the card's ref as one
+        // control, which past 1440px hangs its arrow in the gutter and leaves
+        // only the ref in the row — hence the narrower box there (T-461).
+        // Drawn in its merged shape because `ref_placement_detail` defaults to
+        // `before`; a reader who moved the ref after the title meets a wrap
+        // point a few pixels off for as long as the spec is in flight.
         id: "back",
-        className:
-          "w-[62px] min-[1440px]:absolute min-[1440px]:right-full min-[1440px]:mr-6",
+        className: "hidden w-[62px] sm:block min-[1440px]:w-[38px]",
       },
       // Elastic, and gone below lg, like the real title.
       { id: "title", className: "hidden min-w-0 flex-1 lg:block" },

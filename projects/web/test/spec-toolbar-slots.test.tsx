@@ -746,24 +746,27 @@ describe("the way back and the identity beside it (T-407)", () => {
     // middle-click and bookmark the way home before following it.
     expect(back?.tagName).toBe("A");
     expect(back?.getAttribute("href")).toBe("/projects/demo/issues/1");
-    expect(back?.getAttribute("aria-label")).toBe("Back to Issue");
-    expect(back?.textContent).toBe("Issue");
-    // Worn identically to the issue page's control, which asserts these same
-    // three attributes in issue-return-row.test.tsx.
-    expect(back?.dataset.slot).toBe("button");
-    expect(back?.dataset.variant).toBe("ghost");
-    expect(back?.dataset.size).toBe("sm");
+    // Back and the card's own ref are the same destination here, so T-461
+    // made them one control: the ref is the visible label, which is why the
+    // accessible name has to carry it too (WCAG 2.5.3).
+    expect(back?.getAttribute("aria-label")).toBe("Back to T-1");
+    expect(back?.textContent).toBe("T-1");
+    // No button box and no padding, unlike the issue page's copy: the
+    // requirement the merge has to keep is that the ref stays at the pixel it
+    // would sit at without it, and a `Button` would push it across the row.
+    expect(back?.dataset.slot).toBeUndefined();
+    expect(back?.className).not.toMatch(/(^|\s)px-/);
   });
 
-  it("says the number once, in the identity rather than on the way back", async () => {
+  it("says the number once, and in the control that goes there", async () => {
     const view = await toolbar("?v=2&file=design.md");
     const ref = await view.findByText("T-1");
-    // The back control used to carry the number itself; two spellings of the
-    // same card on one row is what T-407 traded for a compact identity.
+    // Two spellings of the same card on one row is what T-407 traded away,
+    // and the merge must not bring it back: the identity gives the number up
+    // to the control rather than printing a second copy beside it.
     expect(view.getAllByText("T-1")).toHaveLength(1);
-    expect(slot(view, "title")?.contains(ref)).toBe(true);
-    expect(slot(view, "back")?.textContent).toBe("Issue");
-    expect(slot(view, "title")?.textContent).toBe(`T-1${TITLE}`);
+    expect(slot(view, "back")?.contains(ref)).toBe(true);
+    expect(slot(view, "title")?.textContent).toBe(TITLE);
   });
 
   it.each(["before", "after"] as const)(
@@ -807,9 +810,12 @@ describe("the way back and the identity beside it (T-407)", () => {
     );
     const view = renderSpecView("");
     await view.findByText(/no spec yet/i);
-    const back = view.getByRole("link", { name: "Back to Issue" });
+    // The one host that keeps its words (T-461): there is no title beside
+    // this control to say where back goes, so a bare arrow under one sentence
+    // would say nothing at all.
+    const back = view.getByRole("link", { name: /^Back to [#T]/ });
     expect(back.getAttribute("href")).toBe("/projects/demo/issues/1");
-    expect(back.textContent).toBe("Issue");
+    expect(back.textContent).toMatch(/^Back to [#T]/);
     // There is no toolbar here to belong to, so it claims no slot on one.
     expect(back.hasAttribute("data-toolbar-slot")).toBe(false);
   });

@@ -964,6 +964,22 @@ function startAppAt(url: string) {
   return delay(50);
 }
 
+/**
+ * The way back, wherever this viewport puts it (T-461). Below `sm` it is the
+ * header's nav that carries it, because no page has a gutter or a heading to
+ * hang one beside there; from `sm` up it travels with the card's own heading.
+ * Reading it out of one fixed row would quietly stop testing anything on
+ * whichever side of 640px the case is not on.
+ */
+async function backControlNamed(name: string): Promise<HTMLElement> {
+  const header = document.querySelector("header");
+  if (window.innerWidth < 640 && header !== null) {
+    return within(header).findByRole("link", { name }, WAIT);
+  }
+  const block = await screen.findByTestId("issue-title-block", {}, WAIT);
+  return within(block).findByRole("link", { name }, WAIT);
+}
+
 function addressBar() {
   return `${window.location.pathname}${window.location.search}${window.location.hash}`;
 }
@@ -1017,8 +1033,7 @@ describe("T-407 real application origins and browser history", () => {
       expect(addressBar()).toBe(`${ISSUE_URL}#event-901`);
       expect(appRouter.history.location.state.__TSR_index).toBe(index + 1);
       expect(readCurrentReturnEntry(appRouter, ME.id).origin).toEqual(before);
-      const returnRow = await screen.findByTestId("issue-return-row", {}, WAIT);
-      const returnLink = within(returnRow).getByRole("link", { name: back });
+      const returnLink = await backControlNamed(back);
       sameUrl(returnLink.getAttribute("href") ?? "", url);
       ordinarySuccess("comment");
 
@@ -1028,11 +1043,7 @@ describe("T-407 real application origins and browser history", () => {
       expect(readCurrentReturnEntry(appRouter, ME.id).origin).toEqual(before);
       act(() => appRouter.history.forward());
       await expectLanding(appRouter);
-      clickLink(
-        within(
-          await screen.findByTestId("issue-return-row", {}, WAIT),
-        ).getByRole("link", { name: back }),
-      );
+      clickLink(await backControlNamed(back));
       await waitFor(() => sameUrl(addressBar(), url), WAIT);
       await screen.findAllByRole(
         "link",
@@ -1063,9 +1074,7 @@ describe("T-407 real application origins and browser history", () => {
     await openReview();
     fireEvent.click(await submitControl(1280, "comment"));
     await expectLanding(appRouter);
-    const back = within(
-      await screen.findByTestId("issue-return-row", {}, WAIT),
-    ).getByRole("link", { name: "Back to Issues" });
+    const back = await backControlNamed("Back to Issues");
     expect(back.getAttribute("href")).toBe("/projects/demo");
     clickLink(back);
     await waitFor(() => expect(addressBar()).toBe("/projects/demo"), WAIT);

@@ -476,15 +476,19 @@ function expectNoOriginInTheAddress() {
  *
  * Both halves of that are load-bearing. The heading is waited for first
  * because the router keeps the previous page mounted while the next one
- * suspends, and the row read a moment too early belongs to the card the reader
- * has just left. The row scopes the query because the trash page carries a
+ * suspends, and a block read a moment too early belongs to the card the reader
+ * has just left. The block scopes the query because the trash page carries a
  * "Back to issues" link of its own, which a bare role query would find on the
  * page being left rather than the one being arrived at.
+ *
+ * The block is the heading's, not the sticky row's: since T-461 the control
+ * travels with the title it belongs to, and the row holds only a copy that
+ * appears once the title has scrolled away.
  */
 async function backLinkOn(title: string): Promise<HTMLElement> {
   await screen.findByRole("heading", { level: 1, name: new RegExp(title) });
-  const row = screen.getByTestId("issue-return-row");
-  return within(row).getByRole("link", { name: /^Back to / });
+  const block = screen.getByTestId("issue-title-block");
+  return within(block).getByRole("link", { name: /^Back to / });
 }
 
 /**
@@ -597,7 +601,6 @@ describe("the project list", () => {
 
     openWithTheMouse(await screen.findByRole("link", { name: TRASHED.title }));
     const back = await backLinkOn(TRASHED.title);
-    expect(back.textContent).toContain("Trash");
     expect(back.getAttribute("aria-label")).toBe("Back to Trash");
     fireEvent.click(back);
 
@@ -631,7 +634,6 @@ describe("the board", () => {
     openWithTheMouse(await screen.findByRole("link", { name: WASH.title }));
 
     const back = await backLinkOn(WASH.title);
-    expect(back.textContent).toContain("Board");
     expect(back.getAttribute("aria-label")).toBe("Back to Board");
     fireEvent.click(back);
 
@@ -688,7 +690,11 @@ describe("search", () => {
     );
     await landedOn("/projects/demo/issues/11/spec");
 
-    fireEvent.click(await screen.findByRole("link", { name: "Back to Issue" }));
+    // Named after the card where the toolbar merges the ref into the control
+    // and "Back to Issue" where the reader's ref placement keeps them apart
+    // (T-461); this fixture answers /me/prefs with an empty object, so it
+    // lands on the second.
+    fireEvent.click(await screen.findByRole("link", { name: /^Back to / }));
     await landedOn("/projects/demo/issues/11");
 
     const toSearch = await backLinkOn(DIG.title);
@@ -734,7 +740,11 @@ describe("the spec page's own moves", () => {
       }),
     );
 
-    fireEvent.click(await screen.findByRole("link", { name: "Back to Issue" }));
+    // Named after the card where the toolbar merges the ref into the control
+    // and "Back to Issue" where the reader's ref placement keeps them apart
+    // (T-461); this fixture answers /me/prefs with an empty object, so it
+    // lands on the second.
+    fireEvent.click(await screen.findByRole("link", { name: /^Back to / }));
     await landedOn("/projects/demo/issues/11");
     const back = await backLinkOn(DIG.title);
     expect(back.getAttribute("aria-label")).toBe("Back to Issues");
@@ -847,7 +857,6 @@ describe("a user page", () => {
 
     const back = await backLinkOn(ELSEWHERE.title);
     expect(back.getAttribute("aria-label")).toBe("Back to alice");
-    expect(back.textContent).toContain("User");
     fireEvent.click(back);
 
     await landedOn("/users/alice");
@@ -1071,5 +1080,99 @@ describe("the unsaved-changes guard", () => {
     } finally {
       dirty();
     }
+  });
+});
+
+/**
+ * Where the way back stands is a viewport question with three answers, and the
+ * rule that binds them is that exactly one of the three is on screen (T-461).
+ *
+ * It has to be a viewport question: `<main>` is `max-w-6xl`, so from 1152px up
+ * the column stops growing and only the margin around it does — the gutter the
+ * widest band hangs the arrow in is invisible to the column and to every box
+ * inside it. And it has to be answered in JavaScript rather than by a class,
+ * because a copy CSS has hidden is still a copy in the tab order and in the
+ * accessibility tree; these cases would pass against three of them.
+ */
+describe("where the back control stands (T-461)", () => {
+  const setWidth = (width: number) =>
+    (
+      window as unknown as {
+        happyDOM: { setViewport: (viewport: { width: number }) => void };
+      }
+    ).happyDOM.setViewport({ width });
+
+  // `useMediaQuery` reads its snapshot during render and happy-dom fires no
+  // change event for a resize, so the width has to be set before the mount.
+  afterEach(() => setWidth(1024));
+
+  /** Open a card from the list at `width`, and answer with every way out. */
+  async function waysBackAt(width: number): Promise<HTMLElement[]> {
+    setWidth(width);
+    await startAt("/projects/demo");
+    mount();
+    openWithTheMouse(await screen.findByRole("link", { name: DIG.title }));
+    await screen.findByRole("heading", {
+      level: 1,
+      name: new RegExp(DIG.title),
+    });
+    return screen.getAllByRole("link", { name: /^Back to / });
+  }
+
+  it.each([
+    ["a phone hands it to the header's nav", 390, "header"],
+    ["a tablet gives it to the card's own heading", 641, "block"],
+    ["a laptop keeps it with the heading", 1439, "block"],
+    ["a wide screen keeps it with the heading", 1441, "block"],
+  ] as const)("%s", async (_what, width, host) => {
+    const ways = await waysBackAt(width);
+    // The rule, first: two controls saying "back" is the disagreement T-407
+    // was filed for, in a new spelling.
+    expect(ways).toHaveLength(1);
+    const back = ways[0] as HTMLElement;
+    expect(back.closest("header") !== null).toBe(host === "header");
+    expect(back.closest("[data-testid='issue-title-block']") !== null).toBe(
+      host === "block",
+    );
+  });
+
+  it("hangs it in the gutter only where there is a gutter", async () => {
+    const [narrow] = await waysBackAt(1439);
+    // 1440px is where the design says the margin is comfortable, not where
+    // the arrow first fits — the column stops growing at 1152px, so a gutter
+    // exists well before this. What the case pins is that one number decides
+    // it, and that below it the control is in the column rather than hanging
+    // off an edge the reader may have scrolled sideways past.
+    expect((narrow as HTMLElement).className).not.toMatch(/(^|\s)absolute\b/);
+    cleanup();
+    restoreAppRouterPage();
+
+    const [wide] = await waysBackAt(1441);
+    expect((wide as HTMLElement).className).toMatch(/(^|\s)absolute\b/);
+  });
+
+  it.each([
+    ["withholds the mirror's copy on a phone", 390, 0],
+    ["gives the mirror a copy from `sm` up", 641, 1],
+  ] as const)("%s", async (_what, width, copies) => {
+    await waysBackAt(width);
+    // The mirror is `aria-hidden`, so its copy is invisible to the query
+    // above and has to be counted through the bar itself. On a phone the
+    // header's nav is already pinned at every scroll position, and a copy
+    // here would put two arrows on screen at once.
+    const bar = screen.getByTestId("floating-title-bar");
+    expect(
+      within(bar).queryAllByRole("link", { name: /^Back to /, hidden: true }),
+    ).toHaveLength(copies);
+  });
+
+  it("keeps the way back while the title is being renamed", async () => {
+    await waysBackAt(1024);
+    fireEvent.click(screen.getByRole("button", { name: "edit title" }));
+    await screen.findByRole("button", { name: "save title" });
+    // `TitleBlock` swaps itself for the rename form, so a control nested
+    // inside the heading would leave with it — and a reader mid-rename is
+    // exactly the one who may want out without saving.
+    expect(screen.getAllByRole("link", { name: /^Back to / })).toHaveLength(1);
   });
 });
