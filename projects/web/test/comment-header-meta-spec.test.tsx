@@ -19,7 +19,11 @@ import { api } from "../src/api/queries.ts";
 import { AnnotatedMarkdown } from "../src/components/spec/annotated-markdown.tsx";
 import { parseSpecSearch } from "../src/lib/spec-search.ts";
 import { SpecViewPage } from "../src/pages/spec-view.tsx";
-import { expectHeaderMeta } from "./header-meta.ts";
+import {
+  expectHeaderMeta,
+  expectSplitHeader,
+  headerRowOf,
+} from "./header-meta.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 /**
@@ -393,5 +397,131 @@ describe("spec annotation headers carry the id and time (T-435)", () => {
         document.querySelector("[data-slot='popover-content']"),
       ).toBeNull(),
     );
+  });
+});
+
+/** Already dealt with: the branch where `resolved` replaces the button. */
+const RESOLVED = annotation(
+  406,
+  { line_start: null, line_end: null },
+  { resolved: { by: AUTHOR, at: "2026-08-13T00:00:00Z" } },
+);
+const RESOLVED_ON_DESIGN = annotation(
+  407,
+  { line_start: 3, line_end: 3 },
+  { resolved: { by: AUTHOR, at: "2026-08-13T00:00:00Z" } },
+);
+
+/**
+ * The narrow-screen split (T-445) across the four spec-document entry
+ * points, both branches of the two that carry a control. Geometry belongs to
+ * scripts/user-baseline-smoke.mjs; these grade which elements ask for it.
+ */
+describe("spec annotation headers split in two below sm (T-445)", () => {
+  it("splits the file-comments strip and keeps its spacer", async () => {
+    mockSpec([FILE_LEVEL]);
+    const view = await page("?v=2&view=rendered&file=design.md");
+    const strip = (await view.findByText("File comments"))
+      .parentElement as HTMLElement;
+    const row = headerRowOf(strip);
+    expectSplitHeader(row, {
+      identity: ["Alice", "v2"],
+      actions: [row.querySelector("button")],
+      spacer: true,
+    });
+  });
+
+  it("splits it the same way once the annotation is resolved", async () => {
+    mockSpec([RESOLVED]);
+    const view = await page("?v=2&view=rendered&file=design.md");
+    const strip = (await view.findByText("File comments"))
+      .parentElement as HTMLElement;
+    const row = headerRowOf(strip);
+    // No button left, so the `resolved` mark is what holds the right-hand
+    // column — the branch a fix applied only to the button would miss.
+    expect(row.querySelector("button")).toBeNull();
+    expectSplitHeader(row, {
+      identity: ["Alice", "v2"],
+      actions: [
+        [...row.children].find((child) => child.textContent === "resolved"),
+      ],
+      spacer: true,
+    });
+  });
+
+  it("splits the strip for comments with no place left in this version", async () => {
+    mockSpec([OUTDATED]);
+    const view = await page("?v=2&view=rendered&file=design.md");
+    const strip = (await view.findByText(/Comments without a place in v2/))
+      .parentElement as HTMLElement;
+    const row = headerRowOf(strip);
+    expectSplitHeader(row, {
+      identity: ["Alice", "v1", "outdated"],
+      actions: [row.querySelector("button")],
+      spacer: true,
+    });
+  });
+
+  it("splits the rendered document's published bubble", async () => {
+    mockSpec([ON_DESIGN]);
+    const view = await page("?v=2&view=rendered&file=design.md");
+    fireEvent.click(await view.findByLabelText("1 comment(s) on this block"));
+    const popover = await waitFor(() => {
+      const el = document.querySelector("[data-slot='popover-content']");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    const row = headerRowOf(popover);
+    // Not the first button in the row: the locate control is one too, and it
+    // belongs to the identity group rather than to the reader's actions.
+    expectSplitHeader(row, {
+      identity: ["Alice", "v2"],
+      actions: [
+        [...row.querySelectorAll("button")].find((button) =>
+          button.textContent?.includes("Resolve"),
+        ),
+      ],
+      spacer: true,
+    });
+
+    fireEvent.keyDown(popover, { key: "Escape" });
+    await waitFor(() =>
+      expect(
+        document.querySelector("[data-slot='popover-content']"),
+      ).toBeNull(),
+    );
+  });
+
+  it("splits the diff's own inline annotation, which has no control at all", async () => {
+    mockSpec([RESOLVED_ON_DESIGN]);
+    const view = await page("?v=2&compare=1&view=source");
+    const card = await waitFor(() => {
+      const els = view.container.querySelectorAll(
+        "[data-testid='diff-view-annotation']",
+      );
+      expect(els.length).toBeGreaterThan(0);
+      return els[0] as HTMLElement;
+    });
+    // Here `resolved` is a mark beside the author rather than a control, so
+    // it belongs to the first line and the second column collapses.
+    expectSplitHeader(headerRowOf(card), {
+      identity: ["Alice", "v2", "resolved"],
+    });
+  });
+
+  it("splits a single version's source annotation the same way", async () => {
+    mockSpec([annotation(405, { version: 1, line_start: 1, line_end: 1 })]);
+    const view = await page("?v=1&file=design.md");
+    fireEvent.click(
+      await view.findByTitle("Read this version's raw markdown source"),
+    );
+    const card = await waitFor(() => {
+      const els = view.container.querySelectorAll(
+        "[data-testid='file-view-annotation']",
+      );
+      expect(els.length).toBeGreaterThan(0);
+      return els[0] as HTMLElement;
+    });
+    expectSplitHeader(headerRowOf(card), { identity: ["Alice", "v1"] });
   });
 });

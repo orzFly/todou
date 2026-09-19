@@ -1,4 +1,9 @@
 import { expect } from "vitest";
+import {
+  COMMENT_HEADER_ACTION,
+  COMMENT_HEADER_IDENTITY,
+  COMMENT_HEADER_ROW,
+} from "../src/components/shared/comment-header-meta.tsx";
 
 /**
  * What every comment header has to show since T-435, shared by the suites
@@ -53,4 +58,95 @@ export function expectHeaderMeta(
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
   return { idLink, stamp };
+}
+
+/** The row a header draws itself in, found through the meta it is built around. */
+export function headerRowOf(root: ParentNode): HTMLElement {
+  const meta = root.querySelector<HTMLElement>(
+    "[data-testid='comment-header-meta']",
+  );
+  expect(meta, "no comment header in this subtree").not.toBeNull();
+  const row = meta?.parentElement ?? null;
+  expect(row, "the meta is not a child of a header row").not.toBeNull();
+  return row as HTMLElement;
+}
+
+function expectClasses(element: Element, classes: string, what: string) {
+  const held = [...element.classList];
+  for (const token of classes.split(" ")) {
+    expect(held, `${what} is missing ${token}`).toContain(token);
+  }
+}
+
+/**
+ * That a header splits into two lines below `sm` the way the other six do
+ * (T-445) — one shared vocabulary reaching every entry point, rather than
+ * six copies free to drift apart, which is what the card's "all seven behave
+ * alike" criteria would otherwise have to re-prove one surface at a time.
+ *
+ * Geometry is not asserted here and cannot be: happy-dom computes no layout,
+ * so what each class *does* is graded in the browser by
+ * scripts/user-baseline-smoke.mjs. This grades only which elements carry it.
+ */
+export function expectSplitHeader(
+  row: HTMLElement,
+  expected: {
+    /** Text each of these has to find inside the identity group. */
+    identity: string[];
+    /**
+     * What the reader may do here, already found — each entry point names its
+     * own controls, and a selector general enough for all six would stop
+     * telling them apart.
+     */
+    actions?: Array<Element | null | undefined>;
+    /** Whether this row is one of the two carrying a spacer span. */
+    spacer?: boolean;
+  },
+) {
+  expectClasses(row, COMMENT_HEADER_ROW, "the header row");
+
+  const identity = [...row.children].filter(
+    (child) => child.className === COMMENT_HEADER_IDENTITY,
+  );
+  expect(identity, "expected exactly one identity group").toHaveLength(1);
+  const group = identity[0] as HTMLElement;
+  expect(group.querySelector("a[href^='/users/']")).not.toBeNull();
+  for (const text of expected.identity) {
+    expect(group.textContent).toContain(text);
+  }
+  // The meta is the second line, so it is the one thing that must stay out
+  // of the group holding the first.
+  expect(group.querySelector("[data-testid='comment-header-meta']")).toBeNull();
+
+  for (const action of expected.actions ?? []) {
+    expect(action, "an expected action is not rendered").toBeTruthy();
+    // The class belongs on whatever the row itself lays out, which for the
+    // timeline is the group around the buttons rather than a button.
+    const placed = [...row.children].find(
+      (child) => child === action || child.contains(action as Node),
+    );
+    expect(placed, "an action sits outside the header row").toBeTruthy();
+    expectClasses(
+      placed as Element,
+      COMMENT_HEADER_ACTION,
+      (action as Element).tagName.toLowerCase(),
+    );
+  }
+
+  // Empty, inert and exactly the sort of thing a later reader deletes: it is
+  // the `gap-2` between it and the meta that holds the desktop row where it
+  // is, so the assertion is that it is still here, not merely hidden.
+  const spacers = [...row.children].filter(
+    (child) =>
+      child.tagName === "SPAN" &&
+      child.classList.contains("ml-auto") &&
+      !child.hasAttribute("data-testid"),
+  );
+  if (expected.spacer !== true) {
+    expect(spacers).toHaveLength(0);
+    return;
+  }
+  expect(spacers, "the desktop spacer span is gone").toHaveLength(1);
+  expect(spacers[0].classList).toContain("max-sm:hidden");
+  expect(spacers[0].textContent).toBe("");
 }

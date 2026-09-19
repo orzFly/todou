@@ -17,7 +17,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { IssueDetailPage } from "../src/pages/issue-detail.tsx";
 import { ProjectLayout } from "../src/pages/project-layout.tsx";
 import { cmCount, cmSetValue } from "./cm.ts";
-import { expectHeaderMeta } from "./header-meta.ts";
+import {
+  expectHeaderMeta,
+  expectSplitHeader,
+  headerRowOf,
+} from "./header-meta.ts";
 import { testQueryClient } from "./render.tsx";
 
 /**
@@ -331,5 +335,34 @@ describe("an optimistic comment's header (T-435)", () => {
     expectHeaderMeta(settled, "/projects/p/issues/7#comment-900", 900, CREATED);
     expect(settled.textContent).not.toContain("sending…");
     expect(view.queryByText(/Failed to send/)).toBeNull();
+  });
+});
+
+/**
+ * The optimistic branch draws its own `sending…` where a settled comment
+ * draws the action group, so the narrow-screen split (T-445) has to reach
+ * it separately — one branch of one call site, and the only one whose
+ * right-hand column is a word rather than a control.
+ */
+describe("an optimistic comment's narrow-screen shape (T-445)", () => {
+  it("puts `sending…` where the actions would be", async () => {
+    const posts = stubPage();
+    const view = renderPage();
+
+    await send(view, "still unsent");
+    await waitFor(() => expect(posts).toHaveLength(1));
+
+    const pending = await waitFor(() => {
+      const row = rowFor(view, "still unsent");
+      expect(row?.textContent).toContain("sending…");
+      return row as HTMLElement;
+    });
+    const row = headerRowOf(pending);
+    expectSplitHeader(row, {
+      identity: ["User"],
+      actions: [
+        [...row.children].find((child) => child.textContent === "sending…"),
+      ],
+    });
   });
 });

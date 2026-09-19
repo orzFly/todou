@@ -80,13 +80,22 @@ function mark(
   author: Element | null,
   peer: Element | null,
   extra: Record<string, Element | null> = {},
+  /**
+   * Skip the same-line precondition, on the rows where a wrap is the design
+   * rather than a sign the sample was never found — `markCommentHeader` has
+   * never had the precondition for this same reason. Below `sm` a comment
+   * header puts its meta on a second line (T-445), so a preview's stamp
+   * sits below its author on purpose, and dropping the mark there would
+   * report the row as absent.
+   */
+  allowWrap = false,
 ) {
   if (!row || !author || !peer) return;
   const authorLine = firstTextTop(author);
   const peerLine = firstTextTop(peer);
+  if (!authorLine || !peerLine) return;
   if (
-    !authorLine ||
-    !peerLine ||
+    !allowWrap &&
     Math.abs(authorLine.top - peerLine.top) >
       Math.max(authorLine.lineHeight, peerLine.lineHeight) * 0.75
   ) {
@@ -102,6 +111,21 @@ function mark(
   for (const [role, element] of Object.entries(extra)) {
     if (element) element.setAttribute("data-baseline-participant", role);
   }
+}
+
+/**
+ * The author chip of a comment header. One level deeper than in every other
+ * row here: a comment header wraps its identity in a group so the row can put
+ * the meta on a second line below `sm` (T-445). Still bounded to that one
+ * level rather than a bare descendant search, because the rows this marks
+ * carry comment bodies that hold user links of their own.
+ */
+function authorChipOf(row: Element | null) {
+  return (
+    row?.querySelector(
+      ':scope > a[href^="/users/"], :scope > span > a[href^="/users/"]',
+    ) ?? null
+  );
 }
 
 /** The header meta's two links, told apart the way a reader does. */
@@ -130,7 +154,7 @@ function markCommentHeader(selector: string, id: string, withBadge: boolean) {
   const badge = withBadge
     ? row.querySelector('[data-testid="agent-context-badge"]')
     : null;
-  const author = row.querySelector(':scope > a[href^="/users/"]');
+  const author = authorChipOf(row);
   // T-433's `peer` was this comment's timestamp link and still is, so the
   // sample it proved survives unchanged; the id beside it is new.
   const roles: Record<string, Element | null> = {
@@ -249,13 +273,7 @@ function markRows(commentId?: number, annotationId?: number) {
     );
     const row = link?.closest(".mb-2.flex.items-baseline") ?? null;
     const parts = metaParts(row);
-    mark(
-      row,
-      id,
-      row?.querySelector(':scope > a[href^="/users/"]') ?? null,
-      parts.time,
-      { id: parts.id },
-    );
+    mark(row, id, authorChipOf(row), parts.time, { id: parts.id }, true);
   };
   markHover("comment-hover-card", commentId);
   markHover("spec-annotation-hover-card", annotationId);
@@ -269,7 +287,7 @@ function markRows(commentId?: number, annotationId?: number) {
   mark(
     annotationRow,
     "annotation-chip",
-    annotationRow?.querySelector(':scope > a[href^="/users/"]') ?? null,
+    authorChipOf(annotationRow),
     locate?.parentElement ?? null,
     { id: annotationParts.id, time: annotationParts.time },
   );

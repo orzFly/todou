@@ -7,7 +7,12 @@ import {
   CommentItem,
   type Viewer,
 } from "../src/components/timeline/comment-item.tsx";
-import { expectHeaderMeta, metaLinks } from "./header-meta.ts";
+import {
+  expectHeaderMeta,
+  expectSplitHeader,
+  headerRowOf,
+  metaLinks,
+} from "./header-meta.ts";
 import { renderWithProviders } from "./render.tsx";
 
 /**
@@ -296,5 +301,93 @@ describe("a comment preview's header (T-435)", () => {
     expect(content.textContent).toContain("design.md");
     expect(content.textContent).toContain("L42–48");
     expect(content.querySelector("a[href*='/spec']")).toBeNull();
+  });
+});
+
+/**
+ * The narrow-screen split (T-445) on the three entry points this suite
+ * reaches. What each class does is measured in a real browser by
+ * scripts/user-baseline-smoke.mjs; what these grade is that all three ask
+ * for it through the same vocabulary, which is the half a layout engine
+ * cannot tell us.
+ */
+describe("a comment header's narrow-screen shape (T-445)", () => {
+  it("puts the author, the badge and the edit marker on one line, actions opposite", async () => {
+    const view = renderWithProviders(
+      <CommentItem
+        slug="p"
+        issueNumber={7}
+        comment={commentOf(12, {
+          edited_at: EDITED,
+          agent_context: { agent: "codex", model: "gpt-6-astra" },
+        })}
+        viewer={{ id: 1, isAdmin: false, role: "writer" }}
+      />,
+    );
+    const row = await waitFor(() => headerRowOf(view.container));
+    expectSplitHeader(row, {
+      identity: ["Alice", "gpt-6-astra", "edited"],
+      actions: [
+        row.querySelector("[aria-label='comment actions']"),
+        row.querySelector("[aria-label='edit comment']"),
+      ],
+    });
+  });
+
+  it("gives the comment preview the same shape with nothing to do in it", async () => {
+    const view = renderWithProviders(
+      <CommentHoverCard
+        slug="elsewhere"
+        issueNumber={99}
+        comment={commentOf(12)}
+      >
+        <a href="/projects/elsewhere/issues/99#comment-12">preview</a>
+      </CommentHoverCard>,
+    );
+    const trigger = await waitFor(() => {
+      const el = view.container.querySelector(
+        "[data-slot='hover-card-trigger']",
+      );
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    trigger.dispatchEvent(
+      new PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" }),
+    );
+    const content = await waitFor(() => {
+      const el = document.querySelector("[data-slot='hover-card-content']");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    expectSplitHeader(headerRowOf(content), { identity: ["Alice"] });
+  });
+
+  it("gives the annotation preview the same shape", async () => {
+    const view = renderWithProviders(
+      <SpecAnnotationHoverCard
+        slug="elsewhere"
+        issueNumber={99}
+        annotation={annotationOf(4631)}
+      >
+        <a href="/projects/elsewhere/issues/99#comment-4631">preview</a>
+      </SpecAnnotationHoverCard>,
+    );
+    const trigger = await waitFor(() => {
+      const el = view.container.querySelector(
+        "[data-slot='hover-card-trigger']",
+      );
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    trigger.dispatchEvent(
+      new PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" }),
+    );
+    const content = await waitFor(() => {
+      const el = document.querySelector("[data-slot='hover-card-content']");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    // The file row is this card's own, under the header rather than in it.
+    expectSplitHeader(headerRowOf(content), { identity: ["Alice"] });
   });
 });
