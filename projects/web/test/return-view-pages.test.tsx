@@ -33,6 +33,7 @@ import {
 import { api, statusesQuery } from "../src/api/queries.ts";
 import { referenceConfigQuery } from "../src/api/references.ts";
 import { userQuery, userSearchSchema } from "../src/api/users.ts";
+import * as returnContext from "../src/components/shared/return-context.tsx";
 import { ReturnViewProvider } from "../src/components/shared/return-context.tsx";
 import {
   RETURN_VIEW_VERSION,
@@ -1186,6 +1187,53 @@ describe("the inbox tab carried by its URL", () => {
     expect(rowIds(view.container)).toEqual(["41"]);
     expect(restoreScrolls(scrollTo)).toEqual([]);
     expect(entryOf(view.router).pending).toBeUndefined();
+  });
+
+  it("keeps a pending restore on modified tab clicks, but cancels on an ordinary click", async () => {
+    // Hold the placement frame so the real restore remains pending while
+    // the reader opens another tab; a completed restore cannot prove this.
+    vi.spyOn(window, "requestAnimationFrame").mockReturnValue(0);
+    const cancelRestore = vi.fn();
+    const useCancelReturnRestore = returnContext.useCancelReturnRestore;
+    vi.spyOn(returnContext, "useCancelReturnRestore").mockImplementation(() => {
+      const cancel = useCancelReturnRestore();
+      return () => {
+        cancelRestore();
+        cancel();
+      };
+    });
+    const pending = snapshot({
+      target: { kind: "inbox" },
+      tab: "specs",
+      scroll: [region({ region: "window", y: 320 })],
+    });
+    const view = mountInbox({ path: "/inbox?tab=specs", pending });
+    await view.findByText("a spec");
+    await settle();
+    expect(entryOf(view.router).pending).toEqual({
+      view: pending,
+      locate: true,
+    });
+    const comments = view.getByRole("tab", { name: "Comments" });
+    expect(comments.getAttribute("href")).toBe("/inbox?tab=comments");
+    for (const modifier of ["metaKey", "ctrlKey", "shiftKey", "altKey"]) {
+      fireEvent.pointerDown(comments, { [modifier]: true });
+      fireEvent.click(comments, { [modifier]: true });
+      await settle();
+      expect.soft(cancelRestore, modifier).not.toHaveBeenCalled();
+      expect.soft(entryOf(view.router).pending, modifier).toEqual({
+        view: pending,
+        locate: true,
+      });
+      expect(view.router.state.location.href).toBe("/inbox?tab=specs");
+      expect(selectedTab(view)).toBe("Specs");
+    }
+    // Same callback and real registry: the unmodified gesture must cancel.
+    fireEvent.click(comments);
+    await settle();
+    expect(cancelRestore).toHaveBeenCalledTimes(1);
+    expect(entryOf(view.router).pending).toBeUndefined();
+    expect(selectedTab(view)).toBe("Comments");
   });
 
   it("keeps the URL authoritative when history state remembers another tab", async () => {
