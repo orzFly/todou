@@ -519,6 +519,55 @@ describe("the metadata dialog's focus restore with both doors gone (T-430)", () 
     await waitFor(() => expect(document.activeElement).toBe(retry));
   });
 
+  it("passes over a Retry that a refetch in flight has disabled", async () => {
+    vi.spyOn(api, "writeIssueMetadata").mockResolvedValue({ entries: [] });
+    const get = vi
+      .spyOn(api, "getIssueMetadata")
+      .mockResolvedValue({ entries: [entry("orch", "phase", "plan")] });
+    const client = mount([entry("orch", "phase", "plan")]);
+    const summary = await screen.findByTestId("metadata-open");
+    summary.focus();
+    fireEvent.click(summary);
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+
+    get.mockResolvedValue({ entries: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Delete orch/phase" }));
+    await waitFor(() =>
+      expect(screen.queryByTestId("metadata-open")).toBeNull(),
+    );
+
+    get.mockRejectedValue(new Error("metadata unreachable"));
+    await act(async () => {
+      await client.invalidateQueries({
+        queryKey: issueMetadataQuery(SLUG, NUMBER).queryKey,
+      });
+    });
+    const sidebar = screen.getByTestId("metadata-sidebar");
+    await waitFor(() =>
+      expect(doorsGone(sidebar)).toEqual({ summary: null, heading: null }),
+    );
+
+    // A read that never settles is what `refetchOnWindowFocus` leaves behind
+    // when the reader comes back to the tab with the dialog still open: the
+    // failure face stays, and its Retry is disabled for as long as that read
+    // is in flight.
+    get.mockReturnValue(new Promise(() => {}));
+    await act(async () => {
+      void client.refetchQueries({
+        queryKey: issueMetadataQuery(SLUG, NUMBER).queryKey,
+      });
+    });
+    const retry = sidebar.querySelector<HTMLButtonElement>("button");
+    await waitFor(() => expect(retry?.disabled).toBe(true));
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // Still on screen, and still the wrong place to send focus: a disabled
+    // button takes none, which would leave it on body.
+    expect(retry?.isConnected).toBe(true);
+    await waitFor(() => expect(document.activeElement).toBe(sidebar));
+  });
+
   it("lands on the section when a reader's last entry goes and leaves nothing", async () => {
     const get = vi
       .spyOn(api, "getIssueMetadata")

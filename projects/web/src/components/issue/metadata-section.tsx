@@ -150,7 +150,12 @@ export function MetadataSection({
           // is the control that brings the doors back; the read-only card
           // whose last entry someone else deleted keeps neither and is left
           // with the section itself (T-430).
-          return retry.current ?? section.current;
+          const retryButton = retry.current;
+          // A refetch already in flight renders Retry disabled, and focus()
+          // on a disabled button does nothing at all — taking it would put the
+          // focus back on body, the state this card exists to remove.
+          if (retryButton !== null && !retryButton.disabled) return retryButton;
+          return section.current;
         }}
       />
     </SidebarSection>
