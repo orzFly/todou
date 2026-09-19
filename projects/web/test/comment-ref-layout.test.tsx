@@ -332,6 +332,44 @@ describe("parent container measurement and resize", () => {
     ).toBe(true);
   });
 
+  it("charges the chip's cloned end edge on top of its own box", () => {
+    installGeometry(260);
+    const { container } = render(
+      <div
+        data-layout-container
+        style={{ display: "block", padding: "0 10px" }}
+      >
+        <a
+          href="#comment-209"
+          className="comment-link-body"
+          style={{ padding: "0 4px", border: "1px solid" }}
+        >
+          <CommentReference
+            {...props}
+            slug="WWWWWWWWWWWW"
+            prefix="WWWWWWWWWWWW"
+            spelled="WWWWWWWWWWWW/WWWWWWWWWWWW-29"
+          />
+        </a>
+      </div>,
+    );
+    // 240 of content, less the chip's own 10px box, less its 5px end edge:
+    // `box-decoration-break: clone` draws that edge again on a wrapped
+    // fragment and the engine keeps no room for it. Charging the box alone
+    // reads 230 here, and hung the chip 1.63px out of a 390px paragraph.
+    expect(
+      container.querySelector<HTMLElement>("[data-comment-title]")?.style
+        .maxWidth,
+    ).toBe("min(24em, 225px)");
+    // fixed '/' + '-29' + '#comment-209' = 112px, so 56.5px a segment, less
+    // the 12px tail glyph each keeps.
+    for (const head of container.querySelectorAll<HTMLElement>(
+      ".comment-reference-head",
+    )) {
+      expect(Number.parseFloat(head.style.width)).toBeCloseTo(44.5);
+    }
+  });
+
   it("keeps equal budgets through repeated 1/3 tail changes despite clipped Range fragments", () => {
     const geometry = installGeometry(260);
     // Chromium may return a second visual fragment for a clipped Range.

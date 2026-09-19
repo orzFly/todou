@@ -148,6 +148,12 @@ export function CommentReference({
           pixels(style.paddingRight) +
           pixels(style.borderLeftWidth) +
           pixels(style.borderRightWidth);
+        // The end edge a second time: `box-decoration-break: clone` repeats
+        // it on every fragment, and Chromium reserves only the opening edge
+        // when it breaks the line, so content runs to the paragraph's own
+        // edge and the cloned closing box is drawn past it — 1.63px at 390px.
+        available -=
+          pixels(style.paddingRight) + pixels(style.borderRightWidth);
         const icon = anchor.querySelector(".comment-reference-icon");
         if (icon) {
           const iconStyle = getComputedStyle(icon);
