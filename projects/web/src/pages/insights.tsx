@@ -7,8 +7,6 @@ import {
 } from "@todou/shared";
 import { useState } from "react";
 import { insightsBurnQuery, insightsSettingsQuery } from "@/api/insights.ts";
-import { BucketInspector } from "@/components/insights/bucket-inspector.tsx";
-import { BucketTable } from "@/components/insights/bucket-table.tsx";
 import { BurnChart } from "@/components/insights/burn-chart.tsx";
 import { StatusFlowChart } from "@/components/insights/status-flow-chart.tsx";
 import { PageSkeleton } from "@/components/page-skeleton.tsx";
@@ -65,8 +63,6 @@ export function InsightsPage() {
         key={`${resolved.range}/${resolved.from}/${resolved.to}/${resolved.grain}/${resolved.tz}`}
         search={resolved}
         context={context}
-        resolvedGrain={result.data?.resolved_grain}
-        bucketCount={result.data?.buckets.length}
         onChange={(next) => {
           const { invalid: _invalid, ...validated } = next;
           void navigate({
@@ -84,8 +80,7 @@ export function InsightsPage() {
       )}
       {request === null ? (
         <p role="alert" className="text-sm text-destructive">
-          Choose a valid custom range of at most 366 days. The end date is
-          included.
+          Choose a valid custom range of at most 366 days.
         </p>
       ) : coldFailure !== null ? (
         <LoadFailure
@@ -173,15 +168,12 @@ export function InsightsControls({
   search,
   context,
   onChange,
-  resolvedGrain,
-  bucketCount,
 }: {
   search: ResolvedInsightsSearch;
   context: InsightsSearchContext;
   onChange: (search: InsightsSearch) => void;
-  resolvedGrain?: string;
-  bucketCount?: number;
 }) {
+  const { tz: _tz, invalid: _invalid, ...filters } = search;
   const defaultRange = insightsPresetRequest(
     "30d",
     search.grain,
@@ -195,21 +187,14 @@ export function InsightsControls({
     search.to ?? defaultEnd.toISOString().slice(0, 10),
   );
   const [error, setError] = useState<string | null>(null);
-  const timezones = [...new Set([search.tz, context.timezone, "UTC"])];
   const controlClass = "h-9 rounded-md border bg-background px-2 text-sm";
-  const unavailable = Grain.options.flatMap((grain) => {
-    if (grain !== "1h" && grain !== "6h" && grain !== "12h") return [];
-    return (minimumHourlyBuckets(search, context, grain) ?? 0) > 400
-      ? [GRAIN_LABELS[grain]]
-      : [];
-  });
 
   return (
     <form
       className="space-y-3"
       onSubmit={(event) => {
         event.preventDefault();
-        const next = { ...search, range: "custom" as const, from, to };
+        const next = { ...filters, range: "custom" as const, from, to };
         if (insightsRequest(next, context) === null) {
           setError("Choose valid dates in order, spanning at most 366 days.");
           return;
@@ -234,8 +219,8 @@ export function InsightsControls({
                 }`}
                 onClick={() =>
                   range === "custom"
-                    ? onChange({ ...search, range, from, to })
-                    : onChange({ range, grain: search.grain, tz: search.tz })
+                    ? onChange({ ...filters, range, from, to })
+                    : onChange({ range, grain: search.grain })
                 }
               >
                 {label}
@@ -256,21 +241,13 @@ export function InsightsControls({
                   key={grain}
                   type="button"
                   aria-pressed={search.grain === grain}
-                  aria-label={
-                    exceeds ? `${label}，不可用：超过400桶上限` : undefined
-                  }
-                  title={
-                    exceeds
-                      ? "超过400桶上限；请缩短时间范围或选择更粗的粒度"
-                      : undefined
-                  }
                   disabled={exceeds}
                   className={`${segmentButtonClass} ${
                     search.grain === grain
                       ? "border-border bg-background text-foreground shadow-sm"
                       : "text-muted-foreground"
                   }`}
-                  onClick={() => onChange({ ...search, grain })}
+                  onClick={() => onChange({ ...filters, grain })}
                 >
                   {label}
                 </button>
@@ -304,41 +281,7 @@ export function InsightsControls({
           <Button type="submit" variant="outline" size="sm">
             应用日期
           </Button>
-          <span className="w-full text-xs text-muted-foreground">
-            包含所选结束日期
-          </span>
         </div>
-      )}
-      <div className="flex flex-wrap items-end justify-between gap-2">
-        <label className="grid gap-1 text-sm">
-          时区
-          <select
-            className={controlClass}
-            value={search.tz}
-            onChange={(event) =>
-              onChange({ ...search, tz: event.target.value })
-            }
-          >
-            {timezones.map((timezone) => (
-              <option key={timezone} value={timezone}>
-                {timezone}
-              </option>
-            ))}
-          </select>
-        </label>
-        <span className="text-xs text-muted-foreground">
-          {search.grain === "auto" && resolvedGrain
-            ? `自动 → ${GRAIN_LABELS[resolvedGrain as Exclude<GrainValue, "auto">] ?? resolvedGrain}`
-            : GRAIN_LABELS[search.grain]}
-          {bucketCount === undefined ? "" : ` · ${bucketCount} 桶`}
-          {" · "}最多 400 桶
-        </span>
-      </div>
-      {unavailable.length > 0 && (
-        <p className="text-xs text-muted-foreground">
-          {unavailable.join("、")}{" "}
-          超过400桶上限；请缩短时间范围或选择更粗的粒度。
-        </p>
       )}
       {error && (
         <p role="alert" className="text-sm text-destructive">
@@ -366,42 +309,22 @@ export function InsightsResults({ data }: { data: BurnResponse }) {
   };
   return (
     <div className="space-y-5">
-      <div className="space-y-1 text-sm text-muted-foreground">
-        <p>
-          当前卡片集合：本项目现有 {data.cohort.count}{" "}
-          张卡。集合外的历史卡片不计入。
-          删除或移出卡片会改写过去的曲线；搬入卡片仅从最近一次进入本项目起计。
-          修改状态角色也会重新解释历史。
-        </p>
-        <p>
-          数据截至 <time dateTime={data.as_of}>{data.as_of}</time> ·{" "}
-          {data.resolved_grain} 粒度 · {data.timezone}
-        </p>
-        {data.history_coverage.has_unknown && (
-          <p role="status">
-            Some history is unknown. Gaps are not zero; exact reads include
-            known values and unknown counts.{" "}
-            {data.history_coverage.reasons
-              .map((reason) => reason.replaceAll("_", " "))
-              .join(", ")}
-          </p>
-        )}
-      </div>
       {data.buckets.length === 0 ? (
-        <p className="rounded-lg border border-dashed p-6 text-muted-foreground">
-          No buckets in this range.
+        <p
+          role="status"
+          className="rounded-lg border border-dashed p-6 text-muted-foreground"
+        >
+          No data in this range.
         </p>
       ) : (
         <>
           {data.cohort.count === 0 && (
-            <p role="status">No cards in the current cohort.</p>
+            <p role="status">No cards in this project.</p>
           )}
           <div className="grid min-w-0 gap-5 xl:grid-cols-2">
             <BurnChart {...props} />
             <StatusFlowChart {...props} />
           </div>
-          <BucketInspector {...props} />
-          <BucketTable {...props} />
         </>
       )}
     </div>

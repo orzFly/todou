@@ -143,7 +143,7 @@ describe("Insights route", () => {
 
 describe("Insights controls", () => {
   const context = { now: new Date("2026-09-18T01:00:00Z"), timezone: "UTC" };
-  const search = resolveInsightsSearch({ tz: "UTC" }, context);
+  const search = resolveInsightsSearch({}, context);
 
   it("keeps all five ranges and six grains visible as independent pressed buttons", () => {
     const change = vi.fn();
@@ -176,11 +176,15 @@ describe("Insights controls", () => {
     expect(change).toHaveBeenLastCalledWith({
       range: "24h",
       grain: "auto",
-      tz: "UTC",
     });
     fireEvent.click(within(grains).getByRole("button", { name: "6h" }));
-    expect(change).toHaveBeenLastCalledWith({ ...search, grain: "6h" });
-    expect(screen.getByLabelText("时区").tagName).toBe("SELECT");
+    expect(change).toHaveBeenLastCalledWith({
+      range: "30d",
+      from: undefined,
+      to: undefined,
+      grain: "6h",
+    });
+    expect(screen.queryByLabelText("时区")).toBeNull();
     expect(screen.queryByRole("combobox", { name: "时间范围" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "统计粒度" })).toBeNull();
   });
@@ -199,8 +203,8 @@ describe("Insights controls", () => {
       ),
     );
     expect(change).toHaveBeenCalledWith({
-      ...search,
       range: "custom",
+      grain: "auto",
       from: "2026-08-20",
       to: "2026-09-18",
     });
@@ -209,7 +213,7 @@ describe("Insights controls", () => {
   it("validates custom dates before applying the shared request", () => {
     const change = vi.fn();
     const custom = resolveInsightsSearch(
-      { range: "custom", from: "2026-09-17", to: "2026-09-18", tz: "UTC" },
+      { range: "custom", from: "2026-09-17", to: "2026-09-18" },
       context,
     );
     render(
@@ -231,7 +235,8 @@ describe("Insights controls", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "应用日期" }));
     expect(change).toHaveBeenCalledWith({
-      ...custom,
+      range: "custom",
+      grain: "auto",
       from: "2026-09-18",
       to: "2026-09-18",
     });
@@ -240,29 +245,20 @@ describe("Insights controls", () => {
     );
   });
 
-  it("用中文说明超限粒度，短范围仍可选", () => {
+  it("disables unavailable grains without explanatory copy and enables shorter ranges", () => {
     const change = vi.fn();
     const view = render(
-      <InsightsControls
-        search={search}
-        context={context}
-        onChange={change}
-        resolvedGrain="6h"
-        bucketCount={30}
-      />,
+      <InsightsControls search={search} context={context} onChange={change} />,
     );
     const grain = screen.getByRole("group", { name: "统计粒度" });
-    const unavailable = within(grain).getByRole("button", {
-      name: "1h，不可用：超过400桶上限",
-    });
+    const unavailable = within(grain).getByRole("button", { name: "1h" });
     expect(unavailable).toHaveProperty("disabled", true);
-    expect(unavailable.getAttribute("title")).toBe(
-      "超过400桶上限；请缩短时间范围或选择更粗的粒度",
-    );
-    expect(
-      screen.getByText("1h 超过400桶上限；请缩短时间范围或选择更粗的粒度。"),
-    ).toBeTruthy();
-    expect(screen.getByText(/自动 → 6h · 30 桶 · 最多 400 桶/)).toBeTruthy();
+    expect(unavailable.getAttribute("title")).toBeNull();
+    expect(unavailable.getAttribute("aria-label")).toBeNull();
+    fireEvent.click(unavailable);
+    expect(change).not.toHaveBeenCalled();
+    expect(view.container.textContent).not.toMatch(/桶|bucket|400|自动\s*→/i);
+    expect(screen.queryByRole("combobox")).toBeNull();
     view.rerender(
       <InsightsControls
         search={{ ...search, range: "7d" }}
@@ -284,12 +280,12 @@ describe("Insights page", () => {
       .mockResolvedValue(settings);
     const request = vi.spyOn(api, "getInsightsBurn").mockResolvedValue(data);
     const view = renderPage();
-    await screen.findByText(/当前卡片集合：本项目现有 4 张卡/);
+    await screen.findByRole("heading", { name: "Burn chart" });
     expect(settingsRequest).toHaveBeenCalledWith("x");
     const expected = {
       from: "2026-09-17",
       to: "2026-09-19",
-      tz: "UTC",
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC",
       grain: "auto" as const,
     };
     expect(request).toHaveBeenCalledWith("x", expected);
@@ -311,7 +307,76 @@ describe("Insights page", () => {
         grain: "6h",
       }),
     );
+    expect(view.router.state.location.search).not.toHaveProperty("tz");
+    expect(
+      new URLSearchParams(view.router.state.location.searchStr).has("tz"),
+    ).toBe(false);
     expect(screen.queryByText(/role settings/i)).toBeNull();
+    view.unmount();
+    view.client.clear();
+  });
+
+  it("uses the browser timezone despite legacy tz and omits tz after range changes", async () => {
+    const options = Intl.DateTimeFormat().resolvedOptions();
+    vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
+      ...options,
+      timeZone: "Asia/Tokyo",
+    });
+    vi.spyOn(api, "getInsightsSettings").mockResolvedValue(settings);
+    const request = vi.spyOn(api, "getInsightsBurn").mockResolvedValue({
+      ...data,
+      timezone: "Asia/Tokyo",
+    });
+    const view = renderPage();
+    await screen.findByRole("heading", { name: "Burn chart" });
+    expect(request).toHaveBeenCalledWith("x", {
+      from: "2026-09-17",
+      to: "2026-09-19",
+      grain: "auto",
+      tz: "Asia/Tokyo",
+    });
+    expect(screen.queryByLabelText("时区")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "7天" }));
+    await waitFor(() =>
+      expect(view.router.state.location.search.range).toBe("7d"),
+    );
+    await waitFor(() =>
+      expect(request).toHaveBeenLastCalledWith(
+        "x",
+        expect.objectContaining({ tz: "Asia/Tokyo" }),
+      ),
+    );
+    expect(
+      new URLSearchParams(view.router.state.location.searchStr).has("tz"),
+    ).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "自定义" }));
+    await screen.findByLabelText("开始日期");
+    fireEvent.change(screen.getByLabelText("开始日期"), {
+      target: { value: "2026-09-16" },
+    });
+    fireEvent.change(screen.getByLabelText("结束日期"), {
+      target: { value: "2026-09-18" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "应用日期" }));
+    await waitFor(() =>
+      expect(view.router.state.location.search).toEqual({
+        range: "custom",
+        from: "2026-09-16",
+        to: "2026-09-18",
+        grain: "auto",
+      }),
+    );
+    await waitFor(() =>
+      expect(request).toHaveBeenLastCalledWith("x", {
+        from: "2026-09-16",
+        to: "2026-09-19",
+        grain: "auto",
+        tz: "Asia/Tokyo",
+      }),
+    );
+    expect(
+      new URLSearchParams(view.router.state.location.searchStr).has("tz"),
+    ).toBe(false);
     view.unmount();
     view.client.clear();
   });
@@ -348,33 +413,36 @@ describe("Insights page", () => {
     const failed = renderPage();
     await screen.findByText(/Could not load insights: read unavailable/);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    await screen.findByText(/当前卡片集合：本项目现有 4 张卡/);
+    await screen.findByRole("heading", { name: "Burn chart" });
     failed.unmount();
     failed.client.clear();
   });
 
-  it("shares selection between both charts, inspector and table, resetting on replacement", () => {
+  it("shares selection between both charts and resets it on replacement", () => {
     const view = render(<InsightsResults data={data} />);
-    const inspector = screen.getByRole("region", { name: "Bucket inspector" });
-    const table = screen.getByRole("table", { name: "Insights buckets" });
-    fireEvent.click(
-      within(table).getByRole("button", { name: /Select bucket 1:/ }),
+    expect(
+      [...view.container.querySelectorAll("svg[data-selected-bucket]")].map(
+        (svg) => svg.getAttribute("data-selected-bucket"),
+      ),
+    ).toEqual(["1", "1"]);
+    fireEvent.keyDown(
+      screen.getByRole("group", { name: /Burn chart.*selection/ }),
+      { key: "Home" },
     );
     expect(
       [...view.container.querySelectorAll("svg[data-selected-bucket]")].map(
         (svg) => svg.getAttribute("data-selected-bucket"),
       ),
     ).toEqual(["0", "0"]);
-    expect(inspector.textContent).toContain(data.buckets[0].start);
     fireEvent.keyDown(
-      screen.getByRole("group", { name: "Burn chart bucket selection" }),
+      screen.getByRole("group", { name: /Status flow chart.*selection/ }),
       { key: "End" },
     );
     expect(
-      within(table)
-        .getByRole("button", { name: /Select bucket 2:/ })
-        .getAttribute("aria-pressed"),
-    ).toBe("true");
+      [...view.container.querySelectorAll("svg[data-selected-bucket]")].map(
+        (svg) => svg.getAttribute("data-selected-bucket"),
+      ),
+    ).toEqual(["1", "1"]);
     view.rerender(
       <InsightsResults data={{ ...data, buckets: data.buckets.slice(0, 1) }} />,
     );
@@ -385,7 +453,38 @@ describe("Insights page", () => {
     ).toEqual(["0", "0"]);
   });
 
-  it("explains current-cohort coverage and handles empty ranges", () => {
+  it("omits the inspector, table and historical explanations", () => {
+    render(
+      <InsightsResults
+        data={{
+          ...data,
+          history_coverage: {
+            ...data.history_coverage,
+            has_unknown: true,
+            reasons: ["broken_transition_chain"],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Burn chart" })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "Status flow chart" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("region", { name: "Bucket inspector" }),
+    ).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(
+      screen.queryByText(/当前卡片集合|删除或移出卡片|搬入卡片|修改状态角色/),
+    ).toBeNull();
+    expect(
+      screen.queryByText(
+        /数据截至|Some history is unknown|Gaps are not zero|broken transition chain/,
+      ),
+    ).toBeNull();
+  });
+
+  it("handles empty ranges without technical terminology", () => {
     render(
       <InsightsResults
         data={{
@@ -399,14 +498,25 @@ describe("Insights page", () => {
         }}
       />,
     );
-    expect(screen.getByText(/当前卡片集合：本项目现有 4 张卡/)).toBeTruthy();
-    expect(screen.getByText(/删除或移出卡片会改写过去的曲线/)).toBeTruthy();
-    expect(screen.getByText(/搬入卡片仅从最近一次进入本项目起计/)).toBeTruthy();
-    expect(screen.getByText(/修改状态角色也会重新解释历史/)).toBeTruthy();
-    expect(screen.getByText(/Gaps are not zero/).textContent).toContain(
-      "broken transition chain",
+    expect(screen.getByRole("status").textContent).toBe(
+      "No data in this range.",
     );
-    expect(screen.getByText("No buckets in this range.")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Burn chart" })).toBeNull();
     expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("keeps charts and a concise empty project state when there are no cards", () => {
+    render(
+      <InsightsResults
+        data={{ ...data, cohort: { ...data.cohort, count: 0 } }}
+      />,
+    );
+    expect(screen.getByRole("status").textContent).toBe(
+      "No cards in this project.",
+    );
+    expect(screen.getByRole("heading", { name: "Burn chart" })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "Status flow chart" }),
+    ).toBeTruthy();
   });
 });

@@ -37,7 +37,6 @@ describe("insights search", () => {
       from: "2026-02-28",
       to: "2026-03-08",
       grain: "6h",
-      tz: "America/New_York",
     });
     expect(
       parseInsightsSearch({
@@ -52,7 +51,6 @@ describe("insights search", () => {
       from: undefined,
       to: undefined,
       grain: undefined,
-      tz: undefined,
       invalid: true,
     });
     expect(
@@ -69,12 +67,38 @@ describe("insights search", () => {
       tz: "America/New_York",
     });
     expect(
-      resolveInsightsSearch({ tz: "Asia/Tokyo", grain: "1w" }, context),
-    ).toMatchObject({ tz: "Asia/Tokyo", grain: "1w" });
+      resolveInsightsSearch(
+        parseInsightsSearch({ tz: "Asia/Tokyo", grain: "1w" }),
+        context,
+      ),
+    ).toMatchObject({ tz: "America/New_York", grain: "1w" });
     expect(
       resolveInsightsSearch({}, { ...context, timezone: "Not/AZone" }).tz,
     ).toBe("UTC");
   });
+
+  it.each(["Asia/Tokyo", "UTC", "Not/AZone", 7])(
+    "ignores legacy URL timezone %s without reporting an invalid filter",
+    (tz) => {
+      const legacySearch = { range: "7d" as const, tz };
+      const parsed = parseInsightsSearch(legacySearch);
+      const browser = {
+        now: new Date("2026-01-01T01:00:00Z"),
+        timezone: "America/Los_Angeles",
+      };
+      expect(parsed).not.toHaveProperty("tz");
+      expect(parsed.invalid).toBeUndefined();
+      expect(resolveInsightsSearch(legacySearch, browser).tz).toBe(
+        browser.timezone,
+      );
+      expect(insightsRequest(parsed, browser)).toEqual({
+        from: "2025-12-25",
+        to: "2026-01-01",
+        grain: "auto",
+        tz: browser.timezone,
+      });
+    },
+  );
 
   it.each(["auto", "1h", "6h", "12h", "1d", "1w"])(
     "accepts the contracted grain %s",

@@ -10,7 +10,6 @@ export type InsightsSearch = {
   /** Inclusive calendar date in the URL; requests use the following day. */
   to?: string;
   grain?: InsightsGrain;
-  tz?: string;
   /** One or more recognized URL fields were present but invalid. */
   invalid?: true;
 };
@@ -68,19 +67,16 @@ export function parseInsightsSearch(
   const grain = Grain.safeParse(search.grain);
   const from = isCalendarDate(search.from) ? search.from : undefined;
   const to = isCalendarDate(search.to) ? search.to : undefined;
-  const tz = isTimezone(search.tz) ? search.tz : undefined;
   const invalid =
     (search.range !== undefined && range === undefined) ||
     (search.from !== undefined && from === undefined) ||
     (search.to !== undefined && to === undefined) ||
-    (search.grain !== undefined && !grain.success) ||
-    (search.tz !== undefined && tz === undefined);
+    (search.grain !== undefined && !grain.success);
   return {
     range,
     from,
     to,
     grain: grain.success ? grain.data : undefined,
-    tz,
     ...(invalid ? { invalid: true as const } : {}),
   };
 }
@@ -96,7 +92,7 @@ export function resolveInsightsSearch(
     from: parsed.from,
     to: parsed.to,
     grain: parsed.grain ?? "auto",
-    tz: parsed.tz ?? (isTimezone(context.timezone) ? context.timezone : "UTC"),
+    tz: isTimezone(context.timezone) ? context.timezone : "UTC",
     ...(parsed.invalid ? { invalid: true as const } : {}),
   };
 }
@@ -118,7 +114,7 @@ export function insightsPresetRequest(
     });
   }
 
-  // Intl is used only to find today's date in the selected timezone. The
+  // Intl is used only to find today's date in the browser timezone. The
   // server, not the browser, converts the date boundaries into instants.
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: tz,
