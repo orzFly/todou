@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
  * Manual real-Chromium checks for the edit history diff's line wrapping
- * (T-425). It is intentionally independent of `pnpm test`/CI: line numbers,
- * soft wrapping, the clipboard and horizontal scrolling all live inside
- * pierre's shadow root, and happy-dom lays none of it out.
+ * (T-425) and for the modal scroll lock the diff sits under (T-450). It is
+ * intentionally independent of `pnpm test`/CI: line numbers, soft wrapping,
+ * the clipboard, horizontal scrolling and the fate of a trusted wheel all live
+ * inside pierre's shadow root, and happy-dom lays none of it out.
  *
  * Usage: node scripts/revision-history-wrap-smoke.mjs [--self-test] [--keep] [--help]
  * Preconditions: the devshell's Node 24+, installed workspace dependencies,
@@ -87,6 +88,9 @@ const COVERAGE_FAILURES = new Set([
   "clipboard-unavailable",
   "prose-fixture-missing",
   "fault-not-confirmed",
+  "no-wheel-delivered",
+  "wheel-target-not-retargeted",
+  "page-cannot-scroll",
   "self-test-baseline-not-clean",
   "self-test-no-new-failure",
   "self-test-fresh-restoration",
@@ -277,6 +281,28 @@ function probeSource(fault) {
       button.style.top = '10px';
       return { applied: getComputedStyle(button).position === 'absolute' };
     }
+    if (FAULT === 'wheel-release-disabled') {
+      // Precisely what dialog.tsx added, taken away again: the release still
+      // runs and now achieves nothing, so the lock cancels as it used to.
+      Object.defineProperty(WheelEvent.prototype, 'stopPropagation',
+        { value() {}, configurable: true, writable: true });
+      const probe = new WheelEvent('wheel');
+      probe.stopPropagation();
+      return { applied: probe.cancelBubble === false };
+    }
+    if (FAULT === 'scroll-lock-removed') {
+      // Both halves of the modal lock: the wheel it cancels, and the
+      // overflow it takes off the body. An inline !important is the one
+      // declaration that outranks the stylesheet the lock injects.
+      Object.defineProperty(WheelEvent.prototype, 'preventDefault',
+        { value() {}, configurable: true, writable: true });
+      for (const node of [document.documentElement, document.body])
+        node.style.setProperty('overflow', 'auto', 'important');
+      const probe = new WheelEvent('wheel', { cancelable: true });
+      probe.preventDefault();
+      return { applied: probe.defaultPrevented === false &&
+        getComputedStyle(document.body).overflowY !== 'hidden' };
+    }
     if (FAULT === 'prose-rewrapped') {
       const style = document.createElement('style');
       style.dataset.t425Fault = FAULT;
@@ -444,20 +470,36 @@ function probeSource(fault) {
       };
     },
     wheelSeen: [],
+    wheelSettled: [],
     watchWheel: () => {
       window.__t425.wheelSeen = [];
+      window.__t425.wheelSettled = [];
       if (window.__t425.wheelWatching) return true;
       window.__t425.wheelWatching = true;
-      // On window, bubbling, after every other listener has had the event:
-      // whoever cancels it has already done so by the time this runs.
+      // Two listeners, because one cannot answer both questions. Capture on
+      // window runs before anything else and so counts every wheel that
+      // arrived, including the ones dialog.tsx takes out of the lock's reach
+      // with stopPropagation. Bubbling on window runs after everyone and is
+      // the only place the cancellation verdict is final — an event that is
+      // missing from it was released rather than cancelled.
       window.addEventListener('wheel', event => {
         window.__t425.wheelSeen.push({ deltaX: event.deltaX, deltaY: event.deltaY,
-          cancelable: event.cancelable, defaultPrevented: event.defaultPrevented,
+          cancelable: event.cancelable,
+          retargeted: event.target !== event.composedPath()[0],
           target: event.target?.tagName?.toLowerCase() ?? null });
+      }, { passive: true, capture: true });
+      window.addEventListener('wheel', event => {
+        window.__t425.wheelSettled.push({ deltaX: event.deltaX, deltaY: event.deltaY,
+          cancelable: event.cancelable, defaultPrevented: event.defaultPrevented });
       }, { passive: true });
       return true;
     },
     wheelEvents: () => window.__t425.wheelSeen,
+    wheelVerdicts: () => window.__t425.wheelSettled,
+    pageScroll: () => ({
+      y: Math.round(window.scrollY),
+      max: Math.round(document.documentElement.scrollHeight - window.innerHeight),
+    }),
     pointTarget: (x, y) => {
       const top = document.elementFromPoint(x, y);
       const inner = shadow()?.elementFromPoint?.(x, y) ?? null;
@@ -596,8 +638,7 @@ function probeSource(fault) {
  * the assignment outright, and `overflow-x: hidden` is caught by the
  * computed-style assertion beside this one.
  *
- * A real wheel is graded separately by `probeWheel`, which does not decide
- * pass or fail: see the `wheel` note in the report and T-425's delivery.
+ * A real wheel is graded separately, by `probeWheel` and `checkWheel`.
  */
 async function scrollCodeToEnd(page) {
   const before = await evaluate(page, () => window.__t425.codeScroll());
@@ -607,59 +648,170 @@ async function scrollCodeToEnd(page) {
   return { before, moved, after };
 }
 
+/** A compositor-level gesture: untrusted `new WheelEvent(...)` scrolls nothing. */
+async function wheelOver(page, x, y, xDistance, yDistance) {
+  // Hover first: a wheel arrives at whatever the last mouse move put under
+  // the cursor, and the cursor starts at the origin.
+  await page.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x,
+    y,
+    button: "none",
+    buttons: 0,
+    pointerType: "mouse",
+  });
+  await sleep(50);
+  await evaluate(page, () => window.__t425.watchWheel());
+  await page.send("Input.synthesizeScrollGesture", {
+    x,
+    y,
+    xDistance,
+    yDistance,
+    gestureSourceType: "mouse",
+    speed: 4000,
+  });
+  await sleep(250);
+  return {
+    arrived: await evaluate(page, () => window.__t425.wheelEvents()),
+    settled: await evaluate(page, () => window.__t425.wheelVerdicts()),
+  };
+}
+
 /**
- * Whether a trusted wheel over the diff is allowed to scroll it. Recorded,
- * not graded: Radix's modal scroll lock cancels it, which predates T-425.
+ * What a trusted wheel over the diff does, in both directions (T-450).
+ *
+ * Sideways it has to scroll. The modal scroll lock judges a wheel by
+ * `event.target`, and pierre's open shadow root retargets that to the host, so
+ * the scroller holding the code is invisible to it and every horizontal wheel
+ * used to be cancelled as an overscroll; `dialog.tsx` hands those events past
+ * the lock. Downwards it has to stay cancelled once the dialog itself has
+ * nowhere left to go, which is the half of the lock this card must not have
+ * widened its way through — hence `scrollBoxToBottom` first, so the dialog
+ * cannot legitimately absorb the gesture.
  */
 async function probeWheel(page) {
   // From the left edge: the travel check above leaves it at the far end,
   // where a working wheel would have nowhere to go either.
   await evaluate(page, () => window.__t425.resetCodeScroll());
   const start = await evaluate(page, () => window.__t425.codeScroll());
-  if (start.error) return start;
-  // Hover first: a wheel arrives at whatever the last mouse move put under
-  // the cursor, and the cursor starts at the origin.
-  await page.send("Input.dispatchMouseEvent", {
-    type: "mouseMoved",
-    x: start.centre.x,
-    y: start.centre.y,
-    button: "none",
-    buttons: 0,
-    pointerType: "mouse",
-  });
-  await sleep(50);
+  if (start.error) return { error: start.error };
   const target = await evaluate(
     page,
     (x, y) => window.__t425.pointTarget(x, y),
     start.centre.x,
     start.centre.y,
   );
-  await evaluate(page, () => window.__t425.watchWheel());
-  // A compositor-level gesture, the closest thing CDP has to a hand on a
-  // wheel: untrusted `new WheelEvent(...)` performs no scrolling at all.
-  await page.send("Input.synthesizeScrollGesture", {
-    x: start.centre.x,
-    y: start.centre.y,
-    xDistance: -600,
-    yDistance: 0,
-    gestureSourceType: "mouse",
-    speed: 4000,
-  });
-  await sleep(250);
+  const sideways = await wheelOver(
+    page,
+    start.centre.x,
+    start.centre.y,
+    -600,
+    0,
+  );
   const end = await evaluate(page, () => window.__t425.codeScroll());
-  const events = await evaluate(page, () => window.__t425.wheelEvents());
+
+  await evaluate(page, () => window.__t425.scrollBoxToBottom());
+  const pageBefore = await evaluate(page, () => window.__t425.pageScroll());
+  const downwards = await wheelOver(
+    page,
+    start.centre.x,
+    start.centre.y,
+    0,
+    600,
+  );
+  const pageAfter = await evaluate(page, () => window.__t425.pageScroll());
+
   return {
-    from: start.scrollLeft,
-    to: end.scrollLeft,
-    max: end.max,
-    scrolled: end.scrollLeft > start.scrollLeft,
     target,
-    wheelEvents: events.length,
-    cancelled: events.some((event) => event.defaultPrevented),
     scrollLocked: await evaluate(page, () =>
       document.body.hasAttribute("data-scroll-locked"),
     ),
+    horizontal: {
+      from: start.scrollLeft,
+      to: end.scrollLeft,
+      max: end.max,
+      arrived: sideways.arrived.length,
+      retargeted: sideways.arrived.every((event) => event.retargeted),
+      cancelled: sideways.settled.filter((event) => event.defaultPrevented)
+        .length,
+    },
+    vertical: {
+      arrived: downwards.arrived.length,
+      cancelled: downwards.settled.filter((event) => event.defaultPrevented)
+        .length,
+      page: { before: pageBefore.y, after: pageAfter.y, max: pageBefore.max },
+    },
   };
+}
+
+/**
+ * `page-scrolled-behind-dialog` is the outcome the lock exists for, and it is
+ * deliberately kept next to `vertical-wheel-not-cancelled`, which is the
+ * mechanism underneath it: the lock also puts `overflow: hidden` on the body,
+ * so the page cannot move whatever happens to the wheel and the outcome alone
+ * would never go red. The `scroll-lock-removed` fault lifts both halves, which
+ * is what makes this pair falsifiable rather than decorative.
+ */
+function checkWheel(result, viewport, entry, baselineHeight) {
+  const at = { viewport: viewport.name, entry };
+  if (result.error) return [failure("no-scrolling-line", result.error, at)];
+  const failures = [];
+  const { horizontal, vertical } = result;
+  if (horizontal.arrived === 0 || vertical.arrived === 0)
+    return [
+      failure(
+        "no-wheel-delivered",
+        `${horizontal.arrived} sideways, ${vertical.arrived} downwards`,
+        at,
+      ),
+    ];
+  // Without the retargeting there is no T-450 to grade, and a green run would
+  // mean pierre had stopped using a shadow root rather than that this works.
+  if (!horizontal.retargeted)
+    failures.push(
+      failure(
+        "wheel-target-not-retargeted",
+        `wheels landed on ${JSON.stringify(result.target)} unretargeted`,
+        at,
+      ),
+    );
+  if (horizontal.max < 1)
+    failures.push(
+      failure("no-scrolling-line", "nothing to scroll sideways", at),
+    );
+  else if (horizontal.to <= horizontal.from)
+    failures.push(
+      failure(
+        "horizontal-wheel-blocked",
+        `scrollLeft stayed at ${horizontal.to} of ${horizontal.max}; ${horizontal.cancelled} of ${horizontal.arrived} wheels cancelled`,
+        at,
+      ),
+    );
+  if (vertical.cancelled === 0)
+    failures.push(
+      failure(
+        "vertical-wheel-not-cancelled",
+        `${vertical.arrived} downward wheels, none cancelled, with the dialog already at its bottom`,
+        at,
+      ),
+    );
+  if (baselineHeight < 1)
+    failures.push(
+      failure(
+        "page-cannot-scroll",
+        `the issue page is ${baselineHeight}px short of scrolling, so the lock has nothing to hold`,
+        at,
+      ),
+    );
+  else if (vertical.page.after !== vertical.page.before)
+    failures.push(
+      failure(
+        "page-scrolled-behind-dialog",
+        `window.scrollY ${vertical.page.before} → ${vertical.page.after}`,
+        at,
+      ),
+    );
+  return failures;
 }
 
 async function pressKey(page, key, { modifiers = 0, code, text } = {}) {
@@ -1138,7 +1290,7 @@ async function openPage(browser, context, stack, fixture, fault, viewport) {
 
 async function runPass({ browser, stack, fixture, fault, label }) {
   const failures = [];
-  const notes = { fault: fault ?? null, faultApplied: null, wheel: undefined };
+  const notes = { fault: fault ?? null, faultApplied: null, wheel: [] };
   const context = await browser.newContext();
   await browser.send("Browser.grantPermissions", {
     browserContextId: context.browserContextId,
@@ -1164,6 +1316,11 @@ async function runPass({ browser, stack, fixture, fault, label }) {
           page,
           () => document.documentElement.scrollWidth,
         );
+        // Taken before any dialog opens, because the lock's own `overflow:
+        // hidden` makes the same measurement meaningless afterwards.
+        const baselineHeight = (
+          await evaluate(page, () => window.__t425.pageScroll())
+        ).max;
         for (const entry of ["description", "comment"]) {
           const opened = await evaluate(
             page,
@@ -1238,8 +1395,13 @@ async function runPass({ browser, stack, fixture, fault, label }) {
             failures.push(
               ...checkScroll(state, scrolled, wrap, viewport, baselineWidth),
             );
-            if (!wrap && notes.wheel === undefined)
-              notes.wheel = await probeWheel(page);
+            if (!wrap) {
+              const wheel = await probeWheel(page);
+              notes.wheel.push({ viewport: viewport.name, entry, ...wheel });
+              failures.push(
+                ...checkWheel(wheel, viewport, entry, baselineHeight),
+              );
+            }
             if (wrap && entry === "description") {
               for (const side of ["deletion", "addition"]) {
                 failures.push(
@@ -1470,6 +1632,8 @@ const FAULTS = [
   { fault: "scroll-hidden", expect: "scroll-mode-overflow-style" },
   { fault: "wrap-over-close", expect: "wrap-overlaps-close" },
   { fault: "prose-rewrapped", expect: "prose-whiteSpace-changed" },
+  { fault: "wheel-release-disabled", expect: "horizontal-wheel-blocked" },
+  { fault: "scroll-lock-removed", expect: "page-scrolled-behind-dialog" },
 ];
 
 function isCoverageFailure(entry) {

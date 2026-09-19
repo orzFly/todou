@@ -4,6 +4,56 @@ import type * as React from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+/** Room left in `delta`'s direction, by the axis the gesture is mostly on. */
+function hasScrollRoom(node: Element, horizontal: boolean, delta: number) {
+  const style = getComputedStyle(node);
+  const overflow = horizontal ? style.overflowX : style.overflowY;
+  if (overflow === "visible" || overflow === "hidden" || overflow === "clip")
+    return false;
+  const travel = horizontal
+    ? node.scrollWidth - node.clientWidth
+    : node.scrollHeight - node.clientHeight;
+  if (travel < 1) return false;
+  // A right-to-left box counts scrollLeft down from 0 — the same correction
+  // react-remove-scroll makes before comparing a delta against a position.
+  const position =
+    (horizontal && style.direction === "rtl" ? -1 : 1) *
+    (horizontal ? node.scrollLeft : node.scrollTop);
+  return delta > 0 ? travel - position >= 1 : position >= 1;
+}
+
+/**
+ * The modal scroll lock decides whether a wheel would overscroll by walking up
+ * from `event.target`, and an open shadow root retargets that to its host — so
+ * a scroller *inside* the shadow tree is invisible to it and every wheel over
+ * one is cancelled. Scrollers above the host are visible, which is why a
+ * dialog's own body already scrolls while pierre's diff does not (T-450).
+ *
+ * Measured on Chromium 153: over the diff all ten wheels were cancelled and
+ * `scrollLeft` never left 0, while a plain `overflow-x: scroll` div added to
+ * the same dialog scrolled normally. Room to move is required, in this
+ * gesture's own direction, so a scroller at its end still reaches the lock and
+ * the page behind the dialog stays where it was.
+ */
+function releaseShadowScroll(event: React.WheelEvent<HTMLElement>) {
+  const target = event.nativeEvent.target;
+  const path = event.nativeEvent.composedPath();
+  if (path[0] === target) return;
+  const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+  const delta = horizontal ? event.deltaX : event.deltaY;
+  if (delta === 0) return;
+  for (const node of path) {
+    // From the host upwards the lock reads the same nodes this loop would.
+    if (node === target) return;
+    if (node instanceof Element && hasScrollRoom(node, horizontal, delta)) {
+      // The lock listens on the document; leaving before the event gets there
+      // is what lets the browser scroll this container as it normally would.
+      event.stopPropagation();
+      return;
+    }
+  }
+}
+
 function Dialog({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) {
@@ -48,6 +98,7 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  onWheel,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
@@ -61,6 +112,10 @@ function DialogContent({
           "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className,
         )}
+        onWheel={(event) => {
+          onWheel?.(event);
+          if (!event.isPropagationStopped()) releaseShadowScroll(event);
+        }}
         {...props}
       >
         {children}
