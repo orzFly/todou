@@ -83,6 +83,16 @@ export function UserAvatar({
 }
 
 /**
+ * What a second line has to be indented by to start under a chip's name
+ * instead of under its avatar: `UserAvatar`'s `size-5` plus the `ml-1.5` in
+ * front of the name. It lives beside those two rather than beside the header
+ * that indents by it (T-445), because nothing in that second line holds it in
+ * place — resize the avatar without moving this and the two lines go ragged
+ * with no other symptom.
+ */
+export const USER_CHIP_NAME_INDENT = "1.625rem";
+
+/**
  * Uniform user rendering across the app. Machine users get a bot badge and
  * an ownership tooltip so agents are always visually distinct from humans.
  */

@@ -48,7 +48,12 @@ import { useRefPlacement } from "@/api/prefs.ts";
 import { api } from "@/api/queries.ts";
 import { specCommentsQuery, specFilesQuery, specQuery } from "@/api/spec.ts";
 import { SpecStatusBadge } from "@/components/issue/spec-entry.tsx";
-import { CommentHeaderMeta } from "@/components/shared/comment-header-meta.tsx";
+import {
+  COMMENT_HEADER_ACTION,
+  COMMENT_HEADER_ROW,
+  CommentHeaderIdentity,
+  CommentHeaderMeta,
+} from "@/components/shared/comment-header-meta.tsx";
 import {
   PIERRE_HIGHLIGHTER,
   PIERRE_THEME_TYPE,
@@ -1817,17 +1822,30 @@ function UnplacedComment({
         item.resolved !== null && "opacity-70",
       )}
     >
-      <div className="mb-1 flex flex-wrap items-baseline gap-2 text-xs text-muted-foreground">
-        <UserChip user={item.author} />
-        <span>
-          {formatAnchorRange(item.anchor)} · v{item.anchor.version}
-        </span>
-        {item.outdated && (
-          <span className="self-center rounded-full border px-1.5 text-muted-foreground">
-            outdated
-          </span>
+      <div
+        className={cn(
+          "mb-1 flex flex-wrap items-baseline gap-2 text-xs text-muted-foreground",
+          COMMENT_HEADER_ROW,
         )}
-        <span className="ml-auto" />
+      >
+        <CommentHeaderIdentity>
+          <UserChip user={item.author} />
+          <span>
+            {formatAnchorRange(item.anchor)} · v{item.anchor.version}
+          </span>
+          {item.outdated && (
+            <span className="self-center rounded-full border px-1.5 text-muted-foreground">
+              outdated
+            </span>
+          )}
+        </CommentHeaderIdentity>
+        {/* Stays, against every instinct to sweep it up: it is what pushes
+            the meta right on the desktop row, and replacing it with an
+            `ml-auto` on the meta itself would cost the row one `gap-2` and
+            shift the desktop 8px (T-445). The grid below the breakpoint
+            places its children itself, where an unplaced box of its own
+            would take a cell. */}
+        <span className="ml-auto max-sm:hidden" />
         <CommentHeaderMeta
           slug={slug}
           issueNumber={issueNumber}
@@ -1838,14 +1856,24 @@ function UnplacedComment({
           <Button
             size="sm"
             variant="outline"
-            className="h-6 self-center px-2 text-xs"
+            className={cn(
+              "h-6 self-center px-2 text-xs",
+              COMMENT_HEADER_ACTION,
+            )}
             disabled={resolving}
             onClick={() => onResolve(item.comment_id)}
           >
             Resolve
           </Button>
         ) : (
-          <span className="text-green-700 dark:text-green-400">resolved</span>
+          <span
+            className={cn(
+              "text-green-700 dark:text-green-400",
+              COMMENT_HEADER_ACTION,
+            )}
+          >
+            resolved
+          </span>
         )}
       </div>
       {item.anchor.quote !== "" && (
@@ -2479,14 +2507,21 @@ function DiffAnnotation({
 }) {
   return (
     <div className="border-y bg-background px-3 py-2 text-sm">
-      <div className="mb-1 flex flex-wrap items-baseline gap-2 text-xs text-muted-foreground">
-        <UserChip user={item.author} />
-        <span>
-          {formatAnchorRange(item.anchor)} · v{item.anchor.version}
-        </span>
-        {item.resolved !== null && (
-          <span className="text-green-700 dark:text-green-400">resolved</span>
+      <div
+        className={cn(
+          "mb-1 flex flex-wrap items-baseline gap-2 text-xs text-muted-foreground",
+          COMMENT_HEADER_ROW,
         )}
+      >
+        <CommentHeaderIdentity>
+          <UserChip user={item.author} />
+          <span>
+            {formatAnchorRange(item.anchor)} · v{item.anchor.version}
+          </span>
+          {item.resolved !== null && (
+            <span className="text-green-700 dark:text-green-400">resolved</span>
+          )}
+        </CommentHeaderIdentity>
         <CommentHeaderMeta
           className="ml-auto"
           slug={slug}

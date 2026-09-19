@@ -1,9 +1,52 @@
 import { Link } from "@tanstack/react-router";
+import type { CSSProperties, ReactNode } from "react";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
+import { USER_CHIP_NAME_INDENT } from "@/components/shared/user-chip.tsx";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import { cn } from "@/lib/utils";
 
 const TEXT = "shrink-0 text-xs whitespace-nowrap text-muted-foreground";
+
+/**
+ * A comment header's narrow-screen shape, merged into the row of all seven
+ * entry points: who wrote it and what the reader may do share the first line,
+ * and the id and the time get the second to themselves (T-445).
+ *
+ * Every class below the breakpoint and none above it, here and in the two
+ * names under it. That is what makes "the desktop row is untouched" a
+ * property of the code rather than a comparison somebody remembered to run —
+ * T-426 let a narrow-screen concession reach the desktop, and T-443 had to
+ * take it back. The column gap is restated rather than inherited so the row
+ * gap next to it cannot depend on which of the two Tailwind emits last.
+ */
+export const COMMENT_HEADER_ROW =
+  "max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-2 max-sm:gap-y-0.5";
+
+/**
+ * Whatever a header's reader may do here: the timeline's action group,
+ * `sending…`, `Resolve`, the `resolved` mark.
+ */
+export const COMMENT_HEADER_ACTION =
+  "max-sm:col-start-2 max-sm:row-start-1 max-sm:justify-self-end max-sm:self-center";
+
+/**
+ * Everything that names the author — the chip, the agent badge, the edit
+ * marker, a spec annotation's anchor.
+ *
+ * `contents` is load-bearing rather than tidy: above the breakpoint this
+ * element generates no box at all, so the desktop row keeps exactly the flex
+ * items it had before the group existed, and nothing in it can be pushed by
+ * a wrapper that is not there. Below the breakpoint the group becomes a flex
+ * box of its own and has to carry a gap again, because the row's `gap-2` no
+ * longer reaches children this element now owns — without one the name and
+ * the anchor render as a single run (`alice-quartermainfile · v1`).
+ */
+export const COMMENT_HEADER_IDENTITY =
+  "contents max-sm:col-start-1 max-sm:row-start-1 max-sm:flex max-sm:min-w-0 max-sm:flex-wrap max-sm:items-baseline max-sm:gap-x-2 max-sm:gap-y-0.5";
+
+export function CommentHeaderIdentity({ children }: { children: ReactNode }) {
+  return <span className={COMMENT_HEADER_IDENTITY}>{children}</span>;
+}
 
 /** Absolute and localised, as every other timestamp in the app already is. */
 function CreatedTime({ createdAt }: { createdAt: string }) {
@@ -47,16 +90,34 @@ export function CommentHeaderMeta(
   const returnState = useReturnLinkState();
   // Wraps rather than shrinks: each half is `whitespace-nowrap`, so in a
   // container too narrow for both the time drops under the id instead of
-  // the pair being squeezed a character per line. Right-justified so the
-  // second line stays against the same edge as the first.
+  // the pair being squeezed a character per line. Right-justified above the
+  // breakpoint, so the second line stays against the same edge as the first.
   const box = cn(
     "flex flex-wrap items-baseline justify-end gap-x-2",
+    // The second line of the split header (T-445). `ml-0` is not tidiness:
+    // the call site's `ml-auto` would, in a grid, shrink this to a
+    // right-aligned box and carry the line's left edge with it. The base
+    // `justify-end` goes the same way — it survives until the id and the
+    // time need a line each, and then it sends the id 112px right of the
+    // name it is supposed to start under.
+    "max-sm:col-span-2 max-sm:row-start-2 max-sm:ml-0 max-sm:justify-start",
+    "max-sm:ps-(--user-chip-name-indent)",
+    // The time claims the leftover space rather than the row distributing
+    // it, so running out of room drops it to a line of its own still against
+    // the right edge. `justify-between` + `nowrap` draws the same shape and
+    // fails by leaving the header, which is the one thing this card forbids.
+    "max-sm:[&>*:last-child]:ml-auto",
     props.className,
   );
+  // A custom property so the number stays beside the avatar it tracks
+  // instead of being copied into the seven headers that indent by it.
+  const indent = {
+    "--user-chip-name-indent": USER_CHIP_NAME_INDENT,
+  } as CSSProperties;
 
   if (props.pending) {
     return (
-      <span className={box} data-testid="comment-header-meta">
+      <span className={box} style={indent} data-testid="comment-header-meta">
         <span className={TEXT}>
           <CreatedTime createdAt={props.createdAt} />
         </span>
@@ -76,7 +137,7 @@ export function CommentHeaderMeta(
     className: cn(TEXT, "hover:underline"),
   };
   return (
-    <span className={box} data-testid="comment-header-meta">
+    <span className={box} style={indent} data-testid="comment-header-meta">
       <Link {...target}>
         {/* The one span the reader can select on its own, so a drag across it
             copies the suffix and nothing else — no author, no timestamp, and

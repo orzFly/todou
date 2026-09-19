@@ -16,7 +16,12 @@ import {
   useStagedFiles,
 } from "@/components/issue/staged-files.tsx";
 import { AgentContextBadge } from "@/components/shared/agent-badge.tsx";
-import { CommentHeaderMeta } from "@/components/shared/comment-header-meta.tsx";
+import {
+  COMMENT_HEADER_ACTION,
+  COMMENT_HEADER_ROW,
+  CommentHeaderIdentity,
+  CommentHeaderMeta,
+} from "@/components/shared/comment-header-meta.tsx";
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
@@ -32,6 +37,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
+import { cn } from "@/lib/utils";
 
 export type Viewer = {
   id: number;
@@ -164,31 +170,38 @@ export function CommentItem({
       className={`rounded-lg border ${pending ? "opacity-60" : ""}`}
       data-comment-id={comment.id}
     >
-      <div className="flex flex-wrap items-baseline gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm">
-        <UserChip user={comment.author} />
-        {/* T-433's rule — text of different sizes shares one baseline —
-            applied to the badge here, where T-435 put an id and a time on
-            that same line. The icon opts out and stays centred because a
-            replaced box has no baseline of its own: left in the group, the
-            pill's position would be decided by a synthesized one taken from
-            the glyph's box rather than by the model name beside it. Scoped
-            to this call site; the event and revision rows keep T-433's
-            self-center. */}
-        <AgentContextBadge
-          context={comment.agent_context}
-          className="items-baseline [&>svg]:self-center"
-        />
-        {comment.edited_at && (
-          <RevisionHistory
-            label="comment"
-            editedAt={comment.edited_at}
-            filename="comment.md"
-            queryKey={["revisions", slug, issueNumber, "comment", comment.id]}
-            fetchRevisions={() =>
-              api.getCommentRevisions(slug, issueNumber, comment.id)
-            }
-          />
+      <div
+        className={cn(
+          "flex flex-wrap items-baseline gap-2 border-b bg-muted/40 px-3 py-1.5 text-sm",
+          COMMENT_HEADER_ROW,
         )}
+      >
+        <CommentHeaderIdentity>
+          <UserChip user={comment.author} />
+          {/* T-433's rule — text of different sizes shares one baseline —
+              applied to the badge here, where T-435 put an id and a time on
+              that same line. The icon opts out and stays centred because a
+              replaced box has no baseline of its own: left in the group, the
+              pill's position would be decided by a synthesized one taken from
+              the glyph's box rather than by the model name beside it. Scoped
+              to this call site; the event and revision rows keep T-433's
+              self-center. */}
+          <AgentContextBadge
+            context={comment.agent_context}
+            className="items-baseline [&>svg]:self-center"
+          />
+          {comment.edited_at && (
+            <RevisionHistory
+              label="comment"
+              editedAt={comment.edited_at}
+              filename="comment.md"
+              queryKey={["revisions", slug, issueNumber, "comment", comment.id]}
+              fetchRevisions={() =>
+                api.getCommentRevisions(slug, issueNumber, comment.id)
+              }
+            />
+          )}
+        </CommentHeaderIdentity>
         {pending ? (
           <CommentHeaderMeta
             pending
@@ -205,10 +218,22 @@ export function CommentItem({
           />
         )}
         {pending && (
-          <span className="text-xs text-muted-foreground">sending…</span>
+          <span
+            className={cn(
+              "text-xs text-muted-foreground",
+              COMMENT_HEADER_ACTION,
+            )}
+          >
+            sending…
+          </span>
         )}
         {!pending && (
-          <div className="flex shrink-0 self-center items-center gap-0.5">
+          <div
+            className={cn(
+              "flex shrink-0 self-center items-center gap-0.5",
+              COMMENT_HEADER_ACTION,
+            )}
+          >
             {/* Both a mark and the way back: a reader who got here through
                 a Reveal sees at once that this one is put away, and the
                 same button restores it for everybody. Unreadable without

@@ -15,7 +15,12 @@ import {
   useState,
 } from "react";
 import type Markdown from "react-markdown";
-import { CommentHeaderMeta } from "@/components/shared/comment-header-meta.tsx";
+import {
+  COMMENT_HEADER_ACTION,
+  COMMENT_HEADER_ROW,
+  CommentHeaderIdentity,
+  CommentHeaderMeta,
+} from "@/components/shared/comment-header-meta.tsx";
 import {
   MarkdownViewWithPlugins,
   useMarkdownRemarkPlugins,
@@ -64,6 +69,7 @@ import {
   sourceOffsetOfRendered,
 } from "@/lib/spec-source-index.ts";
 import { POINTER_FINE, useMediaQuery } from "@/lib/use-media-query.ts";
+import { cn } from "@/lib/utils";
 
 type RehypePlugins = ComponentProps<typeof Markdown>["rehypePlugins"];
 
@@ -1197,12 +1203,25 @@ function AnnotationChip({
             </div>
           ) : (
             <div key={item.key} className="rounded-md border p-2 text-sm">
-              <div className="mb-1 flex flex-wrap items-baseline gap-2 text-xs text-muted-foreground">
-                <UserChip user={item.item.author} />
-                <span>
-                  {locate(item)} · v{item.item.anchor.version}
-                </span>
-                <span className="ml-auto" />
+              <div
+                className={cn(
+                  "mb-1 flex flex-wrap items-baseline gap-2 text-xs text-muted-foreground",
+                  COMMENT_HEADER_ROW,
+                )}
+              >
+                <CommentHeaderIdentity>
+                  <UserChip user={item.item.author} />
+                  <span>
+                    {locate(item)} · v{item.item.anchor.version}
+                  </span>
+                </CommentHeaderIdentity>
+                {/* Stays, against every instinct to sweep it up: it is what
+                    pushes the meta right on the desktop row, and replacing it
+                    with an `ml-auto` on the meta itself would cost the row one
+                    `gap-2` and shift the desktop 8px (T-445). The grid below
+                    the breakpoint places its children itself, where an
+                    unplaced box of its own would take a cell. */}
+                <span className="ml-auto max-sm:hidden" />
                 <CommentHeaderMeta
                   slug={slug}
                   issueNumber={issueNumber}
@@ -1213,7 +1232,10 @@ function AnnotationChip({
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-6 self-center px-2 text-xs"
+                    className={cn(
+                      "h-6 self-center px-2 text-xs",
+                      COMMENT_HEADER_ACTION,
+                    )}
                     disabled={resolving}
                     onClick={() => onResolve(item.item.comment_id)}
                   >
@@ -1222,7 +1244,10 @@ function AnnotationChip({
                   </Button>
                 ) : (
                   <span
-                    className="text-green-700 dark:text-green-400"
+                    className={cn(
+                      "text-green-700 dark:text-green-400",
+                      COMMENT_HEADER_ACTION,
+                    )}
                     title={`resolved by ${displayNameOf(item.item.resolved.by)}`}
                   >
                     resolved

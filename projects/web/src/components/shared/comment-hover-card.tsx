@@ -1,6 +1,10 @@
 import { isHidden, type TimelineComment } from "@todou/shared";
 import type { ReactNode } from "react";
-import { CommentHeaderMeta } from "@/components/shared/comment-header-meta.tsx";
+import {
+  COMMENT_HEADER_ROW,
+  CommentHeaderIdentity,
+  CommentHeaderMeta,
+} from "@/components/shared/comment-header-meta.tsx";
 import {
   CLOSE_DELAY_MS,
   HoverDepth,
@@ -13,6 +17,7 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card.tsx";
+import { cn } from "@/lib/utils";
 
 export function CommentHoverCard({
   slug,
@@ -31,8 +36,15 @@ export function CommentHoverCard({
       <HoverCardTrigger asChild>{children}</HoverCardTrigger>
       <HoverCardContent>
         <HoverDepth.Provider value={1}>
-          <div className="mb-2 flex flex-wrap items-baseline gap-2">
-            <UserChip user={comment.author} />
+          <div
+            className={cn(
+              "mb-2 flex flex-wrap items-baseline gap-2",
+              COMMENT_HEADER_ROW,
+            )}
+          >
+            <CommentHeaderIdentity>
+              <UserChip user={comment.author} />
+            </CommentHeaderIdentity>
             <CommentHeaderMeta
               className="ml-auto"
               slug={slug}

@@ -5,7 +5,11 @@ import {
 } from "@todou/shared";
 import { FileTextIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { CommentHeaderMeta } from "@/components/shared/comment-header-meta.tsx";
+import {
+  COMMENT_HEADER_ROW,
+  CommentHeaderIdentity,
+  CommentHeaderMeta,
+} from "@/components/shared/comment-header-meta.tsx";
 import {
   CLOSE_DELAY_MS,
   HoverDepth,
@@ -19,6 +23,7 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card.tsx";
+import { cn } from "@/lib/utils";
 
 /**
  * A spec annotation, previewed off the row that names it (T-406). What a
@@ -50,8 +55,15 @@ export function SpecAnnotationHoverCard({
       <HoverCardTrigger asChild>{children}</HoverCardTrigger>
       <HoverCardContent>
         <HoverDepth.Provider value={1}>
-          <div className="mb-2 flex flex-wrap items-baseline gap-2">
-            <UserChip user={annotation.author} />
+          <div
+            className={cn(
+              "mb-2 flex flex-wrap items-baseline gap-2",
+              COMMENT_HEADER_ROW,
+            )}
+          >
+            <CommentHeaderIdentity>
+              <UserChip user={annotation.author} />
+            </CommentHeaderIdentity>
             <CommentHeaderMeta
               className="ml-auto"
               slug={slug}
