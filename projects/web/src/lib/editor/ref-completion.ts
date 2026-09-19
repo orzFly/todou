@@ -13,7 +13,6 @@ import { EditorView, keymap } from "@codemirror/view";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import type { IssueListItem } from "@todou/shared";
 import { useMemo } from "react";
-import { issueRefQuery } from "@/api/issue-refs.ts";
 import {
   issueCompletionQuery,
   issueCompletionSearchQuery,
@@ -23,6 +22,7 @@ import {
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "@/api/references.ts";
+import { searchIssueRefQuery as issueRefQuery } from "@/api/search-refs.ts";
 import { inCodeContext } from "@/lib/editor/code-context.ts";
 import {
   applyWithSpace,

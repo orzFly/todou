@@ -1,9 +1,13 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { fireEvent, waitFor } from "@testing-library/react";
-import type { IssueListItem } from "@todou/shared";
+import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { DEFAULT_REFERENCE_CONFIG, type IssueListItem } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { issueRefQuery } from "../src/api/issue-refs.ts";
-import { projectsQuery } from "../src/api/queries.ts";
+import { api, projectsQuery } from "../src/api/queries.ts";
+import {
+  referenceConfigQuery,
+  referenceDirectoryQuery,
+} from "../src/api/references.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { ICONS, renderEvent } from "../src/components/timeline/event-row.tsx";
 import { NO_ENTITIES } from "../src/components/timeline/use-event-entities.ts";
@@ -83,24 +87,41 @@ function withProjects(client: QueryClient): QueryClient {
       created_at: "2026-01-01T00:00:00.000Z",
     },
   ]);
+  client.setQueryData(
+    referenceConfigQuery("todou").queryKey,
+    DEFAULT_REFERENCE_CONFIG,
+  );
+  client.setQueryData(referenceDirectoryQuery.queryKey, null);
   return client;
 }
 
 /**
- * The whole reason the design chose plain-text degradation over a dead link:
- * once a card is in the trash its title must not surface anywhere, and every
- * reference to it must come back by itself when it is restored.
+ * Initial resolution of a trashed card keeps the authored text and hides its
+ * title. Background invalidation preserves the current display; a full page
+ * refresh resolves restoration or deletion with a fresh query cache.
  */
 describe("references to a card in the trash", () => {
+  const clients: QueryClient[] = [];
+  const newClient = () => {
+    const client = withProjects(testQueryClient());
+    clients.push(client);
+    return client;
+  };
+
+  afterEach(() => {
+    cleanup();
+    for (const client of clients.splice(0)) client.clear();
+  });
+
   it("render as the text their author typed, with no title", async () => {
-    const client = testQueryClient();
+    const client = newClient();
     // null is what the batcher resolves to when the number matches nothing
     // the viewer may see — which a deleted card no longer is.
     client.setQueryData(issueRefQuery("todou", 5).queryKey, null);
 
     const view = renderWithProviders(
       <MarkdownView slug="todou">{STORED}</MarkdownView>,
-      withProjects(client),
+      client,
     );
 
     await waitFor(() => {
@@ -110,44 +131,159 @@ describe("references to a card in the trash", () => {
     expect(view.container.textContent).not.toContain(SECRET);
   });
 
-  it("become links again the moment the card is restored", async () => {
-    let deleted = true;
-    vi.stubGlobal("fetch", (async (input: unknown) => {
-      expect(String(input)).toContain("numbers=5");
-      return new Response(
-        JSON.stringify({
-          items: deleted ? [] : [item(5, SECRET)],
-          next_cursor: null,
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
-    }) as typeof fetch);
-
-    const client: QueryClient = withProjects(testQueryClient());
+  it("resolves a restored card after a page refresh, not background invalidation", async () => {
+    const listIssues = vi.spyOn(api, "listIssues").mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    });
+    const getIssue = vi
+      .spyOn(api, "getIssue")
+      .mockRejectedValue({ status: 404 });
+    const refKey = issueRefQuery("todou", 5).queryKey;
+    const client = newClient();
     const view = renderWithProviders(
       <MarkdownView slug="todou">{STORED}</MarkdownView>,
       client,
     );
 
-    // While the lookup is in flight the ref is a bare link (no title); the
-    // degradation is what lands when it comes back empty.
-    await waitFor(() => {
+    // Wait for the list miss and single-issue fallback to finish: the loading
+    // state also lacks a rich link, so its appearance alone proves nothing.
+    const paragraph = await waitFor(() => {
+      expect(client.getQueryData(refKey)).toBeNull();
+      const el = view.container.querySelector("p");
+      expect(el).not.toBeNull();
+      expect(el?.textContent).toBe("Blocked by #5 for now.");
       expect(view.container.querySelector("a[data-issue-link='5']")).toBeNull();
+      expect(view.container.textContent).not.toContain(SECRET);
+      return el as HTMLParagraphElement;
+    });
+    const originalNodes = Array.from(paragraph.childNodes);
+    expect(listIssues).toHaveBeenCalledTimes(1);
+    expect(listIssues).toHaveBeenCalledWith("todou", {
+      numbers: [5],
+      limit: 1,
+    });
+    expect(getIssue).toHaveBeenCalledTimes(1);
+    expect(getIssue).toHaveBeenCalledWith("todou", 5);
+
+    listIssues.mockResolvedValue({
+      items: [item(5, SECRET)],
+      next_cursor: null,
+    });
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ["issue-ref", "todou"] });
+    });
+
+    // A restore invalidation neither repeats the lookup nor replaces the
+    // paragraph, its authored reference, or the surrounding text nodes.
+    expect(listIssues).toHaveBeenCalledTimes(1);
+    expect(getIssue).toHaveBeenCalledTimes(1);
+    expect(client.getQueryData(refKey)).toBeNull();
+    expect(view.container.querySelector("p")).toBe(paragraph);
+    expect(paragraph.childNodes.length).toBe(originalNodes.length);
+    originalNodes.forEach((node, index) => {
+      expect(paragraph.childNodes[index]).toBe(node);
     });
     expect(view.container.textContent).toContain("Blocked by #5 for now.");
+    expect(view.container.querySelector("a[data-issue-link='5']")).toBeNull();
+    expect(view.container.textContent).not.toContain(SECRET);
 
-    // What the restore mutation does: drop the cached ref lookups for this
-    // project. Nothing else in the rendered tree changes.
-    deleted = false;
-    await client.invalidateQueries({ queryKey: ["issue-ref", "todou"] });
-
+    // Reloading the page unmounts the display and starts with an empty ref cache.
+    view.unmount();
+    const refreshedClient = newClient();
+    expect(refreshedClient.getQueryData(refKey)).toBeUndefined();
+    const refreshedView = renderWithProviders(
+      <MarkdownView slug="todou">{STORED}</MarkdownView>,
+      refreshedClient,
+    );
     const link = await waitFor(() => {
-      const el = view.container.querySelector("a[data-issue-link='5']");
+      const el = refreshedView.container.querySelector(
+        "a[data-issue-link='5']",
+      );
       expect(el).not.toBeNull();
+      expect(el?.textContent).toContain(SECRET);
       return el as HTMLAnchorElement;
     });
     expect(link.getAttribute("href")).toBe("/projects/todou/issues/5");
+    expect(listIssues).toHaveBeenCalledTimes(2);
+    expect(listIssues).toHaveBeenNthCalledWith(2, "todou", {
+      numbers: [5],
+      limit: 1,
+    });
+    // The refreshed list resolves the restored card without another fallback.
+    expect(getIssue).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a resolved link through deletion and invalidation until a page refresh", async () => {
+    const resolved = item(5, SECRET);
+    const listIssues = vi.spyOn(api, "listIssues").mockResolvedValue({
+      items: [resolved],
+      next_cursor: null,
+    });
+    const getIssue = vi
+      .spyOn(api, "getIssue")
+      .mockRejectedValue({ status: 404 });
+    const refKey = issueRefQuery("todou", 5).queryKey;
+    const client = newClient();
+    const view = renderWithProviders(
+      <MarkdownView slug="todou">{STORED}</MarkdownView>,
+      client,
+    );
+    const link = await waitFor(() => {
+      const el = view.container.querySelector("a[data-issue-link='5']");
+      expect(el).not.toBeNull();
+      expect(el?.textContent).toContain(SECRET);
+      return el as HTMLAnchorElement;
+    });
+    const originalNodes = Array.from(link.childNodes);
+    expect(link.getAttribute("href")).toBe("/projects/todou/issues/5");
+    expect(listIssues).toHaveBeenCalledTimes(1);
+    expect(listIssues).toHaveBeenCalledWith("todou", {
+      numbers: [5],
+      limit: 1,
+    });
+    expect(getIssue).not.toHaveBeenCalled();
+
+    listIssues.mockResolvedValue({ items: [], next_cursor: null });
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ["issue-ref", "todou"] });
+    });
+
+    expect(listIssues).toHaveBeenCalledTimes(1);
+    expect(getIssue).not.toHaveBeenCalled();
+    expect(client.getQueryData(refKey)).toEqual(resolved);
+    expect(view.container.querySelector("a[data-issue-link='5']")).toBe(link);
+    expect(link.childNodes.length).toBe(originalNodes.length);
+    originalNodes.forEach((node, index) => {
+      expect(link.childNodes[index]).toBe(node);
+    });
+    expect(link.getAttribute("href")).toBe("/projects/todou/issues/5");
     expect(link.textContent).toContain(SECRET);
+
+    view.unmount();
+    const refreshedClient = newClient();
+    expect(refreshedClient.getQueryData(refKey)).toBeUndefined();
+    const refreshedView = renderWithProviders(
+      <MarkdownView slug="todou">{STORED}</MarkdownView>,
+      refreshedClient,
+    );
+    await waitFor(() => {
+      expect(refreshedClient.getQueryData(refKey)).toBeNull();
+      expect(refreshedView.container.textContent).toContain(
+        "Blocked by #5 for now.",
+      );
+      expect(
+        refreshedView.container.querySelector("a[data-issue-link='5']"),
+      ).toBeNull();
+      expect(refreshedView.container.textContent).not.toContain(SECRET);
+    });
+    expect(listIssues).toHaveBeenCalledTimes(2);
+    expect(listIssues).toHaveBeenNthCalledWith(2, "todou", {
+      numbers: [5],
+      limit: 1,
+    });
+    expect(getIssue).toHaveBeenCalledTimes(1);
+    expect(getIssue).toHaveBeenCalledWith("todou", 5);
   });
 });
 

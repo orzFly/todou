@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { IssueListItem } from "@todou/shared";
 import type { ReactNode } from "react";
 import { issueQuery } from "@/api/issues.ts";
@@ -92,11 +92,20 @@ export function IssueHoverCard({
  * every reference on the page instead of behind the few a reader stops on.
  */
 function IssueBody({ slug, number }: { slug: string; number: number }) {
-  // The detail page's own key, so a card either surface has read is free for
-  // the other. The staleTime is this observer's alone — `issueQuery` carries
-  // the default 0, which would refetch on every open, and react-query counts
-  // staleness per observer, so the detail page keeps its own freshness.
-  const issue = useQuery({ ...issueQuery(slug, number), staleTime: 60_000 });
+  const client = useQueryClient();
+  const detail = issueQuery(slug, number);
+  // Reuse an already-read body as a snapshot. A separate key keeps detail
+  // page updates independent of the preview's read-once lifetime.
+  const issue = useQuery({
+    ...detail,
+    queryKey: ["issue-preview", slug, number],
+    initialData: () => client.getQueryData(detail.queryKey),
+    staleTime: "static",
+    gcTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
   if (issue.isPending) {
     return (
       <div className="space-y-1.5">

@@ -8,11 +8,6 @@ import {
   type ResolvedRef,
 } from "@todou/shared";
 import { useMemo } from "react";
-import {
-  commentLocationQuery,
-  commentRefQuery,
-  issueRefQuery,
-} from "@/api/issue-refs.ts";
 import { recentOpenIssuesQuery } from "@/api/issues.ts";
 import { projectsQuery } from "@/api/queries.ts";
 import {
@@ -27,6 +22,11 @@ import {
   searchRefPending,
   searchRefState,
 } from "@/api/search-comment-target.ts";
+import {
+  searchCommentLocationQuery as commentLocationQuery,
+  searchCommentRefQuery as commentRefQuery,
+  searchIssueRefQuery as issueRefQuery,
+} from "@/api/search-refs.ts";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import { qualifiedRefSpelling } from "@/lib/issue-refs.ts";
 import { projectSpellings } from "@/lib/project-spellings.ts";

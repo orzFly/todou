@@ -44,7 +44,7 @@ const CURRENT_NOTE = "(current)";
 
 /**
  * GitHub-style rich issue reference: status icon, title and muted ref once
- * the complete target is freshly confirmed (in the viewer's preferred order,
+ * the complete target is confirmed for this session (in the viewer's preferred order,
  * T-153). Until then a known address remains an ordinary link; a bare
  * unresolved comment remains text. With `commentId` the link deep-links to
  * that comment's anchor and names the final comment ID with its author.
@@ -52,10 +52,8 @@ const CURRENT_NOTE = "(current)";
  * alone is anchored to its created_at.
  *
  * A reference names a card, not an address: `slug`/`number` are where it was
- * written, which is only how the row is found, while everything the reader
- * sees names where that card is now. Spelling one that moved at its written
- * address hands the reader a project and a number that today belong to a
- * different card — or to none.
+ * written, which is how the row is found. Resolution follows any moves once;
+ * the displayed title and destination then remain a snapshot for this session.
  *
  * `asWritten` is the one exception, for a sentence that really is about an
  * address rather than a card: a migration's source and destination, which
@@ -115,9 +113,7 @@ export function IssueLink({
   repeat?: boolean;
 }) {
   const ref = useQuery(issueRefQuery(slug, number));
-  // Where the card is NOW. A stored link is anchored on an address that
-  // never changes, so following one after a move would spend a redirect;
-  // pointing the anchor at the current address spends none.
+  // Follow moves during the initial lookup and retain that resolved address.
   const at = ref.data?.at;
   const toSlug = at?.slug ?? slug;
   const toNumber = at?.number ?? number;
@@ -130,19 +126,14 @@ export function IssueLink({
     initialData: initialComment,
     initialDataUpdatedAt: initialCommentUpdatedAt,
   });
-  // A fresh location response is itself the complete authorized comment.
-  // Keep its original timestamp and use it on every refresh, not only when
-  // TanStack happens to create an empty comment-ref cache entry.
+  // A location response is itself the complete authorized comment. Reuse it
+  // at its original timestamp, including when a comment-ref entry already exists.
   const comment =
     initialComment === undefined
       ? commentQuery
       : {
           data: initialComment,
-          isFetching: false,
           isError: false,
-          isStale:
-            initialCommentUpdatedAt === undefined ||
-            Date.now() - initialCommentUpdatedAt >= 60_000,
         };
   const refLeads = useRefPlacement("reference") === "before";
   const boxed = useBoxedRefLinks() && inBody;
@@ -156,29 +147,23 @@ export function IssueLink({
   const spelled = crossProject
     ? qualifiedRefSpelling(shownSlug, prefix, shownNumber)
     : formatRef(prefix, shownNumber);
-  // Where the card is NOW, not the address the reference was written with: a
-  // reference to an old address that redirects here is, to the reader, this
-  // very card.
+  // An old address that resolved to the page being read names this very card.
   const onPageCard =
     pageNumber !== undefined && toSlug === pageSlug && toNumber === pageNumber;
 
   // Never paint any part of a rich card from one confirmed query and another
-  // pending, stale, failed, or mismatched query. In particular the comment's
+  // unresolved, failed, or mismatched query. In particular the comment's
   // final parent must agree with the issue's final address after redirects.
   const confirmedIssue =
     ref.data !== undefined &&
     ref.data !== null &&
     ref.data.deleted_at == null &&
-    !ref.isFetching &&
-    !ref.isStale &&
     !ref.isError &&
     !(ref.data.at === undefined && /^\d+$/.test(toSlug));
   const confirmedComment =
     commentId === undefined ||
     (comment.data !== undefined &&
       comment.data !== null &&
-      !comment.isFetching &&
-      !comment.isStale &&
       !comment.isError &&
       comment.data.at.slug === toSlug &&
       comment.data.at.number === toNumber &&
@@ -376,8 +361,7 @@ export function IssueLink({
 
 /**
  * A bare `#comment-M`: the id names a comment, and which issue carries it
- * is a lookup away. Plain text until that lands, so a stale or unreadable
- * id never renders as a link to nowhere.
+ * is a lookup away. Plain text until the initial lookup confirms its target.
  */
 function CommentLink({
   slug,
@@ -399,17 +383,11 @@ function CommentLink({
   const client = useQueryClient();
   const locationOptions = commentLocationQuery(slug, commentId);
   const located = useQuery(locationOptions);
-  if (
-    !located.data ||
-    located.isFetching ||
-    located.isStale ||
-    located.isError
-  ) {
+  if (!located.data || located.isError) {
     return <>{fallback}</>;
   }
-  // The location lookup has already fetched the complete comment. Reuse it
-  // with the same dataUpdatedAt, not a freshly stamped cache entry that could
-  // extend the life of stale authorization metadata.
+  // The location lookup has already fetched the complete comment. Reuse its
+  // original dataUpdatedAt when priming the session's comment-ref entry.
   const home = located.data.slug ?? slug;
   const comment = located.data.comment;
   return (

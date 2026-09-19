@@ -9,10 +9,6 @@ import {
 import { render, waitFor } from "@testing-library/react";
 import type { Issue, Label, Me, Member, Project, Status } from "@todou/shared";
 import { describe, expect, it } from "vitest";
-import {
-  commentRefQuery,
-  type ResolvedCommentRef,
-} from "../src/api/issue-refs.ts";
 import { issueQuery } from "../src/api/issues.ts";
 import {
   labelsQuery,
@@ -21,6 +17,10 @@ import {
   projectQuery,
   statusesQuery,
 } from "../src/api/queries.ts";
+import {
+  searchCommentRefQuery as commentRefQuery,
+  type ResolvedCommentRef,
+} from "../src/api/search-refs.ts";
 import { NewIssuePage } from "../src/pages/new-issue.tsx";
 import { cmGetValue } from "./cm.ts";
 import { testQueryClient } from "./render.tsx";

@@ -25,12 +25,6 @@ import type {
   SearchPage,
 } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  commentLocationQuery,
-  commentRefQuery,
-  issueRefQuery,
-  type ResolvedCommentRef,
-} from "../src/api/issue-refs.ts";
 import { recentOpenIssuesQuery } from "../src/api/issues.ts";
 import {
   api,
@@ -53,6 +47,12 @@ import {
   searchQuery,
   withDomains,
 } from "../src/api/search.ts";
+import {
+  searchCommentLocationQuery as commentLocationQuery,
+  searchCommentRefQuery as commentRefQuery,
+  searchIssueRefQuery as issueRefQuery,
+  type ResolvedCommentRef,
+} from "../src/api/search-refs.ts";
 import { SearchBox } from "../src/components/search-box.tsx";
 import { SearchHighlight } from "../src/components/search-highlight.tsx";
 import {

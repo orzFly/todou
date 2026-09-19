@@ -13,9 +13,9 @@ import type {
 import { enumValue } from "@todou/shared";
 import { toast } from "sonner";
 import { z } from "zod";
-import { invalidateIssueRefQueries } from "@/api/issue-refs.ts";
 import { issuesEntry } from "@/api/issues-cache.ts";
 import { api } from "@/api/queries.ts";
+import { invalidateSearchRefQueries } from "@/api/search-refs.ts";
 
 export const ID_CSV = /^\d+(,\d+)*$/;
 
@@ -472,9 +472,9 @@ function invalidateAfterTrashMove(
   queryClient.invalidateQueries({ queryKey: ["issue", slug, issueNumber] });
   queryClient.invalidateQueries({ queryKey: ["inbox"] });
   if (refs) {
-    // Reference metadata is an authorization result: make it ineligible
-    // immediately, then let the centralized helper cancel/refetch active refs.
-    void invalidateIssueRefQueries(queryClient, { slug, issueNumber });
+    // Search needs a current destination. Already rendered rich links keep
+    // their session snapshot rather than restarting decoration requests.
+    void invalidateSearchRefQueries(queryClient, { slug, issueNumber });
   }
 }
 
@@ -604,9 +604,7 @@ export function useMoveIssueMutation() {
       }),
     onError: (error) => toast.error(`Could not move issue: ${error.message}`),
     onSettled: (result, _error, vars) => {
-      // Both ends move: the card leaves one project's lists and joins the
-      // other's, and every <IssueLink> pointing at the old address has to
-      // re-resolve before it can find the redirect.
+      // Both ends move: refresh the affected pages and search destinations.
       invalidateAfterTrashMove(queryClient, vars.slug, vars.issueNumber, false);
       if (result) {
         invalidateAfterTrashMove(
@@ -619,7 +617,7 @@ export function useMoveIssueMutation() {
       // Historical slug and numeric project-id addresses cannot all be
       // enumerated here. A move invalidates both known ends and any older
       // address that can redirect through them.
-      void invalidateIssueRefQueries(queryClient);
+      void invalidateSearchRefQueries(queryClient);
     },
   });
 }

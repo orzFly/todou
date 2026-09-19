@@ -1,8 +1,4 @@
-import {
-  type Query,
-  type QueryClient,
-  queryOptions,
-} from "@tanstack/react-query";
+import { queryOptions } from "@tanstack/react-query";
 import type {
   CommentLocation,
   IssueListItem,
@@ -171,31 +167,18 @@ async function fetchSingleTarget(
   }
 }
 
-function activeRevalidation<T>() {
-  return {
-    staleTime: 60_000,
-    refetchInterval: (query: Query<T, Error, T, readonly unknown[]>) =>
-      query.state.fetchStatus === "fetching"
-        ? false
-        : Math.max(
-            1,
-            60_000 -
-              (Date.now() -
-                Math.max(
-                  query.state.dataUpdatedAt,
-                  query.state.errorUpdatedAt,
-                )),
-          ),
-  } as const;
-}
-
+// Display references resolve once per client session (T-462). Static data
+// survives invalidation; infinite gcTime also preserves it across page visits.
+// Live search confirmation uses independent keys in search-refs.ts.
 export const issueRefQuery = (slug: string, number: number) =>
-  queryOptions({
+  queryOptions<ResolvedIssueRef | null>({
     queryKey: ["issue-ref", slug, number],
     queryFn: () => fetchIssueRef(slug, number),
-    // Ref metadata is decoration, but an actively displayed ref should not
-    // stay confirmed forever after a move or deletion.
-    ...activeRevalidation<ResolvedIssueRef | null>(),
+    staleTime: "static",
+    gcTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
 export type ResolvedCommentRef = TimelineComment & {
@@ -222,7 +205,7 @@ export const commentRefQuery = (
   issueNumber: number,
   commentId: number,
 ) =>
-  queryOptions({
+  queryOptions<ResolvedCommentRef | null>({
     queryKey: ["comment-ref", slug, issueNumber, commentId],
     queryFn: async (): Promise<ResolvedCommentRef | null> => {
       try {
@@ -245,7 +228,11 @@ export const commentRefQuery = (
         throw error;
       }
     },
-    ...activeRevalidation<ResolvedCommentRef | null>(),
+    staleTime: "static",
+    gcTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
 /**
@@ -257,7 +244,7 @@ export const commentRefQuery = (
 export type LocatedComment = CommentLocation & { slug?: string };
 
 export const commentLocationQuery = (slug: string, commentId: number) =>
-  queryOptions({
+  queryOptions<LocatedComment | null>({
     queryKey: ["comment-location", slug, commentId],
     queryFn: async (): Promise<LocatedComment | null> => {
       try {
@@ -287,65 +274,9 @@ export const commentLocationQuery = (slug: string, commentId: number) =>
         throw error;
       }
     },
-    ...activeRevalidation<LocatedComment | null>(),
+    staleTime: "static",
+    gcTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
-
-export type IssueRefInvalidationTarget = {
-  slug?: string;
-  issueNumber?: number;
-  commentId?: number;
-};
-
-const matchesIssueRefTarget = (
-  query: Query,
-  target: IssueRefInvalidationTarget,
-): boolean => {
-  const [kind, slug, issueOrComment, commentId] = query.queryKey;
-  if (
-    kind !== "issue-ref" &&
-    kind !== "comment-ref" &&
-    kind !== "comment-location"
-  ) {
-    return false;
-  }
-  if (target.slug !== undefined && slug !== target.slug) return false;
-  // A location key has no issue number. Invalidate all locations for this
-  // project when an issue changes, since any of them may now point elsewhere.
-  if (
-    target.issueNumber !== undefined &&
-    kind !== "comment-location" &&
-    issueOrComment !== target.issueNumber
-  ) {
-    return false;
-  }
-  if (target.commentId !== undefined) {
-    if (kind === "issue-ref") return false;
-    const candidate = kind === "comment-ref" ? commentId : issueOrComment;
-    if (candidate !== target.commentId) return false;
-  }
-  return true;
-};
-
-/**
- * Make matching reference metadata stale immediately, discard any in-flight
- * generation, then refresh observers that are currently active.
- */
-export async function invalidateIssueRefQueries(
-  client: QueryClient,
-  target: IssueRefInvalidationTarget = {},
-  options: {
-    queryKey?: readonly unknown[];
-    refetchType?: "active" | "none";
-  } = {},
-): Promise<void> {
-  const filters = {
-    queryKey: options.queryKey,
-    predicate: (query: Query) => matchesIssueRefTarget(query, target),
-  };
-  const cancellation = client.cancelQueries(filters, { revert: false });
-  void client.invalidateQueries({ ...filters, refetchType: "none" });
-  await cancellation;
-  if (options.refetchType !== "none") {
-    await client.refetchQueries({ ...filters, type: "active" });
-  }
-}

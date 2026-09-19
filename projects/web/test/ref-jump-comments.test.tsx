@@ -14,13 +14,9 @@ import type {
 } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  commentLocationQuery,
-  commentRefQuery,
-  invalidateIssueRefQueries,
-  issueRefQuery,
-  type LocatedComment,
-  type ResolvedCommentRef,
-  type ResolvedIssueRef,
+  commentLocationQuery as displayCommentLocationQuery,
+  commentRefQuery as displayCommentRefQuery,
+  issueRefQuery as displayIssueRefQuery,
 } from "../src/api/issue-refs.ts";
 import { api, projectsQuery } from "../src/api/queries.ts";
 import {
@@ -33,6 +29,15 @@ import {
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
+import {
+  searchCommentLocationQuery as commentLocationQuery,
+  searchCommentRefQuery as commentRefQuery,
+  invalidateSearchRefQueries as invalidateIssueRefQueries,
+  searchIssueRefQuery as issueRefQuery,
+  type LocatedComment,
+  type ResolvedCommentRef,
+  type ResolvedIssueRef,
+} from "../src/api/search-refs.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 const alice = {
@@ -1152,4 +1157,63 @@ it("keeps a plain issue available while its fresh-cache refresh is paused", asyn
     onlineManager.setOnline(true);
   });
   await waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+});
+
+describe.each(consumers)("search cache isolation through %s", (consumer) => {
+  describe.each(shapes)("%s comment address", (shape) => {
+    it.each([false, true])(
+      "fetches live confirmations without writing display cache (seeded: %s)",
+      async (seedDisplay) => {
+        const client = seeded();
+        const displayIssue = displayIssueRefQuery("todou", 12).queryKey;
+        const displayComment = displayCommentRefQuery("todou", 12, 7).queryKey;
+        const displayLocation = displayCommentLocationQuery(
+          "todou",
+          7,
+        ).queryKey;
+        if (seedDisplay) {
+          client.setQueryData(
+            displayIssue,
+            issue(12, "Persistent display title"),
+          );
+          client.setQueryData(displayComment, note("todou", 12, 7, bob));
+          client.setQueryData(displayLocation, location("todou", 12, 7, bob));
+        }
+        const displayKeys = [displayIssue, displayComment, displayLocation];
+        const before = displayKeys.map((key) => client.getQueryState(key));
+        const list = vi.spyOn(api, "listIssues").mockResolvedValue(page());
+        const getComment = vi
+          .spyOn(api, "getComment")
+          .mockResolvedValue(comment());
+        const locateComment = vi
+          .spyOn(api, "locateComment")
+          .mockResolvedValue(location());
+
+        await expectAccepted(consumer, client, queryText(shape));
+
+        expect(list).toHaveBeenCalledTimes(1);
+        expect(getComment).toHaveBeenCalledTimes(shape === "attached" ? 1 : 0);
+        expect(locateComment).toHaveBeenCalledTimes(shape === "bare" ? 1 : 0);
+        expect(
+          client.getQueryData(issueRefQuery("todou", 12).queryKey),
+        ).toEqual(issue());
+        expect(client.getQueryData(commentKey(shape))).toEqual(
+          shape === "attached" ? note() : location(),
+        );
+        await act(async () => {
+          await invalidateIssueRefQueries(client, {}, { refetchType: "none" });
+        });
+        expect(
+          client.getQueryState(issueRefQuery("todou", 12).queryKey)
+            ?.isInvalidated,
+        ).toBe(true);
+        expect(client.getQueryState(commentKey(shape))?.isInvalidated).toBe(
+          true,
+        );
+        for (const [index, key] of displayKeys.entries()) {
+          expect(client.getQueryState(key)).toBe(before[index]);
+        }
+      },
+    );
+  });
 });

@@ -7,7 +7,6 @@ import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import type { Issue, Status } from "@todou/shared";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { commentRefQuery } from "@/api/issue-refs.ts";
 import { issueQuery } from "@/api/issues.ts";
 import {
   api,
@@ -16,6 +15,7 @@ import {
   statusesQuery,
   useCan,
 } from "@/api/queries.ts";
+import { searchCommentRefQuery as commentRefQuery } from "@/api/search-refs.ts";
 import { AssigneePicker } from "@/components/issue/assignee-picker.tsx";
 import { LabelChips } from "@/components/issue/label-chip.tsx";
 import {

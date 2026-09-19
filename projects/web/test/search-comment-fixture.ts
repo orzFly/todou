@@ -2,12 +2,6 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { IssueListItem, ReferenceDirectory } from "@todou/shared";
 import { vi } from "vitest";
 import {
-  commentRefQuery,
-  issueRefQuery,
-  type ResolvedCommentRef,
-  type ResolvedIssueRef,
-} from "../src/api/issue-refs.ts";
-import {
   labelsQuery,
   membersQuery,
   projectQuery,
@@ -19,6 +13,12 @@ import {
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
 import { searchFacetsQuery } from "../src/api/search.ts";
+import {
+  searchCommentRefQuery as commentRefQuery,
+  searchIssueRefQuery as issueRefQuery,
+  type ResolvedCommentRef,
+  type ResolvedIssueRef,
+} from "../src/api/search-refs.ts";
 
 export const COMMENT_INPUTS = ["T-141#comment-1837", "#comment-1837"];
 export const COMMENT_TARGET = "/projects/mirror/issues/30#comment-900";

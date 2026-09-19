@@ -21,9 +21,9 @@ import {
 import { useEffect } from "react";
 import { activityKeys } from "@/api/activity-calendar.ts";
 import { insightsKeys } from "@/api/insights.ts";
-import { invalidateIssueRefQueries } from "@/api/issue-refs.ts";
 import { issueListDescriptorOf } from "@/api/issues-cache.ts";
 import { api, clientOrigin } from "@/api/queries.ts";
+import { invalidateSearchRefQueries } from "@/api/search-refs.ts";
 import {
   electLeader,
   openTabChannel,
@@ -158,9 +158,9 @@ function entityInvalidations(event: ChangeEvent, slug: string): Invalidation[] {
         ? [
             refetch(["issues", slug]),
             refetch(insightsKeys.burn(slug)),
-            refetch(["issue-ref"]),
-            refetch(["comment-ref"]),
-            refetch(["comment-location"]),
+            refetch(["search-issue-ref"]),
+            refetch(["search-comment-ref"]),
+            refetch(["search-comment-location"]),
           ]
         : [
             // Where the row landed is the one thing the pointer cannot say,
@@ -172,22 +172,25 @@ function entityInvalidations(event: ChangeEvent, slug: string): Invalidation[] {
             refetch(insightsKeys.burn(slug)),
             // A gone row can be trash or a move. Old slugs, stored numeric
             // project ids, and redirected comment ids cannot be enumerated
-            // from this event, so withdraw every affected ref conservatively.
+            // from this event, so recheck every affected search target.
             refetch(
               event.list_row?.kind === "gone"
-                ? ["issue-ref"]
-                : ["issue-ref", slug, event.issue_number],
+                ? ["search-issue-ref"]
+                : ["search-issue-ref", slug, event.issue_number],
             ),
             refetch(
               event.list_row?.kind === "gone"
-                ? ["comment-ref"]
-                : ["comment-ref", slug, event.issue_number],
+                ? ["search-comment-ref"]
+                : ["search-comment-ref", slug, event.issue_number],
             ),
-            refetch(["comment-location"]),
+            refetch(["search-comment-location"]),
           ];
     case "comment":
       return event.issue_number === undefined
-        ? [refetch(["comment-ref"]), refetch(["comment-location"])]
+        ? [
+            refetch(["search-comment-ref"]),
+            refetch(["search-comment-location"]),
+          ]
         : [
             refetch(["timeline", slug, event.issue_number]),
             refetch(["questions", slug, event.issue_number]),
@@ -195,8 +198,8 @@ function entityInvalidations(event: ChangeEvent, slug: string): Invalidation[] {
               verdict: "contains",
               number: event.issue_number,
             }),
-            refetch(["comment-ref"]),
-            refetch(["comment-location"]),
+            refetch(["search-comment-ref"]),
+            refetch(["search-comment-location"]),
           ];
     case "timeline":
       return event.issue_number === undefined
@@ -209,8 +212,8 @@ function entityInvalidations(event: ChangeEvent, slug: string): Invalidation[] {
               number: event.issue_number,
             }),
             refetch(insightsKeys.burn(slug)),
-            refetch(["comment-ref"]),
-            refetch(["comment-location"]),
+            refetch(["search-comment-ref"]),
+            refetch(["search-comment-location"]),
           ];
     case "attachment":
       return event.issue_number === undefined
@@ -272,9 +275,9 @@ function entityInvalidations(event: ChangeEvent, slug: string): Invalidation[] {
         refetch(["agent-memberships"]),
         refetch(["reference-directory"]),
         refetch(["reference-config"]),
-        refetch(["issue-ref"]),
-        refetch(["comment-ref"]),
-        refetch(["comment-location"]),
+        refetch(["search-issue-ref"]),
+        refetch(["search-comment-ref"]),
+        refetch(["search-comment-location"]),
       ];
     case "project":
       return [
@@ -285,9 +288,9 @@ function entityInvalidations(event: ChangeEvent, slug: string): Invalidation[] {
         refetch(insightsKeys.burn(slug)),
         refetch(["reference-directory"]),
         refetch(["reference-config"]),
-        refetch(["issue-ref"]),
-        refetch(["comment-ref"]),
-        refetch(["comment-location"]),
+        refetch(["search-issue-ref"]),
+        refetch(["search-comment-ref"]),
+        refetch(["search-comment-location"]),
       ];
   }
 }
@@ -688,11 +691,11 @@ export function applyInvalidation(
   const { key, scope } = invalidation;
   if (scope === "refetch") {
     if (
-      key[0] === "issue-ref" ||
-      key[0] === "comment-ref" ||
-      key[0] === "comment-location"
+      key[0] === "search-issue-ref" ||
+      key[0] === "search-comment-ref" ||
+      key[0] === "search-comment-location"
     ) {
-      void invalidateIssueRefQueries(
+      void invalidateSearchRefQueries(
         queryClient,
         {},
         {
@@ -936,9 +939,9 @@ export function reconnectInvalidations(): QueryKeyLike[] {
     ["projects"],
     ["reference-directory"],
     ["reference-config"],
-    ["issue-ref"],
-    ["comment-ref"],
-    ["comment-location"],
+    ["search-issue-ref"],
+    ["search-comment-ref"],
+    ["search-comment-location"],
     ["inbox"],
     // A preference toggled on another device during the outage arrives
     // nowhere else: its `me` event was dropped with the connection.

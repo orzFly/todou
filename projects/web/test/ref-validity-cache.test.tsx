@@ -1,6 +1,11 @@
-import { focusManager, type QueryClient } from "@tanstack/react-query";
+import {
+  focusManager,
+  onlineManager,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { act, fireEvent, screen } from "@testing-library/react";
 import {
+  type CommentLocation,
   type IssueListItem,
   type IssueListPage,
   type Me,
@@ -11,16 +16,18 @@ import {
 import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  commentLocationQuery,
   commentRefQuery,
-  invalidateIssueRefQueries,
   issueRefQuery,
   type ResolvedCommentRef,
-  type ResolvedIssueRef,
 } from "../src/api/issue-refs.ts";
 import { prefsQuery } from "../src/api/prefs.ts";
-import { api } from "../src/api/queries.ts";
+import { api, projectsQuery } from "../src/api/queries.ts";
 import { referenceConfigQuery } from "../src/api/references.ts";
-import { IssueLink } from "../src/components/shared/issue-link.tsx";
+import {
+  IssueLink,
+  MarkdownLink,
+} from "../src/components/shared/issue-link.tsx";
 import { AppShell } from "../src/components/shell.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
@@ -39,7 +46,6 @@ const alice = {
   avatar_url: null,
   owner: null,
 };
-const bob = { ...alice, id: 2, login: "bob", display_name: "Bob" };
 
 const issue = (title: string): IssueListItem => ({
   id: 7,
@@ -72,10 +78,10 @@ const issue = (title: string): IssueListItem => ({
   blocks: [],
   moves: [],
 });
-const comment = (author = alice): TimelineComment => ({
+const comment = (): TimelineComment => ({
   type: "comment",
   id: 42,
-  author,
+  author: alice,
   body: "hello",
   created_at: "2026-08-12T00:00:00Z",
   component: null,
@@ -88,6 +94,11 @@ const page = (title: string): IssueListPage => ({
   items: [issue(title)],
   next_cursor: null,
 });
+const location = (): CommentLocation => ({
+  issue_number: 7,
+  issue_ref: "T-7",
+  comment: comment(),
+});
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -99,11 +110,20 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function seeded(): QueryClient {
+function configured(): QueryClient {
   const client = testQueryClient();
   client.setQueryData(referenceConfigQuery(SLUG).queryKey, config);
   client.setQueryData(prefsQuery.queryKey, MePrefs.parse({}));
-  client.setQueryData(issueRefQuery(SLUG, 7).queryKey, issue("Old title"));
+  client.setQueryData(projectsQuery.queryKey, []);
+  // Keep unrelated directory/preferences requests out of these request counts.
+  for (const query of [referenceConfigQuery(SLUG), prefsQuery, projectsQuery]) {
+    client.setQueryDefaults(query.queryKey, {
+      gcTime: Infinity,
+      refetchOnMount: false,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    });
+  }
   return client;
 }
 
@@ -128,9 +148,8 @@ async function advance(ms: number) {
 
 async function mount(ui: ReactElement, client: QueryClient) {
   const view = renderWithProviders(ui, client);
-  // RouterProvider's first render is asynchronous; flush its microtasks and
-  // the issue lookup batch's zero-delay timer without advancing wall time.
-  await advance(0);
+  // Flush the asynchronous router render and the issue batch timer.
+  await advance(1);
   return view;
 }
 
@@ -160,192 +179,197 @@ function expectPlain(view: View, href = ISSUE_HREF) {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-09-18T12:00:00Z"));
-  // Interval fetches are focus-gated by QueryClient. Happy DOM's focus
-  // state is not a reliable stand-in for an active browser tab.
   focusManager.setFocused(true);
+  onlineManager.setOnline(true);
 });
 afterEach(() => {
   focusManager.setFocused(undefined);
+  onlineManager.setOnline(true);
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
-/**
- * Regression shape before active revalidation: staleTime=60s only marks a
- * query stale; it never sends a request at the deadline. Before the pending
- * guard, IssueLink also keeps painting the old title/author until data is null.
- * Every case below checks the actual anchor and metadata, not just the cache.
- */
-describe("visible reference metadata validity", () => {
-  it("revalidates an active issue at 60s, hides old decoration in flight, then restores the new title", async () => {
-    const request = deferred<IssueListPage>();
-    const list = vi.spyOn(api, "listIssues").mockReturnValue(request.promise);
-    const client = seeded();
-    const view = await mount(ref(), client);
-    expectRich(view, "Old title");
+describe("visible reference session cache", () => {
+  it.each(["issue", "full comment", "bare comment"] as const)(
+    "resolves a %s once and preserves its anchor through ten minutes, focus, reconnect and remount",
+    async (kind) => {
+      const issueRequest = deferred<IssueListPage>();
+      const commentRequest = deferred<TimelineComment>();
+      const locationRequest = deferred<CommentLocation>();
+      const list = vi
+        .spyOn(api, "listIssues")
+        .mockReturnValue(issueRequest.promise);
+      const getComment = vi
+        .spyOn(api, "getComment")
+        .mockReturnValue(commentRequest.promise);
+      const locate = vi
+        .spyOn(api, "locateComment")
+        .mockReturnValue(locationRequest.promise);
+      const getIssue = vi.spyOn(api, "getIssue");
+      const client = configured();
+      const ui =
+        kind === "bare comment" ? (
+          <MarkdownLink
+            slug={SLUG}
+            href="#xref-comment-42"
+            node={{ children: [{ type: "text", value: "#comment-42" }] }}
+          >
+            #comment-42
+          </MarkdownLink>
+        ) : (
+          ref(kind === "issue" ? undefined : 42)
+        );
+      const view = await mount(ui, client);
+      expect(rich(view)).toBeNull();
+      if (kind === "bare comment") {
+        expect(view.container.querySelector("a")).toBeNull();
+        expect(view.container.textContent).toBe("#comment-42");
+      } else {
+        expectPlain(view, kind === "issue" ? ISSUE_HREF : COMMENT_HREF);
+      }
 
-    await advance(59_999);
-    expect(list).not.toHaveBeenCalled();
-    expectRich(view, "Old title");
-    await advance(1);
-    expect(
-      client.getQueryState(issueRefQuery(SLUG, 7).queryKey)?.fetchStatus,
-    ).toBe("fetching");
-    await advance(1); // the batch's zero-delay timer was scheduled at the deadline
-    expect(list).toHaveBeenCalledTimes(1);
-    expectPlain(view);
+      await act(async () => {
+        issueRequest.resolve(page("Old title"));
+        commentRequest.resolve(comment());
+        locationRequest.resolve(location());
+      });
+      // Bare comments mount the issue observer after the location notification;
+      // flush both that batch timer and its observer notification.
+      await advance(5);
+      const href = kind === "issue" ? ISSUE_HREF : COMMENT_HREF;
+      expectRich(view, "Old title", href);
+      const anchor = rich(view) as HTMLAnchorElement;
+      const markup = anchor.outerHTML;
+      const children = [...anchor.childNodes];
+      if (kind !== "issue") {
+        expect(anchor.querySelector("[data-comment-author]")?.textContent).toBe(
+          " by Alice",
+        );
+      }
+      const keys: Array<readonly unknown[]> = [issueRefQuery(SLUG, 7).queryKey];
+      if (kind !== "issue") keys.push(commentRefQuery(SLUG, 7, 42).queryKey);
+      if (kind === "bare comment")
+        keys.push(commentLocationQuery(SLUG, 42).queryKey);
+      const timestamps = keys.map(
+        (key) => client.getQueryState(key)?.dataUpdatedAt,
+      );
+      if (kind === "bare comment") expect(timestamps[1]).toBe(timestamps[2]);
+      const expectRequests = () => {
+        expect(list).toHaveBeenCalledTimes(1);
+        expect(getComment).toHaveBeenCalledTimes(
+          kind === "full comment" ? 1 : 0,
+        );
+        expect(locate).toHaveBeenCalledTimes(kind === "bare comment" ? 1 : 0);
+        expect(getIssue).not.toHaveBeenCalled();
+      };
+      const expectSameAnchor = () => {
+        expect(rich(view)).toBe(anchor);
+        expect(anchor.outerHTML).toBe(markup);
+        expect(anchor.childNodes.length).toBe(children.length);
+        children.forEach((child, index) => {
+          expect(anchor.childNodes[index]).toBe(child);
+        });
+        expectRequests();
+      };
+      expectRequests();
+      await advance(10 * 60_000);
+      expectSameAnchor();
+      await act(async () => {
+        focusManager.setFocused(false);
+        onlineManager.setOnline(false);
+      });
+      await advance(10 * 60_000);
+      expectSameAnchor();
+      await act(async () => {
+        focusManager.setFocused(true);
+        onlineManager.setOnline(true);
+      });
+      await advance(1);
+      expectSameAnchor();
+      await act(async () => {
+        await Promise.all(
+          keys.map((queryKey) => client.invalidateQueries({ queryKey })),
+        );
+      });
+      await advance(1);
+      expectSameAnchor();
 
-    await act(async () => request.resolve(page("New title")));
-    await advance(0);
-    expectRich(view, "New title");
-    expect(view.container.textContent).not.toContain("Old title");
-  });
+      view.unmount();
+      await advance(10 * 60_000);
+      const remounted = await mount(ui, client);
+      expectRich(remounted, "Old title", href);
+      // A remount creates new DOM; its address, decoration and cache timestamps stay identical.
+      expect(rich(remounted)?.outerHTML).toBe(markup);
+      expect(
+        keys.map((key) => client.getQueryState(key)?.dataUpdatedAt),
+      ).toEqual(timestamps);
+      expectRequests();
+      remounted.unmount();
+      client.clear();
+    },
+  );
 
-  it("schedules a prewarmed result from its remaining freshness", () => {
-    const client = seeded();
-    const query = client.getQueryCache().find<ResolvedIssueRef | null>({
-      queryKey: issueRefQuery(SLUG, 7).queryKey,
-    });
-    vi.setSystemTime(Date.now() + 59_000);
-    const interval = issueRefQuery(SLUG, 7).refetchInterval;
-    expect(typeof interval).toBe("function");
-    if (typeof interval !== "function" || query === undefined) {
-      throw new Error("active reference interval unavailable");
-    }
-    expect(interval(query)).toBe(1_000);
-  });
+  it.each([403, 404, 410, "offline"])(
+    "keeps an initially unreadable comment ordinary (%s)",
+    async (failure) => {
+      const client = configured();
+      client.setQueryData(issueRefQuery(SLUG, 7).queryKey, issue("Old title"));
+      const request = deferred<TimelineComment>();
+      const getComment = vi
+        .spyOn(api, "getComment")
+        .mockReturnValue(request.promise);
+      const view = await mount(ref(42), client);
+      expectPlain(view, COMMENT_HREF);
+      await act(async () =>
+        request.reject(
+          failure === "offline" ? new Error("offline") : { status: failure },
+        ),
+      );
+      await advance(1);
+      expectPlain(view, COMMENT_HREF);
+      expect(getComment).toHaveBeenCalledTimes(1);
+      view.unmount();
+      client.clear();
+    },
+  );
 
-  it("revalidates a comment author at 60s without displaying mixed old issue/comment metadata", async () => {
-    const request = deferred<TimelineComment>();
-    const getComment = vi
-      .spyOn(api, "getComment")
-      .mockReturnValue(request.promise);
-    // The issue has the same 60s deadline. Let its independent refresh
-    // complete so this case specifically holds the comment author in flight.
-    vi.spyOn(api, "listIssues").mockResolvedValue(page("Old title"));
-    const client = seeded();
-    client.setQueryData<ResolvedCommentRef | null>(
+  it.each([
+    "missing",
+    "deleted",
+    "different parent",
+    "different project",
+    "different comment",
+  ])("rejects %s metadata even when cached for the session", async (kind) => {
+    const client = configured();
+    client.setQueryData(
+      issueRefQuery(SLUG, 7).queryKey,
+      kind === "missing"
+        ? null
+        : {
+            ...issue("Old title"),
+            deleted_at: kind === "deleted" ? "2026-09-18T00:00:00Z" : null,
+          },
+    );
+    client.setQueryData<ResolvedCommentRef>(
       commentRefQuery(SLUG, 7, 42).queryKey,
-      () => ({
+      {
         ...comment(),
-        at: { slug: SLUG, number: 7, commentId: 42 },
-      }),
+        at: {
+          slug: kind === "different project" ? "other" : SLUG,
+          number: kind === "different parent" ? 8 : 7,
+          commentId: kind === "different comment" ? 99 : 42,
+        },
+      },
     );
     const view = await mount(ref(42), client);
-    expectRich(view, "Old title", COMMENT_HREF);
-    expect(
-      [...(rich(view)?.querySelectorAll("[data-ref-part]") ?? [])]
-        .map((part) => part.textContent)
-        .join(""),
-    ).toBe("T-7#comment-42");
-    expect(
-      rich(view)?.querySelector("[data-comment-author]")?.textContent,
-    ).toBe(" by Alice");
-    expect(rich(view)?.getAttribute("data-comment-link")).toBe("42");
-
-    await advance(59_999);
-    expect(getComment).not.toHaveBeenCalled();
-    await advance(1);
-    await advance(1);
-    expect(getComment).toHaveBeenCalledTimes(1);
     expectPlain(view, COMMENT_HREF);
-
-    await act(async () => request.resolve(comment(bob)));
-    await advance(1);
-    expect(
-      client.getQueryData<ResolvedCommentRef>(
-        commentRefQuery(SLUG, 7, 42).queryKey,
-      )?.author.login,
-    ).toBe("bob");
-  });
-  it("removes a confirmed comment author after a missing reply or transient error", async () => {
-    const client = seeded();
-    client.setQueryData<ResolvedCommentRef | null>(
-      commentRefQuery(SLUG, 7, 42).queryKey,
-      () => ({
-        ...comment(),
-        at: { slug: SLUG, number: 7, commentId: 42 },
-      }),
-    );
-    const getComment = vi.spyOn(api, "getComment");
-    const view = await mount(ref(42), client);
-    expect(
-      [...(rich(view)?.querySelectorAll("[data-ref-part]") ?? [])]
-        .map((part) => part.textContent)
-        .join(""),
-    ).toBe("T-7#comment-42");
-    expect(
-      rich(view)?.querySelector("[data-comment-author]")?.textContent,
-    ).toBe(" by Alice");
-
-    const missing = deferred<TimelineComment>();
-    getComment.mockReturnValueOnce(missing.promise);
-    const first = invalidateIssueRefQueries(client, {
-      slug: SLUG,
-      issueNumber: 7,
-      commentId: 42,
-    });
-    await advance(1);
-    expectPlain(view, COMMENT_HREF);
-    await act(async () => missing.reject({ status: 404 }));
-    await first;
-    expectPlain(view, COMMENT_HREF);
-
-    getComment.mockResolvedValueOnce(comment(bob));
-    const refresh = invalidateIssueRefQueries(client, {
-      slug: SLUG,
-      issueNumber: 7,
-      commentId: 42,
-    });
-    await act(async () => {
-      await refresh;
-    });
-    await advance(1);
-    expect(
-      [...(rich(view)?.querySelectorAll("[data-ref-part]") ?? [])]
-        .map((part) => part.textContent)
-        .join(""),
-    ).toBe("T-7#comment-42");
-    expect(
-      rich(view)?.querySelector("[data-comment-author]")?.textContent,
-    ).toBe(" by Bob");
-
-    const failed = deferred<TimelineComment>();
-    getComment.mockReturnValueOnce(failed.promise);
-    const second = invalidateIssueRefQueries(client, {
-      slug: SLUG,
-      issueNumber: 7,
-      commentId: 42,
-    });
-    await advance(1);
-    expectPlain(view, COMMENT_HREF);
-    await act(async () => failed.reject(new Error("offline")));
-    await second;
-    expectPlain(view, COMMENT_HREF);
-    expect(view.container.textContent).not.toContain("by Bob");
-  });
-
-  it("does not paint stale decoration on the first frame after background/refocus", async () => {
-    const request = deferred<IssueListPage>();
-    const list = vi.spyOn(api, "listIssues").mockReturnValue(request.promise);
-    const view = await mount(ref(), seeded());
-    expectRich(view, "Old title");
-    focusManager.setFocused(false);
-    await advance(60_002);
-    const callsWhileBackgrounded = list.mock.calls.length;
-    expectPlain(view); // stale even before a network reply or focus event
-    await act(async () => focusManager.setFocused(true));
-    await advance(1);
-    expect(list.mock.calls.length).toBeGreaterThanOrEqual(
-      callsWhileBackgrounded,
-    );
-    expectPlain(view);
-    await act(async () => request.resolve(page("Focused title")));
+    view.unmount();
+    client.clear();
   });
 });
 
 describe("account boundary", () => {
-  it("clears a confirmed ref and discards an in-flight older reply on logout", async () => {
+  it("clears all three session caches and discards an in-flight older reply on logout", async () => {
     const me: Me = {
       id: 1,
       login: "user",
@@ -357,22 +381,30 @@ describe("account boundary", () => {
       is_instance_admin: true,
       created_at: "2026-01-01T00:00:00Z",
     };
-    const client = seeded();
+    const client = configured();
+    const keys = [
+      issueRefQuery(SLUG, 7).queryKey,
+      commentRefQuery(SLUG, 7, 42).queryKey,
+      commentLocationQuery(SLUG, 42).queryKey,
+      issueRefQuery(SLUG, 8).queryKey,
+    ] as const;
+    client.setQueryData(keys[0], issue("Old title"));
+    client.setQueryData<ResolvedCommentRef>(keys[1], {
+      ...comment(),
+      at: { slug: SLUG, number: 7, commentId: 42 },
+    });
+    client.setQueryData(keys[2], location());
     client.setQueryData(["auth-mode"], { mode: "single" });
     vi.spyOn(api, "logout").mockResolvedValue(undefined);
     const request = deferred<IssueListPage>();
-    vi.spyOn(api, "listIssues").mockReturnValue(request.promise);
-    const view = await mount(<AppShell me={me}>{ref()}</AppShell>, client);
-    expectRich(view, "Old title");
-
-    const oldRefresh = invalidateIssueRefQueries(client, {
-      slug: SLUG,
-      issueNumber: 7,
-    });
+    const list = vi.spyOn(api, "listIssues").mockReturnValue(request.promise);
+    const view = await mount(<AppShell me={me}>{ref(42)}</AppShell>, client);
+    expectRich(view, "Old title", COMMENT_HREF);
+    const oldRequest = client
+      .fetchQuery(issueRefQuery(SLUG, 8))
+      .catch(() => undefined);
     await advance(1);
-    expectPlain({
-      container: view.container.querySelector("main") as HTMLElement,
-    });
+    expect(list).toHaveBeenCalledTimes(1);
     const trigger = screen.getByText("User").closest("button");
     expect(trigger).not.toBeNull();
     fireEvent.pointerDown(trigger as HTMLElement, {
@@ -383,16 +415,19 @@ describe("account boundary", () => {
     fireEvent.click(screen.getByText("Log out"));
     await advance(0);
     expect(api.logout).toHaveBeenCalledTimes(1);
-    expect(
-      client.getQueryData(issueRefQuery(SLUG, 7).queryKey),
-    ).toBeUndefined();
+    for (const key of keys) expect(client.getQueryData(key)).toBeUndefined();
 
-    await act(async () => request.resolve(page("Previous account title")));
-    await oldRefresh;
-    expect(
-      client.getQueryData(issueRefQuery(SLUG, 7).queryKey),
-    ).toBeUndefined();
+    await act(async () =>
+      request.resolve({
+        items: [{ ...issue("Previous account title"), id: 8, number: 8 }],
+        next_cursor: null,
+      }),
+    );
+    await oldRequest;
+    for (const key of keys) expect(client.getQueryData(key)).toBeUndefined();
     expect(view.container.textContent).not.toContain("Previous account title");
     expect(rich(view)).toBeNull();
+    view.unmount();
+    client.clear();
   });
 });

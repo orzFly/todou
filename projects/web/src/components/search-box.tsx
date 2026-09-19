@@ -226,9 +226,13 @@ export function SearchBox({
     [labels.data, statuses.data, members.data],
   );
 
-  // A jump that silently drops `label:bug` is a lie about where it goes, so
-  // the offer only stands for a query that is nothing but a reference.
-  const jumpRows = useJumpRows(slug, hasQualifier(parts) ? "" : value);
+  // Only resolve while the offer is visible. A retained value after blur or
+  // Escape must not leave hidden reference observers polling in the header.
+  // A qualified query still belongs to ordinary search.
+  const jumpRows = useJumpRows(
+    slug,
+    focused && !dismissed && !hasQualifier(parts) ? value : "",
+  );
   const named = jumpRows.find((row) => row.kind === "project");
   // A project named without a card is a weaker aim than a card: the reader
   // may well be on their way to one whose number they do not remember.
@@ -547,7 +551,10 @@ export function SearchBox({
               highlightParts(text, parseSearchQuery(text), known)
             }
             onKeyDown={onKeyDown}
-            onFocus={() => setFocused(true)}
+            onFocus={() => {
+              setFocused(true);
+              setDismissed(false);
+            }}
             onBlur={(e) => {
               // Clicking a row blurs the input before the click lands; the
               // listbox's own mousedown guard covers the pointer, this covers

@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import type { IssueListItem } from "@todou/shared";
 import { useEffect, useRef } from "react";
-import { issueRefQuery } from "@/api/issue-refs.ts";
 import {
   issueCompletionQuery,
   issueCompletionSearchQuery,
@@ -12,6 +11,7 @@ import {
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "@/api/references.ts";
+import { searchIssueRefQuery as issueRefQuery } from "@/api/search-refs.ts";
 import {
   type ProjectRefOption,
   projectSpellings,

@@ -4,8 +4,8 @@ import { can, isHidden } from "@todou/shared";
 import { EyeOffIcon, PencilIcon, Trash2Icon } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
-import { invalidateIssueRefQueries } from "@/api/issue-refs.ts";
 import { api } from "@/api/queries.ts";
+import { invalidateSearchRefQueries } from "@/api/search-refs.ts";
 import {
   EntryActionsMenu,
   QUOTE_REHYPE_PLUGINS,
@@ -99,8 +99,8 @@ export function CommentItem({
       queryKey: ["timeline", target.slug, target.issueNumber],
     });
     // A migrated comment may be cached under any historical address. The
-    // mutation supplies only its current one, so withdraw refs conservatively.
-    void invalidateIssueRefQueries(queryClient);
+    // mutation supplies only its current one, so recheck search targets.
+    void invalidateSearchRefQueries(queryClient);
   };
   const save = useMutation({
     mutationFn: (vars: Target & { body: string }) =>

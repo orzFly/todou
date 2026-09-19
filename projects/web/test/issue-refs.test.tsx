@@ -13,7 +13,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   commentLocationQuery,
   commentRefQuery,
-  invalidateIssueRefQueries,
   issueRefQuery,
   type LocatedComment,
 } from "../src/api/issue-refs.ts";
@@ -22,6 +21,11 @@ import {
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
+import {
+  invalidateSearchRefQueries,
+  searchCommentLocationQuery,
+  searchIssueRefQuery,
+} from "../src/api/search-refs.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { EventRow } from "../src/components/timeline/event-row.tsx";
 import { splitIssueRefs } from "../src/lib/issue-refs.ts";
@@ -329,20 +333,21 @@ describe("issue ref batching", () => {
     expect(missing).toBeNull();
   });
 });
-describe("reference invalidation", () => {
-  it("stales matching refs and locations immediately, cancels old generations, and refreshes active refs", async () => {
-    const client = seededClient("todou", [refItem(3, "Old")]);
-    const issueKey = issueRefQuery("todou", 3).queryKey;
-    const locationKey = commentLocationQuery("todou", 42).queryKey;
+describe("reference cache isolation", () => {
+  it("invalidates only matching Search refs, cancels old generations, and refreshes active Search refs", async () => {
+    const client = seededClient("todou", [refItem(3, "Base")]);
+    const issueKey = searchIssueRefQuery("todou", 3).queryKey;
+    const locationKey = searchCommentLocationQuery("todou", 42).queryKey;
+    client.setQueryData(issueKey, refItem(3, "Old"));
     client.setQueryData(locationKey, null);
     client.setQueryData(
-      issueRefQuery("other", 3).queryKey,
+      searchIssueRefQuery("other", 3).queryKey,
       refItem(3, "Other"),
     );
     let releaseOld: ((value: IssueListItem) => void) | undefined;
     let calls = 0;
     const observer = new QueryObserver(client, {
-      ...issueRefQuery("todou", 3),
+      ...searchIssueRefQuery("todou", 3),
       queryFn: ({ signal }) => {
         signal.addEventListener("abort", () => {});
         calls += 1;
@@ -359,23 +364,32 @@ describe("reference invalidation", () => {
     });
     await waitFor(() => expect(releaseOld).toBeDefined());
 
-    const refresh = invalidateIssueRefQueries(client, {
+    const refresh = invalidateSearchRefQueries(client, {
       slug: "todou",
       issueNumber: 3,
     });
     expect(client.getQueryState(issueKey)?.isInvalidated).toBe(true);
     expect(client.getQueryState(locationKey)?.isInvalidated).toBe(true);
     expect(
-      client.getQueryState(issueRefQuery("other", 3).queryKey)?.isInvalidated,
+      client.getQueryState(searchIssueRefQuery("other", 3).queryKey)
+        ?.isInvalidated,
     ).toBe(false);
+    expect(
+      client.getQueryState(issueRefQuery("todou", 3).queryKey)?.isInvalidated,
+    ).toBe(false);
+    expect(
+      client.getQueryData<IssueListItem>(issueRefQuery("todou", 3).queryKey)
+        ?.title,
+    ).toBe("Base");
     await refresh;
     releaseOld?.(refItem(3, "Old response"));
     await oldRequest;
     expect(client.getQueryData<IssueListItem>(issueKey)?.title).toBe("New");
     expect(calls).toBe(2);
     stop();
+    client.clear();
   });
-  it("revalidates a prewarmed 59-second-old active ref at age 60 seconds", async () => {
+  it("retains a prewarmed base ref through ten minutes, invalidation and remount", async () => {
     vi.useFakeTimers();
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -384,33 +398,25 @@ describe("reference invalidation", () => {
     try {
       vi.setSystemTime(new Date("2026-09-18T12:00:00Z"));
       const key = issueRefQuery("todou", 3).queryKey;
-      client.setQueryData(key, refItem(3, "Prewarmed"), {
-        updatedAt: Date.now() - 59_000,
-      });
-      let resolveProbe: ((value: IssueListItem) => void) | undefined;
-      const refreshed = vi.fn(
-        () =>
-          new Promise<IssueListItem>((resolve) => {
-            resolveProbe = resolve;
-          }),
-      );
+      const updatedAt = Date.now() - 59_000;
+      client.setQueryData(key, refItem(3, "Prewarmed"), { updatedAt });
+      const refreshed = vi.fn(async () => refItem(3, "Unexpected refresh"));
       const observer = new QueryObserver(client, {
         ...issueRefQuery("todou", 3),
         queryFn: refreshed,
       });
       stop = observer.subscribe(() => {});
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      await client.invalidateQueries({ queryKey: key });
+      expect(observer.getCurrentResult().data?.title).toBe("Prewarmed");
+      expect(observer.getCurrentResult().isStale).toBe(false);
       expect(refreshed).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(999);
+      stop();
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      stop = observer.subscribe(() => {});
+      expect(observer.getCurrentResult().data?.title).toBe("Prewarmed");
+      expect(client.getQueryState(key)?.dataUpdatedAt).toBe(updatedAt);
       expect(refreshed).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(1);
-      expect(refreshed).toHaveBeenCalledTimes(1);
-      await vi.advanceTimersByTimeAsync(25);
-      expect(refreshed).toHaveBeenCalledTimes(1);
-      resolveProbe?.(refItem(3, "Revalidated"));
-      await vi.advanceTimersByTimeAsync(0);
-      expect(client.getQueryData<IssueListItem>(key)?.title).toBe(
-        "Revalidated",
-      );
     } finally {
       stop?.();
       client.clear();
@@ -439,7 +445,7 @@ describe("reference invalidation", () => {
         created_at: "2026-08-12T00:00:00Z",
       },
     ]);
-    const updatedAt = Date.now() - 20_000;
+    const updatedAt = Date.now() - 10 * 60_000;
     const locationKey = commentLocationQuery("todou", 42).queryKey;
     client.setQueryData<LocatedComment | null>(
       locationKey,

@@ -1,4 +1,8 @@
-import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  focusManager,
+  type QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import {
   createMemoryHistory,
   createRootRoute,
@@ -6,7 +10,13 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { fireEvent, render, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type {
   IssueListItem,
   Label,
@@ -16,8 +26,8 @@ import type {
 } from "@todou/shared";
 import { SEARCH_QUALIFIERS } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { issueRefQuery } from "../src/api/issue-refs.ts";
 import {
+  api,
   labelsQuery,
   meQuery,
   projectQuery,
@@ -27,6 +37,7 @@ import {
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
+import { searchIssueRefQuery as issueRefQuery } from "../src/api/search-refs.ts";
 import { AppShell } from "../src/components/shell.tsx";
 import { historyKey, readHistory } from "../src/lib/search-history.ts";
 import { testQueryClient } from "./render.tsx";
@@ -204,6 +215,73 @@ describe("the header's search, wide", () => {
   });
 });
 
+describe("dismissed header reference searches", () => {
+  it.each(["Escape", "blur"])(
+    "stops hidden polling after %s and resumes on focus",
+    async (dismiss) => {
+      const view = renderShellAt(1280);
+      const input = (await view.findByLabelText(
+        "Search this project",
+      )) as HTMLInputElement;
+      const list = vi.spyOn(api, "listIssues").mockResolvedValue({
+        items: [refItem(141, "全文搜索")],
+        next_cursor: null,
+      });
+      // Advance polling timers while keeping the cached context fresh, so
+      // this test isolates reference observers from unrelated header queries.
+      vi.useFakeTimers({
+        toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+      });
+      focusManager.setFocused(true);
+      const advance = async (ms: number) => {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(ms);
+        });
+      };
+      const query = view.client.getQueryCache().find({
+        queryKey: issueRefQuery("todou", 141).queryKey,
+        exact: true,
+      });
+      const jumpRow = () =>
+        view.container.querySelector(
+          '[role="listbox"] a[href="/projects/todou/issues/141"]',
+        );
+      try {
+        fireEvent.focusIn(input);
+        fireEvent.change(input, { target: { value: "#141" } });
+        await advance(1);
+        expect(jumpRow()?.textContent).toContain("全文搜索");
+        expect(query?.isActive()).toBe(true);
+
+        if (dismiss === "Escape") fireEvent.keyDown(input, { key: "Escape" });
+        else fireEvent.blur(input);
+        await advance(1);
+        expect(input.value).toBe("#141");
+        expect(jumpRow()).toBeNull();
+        expect(query?.isActive()).toBe(false);
+        await advance(60_001);
+        expect(list).not.toHaveBeenCalled();
+        expect(query?.isActive()).toBe(false);
+
+        fireEvent.blur(input);
+        fireEvent.focusIn(input);
+        await advance(1);
+        expect(input.value).toBe("#141");
+        expect(query?.isActive()).toBe(true);
+        expect(jumpRow()?.textContent).toContain("全文搜索");
+      } finally {
+        view.unmount();
+        await view.client.cancelQueries();
+        view.client.clear();
+        vi.clearAllTimers();
+        vi.useRealTimers();
+        focusManager.setFocused(undefined);
+        list.mockRestore();
+      }
+    },
+  );
+});
+
 describe("the header's search, narrow", () => {
   it("offers an icon and no box until it is asked for", async () => {
     const view = renderShellAt(390);
@@ -265,9 +343,9 @@ describe("the header's search, narrow", () => {
 
 /**
  * T-215's jump row meeting T-231's tombstones. `useJumpRows` resolves a card
- * through the same `issueRefQuery` batcher <IssueLink> uses, so the probe that
- * turns a moved card's ref into a live one is inherited rather than repeated —
- * this pins that it is still shared. The reader typed the tombstone's address;
+ * through a search query with its own cache, sharing the network batcher used
+ * by <IssueLink>. The probe that turns a moved card's ref into a live one is
+ * inherited rather than repeated. The reader typed the tombstone's address;
  * the row answers with the card's, so following it costs no redirect (T-274).
  */
 describe("the header's search, a card that moved away", () => {

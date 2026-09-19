@@ -13,7 +13,6 @@ import type {
   ReferenceDirectory,
 } from "@todou/shared";
 import { describe, expect, it } from "vitest";
-import { issueRefQuery, type ResolvedIssueRef } from "../src/api/issue-refs.ts";
 import {
   issueCompletionQuery,
   issueCompletionSearchQuery,
@@ -23,6 +22,10 @@ import {
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
+import {
+  searchIssueRefQuery as issueRefQuery,
+  type ResolvedIssueRef,
+} from "../src/api/search-refs.ts";
 import { inCodeContext } from "../src/lib/editor/code-context.ts";
 import { refCompletionSource } from "../src/lib/editor/ref-completion.ts";
 import {

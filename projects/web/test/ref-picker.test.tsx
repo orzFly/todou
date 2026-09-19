@@ -9,7 +9,6 @@ import type {
   ReferenceDirectory,
 } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { issueRefQuery } from "../src/api/issue-refs.ts";
 import {
   issueCompletionQuery,
   issueCompletionSearchQuery,
@@ -20,6 +19,7 @@ import {
   referenceConfigQuery,
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
+import { searchIssueRefQuery as issueRefQuery } from "../src/api/search-refs.ts";
 import { BlocksSection } from "../src/components/issue/blocks-section.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 

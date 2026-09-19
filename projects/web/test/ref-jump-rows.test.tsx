@@ -8,14 +8,6 @@ import type {
   TimelineComment,
 } from "@todou/shared";
 import { describe, expect, it } from "vitest";
-import {
-  commentLocationQuery,
-  commentRefQuery,
-  issueRefQuery,
-  type LocatedComment,
-  type ResolvedCommentRef,
-  type ResolvedIssueRef,
-} from "../src/api/issue-refs.ts";
 import { recentOpenIssuesQuery } from "../src/api/issues.ts";
 import { projectsQuery } from "../src/api/queries.ts";
 import {
@@ -30,6 +22,14 @@ import {
   referenceDirectoryQuery,
   resolveRefQuery,
 } from "../src/api/references.ts";
+import {
+  searchCommentLocationQuery as commentLocationQuery,
+  searchCommentRefQuery as commentRefQuery,
+  searchIssueRefQuery as issueRefQuery,
+  type LocatedComment,
+  type ResolvedCommentRef,
+  type ResolvedIssueRef,
+} from "../src/api/search-refs.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 const author = {

@@ -1,9 +1,10 @@
-import type { QueryClient } from "@tanstack/react-query";
+import { type QueryClient, QueryObserver } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import {
   type IssueListItem,
   type IssueListPage,
   MePrefs,
+  MovedError,
   type TimelineComment,
   type TimelineEvent,
 } from "@todou/shared";
@@ -29,8 +30,14 @@ import {
   referenceDirectoryQuery,
 } from "../src/api/references.ts";
 import {
+  searchCommentLocationQuery,
+  searchCommentRefQuery,
+  searchIssueRefQuery,
+} from "../src/api/search-refs.ts";
+import {
   applyInvalidation,
   invalidationsFor,
+  reconnectInvalidations,
 } from "../src/api/useUserEvents.ts";
 import { IssueLink } from "../src/components/shared/issue-link.tsx";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
@@ -40,7 +47,6 @@ import { renderWithProviders, testQueryClient } from "./render.tsx";
 const SOURCE = "historical";
 const DESTINATION = "destination";
 const OLD_TITLE = "Previously authorized title";
-const originalHref = "/projects/historical/issues/12#comment-7";
 const alice = {
   id: 1,
   login: "alice",
@@ -124,7 +130,7 @@ function seeded() {
       created_at: "2026-09-01T00:00:00Z",
     })),
   );
-  for (const slug of [SOURCE, DESTINATION]) {
+  for (const slug of [SOURCE, DESTINATION, "999"]) {
     client.setQueryData(referenceConfigQuery(slug).queryKey, {
       format: { prefix: "T", history: [] },
       autolinks: [],
@@ -198,15 +204,410 @@ async function hover(anchor: Element) {
   });
 }
 
+const backgroundEvents = [
+  "comment",
+  "timeline",
+  "issue",
+  "member",
+  "project",
+  "reconnect",
+] as const;
+
+async function backgroundEvent(
+  client: QueryClient,
+  entity: (typeof backgroundEvents)[number],
+  slug = DESTINATION,
+  issueNumber = 55,
+) {
+  await act(async () => {
+    const invalidations =
+      entity === "reconnect"
+        ? reconnectInvalidations().map((key) => ({
+            key,
+            scope: "refetch" as const,
+          }))
+        : invalidationsFor(
+            { entity, id: 8, action: "updated", issue_number: issueNumber },
+            slug,
+          );
+    for (const invalidation of invalidations) {
+      applyInvalidation(client, invalidation);
+    }
+    // Let cancellation, batched requests and observer notifications run before
+    // checking a negative request-count or DOM-identity assertion.
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  });
+}
+
+function mockDirectories(client: QueryClient) {
+  vi.spyOn(api, "listProjects").mockResolvedValue(
+    client.getQueryData(projectsQuery.queryKey) ?? [],
+  );
+  vi.spyOn(api, "getReferenceConfig").mockResolvedValue({
+    format: { prefix: "T", history: [] },
+    autolinks: [],
+  });
+  vi.spyOn(api, "getReferenceDirectory").mockResolvedValue({
+    entries: [],
+    contested: [],
+  });
+  vi.spyOn(api, "getMyPrefs").mockResolvedValue(MePrefs.parse({}));
+}
+
+function unchangedReference(
+  container: HTMLElement,
+  anchor: HTMLAnchorElement,
+  card: HTMLElement,
+) {
+  const href = anchor.getAttribute("href");
+  const linkHtml = anchor.innerHTML;
+  const hoverHtml = card.innerHTML;
+  const linkChildren = [...anchor.querySelectorAll("*")];
+  const hoverChildren = [...card.querySelectorAll("*")];
+  return () => {
+    expect(container.querySelector("a[data-issue-link]")).toBe(anchor);
+    expect(anchor.isConnected).toBe(true);
+    expect(anchor.getAttribute("href")).toBe(href);
+    expect(anchor.innerHTML).toBe(linkHtml);
+    expect(document.querySelector("[data-slot='hover-card-content']")).toBe(
+      card,
+    );
+    expect(card.innerHTML).toBe(hoverHtml);
+    for (const [root, children] of [
+      [anchor, linkChildren],
+      [card, hoverChildren],
+    ] as const) {
+      const current = [...root.querySelectorAll("*")];
+      expect(current).toHaveLength(children.length);
+      current.forEach((node, index) => {
+        expect(node).toBe(children[index]);
+      });
+    }
+  };
+}
+
+const unsubscribeSearch: (() => void)[] = [];
+
 afterEach(() => {
   cleanup();
+  for (const unsubscribe of unsubscribeSearch.splice(0)) unsubscribe();
   for (const client of clients.splice(0)) client.clear();
   vi.restoreAllMocks();
 });
 
-describe("reference validity through SSE invalidations", () => {
+describe("initial display reference resolution", () => {
+  describe.each([SOURCE, "999"])("project address %s", (source) => {
+    it.each([403, 404])(
+      "keeps authored issue links ordinary when the first lookup returns %i",
+      async (status) => {
+        const response = deferred<IssueListPage>();
+        const list = vi
+          .spyOn(api, "listIssues")
+          .mockReturnValue(response.promise);
+        const getIssue = vi
+          .spyOn(api, "getIssue")
+          .mockRejectedValue({ status });
+        const client = seeded();
+        const href = `/projects/${source}/issues/12`;
+        const view = renderWithProviders(
+          <div>
+            <section data-testid="markdown">
+              <MarkdownView slug={SOURCE}>
+                {`[**original label**](${href})`}
+              </MarkdownView>
+            </section>
+            <section data-testid="direct">
+              <IssueLink
+                slug={source}
+                number={12}
+                pageSlug={SOURCE}
+                fallbackHref={href}
+                fallbackChildren={<strong>original label</strong>}
+                inBody
+              />
+            </section>
+          </div>,
+          client,
+        );
+        await waitFor(() => {
+          expectOrdinary(view.getByTestId("markdown"), href);
+          expectOrdinary(view.getByTestId("direct"), href);
+        });
+        const anchors = ["markdown", "direct"].map((id) =>
+          view.getByTestId(id).querySelector("a"),
+        );
+        const key = issueRefQuery(source, 12).queryKey;
+        await waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+        expect(client.getQueryState(key)?.status).toBe("pending");
+        expect(client.getQueryData(key)).toBeUndefined();
+        await act(async () => {
+          if (status === 403) response.reject({ status });
+          else response.resolve({ items: [], next_cursor: null });
+        });
+        await waitFor(() => expect(client.getQueryData(key)).toBeNull());
+        expect(getIssue).toHaveBeenCalledExactlyOnceWith(source, 12);
+        expect(list).toHaveBeenCalledTimes(1);
+        for (const [index, id] of ["markdown", "direct"].entries()) {
+          const section = view.getByTestId(id);
+          expectOrdinary(section, href);
+          expect(section.querySelector("a")).toBe(anchors[index]);
+        }
+      },
+    );
+  });
+
   it.each([403, 404])(
-    "ignores an initial authorized issue response arriving after a membership refresh returned %i",
+    "does not expose issue metadata when the first comment/location lookup returns %i",
+    async (status) => {
+      const list = vi
+        .spyOn(api, "listIssues")
+        .mockResolvedValue({ items: [issue(12)], next_cursor: null });
+      const getComment = vi
+        .spyOn(api, "getComment")
+        .mockRejectedValue({ status });
+      const locate = vi
+        .spyOn(api, "locateComment")
+        .mockRejectedValue({ status });
+      const client = seeded();
+      const href = "/projects/historical/issues/12#comment-7";
+      const view = renderWithProviders(
+        <div>
+          <section data-testid="explicit">
+            <MarkdownView slug={SOURCE}>
+              {`[**original label**](${href})`}
+            </MarkdownView>
+          </section>
+          <section data-testid="bare">
+            <MarkdownView slug={SOURCE} preview>
+              {"#comment-7"}
+            </MarkdownView>
+          </section>
+        </div>,
+        client,
+      );
+      await waitFor(() => {
+        expect(client.getQueryData(issueRefQuery(SOURCE, 12).queryKey)).toEqual(
+          issue(12),
+        );
+        expect(
+          client.getQueryData(commentRefQuery(SOURCE, 12, 7).queryKey),
+        ).toBeNull();
+        expect(
+          client.getQueryData(commentLocationQuery(SOURCE, 7).queryKey),
+        ).toBeNull();
+      });
+      expectOrdinary(view.getByTestId("explicit"), href);
+      expect(view.getByTestId("bare").textContent).toBe("#comment-7");
+      expect(view.getByTestId("bare").querySelector("a")).toBeNull();
+      expect(view.container.textContent).not.toContain(OLD_TITLE);
+      expect(list).toHaveBeenCalledExactlyOnceWith(SOURCE, {
+        numbers: [12],
+        limit: 1,
+      });
+      expect(getComment).toHaveBeenCalledExactlyOnceWith(SOURCE, 12, 7);
+      expect(locate).toHaveBeenCalledExactlyOnceWith(SOURCE, 7);
+    },
+  );
+});
+
+describe.each([SOURCE, "999"])(
+  "static display references from project address %s",
+  (source) => {
+    it.each(["issue", "comment"] as const)(
+      "retains a resolved migrated %s link and open hover through every background event",
+      async (kind) => {
+        let readable = true;
+        const list = vi
+          .spyOn(api, "listIssues")
+          .mockResolvedValue({ items: [], next_cursor: null });
+        const getIssue = vi
+          .spyOn(api, "getIssue")
+          .mockImplementation(async (slug) => {
+            if (!readable) throw { status: 403 };
+            if (slug === source) {
+              throw new MovedError({ slug: DESTINATION, number: 55 });
+            }
+            return { ...issue(55), body: "Old authorized issue body" };
+          });
+        const getComment = vi
+          .spyOn(api, "getComment")
+          .mockImplementation(async (slug) => {
+            if (!readable) throw { status: 404 };
+            if (slug === source) {
+              throw new MovedError({
+                slug: DESTINATION,
+                number: 55,
+                comment_id: 8,
+              });
+            }
+            return comment();
+          });
+        const locate = vi.spyOn(api, "locateComment");
+        const client = seeded();
+        mockDirectories(client);
+        const href = `/projects/${source}/issues/12${
+          kind === "comment" ? "#comment-7" : ""
+        }`;
+        const view = renderWithProviders(
+          <MarkdownView slug={SOURCE}>
+            {`[**original label**](${href})`}
+          </MarkdownView>,
+          client,
+        );
+        const anchor = await waitFor(() => {
+          const link = view.container.querySelector("a[data-issue-link='55']");
+          expect(link).not.toBeNull();
+          return link as HTMLAnchorElement;
+        });
+        expect(anchor.getAttribute("href")).toBe(
+          `/projects/destination/issues/55${
+            kind === "comment" ? "#comment-8" : ""
+          }`,
+        );
+        expect(anchor.textContent).toContain(OLD_TITLE);
+        if (kind === "comment") {
+          expectCommentIdentity(anchor, "destination/T-55#comment-8", "Alice");
+        }
+        const card = await hover(anchor);
+        await waitFor(() =>
+          expect(card.textContent).toContain(
+            kind === "comment"
+              ? "Old authorized body"
+              : "Old authorized issue body",
+          ),
+        );
+        expect(list).toHaveBeenCalledTimes(1);
+        expect(getIssue).toHaveBeenCalledTimes(kind === "comment" ? 2 : 3);
+        expect(getIssue).toHaveBeenNthCalledWith(1, source, 12);
+        expect(getIssue).toHaveBeenNthCalledWith(2, DESTINATION, 55);
+        expect(getComment).toHaveBeenCalledTimes(kind === "comment" ? 2 : 0);
+        if (kind === "comment") {
+          expect(getComment).toHaveBeenNthCalledWith(1, source, 12, 7);
+          expect(getComment).toHaveBeenNthCalledWith(2, DESTINATION, 55, 8);
+        }
+        expect(locate).not.toHaveBeenCalled();
+        const unchanged = unchangedReference(view.container, anchor, card);
+        const issueKey = issueRefQuery(source, 12).queryKey;
+        const noteKey = commentRefQuery(source, 12, 7).queryKey;
+        const issueData = client.getQueryData(issueKey);
+        const noteData = client.getQueryData(noteKey);
+        readable = false;
+
+        for (const entity of backgroundEvents) {
+          await backgroundEvent(client, entity);
+          unchanged();
+          expect(list).toHaveBeenCalledTimes(1);
+          expect(getIssue).toHaveBeenCalledTimes(kind === "comment" ? 2 : 3);
+          expect(getComment).toHaveBeenCalledTimes(kind === "comment" ? 2 : 0);
+          expect(locate).not.toHaveBeenCalled();
+          expect(client.getQueryData(issueKey)).toBe(issueData);
+          expect(client.getQueryData(noteKey)).toBe(noteData);
+          expect(client.getQueryState(issueKey)?.fetchStatus).toBe("idle");
+        }
+
+        const hoverText = card.textContent;
+        fireEvent.pointerOut(anchor, {
+          pointerType: "mouse",
+          bubbles: true,
+          relatedTarget: document.body,
+        });
+        await waitFor(() =>
+          expect(
+            document.querySelector("[data-slot='hover-card-content']"),
+          ).toBeNull(),
+        );
+        const reopened = await hover(anchor);
+        expect(reopened.textContent).toBe(hoverText);
+        expect(view.container.querySelector("a[data-issue-link='55']")).toBe(
+          anchor,
+        );
+        expect(list).toHaveBeenCalledTimes(1);
+        expect(getIssue).toHaveBeenCalledTimes(kind === "comment" ? 2 : 3);
+        expect(getComment).toHaveBeenCalledTimes(kind === "comment" ? 2 : 0);
+        expect(locate).not.toHaveBeenCalled();
+      },
+    );
+  },
+);
+
+describe("static located comment references", () => {
+  it("keeps the initial full location, its timestamps and DOM through background events despite an older target cache", async () => {
+    const now = Date.parse("2026-09-18T12:00:00Z");
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    const location: LocatedComment = {
+      slug: DESTINATION,
+      issue_number: 55,
+      issue_ref: "destination#55",
+      comment: comment(bob),
+    };
+    const locate = vi.spyOn(api, "locateComment").mockResolvedValue(location);
+    const getComment = vi.spyOn(api, "getComment");
+    const list = vi.spyOn(api, "listIssues").mockResolvedValue({
+      items: [issue(55, "Located parent")],
+      next_cursor: null,
+    });
+    const getIssue = vi.spyOn(api, "getIssue");
+    const client = seeded();
+    mockDirectories(client);
+    const targetKey = commentRefQuery(DESTINATION, 55, 8).queryKey;
+    const staleTarget: ResolvedCommentRef = {
+      ...comment(),
+      at: { slug: DESTINATION, number: 55, commentId: 8 },
+    };
+    const staleUpdatedAt = now - 60_001;
+    client.setQueryData(targetKey, staleTarget, { updatedAt: staleUpdatedAt });
+    const locationKey = commentLocationQuery(SOURCE, 7).queryKey;
+    const view = renderWithProviders(
+      <MarkdownView slug={SOURCE} preview>
+        {"#comment-7"}
+      </MarkdownView>,
+      client,
+    );
+    const anchor = await waitFor(() => {
+      const link = view.container.querySelector("a[data-comment-link='8']");
+      expect(link).not.toBeNull();
+      return link as HTMLAnchorElement;
+    });
+    expectCommentIdentity(anchor, "destination/T-55#comment-8", "Bob");
+    expect(anchor.getAttribute("href")).toBe(
+      "/projects/destination/issues/55#comment-8",
+    );
+    expect(anchor.getAttribute("data-issue-link")).toBe("55");
+    expect(anchor.textContent).toContain("Located parent");
+    expect(anchor.textContent).not.toContain("Alice");
+    expect(client.getQueryState(locationKey)?.dataUpdatedAt).toBe(now);
+    const card = await hover(anchor);
+    expect(card.textContent).toContain("Fresh located body");
+    expect(card.textContent).toContain("Bob");
+    expect(card.textContent).not.toContain("Old authorized body");
+    expect(card.textContent).not.toContain("Alice");
+    const unchanged = unchangedReference(view.container, anchor, card);
+    const locationData = client.getQueryData(locationKey);
+    locate.mockRejectedValue({ status: 404 });
+    clock.mockReturnValue(now + 120_000);
+    for (const entity of backgroundEvents) {
+      await backgroundEvent(client, entity);
+      unchanged();
+      expect(locate).toHaveBeenCalledExactlyOnceWith(SOURCE, 7);
+      expect(list).toHaveBeenCalledExactlyOnceWith(DESTINATION, {
+        numbers: [55],
+        limit: 1,
+      });
+      expect(getComment).not.toHaveBeenCalled();
+      expect(getIssue).not.toHaveBeenCalled();
+      expect(client.getQueryData(locationKey)).toBe(locationData);
+      expect(client.getQueryState(locationKey)?.dataUpdatedAt).toBe(now);
+      expect(client.getQueryData(targetKey)).toEqual(staleTarget);
+      expect(client.getQueryState(targetKey)?.dataUpdatedAt).toBe(
+        staleUpdatedAt,
+      );
+    }
+  });
+});
+
+describe("search permissions independent of static display references", () => {
+  it.each([403, 404])(
+    "discards an old pending issue search after membership refresh returns %i without changing display",
     async (status) => {
       const old = deferred<IssueListPage>();
       const refreshed = deferred<IssueListPage>();
@@ -216,232 +617,186 @@ describe("reference validity through SSE invalidations", () => {
         .mockReturnValueOnce(refreshed.promise);
       const getIssue = vi.spyOn(api, "getIssue").mockRejectedValue({ status });
       const client = seeded();
-      const href = "/projects/historical/issues/12";
-      const view = renderWithProviders(
-        <div>
-          <section data-testid="markdown">
-            <MarkdownView slug={SOURCE}>
-              {"[**original label**](/projects/historical/issues/12)"}
-            </MarkdownView>
-          </section>
-          <section data-testid="direct">
-            <IssueLink
-              slug={SOURCE}
-              number={12}
-              pageSlug={SOURCE}
-              fallbackHref={href}
-              fallbackChildren={<strong>original label</strong>}
-              inBody
-            />
-          </section>
-        </div>,
-        client,
+      mockDirectories(client);
+      const displayKey = issueRefQuery(SOURCE, 12).queryKey;
+      client.setQueryData(displayKey, issue(12));
+      client.setQueryData<ResolvedCommentRef>(
+        commentRefQuery(SOURCE, 12, 7).queryKey,
+        { ...comment(), at: { slug: SOURCE, number: 12, commentId: 8 } },
       );
-      await waitFor(() => expect(list).toHaveBeenCalledTimes(1));
-      const key = issueRefQuery(SOURCE, 12).queryKey;
-      expect(client.getQueryState(key)?.status).toBe("pending");
-      expect(client.getQueryState(key)?.data).toBeUndefined();
-      const expectBothOrdinary = () => {
-        expectOrdinary(view.getByTestId("markdown"), href);
-        expectOrdinary(view.getByTestId("direct"), href);
-      };
-      expectBothOrdinary();
-
-      act(() => {
-        for (const invalidation of invalidationsFor(
-          { entity: "member", id: 1, action: "deleted" },
-          SOURCE,
-        )) {
-          applyInvalidation(client, invalidation);
-        }
-      });
-      // The first query has no cached data: invalidateQueries alone would
-      // reuse its pending promise instead of starting a new generation.
-      await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
-      expectBothOrdinary();
-      await act(async () =>
-        refreshed.resolve({ items: [], next_cursor: null }),
-      );
-      await waitFor(() => expect(client.getQueryData(key)).toBeNull());
-      expect(getIssue).toHaveBeenCalledExactlyOnceWith(SOURCE, 12);
-      expectBothOrdinary();
-
-      await act(async () => {
-        old.resolve({ items: [issue(12)], next_cursor: null });
-        await old.promise;
-        // Let the batcher's continuations and observer notifications finish
-        // before asserting that the cancelled generation stayed discarded.
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      });
-      expect(client.getQueryData(key)).toBeNull();
-      expect(client.getQueryState(key)?.fetchStatus).toBe("idle");
-      expect(list).toHaveBeenCalledTimes(2);
-      expectBothOrdinary();
-    },
-  );
-
-  it.each(["comment", "timeline"] as const)(
-    "withdraws a migrated comment under its historical key on a destination %s event",
-    async (entity) => {
-      const request = deferred<TimelineComment>();
-      const getComment = vi
-        .spyOn(api, "getComment")
-        .mockReturnValue(request.promise);
-      const client = seeded();
-      client.setQueryData<ResolvedIssueRef | null>(
-        issueRefQuery(SOURCE, 12).queryKey,
-        () => ({
-          ...issue(55),
-          at: { slug: DESTINATION, number: 55 },
-        }),
-      );
-      const key = commentRefQuery(SOURCE, 12, 7).queryKey;
-      client.setQueryData<ResolvedCommentRef>(key, {
-        ...comment(),
-        at: { slug: DESTINATION, number: 55, commentId: 8 },
-      });
       const view = renderWithProviders(
         <MarkdownView slug={SOURCE}>
           {"[**original label**](/projects/historical/issues/12#comment-7)"}
         </MarkdownView>,
         client,
       );
-      const rich = await waitFor(() => {
-        const anchor = view.container.querySelector("a[data-comment-link='8']");
-        expect(anchor).not.toBeNull();
-        return anchor as HTMLAnchorElement;
+      const anchor = await waitFor(() => {
+        const link = view.container.querySelector("a[data-comment-link='8']");
+        expect(link).not.toBeNull();
+        return link as HTMLAnchorElement;
       });
-      expect(rich.getAttribute("href")).toBe(
-        "/projects/destination/issues/55#comment-8",
-      );
-      expectCommentIdentity(rich, "destination/T-55#comment-8", "Alice");
-      expect((await hover(rich)).textContent).toContain("Old authorized body");
-      expect(getComment).not.toHaveBeenCalled();
+      const card = await hover(anchor);
+      expect(card.textContent).toContain("Old authorized body");
+      const unchanged = unchangedReference(view.container, anchor, card);
+      const displayData = client.getQueryData(displayKey);
+      expect(list).not.toHaveBeenCalled();
 
-      act(() => {
-        for (const invalidation of invalidationsFor(
-          { entity, id: 8, action: "deleted", issue_number: 55 },
-          DESTINATION,
-        )) {
-          applyInvalidation(client, invalidation);
-        }
-      });
-      await waitFor(() => {
-        expect(getComment).toHaveBeenCalledExactlyOnceWith(SOURCE, 12, 7);
-        expect(client.getQueryState(key)?.fetchStatus).toBe("fetching");
-        expectOrdinary(view.container, originalHref);
-      });
-      // The stored address still uses comment 7; a destination-only key
-      // invalidation would leave both its rich link and open hover intact.
-      await act(async () => request.reject({ status: 404 }));
+      const options = searchIssueRefQuery(SOURCE, 12);
+      const key = options.queryKey;
+      const observer = new QueryObserver(client, options);
+      unsubscribeSearch.push(observer.subscribe(() => {}));
+      await waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+      expect(key).toEqual(["search-issue-ref", SOURCE, 12]);
+      expect(client.getQueryState(key)?.status).toBe("pending");
+      expect(client.getQueryData(key)).toBeUndefined();
+      unchanged();
+
+      await backgroundEvent(client, "member", SOURCE, 12);
+      await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+      // invalidateQueries alone would reuse the pending promise when no
+      // search data has landed. A new generation must check current access.
+      await act(async () =>
+        refreshed.resolve({ items: [], next_cursor: null }),
+      );
       await waitFor(() => expect(client.getQueryData(key)).toBeNull());
-      expectOrdinary(view.container, originalHref);
-      expect(getComment).toHaveBeenCalledTimes(1);
+      expect(getIssue).toHaveBeenCalledExactlyOnceWith(SOURCE, 12);
+      unchanged();
+      await act(async () => {
+        old.resolve({ items: [issue(12)], next_cursor: null });
+        await old.promise;
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      });
+      expect(client.getQueryData(key)).toBeNull();
+      expect(client.getQueryState(key)?.fetchStatus).toBe("idle");
+      expect(list).toHaveBeenCalledTimes(2);
+      expect(getIssue).toHaveBeenCalledTimes(1);
+      expect(client.getQueryData(displayKey)).toBe(displayData);
+      unchanged();
     },
   );
 
-  it("uses a refreshed bare location's full comment despite an already-stale target cache, preserving timestamps", async () => {
-    const now = Date.parse("2026-09-18T12:00:00Z");
-    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
-    const request = deferred<LocatedComment>();
-    const locate = vi
-      .spyOn(api, "locateComment")
-      .mockReturnValue(request.promise);
-    const getComment = vi.spyOn(api, "getComment");
-    const client = seeded();
-    client.setQueryData(
-      issueRefQuery(DESTINATION, 55).queryKey,
-      issue(55, "Located parent"),
-    );
-    const targetKey = commentRefQuery(DESTINATION, 55, 8).queryKey;
-    const staleTarget: ResolvedCommentRef = {
-      ...comment(),
-      at: { slug: DESTINATION, number: 55, commentId: 8 },
-    };
-    const staleUpdatedAt = now - 60_001;
-    client.setQueryData(targetKey, staleTarget, { updatedAt: staleUpdatedAt });
-    const locationKey = commentLocationQuery(SOURCE, 7).queryKey;
-    client.setQueryData<LocatedComment>(
-      locationKey,
-      {
+  it.each([
+    { entity: "comment" as const, status: 403 },
+    { entity: "timeline" as const, status: 404 },
+  ])(
+    "cancels pending comment and location searches on $entity events, confirms new permissions and preserves display",
+    async ({ entity, status }) => {
+      const oldComment = deferred<TimelineComment>();
+      const freshComment = deferred<TimelineComment>();
+      const oldLocation = deferred<LocatedComment>();
+      const freshLocation = deferred<LocatedComment>();
+      const getComment = vi
+        .spyOn(api, "getComment")
+        .mockReturnValueOnce(oldComment.promise)
+        .mockReturnValueOnce(freshComment.promise);
+      const locate = vi
+        .spyOn(api, "locateComment")
+        .mockReturnValueOnce(oldLocation.promise)
+        .mockReturnValueOnce(freshLocation.promise);
+      const list = vi.spyOn(api, "listIssues");
+      const getIssue = vi.spyOn(api, "getIssue");
+      const client = seeded();
+      mockDirectories(client);
+      const location: LocatedComment = {
         slug: DESTINATION,
         issue_number: 55,
         issue_ref: "destination#55",
         comment: comment(),
-      },
-      { updatedAt: now - 1_000 },
-    );
-    const view = renderWithProviders(
-      <MarkdownView slug={SOURCE} preview>
-        {"#comment-7"}
-      </MarkdownView>,
-      client,
-    );
-    await waitFor(() => {
-      const anchor = view.container.querySelector("a[data-comment-link='8']");
-      expect(anchor).not.toBeNull();
-      expectCommentIdentity(
-        anchor as HTMLAnchorElement,
-        "destination/T-55#comment-8",
-        "Alice",
+      };
+      const displayLocationKey = commentLocationQuery(SOURCE, 7).queryKey;
+      client.setQueryData(displayLocationKey, location);
+      client.setQueryData(issueRefQuery(DESTINATION, 55).queryKey, issue(55));
+      const view = renderWithProviders(
+        <MarkdownView slug={SOURCE} preview>
+          {"#comment-7"}
+        </MarkdownView>,
+        client,
       );
-    });
-    expect(getComment).not.toHaveBeenCalled();
+      const anchor = await waitFor(() => {
+        const link = view.container.querySelector("a[data-comment-link='8']");
+        expect(link).not.toBeNull();
+        return link as HTMLAnchorElement;
+      });
+      expectCommentIdentity(anchor, "destination/T-55#comment-8", "Alice");
+      const card = await hover(anchor);
+      expect(card.textContent).toContain("Old authorized body");
+      const unchanged = unchangedReference(view.container, anchor, card);
+      const displayCommentKey = commentRefQuery(DESTINATION, 55, 8).queryKey;
+      const displayComment = client.getQueryData(displayCommentKey);
+      const displayLocation = client.getQueryData(displayLocationKey);
+      expect(getComment).not.toHaveBeenCalled();
+      expect(locate).not.toHaveBeenCalled();
 
-    act(() => {
-      for (const invalidation of invalidationsFor(
-        { entity: "comment", id: 8, action: "updated", issue_number: 55 },
-        DESTINATION,
-      )) {
-        applyInvalidation(client, invalidation);
+      const commentOptions = searchCommentRefQuery(SOURCE, 12, 7);
+      const locationOptions = searchCommentLocationQuery(SOURCE, 7);
+      const commentObserver = new QueryObserver(client, commentOptions);
+      const locationObserver = new QueryObserver(client, locationOptions);
+      unsubscribeSearch.push(
+        commentObserver.subscribe(() => {}),
+        locationObserver.subscribe(() => {}),
+      );
+      await waitFor(() => {
+        expect(getComment).toHaveBeenCalledExactlyOnceWith(SOURCE, 12, 7);
+        expect(locate).toHaveBeenCalledExactlyOnceWith(SOURCE, 7);
+      });
+      const keys = [commentOptions.queryKey, locationOptions.queryKey];
+      expect(keys).toEqual([
+        ["search-comment-ref", SOURCE, 12, 7],
+        ["search-comment-location", SOURCE, 7],
+      ]);
+      for (const key of keys) {
+        expect(client.getQueryState(key)?.status).toBe("pending");
+        expect(client.getQueryData(key)).toBeUndefined();
       }
-    });
-    await waitFor(() => {
-      expect(locate).toHaveBeenCalledExactlyOnceWith(SOURCE, 7);
-      expect(view.container.querySelector("a")).toBeNull();
-      expect(view.container.textContent).toContain("#comment-7");
-    });
-    const freshLocation: LocatedComment = {
-      slug: DESTINATION,
-      issue_number: 55,
-      issue_ref: "destination#55",
-      comment: comment(bob),
-    };
-    await act(async () => request.resolve(freshLocation));
-    const rich = await waitFor(() => {
-      const anchor = view.container.querySelector("a[data-comment-link='8']");
-      expect(anchor).not.toBeNull();
-      expectCommentIdentity(
-        anchor as HTMLAnchorElement,
-        "destination/T-55#comment-8",
-        "Bob",
-      );
-      return anchor as HTMLAnchorElement;
-    });
-    expect(rich.getAttribute("href")).toBe(
-      "/projects/destination/issues/55#comment-8",
-    );
-    expect(rich.getAttribute("data-issue-link")).toBe("55");
-    expect(rich.textContent).toContain("Located parent");
-    expect(rich.textContent).not.toContain("Alice");
-    const locationUpdatedAt = client.getQueryState(locationKey)?.dataUpdatedAt;
-    expect(locationUpdatedAt).toBe(now);
+      await backgroundEvent(client, entity);
+      await waitFor(() => {
+        expect(getComment).toHaveBeenCalledTimes(2);
+        expect(locate).toHaveBeenCalledTimes(2);
+      });
+      await act(async () => {
+        freshComment.reject({ status });
+        freshLocation.reject({ status });
+      });
+      await waitFor(() => {
+        for (const key of keys) expect(client.getQueryData(key)).toBeNull();
+      });
+      unchanged();
+      await act(async () => {
+        oldComment.resolve(comment());
+        oldLocation.resolve(location);
+        await Promise.all([oldComment.promise, oldLocation.promise]);
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      });
+      for (const key of keys) {
+        expect(client.getQueryData(key)).toBeNull();
+        expect(client.getQueryState(key)?.fetchStatus).toBe("idle");
+      }
+      expect(getComment).toHaveBeenCalledTimes(2);
+      expect(locate).toHaveBeenCalledTimes(2);
+      unchanged();
 
-    clock.mockReturnValue(now + 1_000);
-    const card = await hover(rich);
-    expect(card.textContent).toContain("Bob");
-    expect(card.textContent).toContain("Fresh located body");
-    expect(card.textContent).not.toContain("Old authorized body");
-    expect(card.textContent).not.toContain("Alice");
-    expect(locate).toHaveBeenCalledTimes(1);
-    expect(getComment).not.toHaveBeenCalled();
-    expect(client.getQueryData(locationKey)).toEqual(freshLocation);
-    expect(client.getQueryState(locationKey)?.dataUpdatedAt).toBe(
-      locationUpdatedAt,
-    );
-    expect(client.getQueryData(targetKey)).toEqual(staleTarget);
-    expect(client.getQueryState(targetKey)?.dataUpdatedAt).toBe(staleUpdatedAt);
-  });
+      // Access granted later is checked by search, while the existing page
+      // retains its original author/body and the exact same hover subtree.
+      getComment.mockResolvedValue(comment(bob));
+      locate.mockResolvedValue({ ...location, comment: comment(bob) });
+      await backgroundEvent(client, entity);
+      await waitFor(() => {
+        expect(client.getQueryData(commentOptions.queryKey)?.author).toEqual(
+          bob,
+        );
+        expect(
+          client.getQueryData(locationOptions.queryKey)?.comment.author,
+        ).toEqual(bob);
+      });
+      expect(getComment).toHaveBeenCalledTimes(3);
+      expect(locate).toHaveBeenCalledTimes(3);
+      expect(list).not.toHaveBeenCalled();
+      expect(getIssue).not.toHaveBeenCalled();
+      expect(client.getQueryData(displayLocationKey)).toBe(displayLocation);
+      expect(client.getQueryData(displayCommentKey)).toBe(displayComment);
+      unchanged();
+    },
+  );
 });
 
 describe("referenced EventRow comment identity", () => {

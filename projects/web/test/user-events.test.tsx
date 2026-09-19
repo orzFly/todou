@@ -121,9 +121,9 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       { key: ["issue", "todou", 42], scope: "refetch" },
       { key: ["timeline", "todou", 42], scope: "refetch" },
       { key: ["insights-burn", "todou"], scope: "refetch" },
-      { key: ["issue-ref", "todou", 42], scope: "refetch" },
-      { key: ["comment-ref", "todou", 42], scope: "refetch" },
-      { key: ["comment-location"], scope: "refetch" },
+      { key: ["search-issue-ref", "todou", 42], scope: "refetch" },
+      { key: ["search-comment-ref", "todou", 42], scope: "refetch" },
+      { key: ["search-comment-location"], scope: "refetch" },
       { key: ["activity-project", "todou"], scope: "refetch" },
       { key: ["activity-user"], scope: "refetch" },
     ]);
@@ -172,10 +172,14 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       },
       "old-slug",
     ).map((invalidation) => invalidation.key);
-    expect(keys).toContainEqual(["issue-ref"]);
-    expect(keys).toContainEqual(["comment-ref"]);
-    expect(keys).toContainEqual(["comment-location"]);
-    expect(keys).not.toContainEqual(["issue-ref", "old-slug", 42]);
+    expect(keys).toContainEqual(["search-issue-ref"]);
+    expect(keys).toContainEqual(["search-comment-ref"]);
+    expect(keys).toContainEqual(["search-comment-location"]);
+    expect(keys).not.toContainEqual(["search-issue-ref", "old-slug", 42]);
+    const prefixes = keys.map((key) => key[0]);
+    for (const prefix of ["issue-ref", "comment-ref", "comment-location"]) {
+      expect(prefixes).not.toContain(prefix);
+    }
   });
 
   it.each([
@@ -255,8 +259,8 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
         scope: { issueRows: [{ verdict: "contains", number: 7 }] },
       },
       { key: ["insights-burn", "todou"], scope: "refetch" },
-      { key: ["comment-ref"], scope: "refetch" },
-      { key: ["comment-location"], scope: "refetch" },
+      { key: ["search-comment-ref"], scope: "refetch" },
+      { key: ["search-comment-location"], scope: "refetch" },
       { key: ["activity-project", "todou"], scope: "refetch" },
       { key: ["activity-user"], scope: "refetch" },
     ]);
@@ -272,8 +276,8 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       ["timeline", "todou", 7],
       ["questions", "todou", 7],
       ["issues", "todou"],
-      ["comment-ref"],
-      ["comment-location"],
+      ["search-comment-ref"],
+      ["search-comment-location"],
       ["activity-project", "todou"],
       ["activity-user"],
     ]);
@@ -303,13 +307,40 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
       { key: ["agent-memberships"], scope: "refetch" },
       { key: ["reference-directory"], scope: "refetch" },
       { key: ["reference-config"], scope: "refetch" },
-      { key: ["issue-ref"], scope: "refetch" },
-      { key: ["comment-ref"], scope: "refetch" },
-      { key: ["comment-location"], scope: "refetch" },
+      { key: ["search-issue-ref"], scope: "refetch" },
+      { key: ["search-comment-ref"], scope: "refetch" },
+      { key: ["search-comment-location"], scope: "refetch" },
       { key: ["activity-project", "p"], scope: "refetch" },
       { key: ["activity-user"], scope: "refetch" },
     ]);
   });
+
+  it.each([
+    ["issue", 42],
+    ["issue", undefined],
+    ["comment", 42],
+    ["comment", undefined],
+    ["timeline", 42],
+    ["member", undefined],
+    ["project", undefined],
+  ] as const)(
+    "invalidates search references without targeting static display prefixes for %s (issue %s)",
+    (entity, issue_number) => {
+      const prefixes = invalidationsFor(
+        { entity, id: 1, action: "updated", issue_number },
+        "todou",
+      ).map(({ key }) => key[0]);
+
+      for (const prefix of ["issue-ref", "comment-ref", "comment-location"]) {
+        expect(prefixes).not.toContain(prefix);
+      }
+      expect(prefixes).toContain("search-comment-ref");
+      expect(prefixes).toContain("search-comment-location");
+      if (entity === "issue" || entity === "member" || entity === "project") {
+        expect(prefixes).toContain("search-issue-ref");
+      }
+    },
+  );
 
   it("takes a metadata event to its own key alone (T-282)", () => {
     const change: MetadataChange = {
@@ -357,9 +388,13 @@ describe("invalidationsFor (SSE → invalidation descriptors)", () => {
     // the compensation must too.
     expect(keys).toContainEqual(["issues"]);
     expect(keys).toContainEqual(["projects"]);
-    expect(keys).toContainEqual(["issue-ref"]);
-    expect(keys).toContainEqual(["comment-ref"]);
-    expect(keys).toContainEqual(["comment-location"]);
+    expect(keys).toContainEqual(["search-issue-ref"]);
+    expect(keys).toContainEqual(["search-comment-ref"]);
+    expect(keys).toContainEqual(["search-comment-location"]);
+    const prefixes = keys.map((key) => key[0]);
+    for (const prefix of ["issue-ref", "comment-ref", "comment-location"]) {
+      expect(prefixes).not.toContain(prefix);
+    }
     expect(keys).toContainEqual(["activity-project"]);
     expect(keys).toContainEqual(["activity-user"]);
     // A preference toggled elsewhere during the outage has no other way in:
@@ -1379,8 +1414,8 @@ describe("useUserEvents", () => {
       ["questions", "todou", 3],
       ["issues", "todou"],
       ["insights-burn", "todou"],
-      ["comment-ref"],
-      ["comment-location"],
+      ["search-comment-ref"],
+      ["search-comment-location"],
       ["activity-project", "todou"],
       ["activity-user"],
       ["inbox"],
