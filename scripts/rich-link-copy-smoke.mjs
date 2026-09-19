@@ -21,7 +21,8 @@
  * missing prerequisite, startup failure, or a check that could not reach the
  * thing it grades (a coverage failure).
  * Limitations: Chromium grades; Firefox is only measured, on the one path the
- * chosen inline layout was priced against (--firefox). Safari/WebKit and real
+ * chosen inline layout was priced against (--firefox), where one reading is a
+ * known and accepted partial — see runFirefoxPass. Safari/WebKit and real
  * touch are neither exercised nor claimed. Headless browsers measure CSS
  * geometry, not painted pixels. A textarea is not proof about Word or VS Code.
  */
@@ -78,6 +79,7 @@ const COVERAGE_FAILURES = new Set([
   "clipboard-unavailable",
   "copy-did-not-happen",
   "fixture-missing-shapes",
+  "chip-title-unmeasured",
   "self-test-baseline-not-clean",
   "self-test-no-new-failure",
   "self-test-fresh-restoration",
@@ -105,6 +107,12 @@ const FAULTS = {
   // The title is an inline-block, and its own leading decides whether the
   // line it sits on is the same height as a chipless one.
   leading: ".ref-chip-body { line-height: 2 !important; }",
+  // The leading this card took off the chips, put back. It is under the
+  // body's own, so it grows no line and the check above cannot see it — what
+  // it moves is the title, whose `overflow: hidden` baseline is its bottom
+  // edge and therefore follows the leading rather than the prose (T-460).
+  "title-leading":
+    ".ref-chip-body, .comment-link-body { line-height: 1.2 !important; }",
 };
 
 /**
@@ -582,9 +590,27 @@ function probeSource(fault) {
     const prose = token
       ? candidates.find(rect => rect.top < token.bottom && rect.bottom > token.top) || null
       : null;
+    // The title is the one part of a chip with a box of its own, and
+    // \`overflow: hidden\` degrades that box's baseline to its bottom edge, so
+    // it answers to the sheet's leading rather than to the prose (T-460
+    // measured 2.59px of sink at every width). The token cannot see this:
+    // it has no box and never left the baseline.
+    const titleBox = p.querySelector('[data-comment-title], .ref-chip-title');
+    const titleNode = titleBox
+      ? document.createTreeWalker(titleBox, NodeFilter.SHOW_TEXT).nextNode()
+      : null;
+    const title = titleNode ? charRect(titleNode, 0) : null;
+    // The opening guillemet, whatever line it ended up on: a narrow title
+    // takes a whole line to itself, so "whichever character shares its line"
+    // finds nothing at exactly the width the drift matters at. The caller
+    // takes the difference modulo the line height instead, which is what
+    // makes a run one line up a usable baseline.
     return {
       prose,
       token,
+      title,
+      proseAnchor: candidates[0] ?? null,
+      hasTitle: titleBox !== null,
       slot: slot ? slot.getAttribute('data-ref-part') || slot.tagName : null,
       candidates,
       lines: lineCount(p),
@@ -810,6 +836,19 @@ function checkCopy(result, probe, direction, viewport, placement) {
   return failures;
 }
 
+/**
+ * How far a run sits off the paragraph's baseline grid, given a run that is
+ * on it and a uniform line height — which is exactly what `chip-grows-its-line`
+ * below asserts, so the two hold each other up. A sink of a whole line reads
+ * as zero here, and that is the one shape this cannot see; it would have to
+ * pass that check first, having moved 22px without changing any line's height.
+ */
+function onTheLineGrid(distance, lineHeight) {
+  if (!(lineHeight > 0)) return distance;
+  const within = ((distance % lineHeight) + lineHeight) % lineHeight;
+  return within > lineHeight / 2 ? within - lineHeight : within;
+}
+
 function checkLayout(overflow, baselines, chipless, probes, viewport) {
   const at = { viewport };
   const failures = [];
@@ -830,8 +869,16 @@ function checkLayout(overflow, baselines, chipless, probes, viewport) {
       measured.prose && measured.token
         ? measured.prose.bottom - measured.token.bottom
         : null;
+    const titleDrift =
+      measured.proseAnchor && measured.title
+        ? onTheLineGrid(
+            measured.title.bottom - measured.proseAnchor.bottom,
+            measured.lineHeight,
+          )
+        : null;
     measurements.chips[key] = {
       drift,
+      titleDrift,
       lines: measured.lines,
       lineHeight: measured.lineHeight,
       // A skipped comparison is recorded, not silently counted as covered.
@@ -844,12 +891,36 @@ function checkLayout(overflow, baselines, chipless, probes, viewport) {
             },
           }
         : {}),
+      ...(titleDrift === null && measured.hasTitle
+        ? { titleUnmeasured: { title: measured.title } }
+        : {}),
     };
     if (drift !== null && Math.abs(drift) > 1)
       failures.push(
         failure(
           "chip-off-baseline",
           `${key}: token bottom ${measured.token.bottom} vs prose ${measured.prose.bottom}`,
+          at,
+        ),
+      );
+    // Half a pixel, where the token gets one: this one is a measured 0.00 on
+    // a fix whose whole subject is the 2.59px it used to be, and a tolerance
+    // wider than the defect grades nothing.
+    if (titleDrift !== null && Math.abs(titleDrift) > 0.5)
+      failures.push(
+        failure(
+          "chip-title-off-baseline",
+          `${key}: title sits ${titleDrift}px off the paragraph's baseline grid`,
+          at,
+        ),
+      );
+    // A chip that draws a title and never got the comparison is a check that
+    // passed for the wrong reason; EXPECTED_SHAPES says which ones draw one.
+    if (titleDrift === null && measured.hasTitle)
+      failures.push(
+        failure(
+          "chip-title-unmeasured",
+          `${key}: a title is drawn but its box or the prose anchor had no rect`,
           at,
         ),
       );
@@ -1328,6 +1399,23 @@ function verdictFor(got, identity) {
  * starts in the prose and reaches the ref. Recorded, not graded — whether
  * Firefox's gesture differs is the browser's business and this card's accepted
  * boundary; that the reading exists is what closes the decision.
+ *
+ * `narrow/comment/body-into-ref` reads `partial:3/13` on purpose (T-460). Gecko
+ * never puts a caret inside a `user-select: all` element: `caretPositionFromPoint`
+ * over `[data-comment-ref]` returns only that element's own two ends, and which
+ * end it picks follows the whole chip's box rather than the line under the
+ * pointer. A comment ref draws its identity in two slots with the title between
+ * them, so the atom has to be the container the title lives in; once that box
+ * wraps, every point in it picks the near end and the ref leaves the selection
+ * whole. Wide is not a fix, only a luckier landing — at 1280px a drag that stops
+ * on `T-2` instead of `#comment-1` loses the ref the same way.
+ *
+ * Three fixes were measured and each costs more than the reading: an
+ * `inline-block` container turns the 390px paragraph from three lines into four,
+ * moving the atom onto the two identity slots makes Chromium's inner drag copy
+ * `#comment-1` without `T-2`, and welding the identity into one slot undoes the
+ * reading order the user chose in T-434. The user took the reading over all
+ * three; leave it alone.
  */
 async function runFirefoxPass({ stack, fixture }) {
   const probes = fixture.probes.filter((probe) =>
