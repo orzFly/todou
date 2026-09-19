@@ -14,12 +14,12 @@ function hasScrollRoom(node: Element, horizontal: boolean, delta: number) {
     ? node.scrollWidth - node.clientWidth
     : node.scrollHeight - node.clientHeight;
   if (travel < 1) return false;
-  // A right-to-left box counts scrollLeft down from 0 — the same correction
-  // react-remove-scroll makes before comparing a delta against a position.
-  const position =
-    (horizontal && style.direction === "rtl" ? -1 : 1) *
-    (horizontal ? node.scrollLeft : node.scrollTop);
-  return delta > 0 ? travel - position >= 1 : position >= 1;
+  // A right-to-left box counts scrollLeft down from 0, so the gesture and the
+  // position have to pass through the same flip. Correcting only the position
+  // asks the question backwards: every branch answers for the other direction.
+  const factor = horizontal && style.direction === "rtl" ? -1 : 1;
+  const position = factor * (horizontal ? node.scrollLeft : node.scrollTop);
+  return factor * delta > 0 ? travel - position >= 1 : position >= 1;
 }
 
 /**

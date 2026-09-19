@@ -91,6 +91,7 @@ const COVERAGE_FAILURES = new Set([
   "no-wheel-delivered",
   "wheel-target-not-retargeted",
   "page-cannot-scroll",
+  "page-already-at-top",
   "self-test-baseline-not-clean",
   "self-test-no-new-failure",
   "self-test-fresh-restoration",
@@ -500,6 +501,14 @@ function probeSource(fault) {
       y: Math.round(window.scrollY),
       max: Math.round(document.documentElement.scrollHeight - window.innerHeight),
     }),
+    // probeWheel's vertical gesture scrolls the page up, so an entry that left
+    // the page at 0 hands the next one a sample that holds still whatever the
+    // lock does. Under a working lock this call moves nothing — and a working
+    // lock is also why the page was never pushed to 0 to begin with.
+    parkPageAtBottom: () => {
+      window.scrollTo(0, document.documentElement.scrollHeight);
+      return Math.round(window.scrollY);
+    },
     pointTarget: (x, y) => {
       const top = document.elementFromPoint(x, y);
       const inner = shadow()?.elementFromPoint?.(x, y) ?? null;
@@ -684,10 +693,13 @@ async function wheelOver(page, x, y, xDistance, yDistance) {
  * `event.target`, and pierre's open shadow root retargets that to the host, so
  * the scroller holding the code is invisible to it and every horizontal wheel
  * used to be cancelled as an overscroll; `dialog.tsx` hands those events past
- * the lock. Downwards it has to stay cancelled once the dialog itself has
- * nowhere left to go, which is the half of the lock this card must not have
- * widened its way through — hence `scrollBoxToBottom` first, so the dialog
- * cannot legitimately absorb the gesture.
+ * the lock. The vertical half has to stay cancelled while the dialog itself
+ * has nowhere left to go, which is the half of the lock this card must not
+ * have widened its way through — hence `scrollBoxToBottom` first, and the
+ * box's own travel is recorded beside the verdict, because a box with none
+ * could not have absorbed the gesture from either end. That gesture scrolls
+ * the page *up* — CDP reads a positive yDistance as scroll-up — so the page is
+ * parked at its bottom first, where it has somewhere to be pushed.
  */
 async function probeWheel(page) {
   // From the left edge: the travel check above leaves it at the far end,
@@ -710,15 +722,10 @@ async function probeWheel(page) {
   );
   const end = await evaluate(page, () => window.__t425.codeScroll());
 
-  await evaluate(page, () => window.__t425.scrollBoxToBottom());
+  const box = await evaluate(page, () => window.__t425.scrollBoxToBottom());
+  await evaluate(page, () => window.__t425.parkPageAtBottom());
   const pageBefore = await evaluate(page, () => window.__t425.pageScroll());
-  const downwards = await wheelOver(
-    page,
-    start.centre.x,
-    start.centre.y,
-    0,
-    600,
-  );
+  const upwards = await wheelOver(page, start.centre.x, start.centre.y, 0, 600);
   const pageAfter = await evaluate(page, () => window.__t425.pageScroll());
 
   return {
@@ -736,9 +743,10 @@ async function probeWheel(page) {
         .length,
     },
     vertical: {
-      arrived: downwards.arrived.length,
-      cancelled: downwards.settled.filter((event) => event.defaultPrevented)
+      arrived: upwards.arrived.length,
+      cancelled: upwards.settled.filter((event) => event.defaultPrevented)
         .length,
+      box,
       page: { before: pageBefore.y, after: pageAfter.y, max: pageBefore.max },
     },
   };
@@ -761,7 +769,7 @@ function checkWheel(result, viewport, entry, baselineHeight) {
     return [
       failure(
         "no-wheel-delivered",
-        `${horizontal.arrived} sideways, ${vertical.arrived} downwards`,
+        `${horizontal.arrived} sideways, ${vertical.arrived} upwards`,
         at,
       ),
     ];
@@ -791,7 +799,7 @@ function checkWheel(result, viewport, entry, baselineHeight) {
     failures.push(
       failure(
         "vertical-wheel-not-cancelled",
-        `${vertical.arrived} downward wheels, none cancelled, with the dialog already at its bottom`,
+        `${vertical.arrived} upward wheels, none cancelled, with the dialog's own scroller at ${JSON.stringify(vertical.box)}`,
         at,
       ),
     );
@@ -800,6 +808,18 @@ function checkWheel(result, viewport, entry, baselineHeight) {
       failure(
         "page-cannot-scroll",
         `the issue page is ${baselineHeight}px short of scrolling, so the lock has nothing to hold`,
+        at,
+      ),
+    );
+  // `page-cannot-scroll` asks whether the page can scroll at all; this asks
+  // whether it could have scrolled *here*. The gesture goes up, so a page
+  // sitting at 0 holds still whether the lock works or not, and the outcome
+  // below would pass on a sample that never had anywhere to go.
+  else if (vertical.page.before < 1)
+    failures.push(
+      failure(
+        "page-already-at-top",
+        `the upward gesture started at 0 of ${vertical.page.max}, so there was nothing for the lock to prevent`,
         at,
       ),
     );
