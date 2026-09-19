@@ -33,9 +33,7 @@ describe("server enum fallbacks", () => {
     (value) => {
       const status = value as SpecReviewStatus;
       const view = render(<SpecStatusBadge status={status} />);
-      expect(view.container.textContent).toBe(
-        `unknown status: ${value}`,
-      );
+      expect(view.container.textContent).toBe(`unknown status: ${value}`);
       expect(view.container.firstElementChild?.className).toContain(
         "text-muted-foreground",
       );
@@ -47,6 +45,7 @@ describe("server enum fallbacks", () => {
     ["unreviewed", "awaiting review", "text-amber-700"],
     ["approved", "approved", "text-green-700"],
     ["changes_requested", "changes requested", "text-red-700"],
+    ["withdrawn", "withdrawn · reworking", "text-muted-foreground"],
   ] as const)(
     "preserves known status %s label and styling",
     (status, label, style) => {

@@ -21,7 +21,12 @@ describe("forward-compatible enum lookup", () => {
   it("preserves the field name when a required mapped value is missing", () => {
     const missing = undefined as unknown as string;
     expect(() =>
-      enumLookup({ approved: "Approved" }, missing, () => "Unknown", "review_status"),
+      enumLookup(
+        { approved: "Approved" },
+        missing,
+        () => "Unknown",
+        "review_status",
+      ),
     ).toThrow("review_status must be a non-empty string");
   });
 

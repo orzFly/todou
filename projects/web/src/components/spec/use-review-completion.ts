@@ -1,6 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { enumLookup, type SpecReviewResult, type SpecReviewVerdict } from "@todou/shared";
+import {
+  enumLookup,
+  type SpecReviewResult,
+  type SpecReviewVerdict,
+} from "@todou/shared";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { meQuery } from "@/api/queries.ts";
@@ -76,7 +80,9 @@ export function useReviewCompletion(slug: string, issueNumber: number) {
           try {
             label = specReviewVerdictLabel(result.verdict);
           } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Invalid review verdict");
+            toast.error(
+              error instanceof Error ? error.message : "Invalid review verdict",
+            );
             settle();
             return;
           }
@@ -123,9 +129,7 @@ export function useReviewCompletion(slug: string, issueNumber: number) {
             // Consumer UI cleanup cannot turn a committed POST into a failure.
             settled = false;
           }
-          toast.success(
-            `${label} spec v${result.version}`,
-          );
+          toast.success(`${label} spec v${result.version}`);
           if (
             !settled ||
             !router ||

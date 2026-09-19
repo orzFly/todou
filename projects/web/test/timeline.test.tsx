@@ -142,6 +142,15 @@ describe("renderEvent text mirror", () => {
     expect(iconForEvent("future_event")).toBeTruthy();
   });
 
+  it("keeps master's spec_withdrawn event recognized after integration", () => {
+    const result = renderEvent(
+      eventOf("spec_withdrawn", { version: 3, reason: "reworking scope" }),
+      BARE_CTX,
+    );
+    expect(result.text).toBe("withdrew spec v3 · reworking — reworking scope");
+    expect(result.text).not.toContain("unknown event");
+  });
+
   it.each([undefined, null, "", 42])(
     "does not disguise a missing event_type as a future event: %j",
     (value) => {
@@ -463,7 +472,9 @@ describe("timeline rendering", () => {
     // The row destructures renderEvent's result, exactly as on the issue timeline.
     const event = eventOf("future_event" as TimelineEvent["event_type"], {});
     const view = renderWithRouter(<EventRow event={event} />);
-    const summary = await view.findByTitle("logged an unknown event: future_event");
+    const summary = await view.findByTitle(
+      "logged an unknown event: future_event",
+    );
     expect(summary.textContent).toBe("logged an unknown event: future_event");
     const time = view.getByTitle(event.created_at);
     expect(time.textContent).toBe(new Date(event.created_at).toLocaleString());

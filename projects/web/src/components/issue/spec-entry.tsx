@@ -33,7 +33,12 @@ const UNKNOWN_STATUS_STYLE =
   "border-muted-foreground/40 bg-muted text-muted-foreground";
 
 export function specStatusStyle(status: string): string {
-  return enumLookup(STATUS_STYLE, status, () => UNKNOWN_STATUS_STYLE, "review_status");
+  return enumLookup(
+    STATUS_STYLE,
+    status,
+    () => UNKNOWN_STATUS_STYLE,
+    "review_status",
+  );
 }
 
 export function specStatusLabel(status: string): string {

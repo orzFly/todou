@@ -96,6 +96,7 @@ describe.each(surfaces)("$name review status compatibility", ({ argv }) => {
     ["unreviewed", "awaiting review"],
     ["approved", "approved"],
     ["changes_requested", "changes requested"],
+    ["withdrawn", "withdrawn · reworking"],
     [null, "awaiting review"],
   ])("preserves the wording for %s", async (status, wording) => {
     const { fetchImpl } = fakeFetch(statusRoutes(status));
