@@ -1,5 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useRouter, useRouterState } from "@tanstack/react-router";
+import {
+  type RegisteredRouter,
+  useRouter,
+  useRouterState,
+} from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { questionsQuery } from "@/api/questions.ts";
 import {
@@ -8,12 +12,16 @@ import {
   UNANSWERED_QUESTIONS_HASH,
 } from "@/lib/question-landing.ts";
 
+export const QUESTION_LANDING_ROUTE_ID =
+  "/authed/projects/$slug/issues/$number" satisfies keyof RegisteredRouter["routesById"];
+
 type Landing = {
   id: number;
   pathname: string;
   phase: "reading" | "anchor" | "latest" | "failed" | "done";
   hash: string;
   error?: "read" | "unavailable" | "stalled";
+  detail?: string;
 };
 
 /** One entry consumes one fresh snapshot, then hands scrolling to the timeline. */
@@ -23,7 +31,7 @@ export function useQuestionLanding(slug: string, issueNumber: number) {
   const location = useRouterState({ select: (s) => s.location });
   const destination = router
     .matchRoutes(location)
-    .find((match) => match.routeId === "/authed/projects/$slug/issues/$number");
+    .find((match) => match.routeId === QUESTION_LANDING_ROUTE_ID);
   const isCurrentCard =
     destination?.params.slug === slug &&
     Number(destination.params.number) === issueNumber;
@@ -63,6 +71,11 @@ export function useQuestionLanding(slug: string, issueNumber: number) {
       pathname: location.pathname,
       phase: "reading",
       hash: UNANSWERED_QUESTIONS_HASH,
+      // Keep the failure visible and its button disabled during the retry.
+      ...(active.current?.pathname === location.pathname &&
+      active.current.phase === "failed"
+        ? { error: active.current.error, detail: active.current.detail }
+        : {}),
     };
     active.current = intent;
     setLanding(intent);
@@ -79,6 +92,8 @@ export function useQuestionLanding(slug: string, issueNumber: number) {
           ...intent,
           phase: id === null ? "latest" : "anchor",
           hash: id === null ? "" : `comment-${id}`,
+          error: undefined,
+          detail: undefined,
         };
         active.current = next;
         setLanding(next);
@@ -92,20 +107,30 @@ export function useQuestionLanding(slug: string, issueNumber: number) {
             ignoreBlocker: true,
             state: (prev) => prev,
           });
-        } catch {
+        } catch (error) {
           if (
             active.current !== next ||
             router.state.location.pathname !== next.pathname
           )
             return;
-          const failed: Landing = { ...intent, phase: "failed", error: "read" };
+          const failed: Landing = {
+            ...intent,
+            phase: "failed",
+            error: "read",
+            detail: error instanceof Error ? error.message : String(error),
+          };
           active.current = failed;
           setLanding(failed);
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!isCurrent()) return;
-        const failed: Landing = { ...intent, phase: "failed", error: "read" };
+        const failed: Landing = {
+          ...intent,
+          phase: "failed",
+          error: "read",
+          detail: error instanceof Error ? error.message : String(error),
+        };
         active.current = failed;
         setLanding(failed);
       });
@@ -150,7 +175,9 @@ export function useQuestionLanding(slug: string, issueNumber: number) {
   return {
     // Include the first render, before the reading effect has run.
     ownsScroll:
-      semantic || landing?.phase === "anchor" || landing?.phase === "latest",
+      (semantic && landing?.phase !== "failed") ||
+      landing?.phase === "anchor" ||
+      landing?.phase === "latest",
     anchorRequest:
       landing &&
       landing.hash === location.hash &&
@@ -159,11 +186,11 @@ export function useQuestionLanding(slug: string, issueNumber: number) {
         : undefined,
     latest: landing?.phase === "latest" && location.hash === "",
     error: landing?.error,
+    detail: landing?.detail,
+    retrying: landing?.phase === "reading",
     finish,
     retry: () => {
-      active.current = null;
       if (semantic) {
-        setLanding(null);
         setRetry((value) => value + 1);
       } else {
         void router

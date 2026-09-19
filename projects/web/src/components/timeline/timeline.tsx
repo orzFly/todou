@@ -42,6 +42,7 @@ import { useQuestionLanding } from "@/components/timeline/use-question-landing.t
 import { useTimelineAnchor } from "@/components/timeline/use-timeline-anchor.ts";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { isQuestionLandingHash } from "@/lib/question-landing.ts";
 import { parseTimelineAnchor } from "@/lib/timeline-anchors.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 
@@ -209,9 +210,22 @@ export function Timeline({
   useLayoutEffect(() => {
     if (!didInitialScroll.current && renderedCount > 0) {
       didInitialScroll.current = true;
-      if (!anchorActive && !questionLanding.ownsScroll) scrollToBottom();
+      // Failed question reads release live following, but are not a successful
+      // latest-position fallback when the first timeline page arrives later.
+      if (
+        !anchorActive &&
+        !questionLanding.ownsScroll &&
+        !isQuestionLandingHash(anchorHash ?? "")
+      )
+        scrollToBottom();
     }
-  }, [renderedCount, scrollToBottom, anchorActive, questionLanding.ownsScroll]);
+  }, [
+    renderedCount,
+    scrollToBottom,
+    anchorActive,
+    anchorHash,
+    questionLanding.ownsScroll,
+  ]);
 
   // Insertions above the viewport must not shift what the reader sees.
   useLayoutEffect(() => {
@@ -381,8 +395,8 @@ export function Timeline({
                 : "Couldn't locate questions."
             }
             onRetry={questionLanding.retry}
-            detail={undefined}
-            retrying={false}
+            detail={questionLanding.detail}
+            retrying={questionLanding.retrying}
             className="mb-3"
           />
         )}

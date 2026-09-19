@@ -34,6 +34,7 @@ import { type ReactElement, Suspense } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { questionsQuery } from "../src/api/questions.ts";
 import { UnsavedChangesGuard } from "../src/components/shared/unsaved-guard.tsx";
+import { QUESTION_LANDING_ROUTE_ID } from "../src/components/timeline/use-question-landing.ts";
 import { registerDirtySource } from "../src/lib/unsaved-guard.ts";
 import { IssueDetailPage } from "../src/pages/issue-detail.tsx";
 import { IssueRouteError } from "../src/pages/issue-route-error.tsx";
@@ -41,6 +42,7 @@ import {
   ProjectLayout,
   ProjectRouteError,
 } from "../src/pages/project-layout.tsx";
+import { router as appRouter } from "../src/router.tsx";
 
 // These imports deliberately reach the production keyed Timeline through the
 // actual detail page, so `vitest related` follows the same graph as the app.
@@ -616,6 +618,12 @@ afterEach(() => {
 });
 
 describe("question landing through the real issue route", () => {
+  it("P2-2 uses the issue detail route registered by the production router", () => {
+    const route = appRouter.routesById[QUESTION_LANDING_ROUTE_ID];
+    expect(route).toBeDefined();
+    expect(route.options.component).toBe(IssueDetailPage);
+  });
+
   it("C5 selects the earliest unanswered by question time and id across two after pages", async () => {
     const items = [
       answered(question(10), 11),
@@ -777,6 +785,92 @@ describe("question landing through the real issue route", () => {
     await landed(view, scroll, 20);
     expect(server.questions()).toHaveLength(before + 1);
     expect(view.router.history.length).toBe(length);
+  });
+
+  it.each(["server", "network"])(
+    "P2-3 preserves the %s error detail and disables Retry during its new read",
+    async (kind) => {
+      const model = card([question(10)]);
+      const detail =
+        kind === "server" ? "questions unavailable (500)" : "Failed to fetch";
+      model.questionReply = () =>
+        kind === "server"
+          ? failure(detail)
+          : Promise.reject(new TypeError(detail));
+      const server = serve({ "p/7": model });
+      const scroll = scrolling();
+      const view = renderAt();
+      const message = await view.findByText(LOCATE_FAILURE);
+      expect(message.getAttribute("title")).toBe(detail);
+      expect(scroll.bottoms()).toBe(0);
+      const pending = deferred<Response>();
+      model.questionReply = () => pending.promise;
+      const before = server.questions().length;
+      fireEvent.click(retryFor(view, LOCATE_FAILURE));
+      await waitFor(() => expect(server.questions()).toHaveLength(before + 1));
+      expect(view.getByText(LOCATE_FAILURE).getAttribute("title")).toBe(detail);
+      expect(
+        (retryFor(view, LOCATE_FAILURE) as HTMLButtonElement).disabled,
+      ).toBe(true);
+      expect(view.router.state.location.hash).toBe(ENTRY);
+      await release(pending, json(model.questions));
+      await landed(view, scroll, 10);
+      expect(view.queryByText(LOCATE_FAILURE)).toBeNull();
+    },
+  );
+
+  it("P2-1 question read failure preserves live following and new-below notification", async () => {
+    const model = card([], [comment(1), comment(2)]);
+    model.questionReply = () => failure("questions unavailable");
+    serve({ "p/7": model });
+    const scroll = scrolling();
+    const view = renderAt();
+    await view.findByText(LOCATE_FAILURE);
+    await view.findByText("comment body 2");
+    expect(scroll.bottoms()).toBe(0);
+    expect(view.router.state.location.hash).toBe(ENTRY);
+
+    scroll.userAt(9_200);
+    model.items.push(comment(3));
+    await refetchTail(view);
+    await view.findByText("comment body 3");
+    await waitFor(() => expect(scroll.bottoms()).toBe(1));
+
+    scroll.userAt(0);
+    model.items.push(comment(4));
+    await refetchTail(view);
+    await view.findByText("comment body 4");
+    expect(scroll.bottoms()).toBe(1);
+    expect(view.getByRole("button", { name: "新消息" })).toBeTruthy();
+    expect(view.getByText(LOCATE_FAILURE)).toBeTruthy();
+    expect(view.router.state.location.hash).toBe(ENTRY);
+    expect(scroll.events.some((event) => event.startsWith("reveal:"))).toBe(
+      false,
+    );
+  });
+
+  it("P2-1 failure before the first timeline page does not trigger initial bottom positioning", async () => {
+    const model = card([], [comment(1), comment(2)]);
+    const pending = deferred<Response>();
+    model.questionReply = () => failure("questions unavailable");
+    model.timelineReply = () => pending.promise;
+    const server = serve({ "p/7": model });
+    const scroll = scrolling();
+    const view = renderAt();
+    await waitFor(() => {
+      expect(server.questions()).toHaveLength(1);
+      expect(
+        view.client.getQueryState(questionsQuery("p", 7).queryKey)?.status,
+      ).toBe("error");
+    });
+    await release(
+      pending,
+      json(timelinePage(model.items, new URL("http://todou.example/?last=1"))),
+    );
+    await view.findByText(LOCATE_FAILURE);
+    await view.findByText("comment body 2");
+    expect(scroll.bottoms()).toBe(0);
+    expect(view.router.state.location.hash).toBe(ENTRY);
   });
 
   it("C8 reentering the same card reveals the same comment again without chasing answers or rerenders", async () => {
