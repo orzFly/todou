@@ -246,12 +246,18 @@ describe("stored id-anchored references", () => {
     const link = await anchor(view, 12);
     expect(link.getAttribute("href")).toBe("/projects/a/issues/12#comment-7");
     expect(link.getAttribute("data-comment-link")).toBe("7");
+    expect(link.querySelector("[data-comment-ref]")?.textContent).toBe(
+      "#12#comment-7",
+    );
+    expect(link.querySelector("[data-comment-author]")?.textContent).toBe(
+      " · by User",
+    );
   });
 });
 
 describe("unconfirmed stored references", () => {
   const source = "/projects/1/issues/12#comment-7";
-  const markdown = `[**careful** and \`literal\`](${source})`;
+  const markdown = `[**careful** and \`literal\` comment by Alice](${source})`;
 
   it("keeps exact href and complex children when the comment is missing or belongs to another issue", async () => {
     for (const target of [
@@ -291,6 +297,9 @@ describe("unconfirmed stored references", () => {
       expect(link.getAttribute("href")).toBe(source);
       expect(link.querySelector("strong")?.textContent).toBe("careful");
       expect(link.querySelector("code")?.textContent).toBe("literal");
+      expect(link.textContent).toBe("careful and literal comment by Alice");
+      expect(link.querySelector("[data-comment-ref]")).toBeNull();
+      expect(link.querySelector("[data-comment-author]")).toBeNull();
       expect(link.getAttribute("data-issue-link")).toBeNull();
       expect(link.getAttribute("title")).toBeNull();
       expect(link.querySelector("svg")).toBeNull();
@@ -328,6 +337,10 @@ describe("unconfirmed stored references", () => {
     ) as HTMLAnchorElement;
     expect(pending.getAttribute("href")).toBe(source);
     expect(pending.getAttribute("data-issue-link")).toBeNull();
+    expect(pending.textContent).toBe("careful and literal comment by Alice");
+    expect(pending.querySelector("strong")?.textContent).toBe("careful");
+    expect(pending.querySelector("code")?.textContent).toBe("literal");
+    expect(pending.querySelector("[data-comment-ref]")).toBeNull();
     release?.(
       new Response(
         JSON.stringify({
@@ -347,7 +360,13 @@ describe("unconfirmed stored references", () => {
     );
     const rich = await anchor(view, 12);
     expect(rich.textContent).toContain("Confirmed title");
-    expect(rich.textContent).toContain("comment by User");
+    const token = rich.querySelector("[data-comment-ref]");
+    const author = rich.querySelector("[data-comment-author]");
+    expect(token?.textContent).toBe("#12#comment-7");
+    expect(author?.textContent).toBe(" · by User");
+    expect(token?.contains(author)).toBe(false);
+    expect(rich.getAttribute("href")).toBe("/projects/a/issues/12#comment-7");
+    expect(rich.getAttribute("data-comment-link")).toBe("7");
   });
 
   it("preserves an explicit invalid link even after its issue lookup fails", async () => {
@@ -443,6 +462,9 @@ describe("unconfirmed stored references", () => {
     const link = view.container.querySelector("a[href]") as HTMLAnchorElement;
     expect(link.getAttribute("href")).toBe(source);
     expect(link.querySelector("strong")?.textContent).toBe("careful");
+    expect(link.querySelector("code")?.textContent).toBe("literal");
+    expect(link.textContent).toBe("careful and literal comment by Alice");
+    expect(link.querySelector("[data-comment-ref]")).toBeNull();
     expect(link.getAttribute("data-issue-link")).toBeNull();
     expect(link.textContent).not.toContain("Parent title");
   });

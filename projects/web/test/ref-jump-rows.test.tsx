@@ -339,7 +339,7 @@ describe("useJumpRows", () => {
         state: "ready",
         number: 141,
         commentId: 1837,
-        spelled: "T-141",
+        spelled: "T-141#comment-1837",
         commentBy: "Alice",
       },
     ]);

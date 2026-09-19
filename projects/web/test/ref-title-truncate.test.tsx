@@ -9,7 +9,11 @@ import type {
 } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import { attachmentsQuery } from "../src/api/attachments.ts";
-import { issueRefQuery } from "../src/api/issue-refs.ts";
+import {
+  commentRefQuery,
+  issueRefQuery,
+  type ResolvedCommentRef,
+} from "../src/api/issue-refs.ts";
 import { prefsQuery } from "../src/api/prefs.ts";
 import { referenceConfigQuery } from "../src/api/references.ts";
 import {
@@ -145,6 +149,55 @@ describe("reference title cap (T-371)", () => {
       expect(link.className.split(" ")).not.toContain(skin);
     }
   });
+
+  it.each([false, true])(
+    "caps only the issue title in a comment chip when truncate=%s",
+    async (truncate_ref_title) => {
+      const client = seeded({ truncate_ref_title });
+      client.getQueryCache().build<ResolvedCommentRef | null>(client, {
+        ...commentRefQuery("todou", 7, 42),
+        initialData: {
+          type: "comment",
+          id: 42,
+          author,
+          body: "hi",
+          created_at: "2026-08-12T00:00:00Z",
+          component: null,
+          edited_at: null,
+          resolved_at: null,
+          hidden_at: null,
+          agent_context: null,
+          at: { slug: "todou", number: 7, commentId: 42 },
+        } satisfies ResolvedCommentRef,
+      });
+      const view = renderWithProviders(
+        <MarkdownView slug="todou">
+          {"see [T-7#comment-42](/projects/todou/issues/7#comment-42)"}
+        </MarkdownView>,
+        client,
+      );
+      const link = await linkIn(view.container);
+      expect(link.getAttribute("data-comment-link")).toBe("42");
+      expect(titleSpan(link)?.textContent).toBe(LONG);
+      expect(titleSpan(link)?.classList.contains(RICH_CHIP_TITLE_CAP)).toBe(
+        truncate_ref_title,
+      );
+      const token = link.querySelector("[data-comment-ref]");
+      const by = link.querySelector("[data-comment-author]");
+      expect(token?.childNodes).toHaveLength(1);
+      expect(token?.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+      expect(token?.firstChild?.textContent).toBe("T-7#comment-42");
+      expect(by?.textContent).toBe(" · by Alice");
+      for (const fixed of [token, by]) {
+        expect(fixed?.parentElement).toBe(link);
+        expect(fixed?.classList.contains("flex-none")).toBe(true);
+        expect(fixed?.classList.contains("truncate")).toBe(false);
+        expect(fixed?.classList.contains(RICH_CHIP_TITLE_CAP)).toBe(false);
+      }
+      expect(link.textContent).toBe(`T-7#comment-42${LONG} · by Alice`);
+      expect(link.getAttribute("title")).toBe(`T-7 ${LONG} (Todo)`);
+    },
+  );
 });
 
 describe("the chip stops at the body (T-371)", () => {

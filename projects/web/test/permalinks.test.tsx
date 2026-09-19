@@ -177,7 +177,12 @@ describe("comment permalinks in the timeline", () => {
       return el as HTMLAnchorElement;
     });
     expect(link.getAttribute("href")).toBe("/projects/p/issues/3#comment-42");
-    expect(link.textContent).toContain("comment by Alice");
+    expect(link.querySelector("[data-comment-ref]")?.textContent).toBe(
+      "#3#comment-42",
+    );
+    expect(link.querySelector("[data-comment-author]")?.textContent).toBe(
+      " · by Alice",
+    );
   });
 });
 
@@ -209,7 +214,12 @@ describe("rich comment permalinks in markdown", () => {
       "/projects/todou/issues/38#comment-136",
     );
     expect(link.textContent).toContain("Permalink target");
-    expect(link.textContent).toContain("comment by Alice");
+    expect(link.querySelector("[data-comment-ref]")?.textContent).toBe(
+      "#38#comment-136",
+    );
+    expect(link.querySelector("[data-comment-author]")?.textContent).toBe(
+      " · by Alice",
+    );
   });
 
   it("keeps custom text ordinary until a comment confirms the parent", async () => {

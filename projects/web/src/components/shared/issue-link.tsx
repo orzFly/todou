@@ -36,9 +36,8 @@ import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import { cn } from "@/lib/utils.ts";
 
 /**
- * What a reference to the card being read says instead of a ref and a title.
- * It sits in the same muted slot as the ref and "comment by …" — all three
- * are one quiet remark about the target.
+ * What an ordinary issue reference to the card being read says instead of
+ * a ref and a title. Comment references always retain their complete identity.
  */
 const CURRENT_NOTE = "current";
 
@@ -47,7 +46,7 @@ const CURRENT_NOTE = "current";
  * the complete target is freshly confirmed (in the viewer's preferred order,
  * T-153). Until then a known address remains an ordinary link; a bare
  * unresolved comment remains text. With `commentId` the link deep-links to
- * that comment's anchor and reads "… · comment by X".
+ * that comment's anchor and reads "<issue ref>#comment-N · by X".
  * Spelling uses the project's CURRENT format (T-80); user-authored text
  * alone is anchored to its created_at.
  *
@@ -88,10 +87,9 @@ export function IssueLink({
   pageSlug: string | undefined;
   /**
    * The card the reader is on, with `pageSlug` the address of the page
-   * itself. A reference that resolves to it names what is already on the
-   * screen: it reads "current" instead of a ref and a title, and it opens no
-   * preview. Omitted where a surface cannot say which card is being read,
-   * which is what keeps "current" out of it.
+   * itself. An ordinary issue reference can read "current" instead of a ref
+   * and a title, and opens no preview. Comments retain their complete ref
+   * without a title. Omitted where a surface cannot say which card is read.
    */
   pageNumber?: number;
   asWritten?: boolean;
@@ -213,29 +211,38 @@ export function IssueLink({
   }
 
   const item = ref.data;
-  const commentNote =
-    commentId === undefined || !comment.data
-      ? null
-      : `comment by ${displayNameOf(comment.data.author)}`;
-  // The muted tail is assembled rather than concatenated: the separator
-  // belongs to the join, not to the note itself.
-  const tail: string[] = [];
-  // Leading the title, the ref has already been spelled once; repeating it
-  // after would read as two refs. "current" replaces it outright.
-  if (!asCurrent && !(refLeads && item)) tail.push(spelled);
-  if (asCurrent && commentNote === null) tail.push(CURRENT_NOTE);
-  if (commentNote !== null) {
-    const precededByTitle = !asCurrent && !dropTitle;
-    const precededByRef = !asCurrent && refLeads;
-    const preceded = tail.length > 0 || precededByTitle || precededByRef;
-    tail.push(preceded ? `· ${commentNote}` : commentNote);
-  }
-  const trailing = tail.join(" ");
+  const confirmedNote = commentId === undefined ? null : comment.data;
+  const isComment = confirmedNote != null;
+  const commentRef = isComment
+    ? `${spelled}#comment-${confirmedNote.at.commentId}`
+    : null;
+  const hideTitle = dropTitle || (isComment ? onPageCard : asCurrent);
+  // One visible identity slot, shared by Markdown and system references.
+  // Keep the author outside it so the complete ref can be selected separately.
+  const commentToken =
+    commentRef === null ? null : (
+      <span
+        data-comment-ref
+        className={cn(
+          "font-normal text-muted-foreground",
+          inBody && RICH_CHIP_FIXED,
+        )}
+      >
+        {commentRef}
+      </span>
+    );
+  const trailing = isComment
+    ? ""
+    : asCurrent
+      ? CURRENT_NOTE
+      : refLeads
+        ? ""
+        : spelled;
   const iconClass = inBody
     ? RICH_CHIP_ICON
     : "mr-0.5 inline size-3.5 align-middle";
-  // The preview is already paid for: rendering "comment by X" fetched the
-  // whole comment, body included, so hovering asks the server nothing.
+  // The preview is already paid for: confirming the comment fetched its
+  // body too, so hovering asks the server nothing.
   const hovered =
     commentId !== undefined && canHover ? (comment.data ?? null) : null;
   // The confirmed issue already supplied the card contents. A hover preview
@@ -293,7 +300,13 @@ export function IssueLink({
               style={{ color: item.status.color }}
             />
           )}
-          {refLeads && !asCurrent && (
+          {refLeads && isComment && (
+            <>
+              {commentToken}
+              {inBody || hideTitle ? null : " "}
+            </>
+          )}
+          {refLeads && !isComment && !asCurrent && (
             <span
               className={cn(
                 "font-normal text-muted-foreground",
@@ -304,7 +317,7 @@ export function IssueLink({
               {inBody ? null : " "}
             </span>
           )}
-          {dropTitle || asCurrent ? null : inBody ? (
+          {hideTitle ? null : inBody ? (
             <span
               className={cn(RICH_CHIP_LABEL, capTitle && RICH_CHIP_TITLE_CAP)}
             >
@@ -314,6 +327,23 @@ export function IssueLink({
             item.title
           )}
         </>
+      )}
+      {!refLeads && isComment && (
+        <>
+          {inBody || hideTitle ? null : " "}
+          {commentToken}
+        </>
+      )}
+      {isComment && (
+        <span
+          data-comment-author
+          className={cn(
+            "font-normal text-muted-foreground",
+            inBody && RICH_CHIP_FIXED,
+          )}
+        >
+          {` · by ${displayNameOf(confirmedNote.author)}`}
+        </span>
       )}
       {trailing !== "" && (
         <span

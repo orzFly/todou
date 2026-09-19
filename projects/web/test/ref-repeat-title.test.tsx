@@ -150,7 +150,7 @@ describe("repeated references in one document (T-371)", () => {
     expect(view.container.textContent).toContain("Other");
   });
 
-  it("drops the title but keeps 'comment by X' on a repeat that is a comment link", async () => {
+  it("drops a repeated comment's title but keeps its complete ref and author", async () => {
     const view = renderWithProviders(
       <MarkdownView slug="todou">
         {"[T-7](/projects/todou/issues/7) and again " +
@@ -165,7 +165,13 @@ describe("repeated references in one document (T-371)", () => {
     });
     expect(titlesOfSeven(view.container)).toEqual(["Target", ""]);
     const second = view.container.querySelector("a[data-comment-link='42']");
-    expect(second?.textContent).toContain("comment by Alice");
+    expect(second?.textContent).toBe("T-7#comment-42 · by Alice");
+    expect(second?.querySelector("[data-comment-ref]")?.textContent).toBe(
+      "T-7#comment-42",
+    );
+    expect(second?.querySelector("[data-comment-author]")?.textContent).toBe(
+      " · by Alice",
+    );
     expect(second?.textContent).not.toContain("Target");
   });
 
@@ -279,7 +285,7 @@ describe("a reference to the card being read (T-408)", () => {
     expect(other.textContent).not.toContain("current");
   });
 
-  it("keeps 'comment by X' and drops the separator that led it", async () => {
+  it("keeps the complete comment ref and author on the current card", async () => {
     const view = renderWithProviders(
       <MarkdownView slug="todou" issueNumber={7}>
         {"see [T-7#comment-42](/projects/todou/issues/7#comment-42)"}
@@ -291,9 +297,15 @@ describe("a reference to the card being read (T-408)", () => {
       expect(el).not.toBeNull();
       return el as HTMLElement;
     });
-    expect(link.textContent).toBe("comment by Alice");
-    expect(link.textContent).not.toContain("T-7");
-    expect(link.textContent?.startsWith("·")).toBe(false);
+    expect(link.textContent).toBe("T-7#comment-42 · by Alice");
+    expect(link.querySelector("[data-comment-ref]")?.textContent).toBe(
+      "T-7#comment-42",
+    );
+    expect(link.querySelector("[data-comment-author]")?.textContent).toBe(
+      " · by Alice",
+    );
+    expect(link.textContent).not.toContain("Target");
+    expect(link.textContent).not.toContain("current");
   });
 
   it("stays out of a document that never said which card it is on", async () => {

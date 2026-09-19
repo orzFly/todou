@@ -342,10 +342,10 @@ export function SearchBox({
   };
 
   /**
-   * Where Enter goes. Anything the reader arrowed onto decides it outright; a
-   * row that is still loading, or a list that has not appeared yet, is
-   * waited for instead — pasting a ref and hitting Enter in the same beat
-   * has to reach the same place as waiting for the row first.
+   * Where Enter goes. A selected comment still needs current confirmation:
+   * invalidation can arrive before React removes its ready row. A row that is
+   * loading, or a list that has not appeared yet, is also waited for — pasting
+   * a ref and hitting Enter must reach the same place as waiting for its row.
    */
   const decide = async (): Promise<Destination> => {
     // Esc hid the offer, and hiding it has to mean something: Enter then
@@ -356,7 +356,11 @@ export function SearchBox({
     if (chosen?.kind === "history") return { to: "search", q: chosen.q };
     if (chosen?.kind === "external")
       return { to: "external", href: chosen.href };
-    if (chosen?.kind === "issue" && chosen.state === "ready") {
+    if (
+      chosen?.kind === "issue" &&
+      chosen.state === "ready" &&
+      chosen.commentId === undefined
+    ) {
       return { to: "card", target: chosen };
     }
     if (chosen?.kind === "project") return { to: "project", slug: chosen.slug };
@@ -804,7 +808,7 @@ export function SearchBox({
                 <span className="truncate">{row.item.title}</span>
                 {row.commentBy !== null && (
                   <span className="shrink-0 text-muted-foreground">
-                    · comment by {row.commentBy}
+                    · by {row.commentBy}
                   </span>
                 )}
                 <StatusPill

@@ -5,6 +5,7 @@ import {
   type IssueListPage,
   MePrefs,
   type TimelineComment,
+  type TimelineEvent,
 } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -16,7 +17,13 @@ import {
   type ResolvedIssueRef,
 } from "../src/api/issue-refs.ts";
 import { prefsQuery } from "../src/api/prefs.ts";
-import { api, projectsQuery } from "../src/api/queries.ts";
+import {
+  api,
+  labelsQuery,
+  membersQuery,
+  projectsQuery,
+  statusesQuery,
+} from "../src/api/queries.ts";
 import {
   referenceConfigQuery,
   referenceDirectoryQuery,
@@ -27,6 +34,7 @@ import {
 } from "../src/api/useUserEvents.ts";
 import { IssueLink } from "../src/components/shared/issue-link.tsx";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
+import { EventRow } from "../src/components/timeline/event-row.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 const SOURCE = "historical";
@@ -125,6 +133,31 @@ function seeded() {
   return client;
 }
 
+function expectCommentIdentity(
+  anchor: Element,
+  spelled: string,
+  author: string,
+) {
+  const tokens = anchor.querySelectorAll("[data-comment-ref]");
+  expect(tokens).toHaveLength(1);
+  const token = tokens[0] as HTMLElement;
+  expect(token.textContent).toBe(spelled);
+  expect(token.childNodes).toHaveLength(1);
+  expect(token.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+  expect(
+    token.closest("[hidden], [aria-hidden='true'], .hidden, .sr-only"),
+  ).toBeNull();
+  expect(getComputedStyle(token).display).not.toBe("none");
+  expect(getComputedStyle(token).visibility).not.toBe("hidden");
+  const authors = anchor.querySelectorAll("[data-comment-author]");
+  expect(authors).toHaveLength(1);
+  expect(authors[0]?.textContent).toBe(` · by ${author}`);
+  expect(token.contains(authors[0] ?? null)).toBe(false);
+  expect(authors[0]?.contains(token)).toBe(false);
+  expect(anchor.textContent?.split(spelled)).toHaveLength(2);
+  expect(anchor.textContent).not.toContain("comment by");
+}
+
 function expectOrdinary(container: HTMLElement, href: string) {
   const anchor = container.querySelector("a");
   expect(anchor?.getAttribute("href")).toBe(href);
@@ -141,7 +174,8 @@ function expectOrdinary(container: HTMLElement, href: string) {
   }
   expect(anchor?.querySelector("svg")).toBeNull();
   expect(container.textContent).not.toContain(OLD_TITLE);
-  expect(container.textContent).not.toContain("comment by Alice");
+  expect(container.querySelector("[data-comment-ref]")).toBeNull();
+  expect(container.querySelector("[data-comment-author]")).toBeNull();
   expect(document.querySelector("[data-slot='hover-card-content']")).toBeNull();
 }
 
@@ -270,7 +304,7 @@ describe("reference validity through SSE invalidations", () => {
       expect(rich.getAttribute("href")).toBe(
         "/projects/destination/issues/55#comment-8",
       );
-      expect(rich.textContent).toContain("comment by Alice");
+      expectCommentIdentity(rich, "destination/T-55#comment-8", "Alice");
       expect((await hover(rich)).textContent).toContain("Old authorized body");
       expect(getComment).not.toHaveBeenCalled();
 
@@ -334,9 +368,13 @@ describe("reference validity through SSE invalidations", () => {
       client,
     );
     await waitFor(() => {
-      expect(
-        view.container.querySelector("a[data-comment-link='8']")?.textContent,
-      ).toContain("comment by Alice");
+      const anchor = view.container.querySelector("a[data-comment-link='8']");
+      expect(anchor).not.toBeNull();
+      expectCommentIdentity(
+        anchor as HTMLAnchorElement,
+        "destination/T-55#comment-8",
+        "Alice",
+      );
     });
     expect(getComment).not.toHaveBeenCalled();
 
@@ -362,7 +400,12 @@ describe("reference validity through SSE invalidations", () => {
     await act(async () => request.resolve(freshLocation));
     const rich = await waitFor(() => {
       const anchor = view.container.querySelector("a[data-comment-link='8']");
-      expect(anchor?.textContent).toContain("comment by Bob");
+      expect(anchor).not.toBeNull();
+      expectCommentIdentity(
+        anchor as HTMLAnchorElement,
+        "destination/T-55#comment-8",
+        "Bob",
+      );
       return anchor as HTMLAnchorElement;
     });
     expect(rich.getAttribute("href")).toBe(
@@ -389,4 +432,104 @@ describe("reference validity through SSE invalidations", () => {
     expect(client.getQueryData(targetKey)).toEqual(staleTarget);
     expect(client.getQueryState(targetKey)?.dataUpdatedAt).toBe(staleUpdatedAt);
   });
+});
+
+describe("referenced EventRow comment identity", () => {
+  it.each(["before", "after"] as const)(
+    "shows the final complete comment ref %s the title without body chip styling",
+    async (placement) => {
+      const client = seeded();
+      client.setQueryData(
+        prefsQuery.queryKey,
+        MePrefs.parse({
+          ref_placement_reference: placement,
+          boxed_ref_links: true,
+          truncate_ref_title: true,
+        }),
+      );
+      client.setQueryData(labelsQuery(SOURCE).queryKey, []);
+      client.setQueryData(statusesQuery(SOURCE).queryKey, [issue(12).status]);
+      client.setQueryData(membersQuery(SOURCE).queryKey, []);
+      const issueKey = issueRefQuery(SOURCE, 12).queryKey;
+      const commentKey = commentRefQuery(SOURCE, 12, 7).queryKey;
+      const updatedAt = Date.now();
+      client.setQueryData<ResolvedIssueRef>(
+        issueKey,
+        {
+          ...issue(55, "Final source title"),
+          at: { slug: DESTINATION, number: 55 },
+        },
+        { updatedAt },
+      );
+      client.setQueryData<ResolvedCommentRef>(
+        commentKey,
+        {
+          ...comment(bob),
+          at: { slug: DESTINATION, number: 55, commentId: 8 },
+        },
+        { updatedAt },
+      );
+      const event: TimelineEvent = {
+        type: "event",
+        id: 91,
+        event_type: "referenced",
+        actor: alice,
+        agent_context: null,
+        payload: {
+          by_project: SOURCE,
+          by_project_id: 1,
+          by_issue: 12,
+          by_comment: 7,
+        },
+        created_at: "2026-09-01T00:00:00Z",
+      };
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      const view = renderWithProviders(
+        <EventRow event={event} slug={SOURCE} />,
+        client,
+      );
+      const anchor = await waitFor(() => {
+        const link = view.container.querySelector("a[data-comment-link='8']");
+        expect(link).not.toBeNull();
+        return link as HTMLAnchorElement;
+      });
+      for (const key of [issueKey, commentKey]) {
+        expect(client.getQueryState(key)).toMatchObject({
+          status: "success",
+          fetchStatus: "idle",
+          isInvalidated: false,
+          dataUpdatedAt: updatedAt,
+        });
+        expect(Date.now() - updatedAt).toBeLessThan(60_000);
+      }
+      expectCommentIdentity(anchor, "destination/T-55#comment-8", "Bob");
+      expect(anchor.getAttribute("data-issue-link")).toBe("55");
+      expect(anchor.getAttribute("data-issue-project")).toBe(DESTINATION);
+      expect(anchor.getAttribute("href")).toBe(
+        "/projects/destination/issues/55#comment-8",
+      );
+      expect(anchor.textContent).toBe(
+        placement === "before"
+          ? "destination/T-55#comment-8 Final source title · by Bob"
+          : "Final source title destination/T-55#comment-8 · by Bob",
+      );
+      expect(anchor.className).toBe("font-medium hover:underline");
+      expect(
+        anchor.querySelector(".inline-flex, .border, .truncate, .flex-none"),
+      ).toBeNull();
+      expect(anchor.querySelector("svg")?.getAttribute("class")).toContain(
+        "mr-0.5 inline size-3.5 align-middle",
+      );
+      const card = await hover(anchor);
+      expect(card.textContent).toContain("Fresh located body");
+      expect(card.textContent).toContain("Bob");
+      expect(card.textContent).not.toContain("Old authorized body");
+      expect(
+        card.querySelector(
+          'a[href="/projects/destination/issues/55#comment-8"]',
+        ),
+      ).not.toBeNull();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    },
+  );
 });

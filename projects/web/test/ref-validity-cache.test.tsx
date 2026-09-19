@@ -153,7 +153,8 @@ function expectPlain(view: View, href = ISSUE_HREF) {
   expect(link?.getAttribute("title")).toBeNull();
   expect(link?.getAttribute("data-comment-link")).toBeNull();
   expect(view.container.textContent).not.toContain("Old title");
-  expect(view.container.textContent).not.toContain("comment by Alice");
+  expect(view.container.querySelector("[data-comment-ref]")).toBeNull();
+  expect(view.container.querySelector("[data-comment-author]")).toBeNull();
 }
 
 beforeEach(() => {
@@ -232,7 +233,12 @@ describe("visible reference metadata validity", () => {
     );
     const view = await mount(ref(42), client);
     expectRich(view, "Old title", COMMENT_HREF);
-    expect(rich(view)?.textContent).toContain("comment by Alice");
+    expect(rich(view)?.querySelector("[data-comment-ref]")?.textContent).toBe(
+      "T-7#comment-42",
+    );
+    expect(
+      rich(view)?.querySelector("[data-comment-author]")?.textContent,
+    ).toBe(" · by Alice");
     expect(rich(view)?.getAttribute("data-comment-link")).toBe("42");
 
     await advance(59_999);
@@ -261,7 +267,12 @@ describe("visible reference metadata validity", () => {
     );
     const getComment = vi.spyOn(api, "getComment");
     const view = await mount(ref(42), client);
-    expect(rich(view)?.textContent).toContain("comment by Alice");
+    expect(rich(view)?.querySelector("[data-comment-ref]")?.textContent).toBe(
+      "T-7#comment-42",
+    );
+    expect(
+      rich(view)?.querySelector("[data-comment-author]")?.textContent,
+    ).toBe(" · by Alice");
 
     const missing = deferred<TimelineComment>();
     getComment.mockReturnValueOnce(missing.promise);
@@ -286,7 +297,12 @@ describe("visible reference metadata validity", () => {
       await refresh;
     });
     await advance(1);
-    expect(rich(view)?.textContent).toContain("comment by Bob");
+    expect(rich(view)?.querySelector("[data-comment-ref]")?.textContent).toBe(
+      "T-7#comment-42",
+    );
+    expect(
+      rich(view)?.querySelector("[data-comment-author]")?.textContent,
+    ).toBe(" · by Bob");
 
     const failed = deferred<TimelineComment>();
     getComment.mockReturnValueOnce(failed.promise);
@@ -300,7 +316,7 @@ describe("visible reference metadata validity", () => {
     await act(async () => failed.reject(new Error("offline")));
     await second;
     expectPlain(view, COMMENT_HREF);
-    expect(view.container.textContent).not.toContain("comment by Bob");
+    expect(view.container.textContent).not.toContain(" · by Bob");
   });
 
   it("does not paint stale decoration on the first frame after background/refocus", async () => {

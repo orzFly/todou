@@ -12,6 +12,7 @@ import type {
   TimelineEvent,
   UserRef,
 } from "@todou/shared";
+import { MePrefs } from "@todou/shared";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import {
@@ -20,7 +21,13 @@ import {
   type ResolvedCommentRef,
 } from "../src/api/issue-refs.ts";
 import { issueQuery } from "../src/api/issues.ts";
-import { membersQuery, projectsQuery } from "../src/api/queries.ts";
+import { prefsQuery } from "../src/api/prefs.ts";
+import {
+  labelsQuery,
+  membersQuery,
+  projectsQuery,
+  statusesQuery,
+} from "../src/api/queries.ts";
 import {
   referenceConfigQuery,
   referenceDirectoryQuery,
@@ -207,6 +214,34 @@ function seedComment(
   );
 }
 
+function expectCommentSource(link: HTMLAnchorElement, spelling: string) {
+  const tokens = link.querySelectorAll("[data-comment-ref]");
+  expect(tokens).toHaveLength(1);
+  const token = tokens[0] as HTMLElement;
+  expect(token.textContent).toBe(spelling);
+  expect(token.childNodes).toHaveLength(1);
+  expect(token.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+  expect(
+    token.closest("[hidden], [aria-hidden='true'], .hidden, .sr-only"),
+  ).toBeNull();
+  expect(getComputedStyle(token).display).not.toBe("none");
+  expect(getComputedStyle(token).visibility).not.toBe("hidden");
+  const authors = link.querySelectorAll("[data-comment-author]");
+  expect(authors).toHaveLength(1);
+  expect(authors[0]?.textContent).toBe(" · by Alice");
+  expect(token.contains(authors[0] ?? null)).toBe(false);
+  expect(authors[0]?.contains(token)).toBe(false);
+  expect(link.textContent?.split(spelling)).toHaveLength(2);
+  expect(link.textContent).not.toContain("comment by");
+  expect(link.className).toBe("font-medium hover:underline");
+  expect(
+    link.querySelector(".inline-flex, .border, .truncate, .flex-none"),
+  ).toBeNull();
+  expect(link.querySelector("svg")?.getAttribute("class")).toContain(
+    "mr-0.5 inline size-3.5 align-middle",
+  );
+}
+
 const SINCE = "2026-08-01T00:00:00.000Z";
 
 const configOf = (prefix: string): ReferenceConfig => ({
@@ -248,6 +283,25 @@ function crossClient(
     project(1, "todou"),
     project(2, "mirror"),
   ]);
+  client.setQueryData(
+    prefsQuery.queryKey,
+    MePrefs.parse({
+      ref_placement_reference: "before",
+      boxed_ref_links: true,
+      truncate_ref_title: true,
+    }),
+  );
+  client.setQueryData(labelsQuery("todou").queryKey, []);
+  client.setQueryData(statusesQuery("todou").queryKey, [
+    refItem(1, "Reading page").status,
+  ]);
+  client.setQueryData(membersQuery("todou").queryKey, []);
+  const pageKey = issueQuery("todou", 1).queryKey;
+  client.setQueryDefaults(pageKey, { staleTime: 60_000 });
+  client.setQueryData<Issue>(pageKey, {
+    ...refItem(1, "Reading page"),
+    body: "",
+  });
   for (const [slug, item] of targets) {
     client.setQueryData(issueRefQuery(slug, item.number).queryKey, item);
   }
@@ -536,7 +590,12 @@ describe("EventGroup", () => {
   it("renders references as a resident block list, no expander (T-99)", async () => {
     const first = event({
       event_type: "referenced",
-      payload: { by_issue: 7, by_comment: 42 },
+      payload: {
+        by_project: "todou",
+        by_project_id: 1,
+        by_issue: 7,
+        by_comment: 42,
+      },
       created_at: "2026-08-13T08:00:00.000Z",
     });
     const last = event({
@@ -544,23 +603,16 @@ describe("EventGroup", () => {
       payload: { by_issue: 9 },
       created_at: "2026-08-13T14:30:00.000Z",
     });
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    client.setQueryData(
-      issueRefQuery("p", 7).queryKey,
-      refItem(7, "First source"),
-    );
-    client.setQueryData(
-      issueRefQuery("p", 9).queryKey,
-      refItem(9, "Last source"),
-    );
-    seedComment(client, "p", 7, 42);
+    const client = crossClient([
+      ["todou", refItem(7, "First source")],
+      ["todou", refItem(9, "Last source")],
+    ]);
+    seedComment(client, "todou", 7, 42);
     const { findByTestId, queryByTestId, container } = renderWithProviders(
       <EventGroup
         family="referenced"
         events={[first, last]}
-        slug="p"
+        slug="todou"
         issueNumber={1}
       />,
       client,
@@ -581,9 +633,22 @@ describe("EventGroup", () => {
       expect(container.querySelector('[data-issue-link="9"]')).toBeTruthy();
       expect(container.querySelector('[data-comment-link="42"]')).toBeTruthy();
     });
-    expect(
-      container.querySelector('[data-comment-link="42"]')?.getAttribute("href"),
-    ).toBe("/projects/p/issues/7#comment-42");
+    const commentLink = container.querySelector(
+      'a[data-comment-link="42"]',
+    ) as HTMLAnchorElement;
+    expectCommentSource(commentLink, "T-7#comment-42");
+    expect(commentLink.textContent).toBe(
+      "T-7#comment-42 First source · by Alice",
+    );
+    expect(commentLink.getAttribute("href")).toBe(
+      "/projects/todou/issues/7#comment-42",
+    );
+    const issueLink = container.querySelector('a[data-issue-link="9"]');
+    expect(issueLink?.textContent).toBe("T-9 Last source");
+    expect(issueLink?.getAttribute("href")).toBe("/projects/todou/issues/9");
+    expect(issueLink?.querySelector("[data-comment-ref]")).toBeNull();
+    expect(issueLink?.querySelector("[data-comment-author]")).toBeNull();
+    expect(issueLink?.querySelector("svg")).not.toBeNull();
 
     // Header stamp: first event's permalink, range tooltip.
     const stamp = container.querySelector(
@@ -598,19 +663,32 @@ describe("EventGroup", () => {
       payload: { by_issue: 7, by_comment: 42 },
       created_at: "2026-08-13T08:00:00.000Z",
     });
+    const client = crossClient([["todou", refItem(7, "Only source")]]);
+    seedComment(client, "todou", 7, 42);
     const { findByTestId, queryByTestId, container } = renderWithProviders(
       <EventGroup
         family="referenced"
         events={[only]}
-        slug="p"
+        slug="todou"
         issueNumber={1}
       />,
+      client,
     );
     const group = await findByTestId("event-group");
     expect(group.textContent).toContain("referenced 1 time");
     expect(group.textContent).not.toContain("1 times");
     expect(queryByTestId("event-group-toggle")).toBeNull();
     expect(container.querySelector(`li[id="event-${only.id}"]`)).toBeTruthy();
+    const link = await waitFor(() => {
+      const anchor = container.querySelector('a[data-comment-link="42"]');
+      expect(anchor).not.toBeNull();
+      return anchor as HTMLAnchorElement;
+    });
+    expectCommentSource(link, "T-7#comment-42");
+    expect(link.textContent).toBe("T-7#comment-42 Only source · by Alice");
+    expect(link.getAttribute("href")).toBe(
+      "/projects/todou/issues/7#comment-42",
+    );
     // A single event needs no range — the stamp tooltip is its timestamp.
     const stamp = container.querySelector(
       `a[href*="event-${only.id}"]`,
@@ -648,6 +726,9 @@ describe("EventGroup", () => {
       return el as HTMLAnchorElement;
     });
     expect(localLink.getAttribute("href")).toBe("/projects/todou/issues/7");
+    expect(localLink.textContent).toBe("T-7 Local source");
+    expect(localLink.querySelector("[data-comment-ref]")).toBeNull();
+    expect(localLink.querySelector("[data-comment-author]")).toBeNull();
 
     // The guard on the list row's own resolution: spelling by_issue in this
     // project's terms lands on todou#3, a real card and therefore a wrong
@@ -659,6 +740,9 @@ describe("EventGroup", () => {
     });
     expect(crossLink.getAttribute("href")).toBe("/projects/mirror/issues/3");
     expect(crossLink.textContent).toContain("Mirror source");
+    expect(crossLink.textContent).toBe("mirror/M-3 Mirror source");
+    expect(crossLink.querySelector("[data-comment-ref]")).toBeNull();
+    expect(crossLink.querySelector("[data-comment-author]")).toBeNull();
   });
 
   it("keeps a source it cannot name in the list, unlinked", async () => {
@@ -686,36 +770,57 @@ describe("EventGroup", () => {
     expect(row?.querySelector("a")).toBeNull();
   });
 
-  it("deep-links a cross-project source to its comment (T-256)", async () => {
-    const cross = event({
-      event_type: "cross_referenced",
-      payload: {
-        by_project: "mirror",
-        by_project_id: 2,
-        by_issue: 3,
-        by_comment: 42,
-      },
-    });
-    const client = crossClient([["mirror", refItem(3, "Mirror source")]]);
-    seedComment(client, "mirror", 3, 42);
-    const { container } = renderWithProviders(
-      <EventGroup
-        family="referenced"
-        events={[cross]}
-        slug="todou"
-        issueNumber={1}
-      />,
-      client,
-    );
-    const link = await waitFor(() => {
-      const el = container.querySelector('a[data-comment-link="42"]');
-      expect(el).not.toBeNull();
-      return el as HTMLAnchorElement;
-    });
-    expect(link.getAttribute("href")).toBe(
-      "/projects/mirror/issues/3#comment-42",
-    );
-  });
+  it.each(["referenced", "cross_referenced"] as const)(
+    "shows a complete cross-project comment identity in a %s group",
+    async (eventType) => {
+      const cross = event({
+        event_type: eventType,
+        payload: {
+          by_project: "mirror",
+          by_project_id: 2,
+          by_issue: 3,
+          by_comment: 42,
+        },
+      });
+      const client = crossClient([["mirror", refItem(3, "Mirror source")]]);
+      seedComment(client, "mirror", 3, 42);
+      const { container } = renderWithProviders(
+        <EventGroup
+          family="referenced"
+          events={[cross]}
+          slug="todou"
+          issueNumber={1}
+        />,
+        client,
+      );
+      const link = await waitFor(() => {
+        const el = container.querySelector('a[data-comment-link="42"]');
+        expect(el).not.toBeNull();
+        return el as HTMLAnchorElement;
+      });
+      expect(link.getAttribute("data-issue-link")).toBe("3");
+      expect(link.getAttribute("data-issue-project")).toBe("mirror");
+      expect(link.getAttribute("href")).toBe(
+        "/projects/mirror/issues/3#comment-42",
+      );
+      expectCommentSource(link, "mirror/M-3#comment-42");
+      expect(link.textContent).toBe(
+        "mirror/M-3#comment-42 Mirror source · by Alice",
+      );
+      for (const key of [
+        issueRefQuery("mirror", 3).queryKey,
+        commentRefQuery("mirror", 3, 42).queryKey,
+      ]) {
+        const state = client.getQueryState(key);
+        expect(state).toMatchObject({
+          status: "success",
+          fetchStatus: "idle",
+          isInvalidated: false,
+        });
+        expect(Date.now() - (state?.dataUpdatedAt ?? 0)).toBeLessThan(60_000);
+      }
+    },
+  );
 
   it("gives every attached file a row and a permalink of its own", async () => {
     const fileEvents = [

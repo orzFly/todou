@@ -213,7 +213,7 @@ const withCommentTarget = (
 });
 
 /**
- * Comment lookup for rich permalinks ("comment by @user"). The response
+ * Comment lookup for rich permalinks (full comment ref and author). The response
  * carries its final full address so a comment can only confirm the issue
  * metadata for the parent it actually belongs to.
  */

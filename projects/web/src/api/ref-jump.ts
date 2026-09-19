@@ -20,6 +20,13 @@ import {
   referenceDirectoryQuery,
   resolveRefQuery,
 } from "@/api/references.ts";
+import {
+  confirmedSearchComment,
+  fetchSearchRef,
+  locatedCommentRef,
+  searchRefPending,
+  searchRefState,
+} from "@/api/search-comment-target.ts";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
 import { qualifiedRefSpelling } from "@/lib/issue-refs.ts";
 import { projectSpellings } from "@/lib/project-spellings.ts";
@@ -186,11 +193,13 @@ export function useJumpRows(slug: string, q: string): JumpRow[] {
   // first question rather than the last.
   const located = useQuery({
     ...commentLocationQuery(
-      slug,
+      card?.slug ?? slug,
       card?.kind === "comment" ? card.commentId : 0,
     ),
     enabled: card?.kind === "comment",
   });
+  const locatedNote = locatedCommentRef(card?.slug ?? slug, located.data);
+  const isComment = card?.commentId !== undefined;
 
   const target: JumpTarget | null =
     card === undefined
@@ -203,13 +212,7 @@ export function useJumpRows(slug: string, q: string): JumpRow[] {
               ? {}
               : { commentId: card.commentId }),
           }
-        : located.data
-          ? {
-              slug: card.slug,
-              number: located.data.issue_number,
-              commentId: card.commentId,
-            }
-          : null;
+        : (locatedNote?.at ?? null);
 
   const targetConfig = useQuery({
     ...referenceConfigQuery(target?.slug ?? slug),
@@ -234,27 +237,44 @@ export function useJumpRows(slug: string, q: string): JumpRow[] {
     // case costs no second request.
     enabled: shown !== null,
   });
-  const note = useQuery({
+  const noteQuery = useQuery({
     ...commentRefQuery(
       target?.slug ?? slug,
       target?.number ?? 0,
       target?.commentId ?? 0,
     ),
-    enabled: target !== null && prefixOk && target.commentId !== undefined,
+    enabled:
+      card?.kind === "issue" &&
+      target !== null &&
+      prefixOk &&
+      target.commentId !== undefined,
   });
+  // A bare location is already a full authorized comment. Keeping its query
+  // state also keeps the original authorization time and periodic refresh.
+  const note =
+    card?.kind === "comment" ? { ...located, data: locatedNote } : noteQuery;
+  const commentTarget =
+    isComment && target !== null
+      ? confirmedSearchComment(target, issue, note)
+      : null;
 
   // One pending state for the whole chain: a row that appeared, then grew
   // a title, then a comment note would rearrange the list under the
   // reader's Enter.
   const pending =
-    card !== undefined &&
-    ((card.kind === "comment" && located.isPending) ||
-      (target !== null &&
-        (targetConfig.isPending ||
-          (prefixOk &&
-            (issue.isPending ||
-              shownConfig.isPending ||
-              (target.commentId !== undefined && note.isPending))))));
+    (card !== undefined &&
+      ((card.kind === "comment" && located.isPending) ||
+        (target !== null &&
+          (targetConfig.isPending ||
+            (prefixOk &&
+              (issue.isPending ||
+                shownConfig.isPending ||
+                (target.commentId !== undefined && note.isPending))))))) ||
+    (isComment &&
+      ((card?.kind === "comment" && searchRefPending(located)) ||
+        (target !== null &&
+          prefixOk &&
+          (searchRefPending(issue) || searchRefPending(note)))));
 
   const spelled =
     shown === null
@@ -275,19 +295,26 @@ export function useJumpRows(slug: string, q: string): JumpRow[] {
       target !== null &&
       shown !== null &&
       prefixOk &&
-      issue.data != null
+      issue.data != null &&
+      (!isComment || commentTarget !== null)
     ) {
       rows.push({
         kind: "issue",
         state: "ready",
         slug: shown.slug,
         number: shown.number,
-        ...(target.commentId === undefined
+        ...(commentTarget === null
           ? {}
-          : { commentId: target.commentId }),
-        spelled,
+          : { commentId: commentTarget.commentId }),
+        spelled:
+          commentTarget === null
+            ? spelled
+            : `${spelled}#comment-${commentTarget.commentId}`,
         item: issue.data,
-        commentBy: note.data ? displayNameOf(note.data.author) : null,
+        commentBy:
+          commentTarget !== null && note.data
+            ? displayNameOf(note.data.author)
+            : null,
         crossProject: shown.slug !== slug,
       });
     }
@@ -399,21 +426,58 @@ async function resolvedCard(
   return resolved === null ? undefined : candidateOf(resolved);
 }
 
+/** Comment candidates need the same full confirmation as their visible row. */
+async function commentCardPromise(
+  client: QueryClient,
+  candidate: JumpCardCandidate,
+): Promise<JumpTarget | null> {
+  if (candidate.commentId === undefined) return null;
+  const locationOptions = commentLocationQuery(
+    candidate.slug,
+    candidate.commentId,
+  );
+  if (candidate.kind === "comment") {
+    await fetchSearchRef(client, locationOptions);
+  }
+  const located = searchRefState(client, locationOptions);
+  const locatedNote = locatedCommentRef(candidate.slug, located.data);
+  const target = candidate.kind === "issue" ? candidate : locatedNote?.at;
+  if (target == null) return null;
+
+  const issueOptions = issueRefQuery(target.slug, target.number);
+  const noteOptions = commentRefQuery(
+    target.slug,
+    target.number,
+    target.commentId ?? candidate.commentId,
+  );
+  await Promise.all([
+    fetchSearchRef(client, issueOptions),
+    ...(candidate.kind === "issue"
+      ? [fetchSearchRef(client, noteOptions)]
+      : []),
+  ]);
+  // Every await can outlive another authorization or receive an invalidation.
+  // Read all participating queries again immediately before returning.
+  const currentLocation = searchRefState(client, locationOptions);
+  const note =
+    candidate.kind === "comment"
+      ? {
+          ...currentLocation,
+          data: locatedCommentRef(candidate.slug, currentLocation.data),
+        }
+      : searchRefState(client, noteOptions);
+  return confirmedSearchComment(
+    target,
+    searchRefState(client, issueOptions),
+    note,
+  );
+}
+
 async function cardPromise(
   client: QueryClient,
   candidate: JumpCardCandidate,
 ): Promise<JumpTarget | null> {
   try {
-    const located =
-      candidate.kind === "issue"
-        ? null
-        : await client.fetchQuery(
-            commentLocationQuery(candidate.slug, candidate.commentId),
-          );
-    const number =
-      candidate.kind === "issue" ? candidate.number : located?.issue_number;
-    if (number === undefined) return null;
-
     const writtenPrefix =
       candidate.kind === "issue" ? candidate.writtenPrefix : undefined;
     if (writtenPrefix !== undefined) {
@@ -422,6 +486,11 @@ async function cardPromise(
       );
       if (!writesPrefix(config, writtenPrefix)) return null;
     }
+    if (candidate.commentId !== undefined) {
+      return await commentCardPromise(client, candidate);
+    }
+    if (candidate.kind !== "issue") return null;
+    const number = candidate.number;
 
     const item = await client.fetchQuery(issueRefQuery(candidate.slug, number));
     if (item === null) return null;

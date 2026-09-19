@@ -268,7 +268,7 @@ function BodyReferencesSection() {
       <ToggleRow
         id="truncate-ref-title"
         label="Shorten long titles"
-        description="The issue number and “comment by …” are never shortened."
+        description="Full references and author names are never shortened."
         checked={truncate}
         disabled={pending}
         onChange={(checked) => patch.mutate({ truncate_ref_title: checked })}
@@ -276,7 +276,7 @@ function BodyReferencesSection() {
       <ToggleRow
         id="show-repeated-ref-title"
         label="Title on every mention"
-        description="A mention that loses its title keeps the number and “comment by …”. One that points at the card you are reading says “current” instead."
+        description="Omitting a comment title keeps its full reference and author. Comments on this card always omit the title; ordinary issue references to this card say “current” when this is off."
         checked={repeated}
         disabled={pending}
         onChange={(checked) =>

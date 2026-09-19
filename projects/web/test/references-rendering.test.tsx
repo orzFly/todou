@@ -559,13 +559,25 @@ describe("IssueLink ref placement (T-153, T-157)", () => {
     expect(link.title).toBe("Target issue T-7 (In Progress)");
   });
 
-  it("keeps the comment note trailing in either order", async () => {
-    expect((await renderLink("before", 42)).textContent).toBe(
-      "T-7 Target issue · comment by User",
-    );
-    expect((await renderLink("after", 42)).textContent).toBe(
-      "Target issue T-7 · comment by User",
-    );
+  it("keeps one complete comment token and a separate author in either order", async () => {
+    for (const placement of ["before", "after"] as const) {
+      const link = await renderLink(placement, 42);
+      expect(link.textContent).toBe(
+        placement === "before"
+          ? "T-7#comment-42 Target issue · by User"
+          : "Target issue T-7#comment-42 · by User",
+      );
+      expect(link.querySelectorAll("[data-comment-ref]")).toHaveLength(1);
+      const token = link.querySelector("[data-comment-ref]");
+      const author = link.querySelector("[data-comment-author]");
+      expect(token?.textContent).toBe("T-7#comment-42");
+      expect(author?.textContent).toBe(" · by User");
+      expect(token?.parentElement).toBe(link);
+      expect(author?.parentElement).toBe(link);
+      expect(link.getAttribute("href")).toBe(
+        "/projects/todou/issues/7#comment-42",
+      );
+    }
   });
 });
 

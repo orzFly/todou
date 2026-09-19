@@ -51,7 +51,9 @@ const DOMAIN_LABELS: Array<{ value: SearchDomain; label: string }> = [
 
 /** What a hit is called in its row, and where reading it continues. */
 function whereLabel(item: SearchItem): string {
-  if (item.kind === "comment") return "comment";
+  if (item.kind === "comment") {
+    return item.comment_id === null ? "comment" : `#comment-${item.comment_id}`;
+  }
   if (item.kind === "spec") return item.spec_path ?? "spec";
   return item.field === "title" ? "title" : "body";
 }
@@ -437,7 +439,7 @@ function JumpBanner({ slug, q }: { slug: string; q: string }) {
             <span className="truncate font-medium">{row.item.title}</span>
             {row.commentBy !== null && (
               <span className="shrink-0 text-muted-foreground">
-                · comment by {row.commentBy}
+                · by {row.commentBy}
               </span>
             )}
             <StatusPill status={row.item.status} className="ml-auto shrink-0" />
