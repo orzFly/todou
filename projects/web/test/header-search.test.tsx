@@ -6,7 +6,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import { fireEvent, render, waitFor, within } from "@testing-library/react";
 import type {
   IssueListItem,
   Label,
@@ -30,6 +30,13 @@ import {
 import { AppShell } from "../src/components/shell.tsx";
 import { historyKey, readHistory } from "../src/lib/search-history.ts";
 import { testQueryClient } from "./render.tsx";
+import {
+  COMMENT_SPELLED,
+  COMMENT_TARGET,
+  COMMENT_TITLE,
+  installSearchCommentHTTP,
+  seedSearchCommentContext,
+} from "./search-comment-fixture.ts";
 
 /**
  * The viewport happy-dom answers `matchMedia` from. Tailwind is not loaded
@@ -304,6 +311,42 @@ describe("the header's search, a card that moved away", () => {
   });
 });
 
+describe("the header's search, a migrated comment (T-434)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each([
+    [1280, "T-141#comment-1837"],
+    [390, "#comment-1837"],
+  ] as const)("keeps the final comment identity at %spx", async (width, q) => {
+    installSearchCommentHTTP(refItem(30, COMMENT_TITLE));
+    const view = renderShellAt(width);
+    seedSearchCommentContext(view.client);
+    await view.findAllByRole("link", { name: "List" });
+    if (width === 390) fireEvent.click(toggle(view.container) as Element);
+    const input = await view.findByLabelText("Search this project");
+    fireEvent.focusIn(input);
+    fireEvent.change(input, { target: { value: q } });
+    const token = await view.findByText(COMMENT_SPELLED, { exact: true });
+    const row = token.closest("a") as HTMLAnchorElement;
+    expect(token.childNodes).toHaveLength(1);
+    expect(token.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+    expect(row.textContent?.split(COMMENT_SPELLED)).toHaveLength(2);
+    const author = within(row).getByText("· by Alice", { exact: true });
+    expect(author.parentElement).toBe(token.parentElement);
+    expect(token.contains(author)).toBe(false);
+    expect(row.textContent).not.toMatch(/comment by|#comment-1837/);
+    expect(within(row).getByText(COMMENT_TITLE)).toBeTruthy();
+    expect(within(row).getByText("Next")).toBeTruthy();
+    expect(row.getAttribute("href")).toBe(COMMENT_TARGET);
+    expect(boxes(view.container)).toHaveLength(1);
+    fireEvent.click(row, { button: 0 });
+    await waitFor(() =>
+      expect(view.router.state.location.href).toBe(COMMENT_TARGET),
+    );
+    expect(readHistory(me.id).todou ?? []).toEqual([]);
+  });
+});
+
 describe("the header's project row", () => {
   it("carries the tabs, then the search, then the create button", async () => {
     const view = renderShellAt(390);
@@ -448,6 +491,8 @@ describe("the search box's own history", () => {
 
     const link = historyRows(view)[1]?.querySelector("a") as HTMLAnchorElement;
     expect(link.getAttribute("href")).toBe("/projects/todou/search?q=spec");
+    expect(link.textContent).toBe("spec");
+    expect(link.textContent).not.toMatch(/#comment-|· by|comment by/);
     fireEvent.click(link);
 
     await waitFor(() =>

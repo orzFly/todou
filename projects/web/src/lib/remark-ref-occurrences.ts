@@ -23,7 +23,7 @@ const XREF_COMMENT_HREF = /^#xref-comment-(\d{1,9})$/;
 /**
  * Which card a link names. The comment id is deliberately not part of it: an
  * issue link and a comment link to the same card are the same target, so the
- * second one keeps "comment by X" and loses only the title.
+ * second one keeps its full reference and author, losing only the title.
  *
  * A stored reference spells its project as an id and a written one as a slug,
  * and translating between them needs the viewer's project directory, which a

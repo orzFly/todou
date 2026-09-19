@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { act, fireEvent, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import type {
   Attachment,
   Issue,
@@ -11,7 +11,7 @@ import type {
   TimelineComment,
   TimelineEvent,
 } from "@todou/shared";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   attachmentsQuery,
   attachmentTextQuery,
@@ -23,7 +23,12 @@ import {
 } from "../src/api/issue-refs.ts";
 import { issueQuery } from "../src/api/issues.ts";
 import { prefsQuery } from "../src/api/prefs.ts";
-import { projectsQuery } from "../src/api/queries.ts";
+import {
+  labelsQuery,
+  membersQuery,
+  projectsQuery,
+  statusesQuery,
+} from "../src/api/queries.ts";
 import {
   referenceConfigQuery,
   referenceDirectoryQuery,
@@ -123,8 +128,17 @@ const BODY = "the preview body, in full";
 
 const directory: ReferenceDirectory = { entries: [], contested: [] };
 
+const clients: QueryClient[] = [];
+
+afterEach(() => {
+  cleanup();
+  for (const client of clients.splice(0)) client.clear();
+  vi.restoreAllMocks();
+});
+
 function seeded(comment: TimelineComment = commentOf(42, BODY)): QueryClient {
   const client = testQueryClient();
+  clients.push(client);
   client.setQueryData(referenceConfigQuery("todou").queryKey, config);
   // Every query the preview's own MarkdownView mounts, so a cache miss cannot
   // be mistaken for a request the hover itself made.
@@ -150,7 +164,50 @@ function seeded(comment: TimelineComment = commentOf(42, BODY)): QueryClient {
     }),
   );
   client.setQueryData(prefsQuery.queryKey, PREFS);
+  client.setQueryData(labelsQuery("todou").queryKey, []);
+  client.setQueryData(statusesQuery("todou").queryKey, [
+    refItem(7, "Target").status,
+  ]);
+  client.setQueryData(membersQuery("todou").queryKey, []);
+  const pageKey = issueQuery("todou", 1).queryKey;
+  client.setQueryDefaults(pageKey, { staleTime: 60_000 });
+  client.setQueryData<Issue>(pageKey, {
+    ...refItem(1, "Reading page"),
+    body: "",
+  });
   return client;
+}
+
+function expectCommentIdentity(trigger: Element) {
+  const refs = trigger.querySelectorAll("[data-comment-ref]");
+  expect(refs).toHaveLength(1);
+  const ref = refs[0] as HTMLElement;
+  const parts = [...ref.querySelectorAll("[data-ref-part]")];
+  expect(parts.map((part) => part.textContent).join("")).toBe("T-7#comment-42");
+  for (const part of parts) {
+    expect(
+      part.closest("[hidden], [aria-hidden='true'], .hidden, .sr-only"),
+    ).toBeNull();
+    expect(getComputedStyle(part).display).not.toBe("none");
+    expect(getComputedStyle(part).visibility).not.toBe("hidden");
+    expect(getComputedStyle(part).visibility).not.toBe("collapse");
+  }
+  expect(
+    ref.closest("[hidden], [aria-hidden='true'], .hidden, .sr-only"),
+  ).toBeNull();
+  expect(getComputedStyle(ref).display).not.toBe("none");
+  expect(getComputedStyle(ref).visibility).not.toBe("hidden");
+  const authors = trigger.querySelectorAll("[data-comment-author]");
+  expect(authors).toHaveLength(1);
+  expect(authors[0]?.textContent).toBe(" by Alice");
+  expect(ref.contains(authors[0] ?? null)).toBe(false);
+  expect(authors[0]?.contains(ref)).toBe(false);
+  expect([...trigger.querySelectorAll("[data-ref-part]")]).toEqual(parts);
+  expect(trigger.textContent?.match(/#comment-\d+/g)).toEqual(["#comment-42"]);
+  expect(trigger.textContent).not.toContain("comment by");
+  expect(trigger.getAttribute("href")).toBe(
+    "/projects/todou/issues/7#comment-42",
+  );
 }
 
 // React synthesizes onPointerEnter from the pointerover/pointerout pair, so
@@ -192,6 +249,7 @@ describe("comment hover card (T-371)", () => {
       expect(el).not.toBeNull();
       return el as HTMLElement;
     });
+    expectCommentIdentity(trigger);
     hover(trigger);
     const card = await opened();
     expect(card.textContent).toContain(BODY);
@@ -237,9 +295,12 @@ describe("comment hover card (T-371)", () => {
       expect(el).not.toBeNull();
       return el as HTMLElement;
     });
+    expectCommentIdentity(trigger);
     const before = fetchSpy.mock.calls.map((call) => String(call[0]));
     hover(trigger);
-    await opened();
+    const card = await opened();
+    expect(card.textContent).toContain(BODY);
+    expect(card.textContent).toContain("Alice");
     expect(fetchSpy.mock.calls.map((call) => String(call[0]))).toEqual(before);
     fetchSpy.mockRestore();
   });
@@ -261,23 +322,61 @@ describe("comment hover card (T-371)", () => {
     expect(cards()).toHaveLength(0);
   });
 
-  it("does not spread the hidden comment's body", async () => {
-    const view = renderWithProviders(
-      <MarkdownView slug="todou">
-        {"see [T-7#comment-42](/projects/todou/issues/7#comment-42)"}
-      </MarkdownView>,
-      seeded(commentOf(42, "kept out of sight", "2026-08-13T00:00:00Z")),
-    );
-    const trigger = await waitFor(() => {
-      const el = view.container.querySelector("a[data-comment-link='42']");
-      expect(el).not.toBeNull();
-      return el as HTMLElement;
-    });
-    hover(trigger);
-    const card = await opened();
-    expect(card.textContent).not.toContain("kept out of sight");
-    expect(card.textContent).toContain("hidden");
-  });
+  it.each([
+    ["hidden", true, false],
+    ["resolved", false, true],
+    ["hidden and resolved", true, true],
+  ] as const)(
+    "retains the full ID for a readable %s comment and preserves hover privacy",
+    async (_state, hidden, resolved) => {
+      const body = "The confirmed comment's full body";
+      const note: TimelineComment = {
+        ...commentOf(42, body, hidden ? "2026-08-13T00:00:00Z" : null),
+        resolved_at: resolved ? "2026-08-13T01:00:00Z" : null,
+      };
+      const client = seeded(note);
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      const view = renderWithProviders(
+        <MarkdownView slug="todou">
+          {"see [T-7#comment-42](/projects/todou/issues/7#comment-42)"}
+        </MarkdownView>,
+        client,
+      );
+      const trigger = await waitFor(() => {
+        const el = view.container.querySelector("a[data-comment-link='42']");
+        expect(el).not.toBeNull();
+        return el as HTMLElement;
+      });
+      expectCommentIdentity(trigger);
+      for (const key of [
+        issueRefQuery("todou", 7).queryKey,
+        commentRefQuery("todou", 7, 42).queryKey,
+      ]) {
+        const state = client.getQueryState(key);
+        expect(state).toMatchObject({
+          status: "success",
+          fetchStatus: "idle",
+          isInvalidated: false,
+        });
+        expect(Date.now() - (state?.dataUpdatedAt ?? 0)).toBeLessThan(60_000);
+      }
+      hover(trigger);
+      const card = await opened();
+      expect(card.textContent).toContain("Alice");
+      expect(
+        card.querySelector('a[href="/projects/todou/issues/7#comment-42"]'),
+      ).not.toBeNull();
+      if (hidden) {
+        expect(card.textContent).toContain("This comment is hidden.");
+        expect(document.body.textContent).not.toContain(body);
+      } else {
+        expect(card.textContent).toContain(body);
+        expect(card.textContent).not.toContain("This comment is hidden.");
+      }
+      expectCommentIdentity(trigger);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("stops at one level: the preview's own comment link is not a trigger", async () => {
     const view = renderWithProviders(
@@ -313,9 +412,15 @@ describe("comment hover card (T-371)", () => {
       event_type: "referenced",
       actor: author,
       agent_context: null,
-      payload: { by_issue: 7, by_comment: 42 },
+      payload: {
+        by_project: "todou",
+        by_project_id: 1,
+        by_issue: 7,
+        by_comment: 42,
+      },
       created_at: "2026-08-12T00:00:00Z",
     };
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
     const view = renderWithProviders(
       <EventRow event={event} slug="todou" />,
       seeded(),
@@ -325,9 +430,18 @@ describe("comment hover card (T-371)", () => {
       expect(el).not.toBeNull();
       return el as HTMLElement;
     });
+    expectCommentIdentity(trigger);
+    expect(trigger.className).toBe("font-medium hover:underline");
+    expect(
+      trigger.querySelector(".inline-flex, .border, .truncate, .flex-none"),
+    ).toBeNull();
     hover(trigger);
     const card = await opened();
     expect(card.textContent).toContain(BODY);
+    expect(
+      card.querySelector('a[href="/projects/todou/issues/7#comment-42"]'),
+    ).not.toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("draws a text document embed as a link, not a broken image", async () => {

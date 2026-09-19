@@ -485,7 +485,15 @@ describe("reference invalidation", () => {
     );
     expect(rich.getAttribute("data-issue-link")).toBe("3");
     expect(rich.textContent).toContain("Parent");
-    expect(rich.textContent).toContain("comment by User");
+    const token = rich.querySelector("[data-comment-ref]");
+    const author = rich.querySelector("[data-comment-author]");
+    expect(
+      [...rich.querySelectorAll("[data-ref-part]")]
+        .map((part) => part.textContent)
+        .join(""),
+    ).toBe("#3#comment-42");
+    expect(author?.textContent).toBe(" by User");
+    expect(token?.contains(author)).toBe(false);
     const commentKey = commentRefQuery("todou", 3, 42).queryKey;
     expect(client.getQueryState(locationKey)?.dataUpdatedAt).toBe(updatedAt);
     expect(client.getQueryState(commentKey)?.dataUpdatedAt).toBe(updatedAt);

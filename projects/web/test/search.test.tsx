@@ -5,6 +5,7 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
 import {
@@ -24,7 +25,12 @@ import type {
   SearchPage,
 } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { issueRefQuery } from "../src/api/issue-refs.ts";
+import {
+  commentLocationQuery,
+  commentRefQuery,
+  issueRefQuery,
+  type ResolvedCommentRef,
+} from "../src/api/issue-refs.ts";
 import { recentOpenIssuesQuery } from "../src/api/issues.ts";
 import {
   api,
@@ -49,8 +55,28 @@ import {
 } from "../src/api/search.ts";
 import { SearchBox } from "../src/components/search-box.tsx";
 import { SearchHighlight } from "../src/components/search-highlight.tsx";
-import { groupByIssue, SearchResults } from "../src/pages/search.tsx";
+import {
+  ReturnViewProvider,
+  useRegisterReturnCollection,
+} from "../src/components/shared/return-context.tsx";
+import type { ReturnView } from "../src/lib/return-view.ts";
+import {
+  groupByIssue,
+  SearchPage as SearchPageComponent,
+  SearchResults,
+} from "../src/pages/search.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
+import {
+  COMMENT_INPUTS,
+  COMMENT_SPELLED,
+  COMMENT_TARGET,
+  COMMENT_TITLE,
+  installSearchCommentHTTP,
+  movedComment,
+  searchJson,
+  seedMovedComment,
+  seedSearchCommentContext,
+} from "./search-comment-fixture.ts";
 
 // The box remembers what it was asked to search (T-270), and one case's
 // searches would otherwise turn up as history rows in the next one's panel.
@@ -245,6 +271,8 @@ describe("search results", () => {
     expect(link?.getAttribute("href")).toBe("/projects/todou/issues/141");
     expect(link?.textContent).toContain("全文搜索");
     expect(link?.textContent).toContain("Next");
+    expect(link?.querySelector(".font-mono")?.textContent).toBe("T-141");
+    expect(link?.textContent).not.toMatch(/#comment-|· by|comment by/);
   });
 
   it("offers nothing when there is no such card", async () => {
@@ -293,6 +321,8 @@ describe("search results", () => {
     const link = (await findByText("GH-76")).closest("a");
     expect(link?.getAttribute("href")).toBe("https://github.com/o/r/issues/76");
     expect(link?.getAttribute("target")).toBe("_blank");
+    expect(link?.querySelector(".font-mono")?.textContent).toBe("GH-76");
+    expect(link?.textContent).not.toMatch(/#comment-|· by|comment by/);
   });
 
   it("offers the project's home when a shared link names one", async () => {
@@ -306,6 +336,8 @@ describe("search results", () => {
     const link = (await findByText("M-")).closest("a");
     expect(link?.getAttribute("href")).toBe("/projects/mirror");
     expect(link?.textContent).toContain("Mirror");
+    expect(link?.querySelector(".font-mono")?.textContent).toBe("M-");
+    expect(link?.textContent).not.toMatch(/#comment-|· by|comment by/);
   });
 
   it("says so when nothing matched", async () => {
@@ -323,11 +355,32 @@ describe("search results", () => {
  * shared shim's memory history leaves `window.location` untouched, so
  * reading the router back is the only way to see where it went.
  */
+const SEARCH_ORIGIN: ReturnView = {
+  v: 1,
+  userId: 1,
+  snapshotId: "search-comment-origin",
+  target: { kind: "board", slug: "todou" },
+  pages: [],
+  scroll: [],
+};
+
+function SearchOrigin() {
+  useRegisterReturnCollection(() => SEARCH_ORIGIN);
+  return null;
+}
+
 function renderBox(
   client: QueryClient = testQueryClient(),
   { boxes = 1, onEscape }: { boxes?: number; onEscape?: () => void } = {},
 ) {
-  const rootRoute = createRootRoute();
+  const rootRoute = createRootRoute({
+    component: () => (
+      <ReturnViewProvider viewerId={1}>
+        <SearchOrigin />
+        <Outlet />
+      </ReturnViewProvider>
+    ),
+  });
   const Boxes = () => (
     <>
       <SearchBox slug="todou" onEscape={onEscape} />
@@ -372,6 +425,7 @@ function renderBox(
   );
   return {
     ...utils,
+    router,
     where: () => ({
       pathname: router.state.location.pathname,
       search: router.state.location.search,
@@ -420,7 +474,7 @@ function seedBox(autolinks: Autolink[] = []): QueryClient {
 
 describe("SearchBox", () => {
   it("submits to the results page, trimming what it sends", async () => {
-    const { container, findByLabelText, where } = renderBox();
+    const { container, findByLabelText, where, router } = renderBox();
     const input = (await findByLabelText(
       "Search this project",
     )) as HTMLInputElement;
@@ -432,6 +486,8 @@ describe("SearchBox", () => {
         search: { q: "中文分词" },
       }),
     );
+    expect(router.state.location.hash).toBe("");
+    expect(container.textContent).not.toMatch(/#comment-|· by|comment by/);
   });
 
   it("does not navigate on an empty query", async () => {
@@ -482,6 +538,9 @@ describe("SearchBox · the jump offer", () => {
     expect(card?.textContent).toContain("T-141");
     expect(card?.textContent).toContain("全文搜索");
     expect(card?.textContent).toContain("Next");
+    expect(card?.querySelector(".font-mono")?.textContent).toBe("T-141");
+    expect(card?.textContent).not.toMatch(/#comment-|· by|comment by/);
+    expect(search?.textContent).toBe("Search for “T-141”");
     // Offered, not chosen: nothing is preselected (T-262), and Enter reaches
     // the card by resolving the reference rather than by following a
     // highlight the reader never asked for.
@@ -727,6 +786,8 @@ describe("SearchBox · the jump offer", () => {
     );
     expect(external?.getAttribute("target")).toBe("_blank");
     expect(external?.getAttribute("rel")).toBe("noreferrer");
+    expect(external?.querySelector(".font-mono")?.textContent).toBe("GH-76");
+    expect(external?.textContent).not.toMatch(/#comment-|· by|comment by/);
 
     submit(utils.container);
     await waitFor(() =>
@@ -1500,6 +1561,8 @@ describe("SearchBox · qualifier completion", () => {
     const [home] = optionsOf(utils.container);
     expect(home?.getAttribute("href")).toBe("/projects/mirror");
     expect(home?.textContent).toContain("M-");
+    expect(home?.querySelector(".font-mono")?.textContent).toBe("M-");
+    expect(home?.textContent).not.toMatch(/#comment-|· by|comment by/);
     expect(home?.querySelector("img")?.getAttribute("src")).toBe(
       "/api/projects/2/icon?v=search-jump",
     );
@@ -1527,6 +1590,7 @@ describe("SearchBox · qualifier completion", () => {
     expect(texts.at(-1)).toContain("Search for");
     const card = optionsOf(utils.container)[1] as Element;
     expect(card.getAttribute("href")).toBe("/projects/mirror/issues/1");
+    expect(card.textContent).not.toMatch(/#comment-|· by|comment by/);
   });
 
   it("spells those cards the way the box is being typed in", async () => {
@@ -1606,5 +1670,525 @@ describe("SearchBox · qualifier completion", () => {
     await waitFor(() => expect(mirror?.textContent).toBe("label:不存在 慢"));
     // The label does not exist in this project, and the mirror says so.
     expect(mirror?.innerHTML).toContain("decoration-wavy");
+  });
+});
+
+/** The actual page route, including the return state its links carry. */
+function renderCommentPage(
+  client: QueryClient,
+  q: string,
+  items: SearchItem[] = [],
+) {
+  client.setQueryData(searchQuery("todou", { q }).queryKey, {
+    items,
+    has_more: false,
+    diagnostics: [],
+  });
+  const rootRoute = createRootRoute();
+  const authedRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    id: "authed",
+    component: () => (
+      <ReturnViewProvider viewerId={1}>
+        <Outlet />
+      </ReturnViewProvider>
+    ),
+  });
+  const projectRoute = createRoute({
+    getParentRoute: () => authedRoute,
+    path: "projects/$slug",
+  });
+  const searchRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "search",
+    validateSearch: searchPageSchema,
+    component: SearchPageComponent,
+  });
+  const issueRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "issues/$number",
+  });
+  const specRoute = createRoute({
+    getParentRoute: () => projectRoute,
+    path: "issues/$number/spec",
+  });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([
+      authedRoute.addChildren([
+        projectRoute.addChildren([searchRoute, issueRoute, specRoute]),
+      ]),
+    ]),
+    history: createMemoryHistory({
+      initialEntries: [`/projects/todou/search?${new URLSearchParams({ q })}`],
+    }),
+  });
+  return {
+    ...render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    ),
+    router,
+  };
+}
+
+/** Reject split, duplicated, hidden, or author-contaminated identity tokens. */
+function expectCommentOffer(row: HTMLElement) {
+  const token = within(row).getByText(COMMENT_SPELLED, { exact: true });
+  expect(token.tagName).toBe("SPAN");
+  expect(token.childNodes).toHaveLength(1);
+  expect(token.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+  expect(token.closest("[hidden], [aria-hidden='true']")).toBeNull();
+  expect(row.textContent?.split(COMMENT_SPELLED)).toHaveLength(2);
+  const author = within(row).getByText("· by Alice", { exact: true });
+  expect(author).not.toBe(token);
+  expect(token.contains(author)).toBe(false);
+  expect(author.parentElement).toBe(token.parentElement);
+  expect(row.textContent).not.toContain("comment by");
+  expect(row.textContent).not.toContain("#comment-1837");
+  expect(within(row).getByText(COMMENT_TITLE)).toBeTruthy();
+  expect(within(row).getByText("Next")).toBeTruthy();
+  expect(row.getAttribute("href")).toBe(COMMENT_TARGET);
+}
+
+describe("search consumers · migrated comments (T-434)", () => {
+  it.each(COMMENT_INPUTS)(
+    "offers and clicks the final full target for %s through HTTP aliases",
+    async (q) => {
+      const client = seedSearchCommentContext(testQueryClient());
+      const requested = installSearchCommentHTTP(refItem(30, COMMENT_TITLE));
+      const view = renderBox(client);
+      const input = await typeInto(view, q);
+      const token = await view.findByText(COMMENT_SPELLED, { exact: true });
+      const row = token.closest("a") as HTMLAnchorElement;
+      expect(row.getAttribute("role")).toBe("option");
+      expectCommentOffer(row);
+      expect(input.getAttribute("aria-activedescendant")).toBeNull();
+      expect(row.getAttribute("aria-selected")).toBe("false");
+      expect(requested).toContain(
+        q.startsWith("T-")
+          ? "/projects/todou/issues/141/comments/1837"
+          : "/projects/todou/comments/1837",
+      );
+      expect(
+        requested.filter(
+          (path) => path === "/projects/mirror/issues/30/comments/900",
+        ),
+      ).toHaveLength(1);
+      expect(requested).not.toContain(
+        "/projects/mirror/issues/30/comments/1837",
+      );
+      if (q.startsWith("#comment-")) {
+        expect(
+          client.getQueryData(commentLocationQuery("todou", 1837).queryKey),
+        ).toMatchObject({
+          slug: "mirror",
+          issue_number: 30,
+          comment: { id: 900 },
+        });
+        expect(
+          client.getQueryData(commentRefQuery("mirror", 30, 900).queryKey),
+        ).toBeUndefined();
+      }
+      fireEvent.click(row, { ctrlKey: true });
+      expect(view.router.state.location.pathname).toBe("/");
+      expect(listboxOf(view.container)).not.toBeNull();
+      fireEvent.click(row, { button: 0 });
+      await waitFor(() =>
+        expect(view.router.state.location.href).toBe(COMMENT_TARGET),
+      );
+      expect(view.router.state.location.state).toMatchObject({
+        todouReturn: { origin: SEARCH_ORIGIN },
+      });
+    },
+  );
+
+  it.each(COMMENT_INPUTS)(
+    "Enter waits for the real destination promise for %s",
+    async (q) => {
+      const client = seedSearchCommentContext(testQueryClient());
+      const response = deferred<Response>();
+      const requested = installSearchCommentHTTP(
+        refItem(30, COMMENT_TITLE),
+        () => response.promise,
+      );
+      const view = renderBox(client);
+      const input = await typeInto(view, q);
+      await waitFor(() =>
+        expect(requested).toContain("/projects/mirror/issues/30/comments/900"),
+      );
+      expect(input.getAttribute("aria-activedescendant")).toBeNull();
+      const pending = view.getByRole("option", {
+        name: "Looking up the card…",
+      });
+      expect(pending.tagName).toBe("DIV");
+      expect(view.container.querySelector("a[href*='#comment-']")).toBeNull();
+      expect(view.queryByText(COMMENT_TITLE)).toBeNull();
+      expect(view.queryByText("· by Alice")).toBeNull();
+      // A form submit is the browser's Enter default action. With no selected
+      // row it must execute jumpDestinationPromise, not the ready-row shortcut.
+      submit(view.container);
+      await waitFor(() => expect(input.getAttribute("aria-busy")).toBe("true"));
+      expect(view.router.state.location.pathname).toBe("/");
+      const { at: _at, ...comment } = movedComment();
+      response.resolve(searchJson(comment));
+      await waitFor(() =>
+        expect(view.router.state.location.href).toBe(COMMENT_TARGET),
+      );
+      expect(view.router.state.location.hash).toBe("comment-900");
+      expect(view.router.state.location.state).toMatchObject({
+        todouReturn: { origin: SEARCH_ORIGIN },
+      });
+      expect(
+        requested.filter(
+          (path) => path === "/projects/mirror/issues/30/comments/900",
+        ),
+      ).toHaveLength(1);
+    },
+  );
+
+  it.each(COMMENT_INPUTS)(
+    "SearchPage's banner displays and clicks the same final target for %s",
+    async (q) => {
+      const client = seedSearchCommentContext(testQueryClient());
+      installSearchCommentHTTP(refItem(30, COMMENT_TITLE));
+      const view = renderCommentPage(client, q);
+      const token = await view.findByText(COMMENT_SPELLED, { exact: true });
+      const row = token.closest("a") as HTMLAnchorElement;
+      expectCommentOffer(row);
+      fireEvent.click(row, { button: 0 });
+      await waitFor(() =>
+        expect(view.router.state.location.href).toBe(COMMENT_TARGET),
+      );
+      expect(view.router.state.location.state).toMatchObject({
+        todouReturn: {
+          origin: {
+            userId: 1,
+            target: { kind: "search", slug: "todou", search: { q } },
+          },
+        },
+      });
+    },
+  );
+
+  it.each(["null", "error", "parent mismatch", "ID mismatch"] as const)(
+    "withholds both offers and searches on Enter after a %s comment",
+    async (failure) => {
+      const client = seedMovedComment(
+        testQueryClient(),
+        refItem(30, COMMENT_TITLE),
+      );
+      const query = commentRefQuery("todou", 141, 1837);
+      const note = movedComment();
+      if (failure === "null") client.setQueryData(query.queryKey, null);
+      if (failure === "parent mismatch") {
+        client.setQueryData<ResolvedCommentRef | null>(query.queryKey, () => ({
+          ...note,
+          at: { ...note.at, number: 31 },
+        }));
+      }
+      if (failure === "ID mismatch") {
+        client.setQueryData<ResolvedCommentRef | null>(query.queryKey, () => ({
+          ...note,
+          id: 901,
+        }));
+      }
+      if (failure === "error") {
+        client.removeQueries({ queryKey: query.queryKey });
+        installSearchCommentHTTP(refItem(30, COMMENT_TITLE), () =>
+          searchJson(
+            { error: { code: "unavailable", message: "offline" } },
+            500,
+          ),
+        );
+      }
+      const view = renderBox(client);
+      const page = renderCommentPage(client, "T-141#comment-1837");
+      await typeInto(view, "T-141#comment-1837");
+      await page.findByText(/Nothing matched/);
+      await waitFor(() =>
+        expect(client.getQueryState(query.queryKey)?.status).toBe(
+          failure === "error" ? "error" : "success",
+        ),
+      );
+      for (const root of [view, page]) {
+        expect(root.container.querySelector("a[href*='#comment-']")).toBeNull();
+        expect(root.queryByText(COMMENT_TITLE)).toBeNull();
+        expect(root.queryByText("· by Alice")).toBeNull();
+      }
+      submit(view.container);
+      await waitFor(() =>
+        expect(view.where()).toEqual({
+          pathname: "/projects/todou/search",
+          search: { q: "T-141#comment-1837" },
+        }),
+      );
+      expect(view.router.state.location.hash).toBe("");
+    },
+  );
+
+  it("withdraws both ready offers during invalidation, refusal, and recovery", async () => {
+    const client = seedMovedComment(
+      testQueryClient(),
+      refItem(30, COMMENT_TITLE),
+    );
+    const response = deferred<Response>();
+    installSearchCommentHTTP(
+      refItem(30, COMMENT_TITLE),
+      () => response.promise,
+    );
+    const view = renderBox(client);
+    const page = renderCommentPage(client, "T-141#comment-1837");
+    await typeInto(view, "T-141#comment-1837");
+    await within(view.container).findByText(COMMENT_SPELLED, { exact: true });
+    await within(page.container).findByText(COMMENT_SPELLED, { exact: true });
+    const query = commentRefQuery("todou", 141, 1837);
+    let refresh!: Promise<void>;
+    act(() => {
+      refresh = client.invalidateQueries({ queryKey: query.queryKey });
+    });
+    await waitFor(() => {
+      for (const root of [view, page]) {
+        expect(root.container.querySelector("a[href*='#comment-']")).toBeNull();
+        expect(root.queryByText(COMMENT_TITLE)).toBeNull();
+        expect(root.queryByText("· by Alice")).toBeNull();
+      }
+    });
+    expect(
+      view.getByRole("option", { name: "Looking up the card…" }).tagName,
+    ).toBe("DIV");
+    response.resolve(
+      searchJson({ error: { code: "forbidden", message: "no" } }, 403),
+    );
+    await act(() => refresh);
+    await waitFor(() => expect(client.getQueryData(query.queryKey)).toBeNull());
+    for (const root of [view, page]) {
+      expect(root.container.querySelector("a[href*='#comment-']")).toBeNull();
+    }
+    installSearchCommentHTTP(refItem(30, COMMENT_TITLE));
+    await act(() => client.invalidateQueries({ queryKey: query.queryKey }));
+    for (const root of [view, page]) {
+      const token = await within(root.container).findByText(COMMENT_SPELLED, {
+        exact: true,
+      });
+      expectCommentOffer(token.closest("a") as HTMLAnchorElement);
+    }
+  });
+
+  it.each(["refused", "moved again"] as const)(
+    "reconfirms a selected comment invalidated in the submit task: %s",
+    async (outcome) => {
+      const client = seedMovedComment(
+        testQueryClient(),
+        refItem(30, COMMENT_TITLE),
+      );
+      const view = renderBox(client);
+      const input = await typeInto(view, "T-141#comment-1837");
+      const token = await view.findByText(COMMENT_SPELLED, { exact: true });
+      const row = token.closest("a") as HTMLAnchorElement;
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      expect(row.getAttribute("aria-selected")).toBe("true");
+      expect(input.getAttribute("aria-activedescendant")).toBe(row.id);
+
+      const response = deferred<Response>();
+      const requested = installSearchCommentHTTP(
+        refItem(31, "Moved once more"),
+        () => response.promise,
+        901,
+      );
+      const visited: string[] = [];
+      const unsubscribe = view.router.subscribe("onResolved", () => {
+        visited.push(view.router.state.location.href);
+      });
+      act(() => {
+        void client.invalidateQueries({
+          queryKey: commentRefQuery("todou", 141, 1837).queryKey,
+          refetchType: "none",
+        });
+        void client.invalidateQueries({
+          queryKey: issueRefQuery("todou", 141).queryKey,
+          refetchType: "none",
+        });
+        // Deliberately submit before React can remove the selected ready row.
+        expect(row.getAttribute("href")).toBe(COMMENT_TARGET);
+        expect(row.getAttribute("aria-selected")).toBe("true");
+        submit(view.container);
+      });
+      await waitFor(() => expect(input.getAttribute("aria-busy")).toBe("true"));
+      await waitFor(() =>
+        expect(requested).toContain("/projects/mirror/issues/31/comments/901"),
+      );
+      expect(view.router.state.location.pathname).toBe("/");
+      expect(visited).not.toContain(COMMENT_TARGET);
+
+      const { at: _at, ...comment } = movedComment();
+      response.resolve(
+        outcome === "refused"
+          ? searchJson({ error: { code: "forbidden", message: "no" } }, 403)
+          : searchJson({ ...comment, id: 901 }),
+      );
+      if (outcome === "refused") {
+        await waitFor(() =>
+          expect(view.where()).toEqual({
+            pathname: "/projects/todou/search",
+            search: { q: "T-141#comment-1837" },
+          }),
+        );
+        expect(view.router.state.location.hash).toBe("");
+      } else {
+        await waitFor(() =>
+          expect(view.router.state.location.href).toBe(
+            "/projects/mirror/issues/31#comment-901",
+          ),
+        );
+        expect(view.router.state.location.state).toMatchObject({
+          todouReturn: { origin: SEARCH_ORIGIN },
+        });
+      }
+      expect(visited).not.toContain(COMMENT_TARGET);
+      unsubscribe();
+    },
+  );
+
+  it("searches when Enter follows an already cached background comment error", async () => {
+    const client = seedMovedComment(
+      testQueryClient(),
+      refItem(30, COMMENT_TITLE),
+    );
+    const view = renderBox(client);
+    await typeInto(view, "T-141#comment-1837");
+    await view.findByText(COMMENT_SPELLED, { exact: true });
+    installSearchCommentHTTP(refItem(30, COMMENT_TITLE), () =>
+      searchJson({ error: { code: "unavailable", message: "offline" } }, 500),
+    );
+    const query = commentRefQuery("todou", 141, 1837);
+    await act(() => client.invalidateQueries({ queryKey: query.queryKey }));
+    await waitFor(() => {
+      expect(client.getQueryState(query.queryKey)?.status).toBe("error");
+      expect(client.getQueryState(query.queryKey)?.fetchStatus).toBe("idle");
+      expect(view.queryByText(COMMENT_SPELLED, { exact: true })).toBeNull();
+    });
+    // TanStack retains the old successful data after a background error.
+    expect(client.getQueryData(query.queryKey)).toMatchObject({
+      id: 900,
+      at: { slug: "mirror", number: 30, commentId: 900 },
+    });
+    expect(view.container.querySelector("a[href*='#comment-']")).toBeNull();
+    expect(view.router.state.location.pathname).toBe("/");
+    // Only now press Enter: this cannot pass merely by joining the failed request.
+    submit(view.container);
+    await waitFor(() =>
+      expect(view.where()).toEqual({
+        pathname: "/projects/todou/search",
+        search: { q: "T-141#comment-1837" },
+      }),
+    );
+    expect(view.router.state.location.hash).toBe("");
+  });
+});
+
+describe("search hits · comment identity (T-434)", () => {
+  it("labels each comment ID while preserving snippets, hidden flags, grouping, and other hit kinds", async () => {
+    const client = seedJumpContext(testQueryClient());
+    const getComment = vi.spyOn(api, "getComment");
+    const locateComment = vi.spyOn(api, "locateComment");
+    const items = [
+      hit({ snippet: { text: "Title match", ranges: [[0, 5]] } }),
+      hit({ field: "body", snippet: { text: "Body match", ranges: [[0, 4]] } }),
+      hit({
+        kind: "comment",
+        field: "body",
+        comment_id: 88,
+        snippet: { text: "Visible match", ranges: [[0, 7]] },
+      }),
+      hit({
+        kind: "comment",
+        field: "body",
+        comment_id: 89,
+        hidden: true,
+        snippet: { text: "Hidden match", ranges: [[0, 6]] },
+      }),
+      hit({
+        kind: "comment",
+        field: "body",
+        snippet: { text: "Legacy match", ranges: [] },
+      }),
+      hit({
+        kind: "spec",
+        spec_path: "design.md",
+        field: "body",
+        snippet: { text: "Spec match", ranges: [[0, 4]] },
+      }),
+      hit({
+        kind: "spec",
+        issue: { number: 99, title: "Other card", status },
+        field: "body",
+        snippet: { text: "Legacy spec", ranges: [] },
+      }),
+    ];
+    const view = renderCommentPage(client, "match", items);
+    await view.findByText("#comment-88", { exact: true });
+    const cases = [
+      ["title", "/projects/todou/issues/141", "Title match", "Title", false],
+      ["body", "/projects/todou/issues/141", "Body match", "Body", false],
+      [
+        "#comment-88",
+        "/projects/todou/issues/141#comment-88",
+        "Visible match",
+        "Visible",
+        false,
+      ],
+      [
+        "#comment-89",
+        "/projects/todou/issues/141#comment-89",
+        "Hidden match",
+        "Hidden",
+        true,
+      ],
+      ["comment", "/projects/todou/issues/141", "Legacy match", null, false],
+      [
+        "design.md",
+        "/projects/todou/issues/141/spec?file=design.md",
+        "Spec match",
+        "Spec",
+        false,
+      ],
+      ["spec", "/projects/todou/issues/99/spec", "Legacy spec", null, false],
+    ] as const;
+    for (const [label, href, snippet, mark, hidden] of cases) {
+      const row = view
+        .getByText(label, { exact: true })
+        .closest("a") as HTMLAnchorElement;
+      expect(row.firstElementChild?.textContent).toBe(label);
+      expect(row.getAttribute("href")).toBe(href);
+      expect(row.textContent).toContain(snippet);
+      expect(row.querySelector("mark")?.textContent ?? null).toBe(mark);
+      expect(
+        row.querySelector("[data-testid='hit-hidden-badge']") !== null,
+      ).toBe(hidden);
+      if (!label.startsWith("#comment-")) {
+        expect(row.textContent).not.toMatch(/#comment-|· by|comment by/);
+      }
+    }
+    expect(view.getAllByText("全文搜索", { exact: true })).toHaveLength(1);
+    expect(view.getAllByText("Next", { exact: true })).toHaveLength(2);
+    expect(view.queryByText("#comment-null")).toBeNull();
+    expect(getComment).not.toHaveBeenCalled();
+    expect(locateComment).not.toHaveBeenCalled();
+    fireEvent.click(
+      view.getByText("#comment-88").closest("a") as HTMLAnchorElement,
+    );
+    await waitFor(() =>
+      expect(view.router.state.location.href).toBe(
+        "/projects/todou/issues/141#comment-88",
+      ),
+    );
+    expect(view.router.state.location.state).toMatchObject({
+      todouReturn: {
+        origin: {
+          target: { kind: "search", slug: "todou", search: { q: "match" } },
+        },
+      },
+    });
   });
 });

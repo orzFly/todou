@@ -1,0 +1,84 @@
+/* Only successful comment links in Markdown bodies opt into this layout. */
+.comment-link-body {
+  display: inline;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  line-height: 1.2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.comment-link-body .comment-reference-icon {
+  margin-right: 0.24em;
+  vertical-align: -0.15em;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.comment-reference-body {
+  display: inline;
+  white-space: normal;
+}
+
+.comment-reference-body [data-comment-ref] {
+  user-select: all;
+  -webkit-user-select: all;
+}
+
+.comment-reference-body .comment-reference-identity {
+  white-space: nowrap;
+}
+
+.comment-reference-body .comment-reference-segment {
+  display: inline-block;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+.comment-reference-body [data-comment-clipped] > .comment-reference-head {
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Inline overflow boxes otherwise use their bottom border as a baseline. */
+  vertical-align: bottom;
+}
+
+.comment-reference-body [data-comment-wrap] .comment-reference-identity {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.comment-reference-body [data-comment-wrap] .comment-reference-segment {
+  display: inline;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.comment-reference-body [data-comment-title],
+.comment-reference-body [data-comment-decoration],
+.comment-reference-body [data-comment-author] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.comment-reference-body .comment-reference-title {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.comment-reference-body .comment-reference-title.max-w-\[24em\] {
+  max-width: 24em;
+}
+
+.comment-reference-body [data-comment-author] {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

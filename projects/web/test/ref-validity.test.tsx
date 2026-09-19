@@ -89,9 +89,41 @@ const expectOrdinary = (root: ParentNode, href: string) => {
   expect(anchor.getAttribute("href")).toBe(href);
   expect(anchor.querySelector("strong")?.textContent).toBe("original label");
   expect(anchor.getAttribute("data-issue-link")).toBeNull();
+  expect(anchor.getAttribute("data-comment-link")).toBeNull();
+  expect(
+    anchor.querySelector("[data-comment-ref], [data-comment-author]"),
+  ).toBeNull();
   expect(anchor.getAttribute("title")).toBeNull();
   expect(anchor.querySelector("svg")).toBeNull();
   expect(anchor.textContent).not.toContain("Confirmed parent");
+};
+
+const expectCommentRef = (anchor: HTMLAnchorElement, spelled: string) => {
+  const tokens = anchor.querySelectorAll("[data-comment-ref]");
+  expect(tokens).toHaveLength(1);
+  const token = tokens[0] as HTMLElement;
+  const parts = [...token.querySelectorAll("[data-ref-part]")];
+  expect(parts.map((part) => part.textContent).join("")).toBe(spelled);
+  for (const part of parts) {
+    expect(
+      part.closest("[hidden], [aria-hidden='true'], .hidden, .sr-only"),
+    ).toBeNull();
+    expect(getComputedStyle(part).display).not.toBe("none");
+    expect(getComputedStyle(part).visibility).not.toBe("hidden");
+    expect(getComputedStyle(part).visibility).not.toBe("collapse");
+  }
+  expect(token.closest("[hidden], [aria-hidden='true'], .sr-only")).toBeNull();
+  expect(getComputedStyle(token).display).not.toBe("none");
+  expect(getComputedStyle(token).visibility).not.toBe("hidden");
+  expect(getComputedStyle(token).visibility).not.toBe("collapse");
+  expect([...anchor.querySelectorAll("[data-ref-part]")]).toEqual(parts);
+  expect(anchor.textContent?.match(/#comment-\d+/g)).toEqual([
+    spelled.match(/#comment-\d+$/)?.[0],
+  ]);
+  const authors = anchor.querySelectorAll("[data-comment-author]");
+  expect(authors).toHaveLength(1);
+  expect(authors[0]?.textContent).toBe(" by Alice");
+  expect(token.contains(authors[0] ?? null)).toBe(false);
 };
 
 afterEach(() => vi.unstubAllGlobals());
@@ -158,15 +190,19 @@ describe("one full-target confirmation gate", () => {
     });
     expect(rich.getAttribute("href")).toBe(source);
     expect(rich.textContent).toContain("Confirmed parent");
-    expect(rich.textContent).toContain("comment by Alice");
+    expectCommentRef(rich, "#12#comment-7");
+    expect(rich.getAttribute("data-comment-link")).toBe("7");
+    expect(rich.hash).toBe(`#comment-${rich.dataset.commentLink}`);
     expect(rich.textContent).not.toContain("comment body");
   });
 
   it.each(["old-slug", "9"])(
     "uses the authorized destination for a %s unreadable-source address",
     async (slug) => {
+      const urls: string[] = [];
       vi.stubGlobal("fetch", (async (input: unknown) => {
         const url = String(input);
+        urls.push(url);
         if (url.includes("numbers="))
           return json({ error: { code: "forbidden" } }, 403);
         if (url.includes(`/projects/${slug}/issues/12/comments/7`)) {
@@ -186,7 +222,8 @@ describe("one full-target confirmation gate", () => {
         }
         return json({ error: { code: "not_found" } }, 404);
       }) as typeof fetch);
-      const view = renderWithProviders(link(slug));
+      const queries = testQueryClient();
+      const view = renderWithProviders(link(slug), queries);
       const rich = await waitFor(() => {
         const anchor = view.container.querySelector("a[data-comment-link='8']");
         expect(anchor).not.toBeNull();
@@ -194,11 +231,43 @@ describe("one full-target confirmation gate", () => {
       });
       expect(rich.getAttribute("href")).toBe("/projects/b/issues/55#comment-8");
       expect(rich.getAttribute("data-comment-link")).toBe("8");
+      // The author and final parent alone cannot identify the moved comment.
+      expectCommentRef(rich, "b#55#comment-8");
+      expect(rich.textContent?.match(/#comment-\d+/g)).toEqual(["#comment-8"]);
+      expect(rich.hash).toBe(`#comment-${rich.dataset.commentLink}`);
       expect(
         view.container.querySelector("a[data-comment-link='7']"),
       ).toBeNull();
       expect(rich.getAttribute("data-issue-link")).toBe("55");
+      expect(rich.getAttribute("data-issue-project")).toBe("b");
       expect(rich.textContent).toContain("Destination");
+      expect(urls).toEqual(
+        expect.arrayContaining([
+          `/api/projects/${slug}/issues/12`,
+          `/api/projects/${slug}/issues/12/comments/7`,
+          "/api/projects/b/issues/55",
+          "/api/projects/b/issues/55/comments/8",
+        ]),
+      );
+      expect(
+        queries.getQueryData(issueRefQuery(slug, 12).queryKey)?.at,
+      ).toEqual({ slug: "b", number: 55 });
+      expect(
+        queries.getQueryData(commentRefQuery(slug, 12, 7).queryKey),
+      ).toMatchObject({
+        id: 8,
+        at: { slug: "b", number: 55, commentId: 8 },
+      });
+      for (const key of [
+        issueRefQuery(slug, 12).queryKey,
+        commentRefQuery(slug, 12, 7).queryKey,
+      ]) {
+        expect(queries.getQueryState(key)).toMatchObject({
+          status: "success",
+          fetchStatus: "idle",
+          isInvalidated: false,
+        });
+      }
     },
   );
 

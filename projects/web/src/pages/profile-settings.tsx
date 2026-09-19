@@ -257,6 +257,11 @@ function BodyReferencesSection() {
           These reach references inside descriptions and comments. Timeline rows
           keep their own look whatever is set here.
         </p>
+        <p className="text-sm text-muted-foreground">
+          Reference slugs and issue prefixes shorten to fit their parent
+          container, independently of the title setting. Copying preserves the
+          full reference.
+        </p>
       </div>
       <ToggleRow
         id="boxed-ref-links"
@@ -268,7 +273,6 @@ function BodyReferencesSection() {
       <ToggleRow
         id="truncate-ref-title"
         label="Shorten long titles"
-        description="The issue number and “comment by …” are never shortened."
         checked={truncate}
         disabled={pending}
         onChange={(checked) => patch.mutate({ truncate_ref_title: checked })}
@@ -276,7 +280,7 @@ function BodyReferencesSection() {
       <ToggleRow
         id="show-repeated-ref-title"
         label="Title on every mention"
-        description="A mention that loses its title keeps the number and “comment by …”. One that points at the card you are reading says “current” instead."
+        description="Repeated comments keep their reference and author. Comments on this card show only #comment-N and the author; ordinary issue references to this card say “current” when this is off."
         checked={repeated}
         disabled={pending}
         onChange={(checked) =>

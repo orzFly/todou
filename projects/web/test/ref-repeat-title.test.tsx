@@ -107,9 +107,9 @@ function seeded(overrides: Partial<MePrefs> = {}): QueryClient {
 /** The rendered title of every link pointing at card 7, in document order. */
 const titlesOfSeven = (root: ParentNode): string[] =>
   [...root.querySelectorAll("a[data-issue-link='7']")].map((a) => {
-    const label = [...a.children].find((c) =>
-      (c.getAttribute("class") ?? "").includes("truncate"),
-    );
+    const label = a.hasAttribute("data-comment-link")
+      ? a.querySelector("[data-comment-title]")
+      : [...a.children].find((c) => c.classList.contains("truncate"));
     return label?.textContent ?? "";
   });
 
@@ -150,7 +150,7 @@ describe("repeated references in one document (T-371)", () => {
     expect(view.container.textContent).toContain("Other");
   });
 
-  it("drops the title but keeps 'comment by X' on a repeat that is a comment link", async () => {
+  it("drops a repeated comment's title but keeps its complete ref and author", async () => {
     const view = renderWithProviders(
       <MarkdownView slug="todou">
         {"[T-7](/projects/todou/issues/7) and again " +
@@ -165,7 +165,19 @@ describe("repeated references in one document (T-371)", () => {
     });
     expect(titlesOfSeven(view.container)).toEqual(["Target", ""]);
     const second = view.container.querySelector("a[data-comment-link='42']");
-    expect(second?.textContent).toContain("comment by Alice");
+    expect(second?.textContent).toBe("T-7#comment-42 by Alice");
+    const scope = second?.querySelector("[data-comment-ref]");
+    expect(
+      [...(second?.querySelectorAll("[data-ref-part]") ?? [])]
+        .map((part) => part.textContent)
+        .join(""),
+    ).toBe("T-7#comment-42");
+    expect(
+      scope?.contains(second?.querySelector("[data-comment-author]") ?? null),
+    ).toBe(false);
+    expect(second?.querySelector("[data-comment-author]")?.textContent).toBe(
+      " by Alice",
+    );
     expect(second?.textContent).not.toContain("Target");
   });
 
@@ -257,9 +269,11 @@ describe("a reference to the card being read (T-408)", () => {
       seeded({ show_repeated_ref_title: true }),
     );
     const link = await linkToSeven(view.container);
-    expect(link.textContent).toContain("Target");
-    expect(link.textContent).toContain("T-7");
-    expect(link.textContent).not.toContain("current");
+    expect(link.textContent).toBe("T-7Target");
+    expect(
+      link.querySelector("[data-comment-ref], [data-comment-author]"),
+    ).toBeNull();
+    expect(link.querySelector(".comment-reference-body")).toBeNull();
   });
 
   it("leaves another card in the same document alone", async () => {
@@ -279,22 +293,46 @@ describe("a reference to the card being read (T-408)", () => {
     expect(other.textContent).not.toContain("current");
   });
 
-  it("keeps 'comment by X' and drops the separator that led it", async () => {
-    const view = renderWithProviders(
-      <MarkdownView slug="todou" issueNumber={7}>
-        {"see [T-7#comment-42](/projects/todou/issues/7#comment-42)"}
-      </MarkdownView>,
-      seeded(),
-    );
-    const link = await waitFor(() => {
-      const el = view.container.querySelector("a[data-comment-link='42']");
-      expect(el).not.toBeNull();
-      return el as HTMLElement;
-    });
-    expect(link.textContent).toBe("comment by Alice");
-    expect(link.textContent).not.toContain("T-7");
-    expect(link.textContent?.startsWith("·")).toBe(false);
-  });
+  it.each([false, true])(
+    "shows only the short comment ref on the current card when repeated titles=%s",
+    async (show_repeated_ref_title) => {
+      const view = renderWithProviders(
+        <MarkdownView slug="todou" issueNumber={7}>
+          {"see [T-7#comment-42](/projects/todou/issues/7#comment-42)"}
+        </MarkdownView>,
+        seeded({ show_repeated_ref_title }),
+      );
+      const link = await waitFor(() => {
+        const el = view.container.querySelector("a[data-comment-link='42']");
+        expect(el).not.toBeNull();
+        return el as HTMLElement;
+      });
+      expect(link.textContent).toBe("#comment-42 by Alice");
+      const scope = link.querySelector("[data-comment-ref]");
+      const parts = [...link.querySelectorAll("[data-ref-part]")];
+      expect(parts.map((part) => part.textContent).join("")).toBe(
+        "#comment-42",
+      );
+      for (const part of parts) {
+        expect(part.closest("[data-comment-ref]")).toBe(scope);
+      }
+      expect(link.querySelector("[data-comment-author]")?.textContent).toBe(
+        " by Alice",
+      );
+      expect(scope?.contains(link.querySelector("[data-comment-author]"))).toBe(
+        false,
+      );
+      expect(
+        link.querySelector("[data-comment-title], [data-comment-decoration]"),
+      ).toBeNull();
+      expect(link.getAttribute("href")).toBe(
+        "/projects/todou/issues/7#comment-42",
+      );
+      expect(link.textContent).not.toContain("T-7");
+      expect(link.textContent).not.toContain("Target");
+      expect(link.textContent).not.toContain("current");
+    },
+  );
 
   it("stays out of a document that never said which card it is on", async () => {
     const view = renderWithProviders(

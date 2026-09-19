@@ -4,6 +4,7 @@ import {
   type IssueListItem,
   MePrefs,
   type ReferenceConfig,
+  type TimelineComment,
 } from "@todou/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -15,6 +16,7 @@ import {
 import { prefsQuery } from "../src/api/prefs.ts";
 import { referenceConfigQuery } from "../src/api/references.ts";
 import { IssueLink } from "../src/components/shared/issue-link.tsx";
+import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
 
 const issue = (
@@ -234,7 +236,11 @@ describe("references to a moved card", () => {
     ]);
     expect(first).toEqual(repeated);
     expect(first?.at).toEqual({ slug: "harbor", number: 30, commentId: 8 });
-    expect(urls).toHaveLength(2);
+    expect(first?.id).toBe(8);
+    expect(urls).toEqual([
+      "/api/projects/9/issues/123/comments/7",
+      "/api/projects/harbor/issues/30/comments/8",
+    ]);
   });
 
   it("does not confirm an unreadable moved comment target", async () => {
@@ -357,6 +363,143 @@ describe("rendering a reference to a moved card", () => {
       return el as HTMLAnchorElement;
     });
   };
+
+  it.each(["before", "after"] as const)(
+    "renders one final comment token after an HTTP move with ref placement %s",
+    async (placement) => {
+      const queries = testQueryClient();
+      queries.setQueryData(
+        prefsQuery.queryKey,
+        MePrefs.parse({ ref_placement_reference: placement }),
+      );
+      queries.setQueryData(
+        referenceConfigQuery("homelab").queryKey,
+        refConfig("CH"),
+      );
+      queries.setQueryData(
+        referenceConfigQuery("harbor").queryKey,
+        refConfig("HB"),
+      );
+      const finalComment: TimelineComment = {
+        type: "comment",
+        id: 8,
+        body: "Moved comment body",
+        author: issue(30, "").author,
+        created_at: "2026-01-01T00:00:00Z",
+        edited_at: null,
+        resolved_at: null,
+        hidden_at: null,
+        component: null,
+        agent_context: null,
+      };
+      const urls: string[] = [];
+      vi.stubGlobal("fetch", (async (input: unknown) => {
+        const url = String(input);
+        urls.push(url);
+        if (url.includes("/projects/homelab/issues?")) {
+          return json({ items: [], next_cursor: null });
+        }
+        if (url === "/api/projects/homelab/issues/84/comments/7") {
+          return json(
+            { moved_to: { slug: "harbor", number: 30, comment_id: 8 } },
+            301,
+          );
+        }
+        if (url === "/api/projects/homelab/issues/84") {
+          return json({ moved_to: { slug: "harbor", number: 30 } }, 301);
+        }
+        if (url === "/api/projects/harbor/issues/30/comments/8") {
+          return json(finalComment);
+        }
+        if (url === "/api/projects/harbor/issues/30") {
+          return json(issue(30, "Moved parent"));
+        }
+        return json({ error: { code: "not_found" } }, 404);
+      }) as typeof fetch);
+
+      const view = renderWithProviders(
+        <MarkdownView slug="homelab" issueNumber={1}>
+          {"[CH-84#comment-7](/projects/homelab/issues/84#comment-7)"}
+        </MarkdownView>,
+        queries,
+      );
+      const rich = await waitFor(() => {
+        const anchor = view.container.querySelector<HTMLAnchorElement>(
+          "a[data-comment-link]",
+        );
+        expect(anchor).not.toBeNull();
+        return anchor as HTMLAnchorElement;
+      });
+      const tokens = rich.querySelectorAll("[data-comment-ref]");
+      expect(tokens).toHaveLength(1);
+      const token = tokens[0] as HTMLElement;
+      // Reject using the input commentId: the HTTP alias maps 7 to 8.
+      const parts = [...token.querySelectorAll("[data-ref-part]")];
+      expect(parts.map((part) => part.textContent).join("")).toBe(
+        "harbor/HB-30#comment-8",
+      );
+      expect([...rich.querySelectorAll("[data-ref-part]")]).toEqual(parts);
+      for (const part of parts) {
+        expect(
+          part.closest("[hidden], [aria-hidden='true'], .hidden, .sr-only"),
+        ).toBeNull();
+        expect(getComputedStyle(part).display).not.toBe("none");
+        expect(getComputedStyle(part).visibility).not.toBe("hidden");
+        expect(getComputedStyle(part).visibility).not.toBe("collapse");
+      }
+      expect(
+        token.closest("[hidden], [aria-hidden='true'], .sr-only"),
+      ).toBeNull();
+      expect(getComputedStyle(token).display).not.toBe("none");
+      expect(getComputedStyle(token).visibility).not.toBe("hidden");
+      expect(getComputedStyle(token).visibility).not.toBe("collapse");
+      expect(rich.textContent?.match(/#comment-\d+/g)).toEqual(["#comment-8"]);
+      const authors = rich.querySelectorAll("[data-comment-author]");
+      expect(authors).toHaveLength(1);
+      expect(authors[0]?.textContent).toBe(" by User");
+      expect(token.contains(authors[0] ?? null)).toBe(false);
+      expect(rich.textContent).toBe(
+        placement === "before"
+          ? "harbor/HB-30 Moved parent · #comment-8 by User"
+          : "Moved parent · harbor/HB-30#comment-8 by User",
+      );
+      expect(rich.getAttribute("data-comment-link")).toBe("8");
+      expect(rich.getAttribute("data-issue-link")).toBe("30");
+      expect(rich.getAttribute("data-issue-project")).toBe("harbor");
+      expect(rich.getAttribute("href")).toBe(
+        "/projects/harbor/issues/30#comment-8",
+      );
+      expect(rich.hash).toBe(`#comment-${rich.dataset.commentLink}`);
+      expect(view.container.textContent).not.toContain("CH-84#comment-7");
+      expect(urls).toEqual(
+        expect.arrayContaining([
+          "/api/projects/homelab/issues/84",
+          "/api/projects/homelab/issues/84/comments/7",
+          "/api/projects/harbor/issues/30",
+          "/api/projects/harbor/issues/30/comments/8",
+        ]),
+      );
+      expect(
+        queries.getQueryData(issueRefQuery("homelab", 84).queryKey)?.at,
+      ).toEqual({ slug: "harbor", number: 30 });
+      expect(
+        queries.getQueryData(commentRefQuery("homelab", 84, 7).queryKey),
+      ).toMatchObject({
+        id: 8,
+        at: { slug: "harbor", number: 30, commentId: 8 },
+      });
+      for (const key of [
+        issueRefQuery("homelab", 84).queryKey,
+        commentRefQuery("homelab", 84, 7).queryKey,
+      ]) {
+        expect(queries.getQueryState(key)).toMatchObject({
+          status: "success",
+          fetchStatus: "idle",
+          isInvalidated: false,
+        });
+      }
+    },
+  );
 
   it("spells the card where it lives now, not where it was written", async () => {
     const link = await linkOf(seeded(), "todou");

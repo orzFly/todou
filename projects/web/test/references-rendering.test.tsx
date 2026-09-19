@@ -471,7 +471,19 @@ describe("cross-project references", () => {
       "/projects/mirror/issues/7#comment-42",
     );
     expect(link.getAttribute("data-issue-link")).toBe("7");
-    expect(link.textContent).toContain("Anchored");
+    expect(link.textContent).toBe("mirror/M-7 Anchored · #comment-42 by User");
+    const scope = link.querySelector("[data-comment-ref]");
+    expect(
+      [...link.querySelectorAll("[data-ref-part]")]
+        .map((part) => part.textContent)
+        .join(""),
+    ).toBe("mirror/M-7#comment-42");
+    expect(scope?.contains(link.querySelector("[data-comment-title]"))).toBe(
+      true,
+    );
+    expect(scope?.contains(link.querySelector("[data-comment-author]"))).toBe(
+      false,
+    );
   });
 
   it("names the source project on a cross_referenced event", async () => {
@@ -551,21 +563,73 @@ describe("IssueLink ref placement (T-153, T-157)", () => {
     const link = await renderLink("before");
     expect(link.textContent).toBe("T-7 Target issue");
     expect(link.title).toBe("T-7 Target issue (In Progress)");
+    expect(
+      link.querySelector(
+        "[data-comment-ref], [data-ref-part], [data-comment-title], [data-comment-author]",
+      ),
+    ).toBeNull();
+    expect(link.classList.contains("comment-link-body")).toBe(false);
+    expect(link.querySelector(".comment-reference-body")).toBeNull();
   });
 
   it("trails the ref when references are set to after", async () => {
     const link = await renderLink("after");
     expect(link.textContent).toBe("Target issue T-7");
     expect(link.title).toBe("Target issue T-7 (In Progress)");
+    expect(
+      link.querySelector(
+        "[data-comment-ref], [data-ref-part], [data-comment-title], [data-comment-author]",
+      ),
+    ).toBeNull();
+    expect(link.classList.contains("comment-link-body")).toBe(false);
+    expect(link.querySelector(".comment-reference-body")).toBeNull();
   });
 
-  it("keeps the comment note trailing in either order", async () => {
-    expect((await renderLink("before", 42)).textContent).toBe(
-      "T-7 Target issue · comment by User",
-    );
-    expect((await renderLink("after", 42)).textContent).toBe(
-      "Target issue T-7 · comment by User",
-    );
+  it("keeps one complete comment token and a separate author in either order", async () => {
+    for (const placement of ["before", "after"] as const) {
+      const link = await renderLink(placement, 42);
+      expect(link.textContent).toBe(
+        placement === "before"
+          ? "T-7 Target issue · #comment-42 by User"
+          : "Target issue · T-7#comment-42 by User",
+      );
+      expect(link.querySelectorAll("[data-comment-ref]")).toHaveLength(1);
+      const token = link.querySelector("[data-comment-ref]");
+      const author = link.querySelector("[data-comment-author]");
+      const parts = [...link.querySelectorAll("[data-ref-part]")];
+      expect(parts.map((part) => part.textContent).join("")).toBe(
+        "T-7#comment-42",
+      );
+      for (const part of parts) {
+        expect(part.closest("[data-comment-ref]")).toBe(token);
+        expect(
+          part.closest(
+            "[data-comment-title], [data-comment-decoration], [data-comment-author]",
+          ),
+        ).toBeNull();
+      }
+      expect(token?.contains(link.querySelector("[data-comment-title]"))).toBe(
+        true,
+      );
+      expect(author?.textContent).toBe(" by User");
+      expect(token?.contains(author)).toBe(false);
+      expect(link.classList.contains("comment-link-body")).toBe(false);
+      expect(link.querySelector(".comment-reference-body")).toBeNull();
+      expect(token?.classList.contains("truncate")).toBe(false);
+      expect(
+        link
+          .querySelector("[data-comment-title]")
+          ?.classList.contains("truncate"),
+      ).toBe(false);
+      expect(link.getAttribute("href")).toBe(
+        "/projects/todou/issues/7#comment-42",
+      );
+      expect(link.title).toBe(
+        placement === "before"
+          ? "T-7 Target issue (In Progress)"
+          : "Target issue T-7 (In Progress)",
+      );
+    }
   });
 });
 
