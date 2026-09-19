@@ -405,7 +405,11 @@ export function BoardCardContent({
             <span className="text-xs text-muted-foreground">{ref}</span>
           )}
           {issue.open_questions > 0 && (
-            <QuestionBadge count={issue.open_questions} />
+            <QuestionBadge
+              slug={slug}
+              issueNumber={issue.number}
+              count={issue.open_questions}
+            />
           )}
           {issue.spec_review_status === "unreviewed" && (
             <SpecReviewBadge

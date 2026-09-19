@@ -12,6 +12,7 @@ import { SpecReadError } from "@/api/spec.ts";
 import { LoadFailure } from "@/components/shared/load-failure.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import { Button } from "@/components/ui/button.tsx";
+import { isQuestionLandingHash } from "@/lib/question-landing.ts";
 import { parseTimelineAnchor } from "@/lib/timeline-anchors.ts";
 
 /**
@@ -50,7 +51,11 @@ function FollowMove({ error }: { error: MovedError }) {
     // project, so the anchor has to be translated before the jump — landing
     // on the new card and scrolling nowhere is the failure this avoids.
     if (anchor?.kind !== "comment") {
-      setHash(anchor === null ? "" : window.location.hash);
+      setHash(
+        anchor !== null || isQuestionLandingHash(window.location.hash)
+          ? window.location.hash
+          : "",
+      );
       return;
     }
     // Asked of the project the link came FROM: the id in the URL only ever
@@ -81,6 +86,7 @@ function FollowMove({ error }: { error: MovedError }) {
         number: String(error.movedTo.number),
       },
       replace: true,
+      ...(isQuestionLandingHash(hash) ? { hashScrollIntoView: false } : {}),
       // The entry this replaces is the one the reader followed a link onto,
       // and its origin goes with it — so the new address is given the same
       // way back rather than none (T-407).

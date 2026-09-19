@@ -160,7 +160,12 @@ export function IssueRow({
             is pushed to the far edge, so a badge never ends up inside a group
             the phone hides (T-116). */}
         {issue.open_questions > 0 && (
-          <QuestionBadge count={issue.open_questions} className="shrink-0" />
+          <QuestionBadge
+            slug={slug}
+            issueNumber={issue.number}
+            count={issue.open_questions}
+            className="shrink-0"
+          />
         )}
         {specAwaitingReview && (
           <SpecReviewBadge

@@ -6,7 +6,13 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { fireEvent, render, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type {
   BoardRefPlacement,
   IssueListItem,
@@ -415,6 +421,355 @@ describe("BoardCardContent spec badge (T-53)", () => {
     );
     await noSpec.findByText("issue 1");
     expect(noSpec.queryByTitle(/awaiting review/)).toBeNull();
+  });
+});
+
+describe.each(["board", "list"] as const)(
+  "question links on %s (T-436)",
+  (surface) => {
+    const renderIssue = (count = 2) => {
+      const item: IssueListItem = {
+        ...issue(count, {
+          spec_version: 3,
+          spec_review_status: "unreviewed",
+        }),
+        blocked_by: [
+          {
+            edge_id: 7,
+            project_id: 2,
+            project: "other",
+            number: 7,
+            ref: "OTHER-7",
+            hidden: false,
+            cleared_at: null,
+            blocker_deleted: false,
+          },
+        ],
+      };
+      return renderWithProviders(
+        surface === "board" ? (
+          <BoardCardContent slug="p" issue={item} />
+        ) : (
+          <ul>
+            <IssueRow slug="p" issue={item} />
+          </ul>
+        ),
+      );
+    };
+
+    it("C1 C3 exposes the complete name and href with only the icon hidden", async () => {
+      const view = renderIssue();
+      const link = await view.findByRole("link", {
+        name: "2 unanswered question(s)",
+      });
+      expect(link.tagName).toBe("A");
+      expect(link.getAttribute("href")).toBe(
+        "/projects/p/issues/1#unanswered-questions",
+      );
+      expect(link.closest('[aria-hidden="true"]')).toBeNull();
+      const pill = within(link).getByTitle("2 unanswered question(s)");
+      expect(pill.textContent).toBe("2");
+      expect(pill.querySelector("svg")?.getAttribute("aria-hidden")).toBe(
+        "true",
+      );
+      expect(link.querySelectorAll('[aria-hidden="true"]')).toHaveLength(1);
+      // Native Tab/Enter and the outline's geometry are checked in the browser.
+      expect(link.tabIndex).toBe(0);
+      link.focus();
+      expect(document.activeElement).toBe(link);
+    });
+
+    it("C1 navigates a plain click to the issue's question hash", async () => {
+      const view = renderIssue();
+      fireEvent.click(
+        await view.findByRole("link", { name: "2 unanswered question(s)" }),
+      );
+      await waitFor(() => {
+        expect(view.router.state.location.pathname).toBe(
+          "/projects/p/issues/1",
+        );
+        expect(view.router.state.location.hash).toBe("unanswered-questions");
+      });
+    });
+
+    it.each([
+      { gesture: "meta-click", type: "click", init: { metaKey: true } },
+      { gesture: "ctrl-click", type: "click", init: { ctrlKey: true } },
+      { gesture: "shift-click", type: "click", init: { shiftKey: true } },
+      { gesture: "alt-click", type: "click", init: { altKey: true } },
+      { gesture: "middle click", type: "click", init: { button: 1 } },
+      { gesture: "middle auxclick", type: "auxclick", init: { button: 1 } },
+      { gesture: "context menu", type: "contextmenu", init: { button: 2 } },
+    ])("C1 preserves native $gesture", async ({ type, init }) => {
+      const view = renderIssue();
+      const link = await view.findByRole("link", {
+        name: "2 unanswered question(s)",
+      });
+      const href = "/projects/p/issues/1#unanswered-questions";
+      expect(link.getAttribute("href")).toBe(href);
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      });
+      await act(async () => {
+        fireEvent(link, event);
+      });
+      expect(event.defaultPrevented).toBe(false);
+      expect(view.router.state.location.pathname).toBe("/");
+      expect(view.router.state.location.hash).toBe("");
+      expect(link.getAttribute("href")).toBe(href);
+    });
+
+    it("C2 keeps question, spec and blocked badges outside the real title anchor", async () => {
+      const view = renderIssue();
+      const question = await view.findByRole("link", {
+        name: "2 unanswered question(s)",
+      });
+      const title = view.getByRole("link", { name: /issue 1/ });
+      const spec = view.getByRole("link", { name: "spec" });
+      const blocked = view.getByTitle("waiting for 1 other issue(s)");
+      expect(title.getAttribute("href")).toBe("/projects/p/issues/1");
+      expect(spec.getAttribute("href")).toBe("/projects/p/issues/1/spec");
+      expect(view.container.querySelectorAll("a a")).toHaveLength(0);
+      for (const badge of [question, spec, blocked]) {
+        expect(title.contains(badge)).toBe(false);
+        expect(badge.parentElement?.closest("a")).toBeNull();
+      }
+      expect(question.contains(spec)).toBe(false);
+      expect(question.contains(blocked)).toBe(false);
+      expect(blocked.closest("a")).toBeNull();
+    });
+
+    it("C4 hides zero questions while preserving spec and blocked badges", async () => {
+      const view = renderIssue(0);
+      await view.findByRole("link", { name: /issue 1/ });
+      expect(
+        view.queryByRole("link", { name: /unanswered question/ }),
+      ).toBeNull();
+      expect(view.queryByTitle(/unanswered question/)).toBeNull();
+      expect(
+        view.getByRole("link", { name: "spec" }).getAttribute("href"),
+      ).toBe("/projects/p/issues/1/spec");
+      expect(view.getByTitle("waiting for 1 other issue(s)")).toBeTruthy();
+    });
+
+    it("C4 does not request questions on render, hover or focus", async () => {
+      const questions = vi
+        .spyOn(api, "getIssueQuestions")
+        .mockResolvedValue({ items: [], open: 0 });
+      const view = renderIssue();
+      const link = await view.findByRole("link", {
+        name: "2 unanswered question(s)",
+      });
+      await act(async () => {
+        fireEvent.mouseEnter(link);
+        fireEvent.focusIn(link);
+      });
+      expect(questions).not.toHaveBeenCalled();
+    });
+
+    it("C14 preserves the blocked preview and its target beside the question link", async () => {
+      vi.spyOn(api, "listIssues").mockResolvedValue({
+        items: [{ ...issue(0), id: 70, number: 7, title: "Prerequisite" }],
+        next_cursor: null,
+      });
+      const view = renderIssue();
+      const question = await view.findByRole("link", {
+        name: "2 unanswered question(s)",
+      });
+      const trigger = view.getByTitle("waiting for 1 other issue(s)");
+      fireEvent.pointerOver(trigger, { pointerType: "mouse", bubbles: true });
+      const target = await view.findByRole("link", { name: /Prerequisite/ });
+      expect(target.getAttribute("href")).toBe("/projects/other/issues/7");
+      const popup = target.closest("[data-slot='hover-card-content']");
+      expect(popup).not.toBeNull();
+      expect(question.contains(popup)).toBe(false);
+      expect(popup?.closest("a")).toBeNull();
+      expect(target.parentElement?.closest("a")).toBeNull();
+      expect(document.querySelectorAll("a a")).toHaveLength(0);
+      fireEvent.pointerOut(trigger, {
+        pointerType: "mouse",
+        bubbles: true,
+        relatedTarget: document.body,
+      });
+      await waitFor(() => expect(view.queryByText("Blocked by")).toBeNull());
+      expect(question.getAttribute("href")).toBe(
+        "/projects/p/issues/1#unanswered-questions",
+      );
+    });
+  },
+);
+
+describe("BoardPage question links and drag overlay (T-436)", () => {
+  function renderBoard() {
+    const item = {
+      ...issue(2, { spec_version: 3, spec_review_status: "unreviewed" }),
+      number: 42,
+      title: "Board question",
+    };
+    const client = testQueryClient();
+    client.setDefaultOptions({
+      queries: { retry: false, staleTime: Infinity },
+      mutations: { retry: false },
+    });
+    client.setQueryData(statusesQuery("greenhouse").queryKey, [item.status]);
+    client.setQueryData(
+      boardColumnQuery("greenhouse", item.status.id).queryKey,
+      { items: [item], next_cursor: null },
+    );
+    client.setQueryData(referenceConfigQuery("greenhouse").queryKey, {
+      format: { prefix: "GH", history: [] },
+      autolinks: [],
+    } satisfies ReferenceConfig);
+    vi.spyOn(api, "getMutes").mockResolvedValue({ issues: [], projects: [] });
+    const questions = vi
+      .spyOn(api, "getIssueQuestions")
+      .mockResolvedValue({ items: [], open: 0 });
+
+    // BoardPage's strict useParams and its real PointerSensor need the app's
+    // route ancestry. No DnD mock: activating the sensor mounts the real overlay.
+    const rootRoute = createRootRoute();
+    const authedRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      id: "authed",
+    });
+    const projectRoute = createRoute({
+      getParentRoute: () => authedRoute,
+      path: "/projects/$slug",
+    });
+    const boardRoute = createRoute({
+      getParentRoute: () => projectRoute,
+      path: "board",
+      component: () => (
+        <Suspense fallback={<div>loading board</div>}>
+          <BoardPage />
+        </Suspense>
+      ),
+    });
+    const issueRoute = createRoute({
+      getParentRoute: () => projectRoute,
+      path: "issues/$number",
+    });
+    const specRoute = createRoute({
+      getParentRoute: () => projectRoute,
+      path: "issues/$number/spec",
+    });
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([
+        authedRoute.addChildren([
+          projectRoute.addChildren([boardRoute, issueRoute, specRoute]),
+        ]),
+      ]),
+      history: createMemoryHistory({
+        initialEntries: ["/projects/greenhouse/board"],
+      }),
+    });
+    return {
+      ...render(
+        <QueryClientProvider client={client}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>,
+      ),
+      router,
+      questions,
+    };
+  }
+
+  const pointer = {
+    pointerId: 1,
+    pointerType: "mouse",
+    isPrimary: true,
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 10,
+  };
+
+  it("C14 navigates a question click below the real drag threshold", async () => {
+    const view = renderBoard();
+    const link = await view.findByRole("link", {
+      name: "2 unanswered question(s)",
+    });
+    fireEvent.pointerDown(link, pointer);
+    fireEvent.pointerMove(document, { ...pointer, clientX: 14 });
+    expect(
+      view.getAllByRole("link", { name: "2 unanswered question(s)" }),
+    ).toHaveLength(1);
+    fireEvent.pointerUp(document, { ...pointer, buttons: 0, clientX: 14 });
+    fireEvent.click(link);
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe(
+        "/projects/greenhouse/issues/42",
+      );
+      expect(view.router.state.location.hash).toBe("unanswered-questions");
+    });
+    expect(view.questions).not.toHaveBeenCalled();
+  });
+
+  it("C2 C14 gives the real overlay the same href and suppresses the post-drag click", async () => {
+    const view = renderBoard();
+    const original = await view.findByRole("link", {
+      name: "2 unanswered question(s)",
+    });
+    const href = "/projects/greenhouse/issues/42#unanswered-questions";
+    expect(original.getAttribute("href")).toBe(href);
+    fireEvent.pointerDown(original, pointer);
+    fireEvent.pointerMove(document, { ...pointer, clientX: 30 });
+    await waitFor(() => {
+      expect(
+        view.getAllByRole("link", { name: "2 unanswered question(s)" }),
+      ).toHaveLength(2);
+    });
+
+    const questions = view.getAllByRole("link", {
+      name: "2 unanswered question(s)",
+    });
+    const titles = view.getAllByRole("link", { name: /Board question/ });
+    expect(titles).toHaveLength(2);
+    for (const link of questions) {
+      expect(link.getAttribute("href")).toBe(href);
+      expect(link.closest('[aria-hidden="true"]')).toBeNull();
+      expect(link.parentElement?.closest("a")).toBeNull();
+      for (const title of titles) expect(title.contains(link)).toBe(false);
+    }
+    for (const spec of view.getAllByRole("link", { name: "spec" })) {
+      expect(spec.getAttribute("href")).toBe(
+        "/projects/greenhouse/issues/42/spec",
+      );
+      expect(spec.parentElement?.closest("a")).toBeNull();
+    }
+    expect(view.container.querySelectorAll("a a")).toHaveLength(0);
+    expect(view.questions).not.toHaveBeenCalled();
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.pointerUp(document, { ...pointer, buttons: 0, clientX: 30 });
+      const click = new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+      });
+      fireEvent(original, click);
+      // dnd-kit stops propagation, but only BoardPage's window capture cancels
+      // the anchor's native default navigation. Router state alone misses that.
+      expect(click.defaultPrevented).toBe(true);
+      expect(view.router.state.location.pathname).toBe(
+        "/projects/greenhouse/board",
+      );
+      expect(view.router.state.location.hash).toBe("");
+    } finally {
+      // The real sensor retains its document click listener for 50ms after
+      // release. Drain that teardown so it cannot swallow the next test's click.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+      vi.useRealTimers();
+    }
+    await waitFor(() => {
+      expect(
+        view.getAllByRole("link", { name: "2 unanswered question(s)" }),
+      ).toHaveLength(1);
+    });
   });
 });
 

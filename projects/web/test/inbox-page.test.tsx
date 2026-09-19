@@ -205,6 +205,59 @@ describe("InboxPage", () => {
     ).toBeTruthy();
   });
 
+  it("C4 links question badges per project and row without fetching questions (T-436)", async () => {
+    const questions = vi
+      .spyOn(api, "getIssueQuestions")
+      .mockResolvedValue({ items: [], open: 0 });
+    mockInbox({
+      items: [
+        makeItem("greenhouse", 42, { open_questions: 2 }),
+        makeItem("potato-field", 18, { open_questions: 3 }),
+        makeItem("greenhouse", 7),
+      ],
+      truncated: false,
+    });
+    const view = renderWithProviders(<InboxPage />);
+
+    for (const [slug, number, count] of [
+      ["greenhouse", 42, 2],
+      ["potato-field", 18, 3],
+      ["greenhouse", 7, 0],
+    ] as const) {
+      const title = await view.findByRole("link", { name: `issue ${number}` });
+      const row = title.closest("li") as HTMLElement;
+      expect(title.getAttribute("href")).toBe(
+        `/projects/${slug}/issues/${number}`,
+      );
+      if (count === 0) {
+        expect(
+          within(row).queryByRole("link", { name: /unanswered question/ }),
+        ).toBeNull();
+        expect(within(row).queryByTitle(/unanswered question/)).toBeNull();
+        continue;
+      }
+      const badge = within(row).getByRole("link", {
+        name: `${count} unanswered question(s)`,
+      });
+      expect(badge.getAttribute("href")).toBe(
+        `/projects/${slug}/issues/${number}#unanswered-questions`,
+      );
+      expect(badge.textContent).toBe(String(count));
+      expect(badge.closest('[aria-hidden="true"]')).toBeNull();
+      expect(badge.parentElement?.closest("a")).toBeNull();
+      expect(title.contains(badge)).toBe(false);
+      await act(async () => {
+        fireEvent.mouseEnter(badge);
+        fireEvent.focusIn(badge);
+      });
+    }
+    expect(
+      view.getAllByRole("link", { name: /unanswered question/ }),
+    ).toHaveLength(2);
+    expect(view.container.querySelectorAll("a a")).toHaveLength(0);
+    expect(questions).not.toHaveBeenCalled();
+  });
+
   it("draws the project's uploaded icon in the group header", async () => {
     class LoadedImage extends EventTarget {
       complete = true;

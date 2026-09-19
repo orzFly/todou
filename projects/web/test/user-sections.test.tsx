@@ -272,6 +272,61 @@ describe("UserIssuesSection (T-374)", () => {
     ]);
   });
 
+  it("C4 links question badges per project and row without fetching questions (T-436)", async () => {
+    const questions = vi
+      .spyOn(api, "getIssueQuestions")
+      .mockResolvedValue({ items: [], open: 0 });
+    vi.spyOn(api, "listUserIssues").mockResolvedValue(
+      page([
+        makeItem("todou", 12, { open_questions: 2 }),
+        makeItem("kela", 5, { open_questions: 3 }),
+        makeItem("todou", 19),
+      ]),
+    );
+    vi.spyOn(api, "listUserProjects").mockResolvedValue(noProjects());
+
+    const view = renderAt("/users/alice", clientWithUser());
+    for (const [slug, number, count] of [
+      ["todou", 12, 2],
+      ["kela", 5, 3],
+      ["todou", 19, 0],
+    ] as const) {
+      const title = await view.findByRole("link", {
+        name: `issue ${slug} ${number}`,
+      });
+      const row = title.closest("li") as HTMLElement;
+      expect(title.getAttribute("href")).toBe(
+        `/projects/${slug}/issues/${number}`,
+      );
+      if (count === 0) {
+        expect(
+          within(row).queryByRole("link", { name: /unanswered question/ }),
+        ).toBeNull();
+        expect(within(row).queryByTitle(/unanswered question/)).toBeNull();
+        continue;
+      }
+      const badge = within(row).getByRole("link", {
+        name: `${count} unanswered question(s)`,
+      });
+      expect(badge.getAttribute("href")).toBe(
+        `/projects/${slug}/issues/${number}#unanswered-questions`,
+      );
+      expect(badge.textContent).toBe(String(count));
+      expect(badge.closest('[aria-hidden="true"]')).toBeNull();
+      expect(badge.parentElement?.closest("a")).toBeNull();
+      expect(title.contains(badge)).toBe(false);
+      await act(async () => {
+        fireEvent.mouseEnter(badge);
+        fireEvent.focusIn(badge);
+      });
+    }
+    expect(
+      view.getAllByRole("link", { name: /unanswered question/ }),
+    ).toHaveLength(2);
+    expect(view.container.querySelectorAll("a a")).toHaveLength(0);
+    expect(questions).not.toHaveBeenCalled();
+  });
+
   it("puts the role filter in the URL and refetches under it", async () => {
     const listed = vi
       .spyOn(api, "listUserIssues")

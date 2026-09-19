@@ -38,6 +38,7 @@ import { HiddenBlock } from "@/components/timeline/hidden-block.tsx";
 import { useRevealedRuns } from "@/components/timeline/revealed-runs.tsx";
 import { SpecVersionCard } from "@/components/timeline/spec-version-card.tsx";
 import { TimelineAnswersProvider } from "@/components/timeline/timeline-answers.tsx";
+import { useQuestionLanding } from "@/components/timeline/use-question-landing.ts";
 import { useTimelineAnchor } from "@/components/timeline/use-timeline-anchor.ts";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -140,29 +141,67 @@ export function Timeline({
   const scrollToBottom = useCallback(() => {
     window.scrollTo(0, document.documentElement.scrollHeight);
   }, []);
+  const questionLanding = useQuestionLanding(slug, issueNumber);
+  const timelineReady = tail.isSuccess && (!headEnabled || head.isSuccess);
+  const finishQuestionLanding = (error?: "unavailable" | "stalled") => {
+    // revealBlock has already moved the viewport. Do not wait for a native
+    // scroll event before restoring the ordinary follow-bottom policy.
+    atBottomRef.current = shouldFollowBottom(
+      window.scrollY,
+      document.documentElement.scrollHeight,
+      window.innerHeight,
+    );
+    questionLanding.finish(error);
+  };
 
   // A #comment-/#event- anchor takes over positioning (scroll + flash,
   // expanding the folded middle as needed) — see use-timeline-anchor.ts.
-  const anchorActive = useTimelineAnchor({
-    remaining,
-    isExpanding:
-      tail.isPending ||
-      (headEnabled && head.isPending) ||
-      head.isFetchingNextPage,
-    // Anchor-driven expansion skips the compensation: the document stays
-    // anchored above the seam while chunks stream in, and the final
-    // scrollIntoView owns the viewport once the target renders.
-    expand: () => head.fetchNextPage({ cancelRefetch: false }),
-    hiddenRunHolding: (commentId) => {
-      for (const unit of [...unitsAbove, ...unitsBelow]) {
-        if (unit.kind !== "hidden") continue;
-        if (unit.comments.some((comment) => comment.id === commentId)) {
-          return hiddenRunKey(unit);
+  const anchorActive = useTimelineAnchor(
+    {
+      remaining,
+      isExpanding:
+        tail.isPending ||
+        (headEnabled && head.isPending) ||
+        head.isFetchingNextPage,
+      ready: timelineReady && !tail.isFetching && !head.isFetching,
+      failed: tail.isError || head.isError,
+      // Anchor-driven expansion skips the compensation: the document stays
+      // anchored above the seam while chunks stream in, and the final
+      // scrollIntoView owns the viewport once the target renders.
+      expand: () => head.fetchNextPage({ cancelRefetch: false }),
+      hiddenRunHolding: (commentId) => {
+        for (const unit of [...unitsAbove, ...unitsBelow]) {
+          if (unit.kind !== "hidden") continue;
+          if (unit.comments.some((comment) => comment.id === commentId)) {
+            return hiddenRunKey(unit);
+          }
         }
-      }
-      return null;
+        return null;
+      },
+      revealRun: reveal,
     },
-    revealRun: reveal,
+    questionLanding.anchorRequest === undefined
+      ? undefined
+      : {
+          id: questionLanding.anchorRequest,
+          onComplete: () => finishQuestionLanding(),
+          onUnavailable: () => finishQuestionLanding("unavailable"),
+          onStalled: () => finishQuestionLanding("stalled"),
+        },
+  );
+
+  useEffect(() => {
+    if (
+      questionLanding.latest &&
+      timelineReady &&
+      !tail.isFetching &&
+      !head.isFetching
+    ) {
+      scrollToBottom();
+      didInitialScroll.current = true;
+      setNewBelow(false);
+      finishQuestionLanding();
+    }
   });
 
   // Initial position: bottom of the newest page (chat-style), unless an
@@ -170,9 +209,9 @@ export function Timeline({
   useLayoutEffect(() => {
     if (!didInitialScroll.current && renderedCount > 0) {
       didInitialScroll.current = true;
-      if (!anchorActive) scrollToBottom();
+      if (!anchorActive && !questionLanding.ownsScroll) scrollToBottom();
     }
-  }, [renderedCount, scrollToBottom, anchorActive]);
+  }, [renderedCount, scrollToBottom, anchorActive, questionLanding.ownsScroll]);
 
   // Insertions above the viewport must not shift what the reader sees.
   useLayoutEffect(() => {
@@ -209,7 +248,11 @@ export function Timeline({
       : null;
   const prevLastKey = useRef(lastKey);
   useEffect(() => {
-    if (lastKey !== prevLastKey.current && prevLastKey.current !== null) {
+    if (
+      !questionLanding.ownsScroll &&
+      lastKey !== prevLastKey.current &&
+      prevLastKey.current !== null
+    ) {
       if (atBottomRef.current) {
         scrollToBottom();
       } else {
@@ -217,7 +260,7 @@ export function Timeline({
       }
     }
     prevLastKey.current = lastKey;
-  }, [lastKey, scrollToBottom]);
+  }, [lastKey, scrollToBottom, questionLanding.ownsScroll]);
 
   // The page itself scrolls, so follow-bottom hangs off the window scroll
   // position. (Scroll-to-top no longer loads anything: the head is present
@@ -330,6 +373,19 @@ export function Timeline({
     // above, adjusting the viewport a second time for the same insertion.
     <TimelineAnswersProvider answers={answers}>
       <div className="[overflow-anchor:none]" data-testid="timeline-scroll">
+        {questionLanding.error && (
+          <LoadFailure
+            message={
+              questionLanding.error === "unavailable"
+                ? "This question is no longer available."
+                : "Couldn't locate questions."
+            }
+            onRetry={questionLanding.retry}
+            detail={undefined}
+            retrying={false}
+            className="mb-3"
+          />
+        )}
         {notice && (
           <RefreshFailure
             what="the timeline"

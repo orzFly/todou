@@ -20,6 +20,16 @@ export type GapExpansion = {
   hiddenRunHolding?: (commentId: number) => string | null;
   /** Open that run, so the target renders on the next pass. */
   revealRun?: (key: string) => void;
+  /** Initial reads settled; a paging error is not evidence of deletion. */
+  ready?: boolean;
+  failed?: boolean;
+};
+
+type AnchorRequest = {
+  id: number;
+  onComplete: () => void;
+  onUnavailable: () => void;
+  onStalled: () => void;
 };
 
 /**
@@ -45,28 +55,32 @@ export type GapExpansion = {
  * Returns whether an anchor is being targeted, so the caller can skip its
  * default scroll-to-bottom.
  */
-export function useTimelineAnchor(gap: GapExpansion): boolean {
+export function useTimelineAnchor(
+  gap: GapExpansion,
+  request?: AnchorRequest,
+): boolean {
   const hash = useRouterState({ select: (s) => s.location.hash });
   const target = parseTimelineAnchor(hash ?? "");
   const doneFor = useRef<string | null>(null);
-  // The remaining count as of the last expansion this target triggered.
   const stall = useRef<{ key: string; remaining: number } | null>(null);
 
-  // Deliberately dependency-free: every render re-checks whether the
-  // target exists yet — chunk inserts, fetch settles, and hash changes
-  // all surface as renders, and the guards make re-runs cheap.
+  // Every render re-checks after pages, hidden runs, and hash changes.
   useEffect(() => {
-    if (!target) return;
-    const key = anchorElementId(target);
+    if (!target) {
+      doneFor.current = null;
+      stall.current = null;
+      return;
+    }
+    const elementId = anchorElementId(target);
+    const key = `${elementId}:${request?.id ?? "direct"}`;
     if (doneFor.current === key) return;
-    const el = document.getElementById(key);
+    if (request && (!gap.ready || gap.isExpanding)) return;
+    const el = document.getElementById(elementId);
     if (el) {
       doneFor.current = key;
-      // Centred while it fits between the floating bar and the composer,
-      // top-aligned once it is taller than what they leave — a long comment
-      // centred puts its author line hundreds of pixels off screen (T-299).
-      // The strip itself comes from the page's `scroll-padding`.
+      // Reveal uses the existing floating-bar/composer scroll insets.
       revealBlock(el);
+      request?.onComplete();
       return;
     }
     const run =
@@ -75,19 +89,23 @@ export function useTimelineAnchor(gap: GapExpansion): boolean {
         : null;
     if (run !== null) {
       gap.revealRun?.(run);
-    } else if (gap.remaining > 0 && !gap.isExpanding) {
-      // A dead anchor (deleted comment, foreign event id) expands at most
-      // the whole gap — bounded, unlike the pre-T-30 load-everything walk.
-      // Stop early if an expansion failed to shrink the gap (server
-      // anomaly); anything else would loop forever.
-      if (
-        stall.current?.key === key &&
-        stall.current.remaining === gap.remaining
-      ) {
-        return;
+    } else if (gap.failed) {
+      // Let the existing timeline Retry resume this cursor.
+      stall.current = null;
+    } else if (!gap.isExpanding) {
+      if (gap.remaining > 0) {
+        if (
+          stall.current?.key === key &&
+          stall.current.remaining === gap.remaining
+        ) {
+          if (gap.ready) request?.onStalled();
+          return;
+        }
+        stall.current = { key, remaining: gap.remaining };
+        gap.expand();
+      } else if (gap.ready) {
+        request?.onUnavailable();
       }
-      stall.current = { key, remaining: gap.remaining };
-      gap.expand();
     }
   });
 

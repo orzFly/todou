@@ -9,6 +9,7 @@ import {
 import type { ReactNode } from "react";
 import { BlockedHoverCard } from "@/components/shared/blocked-hover-card.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
+import { UNANSWERED_QUESTIONS_HASH } from "@/lib/question-landing.ts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -44,20 +45,36 @@ function AttentionBadge({
 }
 
 export function QuestionBadge({
+  slug,
+  issueNumber,
   count,
   className,
 }: {
+  slug: string;
+  issueNumber: number;
   count: number;
   className?: string;
 }) {
+  const returnState = useReturnLinkState();
+  const label = `${count} unanswered question(s)`;
   return (
-    <AttentionBadge
-      title={`${count} unanswered question(s)`}
-      className={className}
+    <Link
+      to="/projects/$slug/issues/$number"
+      params={{ slug, number: String(issueNumber) }}
+      hash={UNANSWERED_QUESTIONS_HASH}
+      hashScrollIntoView={false}
+      state={returnState}
+      aria-label={label}
+      className={cn(
+        "inline-flex rounded-full hover:brightness-95 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+        className,
+      )}
     >
-      <MessageCircleQuestionIcon className="size-3.5" />
-      {count}
-    </AttentionBadge>
+      <AttentionBadge title={label}>
+        <MessageCircleQuestionIcon className="size-3.5" aria-hidden="true" />
+        {count}
+      </AttentionBadge>
+    </Link>
   );
 }
 
