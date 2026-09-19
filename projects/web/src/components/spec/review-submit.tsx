@@ -13,11 +13,16 @@ import {
   invalidateSpecState,
   specQuery,
   useIsVersionPusher,
+  useViewerApprovedCurrentRound,
 } from "@/api/spec.ts";
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
 } from "@/components/shared/markdown-editor.tsx";
+import {
+  type ReviewCompletion,
+  useReviewCompletion,
+} from "@/components/spec/use-review-completion.ts";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,7 +37,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useRefCompletion } from "@/lib/editor/ref-completion.ts";
-import type { SpecReviewDraft } from "@/lib/spec-drafts.ts";
+import {
+  confirmSubmittedSpecReviewDrafts,
+  type SpecReviewDraft,
+} from "@/lib/spec-drafts.ts";
 
 const PUSHER_TITLE =
   "You pushed this version — its verdict has to come from someone else";
@@ -44,6 +52,9 @@ type LegacySubmit = {
   verdict: SpecReviewVerdict;
   body?: string;
   comments: SpecReviewSubmitInput["comments"];
+  completion: ReviewCompletion;
+  submittedSummary: string;
+  submittedDrafts: SpecReviewDraft[];
 };
 
 function submitComments(
@@ -108,7 +119,13 @@ export function ReviewSubmitDialog({
   const localSubmitting = useRef(false);
   const refCompletion = useRefCompletion(slug);
   const queryClient = useQueryClient();
+  const beginCompletion = useReviewCompletion(slug, issueNumber);
   const isPusher = useIsVersionPusher(slug, issueNumber, currentVersion);
+  const approvedInCurrentRound = useViewerApprovedCurrentRound(
+    slug,
+    issueNumber,
+    currentVersion,
+  );
   const spec = useQuery(specQuery(slug, issueNumber)).data;
   const staleVersion =
     spec !== undefined &&
@@ -116,6 +133,8 @@ export function ReviewSubmitDialog({
     spec.current_version !== currentVersion;
   const withdrawn = spec?.review_status === "withdrawn";
   const summary = controlledSummary ?? localSummary;
+  const latestSummary = useRef(summary);
+  latestSummary.current = summary;
   const legacySubmit = useMutation({
     mutationFn: (input: LegacySubmit) =>
       api.submitSpecReview(input.slug, input.issueNumber, {
@@ -124,13 +143,26 @@ export function ReviewSubmitDialog({
         ...(input.body === undefined ? {} : { body: input.body }),
         comments: input.comments,
       }),
-    onSuccess: (_result, input) => {
-      void invalidateSpecState(queryClient, input.slug, input.issueNumber);
-      setLocalSummary("");
-      editor.current?.setValue("");
-      setLocalVerdict(null);
-      localSubmitting.current = false;
-      onSubmitted?.();
+    onSuccess: (result, input) => {
+      confirmSubmittedSpecReviewDrafts(
+        input.slug,
+        input.issueNumber,
+        input.submittedDrafts,
+      );
+      return input.completion.complete(result, () => {
+        localSubmitting.current = false;
+        if (input.completion.isCurrent()) {
+          if (
+            (editor.current?.getValue() ?? latestSummary.current) ===
+            input.submittedSummary
+          ) {
+            setLocalSummary("");
+            editor.current?.setValue("");
+          }
+          setLocalVerdict(null);
+          onSubmitted?.();
+        }
+      });
     },
     onError: (error, input) => {
       if (error instanceof TodouError && error.status === 409) {
@@ -145,10 +177,10 @@ export function ReviewSubmitDialog({
     controlledPendingVerdict ?? (legacySubmit.isPending ? localVerdict : null);
   const pending = pendingVerdict !== null;
   const saysNothing = summary.trim() === "" && drafts.length === 0;
-  // Both responsive forms consume these same conditions. T-432 can extend
-  // the verdict restriction here without making the two widths disagree.
+  // Both responsive forms and the submit guard share these conditions.
   const commentDisabled = pending || staleVersion || saysNothing;
   const verdictDisabled = pending || staleVersion || withdrawn || isPusher;
+  const approveDisabled = verdictDisabled || approvedInCurrentRound;
   const staleTitle = `Spec v${currentVersion} is no longer current. Your review draft has been kept.`;
   const verdictTitle = staleVersion
     ? staleTitle
@@ -157,13 +189,25 @@ export function ReviewSubmitDialog({
       : isPusher
         ? PUSHER_TITLE
         : undefined;
+  const approveTitle =
+    verdictTitle ??
+    (approvedInCurrentRound
+      ? "You already approved this spec in the current review round"
+      : undefined);
   const commentTitle = staleVersion
     ? staleTitle
     : saysNothing
       ? "Write a summary or stage a comment first"
       : undefined;
   const submit = (verdict: SpecReviewVerdict) => {
-    if (verdict === "comment" ? commentDisabled : verdictDisabled) return;
+    if (
+      verdict === "comment"
+        ? commentDisabled
+        : verdict === "approve"
+          ? approveDisabled
+          : verdictDisabled
+    )
+      return;
     if (onSubmit !== undefined) {
       onSubmit(verdict);
       return;
@@ -171,11 +215,11 @@ export function ReviewSubmitDialog({
     if (localSubmitting.current) return;
     localSubmitting.current = true;
     setLocalVerdict(verdict);
-    const body = (
+    const submittedSummary =
       controlledSummary === undefined
         ? (editor.current?.getValue() ?? localSummary)
-        : summary
-    ).trim();
+        : summary;
+    const body = submittedSummary.trim();
     legacySubmit.mutate({
       slug,
       issueNumber,
@@ -183,6 +227,12 @@ export function ReviewSubmitDialog({
       verdict,
       ...(body === "" ? {} : { body }),
       comments: submitComments(drafts),
+      completion: beginCompletion(),
+      submittedSummary,
+      submittedDrafts: drafts.map((draft) => ({
+        ...draft,
+        anchor: { ...draft.anchor },
+      })),
     });
   };
 
@@ -274,8 +324,8 @@ export function ReviewSubmitDialog({
           <Button
             size="sm"
             className="bg-green-700 text-white hover:bg-green-800"
-            disabled={verdictDisabled}
-            title={verdictTitle}
+            disabled={approveDisabled}
+            title={approveTitle}
             onClick={() => submit("approve")}
           >
             {pendingVerdict === "approve" ? "Submitting…" : "Approve"}
@@ -311,8 +361,8 @@ export function ReviewSubmitDialog({
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="text-green-700 focus:bg-green-50 focus:text-green-700 data-disabled:text-muted-foreground dark:text-green-400 dark:focus:bg-green-950 dark:focus:text-green-400 dark:data-disabled:text-muted-foreground"
-                disabled={verdictDisabled}
-                title={verdictTitle}
+                disabled={approveDisabled}
+                title={approveTitle}
                 onSelect={() => submit("approve")}
               >
                 Approve

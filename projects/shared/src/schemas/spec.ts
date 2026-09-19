@@ -134,6 +134,17 @@ export const SpecInfo = z.object({
    */
   current_version_cursor: Cursor,
   review_status: SpecReviewStatus,
+  /**
+   * The requesting account's approval on current_version since that
+   * version's latest request_changes (by any account, ordered by event id).
+   * Optional for older servers; absence does not imply either review state.
+   */
+  viewer_review: z
+    .object({
+      user_id: Id,
+      approved_in_current_round: z.boolean(),
+    })
+    .optional(),
   unresolved_comments: z.number().int().nonnegative(),
   /**
    * Of those, the ones anchored to an *older* version. The review gate uses

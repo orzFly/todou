@@ -1,4 +1,8 @@
-import { queryOptions, useInfiniteQuery } from "@tanstack/react-query";
+import {
+  infiniteQueryOptions,
+  queryOptions,
+  useInfiniteQuery,
+} from "@tanstack/react-query";
 import type { TimelineItem, TimelinePage } from "@todou/shared";
 import { drainPaged } from "@todou/shared";
 import { api } from "@/api/queries.ts";
@@ -50,7 +54,10 @@ export function allCommentsQuery(slug: string, issueNumber: number) {
  *
  * A constant, so it is not part of any query key.
  */
-const READS = { include_hidden: true, limit: TIMELINE_PAGE_LIMIT } as const;
+export const READS = {
+  include_hidden: true,
+  limit: TIMELINE_PAGE_LIMIT,
+} as const;
 
 export type TimelinePageParam =
   | { dir: "init" }
@@ -75,8 +82,8 @@ export function latestNextCursor(pages: TimelinePage[]): string | null {
  * tail + head around a folded middle). Initial page is the newest one;
  * SSE invalidations refetch it and pick up appended items.
  */
-export function useTimelineTail(slug: string, issueNumber: number) {
-  return useInfiniteQuery({
+export function timelineTailOptions(slug: string, issueNumber: number) {
+  return infiniteQueryOptions({
     queryKey: ["timeline", slug, issueNumber, "tail"],
     initialPageParam: { dir: "init" } as TimelinePageParam,
     queryFn: ({ pageParam }) => {
@@ -104,6 +111,10 @@ export function useTimelineTail(slug: string, issueNumber: number) {
       return cursor ? { dir: "after", cursor } : undefined;
     },
   });
+}
+
+export function useTimelineTail(slug: string, issueNumber: number) {
+  return useInfiniteQuery(timelineTailOptions(slug, issueNumber));
 }
 
 /**

@@ -884,7 +884,17 @@ describe.each(PLACEMENTS)(
         (await withdraw(number, { version: 1, reason: "preserve across move" }))
           .status,
       ).toBe(200);
-      const original = await info(number);
+      // SpecInfo includes the requesting viewer's review state. Compare the
+      // same account before and after the move, as well as the same version.
+      const originalResponse = await request(
+        number,
+        "/spec",
+        "GET",
+        undefined,
+        owner,
+      );
+      expect(originalResponse.status).toBe(200);
+      const original: SpecInfo = await json(originalResponse);
       const originalFiles = await files(number);
       const originalEvents = await timeline(number, "&types=spec_withdrawn");
       const moved = await request(

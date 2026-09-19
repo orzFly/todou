@@ -8,6 +8,7 @@ import {
 import {
   GoneError,
   MovedError,
+  type SpecInfo,
   SpecPushedPayload,
   type SpecWithdrawInput,
   TodouError,
@@ -147,6 +148,28 @@ export function useIssueSpec(slug: string, issueNumber: number) {
     enabled: hasSpec,
   });
   return { spec, latest };
+}
+export function viewerApprovedCurrentRound(
+  info: SpecInfo | null | undefined,
+  viewerId: number | undefined,
+  version: number,
+): boolean {
+  return (
+    viewerId !== undefined &&
+    info?.current_version === version &&
+    info.viewer_review?.user_id === viewerId &&
+    info.viewer_review?.approved_in_current_round === true
+  );
+}
+
+export function useViewerApprovedCurrentRound(
+  slug: string,
+  issueNumber: number,
+  version: number,
+): boolean {
+  const info = useQuery(specQuery(slug, issueNumber)).data;
+  const me = useQuery(meQuery).data;
+  return viewerApprovedCurrentRound(info, me?.id, version);
 }
 
 /**

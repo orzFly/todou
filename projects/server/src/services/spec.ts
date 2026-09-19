@@ -101,6 +101,43 @@ async function currentVersionRow(db: Db | Tx, issueId: number) {
   return rows[0];
 }
 
+/**
+ * The current account's approval is scoped to the latest request-changes
+ * event for this issue and version, from any account. Event ids define the
+ * round boundary; timestamps and comments never do.
+ *
+ * This query is intentionally reusable by GET and POST. The POST caller
+ * invokes it after the issue row lock, so a concurrent review cannot bypass
+ * the duplicate-approval guard.
+ */
+async function hasApprovedInCurrentRound(
+  db: Db | Tx,
+  issueId: number,
+  version: number,
+  actorId: number,
+): Promise<boolean> {
+  const [row] = await db
+    .select({
+      approved: sql<boolean>`
+        coalesce(max(${issueEvents.id}) filter (
+          where ${issueEvents.actorId} = ${actorId}
+            and ${issueEvents.payload} ->> 'verdict' = 'approve'
+        ), 0) > coalesce(max(${issueEvents.id}) filter (
+          where ${issueEvents.payload} ->> 'verdict' = 'request_changes'
+        ), 0)
+      `,
+    })
+    .from(issueEvents)
+    .where(
+      and(
+        eq(issueEvents.issueId, issueId),
+        eq(issueEvents.type, "spec_review"),
+        sql`${issueEvents.payload} ->> 'version' = ${String(version)}`,
+      ),
+    );
+  return row?.approved ?? false;
+}
+
 async function filesOfVersion(db: Db | Tx, versionId: number) {
   return db
     .select()
@@ -468,6 +505,12 @@ export async function getSpecInfo(
     .orderBy(asc(specVersions.number));
   const current = versionRows.at(-1);
   if (!current) throw new NotFoundError("this issue has no spec");
+  const approvedInCurrentRound = await hasApprovedInCurrentRound(
+    db,
+    issue.id,
+    current.number,
+    actor.id,
+  );
 
   // One issue-scoped query for all historical withdrawals, then one batched
   // identity lookup shared with version authors.
@@ -530,6 +573,10 @@ export async function getSpecInfo(
       i: 0,
     }),
     review_status: issue.specReviewStatus ?? "unreviewed",
+    viewer_review: {
+      user_id: actor.id,
+      approved_in_current_round: approvedInCurrentRound,
+    },
     unresolved_comments: issue.specUnresolvedComments,
     unresolved_carried_comments: carried?.n ?? 0,
     files: files.map((f) => ({ path: f.path, size: f.size })),
@@ -753,6 +800,14 @@ export async function submitSpecReview(
     ) {
       throw new ConflictError(
         `the current spec v${current.number} is withdrawn — refresh before reviewing a new submission`,
+      );
+    }
+    if (
+      input.verdict === "approve" &&
+      (await hasApprovedInCurrentRound(tx, issue.id, current.number, actor.id))
+    ) {
+      throw new ConflictError(
+        `you already approved v${current.number} in the current review round`,
       );
     }
 

@@ -485,6 +485,14 @@ function stubFetch(
     if (method === "GET" && url.endsWith("/api/me")) {
       return Response.json(READER);
     }
+    if (method === "GET" && url.includes("/timeline?")) {
+      return Response.json({
+        items: [],
+        prev_cursor: null,
+        next_cursor: null,
+        total_count: 0,
+      });
+    }
     if (method === "GET" && url.endsWith("/spec")) {
       return Response.json({
         current_version: 3,
@@ -846,7 +854,16 @@ describe("ReviewSubmitDialog: responsive controls (T-443)", () => {
     }
     await act(async () => {
       resolveResponse(
-        Response.json({ event_id: 9, comment_ids: [412] }, { status: 201 }),
+        Response.json(
+          {
+            event_id: 9,
+            version: 3,
+            verdict: "approve",
+            summary_comment_id: null,
+            comment_ids: [412],
+          },
+          { status: 201 },
+        ),
       );
     });
     await screen.findByRole("button", { name: "Approve" });

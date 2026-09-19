@@ -15,8 +15,15 @@ import {
   useSyncExternalStore,
 } from "react";
 import { toast } from "sonner";
-import { api } from "@/api/queries.ts";
-import { invalidateSpecState, specQuery } from "@/api/spec.ts";
+import { api, meQuery } from "@/api/queries.ts";
+import {
+  invalidateSpecState,
+  specQuery,
+  viewerApprovedCurrentRound,
+} from "@/api/spec.ts";
+import { useReturnLinkState } from "@/components/shared/return-context.tsx";
+import { useReviewCompletion } from "@/components/spec/use-review-completion.ts";
+import type { ReturnLinkState } from "@/lib/return-view-history.ts";
 import {
   confirmSubmittedSpecReviewDrafts,
   type SpecReviewDraft,
@@ -36,6 +43,7 @@ type SubmitReviewInput = {
   currentVersion: number;
   verdict: SpecReviewVerdict;
   drafts: SpecReviewDraft[];
+  returnState?: ReturnLinkState;
 };
 
 type SpecReviewSessionContextValue = {
@@ -80,6 +88,7 @@ function SessionOwner({
   children: ReactNode;
 }) {
   const queryClient = useQueryClient();
+  const beginCompletion = useReviewCompletion(slug, issueNumber);
   const session = useMemo(
     () => createSpecReviewSession({ slug, issueNumber }),
     [slug, issueNumber],
@@ -93,7 +102,7 @@ function SessionOwner({
   useDirtySource(session.isDirty, survivesNavigation);
 
   const submitReview = useCallback(
-    ({ currentVersion, verdict, drafts }: SubmitReviewInput) => {
+    ({ currentVersion, verdict, drafts, returnState }: SubmitReviewInput) => {
       const state = session.getSnapshot();
       if (state.pending !== null) return;
       const version = state.reviewVersion ?? currentVersion;
@@ -110,6 +119,19 @@ function SessionOwner({
         toast.error(`Spec v${version} has been withdrawn.`);
         return;
       }
+      if (
+        verdict === "approve" &&
+        viewerApprovedCurrentRound(
+          latest,
+          queryClient.getQueryData(meQuery.queryKey)?.id,
+          version,
+        )
+      ) {
+        toast.error(
+          `You already approved spec v${version} in the current review round.`,
+        );
+        return;
+      }
 
       const submittedDrafts = drafts.map((draft) => ({
         ...draft,
@@ -119,6 +141,10 @@ function SessionOwner({
       const body = submittedSummary.trim();
       const pending = session.beginSubmit(verdict);
       if (pending === null) return;
+      const completion = beginCompletion({
+        isOwner: () => isCurrentSpecReviewSession(state.identity, state.token),
+        returnState,
+      });
 
       void api
         .submitSpecReview(slug, issueNumber, {
@@ -127,33 +153,31 @@ function SessionOwner({
           ...(body === "" ? {} : { body }),
           comments: submitComments(submittedDrafts),
         })
-        .then((result) => {
-          toast.success(
-            `${
-              {
-                approve: "Approved",
-                request_changes: "Requested changes on",
-                comment: "Commented on",
-              }[result.verdict]
-            } spec v${result.version}`,
-          );
-          confirmSubmittedSpecReviewDrafts(slug, issueNumber, submittedDrafts);
-          session.finishSubmit(pending.id, submittedSummary);
-          void invalidateSpecState(queryClient, slug, issueNumber);
-        })
-        .catch((error: unknown) => {
-          session.failSubmit(pending.id);
-          if (error instanceof TodouError && error.status === 409) {
-            void invalidateSpecState(queryClient, slug, issueNumber);
-          }
-          if (isCurrentSpecReviewSession(state.identity, state.token)) {
-            toast.error(
-              error instanceof Error ? error.message : "Review failed",
+        .then(
+          (result) => {
+            confirmSubmittedSpecReviewDrafts(
+              slug,
+              issueNumber,
+              submittedDrafts,
             );
-          }
-        });
+            return completion.complete(result, () => {
+              session.finishSubmit(pending.id, submittedSummary);
+            });
+          },
+          (error: unknown) => {
+            session.failSubmit(pending.id);
+            if (error instanceof TodouError && error.status === 409) {
+              void invalidateSpecState(queryClient, slug, issueNumber);
+            }
+            if (isCurrentSpecReviewSession(state.identity, state.token)) {
+              toast.error(
+                error instanceof Error ? error.message : "Review failed",
+              );
+            }
+          },
+        );
     },
-    [issueNumber, queryClient, session, slug],
+    [beginCompletion, issueNumber, queryClient, session, slug],
   );
 
   const value = useMemo(
@@ -227,6 +251,14 @@ export function useSpecReviewSession(
   state: SpecReviewSessionSnapshot;
 } {
   const value = useContext(SpecReviewSessionContext);
+  // This consumer lives below ReturnViewProvider in the shell; SessionOwner
+  // intentionally lives above it so Suspense cannot reset an in-flight POST.
+  const returnState = useReturnLinkState();
+  const submitReview = useCallback(
+    (input: SubmitReviewInput) =>
+      value?.submitReview({ ...input, returnState }),
+    [returnState, value],
+  );
   if (
     value === null ||
     value.session.getSnapshot().identity.slug !== slug ||
@@ -238,5 +270,5 @@ export function useSpecReviewSession(
     value.session.subscribe,
     value.session.getSnapshot,
   );
-  return { ...value, state };
+  return { ...value, state, submitReview };
 }

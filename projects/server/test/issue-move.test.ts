@@ -5,7 +5,9 @@ import {
   comments,
   issueEvents,
   issueReads,
+  issues,
   pendingUploads,
+  specVersions,
 } from "../src/db/project-schema.ts";
 import { routeInfoOf } from "../src/services/access.ts";
 import {
@@ -187,6 +189,225 @@ describe.each(PLACEMENTS)("issue move (%s placement)", (placement) => {
     );
     expect(commentRedirect.status).toBe(301);
     expect((await json(commentRedirect)).moved_to.slug).toBe(B);
+  });
+
+  it("preserves personal approval rounds, versions and actor order through a real move", async () => {
+    const reviewerA = await addUserWithToken(t.ctx, `mv-review-a-${placement}`);
+    const reviewerB = await addUserWithToken(t.ctx, `mv-review-b-${placement}`);
+    for (const reviewer of [reviewerA, reviewerB]) {
+      for (const slug of [A, B]) {
+        const member = await req(
+          `/projects/${slug}/members/${reviewer.user.id}`,
+          admin,
+          { method: "PUT", body: JSON.stringify({ role: "writer" }) },
+        );
+        expect(member.status).toBe(204);
+      }
+    }
+    const source = await createIssue(A, "personal approvals travel");
+    const push = async (version: number) => {
+      const response = await req(
+        `/projects/${A}/issues/${source.number}/spec/push`,
+        author,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            files: [
+              { path: "design.md", body: `Design version ${version}.\n` },
+            ],
+            message: `Version ${version}`,
+          }),
+        },
+      );
+      expect(response.status).toBe(200);
+      expect((await json(response)).version).toBe(version);
+    };
+    const review = (
+      slug: string,
+      number: number,
+      who: Who,
+      version: number,
+      verdict: "approve" | "request_changes",
+    ) =>
+      req(`/projects/${slug}/issues/${number}/spec/reviews`, who, {
+        method: "POST",
+        body: JSON.stringify({ version, verdict }),
+      });
+    const info = async (slug: string, number: number, who: Who) => {
+      const response = await req(
+        `/projects/${slug}/issues/${number}/spec`,
+        who,
+      );
+      expect(response.status).toBe(200);
+      return json(response);
+    };
+    const personal = async (
+      slug: string,
+      number: number,
+      approvedA: boolean,
+      approvedB: boolean,
+    ) => {
+      for (const [reviewer, approved] of [
+        [reviewerA, approvedA],
+        [reviewerB, approvedB],
+      ] as const) {
+        const spec = await info(slug, number, reviewer.headers);
+        expect(spec.current_version).toBe(2);
+        expect(spec.viewer_review).toEqual({
+          user_id: reviewer.user.id,
+          approved_in_current_round: approved,
+        });
+      }
+    };
+    const srcDb = await dbOf(idA, A);
+    // Compare persisted rows in event-id order. Surrogate ids and project/
+    // issue ids can change during a move; actor, payload and dates must not.
+    const history = (db: typeof srcDb, issueId: number) =>
+      db
+        .select({
+          actorId: issueEvents.actorId,
+          payload: issueEvents.payload,
+          createdAt: issueEvents.createdAt,
+        })
+        .from(issueEvents)
+        .where(
+          and(
+            eq(issueEvents.issueId, issueId),
+            eq(issueEvents.type, "spec_review"),
+          ),
+        )
+        .orderBy(issueEvents.id);
+    const versions = (db: typeof srcDb, issueId: number) =>
+      db
+        .select({
+          number: specVersions.number,
+          authorId: specVersions.authorId,
+          message: specVersions.message,
+          createdAt: specVersions.createdAt,
+        })
+        .from(specVersions)
+        .where(eq(specVersions.issueId, issueId))
+        .orderBy(specVersions.number);
+
+    await push(1);
+    expect(
+      (await review(A, source.number, reviewerB.headers, 1, "approve")).status,
+    ).toBe(201);
+    await push(2);
+    await personal(A, source.number, false, false);
+    const sequence = [
+      [reviewerA, "approve"],
+      [reviewerB, "approve"],
+      [reviewerB, "request_changes"],
+      [reviewerA, "approve"],
+    ] as const;
+    for (const [index, [reviewer, verdict]] of sequence.entries()) {
+      const response = await review(
+        A,
+        source.number,
+        reviewer.headers,
+        2,
+        verdict,
+      );
+      expect(response.status).toBe(201);
+      const eventId = (await json(response)).event_id as number;
+      // These are real HTTP review events. Only their display timestamps
+      // are inverted: the boundary's larger id has an earlier timestamp
+      // than B's approval, and A's new approval is earlier still.
+      await srcDb
+        .update(issueEvents)
+        .set({ createdAt: new Date(Date.UTC(2025, 0, 10 - index)) })
+        .where(eq(issueEvents.id, eventId));
+      if (verdict === "request_changes")
+        await personal(A, source.number, false, false);
+    }
+    await personal(A, source.number, true, false);
+    const beforeInfo = await info(A, source.number, reviewerA.headers);
+    const beforeHistory = await history(srcDb, source.id);
+    const beforeVersions = await versions(srcDb, source.id);
+    expect(beforeHistory).toMatchObject([
+      {
+        actorId: reviewerB.user.id,
+        payload: { version: 1, verdict: "approve" },
+      },
+      {
+        actorId: reviewerA.user.id,
+        payload: { version: 2, verdict: "approve" },
+      },
+      {
+        actorId: reviewerB.user.id,
+        payload: { version: 2, verdict: "approve" },
+      },
+      {
+        actorId: reviewerB.user.id,
+        payload: { version: 2, verdict: "request_changes" },
+      },
+      {
+        actorId: reviewerA.user.id,
+        payload: { version: 2, verdict: "approve" },
+      },
+    ]);
+    expect(beforeVersions).toMatchObject([
+      { number: 1, authorId, message: "Version 1" },
+      { number: 2, authorId, message: "Version 2" },
+    ]);
+
+    const result = await moved(A, source.number, B);
+    const number = result.moved_to.number;
+    const dstDb = await dbOf(idB, B);
+    const [destination] = await dstDb
+      .select({ id: issues.id })
+      .from(issues)
+      .where(and(eq(issues.projectId, idB), eq(issues.number, number)));
+    if (!destination) throw new Error("missing moved spec issue");
+    expect(await history(dstDb, destination.id)).toEqual(beforeHistory);
+    expect(await versions(dstDb, destination.id)).toEqual(beforeVersions);
+    expect(await info(B, number, reviewerA.headers)).toEqual(beforeInfo);
+    await personal(B, number, true, false);
+    const oldAddress = await req(
+      `/projects/${A}/issues/${source.number}/spec`,
+      reviewerA.headers,
+    );
+    expect(oldAddress.status).toBe(301);
+
+    expect(
+      (await review(B, number, reviewerA.headers, 2, "approve")).status,
+    ).toBe(409);
+    expect(await history(dstDb, destination.id)).toEqual(beforeHistory);
+    await personal(B, number, true, false);
+    // B's pre-boundary approval must not bar an approval at the destination.
+    expect(
+      (await review(B, number, reviewerB.headers, 2, "approve")).status,
+    ).toBe(201);
+    await personal(B, number, true, true);
+    expect(
+      (await review(B, number, reviewerB.headers, 2, "request_changes")).status,
+    ).toBe(201);
+    await personal(B, number, false, false);
+    expect(
+      (await review(B, number, reviewerA.headers, 2, "approve")).status,
+    ).toBe(201);
+    await personal(B, number, true, false);
+    expect(
+      (await review(B, number, reviewerA.headers, 2, "approve")).status,
+    ).toBe(409);
+    const afterHistory = await history(dstDb, destination.id);
+    expect(afterHistory).toHaveLength(beforeHistory.length + 3);
+    expect(afterHistory.slice(beforeHistory.length)).toMatchObject([
+      {
+        actorId: reviewerB.user.id,
+        payload: { version: 2, verdict: "approve" },
+      },
+      {
+        actorId: reviewerB.user.id,
+        payload: { version: 2, verdict: "request_changes" },
+      },
+      {
+        actorId: reviewerA.user.id,
+        payload: { version: 2, verdict: "approve" },
+      },
+    ]);
+    expect(await versions(dstDb, destination.id)).toEqual(beforeVersions);
   });
 
   /**
