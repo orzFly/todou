@@ -203,6 +203,7 @@ export function ActivityCalendar({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (typeof event.key !== "string") return;
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();

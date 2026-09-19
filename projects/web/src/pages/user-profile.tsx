@@ -279,20 +279,3 @@ export function UserProfilePage({
     </div>
   );
 }
-
-/**
- * The id-shaped half of the address (`/users/12`), which is the form stored
- * text links on. It renders the same page the login form does and hands the
- * reader on once the account resolves.
- *
- * Exactly one component may subscribe to `userQuery` for this address.
- * Rendering the page against a query this one had already failed gave the
- * cache two observers, and react-query refetches on mount while a query sits
- * in error with no data (`retryOnMount` defaults to true): the refetch reset
- * the query to pending, this component swapped back to its skeleton, the
- * second observer unmounted, and the failure repeated — a mount loop that
- * never showed the failure and never stopped asking (T-414).
- */
-export function UserRedirectPage({ ref: id }: { ref: string }) {
-  return <UserProfilePage ref={id} redirectToLogin />;
-}

@@ -361,6 +361,39 @@ describe("ActivityCalendar keyboard and inspection", () => {
     expect(p.onYearChange).not.toHaveBeenCalled();
   });
 
+  it("ignores non-string keys produced by React native-key normalization without reporting errors", () => {
+    const p = props();
+    const { container } = render(<ActivityCalendar {...p} />);
+    const errors: unknown[] = [];
+    const onError = (event: ErrorEvent) => {
+      errors.push(event.error);
+      event.preventDefault();
+    };
+    window.addEventListener("error", onError);
+    try {
+      focus("2024-01-10");
+      for (const key of ["constructor", "toString", "valueOf", "__proto__"]) {
+        // Dispatch real native events: React itself turns these keys into
+        // inherited functions/objects; do not overwrite the synthetic key.
+        expect(fireEvent.keyDown(tile("2024-01-10"), { key })).toBe(true);
+        expect(errors, key).toEqual([]);
+        expect(document.activeElement).toBe(tile("2024-01-10"));
+        expect(tabStops(container)).toEqual(["2024-01-10"]);
+      }
+      expect(p.onDayChange).not.toHaveBeenCalled();
+      expect(p.onYearChange).not.toHaveBeenCalled();
+      fireEvent.keyDown(tile("2024-01-10"), { key: "ArrowDown" });
+      expect(document.activeElement).toBe(tile("2024-01-11"));
+      fireEvent.keyDown(tile("2024-01-11"), { key: "Home" });
+      expect(document.activeElement).toBe(tile("2024-01-08"));
+      fireEvent.keyDown(tile("2024-01-08"), { key: "Enter" });
+      expect(p.onDayChange).toHaveBeenCalledExactlyOnceWith("2024-01-08");
+      expect(errors).toEqual([]);
+    } finally {
+      window.removeEventListener("error", onError);
+    }
+  });
+
   it("exposes exact labels on focus, hover and touch, including disabled dates", () => {
     const p = props({
       days: daysFor(2024, [

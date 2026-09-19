@@ -407,6 +407,10 @@ function UserPage() {
   const search = userSearchSchema(userRoute.useSearch());
   const { role = "any", state = "open" } = search;
   const navigate = useNavigate();
+  // T-414: keep one userQuery subscriber for either address spelling. A
+  // separate numeric-address observer mounting this page after a failed read
+  // makes retryOnMount alternate pending/error and repeatedly remount it.
+  // The same page owns the read and redirects once the account resolves.
   return (
     <UserProfilePage
       ref={ref}
