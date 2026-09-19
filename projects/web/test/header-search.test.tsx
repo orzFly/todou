@@ -347,16 +347,55 @@ describe("the header's search, a migrated comment (T-434)", () => {
   });
 });
 
+/**
+ * The control inside the box's slot — the element that floats. Tailwind is not
+ * loaded here, so the width is only readable as a class name.
+ */
+const control = (input: Element) =>
+  input.closest("search")?.firstElementChild as HTMLElement;
+
+describe("the search box's focus float (T-454)", () => {
+  it("borrows the nav's width while it is being typed into, and gives it back", async () => {
+    const view = renderShellAt(1280);
+    const input = await view.findByLabelText("Search this project");
+    expect(control(input).className).toContain("w-full");
+
+    fireEvent.focus(input);
+    await waitFor(() => expect(control(input).className).toContain("w-80"));
+    expect(control(input).className).not.toContain("w-full");
+
+    // Text in the box is not a reason to keep standing on the nav: the reader
+    // has moved on, and nothing marks a box that stayed open as dismissable.
+    fireEvent.change(input, { target: { value: "label:bug" } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(control(input).className).toContain("w-full"));
+  });
+
+  it("stays in its slot where the host has no width to lend", async () => {
+    // The phone's box already fills an overlay across the whole row, so
+    // floating it would be growing over itself.
+    const view = renderShellAt(390);
+    fireEvent.click(await view.findByRole("button", { name: "Search" }));
+    const input = await view.findByLabelText("Search this project");
+    fireEvent.focus(input);
+    expect(control(input).className).toContain("w-full");
+  });
+});
+
 describe("the header's project row", () => {
   it("carries the tabs, then the search, then the create button", async () => {
     const view = renderShellAt(390);
     await view.findAllByRole("link", { name: "List" });
     const { first, project } = rows(view);
 
+    // Insights and Settings ride behind the `···` on the phone row too (T-454).
     const labels = [...project.querySelectorAll("nav a")].map((a) =>
       a.textContent?.trim(),
     );
-    expect(labels).toEqual(["List", "Board", "Insights", "Settings"]);
+    expect(labels).toEqual(["List", "Board"]);
+    expect(
+      project.querySelector('nav button[aria-label="More"]'),
+    ).not.toBeNull();
     // The search is this project's, so it keeps the project's own company
     // rather than the account cluster's.
     const icon = toggle(project) as Element;

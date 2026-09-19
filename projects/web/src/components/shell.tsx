@@ -135,10 +135,15 @@ export function AppShell({
           <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
             {/* `relative` is the anchor the collapsed search expands against. */}
             <div className="relative mx-auto flex h-14 max-w-6xl items-center gap-2 px-4">
-              {/* The only cluster that may give ground: `min-w-0` lets the project
-              name truncate, and `overflow-hidden` makes what is left over
-              clip rather than lie on top of the search box. */}
-              <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+              {/* Sized by its own content (`flex-auto`, not `flex-1`), which
+              is what lets the row notice that this cluster is running out of
+              room and take the width off the search box first — with a basis
+              of 0 the browser cannot see what this wants, so the deficit fell
+              on the project name every time (T-454). `min-w-0` is still what
+              lets that name truncate once the box has nothing left to give,
+              and `overflow-hidden` makes what is left over clip rather than
+              lie on top of the box. */}
+              <div className="flex min-w-0 flex-auto items-center gap-2 overflow-hidden">
                 <Link
                   to="/projects"
                   className="flex shrink-0 items-center gap-2 font-semibold"
@@ -173,19 +178,31 @@ export function AppShell({
                   </>
                 )}
               </div>
-              {/* A fixed width per breakpoint, never shrinking, is what holds
-              the box still: only the flanks give ground. */}
+              {/* Docked against the account cluster rather than centred, so
+              that idle, focused and mid-resize all grow the box in the same
+              direction — leftwards, over the nav (T-454). The shrink weight
+              is what orders the two give-ways: against the left cluster's
+              factor of 1 it takes all of any deficit, down to `min-w-32`,
+              where flex freezes it and the rest of the deficit finally
+              reaches the project name.
+
+              Five digits rather than three because "nearly all" is not
+              enough here. At 999 the cluster still absorbed about a thousandth
+              of the deficit — 0.09px, under a device pixel but over Chrome's
+              1/64px layout quantum — and the project name, left sitting that
+              0.09px inside its own text, ellipsised itself to `Tod…` across
+              every width where the box was mid-shrink. At 99999 the residue
+              rounds away to nothing. */}
               {wide && slug != null && (
                 <SearchBox
                   slug={slug}
-                  className="w-40 shrink-0 lg:w-64 xl:w-80"
+                  className="w-80 min-w-32 shrink-[99999]"
+                  focusWidth="w-80"
                 />
               )}
-              {/* No `min-w-0` here, deliberately: this cluster stops at its
-              min-content width and the buttons are never squeezed. Both
-              flanks being `flex-1` with the same floor is what leaves the
-              box in the middle of the row. */}
-              <div className="flex flex-1 items-center justify-end gap-1">
+              {/* Content-sized and unshrinkable: these buttons are the one
+              thing in the row that has no smaller form to fall back to. */}
+              <div className="flex flex-none items-center gap-1">
                 {!wide && !hasProjectRow && slug != null && (
                   <SearchToggle slug={slug} />
                 )}

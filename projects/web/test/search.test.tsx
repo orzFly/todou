@@ -62,6 +62,7 @@ import {
 import type { ReturnView } from "../src/lib/return-view.ts";
 import {
   groupByIssue,
+  resultsStickyTop,
   SearchPage as SearchPageComponent,
   SearchResults,
 } from "../src/pages/search.tsx";
@@ -912,6 +913,34 @@ describe("SearchHighlight", () => {
     );
     await waitFor(() => expect(container.textContent).toBe("plain"));
     expect(container.querySelector("mark")).toBeNull();
+  });
+});
+
+describe("the pinned results heading (T-454)", () => {
+  it("pins the query, and nothing else on the page, under the header", async () => {
+    const { client, params } = seeded({ items: [hit()], has_more: false });
+    const { container, findByText } = renderWithProviders(
+      <SearchResults slug="todou" search={params} />,
+      client,
+    );
+    const heading = (await findByText("Results for “全文搜索”"))
+      .parentElement as HTMLElement;
+    // The breakpoint `resultsStickyTop` is told about below.
+    expect(heading.className).toContain("sm:sticky");
+    // Measured, because the header is two rows tall below `sm`.
+    expect(heading.style.top).toBe("56px");
+    // The chips scroll away with the results; only the heading pins.
+    const chips = container.querySelector(
+      "button[aria-pressed]",
+    ) as HTMLElement;
+    expect(chips.closest(".sm\\:sticky")).toBeNull();
+  });
+
+  it("counts the heading into the restore offset only where it pins", () => {
+    // A restore that ignored a pinned heading would land its row behind it,
+    // which is the bug the measured offset exists to prevent (T-407).
+    expect(resultsStickyTop(57, 36, true)).toBe(93);
+    expect(resultsStickyTop(97, 36, false)).toBe(97);
   });
 });
 

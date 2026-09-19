@@ -127,12 +127,20 @@ const COMPLETION_ICON = {
 export function SearchBox({
   slug,
   className,
+  focusWidth,
   listAlign = "centered",
   autoFocus = false,
   onEscape,
 }: {
   slug: string;
   className?: string;
+  /**
+   * The width a focused box takes, over whatever is to its left rather than
+   * by pushing its neighbours along (T-454). The host gives up width to the
+   * row it shares; this is what it borrows back for as long as somebody is
+   * typing into it. Omitted, the box never leaves its slot.
+   */
+  focusWidth?: string;
   /**
    * Where the offer grows from: `centered` about the box, for a box that
    * sits in the middle of its row; `start` from the box's left edge, for one
@@ -486,207 +494,338 @@ export function SearchBox({
   });
 
   return (
-    <search className={cn("relative", className)}>
-      <form onSubmit={onSubmit}>
-        <SearchIcon
-          className="pointer-events-none absolute top-1/2 left-2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground"
-          aria-hidden
-        />
-        <QualifierInput
-          inputRef={input}
-          autoFocus={autoFocus}
-          type="text"
-          name="q"
-          // T-262 kept the browser's own history for free; T-268 gives it
-          // back. This box now has a panel of its own, the two drop-downs
-          // cover each other, and the browser's knows neither the `label:`
-          // syntax nor which labels this project has.
-          autoComplete="off"
-          role="combobox"
-          aria-expanded={open}
-          aria-controls={listId}
-          aria-activedescendant={open && hl !== NONE ? optionId(hl) : undefined}
-          aria-autocomplete="list"
-          aria-busy={waiting || undefined}
-          value={value}
-          onValueChange={(next) => {
-            setValue(next);
-            setDismissed(false);
-            setHighlight(NONE);
-          }}
-          onCaretChange={setPosition}
-          render={(text) => highlightParts(text, parseSearchQuery(text), known)}
-          onKeyDown={onKeyDown}
-          onFocus={() => setFocused(true)}
-          onBlur={(e) => {
-            // Clicking a row blurs the input before the click lands; the
-            // listbox's own mousedown guard covers the pointer, this covers
-            // a focus that really did move into it.
-            if (list.current?.contains(e.relatedTarget)) return;
-            setFocused(false);
-          }}
-          aria-label="Search this project"
-          placeholder="Search…"
-          padding="pl-7"
-        />
-      </form>
-      {open && (
-        <div
-          ref={list}
-          id={listId}
-          role="listbox"
-          aria-label="Search suggestions"
-          // Without this, pressing on a row blurs the input first and the
-          // listbox is gone before the click arrives.
-          onMouseDown={(e) => e.preventDefault()}
-          style={{ maxHeight }}
-          className={cn(
-            "absolute top-full z-50 mt-1 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg border bg-popover p-1 shadow-lg ring-1 ring-foreground/5",
-            listAlign === "start"
-              ? // The box starts at the edge of the screen, so the panel
-                // takes its width and stops. A floor still applies, because
-                // the narrowest phone squeezes the box down to ~250px and a
-                // title has to survive (T-215) — but the floor stops at the
-                // viewport, since a `min-width` beats a `max-width` and a
-                // flat 20rem would push the page 16px wider at 320.
-                "left-0 w-full min-w-[min(20rem,calc(100vw-2rem))]"
-              : // Centred on the box, not on the caret: the panel following
-                // the caret across the line made the reader chase it (T-268).
-                "left-1/2 w-[28rem] -translate-x-1/2",
-          )}
-        >
-          {rows.map((row, idx) => {
-            if (row.kind === "search") {
-              // With nothing typed there is no search to offer, so the row
-              // stops pretending to be one: `Search for “”` searched for
-              // nothing, while the page it leads to is a real destination —
-              // the syntax help and the domain chips live there.
-              const blank = query === "";
-              return (
-                <Link
-                  key="search"
-                  to="/projects/$slug/search"
-                  params={{ slug }}
-                  search={blank ? {} : { q: query }}
-                  {...optionProps(idx)}
-                  onMouseMove={() => setHighlight(idx)}
-                  onClick={(e) => {
-                    // The blank row leads to the search page rather than to a
-                    // search, so there is nothing to remember.
-                    if (!blank) history.record(query);
-                    closeUnlessNewTab(e);
-                  }}
-                >
-                  {blank ? (
+    // `h-8` because the control below is lifted out of the flow: the slot has
+    // to keep the height it had, or the header row reflows around a box that
+    // is still on screen.
+    <search className={cn("relative h-8", className)}>
+      {/* The control, anchored to the slot's right edge so that growing is
+          growing leftwards — over the project nav, which is the neighbour
+          that gave up the width in the first place. Absolute rather than a
+          width on the slot, so nothing beside it moves; it is also the
+          containing block the offer panel below hangs off, which is what
+          keeps the panel under the box it grew out of. */}
+      <div
+        className={cn(
+          "absolute inset-y-0 right-0 transition-[width] duration-150",
+          focusWidth !== undefined && focused
+            ? // Opaque and above: it is standing on the nav's text.
+              cn("z-30 rounded-lg bg-background", focusWidth)
+            : "w-full",
+        )}
+      >
+        <form onSubmit={onSubmit}>
+          <SearchIcon
+            className="pointer-events-none absolute top-1/2 left-2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground"
+            aria-hidden
+          />
+          <QualifierInput
+            inputRef={input}
+            autoFocus={autoFocus}
+            type="text"
+            name="q"
+            // T-262 kept the browser's own history for free; T-268 gives it
+            // back. This box now has a panel of its own, the two drop-downs
+            // cover each other, and the browser's knows neither the `label:`
+            // syntax nor which labels this project has.
+            autoComplete="off"
+            role="combobox"
+            aria-expanded={open}
+            aria-controls={listId}
+            aria-activedescendant={
+              open && hl !== NONE ? optionId(hl) : undefined
+            }
+            aria-autocomplete="list"
+            aria-busy={waiting || undefined}
+            value={value}
+            onValueChange={(next) => {
+              setValue(next);
+              setDismissed(false);
+              setHighlight(NONE);
+            }}
+            onCaretChange={setPosition}
+            render={(text) =>
+              highlightParts(text, parseSearchQuery(text), known)
+            }
+            onKeyDown={onKeyDown}
+            onFocus={() => setFocused(true)}
+            onBlur={(e) => {
+              // Clicking a row blurs the input before the click lands; the
+              // listbox's own mousedown guard covers the pointer, this covers
+              // a focus that really did move into it.
+              if (list.current?.contains(e.relatedTarget)) return;
+              setFocused(false);
+            }}
+            aria-label="Search this project"
+            placeholder="Search…"
+            padding="pl-7"
+          />
+        </form>
+        {open && (
+          <div
+            ref={list}
+            id={listId}
+            role="listbox"
+            aria-label="Search suggestions"
+            // Without this, pressing on a row blurs the input first and the
+            // listbox is gone before the click arrives.
+            onMouseDown={(e) => e.preventDefault()}
+            style={{ maxHeight }}
+            className={cn(
+              "absolute top-full z-50 mt-1 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg border bg-popover p-1 shadow-lg ring-1 ring-foreground/5",
+              listAlign === "start"
+                ? // The box starts at the edge of the screen, so the panel
+                  // takes its width and stops. A floor still applies, because
+                  // the narrowest phone squeezes the box down to ~250px and a
+                  // title has to survive (T-215) — but the floor stops at the
+                  // viewport, since a `min-width` beats a `max-width` and a
+                  // flat 20rem would push the page 16px wider at 320.
+                  "left-0 w-full min-w-[min(20rem,calc(100vw-2rem))]"
+                : // Centred on the box, not on the caret: the panel following
+                  // the caret across the line made the reader chase it (T-268).
+                  "left-1/2 w-[28rem] -translate-x-1/2",
+            )}
+          >
+            {rows.map((row, idx) => {
+              if (row.kind === "search") {
+                // With nothing typed there is no search to offer, so the row
+                // stops pretending to be one: `Search for “”` searched for
+                // nothing, while the page it leads to is a real destination —
+                // the syntax help and the domain chips live there.
+                const blank = query === "";
+                return (
+                  <Link
+                    key="search"
+                    to="/projects/$slug/search"
+                    params={{ slug }}
+                    search={blank ? {} : { q: query }}
+                    {...optionProps(idx)}
+                    onMouseMove={() => setHighlight(idx)}
+                    onClick={(e) => {
+                      // The blank row leads to the search page rather than to a
+                      // search, so there is nothing to remember.
+                      if (!blank) history.record(query);
+                      closeUnlessNewTab(e);
+                    }}
+                  >
+                    {blank ? (
+                      <ArrowRightIcon
+                        className="size-3.5 shrink-0 text-muted-foreground"
+                        aria-hidden
+                      />
+                    ) : (
+                      <SearchIcon
+                        className="size-3.5 shrink-0 text-muted-foreground"
+                        aria-hidden
+                      />
+                    )}
+                    <span className="truncate">
+                      {blank ? (
+                        "search page"
+                      ) : (
+                        <>
+                          Search for “{query}”
+                          {elsewhere && ` in ${project.data?.name ?? slug}`}
+                        </>
+                      )}
+                    </span>
+                  </Link>
+                );
+              }
+              if (row.kind === "completion") {
+                const Icon = COMPLETION_ICON[row.row.icon];
+                return (
+                  // A button, not a link: it goes nowhere, it rewrites the
+                  // query in place. Focus stays in the input regardless — the
+                  // listbox cancels the mousedown that would move it.
+                  <button
+                    type="button"
+                    key={row.row.key}
+                    {...optionProps(idx)}
+                    onMouseMove={() => setHighlight(idx)}
+                    onClick={() => accept(row.row.apply)}
+                  >
+                    <Icon
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                      aria-hidden
+                    />
+                    <span className="truncate font-mono text-xs">
+                      {row.row.text}
+                    </span>
+                    {row.row.hint !== undefined && (
+                      <span className="truncate text-muted-foreground text-xs">
+                        {row.row.hint}
+                      </span>
+                    )}
+                  </button>
+                );
+              }
+              if (row.kind === "history") {
+                // The only row whose `role="option"` sits on a container rather
+                // than on the link: a delete button cannot live inside an `<a>`,
+                // so the two go side by side and the link takes the rest of the
+                // line so that nothing is lost from the click target.
+                const props = optionProps(idx);
+                return (
+                  <div
+                    key={`history:${row.q}`}
+                    {...props}
+                    // Both are already in `optionProps`; the linter cannot see
+                    // them inside a spread and reads this as an inert div.
+                    role="option"
+                    tabIndex={-1}
+                    className={cn(props.className, "group")}
+                    onMouseMove={() => setHighlight(idx)}
+                  >
+                    <Link
+                      to="/projects/$slug/search"
+                      params={{ slug }}
+                      search={{ q: row.q }}
+                      tabIndex={-1}
+                      className="flex min-w-0 flex-1 items-center gap-2"
+                      onClick={(e) => {
+                        history.record(row.q);
+                        closeUnlessNewTab(e);
+                      }}
+                    >
+                      <ClockIcon
+                        className="size-3.5 shrink-0 text-muted-foreground"
+                        aria-hidden
+                      />
+                      <span className="truncate">
+                        {highlightParts(row.q, parseSearchQuery(row.q), known)}
+                      </span>
+                    </Link>
+                    <button
+                      type="button"
+                      // Focus stays in the input, as everywhere else in the panel.
+                      tabIndex={-1}
+                      aria-label={`Forget “${row.q}”`}
+                      className={cn(
+                        "shrink-0 rounded-sm p-0.5 text-muted-foreground opacity-0 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100",
+                        idx === hl && "opacity-100",
+                      )}
+                      onClick={() => history.forget(row.q)}
+                    >
+                      <XIcon className="size-3.5" aria-hidden />
+                    </button>
+                  </div>
+                );
+              }
+              if (row.kind === "project") {
+                return (
+                  <Link
+                    key="project"
+                    to="/projects/$slug"
+                    params={{ slug: row.slug }}
+                    {...optionProps(idx)}
+                    onMouseMove={() => setHighlight(idx)}
+                    onClick={closeUnlessNewTab}
+                  >
                     <ArrowRightIcon
                       className="size-3.5 shrink-0 text-muted-foreground"
                       aria-hidden
                     />
-                  ) : (
-                    <SearchIcon
-                      className="size-3.5 shrink-0 text-muted-foreground"
+                    <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                      {row.spelled}
+                    </span>
+                    <ProjectIcon
+                      project={{
+                        name: row.name,
+                        prefix: row.prefix,
+                        icon_url: row.icon_url,
+                      }}
+                      className="size-5"
                       aria-hidden
                     />
-                  )}
-                  <span className="truncate">
-                    {blank ? (
-                      "search page"
-                    ) : (
-                      <>
-                        Search for “{query}”
-                        {elsewhere && ` in ${project.data?.name ?? slug}`}
-                      </>
-                    )}
-                  </span>
-                </Link>
-              );
-            }
-            if (row.kind === "completion") {
-              const Icon = COMPLETION_ICON[row.row.icon];
-              return (
-                // A button, not a link: it goes nowhere, it rewrites the
-                // query in place. Focus stays in the input regardless — the
-                // listbox cancels the mousedown that would move it.
-                <button
-                  type="button"
-                  key={row.row.key}
-                  {...optionProps(idx)}
-                  onMouseMove={() => setHighlight(idx)}
-                  onClick={() => accept(row.row.apply)}
-                >
-                  <Icon
-                    className="size-3.5 shrink-0 text-muted-foreground"
-                    aria-hidden
-                  />
-                  <span className="truncate font-mono text-xs">
-                    {row.row.text}
-                  </span>
-                  {row.row.hint !== undefined && (
-                    <span className="truncate text-muted-foreground text-xs">
-                      {row.row.hint}
-                    </span>
-                  )}
-                </button>
-              );
-            }
-            if (row.kind === "history") {
-              // The only row whose `role="option"` sits on a container rather
-              // than on the link: a delete button cannot live inside an `<a>`,
-              // so the two go side by side and the link takes the rest of the
-              // line so that nothing is lost from the click target.
-              const props = optionProps(idx);
-              return (
-                <div
-                  key={`history:${row.q}`}
-                  {...props}
-                  // Both are already in `optionProps`; the linter cannot see
-                  // them inside a spread and reads this as an inert div.
-                  role="option"
-                  tabIndex={-1}
-                  className={cn(props.className, "group")}
-                  onMouseMove={() => setHighlight(idx)}
-                >
-                  <Link
-                    to="/projects/$slug/search"
-                    params={{ slug }}
-                    search={{ q: row.q }}
-                    tabIndex={-1}
-                    className="flex min-w-0 flex-1 items-center gap-2"
-                    onClick={(e) => {
-                      history.record(row.q);
-                      closeUnlessNewTab(e);
-                    }}
-                  >
-                    <ClockIcon
-                      className="size-3.5 shrink-0 text-muted-foreground"
-                      aria-hidden
-                    />
-                    <span className="truncate">
-                      {highlightParts(row.q, parseSearchQuery(row.q), known)}
-                    </span>
+                    <span className="truncate">{row.name}</span>
                   </Link>
-                  <button
-                    type="button"
-                    // Focus stays in the input, as everywhere else in the panel.
-                    tabIndex={-1}
-                    aria-label={`Forget “${row.q}”`}
-                    className={cn(
-                      "shrink-0 rounded-sm p-0.5 text-muted-foreground opacity-0 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100",
-                      idx === hl && "opacity-100",
-                    )}
-                    onClick={() => history.forget(row.q)}
+                );
+              }
+              if (row.kind === "project-issue") {
+                return (
+                  <Link
+                    key={`peek-${row.number}`}
+                    to="/projects/$slug/issues/$number"
+                    params={{ slug: row.slug, number: String(row.number) }}
+                    state={returnState}
+                    {...optionProps(idx)}
+                    onMouseMove={() => setHighlight(idx)}
+                    onClick={closeUnlessNewTab}
                   >
-                    <XIcon className="size-3.5" aria-hidden />
-                  </button>
-                </div>
-              );
-            }
-            if (row.kind === "project") {
+                    {/* Where the arrow goes on every other row. These cards
+                      are offered rather than asked for, and the empty
+                      column is what says so — one indent, no new glyph. */}
+                    <span className="size-3.5 shrink-0" aria-hidden />
+                    <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                      {row.spelled}
+                    </span>
+                    <span className="truncate">{row.item.title}</span>
+                    <StatusPill
+                      status={row.item.status}
+                      className="ml-auto shrink-0"
+                    />
+                  </Link>
+                );
+              }
+              if (row.kind === "external") {
+                return (
+                  // A new tab: this one leaves todou, unlike an autolink
+                  // clicked mid-sentence, which the reader is reading through.
+                  <a
+                    key="external"
+                    href={row.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    {...optionProps(idx)}
+                    onMouseMove={() => setHighlight(idx)}
+                    onClick={closeUnlessNewTab}
+                  >
+                    <ExternalLinkIcon
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                      aria-hidden
+                    />
+                    <span className="shrink-0 font-mono text-xs">
+                      {row.text}
+                    </span>
+                    <span className="truncate text-muted-foreground">
+                      {row.host}
+                    </span>
+                  </a>
+                );
+              }
+              if (row.state === "pending") {
+                return (
+                  // Not a link: there is nothing to point at yet. Enter still
+                  // reaches the card, by waiting for the lookup it is on.
+                  <div
+                    key="card"
+                    id={optionId(idx)}
+                    role="option"
+                    tabIndex={-1}
+                    aria-selected={idx === hl}
+                    aria-label="Looking up the card…"
+                    className={cn(OPTION, idx === hl && "bg-accent")}
+                  >
+                    <ArrowRightIcon
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                      aria-hidden
+                    />
+                    <Skeleton className="h-4 w-40" />
+                  </div>
+                );
+              }
               return (
                 <Link
-                  key="project"
-                  to="/projects/$slug"
-                  params={{ slug: row.slug }}
+                  key="card"
+                  to="/projects/$slug/issues/$number"
+                  params={{ slug: row.slug, number: String(row.number) }}
+                  hash={
+                    row.commentId === undefined
+                      ? undefined
+                      : commentAnchor(row.commentId)
+                  }
+                  hashScrollIntoView={false}
+                  state={returnState}
                   {...optionProps(idx)}
                   onMouseMove={() => setHighlight(idx)}
                   onClick={closeUnlessNewTab}
@@ -698,128 +837,22 @@ export function SearchBox({
                   <span className="shrink-0 font-mono text-xs text-muted-foreground">
                     {row.spelled}
                   </span>
-                  <ProjectIcon
-                    project={{
-                      name: row.name,
-                      prefix: row.prefix,
-                      icon_url: row.icon_url,
-                    }}
-                    className="size-5"
-                    aria-hidden
-                  />
-                  <span className="truncate">{row.name}</span>
-                </Link>
-              );
-            }
-            if (row.kind === "project-issue") {
-              return (
-                <Link
-                  key={`peek-${row.number}`}
-                  to="/projects/$slug/issues/$number"
-                  params={{ slug: row.slug, number: String(row.number) }}
-                  state={returnState}
-                  {...optionProps(idx)}
-                  onMouseMove={() => setHighlight(idx)}
-                  onClick={closeUnlessNewTab}
-                >
-                  {/* Where the arrow goes on every other row. These cards
-                      are offered rather than asked for, and the empty
-                      column is what says so — one indent, no new glyph. */}
-                  <span className="size-3.5 shrink-0" aria-hidden />
-                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                    {row.spelled}
-                  </span>
                   <span className="truncate">{row.item.title}</span>
+                  {row.commentBy !== null && (
+                    <span className="shrink-0 text-muted-foreground">
+                      · by {row.commentBy}
+                    </span>
+                  )}
                   <StatusPill
                     status={row.item.status}
                     className="ml-auto shrink-0"
                   />
                 </Link>
               );
-            }
-            if (row.kind === "external") {
-              return (
-                // A new tab: this one leaves todou, unlike an autolink
-                // clicked mid-sentence, which the reader is reading through.
-                <a
-                  key="external"
-                  href={row.href}
-                  target="_blank"
-                  rel="noreferrer"
-                  {...optionProps(idx)}
-                  onMouseMove={() => setHighlight(idx)}
-                  onClick={closeUnlessNewTab}
-                >
-                  <ExternalLinkIcon
-                    className="size-3.5 shrink-0 text-muted-foreground"
-                    aria-hidden
-                  />
-                  <span className="shrink-0 font-mono text-xs">{row.text}</span>
-                  <span className="truncate text-muted-foreground">
-                    {row.host}
-                  </span>
-                </a>
-              );
-            }
-            if (row.state === "pending") {
-              return (
-                // Not a link: there is nothing to point at yet. Enter still
-                // reaches the card, by waiting for the lookup it is on.
-                <div
-                  key="card"
-                  id={optionId(idx)}
-                  role="option"
-                  tabIndex={-1}
-                  aria-selected={idx === hl}
-                  aria-label="Looking up the card…"
-                  className={cn(OPTION, idx === hl && "bg-accent")}
-                >
-                  <ArrowRightIcon
-                    className="size-3.5 shrink-0 text-muted-foreground"
-                    aria-hidden
-                  />
-                  <Skeleton className="h-4 w-40" />
-                </div>
-              );
-            }
-            return (
-              <Link
-                key="card"
-                to="/projects/$slug/issues/$number"
-                params={{ slug: row.slug, number: String(row.number) }}
-                hash={
-                  row.commentId === undefined
-                    ? undefined
-                    : commentAnchor(row.commentId)
-                }
-                hashScrollIntoView={false}
-                state={returnState}
-                {...optionProps(idx)}
-                onMouseMove={() => setHighlight(idx)}
-                onClick={closeUnlessNewTab}
-              >
-                <ArrowRightIcon
-                  className="size-3.5 shrink-0 text-muted-foreground"
-                  aria-hidden
-                />
-                <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                  {row.spelled}
-                </span>
-                <span className="truncate">{row.item.title}</span>
-                {row.commentBy !== null && (
-                  <span className="shrink-0 text-muted-foreground">
-                    · by {row.commentBy}
-                  </span>
-                )}
-                <StatusPill
-                  status={row.item.status}
-                  className="ml-auto shrink-0"
-                />
-              </Link>
-            );
-          })}
-        </div>
-      )}
+            })}
+          </div>
+        )}
+      </div>
     </search>
   );
 }

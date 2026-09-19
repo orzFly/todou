@@ -39,6 +39,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { WINDOW_REGION } from "@/lib/return-view.ts";
 import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import { useHeaderHeight } from "@/lib/use-header-height.ts";
+import { SM_UP } from "@/lib/use-media-query.ts";
 import { useReadFailure } from "@/lib/use-read-failure.ts";
 import { useReturnView } from "@/lib/use-return-view.ts";
 import { cn } from "@/lib/utils";
@@ -133,6 +134,7 @@ export function SearchResults({
   );
   const linkState = useReturnLinkState();
   const rootRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLDivElement>(null);
   const headerHeight = useHeaderHeight();
 
   // An empty box is ready with no rows at all: `searchQuery` is disabled for
@@ -148,19 +150,39 @@ export function SearchResults({
   // decision and not an omission somebody restores by hand: every hit it will
   // ever show arrives in one read, and `has_more` only renders a `+`.
   useRegisterReturnLane(null);
-  // Nothing floats over these results but the shell header — the domain chips
-  // scroll away with everything else — so that is the whole inset (T-407).
+  // The shell header, plus the results heading once it pins (T-454). The
+  // domain chips scroll away with everything else, so they are not in it.
+  // Measured when it is asked for rather than carried in state: the heading is
+  // not rendered at all while the page is still its own skeleton, and an
+  // anchor captured against an inset of 0 restores a whole strip out (T-407).
   useRegisterReturnArea({
     region: WINDOW_REGION,
     element: () => null,
     rows: () => returnRows(rootRef.current),
-    inset: () => headerHeight,
+    inset: () =>
+      resultsStickyTop(
+        headerHeight,
+        headingRef.current?.getBoundingClientRect().height ?? 0,
+        // `SM_UP` is the same breakpoint the heading's `sm:sticky` names.
+        window.matchMedia(SM_UP).matches,
+      ),
     axis: "y",
   });
 
   return (
     <div ref={rootRef} className="space-y-5">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+      {/* What was searched for, kept on screen while the hits scroll past it
+          (T-454) — the box in the header is a control, not a record, and on a
+          phone it is folded away to an icon. It pins from `sm` for the reason
+          the list page's toolbar does: below that the header is two rows
+          already, and a third pinned strip costs more of a short viewport
+          than the reminder is worth. `-mx-4 px-4` lets the backdrop bleed
+          into the shell's own horizontal padding. */}
+      <div
+        ref={headingRef}
+        style={{ top: headerHeight }}
+        className="-mx-4 flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-1.5 sm:sticky sm:z-30 sm:bg-background/95 sm:backdrop-blur"
+      >
         <h2 className="font-heading text-lg font-medium">
           {q === "" ? "Search" : `Results for “${q}”`}
         </h2>
@@ -265,6 +287,20 @@ export function SearchResults({
 
 function hitKey(hit: SearchItem): string {
   return `${hit.kind}:${hit.comment_id ?? hit.spec_path ?? hit.field}`;
+}
+
+/**
+ * Where a restored reading position has to stop: under the app header, plus
+ * the results heading wherever that heading pins. Both are measured rather
+ * than named in CSS — the header gains a row on narrow viewports, and the
+ * heading wraps at widths no breakpoint knows. Exported for tests.
+ */
+export function resultsStickyTop(
+  headerHeight: number,
+  headingHeight: number,
+  headingPins: boolean,
+): number {
+  return headerHeight + (headingPins ? headingHeight : 0);
 }
 
 /**
