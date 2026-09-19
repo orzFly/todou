@@ -156,9 +156,11 @@ todou project link my-project
 cd ~/scratch/notes && todou project link my-project
 todou issue list --open
 # Search titles, bodies, comments and spec documents at once. Terms are
-# ANDed and each is a substring, so a word inside a run of Chinese is found
-# and `WordDiff` finds `coalescedWordDiff`; quote a phrase to keep it whole.
-todou search 全文搜索
+# ANDed and each is a substring, so `WordDiff` finds `coalescedWordDiff` —
+# the same rule is what makes Chinese, Japanese and Korean searchable, since
+# those scripts leave no spaces to split a query on. Quote a phrase to keep
+# it whole.
+todou search migration
 todou search pg_trgm --in comments
 todou issue create --title "Fix the potato" --body "It sprouted."
 todou issue view 1

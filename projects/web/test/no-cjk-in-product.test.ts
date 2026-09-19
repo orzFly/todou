@@ -13,12 +13,21 @@ const PROJECTS = resolve(process.cwd(), "..");
  * render — which is also why no module graph reaches it and `vitest related`
  * can never list it. It has to be run on purpose.
  *
- * Its blind spots, stated so nobody mistakes it for a proof: a line counts as
- * a comment by its first characters alone, so CJK trailing a statement is
- * reported as product copy and CJK inside a `/* *\/` block whose continuation
- * lines carry no `*` is missed; and text that reaches the screen from
- * anywhere but these files — the database, a fixture, a dependency — is
- * outside its reach entirely.
+ * It lives in web but scans all four packages, so a change confined to
+ * server, cli or shared never triggers it on its own: running just that
+ * package's suite leaves this silent, and only a full run answers for it.
+ *
+ * Its blind spots, stated so nobody mistakes it for a proof:
+ * - Only `.ts`, `.tsx`, `.css` and each package's `index.html` are read.
+ *   Nothing under a `src/` tree is anything else today, and no product
+ *   module imports a `.md` or `.json`, so widening it would pull in data
+ *   and fixtures rather than copy.
+ * - Text that reaches the screen from anywhere but these files — the
+ *   database, a fixture, a dependency — is outside its reach entirely.
+ * - HTML comments are not recognised, so CJK in one is reported as copy.
+ *   That errs loud, which is the safe direction.
+ * - An interpolation holding its own backtick ends the template early for
+ *   the rest of the file, which errs quiet.
  */
 const EXTENSIONS = /\.(?:tsx?|css)$/;
 const CJK =
@@ -56,7 +65,7 @@ function sourceFiles(dir: string): string[] {
   return out;
 }
 
-function packageSources(): string[] {
+function productFiles(): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(PROJECTS, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
@@ -66,24 +75,83 @@ function packageSources(): string[] {
     } catch {
       // A package without a src/ tree has nothing to say here.
     }
+    // The page shell sits beside src/, and its <title> is the first product
+    // copy a reader ever sees.
+    const page = join(PROJECTS, entry.name, "index.html");
+    try {
+      if (statSync(page).isFile()) out.push(page);
+    } catch {
+      // Only the browser package ships one.
+    }
   }
   return out;
 }
 
-const isComment = (text: string) =>
-  text.startsWith("//") || text.startsWith("*") || text.startsWith("/*");
+/**
+ * Blanks out comment spans, keeping every other character where it is so a
+ * line's remainder can still be tested. Deciding by line prefix instead is
+ * what let the CLI's `--help` text through: it is a template literal full of
+ * markdown, and a bullet opens with `*` exactly as a JSDoc continuation
+ * does, so product copy read as a comment.
+ */
+function codeOnly(source: string): string[] {
+  let block = false;
+  let template = false;
+  return source.split("\n").map((raw) => {
+    let kept = "";
+    // A plain string cannot span lines, so it never survives into the next.
+    let quote: string | null = null;
+    for (let i = 0; i < raw.length; i++) {
+      const char = raw[i] as string;
+      const pair = char + (raw[i + 1] ?? "");
+      if (block) {
+        if (pair === "*/") {
+          block = false;
+          i++;
+        }
+        continue;
+      }
+      if (char === "\\" && (quote !== null || template)) {
+        kept += char + (raw[i + 1] ?? "");
+        i++;
+        continue;
+      }
+      if (quote !== null) {
+        kept += char;
+        if (char === quote) quote = null;
+        continue;
+      }
+      if (template) {
+        kept += char;
+        if (char === "`") template = false;
+        continue;
+      }
+      if (pair === "//") break;
+      if (pair === "/*") {
+        block = true;
+        i++;
+        continue;
+      }
+      if (char === "`") template = true;
+      else if (char === "'" || char === '"') quote = char;
+      kept += char;
+    }
+    return kept;
+  });
+}
 
-const FOUND: Line[] = packageSources()
-  .flatMap((path) =>
-    readFileSync(path, "utf8")
-      .split("\n")
-      .map((raw, index) => ({
-        file: relative(PROJECTS, path).replaceAll("\\", "/"),
-        line: index + 1,
-        text: raw.trim(),
-      })),
-  )
-  .filter(({ text }) => CJK.test(text) && !isComment(text));
+const FOUND: Line[] = productFiles().flatMap((path) => {
+  const source = readFileSync(path, "utf8");
+  const code = codeOnly(source);
+  const file = relative(PROJECTS, path).replaceAll("\\", "/");
+  return source
+    .split("\n")
+    .flatMap((raw, index) =>
+      CJK.test(code[index] ?? "")
+        ? [{ file, line: index + 1, text: raw.trim() }]
+        : [],
+    );
+});
 
 const declaredIn = (file: string) =>
   DECLARED.find((entry) => entry.file === file)?.lines ?? [];
