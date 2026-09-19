@@ -101,6 +101,14 @@ describe("stored mentions render (T-373)", () => {
     // Current login, not the author's stored spelling.
     expect(link.textContent).toContain("@alicia");
     expect(link.getAttribute("href")).toBe("/users/alicia");
+    // And the login is what a selection lands on: the avatar renders the
+    // reader's initials as real text beside it (T-427).
+    expect(link.querySelector("[data-mention-token]")?.textContent).toBe(
+      "@alicia",
+    );
+    expect(
+      link.querySelector("[data-mention-decoration] [data-mention-token]"),
+    ).toBeNull();
   });
 
   it("falls back to the typed spelling for an unknown member", async () => {

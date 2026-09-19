@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { formatRef, type LinkTarget, parseInternalHref } from "@todou/shared";
 import { CircleDotIcon, CircleSlashIcon } from "lucide-react";
-import type { ComponentProps, ReactNode } from "react";
+import { type ComponentProps, Fragment, type ReactNode } from "react";
 import {
   commentLocationQuery,
   commentRefQuery,
@@ -24,11 +24,10 @@ import { IssueHoverCard } from "@/components/shared/issue-hover-card.tsx";
 import { MentionLink } from "@/components/shared/mention-link.tsx";
 import { useReturnLinkState } from "@/components/shared/return-context.tsx";
 import {
-  RICH_CHIP_FIXED,
-  RICH_CHIP_ICON,
-  RICH_CHIP_LABEL,
+  REF_CHIP_ICON,
+  REF_CHIP_LABEL,
+  REF_CHIP_STRUCTURE,
   RICH_CHIP_SKIN,
-  RICH_CHIP_STRUCTURE,
   RICH_CHIP_TITLE_CAP,
 } from "@/components/shared/rich-chip.ts";
 import { displayNameOf } from "@/components/shared/user-chip.tsx";
@@ -37,10 +36,11 @@ import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import { cn } from "@/lib/utils.ts";
 
 /**
- * Ordinary references can say "current"; a current-page comment instead
- * names its short #comment-N suffix.
+ * What an ordinary reference to the card being read adds beside its ref, the
+ * first time the document names it. A current-page comment says nothing of
+ * the kind: its short `#comment-N` suffix already reads as "here".
  */
-const CURRENT_NOTE = "current";
+const CURRENT_NOTE = "(current)";
 
 /**
  * GitHub-style rich issue reference: status icon, title and muted ref once
@@ -161,13 +161,6 @@ export function IssueLink({
   // very card.
   const onPageCard =
     pageNumber !== undefined && toSlug === pageSlug && toNumber === pageNumber;
-  // Two rules read `onPageCard` at different thresholds, on purpose. Writing
-  // "current" is the reader's own preference — they asked for a mention that
-  // repeats a card to keep its title, and this is the same trade. Opening no
-  // preview is not a preference: the card is the page, so there is nothing a
-  // preview could show that is not already on the screen, whichever way the
-  // toggle is set.
-  const asCurrent = onPageCard && !showRepeatedTitle;
 
   // Never paint any part of a rich card from one confirmed query and another
   // pending, stale, failed, or mismatched query. In particular the comment's
@@ -214,19 +207,55 @@ export function IssueLink({
   const item = ref.data;
   const confirmedNote = commentId === undefined ? null : comment.data;
   const isComment = confirmedNote != null;
-  const hideTitle = dropTitle || (isComment ? onPageCard : asCurrent);
-  const trailing = isComment
-    ? ""
-    : asCurrent
-      ? CURRENT_NOTE
-      : refLeads
-        ? ""
-        : spelled;
+  // The card being read keeps its ref — that is the identity the reader
+  // copies — and loses its title, which is the page's own heading two
+  // centimetres up. Unlike a repeated title this is not the reader's to
+  // prefer: "every mention keeps its title" was asked of other cards.
+  const hideTitle = dropTitle || onPageCard;
+  // Only the first mention says so. After that the document has established
+  // which card it is on, and `data-ref-repeat` already knows where "after"
+  // begins — one traversal in AST order, not React's mount order.
+  const currentNote = !isComment && onPageCard && !repeat;
+  /** The non-body tail: in a body the ref is one of the `pieces` below. */
+  const trailing = isComment || refLeads || inBody ? "" : spelled;
   const iconClass = inBody
     ? isComment
       ? "comment-reference-icon inline size-3.5"
-      : RICH_CHIP_ICON
+      : REF_CHIP_ICON
     : "mr-0.5 inline size-3.5 align-middle";
+  // Ordered contents of an ordinary issue chip, laid out inline with real
+  // separators between them. Each one is a leaf: the ref is the sole
+  // selectable slot, and a separator is somewhere a long title can wrap.
+  const pieces: Array<{ key: string; node: ReactNode }> = [];
+  if (inBody && !isComment) {
+    const refToken = (
+      <span data-ref-token className="font-normal text-muted-foreground">
+        {spelled}
+      </span>
+    );
+    if (refLeads) pieces.push({ key: "ref", node: refToken });
+    if (!hideTitle) {
+      pieces.push({
+        key: "title",
+        node: (
+          <span className={cn(REF_CHIP_LABEL, capTitle && RICH_CHIP_TITLE_CAP)}>
+            {item.title}
+          </span>
+        ),
+      });
+    }
+    if (!refLeads) pieces.push({ key: "ref", node: refToken });
+    if (currentNote) {
+      pieces.push({
+        key: "note",
+        node: (
+          <span data-ref-note className="font-normal text-muted-foreground">
+            {CURRENT_NOTE}
+          </span>
+        ),
+      });
+    }
+  }
   // The preview is already paid for: confirming the comment fetched its
   // body too, so hovering asks the server nothing.
   const hovered =
@@ -258,7 +287,7 @@ export function IssueLink({
         inBody
           ? cn(
               "font-medium",
-              isComment ? "comment-link-body" : RICH_CHIP_STRUCTURE,
+              isComment ? "comment-link-body" : REF_CHIP_STRUCTURE,
               boxed ? RICH_CHIP_SKIN : "hover:underline",
             )
           : "font-medium hover:underline"
@@ -301,36 +330,23 @@ export function IssueLink({
               current={onPageCard}
             />
           )}
-          {refLeads && !isComment && !asCurrent && (
-            <span
-              className={cn(
-                "font-normal text-muted-foreground",
-                inBody && RICH_CHIP_FIXED,
-              )}
-            >
-              {spelled}
-              {inBody ? null : " "}
+          {pieces.map(({ key, node }, index) => (
+            <Fragment key={key}>
+              {index > 0 && <span data-ref-decoration> </span>}
+              {node}
+            </Fragment>
+          ))}
+          {!inBody && refLeads && !isComment && (
+            <span className="font-normal text-muted-foreground">
+              {spelled}{" "}
             </span>
           )}
-          {isComment || hideTitle ? null : inBody ? (
-            <span
-              className={cn(RICH_CHIP_LABEL, capTitle && RICH_CHIP_TITLE_CAP)}
-            >
-              {item.title}
-            </span>
-          ) : (
-            item.title
-          )}
+          {isComment || hideTitle || inBody ? null : item.title}
         </>
       )}
       {trailing !== "" && (
-        <span
-          className={cn(
-            "font-normal text-muted-foreground",
-            inBody && RICH_CHIP_FIXED,
-          )}
-        >
-          {inBody ? null : item ? " " : ""}
+        <span className="font-normal text-muted-foreground">
+          {item ? " " : ""}
           {trailing}
         </span>
       )}

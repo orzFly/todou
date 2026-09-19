@@ -22,6 +22,8 @@ import {
 } from "../src/components/issue/attachment-list.tsx";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import {
+  REF_CHIP_LABEL,
+  REF_CHIP_STRUCTURE,
   RICH_CHIP_LABEL,
   RICH_CHIP_SKIN,
   RICH_CHIP_STRUCTURE,
@@ -133,9 +135,10 @@ describe("reference title cap (T-371)", () => {
     const span = titleSpan(link);
 
     expect(span?.getAttribute("class")).not.toContain(RICH_CHIP_TITLE_CAP);
-    // Still a flex child that may shrink: "off" means no cap of its own, not
-    // that a narrow viewport stops cutting it.
-    expect(span?.getAttribute("class")).toContain("min-w-0");
+    // Still the chip's own title box, which the sheet holds to the line's
+    // width: "off" means no cap of its own, not that a narrow viewport stops
+    // cutting it.
+    expect(span?.getAttribute("class")).toContain("ref-chip-title");
     expect(link.getAttribute("title")).toBe(`T-7 ${LONG} (Todo)`);
   });
 
@@ -220,8 +223,15 @@ describe("the chip stops at the body (T-371)", () => {
     created_at: "2026-08-12T00:00:00Z",
   };
 
-  // Every class the chip is built from, whichever preference put it there.
+  // Every class either chip is built from, whichever preference put it there
+  // — the reference chip's own inline set as well as the attachment chip's
+  // flex one, so replacing the structure cannot quietly reopen this row.
   const CHIP_CLASSES = [
+    REF_CHIP_STRUCTURE,
+    ...REF_CHIP_LABEL.split(" "),
+    // Only the chip-specific part: an event row's own glyph shares `inline`
+    // and `size-3.5` with it.
+    "ref-chip-icon",
     ...RICH_CHIP_STRUCTURE.split(" "),
     ...RICH_CHIP_SKIN.split(" "),
     ...RICH_CHIP_LABEL.split(" "),

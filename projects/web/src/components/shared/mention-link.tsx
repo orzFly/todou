@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { membersQuery } from "@/api/queries.ts";
+import { MENTION_CHIP_STRUCTURE } from "@/components/shared/rich-chip.ts";
 import { displayNameOf, UserAvatar } from "@/components/shared/user-chip.tsx";
+import { cn } from "@/lib/utils.ts";
 
 /**
  * A stored @mention, rendered as a chip: the member's CURRENT login and
@@ -42,12 +44,15 @@ export function MentionLink({
       to="/users/$ref"
       params={{ ref: user.login }}
       data-mention-link={user.id}
-      className="font-medium hover:underline"
+      className={cn("font-medium hover:underline", MENTION_CHIP_STRUCTURE)}
       title={displayNameOf(user)}
     >
-      <UserAvatar user={user} badge className="mr-0.5 inline-flex" />
-      {"@"}
-      {user.login}
+      {/* The avatar's fallback is the reader's initials as real text, and the
+          badge is a second box beside it — both are picture, not identity. */}
+      <span data-mention-decoration>
+        <UserAvatar user={user} badge className="mr-0.5 inline-flex" />
+      </span>
+      <span data-mention-token>{`@${user.login}`}</span>
     </Link>
   );
 }

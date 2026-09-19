@@ -24,8 +24,8 @@ import {
 } from "../src/api/references.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import {
-  RICH_CHIP_LABEL,
-  RICH_CHIP_STRUCTURE,
+  REF_CHIP_LABEL,
+  REF_CHIP_STRUCTURE,
   RICH_CHIP_TITLE_CAP,
 } from "../src/components/shared/rich-chip.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
@@ -213,7 +213,7 @@ function expectTitle(link: HTMLAnchorElement, shown: boolean, capped: boolean) {
   if (comment) {
     expect(title?.classList.contains("comment-reference-title")).toBe(true);
   } else {
-    for (const name of RICH_CHIP_LABEL.split(" ")) {
+    for (const name of REF_CHIP_LABEL.split(" ")) {
       expect(title?.classList.contains(name)).toBe(true);
     }
   }
@@ -451,12 +451,13 @@ describe.each(sources)("%s comment display through MarkdownView", (source) => {
         // Ordinary issue references remain the negative control for the same
         // preferences: current/repeat suppression must not become comment-only.
         for (const [index, link] of links.slice(2).entries()) {
-          const current =
-            context === "current" && !prefs.show_repeated_ref_title;
+          const current = context === "current";
           const title =
             !current && (index === 0 || prefs.show_repeated_ref_title);
           const labels = current
-            ? ["current"]
+            ? index === 0
+              ? ["T-7", "(current)"]
+              : ["T-7"]
             : title
               ? prefs.ref_placement_reference === "before"
                 ? ["T-7", TITLE]
@@ -471,14 +472,24 @@ describe.each(sources)("%s comment display through MarkdownView", (source) => {
           ).toBeNull();
           expect(link.classList.contains("comment-link-body")).toBe(false);
           expect(link.querySelector(".comment-reference-body")).toBeNull();
-          for (const name of RICH_CHIP_STRUCTURE.split(" ")) {
-            expect(link.classList.contains(name)).toBe(true);
-          }
+          expect(link.classList.contains(REF_CHIP_STRUCTURE)).toBe(true);
+          expect(link.classList.contains("inline-flex")).toBe(false);
+          // One slot, holding the canonical ref and nothing a reader reads
+          // instead of copying it.
+          const slots = [...link.querySelectorAll("[data-ref-token]")];
+          expect(slots.map((slot) => slot.textContent)).toEqual(["T-7"]);
+          expect(
+            slots[0]?.querySelector(
+              "[data-ref-decoration], [data-ref-note], .truncate",
+            ),
+          ).toBeNull();
           expect([...link.children].map((child) => child.textContent)).toEqual([
             "",
-            ...labels,
+            ...labels.flatMap((label, at) =>
+              at === 0 ? [label] : [" ", label],
+            ),
           ]);
-          expect(link.textContent).toBe(labels.join(""));
+          expect(link.textContent).toBe(labels.join(" "));
           expect(link.querySelectorAll("svg")).toHaveLength(1);
           expect(
             link.querySelector("svg")?.classList.contains("lucide-circle-dot"),

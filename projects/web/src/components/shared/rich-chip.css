@@ -1,0 +1,97 @@
+/* Only successful issue references in Markdown bodies opt into this layout. */
+.ref-chip-body {
+  display: inline;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  line-height: 1.2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.ref-chip-body .ref-chip-icon {
+  margin-right: 0.24em;
+  vertical-align: -0.15em;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.ref-chip-body [data-ref-token] {
+  user-select: all;
+  -webkit-user-select: all;
+}
+
+.ref-chip-body [data-ref-decoration],
+.ref-chip-body [data-ref-note],
+.ref-chip-body .ref-chip-title {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.ref-chip-body .ref-chip-title {
+  display: inline-block;
+  max-width: calc(100% - var(--ref-chip-inset));
+  /* Inline overflow boxes otherwise use their bottom border as a baseline. */
+  vertical-align: bottom;
+}
+
+/*
+ * What the chip's own box costs the title. `100%` is the paragraph's width,
+ * and a title that wraps onto a line of its own starts after the border and
+ * padding this fragment repeats — so without the inset it ends that far past
+ * the text column: measured 6px at 390px, where the flex chip this replaced
+ * capped itself with `max-w-full` and ended at 0.
+ *
+ * The numbers are RICH_CHIP_SKIN's own `border` and `px-[0.3em]`, doubled for
+ * two sides. rich-link-copy.test.tsx holds the two together, so moving the
+ * padding in one place fails there rather than quietly reopening the 6px.
+ */
+.ref-chip-body {
+  --ref-chip-inset: 0px;
+}
+
+.ref-chip-body.border {
+  --ref-chip-inset: calc(0.6em + 2px);
+}
+
+/* The reader's cap, restated at this rule's specificity: the utility that
+   carries it loses to the `max-width` above on its own. */
+.ref-chip-body .ref-chip-title.max-w-\[24em\] {
+  max-width: min(24em, calc(100% - var(--ref-chip-inset)));
+}
+
+/* A mention's copyable identity is the current `@login` and nothing else; the
+   avatar carries the reader's initials as real text. */
+.mention-chip-body,
+.mention-chip-body [data-mention-decoration] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Nothing on the copy path may be a flex box, the avatar included. A flex
+   item is blockified, and Chromium ends a block box with a newline in
+   `text/plain` whatever `user-select` says: measured on Chromium 153, a real
+   drag across `« @user »` pasted `« \n@user »` while the avatar was a flex
+   container. Its fallback initials therefore centre on their line box. */
+.mention-chip-body [data-mention-decoration],
+.mention-chip-body [data-mention-decoration] span,
+.mention-chip-body [data-mention-decoration] img {
+  display: inline-block;
+}
+
+.mention-chip-body [data-mention-decoration] {
+  vertical-align: middle;
+  /* No strut of its own: an inline-block box otherwise reserves a whole line
+     box around the avatar and grows the paragraph's line by 1.08px. */
+  line-height: 0;
+}
+
+.mention-chip-body [data-mention-decoration] [data-slot="avatar-fallback"] {
+  /* size-5, so the initials sit where `items-center` had them. */
+  line-height: 1.25rem;
+  text-align: center;
+}
+
+.mention-chip-body [data-mention-token] {
+  user-select: all;
+  -webkit-user-select: all;
+}

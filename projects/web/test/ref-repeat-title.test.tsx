@@ -245,35 +245,63 @@ const linkToSeven = (root: ParentNode) =>
     return el as HTMLElement;
   });
 
-describe("a reference to the card being read (T-408)", () => {
-  it("reads 'current' instead of a ref and a title", async () => {
+describe("a reference to the card being read (T-408, T-427)", () => {
+  // Both settings, because the answer is the same under both: "keep every
+  // title" is a request about OTHER cards. Drop the `onPageCard` half of
+  // `hideTitle` and the `true` row turns back into "T-7 Target".
+  it.each([false, true])(
+    "keeps its ref, notes the page and drops the title when repeated titles=%s",
+    async (show_repeated_ref_title) => {
+      const view = renderWithProviders(
+        <MarkdownView slug="todou" issueNumber={7}>
+          {"see [T-7](/projects/todou/issues/7)"}
+        </MarkdownView>,
+        seeded({ show_repeated_ref_title }),
+      );
+      const link = await linkToSeven(view.container);
+      expect(link.textContent).toBe("T-7 (current)");
+      expect(titlesOfSeven(view.container)).toEqual([""]);
+      expect(view.container.textContent).not.toContain("Target");
+      // The note names the page, not the card: it stays outside the one slot
+      // a selection copies, and the ref inside it stays whole.
+      expect(link.querySelector("[data-ref-token]")?.textContent).toBe("T-7");
+      expect(link.querySelector("[data-ref-token] [data-ref-note]")).toBeNull();
+      expect(link.querySelector("[data-ref-note]")?.textContent).toBe(
+        "(current)",
+      );
+      expect(
+        link.querySelector("[data-comment-ref], [data-comment-author]"),
+      ).toBeNull();
+      expect(link.querySelector(".comment-reference-body")).toBeNull();
+      // Dropping the title must not cost the tooltip its full spelling.
+      expect(link.getAttribute("title")).toBe("T-7 Target (Todo)");
+    },
+  );
+
+  it("notes the page once, then spells the ref alone", async () => {
     const view = renderWithProviders(
       <MarkdownView slug="todou" issueNumber={7}>
-        {"see [T-7](/projects/todou/issues/7)"}
+        {THRICE}
       </MarkdownView>,
       seeded(),
     );
-    const link = await linkToSeven(view.container);
-    expect(link.textContent).toBe("current");
-    expect(titlesOfSeven(view.container)).toEqual([""]);
-    expect(view.container.textContent).not.toContain("T-7");
-    // Losing the visible ref must not cost the tooltip its full spelling.
-    expect(link.getAttribute("title")).toBe("T-7 Target (Todo)");
-  });
-
-  it("draws the title and the ref when the reader asks for every title", async () => {
-    const view = renderWithProviders(
-      <MarkdownView slug="todou" issueNumber={7}>
-        {"see [T-7](/projects/todou/issues/7)"}
-      </MarkdownView>,
-      seeded({ show_repeated_ref_title: true }),
-    );
-    const link = await linkToSeven(view.container);
-    expect(link.textContent).toBe("T-7Target");
-    expect(
-      link.querySelector("[data-comment-ref], [data-comment-author]"),
-    ).toBeNull();
-    expect(link.querySelector(".comment-reference-body")).toBeNull();
+    const links = await waitFor(() => {
+      const found = [
+        ...view.container.querySelectorAll<HTMLAnchorElement>(
+          "a[data-issue-link='7']",
+        ),
+      ];
+      expect(found).toHaveLength(3);
+      return found;
+    });
+    expect(links.map((link) => link.textContent)).toEqual([
+      "T-7 (current)",
+      "T-7",
+      "T-7",
+    ]);
+    for (const link of links) {
+      expect(link.querySelector("[data-ref-token]")?.textContent).toBe("T-7");
+    }
   });
 
   it("leaves another card in the same document alone", async () => {
@@ -361,7 +389,7 @@ describe("a reference to the card being read (T-408)", () => {
       client,
     );
     const link = await linkToSeven(view.container);
-    expect(link.textContent).toBe("current");
+    expect(link.textContent).toBe("T-7 (current)");
     expect(view.container.textContent).not.toContain("T-9");
   });
 });
