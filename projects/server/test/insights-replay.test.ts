@@ -604,7 +604,13 @@ describe("insights replay and aggregate", () => {
     expect(moved.membershipStartEventId).toBe(5);
     expect(moved.initialStatusId).toBe(1);
     expect(moved.points.map((point) => point.id)).toEqual([5, 6]);
-    expect(moved.reasons).toEqual([]);
+    expect(moved.points.every((point) => point.reason === undefined)).toBe(
+      true,
+    );
+  });
+
+  it("aggregates membership_boundary_unknown only from the move onward", () => {
+    const moveAt = new Date("2026-01-02T08:00:00Z");
 
     const unknownBoundary = replayIssue(
       { id: 2, createdAt: moveAt, statusId: 1 },
@@ -614,7 +620,59 @@ describe("insights replay and aggregate", () => {
       known: false,
       reason: "membership_boundary_unknown",
     });
-    expect(unknownBoundary.reasons).toContain("membership_boundary_unknown");
+    const result = aggregateInsights({
+      statuses: [
+        {
+          status_id: 1,
+          name: "Todo",
+          category: "open",
+          color: "#336699",
+          position: 0,
+          role: "remaining",
+        },
+      ],
+      issues: [unknownBoundary],
+      from: new Date("2026-01-01T00:00:00Z"),
+      projectCreatedAt: new Date("2026-01-01T00:00:00Z"),
+      buckets: [1, 2, 3].map((day) => ({
+        start: new Date(`2026-01-0${day}T00:00:00Z`),
+        end: new Date(`2026-01-0${day + 1}T00:00:00Z`),
+        partial: false,
+        current: false,
+      })),
+    });
+    const unknown = { value: null, known: 0, unknown: 1 };
+    const zero = { value: 0, known: 0, unknown: 0 };
+    expect(result.reasons).toEqual(["membership_boundary_unknown"]);
+    expect(result.buckets.map((bucket) => bucket.reasons)).toEqual([
+      [],
+      ["membership_boundary_unknown"],
+      ["membership_boundary_unknown"],
+    ]);
+    expect(result.buckets.map((bucket) => bucket.quality)).toEqual([
+      "exact",
+      "unknown",
+      "unknown",
+    ]);
+    expect(result.buckets[0]?.stock?.remaining).toEqual(zero);
+    expect(result.buckets[1]?.stock).toMatchObject({
+      remaining: unknown,
+      scope: unknown,
+      open_total: unknown,
+      unknown_cards: 1,
+    });
+    expect(result.buckets[1]?.flow).toMatchObject({
+      moved_in_remaining: unknown,
+      moved_in_completed: unknown,
+      moved_in_open: unknown,
+      scope_added: unknown,
+      open_entered: unknown,
+      created_remaining: zero,
+      completed: zero,
+    });
+    // Stock uncertainty persists, but the entry is counted only on move day.
+    expect(result.buckets[2]?.stock?.remaining).toEqual(unknown);
+    expect(result.buckets[2]?.flow?.moved_in_remaining).toEqual(zero);
   });
 
   it("removes temporarily deleted stock and restores without a completion", () => {

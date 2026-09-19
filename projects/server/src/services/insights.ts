@@ -79,7 +79,16 @@ type Snapshot = {
   }>;
 };
 
-async function readSnapshot(db: Db, projectId: number): Promise<Snapshot> {
+/** Per-call scheduling seam; never shared between requests or app instances. */
+export type InsightsReadHooks = {
+  readonly afterFirstRead?: () => Promise<void>;
+};
+
+async function readSnapshot(
+  db: Db,
+  projectId: number,
+  hooks?: InsightsReadHooks,
+): Promise<Snapshot> {
   return db.transaction(async (tx) => {
     await tx.execute(
       sql.raw("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"),
@@ -90,6 +99,9 @@ async function readSnapshot(db: Db, projectId: number): Promise<Snapshot> {
       .from(statuses)
       .where(eq(statuses.projectId, projectId))
       .orderBy(asc(statuses.position), asc(statuses.id));
+    // Pause after the first data read so another connection can commit before
+    // settings, issues and events are read. One request must not mix versions.
+    await hooks?.afterFirstRead?.();
     const savedRows = await tx
       .select()
       .from(insightsSettings)
@@ -152,6 +164,7 @@ export async function getInsightsBurn(
   actor: UserRow,
   slug: string,
   query: BurnQuery,
+  hooks?: InsightsReadHooks,
 ): Promise<BurnResponse> {
   const { project } = await requireCapability(
     ctx,
@@ -161,7 +174,7 @@ export async function getInsightsBurn(
   );
   const db = await ctx.router.forProject(routeInfoOf(project));
   const range = await resolveRange(db, query);
-  const snapshot = await readSnapshot(db, project.id);
+  const snapshot = await readSnapshot(db, project.id, hooks);
   const bucketPlan = await buildBuckets({
     ...range,
     asOf: snapshot.asOf,

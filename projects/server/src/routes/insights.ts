@@ -13,7 +13,10 @@ import type { Context } from "hono";
 import type { AppEnv } from "../auth/middleware.ts";
 import { ValidationFailedError } from "../errors.ts";
 import { getProjectActivityCalendar } from "../services/activity-calendar/index.ts";
-import { getInsightsBurn } from "../services/insights.ts";
+import {
+  getInsightsBurn,
+  type InsightsReadHooks,
+} from "../services/insights.ts";
 import {
   getInsightsSettings,
   updateInsightsSettings,
@@ -95,7 +98,7 @@ const getActivityRoute = createRoute({
   },
 });
 
-export function insightsRoutes() {
+export function insightsRoutes(readHooks?: InsightsReadHooks) {
   const app = new OpenAPIHono<AppEnv>({ defaultHook: validationHook });
   app.openapi(
     getActivityRoute,
@@ -148,6 +151,7 @@ export function insightsRoutes() {
         c.get("user"),
         c.req.valid("param").slug,
         c.req.valid("query"),
+        readHooks,
       ),
       200,
     ),

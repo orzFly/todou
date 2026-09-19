@@ -32,6 +32,7 @@ export type ReplayPoint = {
   beforeStatusId: number | null;
   afterStatusId: number | null;
   known: boolean;
+  /** The cause belongs to this point/interval, not to the whole issue. */
   reason?: ReplayReason;
 };
 
@@ -41,7 +42,6 @@ export type ReplayedIssue = {
   membershipStartEventId: number | null;
   initialStatusId: number | null;
   points: ReplayPoint[];
-  reasons: ReplayReason[];
 };
 
 function compareEvent(a: ReplayEvent, b: ReplayEvent): number {
@@ -101,7 +101,6 @@ export function replayIssue(
   const transitions = inMembership.filter((event) =>
     STATUS_EVENTS.has(event.type),
   );
-  const reasons = new Set<ReplayReason>();
   const statusPoints = new Map<number, ReplayPoint>();
   let uncertaintyReason: ReplayReason | undefined;
   let cursor: number | null = issue.statusId;
@@ -110,7 +109,6 @@ export function replayIssue(
     const pair = statusPair(event.payload);
     if (pair === null) {
       uncertaintyReason = "malformed_event";
-      reasons.add("malformed_event");
       statusPoints.set(event.id, {
         id: event.id,
         at: event.createdAt,
@@ -125,7 +123,6 @@ export function replayIssue(
     }
     if (cursor !== null && pair.to !== cursor) {
       uncertaintyReason = "broken_transition_chain";
-      reasons.add("broken_transition_chain");
       statusPoints.set(event.id, {
         id: event.id,
         at: event.createdAt,
@@ -152,7 +149,6 @@ export function replayIssue(
     cursor = cursor === null ? null : pair.from;
   }
 
-  if (!boundaryKnown) reasons.add("membership_boundary_unknown");
   const entry: ReplayPoint = {
     id: membershipStartEventId ?? Number.MIN_SAFE_INTEGER,
     at: membershipStart,
@@ -189,6 +185,5 @@ export function replayIssue(
     membershipStartEventId,
     initialStatusId: cursor,
     points,
-    reasons: [...reasons],
   };
 }

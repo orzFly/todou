@@ -252,6 +252,16 @@ describe.each(PLACEMENTS)("relocation reads (%s placement)", (placement) => {
       const res = await req(`/projects/${A}/issues/${from.number}`, outsider);
       // 404 and not 410: the 410 would confirm this address once held a card.
       expect(res.status).toBe(404);
+      const missing = await req(
+        `/projects/absent-project/issues/${from.number}`,
+        outsider,
+      );
+      expect(res.status).toBe(missing.status);
+      expect(await res.text()).toBe(await missing.text());
+      expect([...res.headers.entries()]).toEqual([
+        ...missing.headers.entries(),
+      ]);
+      expect(res.headers.get("location")).toBeNull();
     });
 
     it("keeps cards still living here invisible to non-members", async () => {
