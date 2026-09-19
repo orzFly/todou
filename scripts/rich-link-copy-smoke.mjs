@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Manual real-Chromium checks for what a reader's own selection copies out of
+ * Manual real-browser checks for what a reader's own selection copies out of
  * a rich reference (T-427). It is intentionally independent of `pnpm test`/CI:
  * `user-select`, a drag, the system clipboard and the newlines a layout pushes
  * into `text/plain` are all things happy-dom has no opinion about, and the
@@ -11,25 +11,30 @@
  * Nothing synthesises a copy event, writes the clipboard from script, or
  * rewrites a Selection.
  *
- * Usage: node scripts/rich-link-copy-smoke.mjs [--self-test] [--keep] [--help]
+ * Usage: node scripts/rich-link-copy-smoke.mjs [--self-test|--firefox] [--keep] [--help]
  * Preconditions: the devshell's Node 24+, installed workspace dependencies,
- * `flock`, and CHROMIUM (default /usr/bin/chromium). The runner starts one
- * isolated API/Vite stack and one browser, and seeds its own projects, issues
- * and comments through the real API.
+ * `flock`, and CHROMIUM (default /usr/bin/chromium); FIREFOX (default
+ * /usr/bin/firefox) for --firefox. The runner starts one isolated API/Vite
+ * stack and one browser, and seeds its own projects, issues and comments
+ * through the real API.
  * Exit codes: 0 all checks pass; 1 a named assertion fails; 2 bad CLI input,
  * missing prerequisite, startup failure, or a check that could not reach the
  * thing it grades (a coverage failure).
- * Limitations: Chromium only — Firefox, Safari/WebKit and real touch are not
- * exercised here and are not claimed. Headless Chromium measures CSS geometry,
- * not painted pixels. A textarea and a contenteditable are not proof about
- * Word or VS Code.
+ * Limitations: Chromium grades; Firefox is only measured, on the one path the
+ * chosen inline layout was priced against (--firefox). Safari/WebKit and real
+ * touch are neither exercised nor claimed. Headless browsers measure CSS
+ * geometry, not painted pixels. A textarea is not proof about Word or VS Code.
  */
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
+import { mkdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { evaluate, startBrowser } from "./lib/browser-cdp.mjs";
-import { createBrowserStack } from "./lib/browser-stack.mjs";
+import {
+  createBrowserStack,
+  sanitizedEnvironment,
+} from "./lib/browser-stack.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const SENTINEL = "todou-t427-clipboard-sentinel";
@@ -37,6 +42,12 @@ const VIEWPORTS = [
   { name: "desktop", width: 1280, height: 900 },
   { name: "narrow", width: 390, height: 844 },
 ];
+/**
+ * Every viewport takes every placement. Narrow-and-after is the combination
+ * where the title, the ref and the separator are ordered one way and the line
+ * wraps the other, so leaving it out is exactly leaving out the corner.
+ */
+const PLACEMENTS = ["before", "after"];
 const DIRECTIONS = ["forward", "reverse", "inner"];
 
 const HELP = `rich-link-copy-smoke — real-browser checks for T-427
@@ -47,6 +58,8 @@ Usage:
 
 Options:
   --self-test  Prove each checker with an injected fault and a fresh page.
+  --firefox    Measure the body-into-ref drag in Firefox instead. Recorded,
+               not graded: exits 2 only if a reading could not be taken.
   --keep       Keep the isolated stack directory after the run.
   --help       Print this help and exit.
 
@@ -440,6 +453,17 @@ function probeSource(fault) {
               },
             }
           : null,
+      // Somewhere unambiguously inside the identity, whatever its length:
+      // the point a drag coming out of the prose has to land on.
+      mid: (() => {
+        const rect =
+          innerNode && innerText.length
+            ? charRect(innerNode, Math.floor(innerText.length / 2))
+            : inner && inner.getBoundingClientRect();
+        return rect
+          ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+          : null;
+      })(),
       text: p.textContent,
     };
   };
@@ -905,9 +929,7 @@ async function runPass({ browser, stack, fixture, fault }) {
   });
   try {
     for (const viewport of VIEWPORTS) {
-      for (const placement of viewport.name === "desktop"
-        ? ["before", "after"]
-        : ["before"]) {
+      for (const placement of PLACEMENTS) {
         await setPlacement(stack.serverPort, fixture.cookie, placement);
         const page = await browser.newPage({
           context,
@@ -1054,6 +1076,383 @@ async function runPass({ browser, stack, fixture, fault }) {
   return { failures, notes };
 }
 
+/**
+ * The smallest WebDriver BiDi client that can drive a real drag: connect,
+ * evaluate, move a real pointer, press real keys. Firefox speaks no CDP pipe,
+ * which is why scripts/lib/browser-cdp.mjs cannot reach it, and a research
+ * driver's puppeteer-core is deliberately not a dependency of this repo.
+ */
+class BidiSession {
+  #socket;
+  #next = 1;
+  #pending = new Map();
+  context = null;
+
+  static async open(url) {
+    const session = new BidiSession();
+    // Firefox announces the base endpoint; `/session` is where a BiDi-only
+    // client asks for a session of its own.
+    await session.#connect(`${url.replace(/\/$/, "")}/session`);
+    const { sessionId } = await session.send("session.new", {
+      capabilities: { alwaysMatch: {} },
+    });
+    session.sessionId = sessionId;
+    const { contexts } = await session.send("browsingContext.getTree", {});
+    session.context = contexts[0]?.context ?? null;
+    if (session.context === null) throw new Error("BiDi gave no context");
+    return session;
+  }
+
+  #connect(url) {
+    return new Promise((resolve, reject) => {
+      this.#socket = new WebSocket(url);
+      this.#socket.addEventListener("open", () => resolve());
+      this.#socket.addEventListener("error", () =>
+        reject(new Error(`BiDi socket failed: ${url}`)),
+      );
+      this.#socket.addEventListener("message", (event) => {
+        const message = JSON.parse(event.data);
+        const waiting = this.#pending.get(message.id);
+        if (!waiting) return;
+        this.#pending.delete(message.id);
+        if (message.type === "error")
+          waiting.reject(
+            new Error(`${message.error}: ${message.message ?? ""}`),
+          );
+        else waiting.resolve(message.result);
+      });
+      this.#socket.addEventListener("close", () => {
+        for (const { reject: fail } of this.#pending.values())
+          fail(new Error("BiDi socket closed"));
+        this.#pending.clear();
+      });
+    });
+  }
+
+  send(method, params, timeoutMs = 60_000) {
+    const id = this.#next++;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.#pending.delete(id);
+        reject(new Error(`BiDi ${method} timed out`));
+      }, timeoutMs);
+      this.#pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
+      this.#socket.send(JSON.stringify({ id, method, params }));
+    });
+  }
+
+  /**
+   * Values come back as JSON text, so no BiDi value deserialiser is needed.
+   * Resolved before it is stringified: `JSON.stringify(promise)` is `{}`.
+   */
+  async json(expression) {
+    const result = await this.send("script.evaluate", {
+      expression: `Promise.resolve(${expression}).then((value) => JSON.stringify(value))`,
+      target: { context: this.context },
+      awaitPromise: true,
+      resultOwnership: "none",
+    });
+    if (result.type === "exception")
+      throw new Error(result.exceptionDetails?.text ?? "BiDi evaluate threw");
+    return result.result?.value === undefined
+      ? undefined
+      : JSON.parse(result.result.value);
+  }
+
+  async run(expression) {
+    const result = await this.send("script.evaluate", {
+      expression,
+      target: { context: this.context },
+      awaitPromise: true,
+      resultOwnership: "none",
+    });
+    if (result.type === "exception")
+      throw new Error(result.exceptionDetails?.text ?? "BiDi evaluate threw");
+    return result.result?.value;
+  }
+
+  navigate(url) {
+    return this.send("browsingContext.navigate", {
+      context: this.context,
+      url,
+      wait: "complete",
+    });
+  }
+
+  viewport(width, height) {
+    return this.send("browsingContext.setViewport", {
+      context: this.context,
+      viewport: { width, height },
+      devicePixelRatio: 1,
+    });
+  }
+
+  pointer(actions) {
+    return this.send("input.performActions", {
+      context: this.context,
+      actions: [
+        {
+          type: "pointer",
+          id: "mouse",
+          parameters: { pointerType: "mouse" },
+          actions,
+        },
+      ],
+    });
+  }
+
+  keys(actions) {
+    return this.send("input.performActions", {
+      context: this.context,
+      actions: [{ type: "key", id: "keyboard", actions }],
+    });
+  }
+
+  close() {
+    try {
+      this.#socket.close();
+    } catch {}
+  }
+}
+
+const CONTROL = "";
+
+async function bidiChord(session, letter) {
+  await session.keys([
+    { type: "keyDown", value: CONTROL },
+    { type: "keyDown", value: letter },
+    { type: "keyUp", value: letter },
+    { type: "keyUp", value: CONTROL },
+  ]);
+}
+
+async function bidiDrag(session, from, to) {
+  const steps = 8;
+  const moves = [];
+  for (let step = 1; step <= steps; step += 1) {
+    moves.push({
+      type: "pointerMove",
+      origin: "viewport",
+      duration: 20,
+      x: Math.round(from.x + ((to.x - from.x) * step) / steps),
+      y: Math.round(from.y + ((to.y - from.y) * step) / steps),
+    });
+  }
+  await session.pointer([
+    {
+      type: "pointerMove",
+      origin: "viewport",
+      x: Math.round(from.x),
+      y: Math.round(from.y),
+    },
+    { type: "pointerDown", button: 0 },
+    ...moves,
+    { type: "pointerUp", button: 0 },
+  ]);
+  await sleep(80);
+}
+
+/** Start Firefox headless and wait for it to announce its BiDi endpoint. */
+async function startFirefox(lifecycle, dir) {
+  const binary = process.env.FIREFOX ?? "/usr/bin/firefox";
+  const profile = join(dir, "firefox-profile");
+  mkdirSync(profile, { recursive: true });
+  const child = lifecycle.spawn(
+    binary,
+    [
+      "--headless",
+      "--no-remote",
+      "--profile",
+      profile,
+      "--remote-debugging-port=0",
+      "about:blank",
+    ],
+    {
+      cwd: lifecycle.root,
+      env: sanitizedEnvironment({ MOZ_HEADLESS: "1" }),
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+    "firefox",
+  );
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
+    const found = /WebDriver BiDi listening on (ws:\/\/\S+)/.exec(
+      lifecycle.tail(child),
+    );
+    if (found) return { child, url: found[1] };
+    if (child.exitCode !== null)
+      throw new Error(`firefox exited: ${lifecycle.tail(child)}`);
+    await sleep(200);
+  }
+  throw new Error(`firefox never announced BiDi: ${lifecycle.tail(child)}`);
+}
+
+/** The four paths across one probe, named for where the drag starts and ends. */
+const FIREFOX_PATHS = [
+  { key: "across-forward", from: "open", to: "close" },
+  { key: "across-reverse", from: "close", to: "open" },
+  { key: "body-into-ref", from: "open", to: "mid" },
+  { key: "ref-out-to-body", from: "mid", to: "close" },
+];
+
+/** Which of the identity's characters a path actually produced. */
+function verdictFor(got, identity) {
+  if (got === SENTINEL) return "no-selection";
+  if (got.includes(identity)) return "complete";
+  // The longest run of the identity that made it, so a partial selection is
+  // told apart from one that never reached the token at all.
+  let best = 0;
+  for (let start = 0; start < identity.length; start += 1) {
+    for (let end = identity.length; end > start + best; end -= 1) {
+      if (got.includes(identity.slice(start, end))) {
+        best = end - start;
+        break;
+      }
+    }
+  }
+  return best === 0 ? "no-token" : `partial:${best}/${identity.length}`;
+}
+
+/**
+ * The one measurement the chosen trade-off priced and nobody had re-run on the
+ * structure that shipped: Firefox, real link dragging left on, a drag that
+ * starts in the prose and reaches the ref. Recorded, not graded — whether
+ * Firefox's gesture differs is the browser's business and this card's accepted
+ * boundary; that the reading exists is what closes the decision.
+ */
+async function runFirefoxPass({ stack, fixture }) {
+  const probes = fixture.probes.filter((probe) =>
+    ["ordinary", "mention", "comment"].includes(probe.key),
+  );
+  const readings = [];
+  const failures = [];
+  const { url } = await startFirefox(stack, stack.artifactDir);
+  const session = await BidiSession.open(url);
+  stack.addCleanup(() => session.close());
+  await session.navigate(`${stack.webUrl}/`);
+  const login = await session.json(
+    `fetch('/api/auth/login', { method: 'POST' }).then(r => r.status)`,
+  );
+  if (login !== 200 && login !== 204)
+    return {
+      failures: [failure("firefox-login-failed", `status ${login}`)],
+      readings,
+    };
+
+  for (const viewport of VIEWPORTS) {
+    await session.viewport(viewport.width, viewport.height);
+    await session.navigate(
+      `${stack.webUrl}/projects/${fixture.slug}/issues/${fixture.number}`,
+    );
+    await session.run(probeSource(null));
+    let settled = null;
+    for (let attempt = 0; attempt < 200 && settled === null; attempt += 1) {
+      const ready = await session.json(
+        `{ paragraphs: window.__t427.paragraphs().length, slots: document.querySelectorAll('[data-ref-token], [data-mention-token], [data-comment-ref]').length }`,
+      );
+      if (
+        ready.slots >= fixture.probes.length &&
+        ready.paragraphs === fixture.probes.length + 1
+      )
+        settled = ready;
+      else await sleep(100);
+    }
+    if (settled === null) {
+      failures.push(
+        failure("page-never-settled", "rich links never resolved", {
+          browser: "firefox",
+          viewport: viewport.name,
+        }),
+      );
+      continue;
+    }
+
+    // The clipboard itself, before anything is read through it: headless
+    // Firefox with a dead clipboard would report every path as "no selection".
+    await session.json("window.__t427.focusPrime()");
+    await bidiChord(session, "c");
+    await sleep(120);
+    await session.json("window.__t427.focusSink()");
+    await bidiChord(session, "v");
+    await sleep(150);
+    const primed = await session.json("window.__t427.readSink()");
+    if (primed.plain !== SENTINEL) {
+      failures.push(
+        failure(
+          "clipboard-unavailable",
+          `a keyboard copy of the sentinel pasted ${JSON.stringify(primed.plain)}`,
+          { browser: "firefox", viewport: viewport.name },
+        ),
+      );
+      continue;
+    }
+    await session.json("window.__t427.clearFocus()");
+
+    for (const probe of probes) {
+      const index = fixture.probes.indexOf(probe) + 1;
+      for (const path of FIREFOX_PATHS) {
+        await session.pointer([
+          {
+            type: "pointerMove",
+            origin: "viewport",
+            x: viewport.width - 2,
+            y: viewport.height - 2,
+          },
+        ]);
+        await sleep(150);
+        await session.json("window.__t427.focusPrime()");
+        await bidiChord(session, "c");
+        await sleep(120);
+        await session.json("window.__t427.clearFocus()");
+        await session.json("window.__t427.resetDrag()");
+        await session.json(`window.__t427.scrollTo(${index})`);
+        await sleep(150);
+        const points = await session.json(`window.__t427.points(${index})`);
+        if (points.error || !points[path.from] || !points[path.to]) {
+          failures.push(
+            failure("probe-missing", points.error ?? "no point", {
+              browser: "firefox",
+              viewport: viewport.name,
+              probe: probe.key,
+              path: path.key,
+            }),
+          );
+          continue;
+        }
+        await bidiDrag(session, points[path.from], points[path.to]);
+        const selection = await session.json("window.__t427.selection()");
+        await bidiChord(session, "c");
+        await sleep(150);
+        await session.json("window.__t427.focusSink()");
+        await bidiChord(session, "v");
+        await sleep(150);
+        const pasted = await session.json("window.__t427.readSink()");
+        const drags = await session.json("window.__t427.dragEvents");
+        await session.json("window.__t427.clearFocus()");
+        readings.push({
+          viewport: viewport.name,
+          probe: probe.key,
+          path: path.key,
+          verdict: verdictFor(pasted.plain ?? "", probe.identity),
+          plain: pasted.plain,
+          selectionRanges: selection.ranges,
+          dragstart: drags,
+        });
+      }
+    }
+  }
+  return { failures, readings };
+}
+
 function report(label, { failures, notes }) {
   console.log(
     `${label}: ${failures.length === 0 ? "ok" : `${failures.length} failure(s)`} ` +
@@ -1068,7 +1467,7 @@ function report(label, { failures, notes }) {
 async function main() {
   const argv = process.argv.slice(2);
   const unknown = argv.filter(
-    (arg) => !["--self-test", "--keep", "--help"].includes(arg),
+    (arg) => !["--self-test", "--firefox", "--keep", "--help"].includes(arg),
   );
   if (argv.includes("--help")) {
     console.log(HELP);
@@ -1079,6 +1478,11 @@ async function main() {
     return 2;
   }
   const selfTest = argv.includes("--self-test");
+  const firefox = argv.includes("--firefox");
+  if (firefox && selfTest) {
+    console.error("--firefox is a measurement; it has no faults to inject");
+    return 2;
+  }
   let stack;
   try {
     stack = await createBrowserStack({
@@ -1095,6 +1499,21 @@ async function main() {
   let exit = 0;
   try {
     const fixture = await seedFixture(stack.serverPort);
+    if (firefox) {
+      const { failures, readings } = await runFirefoxPass({ stack, fixture });
+      for (const one of readings) {
+        console.log(
+          `firefox ${one.viewport}/${one.probe}/${one.path}: ${one.verdict} ` +
+            `plain=${JSON.stringify(one.plain)} ranges=${one.selectionRanges} ` +
+            `dragstart=${one.dragstart}`,
+        );
+      }
+      report("firefox", { failures, notes: { readings: readings.length } });
+      // Coverage only: what Firefox's own gesture does is recorded, not
+      // graded. A missing reading is the thing that would leave the
+      // trade-off unpriced all over again.
+      return failures.length > 0 ? 2 : 0;
+    }
     const browser = await startBrowser({
       dir: stack.artifactDir,
       registerChild: stack.registerChild,
