@@ -79,6 +79,7 @@ function mark(
   id: string,
   author: Element | null,
   peer: Element | null,
+  extra: Record<string, Element | null> = {},
 ) {
   if (!row || !author || !peer) return;
   const authorLine = firstTextTop(author);
@@ -94,6 +95,55 @@ function mark(
   row.setAttribute("data-baseline-case", id);
   author.setAttribute("data-baseline-participant", "author");
   peer.setAttribute("data-baseline-participant", "peer");
+  // Marked without the same-line check the pair above gets: the runner
+  // decides what a wrapped participant means, per viewport. Dropping the
+  // mark here instead would report the row as unmarked and read as a pass
+  // at whatever width the header happens to break.
+  for (const [role, element] of Object.entries(extra)) {
+    if (element) element.setAttribute("data-baseline-participant", role);
+  }
+}
+
+/** The header meta's two links, told apart the way a reader does. */
+function metaParts(row: Element | null) {
+  const links = [...(row?.querySelectorAll("a[href*='#comment-']") ?? [])];
+  return {
+    id: links.find((link) => !link.querySelector("time")) ?? null,
+    time: links.find((link) => link.querySelector("time")) ?? null,
+  };
+}
+
+/**
+ * One comment header: the author name, the stamp, the id, and the badge text.
+ *
+ * Marked without `mark`'s same-line precondition. That guard was written for
+ * T-433's rows, where the pair could not wrap; a comment header can, and on a
+ * narrow viewport it does. Dropping the mark there would report the sample as
+ * absent, and "the runner never found it" must not read the same as "the
+ * runner measured it and it was fine" — the runner classifies each role by
+ * the line it landed on instead.
+ */
+function markCommentHeader(selector: string, id: string, withBadge: boolean) {
+  const row = document.querySelector(`${selector} .border-b.bg-muted\\/40`);
+  if (!row) return;
+  const parts = metaParts(row);
+  const badge = withBadge
+    ? row.querySelector('[data-testid="agent-context-badge"]')
+    : null;
+  const author = row.querySelector(':scope > a[href^="/users/"]');
+  // T-433's `peer` was this comment's timestamp link and still is, so the
+  // sample it proved survives unchanged; the id beside it is new.
+  const roles: Record<string, Element | null> = {
+    author,
+    peer: parts.time,
+    id: parts.id,
+    ...(withBadge ? { badge } : {}),
+  };
+  if (Object.values(roles).some((element) => !element)) return;
+  row.setAttribute("data-baseline-case", id);
+  for (const [role, element] of Object.entries(roles)) {
+    element?.setAttribute("data-baseline-participant", role);
+  }
 }
 
 // `mark` operates on the rendered DOM of genuine components. It only adds
@@ -155,17 +205,17 @@ function markRows(commentId?: number, annotationId?: number) {
       body.querySelector(":scope > span[title]"),
     );
   }
-  const comment = document.querySelector(
-    "#fixture-comment-item .border-b.bg-muted\\/40",
+  markCommentHeader("#fixture-comment-item", "comment-item", false);
+  markCommentHeader(
+    "#fixture-comment-item-agent-session",
+    "comment-item-agent-session",
+    true,
   );
-  if (comment) {
-    mark(
-      comment,
-      "comment-item",
-      comment.querySelector(':scope > a[href^="/users/"]'),
-      comment.querySelector(":scope > a[title]"),
-    );
-  }
+  markCommentHeader(
+    "#fixture-comment-item-agent-plain",
+    "comment-item-agent-plain",
+    true,
+  );
   const revision = document.querySelector(
     '[data-slot="popover-content"] button.items-baseline',
   );
@@ -190,15 +240,21 @@ function markRows(commentId?: number, annotationId?: number) {
   }
   const markHover = (id: string, itemId: number | undefined) => {
     if (itemId === undefined) return;
-    const peer = document.querySelector(
+    // Both cards are open at once, so the comment id is what tells them
+    // apart. `.mb-2` then pins the header row: the meta wrapper is
+    // `items-baseline` too now, so `closest(".items-baseline")` would stop
+    // inside the group instead of reaching the row that holds the author.
+    const link = document.querySelector(
       `[data-slot="hover-card-content"] a[href$="#comment-${itemId}"]`,
     );
-    const row = peer?.closest(".items-baseline") ?? null;
+    const row = link?.closest(".mb-2.flex.items-baseline") ?? null;
+    const parts = metaParts(row);
     mark(
       row,
       id,
       row?.querySelector(':scope > a[href^="/users/"]') ?? null,
-      peer,
+      parts.time,
+      { id: parts.id },
     );
   };
   markHover("comment-hover-card", commentId);
@@ -206,12 +262,16 @@ function markRows(commentId?: number, annotationId?: number) {
   const locate = document.querySelector(
     '[data-slot="popover-content"] button[title="Scroll to what this points at"]',
   );
-  const annotationRow = locate?.closest(".items-baseline") ?? null;
+  // The locate control's own span, which T-435 stripped the `title` from:
+  // the creation time it used to hide is visible beside it now.
+  const annotationRow = locate?.closest(".mb-1.flex.items-baseline") ?? null;
+  const annotationParts = metaParts(annotationRow);
   mark(
     annotationRow,
     "annotation-chip",
     annotationRow?.querySelector(':scope > a[href^="/users/"]') ?? null,
-    annotationRow?.querySelector(":scope > span[title]") ?? null,
+    locate?.parentElement ?? null,
+    { id: annotationParts.id, time: annotationParts.time },
   );
 }
 
@@ -219,6 +279,10 @@ type Data = {
   issue: Issue;
   events: TimelineEvent[];
   comment: TimelineComment | undefined;
+  /** Written with a real agent-context header, so the badge is a button. */
+  agentSessionComment: TimelineComment | undefined;
+  /** Same, without a session id: the badge is a plain span (T-435). */
+  agentPlainComment: TimelineComment | undefined;
   spec: SpecInfo | null;
   annotation: SpecCommentItem | undefined;
   specBody: string | undefined;
@@ -226,7 +290,16 @@ type Data = {
 };
 
 function Samples({ data }: { data: Data }) {
-  const { issue, events, comment, spec, annotation, specBody } = data;
+  const {
+    issue,
+    events,
+    comment,
+    agentSessionComment,
+    agentPlainComment,
+    spec,
+    annotation,
+    specBody,
+  } = data;
   const opened = events.find((entry) => entry.event_type === "opened");
   const reference = events.find((entry) => entry.event_type === "referenced");
   const assigned = events.filter((entry) => entry.event_type === "assigned");
@@ -390,6 +463,38 @@ function Samples({ data }: { data: Data }) {
         </section>
       )}
       {comment && (
+        <section id="fixture-comment-item-author">
+          <CommentItem
+            slug={slug}
+            issueNumber={issueNumber}
+            comment={comment}
+            viewer={{
+              id: data.untouched.me.id,
+              isAdmin: data.untouched.me.is_instance_admin,
+              role: "writer",
+            }}
+          />
+        </section>
+      )}
+      {agentSessionComment && (
+        <section id="fixture-comment-item-agent-session">
+          <CommentItem
+            slug={slug}
+            issueNumber={issueNumber}
+            comment={agentSessionComment}
+          />
+        </section>
+      )}
+      {agentPlainComment && (
+        <section id="fixture-comment-item-agent-plain">
+          <CommentItem
+            slug={slug}
+            issueNumber={issueNumber}
+            comment={agentPlainComment}
+          />
+        </section>
+      )}
+      {comment && (
         <section
           id="fixture-pending-comment"
           aria-label="Pending comment sample"
@@ -524,7 +629,20 @@ function Fixture() {
             ),
             comment: timeline.items.find(
               (item): item is TimelineComment =>
-                item.type === "comment" && item.component === null,
+                item.type === "comment" &&
+                item.component === null &&
+                item.agent_context == null,
+            ),
+            agentSessionComment: timeline.items.find(
+              (item): item is TimelineComment =>
+                item.type === "comment" &&
+                item.agent_context?.session_id !== undefined,
+            ),
+            agentPlainComment: timeline.items.find(
+              (item): item is TimelineComment =>
+                item.type === "comment" &&
+                item.agent_context != null &&
+                item.agent_context.session_id === undefined,
             ),
             spec,
             annotation,

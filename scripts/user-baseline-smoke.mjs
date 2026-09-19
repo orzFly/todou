@@ -51,6 +51,15 @@ const AVATAR_CASES = [
   "machine-delayed",
 ];
 
+/**
+ * `author` and `peer` are T-433's original pair and stay exactly what they
+ * were — for a comment header `peer` is still the timestamp link, so that
+ * sample survives T-435 unchanged. `badge`, `id` and `time` are the text
+ * T-435 put on the same baseline; each role marks the visible text node,
+ * never the box around it.
+ */
+const DEFAULT_ROLES = ["author", "peer"];
+
 const CASES = [
   guard(
     "event-row",
@@ -86,7 +95,22 @@ const CASES = [
     "comment-item",
     "author",
     "projects/web/src/components/timeline/comment-item.tsx",
-    /flex items-baseline gap-2 border-b/,
+    /flex flex-wrap items-baseline gap-2 border-b/,
+    ["author", "peer", "id"],
+  ),
+  guard(
+    "comment-item-agent-session",
+    "author",
+    "projects/web/src/components/timeline/comment-item.tsx",
+    /items-baseline \[&>svg\]:self-center/,
+    ["author", "badge", "peer", "id"],
+  ),
+  guard(
+    "comment-item-agent-plain",
+    "author",
+    "projects/web/src/components/timeline/comment-item.tsx",
+    /items-baseline \[&>svg\]:self-center/,
+    ["author", "badge", "peer", "id"],
   ),
   guard(
     "revision-history",
@@ -104,44 +128,140 @@ const CASES = [
     "comment-hover-card",
     "author",
     "projects/web/src/components/shared/comment-hover-card.tsx",
-    /mb-2 flex items-baseline gap-2/,
+    /mb-2 flex flex-wrap items-baseline gap-2/,
+    ["author", "peer", "id"],
   ),
   guard(
     "spec-annotation-hover-card",
     "author",
     "projects/web/src/components/shared/spec-annotation-hover-card.tsx",
-    /mb-2 flex items-baseline gap-2/,
+    /mb-2 flex flex-wrap items-baseline gap-2/,
+    ["author", "peer", "id"],
   ),
   guard(
     "unplaced-comment",
     "author",
     "projects/web/src/pages/spec-view.tsx",
-    /function UnplacedComment[\s\S]*?mb-1 flex items-baseline gap-2/,
+    /function UnplacedComment[\s\S]*?mb-1 flex flex-wrap items-baseline gap-2/,
+    ["author", "peer", "id", "time"],
   ),
   guard(
     "diff-annotation",
     "author",
     "projects/web/src/pages/spec-view.tsx",
-    /function DiffAnnotation[\s\S]*?mb-1 flex items-baseline gap-2/,
+    /function DiffAnnotation[\s\S]*?mb-1 flex flex-wrap items-baseline gap-2/,
+    ["author", "peer", "id", "time"],
+  ),
+  guard(
+    "spec-source-file",
+    "author",
+    "projects/web/src/pages/spec-view.tsx",
+    /function SpecSourceFile[\s\S]*?<SpecFileSource\n\s+slug=\{slug\}/,
+    ["author", "peer", "id", "time"],
+  ),
+  guard(
+    "spec-unfolded-file",
+    "author",
+    "projects/web/src/pages/spec-view.tsx",
+    /function SpecUnfoldableFile[\s\S]*?<SpecFileSource\n\s+slug=\{slug\}/,
+    ["author", "peer", "id", "time"],
   ),
   guard(
     "annotation-chip",
     "author",
     "projects/web/src/components/spec/annotated-markdown.tsx",
     /item\.item\.author[\s\S]*?items-baseline|items-baseline[\s\S]*?item\.item\.author/,
+    ["author", "peer", "id", "time"],
   ),
 ];
 
+/**
+ * Read but never measured: these files have no row of their own, so drift in
+ * them shows up as a source guard and nothing else. A guard is not a hit.
+ */
+const SOURCE_ONLY_GUARDS = [
+  {
+    id: "comment-header-meta",
+    file: "projects/web/src/components/shared/comment-header-meta.tsx",
+    pattern: /flex flex-wrap items-baseline justify-end gap-x-2/,
+  },
+  {
+    id: "comment-header-meta-token",
+    file: "projects/web/src/components/shared/comment-header-meta.tsx",
+    pattern:
+      /<span className="select-all">\{`#\$\{commentAnchor\(commentId\)\}`\}<\/span>/,
+  },
+  {
+    id: "optimistic-split",
+    file: "projects/web/src/pages/issue-detail.tsx",
+    pattern:
+      /pendingComments=\{composer\.pending\.filter\(\(p\) => !p\.failed\)\}/,
+  },
+];
+
+/**
+ * One fault per rule the implementation may lose, so a failure names which.
+ * `row` is T-433's own mutation and every case carries it; the other two
+ * restore exactly one of the rules T-435 changed, and each must leave the
+ * roles it does not move inside the threshold — "something went red" is not
+ * evidence that this rule is what holds the row together.
+ */
+const FAULTS = [
+  ...CASES.map((entry) => ({
+    id: entry.id,
+    kind: "row",
+    expectFail: entry.roles.slice(1),
+    expectHold: [],
+  })),
+  {
+    id: "comment-item-agent-session",
+    kind: "badge",
+    expectFail: ["badge"],
+    expectHold: ["peer", "id"],
+  },
+  {
+    id: "comment-item-agent-plain",
+    kind: "badge",
+    expectFail: ["badge"],
+    expectHold: ["peer", "id"],
+  },
+  {
+    id: "comment-item-agent-session",
+    kind: "meta",
+    // `peer` is the timestamp, which lives in the same group as the id.
+    expectFail: ["id", "peer"],
+    expectHold: ["badge"],
+  },
+];
+
+/**
+ * Which URL each route case is reached at, and what draws it there. The two
+ * source-file entries exist because `MultiFileDiff` and `File` are different
+ * pierre components: a comment header proven through the diff says nothing
+ * about the one the source view renders.
+ */
+const ROUTE_URLS = {
+  "unplaced-comment": { search: "?file=plan.md&v=2&compare=1&view=rendered" },
+  "diff-annotation": { search: "?file=plan.md&v=2&compare=1&view=source" },
+  // No baseline to compare against at v1, so the page reads one version
+  // whole — and the presentation is session state, which is why this one
+  // arrives through the toggle rather than through the URL (T-200).
+  "spec-source-file": { search: "?file=plan.md&v=1", toggleToSource: true },
+  "spec-unfolded-file": {
+    search: "?file=steady.md&v=2&compare=1&view=source",
+  },
+};
+
 const ROUTE_CASES = CASES.filter((entry) =>
-  ["unplaced-comment", "diff-annotation"].includes(entry.id),
+  Object.hasOwn(ROUTE_URLS, entry.id),
 );
 const REVISION_CASES = CASES.filter((entry) => entry.id === "revision-history");
 const FIXTURE_CASES = CASES.filter(
   (entry) => !ROUTE_CASES.includes(entry) && !REVISION_CASES.includes(entry),
 );
 
-function guard(id, family, file, pattern) {
-  return { id, family, file, pattern };
+function guard(id, family, file, pattern, roles = DEFAULT_ROLES) {
+  return { id, family, file, pattern, roles };
 }
 
 function parseArgs(argv) {
@@ -170,12 +290,13 @@ function usage(message) {
 async function seed(serverPort) {
   const base = `http://127.0.0.1:${serverPort}/api`;
   let cookie = "";
-  const call = async (method, path, body) => {
+  const call = async (method, path, body, headers = {}) => {
     const response = await fetch(base + path, {
       method,
       headers: {
         "content-type": "application/json",
         ...(cookie ? { cookie } : {}),
+        ...headers,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -213,6 +334,34 @@ async function seed(serverPort) {
   await call("POST", `/projects/${slug}/issues/${issue.number}/comments`, {
     body: "A real timeline comment for the author header.",
   });
+  // The badge's two shapes, written the way the CLI writes them: the header
+  // is opt-in provenance on an ordinary authenticated POST, so these are
+  // real agent-context comments rather than a DTO edited in the fixture.
+  // With a session id the badge is a button, without one a span, and T-435
+  // needs the visible model text of both on the header's baseline.
+  await call(
+    "POST",
+    `/projects/${slug}/issues/${issue.number}/comments`,
+    { body: "A real agent comment whose badge carries a session." },
+    {
+      "x-todou-agent-context": JSON.stringify({
+        agent: "claude-code",
+        model: "claude-opus-5",
+        session_id: "0d6b1f52-baseline-smoke",
+      }),
+    },
+  );
+  await call(
+    "POST",
+    `/projects/${slug}/issues/${issue.number}/comments`,
+    { body: "A real agent comment whose badge carries no session." },
+    {
+      "x-todou-agent-context": JSON.stringify({
+        agent: "codex",
+        model: "gpt-6-astra",
+      }),
+    },
+  );
   const statusA = statuses[1] ?? statuses[0];
   const statusB = statuses[2] ?? statuses.at(-1);
   if (!statusA || !statusB || statusA.id === statusB.id) {
@@ -247,9 +396,16 @@ async function seed(serverPort) {
     "",
     "A stable paragraph with the annotation chip.",
   ].join("\n");
+  // A second file both versions leave byte-for-byte alone: that is what the
+  // stack draws as an unfoldable block, and the only way to reach
+  // SpecFileSource through the compare view rather than through the diff.
+  const steadySpec = ["# Steady", "", "A line nobody edits."].join("\n");
   await call("POST", `${specPath}/push`, {
     message: "Baseline fixture version one",
-    files: [{ path: "plan.md", body: firstSpec }],
+    files: [
+      { path: "plan.md", body: firstSpec },
+      { path: "steady.md", body: steadySpec },
+    ],
   });
   await call("POST", `${specPath}/reviews`, {
     version: 1,
@@ -265,6 +421,10 @@ async function seed(serverPort) {
         anchor: { path: "plan.md", version: 1, line_start: 5, line_end: 5 },
         body: "Stable line review",
       },
+      {
+        anchor: { path: "steady.md", version: 1, line_start: 3, line_end: 3 },
+        body: "Untouched file review",
+      },
     ],
   });
   await call("POST", `${specPath}/push`, {
@@ -277,6 +437,7 @@ async function seed(serverPort) {
           "A revised line.",
         ),
       },
+      { path: "steady.md", body: steadySpec },
     ],
   });
   return {
@@ -336,11 +497,17 @@ async function load(page, url) {
 /**
  * Zero-size inline blocks expose the browser's actual first-line baseline.
  * Measuring text ink or the bottom of the flex items hides subpixel errors.
+ *
+ * Every marked role is measured against `author`, which is why a case that
+ * gets its badge right and its id wrong still fails: one spread per role,
+ * never one number for the row. Roles that wrapped onto another visual line
+ * are reported as such rather than compared — and never as a pass, because
+ * "it went to the next line" is how a real misalignment hides.
  */
-async function measure(page, faultId = null, cases = CASES) {
+async function measure(page, fault = null, cases = CASES) {
   return await evaluate(
     page,
-    (ids, epsilon, fault) => {
+    (specs, epsilon, faultSpec) => {
       const rows = [];
       const rect = (box) => ({
         x: box.x,
@@ -359,22 +526,24 @@ async function measure(page, faultId = null, cases = CASES) {
         }
         return null;
       };
-      const textLeaf = (element, preferName) => {
-        const name = preferName
-          ? [...element.querySelectorAll("span")].find((span) =>
-              span.classList.contains("ml-1.5"),
-            )
-          : null;
-        // The first participant must be UserChip's visible name. Falling back
-        // to the whole chip can silently measure avatar initials instead.
-        if (preferName && !name) return null;
+      const textLeaf = (element, role) => {
+        const name =
+          role === "author"
+            ? [...element.querySelectorAll("span")].find((span) =>
+                span.classList.contains("ml-1.5"),
+              )
+            : null;
+        // The author participant must be UserChip's visible name. Falling
+        // back to the whole chip can silently measure avatar initials.
+        if (role === "author" && !name) return null;
         const host = name ?? element;
         const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
         let node = walker.nextNode();
         while (node && !node.textContent.trim()) node = walker.nextNode();
         return node;
       };
-      for (const id of ids) {
+      for (const spec of specs) {
+        const { id, roles } = spec;
         const root = deepQuery(`[data-baseline-case="${CSS.escape(id)}"]`);
         if (!root) {
           rows.push({
@@ -398,40 +567,92 @@ async function measure(page, faultId = null, cases = CASES) {
           });
           continue;
         }
-        const participants = ["author", "peer"].map((part) => {
-          const selector = `[data-baseline-participant="${part}"]`;
+        const participants = roles.map((role) => {
+          const selector = `[data-baseline-participant="${role}"]`;
           return root.matches(selector) ? root : root.querySelector(selector);
         });
-        if (participants.some((part) => !part)) {
+        const unmarked = roles.filter((_role, index) => !participants[index]);
+        if (unmarked.length > 0) {
           rows.push({
             id,
             status: "missing",
-            reason: "author/peer text not marked",
+            reason: `unmarked participant(s): ${unmarked.join(", ")}`,
           });
           continue;
         }
+        const roleOf = (role) => participants[roles.indexOf(role)];
+
+        // What the fault moves, and what "moved" means for it. `row` is
+        // T-433's own mutation; the other two restore exactly one of the
+        // rules T-435 changed, so a failure names which.
+        const kind = faultSpec && faultSpec.id === id ? faultSpec.kind : null;
         let mutationRoot = root;
-        if (id === "assignee-row") {
+        let property = "alignItems";
+        if (kind === "row" && id === "assignee-row") {
           mutationRoot =
             root.querySelector("[data-baseline-fault-target]") ?? root;
+        } else if (kind === "badge") {
+          const badge = roleOf("badge");
+          mutationRoot =
+            badge?.closest('[data-testid="agent-context-badge"]') ?? badge;
+          property = "alignSelf";
+        } else if (kind === "meta") {
+          const idPart = roleOf("id");
+          mutationRoot =
+            idPart?.closest('[data-testid="comment-header-meta"]') ?? idPart;
+          if (!mutationRoot?.matches('[data-testid="comment-header-meta"]')) {
+            rows.push({
+              id,
+              status: "invalid",
+              reason: "no comment-header-meta group to move",
+            });
+            continue;
+          }
+          property = "alignSelf";
+        }
+        if (kind && !mutationRoot) {
+          rows.push({
+            id,
+            status: "invalid",
+            reason: `fault ${kind} has nothing to move`,
+          });
+          continue;
         }
         const beforeStyle = getComputedStyle(mutationRoot);
         const before = {
           alignItems: beforeStyle.alignItems,
+          alignSelf: beforeStyle.alignSelf,
           display: beforeStyle.display,
           verticalAlign: beforeStyle.verticalAlign,
         };
         let mutation = null;
-        if (fault === id) {
-          if (id === "assignee-row") {
+        if (kind) {
+          mutationRoot.style[property] = "center";
+          mutation =
+            kind === "row"
+              ? "text flex row restored to items-center"
+              : kind === "badge"
+                ? "agent badge restored to T-433's self-center"
+                : "id/time group set to self-center";
+          if (kind === "badge") {
+            // Both halves, or the restore is not the old rule: the pill and
+            // the row are the same height here, so moving the box alone
+            // leaves the text exactly where it was and the fault proves
+            // nothing. What T-435 changed is where the text sits inside the
+            // pill, and that is `align-items` on the badge.
             mutationRoot.style.alignItems = "center";
+            for (const icon of mutationRoot.querySelectorAll(":scope > svg")) {
+              icon.style.alignSelf = "auto";
+            }
+          }
+          if (kind === "row" && id === "assignee-row") {
             mutationRoot.style.verticalAlign = "middle";
             mutation = "assignee alignment restored to center/middle";
-          } else {
-            mutationRoot.style.alignItems = "center";
-            mutation = "text flex row restored to items-center";
           }
-          if (["unplaced-comment", "annotation-chip"].includes(id)) {
+          if (
+            kind === "row" &&
+            ["unplaced-comment", "annotation-chip"].includes(id)
+          ) {
             root.style.whiteSpace = "nowrap";
             root.style.width = "max-content";
             root.style.zoom = "2";
@@ -441,11 +662,11 @@ async function measure(page, faultId = null, cases = CASES) {
           if (
             id === "diff-annotation" &&
             after.display === "" &&
-            mutationRoot.style.alignItems === "center"
+            mutationRoot.style[property] === "center"
           ) {
-            // Pierre may detach and replace a shadow-root annotation while its
-            // diff is painting. The inline style took effect on the selected
-            // node, but an uncomputed node cannot supply a layout verdict.
+            // Pierre may detach and replace a shadow-root annotation while
+            // its diff is painting. The inline style took effect on the
+            // selected node, but an uncomputed node gives no layout verdict.
             rows.push({
               id,
               status: "invalid",
@@ -454,31 +675,36 @@ async function measure(page, faultId = null, cases = CASES) {
             continue;
           }
           if (
-            after.alignItems !== "center" ||
-            (id === "assignee-row" && after.verticalAlign !== "middle") ||
-            (before.alignItems === after.alignItems &&
-              (id !== "assignee-row" ||
+            after[property] !== "center" ||
+            (kind === "row" &&
+              id === "assignee-row" &&
+              after.verticalAlign !== "middle") ||
+            (before[property] === after[property] &&
+              (kind !== "row" ||
+                id !== "assignee-row" ||
                 before.verticalAlign === after.verticalAlign))
           ) {
             rows.push({
               id,
               status: "invalid",
-              reason: `fault did not take effect: ${mutation} (${before.display}/${before.alignItems} → ${after.display}/${after.alignItems})`,
+              reason: `fault did not take effect: ${mutation} (${before.display}/${before[property]} → ${after.display}/${after[property]})`,
             });
             continue;
           }
         }
+
         const rowBox = rect(root.getBoundingClientRect());
         const baselines = [];
         const styles = [];
         let invalid = null;
+        let perturbed = false;
         for (const [index, element] of participants.entries()) {
-          const node = textLeaf(element, index === 0);
+          const node = textLeaf(element, roles[index]);
           if (!node) {
             invalid =
-              index === 0
+              roles[index] === "author"
                 ? "author UserChip visible name span (.ml-1.5) is missing"
-                : "peer participant lacks text";
+                : `${roles[index]} participant lacks text`;
             break;
           }
           const host = node.parentNode;
@@ -510,11 +736,13 @@ async function measure(page, faultId = null, cases = CASES) {
                 Math.abs(box.width - textAfter[textIndex].width) > epsilon,
             )
           ) {
-            invalid = `baseline marker changed geometry (row ${JSON.stringify(rowBeforeMarker)} → ${JSON.stringify(rowAfter)}, participant ${JSON.stringify(participantBefore)} → ${JSON.stringify(participantAfter)}, text rects ${textBefore.length} → ${textAfter.length})`;
+            invalid = `baseline marker changed geometry for ${roles[index]} (row ${JSON.stringify(rowBeforeMarker)} → ${JSON.stringify(rowAfter)}, participant ${JSON.stringify(participantBefore)} → ${JSON.stringify(participantAfter)}, text rects ${textBefore.length} → ${textAfter.length})`;
+            perturbed = true;
             break;
           }
           const css = getComputedStyle(element);
           styles.push({
+            role: roles[index],
             font: css.font,
             lineHeight: css.lineHeight,
             display: css.display,
@@ -522,24 +750,55 @@ async function measure(page, faultId = null, cases = CASES) {
           });
           baselines.push(y);
         }
-        const spread = Math.abs(baselines[0] - baselines[1]);
+        if (invalid) {
+          rows.push({
+            // The zero-size marker is an atomic inline box, so inserting it
+            // takes away a line-break opportunity. On a row that is already
+            // wrapping that can move the break, and the number would then
+            // describe a layout the reader never sees. Below 640 the header
+            // is allowed to wrap, so this is recorded rather than called a
+            // pass or a failure; at desktop widths it stays fatal.
+            status: perturbed ? "unmeasurable" : "invalid",
+            id,
+            count: 0,
+            mutation,
+            reason: invalid,
+          });
+          continue;
+        }
         const lineHeight = Math.max(
           ...styles.map((style) => Number.parseFloat(style.lineHeight) || 20),
         );
-        if (!invalid && spread > lineHeight * 0.75) {
-          invalid = "participants are on different text lines";
-        }
-        const status = invalid
-          ? "invalid"
-          : spread <= epsilon
-            ? "hit"
-            : "failure";
+        const pairs = roles.slice(1).map((role, index) => {
+          const spread = Math.abs(baselines[0] - baselines[index + 1]);
+          return {
+            role,
+            spread: Number(spread.toFixed(5)),
+            sameLine: spread <= lineHeight * 0.75,
+          };
+        });
+        const compared = pairs.filter((pair) => pair.sameLine);
+        const wrapped = pairs.filter((pair) => !pair.sameLine);
+        const failed = compared.filter((pair) => pair.spread > epsilon);
+        const status =
+          compared.length === 0
+            ? "invalid"
+            : failed.length > 0
+              ? "failure"
+              : "hit";
         rows.push({
           id,
           status,
-          count: invalid ? 0 : 1,
+          count: 1,
+          roles,
           baselines: baselines.map((value) => Number(value.toFixed(5))),
-          spread: Number.isFinite(spread) ? Number(spread.toFixed(5)) : null,
+          pairs,
+          wrapped: wrapped.map((pair) => pair.role),
+          spread: compared.length
+            ? Number(
+                Math.max(...compared.map((pair) => pair.spread)).toFixed(5),
+              )
+            : null,
           row: {
             ...rowBox,
             display: before.display,
@@ -548,22 +807,28 @@ async function measure(page, faultId = null, cases = CASES) {
           styles,
           mutation,
           reason:
-            invalid ??
-            (status === "failure"
-              ? `name minus text ${spread.toFixed(5)} CSS px exceeds ${epsilon}`
-              : null),
+            compared.length === 0
+              ? `every participant wrapped away from author (${wrapped.map((p) => `${p.role} ${p.spread}`).join(", ")})`
+              : failed.length > 0
+                ? failed
+                    .map(
+                      (pair) =>
+                        `${pair.role} minus author ${pair.spread.toFixed(5)} CSS px exceeds ${epsilon}`,
+                    )
+                    .join("; ")
+                : null,
         });
       }
       return rows;
     },
-    cases.map((entry) => entry.id),
+    cases.map((entry) => ({ id: entry.id, roles: entry.roles })),
     EPSILON,
-    faultId,
+    fault,
   );
 }
 
 function sourceGuards() {
-  return CASES.map((entry) => {
+  return [...CASES, ...SOURCE_ONLY_GUARDS].map((entry) => {
     const source = readFileSync(resolve(ROOT, entry.file), "utf8");
     return { id: entry.id, pass: entry.pattern.test(source), file: entry.file };
   });
@@ -922,7 +1187,8 @@ async function specRouteRun(
   kind,
   fault = null,
 ) {
-  const url = `${base}/projects/${seeded.slug}/issues/${seeded.number}/spec?file=plan.md&v=2&compare=1&view=${kind === "diff-annotation" ? "source" : "rendered"}`;
+  const route = ROUTE_URLS[kind];
+  const url = `${base}/projects/${seeded.slug}/issues/${seeded.number}/spec${route.search}`;
   const page = await pageFor(browser, viewport, seeded.cookie, url);
   try {
     await page.cdp.send("Page.navigate", { url }, page.sessionId);
@@ -931,7 +1197,20 @@ async function specRouteRun(
     while (Date.now() < deadline) {
       state = await evaluate(
         page,
-        async (caseId) => {
+        async ([caseId, toggleToSource, faultKind]) => {
+          if (toggleToSource) {
+            // The page's own control, not a rewritten URL: reading one
+            // version's source is session state with no address to link to.
+            const toggle = [
+              ...document.querySelectorAll(
+                'fieldset[aria-label="comparison view"] button',
+              ),
+            ].find((button) => button.textContent.trim() === "source");
+            if (toggle && toggle.getAttribute("aria-pressed") !== "true") {
+              toggle.click();
+              return { ready: false, text: "switching to the source view" };
+            }
+          }
           const deepRows = (host = document) => {
             const rows = [...host.querySelectorAll(".mb-1.flex")];
             for (const element of host.querySelectorAll("*")) {
@@ -949,10 +1228,12 @@ async function specRouteRun(
               !row.querySelector('a[href^="/users/"]')
             )
               return false;
-            if (caseId === "diff-annotation") {
-              return !!row.closest(".border-y.bg-background.px-3.py-2");
+            if (caseId === "unplaced-comment") {
+              return !!row.closest(".space-y-2.rounded-lg.border.px-4.py-3");
             }
-            return !!row.closest(".space-y-2.rounded-lg.border.px-4.py-3");
+            // Every other route case is a DiffAnnotation; which renderer put
+            // it there is decided by the URL, not by the markup.
+            return !!row.closest(".border-y.bg-background.px-3.py-2");
           });
           if (!candidate) {
             return {
@@ -965,7 +1246,16 @@ async function specRouteRun(
             (element) =>
               element !== author && element.textContent.includes("v1"),
           );
-          if (!author || !peer)
+          // The header meta's two links, told apart the way a reader does:
+          // the id is the short suffix, the stamp is the `<time>`. Picking
+          // "the first anchor to #comment-N" would land on whichever of the
+          // two the markup happens to put first.
+          const metaLinks = [
+            ...candidate.querySelectorAll('a[href*="#comment-"]'),
+          ];
+          const idPart = metaLinks.find((link) => !link.querySelector("time"));
+          const timePart = metaLinks.find((link) => link.querySelector("time"));
+          if (!author || !peer || !idPart || !timePart)
             return { ready: false, text: candidate.outerHTML.slice(0, 600) };
           await document.fonts.ready;
           if (!document.fonts.check('12px "Geist Variable"')) {
@@ -974,9 +1264,70 @@ async function specRouteRun(
           candidate.dataset.baselineCase = caseId;
           author.dataset.baselineParticipant = "author";
           peer.dataset.baselineParticipant = "peer";
-          return { ready: true };
+          idPart.dataset.baselineParticipant = "id";
+          timePart.dataset.baselineParticipant = "time";
+          if (faultKind === "nowrap") {
+            // The shape before the repair is both wraps gone. With only the
+            // row pinned, the id/time group still wraps internally and the
+            // row fits — the repair holding at its second level, which would
+            // make a row-only fault prove nothing.
+            candidate.style.flexWrap = "nowrap";
+            for (const group of candidate.querySelectorAll(
+              '[data-testid="comment-header-meta"]',
+            )) {
+              group.style.flexWrap = "nowrap";
+            }
+          }
+          // Where the header actually ran out of room. A row that will not
+          // wrap does not simply stick out: its children are squeezed and
+          // their text stacks a character per line, which is the shape the
+          // 390px spec containers showed. So all three are read — past the
+          // row, past whatever clips it, and taller than one line of its own
+          // text — because only one of them moves in any given case.
+          const rowBox = candidate.getBoundingClientRect();
+          let clipper = candidate.parentElement;
+          while (clipper) {
+            const overflow = getComputedStyle(clipper).overflowX;
+            if (["hidden", "clip", "auto", "scroll"].includes(overflow)) break;
+            clipper = clipper.parentElement;
+          }
+          const clipBox = (
+            clipper ?? document.documentElement
+          ).getBoundingClientRect();
+          const parts = [
+            author,
+            peer,
+            idPart,
+            timePart,
+            ...candidate.querySelectorAll("button"),
+          ];
+          const strained = parts
+            .map((part) => {
+              const box = part.getBoundingClientRect();
+              const line =
+                Number.parseFloat(getComputedStyle(part).lineHeight) || 16;
+              return {
+                text: (part.textContent ?? "").trim().slice(0, 24),
+                overRow: Number((box.right - rowBox.right).toFixed(3)),
+                overClip: Number((box.right - clipBox.right).toFixed(3)),
+                lines: Number((box.height / line).toFixed(2)),
+              };
+            })
+            .filter(
+              (part) =>
+                part.overRow > 0.5 || part.overClip > 0.5 || part.lines > 2.5,
+            );
+          return {
+            ready: true,
+            overflow: {
+              scrolls: candidate.scrollWidth > candidate.clientWidth + 1,
+              clipper: clipper ? clipper.className.slice(0, 40) : "viewport",
+              clipped: strained,
+              wrap: getComputedStyle(candidate).flexWrap,
+            },
+          };
         },
-        kind,
+        [kind, route.toggleToSource === true, fault?.kind ?? null],
       );
       if (state?.ready) break;
       await sleep(150);
@@ -985,9 +1336,21 @@ async function specRouteRun(
     if (!state?.ready)
       errors.push(`${kind} route sample timed out: ${state?.text ?? ""}`);
     if (state?.error) errors.push(state.error);
+    if (options.keep && !fault && state?.ready) {
+      const shot = await page.cdp.send(
+        "Page.captureScreenshot",
+        { format: "png", captureBeyondViewport: true },
+        page.sessionId,
+      );
+      writeFileSync(
+        join(dir, `route-${kind}-${viewport.name}.png`),
+        Buffer.from(shot.data, "base64"),
+      );
+    }
     return {
       viewport: viewport.name,
       fault,
+      overflow: state?.overflow ?? null,
       fixtureErrors: errors,
       rows: await measure(
         page,
@@ -1021,13 +1384,286 @@ async function historicalFaultRun(browser, base, seeded, kind, mode) {
   }
 }
 
+/**
+ * What a reader's own drag across the short id puts on the clipboard (T-427's
+ * rule, applied to the header T-435 added). Real mouse events and a real
+ * Ctrl+C: a `Selection` built from script would prove that the DOM can be
+ * selected, not that dragging over it selects the right thing.
+ *
+ * The drag starts and ends outside the token, so it crosses the whole of it
+ * from both sides — starting inside a link is a native drag-and-drop in some
+ * browsers, and that boundary is recorded rather than worked around.
+ */
+async function selectionRun(browser, base, seeded, viewport, fault = null) {
+  const url = `${base}${FIXTURE_URL}?slug=${encodeURIComponent(seeded.slug)}&number=${seeded.number}`;
+  const page = await pageFor(browser, viewport, seeded.cookie, url);
+  try {
+    await browser.send("Browser.grantPermissions", {
+      origin: base,
+      permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
+    });
+    const fixtureErrors = await load(page, url);
+    const box = await evaluate(
+      page,
+      (faultKind) => {
+        const row = document.querySelector(
+          "#fixture-comment-item .border-b.bg-muted\\/40",
+        );
+        const token = row?.querySelector(
+          '[data-testid="comment-header-meta"] .select-all',
+        );
+        if (!row || !token)
+          return { error: "no id token in the comment header" };
+        const stamp = row.querySelector(
+          '[data-testid="comment-header-meta"] time',
+        );
+        if (faultKind === "time-in-token") {
+          if (!stamp) return { error: "no timestamp to move into the token" };
+          token.append(stamp);
+        } else if (faultKind === "unselectable") {
+          token.style.userSelect = "none";
+          token.style.webkitUserSelect = "none";
+        }
+        row.scrollIntoView({ block: "center" });
+        const style = getComputedStyle(token);
+        const rect = token.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0)
+          return { error: "id token has no box" };
+        // A textarea is measurement apparatus, not product markup: the paste
+        // has to land somewhere a read can see it.
+        let sink = document.querySelector("#baseline-clipboard-sink");
+        if (!sink) {
+          sink = document.createElement("textarea");
+          sink.id = "baseline-clipboard-sink";
+          sink.style.cssText =
+            "position:fixed;left:0;bottom:0;width:200px;height:40px;z-index:9999";
+          document.body.append(sink);
+        }
+        sink.value = "";
+        const sinkRect = sink.getBoundingClientRect();
+        return {
+          token: {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+          },
+          userSelect: style.userSelect || style.webkitUserSelect,
+          text: token.textContent,
+          sink: { x: sinkRect.x + 20, y: sinkRect.y + 10 },
+        };
+      },
+      fault,
+    );
+    if (box.error) {
+      return {
+        viewport: viewport.name,
+        fault,
+        fixtureErrors,
+        error: box.error,
+      };
+    }
+    const mouse = async (type, x, y, extra = {}) =>
+      await page.cdp.send(
+        "Input.dispatchMouseEvent",
+        { type, x, y, button: "left", clickCount: 1, buttons: 1, ...extra },
+        page.sessionId,
+      );
+    const midY = box.token.y + box.token.height / 2;
+    const from = box.token.x - 6;
+    const to = box.token.x + box.token.width + 6;
+    await mouse("mousePressed", from, midY);
+    for (let step = 1; step <= 6; step++) {
+      await mouse("mouseMoved", from + ((to - from) * step) / 6, midY);
+    }
+    await mouse("mouseReleased", to, midY);
+    const selected = await evaluate(page, () =>
+      (document.getSelection()?.toString() ?? "").trim(),
+    );
+    const key = async (type, extra) =>
+      await page.cdp.send(
+        "Input.dispatchKeyEvent",
+        { type, modifiers: 2, ...extra },
+        page.sessionId,
+      );
+    await key("rawKeyDown", {
+      key: "c",
+      code: "KeyC",
+      windowsVirtualKeyCode: 67,
+      nativeVirtualKeyCode: 67,
+    });
+    await key("keyUp", {
+      key: "c",
+      code: "KeyC",
+      windowsVirtualKeyCode: 67,
+      nativeVirtualKeyCode: 67,
+    });
+    await sleep(120);
+    const pasted = await evaluate(
+      page,
+      async (point) => {
+        const sink = document.querySelector("#baseline-clipboard-sink");
+        if (!sink) return { error: "clipboard sink vanished" };
+        sink.focus();
+        try {
+          const text = await navigator.clipboard.readText();
+          sink.value = text;
+          return { value: sink.value, via: "clipboard.readText after Ctrl+C" };
+        } catch (error) {
+          return { error: String(error), point };
+        }
+      },
+      box.sink,
+    );
+    return {
+      viewport: viewport.name,
+      fault,
+      fixtureErrors,
+      selected,
+      pasted,
+      userSelect: box.userSelect,
+      tokenText: box.text,
+    };
+  } finally {
+    await page.close();
+  }
+}
+
+/**
+ * The reverse side of the card's scope: what the header still has to carry at
+ * each width, and what must not happen to the page around it. The id and the
+ * time moving in is not a licence to drop an action or let the page scroll
+ * sideways, so both are read back rather than assumed.
+ */
+async function scopeRun(
+  browser,
+  base,
+  seeded,
+  viewport,
+  fault = null,
+  scheme = "light",
+) {
+  const url = `${base}${FIXTURE_URL}?slug=${encodeURIComponent(seeded.slug)}&number=${seeded.number}`;
+  const page = await pageFor(browser, viewport, seeded.cookie, url);
+  try {
+    const fixtureErrors = await load(page, url);
+    const rows = await evaluate(
+      page,
+      ([faultKind, colorScheme]) => {
+        // The `.dark` class is how `lib/theme.ts` itself switches palettes,
+        // so this is the product's own switch rather than a second one.
+        document.documentElement.classList.toggle(
+          "dark",
+          colorScheme === "dark",
+        );
+        const out = [];
+        const visible = (element) => {
+          if (!element) return false;
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return (
+            rect.width > 0 &&
+            rect.height > 0 &&
+            style.visibility !== "hidden" &&
+            style.display !== "none"
+          );
+        };
+        // What each sample's reader may do, by the role it is rendered for.
+        // Counting controls alone would let an edit button appear for a
+        // reader who may not edit and still read as "actions present".
+        const expected = {
+          "comment-item": ["comment actions"],
+          "comment-item-author": ["comment actions", "edit comment"],
+          "comment-item-agent-session": ["comment actions"],
+          "comment-item-agent-plain": ["comment actions"],
+        };
+        for (const id of Object.keys(expected)) {
+          const row = document
+            .querySelector(`#fixture-${id}`)
+            ?.querySelector(".border-b.bg-muted\\/40");
+          if (!row) {
+            out.push({ id, status: "missing", reason: "no comment header" });
+            continue;
+          }
+          if (faultKind === "hide-desktop-actions") {
+            for (const action of row.querySelectorAll(
+              "[aria-label='comment actions'], [aria-label='edit comment']",
+            )) {
+              action.style.display = "none";
+            }
+          } else if (faultKind === "unshrinkable-header") {
+            // Both halves: with the row wrapping, unshrinkable children move
+            // to the next line rather than overflowing, so a fault that only
+            // pins `flex-shrink` proves nothing about the repair.
+            row.style.flexWrap = "nowrap";
+            for (const child of row.children) {
+              child.style.flexShrink = "0";
+              child.style.whiteSpace = "nowrap";
+              child.style.minWidth = "max-content";
+            }
+          }
+          const meta = row.querySelector('[data-testid="comment-header-meta"]');
+          const token = meta?.querySelector(".select-all");
+          const stamp = meta?.querySelector("time");
+          const actions = [
+            ...row.querySelectorAll("[aria-label='comment actions']"),
+            ...row.querySelectorAll("[aria-label='edit comment']"),
+          ];
+          const rowBox = row.getBoundingClientRect();
+          out.push({
+            id,
+            idVisible: visible(token),
+            idText: token?.textContent ?? null,
+            timeVisible: visible(stamp),
+            actions: actions.filter(visible).length,
+            actionLabels: actions
+              .filter(visible)
+              .map((element) => element.getAttribute("aria-label"))
+              .sort(),
+            expectedActions: [...expected[id]].sort(),
+            // "the id and the time in the same muted colour" is a claim about
+            // rendered colour, so it is read back rather than inferred from a
+            // shared class name.
+            idColor: token ? getComputedStyle(token).color : null,
+            timeColor: stamp ? getComputedStyle(stamp).color : null,
+            // Nothing pushed past the right edge of its own header.
+            withinRow: [token, stamp, ...actions].every((element) => {
+              if (!element) return false;
+              const box = element.getBoundingClientRect();
+              return box.right <= rowBox.right + 0.5 && box.width > 0;
+            }),
+            rowScrolls: row.scrollWidth > row.clientWidth + 1,
+          });
+        }
+        return {
+          rows: out,
+          scheme: colorScheme,
+          background: getComputedStyle(document.body).backgroundColor,
+          documentOverflows:
+            document.documentElement.scrollWidth >
+            document.documentElement.clientWidth + 1,
+          scrollWidth: document.documentElement.scrollWidth,
+          clientWidth: document.documentElement.clientWidth,
+        };
+      },
+      [fault, scheme],
+    );
+    return { viewport: viewport.name, fault, fixtureErrors, ...rows };
+  } finally {
+    await page.close();
+  }
+}
+
 function printRun(run) {
-  const label = run.fault ? `FAULT ${run.fault}` : `CLEAN ${run.viewport}`;
+  const label = run.fault
+    ? `FAULT ${run.fault.id}/${run.fault.kind}`
+    : `CLEAN ${run.viewport}`;
   const hits = run.rows.filter((r) => r.status === "hit").map((r) => r.id);
   const failures = run.rows.filter(
-    (row) => !["hit", "missing"].includes(row.status),
+    (row) => !["hit", "missing", "unmeasurable"].includes(row.status),
   );
   const missing = run.rows.filter((row) => row.status === "missing");
+  const unmeasurable = run.rows.filter((row) => row.status === "unmeasurable");
   console.log(`\n${label}`);
   console.log(`  hits (${hits.length}): ${hits.join(", ") || "none"}`);
   console.log(
@@ -1036,13 +1672,22 @@ function printRun(run) {
   console.log(
     `  missing (${missing.length}): ${missing.map((row) => `${row.id} [${row.reason}]`).join(", ") || "none"}`,
   );
+  console.log(
+    `  unmeasurable (${unmeasurable.length}): ${unmeasurable.map((row) => `${row.id} [${row.reason}]`).join(", ") || "none"}`,
+  );
   for (const row of run.rows) {
-    if (row.status === "hit") {
-      console.log(
-        `    ${row.id}: expected ≤${EPSILON}, actual ${row.spread ?? 0} CSS px; ` +
-          `${row.styles?.map((style) => `${style.font}/${style.lineHeight}/${style.display}/${style.verticalAlign}`).join(" | ") ?? "route styles recorded"}`,
-      );
-    }
+    if (row.status !== "hit") continue;
+    const perRole =
+      row.pairs
+        ?.map(
+          (pair) =>
+            `${pair.role}=${pair.spread}${pair.sameLine ? "" : " (wrapped)"}`,
+        )
+        .join(" ") ?? "";
+    console.log(
+      `    ${row.id}: expected ≤${EPSILON}, actual ${row.spread ?? 0} CSS px [${perRole}]; ` +
+        `${row.styles?.map((style) => `${style.role}:${style.font}/${style.lineHeight}/${style.display}/${style.verticalAlign}`).join(" | ") ?? "route styles recorded"}`,
+    );
   }
   if (run.avatars) {
     const avatarFailures = run.avatars.settled.filter(
@@ -1072,6 +1717,9 @@ function printRun(run) {
 
 const options = parseArgs(process.argv.slice(2));
 let stack = null;
+// Module scope so `browserRun` can reach it: `--keep` writes its screenshots
+// through that function, which cannot see a binding block-scoped to the try.
+let dir = null;
 let fatal = false;
 let environmentFailure = false;
 try {
@@ -1089,7 +1737,7 @@ try {
       ? { remove: ["db", "attachments", "chrome", "config.toml"] }
       : false,
   });
-  const dir = stack.dir;
+  dir = stack.dir;
   const seeded = await seed(stack.serverPort);
   const browser = await startBrowser({
     dir,
@@ -1120,6 +1768,10 @@ try {
         );
         run.rows.push(...actual.rows);
         run.fixtureErrors.push(...actual.fixtureErrors);
+        run.routeOverflow = [
+          ...(run.routeOverflow ?? []),
+          { id: route.id, ...(actual.overflow ?? {}) },
+        ];
       }
     }
     if (viewport.width === 390 || viewport.width === 1280) {
@@ -1127,11 +1779,96 @@ try {
       run.untouched = untouched.rows;
       run.fixtureErrors.push(...untouched.errors);
     }
+    const scope = await scopeRun(browser, base, seeded, viewport);
+    const scopeDark = await scopeRun(
+      browser,
+      base,
+      seeded,
+      viewport,
+      null,
+      "dark",
+    );
+    run.scope = scope;
+    run.scopeDark = scopeDark;
+    run.fixtureErrors.push(...scope.fixtureErrors, ...scopeDark.fixtureErrors);
     cleanRuns.push(run);
     printRun(run);
+    // Desktop keeps every action it had; every width keeps the id, the time
+    // and a page that does not scroll sideways.
+    const scopeBad = [];
+    if (scope.documentOverflows)
+      scopeBad.push(
+        `page scrolls sideways (${scope.scrollWidth} > ${scope.clientWidth})`,
+      );
+    for (const entry of scope.rows ?? []) {
+      if (entry.status === "missing") scopeBad.push(`${entry.id} missing`);
+      else if (!entry.idVisible) scopeBad.push(`${entry.id} id not visible`);
+      else if (!entry.timeVisible)
+        scopeBad.push(`${entry.id} time not visible`);
+      else if (!entry.withinRow)
+        scopeBad.push(`${entry.id} pushed past its row`);
+      else if (entry.rowScrolls) scopeBad.push(`${entry.id} header scrolls`);
+      else if (
+        viewport.width >= 1280 &&
+        entry.actionLabels.join("|") !== entry.expectedActions.join("|")
+      )
+        scopeBad.push(
+          `${entry.id} desktop actions are ${entry.actionLabels.join(",") || "none"}, expected ${entry.expectedActions.join(",")}`,
+        );
+      else if (entry.actions < 1)
+        scopeBad.push(`${entry.id} has no reachable action`);
+    }
+    for (const palette of [scope, scopeDark]) {
+      if (palette.documentOverflows && palette !== scope)
+        scopeBad.push(`page scrolls sideways in ${palette.scheme}`);
+      for (const entry of palette.rows ?? []) {
+        if (entry.status === "missing") continue;
+        if (!entry.idColor || entry.idColor !== entry.timeColor)
+          scopeBad.push(
+            `${entry.id} id/time colours differ in ${palette.scheme} (${entry.idColor} vs ${entry.timeColor})`,
+          );
+      }
+    }
+    for (const entry of run.routeOverflow ?? []) {
+      if (entry.scrolls || (entry.clipped?.length ?? 0) > 0) {
+        scopeBad.push(
+          `${entry.id} header overflows its container (wrap=${entry.wrap}, clipped ${entry.clipped.map((c) => `${JSON.stringify(c.text)}+${c.over}px`).join(", ")})`,
+        );
+      }
+    }
+    if (run.routeOverflow) {
+      console.log(
+        `  spec rows: ${run.routeOverflow.map((entry) => `${entry.id} wrap=${entry.wrap} clipped=${entry.clipped?.length ?? "?"}`).join("; ")}`,
+      );
+    }
+    console.log(
+      `  scope (${(scope.rows ?? []).length} header(s)): ${scopeBad.join("; ") || "id + time + actions reachable, no sideways scroll"}`,
+    );
+    console.log(
+      `    colours: light ${(scope.rows ?? [])[0]?.idColor ?? "?"} on ${scope.background}; ` +
+        `dark ${(scopeDark.rows ?? [])[0]?.idColor ?? "?"} on ${scopeDark.background}`,
+    );
+    if (scopeBad.length) fatal = true;
+    // Below 640 the header is allowed to wrap, and each visual line is
+    // compared on its own. At desktop widths it is not: a participant that
+    // left the author's line there is the misalignment, not an excuse.
+    const wrappedOnDesktop =
+      viewport.width >= 640
+        ? run.rows.filter((row) => (row.wrapped?.length ?? 0) > 0)
+        : [];
+    for (const row of wrappedOnDesktop) {
+      console.log(
+        `  wrapped at ${viewport.name}: ${row.id} [${row.wrapped.join(", ")}]`,
+      );
+    }
     if (
       run.fixtureErrors.length ||
-      run.rows.some((row) => row.status !== "hit") ||
+      run.rows.some(
+        (row) =>
+          row.status !== "hit" &&
+          !(row.status === "unmeasurable" && viewport.width < 640),
+      ) ||
+      wrappedOnDesktop.length > 0 ||
       run.avatars.settled.some((row) => row.status !== "hit") ||
       run.untouched?.some((row) => row.status !== "hit")
     )
@@ -1141,8 +1878,8 @@ try {
   if (options.selfTest) {
     const viewport = VIEWPORTS.at(-1);
     const selfTestCases = options.selfTestCase
-      ? CASES.filter((entry) => entry.id === options.selfTestCase)
-      : CASES;
+      ? FAULTS.filter((entry) => entry.id === options.selfTestCase)
+      : FAULTS;
     const historicalCases = ["T-359", "T-416"].filter(
       (id) => !options.selfTestCase || options.selfTestCase === id,
     );
@@ -1150,37 +1887,155 @@ try {
       throw new Error(`unknown self-test case: ${options.selfTestCase}`);
     }
     console.log(
-      `\nSELF-TEST: ${selfTestCases.length} old-style mutation(s), each followed by a clean page`,
+      `\nSELF-TEST: ${selfTestCases.length} rule mutation(s), each followed by a clean page`,
     );
-    for (const entry of selfTestCases) {
+    for (const spec of selfTestCases) {
+      const entry = CASES.find((item) => item.id === spec.id);
       const execute = (fault) =>
         ROUTE_CASES.includes(entry)
           ? specRouteRun(browser, base, seeded, viewport, entry.id, fault)
           : REVISION_CASES.includes(entry)
             ? revisionRun(browser, base, seeded, viewport, fault)
             : browserRun(browser, base, seeded, viewport, fault);
-      const run = await execute(entry.id);
-      const target = run.rows.find((row) => row.id === entry.id);
+      const run = await execute({ id: spec.id, kind: spec.kind });
+      const target = run.rows.find((row) => row.id === spec.id);
       const unexpected = run.rows.filter(
-        (row) => row.id !== entry.id && row.status !== "hit",
+        (row) =>
+          row.id !== spec.id && !["hit", "unmeasurable"].includes(row.status),
       );
       const restored = await execute(null);
-      const restoredTarget = restored.rows.find((row) => row.id === entry.id);
+      const restoredTarget = restored.rows.find((row) => row.id === spec.id);
+      // Which role moved, not merely that the row went red: a badge fault
+      // that fails because the id drifted proves nothing about the badge.
+      const spreadOf = (role) =>
+        target?.pairs?.find((pair) => pair.role === role);
+      const moved = spec.expectFail.filter((role) => {
+        const pair = spreadOf(role);
+        return pair?.sameLine === true && pair.spread > EPSILON;
+      });
+      const held = spec.expectHold.filter((role) => {
+        const pair = spreadOf(role);
+        return pair?.sameLine === true && pair.spread <= EPSILON;
+      });
       const detected =
         target?.status === "failure" &&
         target.mutation !== null &&
+        moved.length > 0 &&
+        held.length === spec.expectHold.length &&
         unexpected.length === 0 &&
         !run.fixtureErrors.length &&
         restoredTarget?.status === "hit" &&
         !restored.fixtureErrors.length;
       console.log(
-        `  ${entry.id}: ${detected ? "RED → restored GREEN" : "NOT PROVEN"} ` +
-          `(fault ${target?.spread ?? target?.status ?? "missing"}px ${target?.reason ?? ""}, ` +
+        `  ${spec.id}/${spec.kind}: ${detected ? "RED → restored GREEN" : "NOT PROVEN"} ` +
+          `(moved ${moved.join(",") || "none"} of ${spec.expectFail.join(",")}; ` +
+          `held ${held.join(",") || "none"} of ${spec.expectHold.join(",") || "none"}; ` +
+          `fault ${target?.spread ?? target?.status ?? "missing"}px ${target?.reason ?? ""}, ` +
           `restore ${restoredTarget?.spread ?? restoredTarget?.status ?? "missing"}px, ` +
           `unexpected ${unexpected.map((row) => `${row.id}:${row.status}`).join(",") || "none"})`,
       );
       if (!detected) fatal = true;
     }
+    if (!options.selfTestCase || options.selfTestCase === "selection") {
+      const desktop = VIEWPORTS.at(-1);
+      const clean = await selectionRun(browser, base, seeded, desktop);
+      const expected = clean.tokenText;
+      const payload = clean.pasted?.value ?? null;
+      // Chromium serialises a `user-select: all` block with a newline after
+      // it. That is the browser's framing, not content, so the comparison
+      // trims — and then checks that nothing else rode along, which is the
+      // part that would otherwise be trimmed away with it.
+      const carries = (value) =>
+        typeof value === "string" &&
+        value.trim() === expected &&
+        /^\s*#comment-\d+\s*$/.test(value);
+      const cleanOk =
+        !clean.error &&
+        !clean.fixtureErrors.length &&
+        clean.selected === expected &&
+        carries(payload);
+      console.log(
+        `\nSELECTION (drag across the id, native Ctrl+C)\n` +
+          `  clean: ${cleanOk ? "PASS" : "FAIL"} selected=${JSON.stringify(clean.selected)} ` +
+          `pasted=${JSON.stringify(payload)} expected=${JSON.stringify(expected)} ` +
+          `user-select=${clean.userSelect} ${clean.error ?? clean.pasted?.error ?? ""}`,
+      );
+      if (!cleanOk) fatal = true;
+      for (const kind of ["time-in-token", "unselectable"]) {
+        const broken = await selectionRun(browser, base, seeded, desktop, kind);
+        const brokenPayload = broken.pasted?.value ?? null;
+        // Each fault has to change the payload, and a fresh page has to put
+        // it back — the restore below is a new target, never this document.
+        const detected =
+          !broken.error &&
+          (broken.selected !== expected || !carries(brokenPayload));
+        const restored = await selectionRun(browser, base, seeded, desktop);
+        const backOk =
+          !restored.error && carries(restored.pasted?.value ?? null);
+        console.log(
+          `  ${kind}: ${detected && backOk ? "RED → restored GREEN" : "NOT PROVEN"} ` +
+            `selected=${JSON.stringify(broken.selected)} pasted=${JSON.stringify(brokenPayload)} ` +
+            `restore=${JSON.stringify(restored.pasted?.value ?? null)} ${broken.error ?? ""}`,
+        );
+        if (!detected || !backOk) fatal = true;
+      }
+    }
+
+    if (!options.selfTestCase || options.selfTestCase === "scope") {
+      console.log("\nSCOPE FAULTS");
+      // The narrow spec containers, with the wrap taken away: this is the
+      // shape the header had before the fix, and what it costs is Resolve.
+      for (const id of ["diff-annotation", "unplaced-comment"]) {
+        const narrow = VIEWPORTS[0];
+        const broken = await specRouteRun(browser, base, seeded, narrow, id, {
+          id,
+          kind: "nowrap",
+        });
+        const restored = await specRouteRun(browser, base, seeded, narrow, id);
+        const spills = (run) =>
+          run.overflow?.scrolls === true ||
+          (run.overflow?.clipped?.length ?? 0) > 0;
+        const detected = spills(broken);
+        const backOk = !spills(restored) && !restored.fixtureErrors.length;
+        console.log(
+          `  nowrap-${id} @${narrow.name}: ${detected && backOk ? "RED → restored GREEN" : "NOT PROVEN"} ` +
+            `(fault wrap=${broken.overflow?.wrap} clipped=${broken.overflow?.clipped?.length ?? "?"}; ` +
+            `restore wrap=${restored.overflow?.wrap} clipped=${restored.overflow?.clipped?.length ?? "?"})`,
+        );
+        if (!detected || !backOk) fatal = true;
+      }
+      for (const [kind, viewport, breaks] of [
+        [
+          "hide-desktop-actions",
+          VIEWPORTS.at(-1),
+          (scope) =>
+            (scope.rows ?? []).some(
+              (row) =>
+                row.status !== "missing" &&
+                row.actionLabels.join("|") !== row.expectedActions.join("|"),
+            ),
+        ],
+        [
+          "unshrinkable-header",
+          VIEWPORTS[0],
+          (scope) =>
+            scope.documentOverflows ||
+            (scope.rows ?? []).some((row) => row.rowScrolls || !row.withinRow),
+        ],
+      ]) {
+        const broken = await scopeRun(browser, base, seeded, viewport, kind);
+        const restored = await scopeRun(browser, base, seeded, viewport);
+        const detected = breaks(broken);
+        const backOk = !breaks(restored) && !restored.documentOverflows;
+        console.log(
+          `  ${kind} @${viewport.name}: ${detected && backOk ? "RED → restored GREEN" : "NOT PROVEN"} ` +
+            `(fault overflow=${broken.documentOverflows} actions=${(broken.rows ?? []).map((r) => r.actions).join("/")}; ` +
+            `restore overflow=${restored.documentOverflows} actions=${(restored.rows ?? []).map((r) => r.actions).join("/")})`,
+        );
+        if (!detected || !backOk) fatal = true;
+      }
+    }
+
     for (const kind of historicalCases) {
       const fault = await historicalFaultRun(
         browser,
