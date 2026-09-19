@@ -114,9 +114,9 @@ const linkIn = (root: ParentNode) =>
   });
 
 const titleSpan = (link: Element) =>
-  [...link.children].find((child) =>
-    (child.getAttribute("class") ?? "").includes("truncate"),
-  );
+  link.hasAttribute("data-comment-link")
+    ? (link.querySelector("[data-comment-title]") ?? undefined)
+    : [...link.children].find((child) => child.classList.contains("truncate"));
 
 describe("reference title cap (T-371)", () => {
   it("caps the title span and still offers the whole title on hover", async () => {
@@ -184,17 +184,26 @@ describe("reference title cap (T-371)", () => {
       );
       const token = link.querySelector("[data-comment-ref]");
       const by = link.querySelector("[data-comment-author]");
-      expect(token?.childNodes).toHaveLength(1);
-      expect(token?.firstChild?.nodeType).toBe(Node.TEXT_NODE);
-      expect(token?.firstChild?.textContent).toBe("T-7#comment-42");
-      expect(by?.textContent).toBe(" · by Alice");
+      const parts = [...link.querySelectorAll("[data-ref-part]")];
+      expect(parts.map((part) => part.textContent).join("")).toBe(
+        "T-7#comment-42",
+      );
+      expect(token?.contains(titleSpan(link) ?? null)).toBe(true);
+      expect(token?.contains(by)).toBe(false);
+      expect(by?.textContent).toBe(" by Alice");
+      for (const part of parts) {
+        expect(part.closest("[data-comment-ref]")).toBe(token);
+        expect(
+          part.closest(
+            "[data-comment-title], [data-comment-decoration], [data-comment-author]",
+          ),
+        ).toBeNull();
+      }
       for (const fixed of [token, by]) {
-        expect(fixed?.parentElement).toBe(link);
-        expect(fixed?.classList.contains("flex-none")).toBe(true);
         expect(fixed?.classList.contains("truncate")).toBe(false);
         expect(fixed?.classList.contains(RICH_CHIP_TITLE_CAP)).toBe(false);
       }
-      expect(link.textContent).toBe(`T-7#comment-42${LONG} · by Alice`);
+      expect(link.textContent).toBe(`T-7 ${LONG} · #comment-42 by Alice`);
       expect(link.getAttribute("title")).toBe(`T-7 ${LONG} (Todo)`);
     },
   );

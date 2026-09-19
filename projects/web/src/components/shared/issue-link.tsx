@@ -18,6 +18,7 @@ import {
 import { projectsQuery } from "@/api/queries.ts";
 import { referenceConfigQuery } from "@/api/references.ts";
 import { CommentHoverCard } from "@/components/shared/comment-hover-card.tsx";
+import { CommentReference } from "@/components/shared/comment-reference.tsx";
 import { useCanHoverPreview } from "@/components/shared/hover-preview.ts";
 import { IssueHoverCard } from "@/components/shared/issue-hover-card.tsx";
 import { MentionLink } from "@/components/shared/mention-link.tsx";
@@ -36,8 +37,8 @@ import { commentAnchor } from "@/lib/timeline-anchors.ts";
 import { cn } from "@/lib/utils.ts";
 
 /**
- * What an ordinary issue reference to the card being read says instead of
- * a ref and a title. Comment references always retain their complete identity.
+ * Ordinary references can say "current"; a current-page comment instead
+ * names its short #comment-N suffix.
  */
 const CURRENT_NOTE = "current";
 
@@ -46,7 +47,7 @@ const CURRENT_NOTE = "current";
  * the complete target is freshly confirmed (in the viewer's preferred order,
  * T-153). Until then a known address remains an ordinary link; a bare
  * unresolved comment remains text. With `commentId` the link deep-links to
- * that comment's anchor and reads "<issue ref>#comment-N · by X".
+ * that comment's anchor and names the final comment ID with its author.
  * Spelling uses the project's CURRENT format (T-80); user-authored text
  * alone is anchored to its created_at.
  *
@@ -88,8 +89,8 @@ export function IssueLink({
   /**
    * The card the reader is on, with `pageSlug` the address of the page
    * itself. An ordinary issue reference can read "current" instead of a ref
-   * and a title, and opens no preview. Comments retain their complete ref
-   * without a title. Omitted where a surface cannot say which card is read.
+   * and a title, and opens no preview. Comments on the page show their short
+   * suffix without a title. Omitted where a surface cannot name the page.
    */
   pageNumber?: number;
   asWritten?: boolean;
@@ -213,24 +214,7 @@ export function IssueLink({
   const item = ref.data;
   const confirmedNote = commentId === undefined ? null : comment.data;
   const isComment = confirmedNote != null;
-  const commentRef = isComment
-    ? `${spelled}#comment-${confirmedNote.at.commentId}`
-    : null;
   const hideTitle = dropTitle || (isComment ? onPageCard : asCurrent);
-  // One visible identity slot, shared by Markdown and system references.
-  // Keep the author outside it so the complete ref can be selected separately.
-  const commentToken =
-    commentRef === null ? null : (
-      <span
-        data-comment-ref
-        className={cn(
-          "font-normal text-muted-foreground",
-          inBody && RICH_CHIP_FIXED,
-        )}
-      >
-        {commentRef}
-      </span>
-    );
   const trailing = isComment
     ? ""
     : asCurrent
@@ -239,7 +223,9 @@ export function IssueLink({
         ? ""
         : spelled;
   const iconClass = inBody
-    ? RICH_CHIP_ICON
+    ? isComment
+      ? "comment-reference-icon inline size-3.5"
+      : RICH_CHIP_ICON
     : "mr-0.5 inline size-3.5 align-middle";
   // The preview is already paid for: confirming the comment fetched its
   // body too, so hovering asks the server nothing.
@@ -272,7 +258,7 @@ export function IssueLink({
         inBody
           ? cn(
               "font-medium",
-              RICH_CHIP_STRUCTURE,
+              isComment ? "comment-link-body" : RICH_CHIP_STRUCTURE,
               boxed ? RICH_CHIP_SKIN : "hover:underline",
             )
           : "font-medium hover:underline"
@@ -300,11 +286,20 @@ export function IssueLink({
               style={{ color: item.status.color }}
             />
           )}
-          {refLeads && isComment && (
-            <>
-              {commentToken}
-              {inBody || hideTitle ? null : " "}
-            </>
+          {isComment && (
+            <CommentReference
+              spelled={spelled}
+              slug={shownSlug}
+              prefix={prefix}
+              number={shownNumber}
+              commentId={confirmedNote.at.commentId}
+              title={hideTitle ? null : item.title}
+              refLeads={refLeads}
+              inBody={inBody}
+              capTitle={capTitle}
+              author={displayNameOf(confirmedNote.author)}
+              current={onPageCard}
+            />
           )}
           {refLeads && !isComment && !asCurrent && (
             <span
@@ -317,7 +312,7 @@ export function IssueLink({
               {inBody ? null : " "}
             </span>
           )}
-          {hideTitle ? null : inBody ? (
+          {isComment || hideTitle ? null : inBody ? (
             <span
               className={cn(RICH_CHIP_LABEL, capTitle && RICH_CHIP_TITLE_CAP)}
             >
@@ -327,23 +322,6 @@ export function IssueLink({
             item.title
           )}
         </>
-      )}
-      {!refLeads && isComment && (
-        <>
-          {inBody || hideTitle ? null : " "}
-          {commentToken}
-        </>
-      )}
-      {isComment && (
-        <span
-          data-comment-author
-          className={cn(
-            "font-normal text-muted-foreground",
-            inBody && RICH_CHIP_FIXED,
-          )}
-        >
-          {` · by ${displayNameOf(confirmedNote.author)}`}
-        </span>
       )}
       {trailing !== "" && (
         <span

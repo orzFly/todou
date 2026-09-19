@@ -233,12 +233,14 @@ describe("visible reference metadata validity", () => {
     );
     const view = await mount(ref(42), client);
     expectRich(view, "Old title", COMMENT_HREF);
-    expect(rich(view)?.querySelector("[data-comment-ref]")?.textContent).toBe(
-      "T-7#comment-42",
-    );
+    expect(
+      [...(rich(view)?.querySelectorAll("[data-ref-part]") ?? [])]
+        .map((part) => part.textContent)
+        .join(""),
+    ).toBe("T-7#comment-42");
     expect(
       rich(view)?.querySelector("[data-comment-author]")?.textContent,
-    ).toBe(" · by Alice");
+    ).toBe(" by Alice");
     expect(rich(view)?.getAttribute("data-comment-link")).toBe("42");
 
     await advance(59_999);
@@ -267,12 +269,14 @@ describe("visible reference metadata validity", () => {
     );
     const getComment = vi.spyOn(api, "getComment");
     const view = await mount(ref(42), client);
-    expect(rich(view)?.querySelector("[data-comment-ref]")?.textContent).toBe(
-      "T-7#comment-42",
-    );
+    expect(
+      [...(rich(view)?.querySelectorAll("[data-ref-part]") ?? [])]
+        .map((part) => part.textContent)
+        .join(""),
+    ).toBe("T-7#comment-42");
     expect(
       rich(view)?.querySelector("[data-comment-author]")?.textContent,
-    ).toBe(" · by Alice");
+    ).toBe(" by Alice");
 
     const missing = deferred<TimelineComment>();
     getComment.mockReturnValueOnce(missing.promise);
@@ -297,12 +301,14 @@ describe("visible reference metadata validity", () => {
       await refresh;
     });
     await advance(1);
-    expect(rich(view)?.querySelector("[data-comment-ref]")?.textContent).toBe(
-      "T-7#comment-42",
-    );
+    expect(
+      [...(rich(view)?.querySelectorAll("[data-ref-part]") ?? [])]
+        .map((part) => part.textContent)
+        .join(""),
+    ).toBe("T-7#comment-42");
     expect(
       rich(view)?.querySelector("[data-comment-author]")?.textContent,
-    ).toBe(" · by Bob");
+    ).toBe(" by Bob");
 
     const failed = deferred<TimelineComment>();
     getComment.mockReturnValueOnce(failed.promise);
@@ -316,7 +322,7 @@ describe("visible reference metadata validity", () => {
     await act(async () => failed.reject(new Error("offline")));
     await second;
     expectPlain(view, COMMENT_HREF);
-    expect(view.container.textContent).not.toContain(" · by Bob");
+    expect(view.container.textContent).not.toContain("by Bob");
   });
 
   it("does not paint stale decoration on the first frame after background/refocus", async () => {

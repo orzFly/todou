@@ -182,9 +182,16 @@ function expectCommentIdentity(trigger: Element) {
   const refs = trigger.querySelectorAll("[data-comment-ref]");
   expect(refs).toHaveLength(1);
   const ref = refs[0] as HTMLElement;
-  expect(ref.textContent).toBe("T-7#comment-42");
-  expect(ref.childNodes).toHaveLength(1);
-  expect(ref.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+  const parts = [...ref.querySelectorAll("[data-ref-part]")];
+  expect(parts.map((part) => part.textContent).join("")).toBe("T-7#comment-42");
+  for (const part of parts) {
+    expect(
+      part.closest("[hidden], [aria-hidden='true'], .hidden, .sr-only"),
+    ).toBeNull();
+    expect(getComputedStyle(part).display).not.toBe("none");
+    expect(getComputedStyle(part).visibility).not.toBe("hidden");
+    expect(getComputedStyle(part).visibility).not.toBe("collapse");
+  }
   expect(
     ref.closest("[hidden], [aria-hidden='true'], .hidden, .sr-only"),
   ).toBeNull();
@@ -192,10 +199,11 @@ function expectCommentIdentity(trigger: Element) {
   expect(getComputedStyle(ref).visibility).not.toBe("hidden");
   const authors = trigger.querySelectorAll("[data-comment-author]");
   expect(authors).toHaveLength(1);
-  expect(authors[0]?.textContent).toBe(" · by Alice");
+  expect(authors[0]?.textContent).toBe(" by Alice");
   expect(ref.contains(authors[0] ?? null)).toBe(false);
   expect(authors[0]?.contains(ref)).toBe(false);
-  expect(trigger.textContent?.split("T-7#comment-42")).toHaveLength(2);
+  expect([...trigger.querySelectorAll("[data-ref-part]")]).toEqual(parts);
+  expect(trigger.textContent?.match(/#comment-\d+/g)).toEqual(["#comment-42"]);
   expect(trigger.textContent).not.toContain("comment by");
   expect(trigger.getAttribute("href")).toBe(
     "/projects/todou/issues/7#comment-42",

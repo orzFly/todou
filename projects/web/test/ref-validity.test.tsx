@@ -102,17 +102,27 @@ const expectCommentRef = (anchor: HTMLAnchorElement, spelled: string) => {
   const tokens = anchor.querySelectorAll("[data-comment-ref]");
   expect(tokens).toHaveLength(1);
   const token = tokens[0] as HTMLElement;
-  expect(token.textContent).toBe(spelled);
-  expect(token.childNodes).toHaveLength(1);
-  expect(token.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+  const parts = [...token.querySelectorAll("[data-ref-part]")];
+  expect(parts.map((part) => part.textContent).join("")).toBe(spelled);
+  for (const part of parts) {
+    expect(
+      part.closest("[hidden], [aria-hidden='true'], .hidden, .sr-only"),
+    ).toBeNull();
+    expect(getComputedStyle(part).display).not.toBe("none");
+    expect(getComputedStyle(part).visibility).not.toBe("hidden");
+    expect(getComputedStyle(part).visibility).not.toBe("collapse");
+  }
   expect(token.closest("[hidden], [aria-hidden='true'], .sr-only")).toBeNull();
   expect(getComputedStyle(token).display).not.toBe("none");
   expect(getComputedStyle(token).visibility).not.toBe("hidden");
   expect(getComputedStyle(token).visibility).not.toBe("collapse");
-  expect(anchor.textContent?.split(spelled)).toHaveLength(2);
+  expect([...anchor.querySelectorAll("[data-ref-part]")]).toEqual(parts);
+  expect(anchor.textContent?.match(/#comment-\d+/g)).toEqual([
+    spelled.match(/#comment-\d+$/)?.[0],
+  ]);
   const authors = anchor.querySelectorAll("[data-comment-author]");
   expect(authors).toHaveLength(1);
-  expect(authors[0]?.textContent).toBe(" · by Alice");
+  expect(authors[0]?.textContent).toBe(" by Alice");
   expect(token.contains(authors[0] ?? null)).toBe(false);
 };
 

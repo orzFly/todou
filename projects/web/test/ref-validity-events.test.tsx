@@ -141,9 +141,16 @@ function expectCommentIdentity(
   const tokens = anchor.querySelectorAll("[data-comment-ref]");
   expect(tokens).toHaveLength(1);
   const token = tokens[0] as HTMLElement;
-  expect(token.textContent).toBe(spelled);
-  expect(token.childNodes).toHaveLength(1);
-  expect(token.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+  const parts = [...token.querySelectorAll("[data-ref-part]")];
+  expect(parts.map((part) => part.textContent).join("")).toBe(spelled);
+  for (const part of parts) {
+    expect(
+      part.closest("[hidden], [aria-hidden='true'], .hidden, .sr-only"),
+    ).toBeNull();
+    expect(getComputedStyle(part).display).not.toBe("none");
+    expect(getComputedStyle(part).visibility).not.toBe("hidden");
+    expect(getComputedStyle(part).visibility).not.toBe("collapse");
+  }
   expect(
     token.closest("[hidden], [aria-hidden='true'], .hidden, .sr-only"),
   ).toBeNull();
@@ -151,10 +158,13 @@ function expectCommentIdentity(
   expect(getComputedStyle(token).visibility).not.toBe("hidden");
   const authors = anchor.querySelectorAll("[data-comment-author]");
   expect(authors).toHaveLength(1);
-  expect(authors[0]?.textContent).toBe(` · by ${author}`);
+  expect(authors[0]?.textContent).toBe(` by ${author}`);
   expect(token.contains(authors[0] ?? null)).toBe(false);
   expect(authors[0]?.contains(token)).toBe(false);
-  expect(anchor.textContent?.split(spelled)).toHaveLength(2);
+  expect([...anchor.querySelectorAll("[data-ref-part]")]).toEqual(parts);
+  expect(anchor.textContent?.match(/#comment-\d+/g)).toEqual([
+    spelled.match(/#comment-\d+$/)?.[0],
+  ]);
   expect(anchor.textContent).not.toContain("comment by");
 }
 
@@ -436,7 +446,7 @@ describe("reference validity through SSE invalidations", () => {
 
 describe("referenced EventRow comment identity", () => {
   it.each(["before", "after"] as const)(
-    "shows the final complete comment ref %s the title without body chip styling",
+    "shows the final comment identity with %s placement without body chip styling",
     async (placement) => {
       const client = seeded();
       client.setQueryData(
@@ -510,13 +520,14 @@ describe("referenced EventRow comment identity", () => {
       );
       expect(anchor.textContent).toBe(
         placement === "before"
-          ? "destination/T-55#comment-8 Final source title · by Bob"
-          : "Final source title destination/T-55#comment-8 · by Bob",
+          ? "destination/T-55 Final source title · #comment-8 by Bob"
+          : "Final source title · destination/T-55#comment-8 by Bob",
       );
       expect(anchor.className).toBe("font-medium hover:underline");
       expect(
         anchor.querySelector(".inline-flex, .border, .truncate, .flex-none"),
       ).toBeNull();
+      expect(anchor.querySelector(".comment-reference-body")).toBeNull();
       expect(anchor.querySelector("svg")?.getAttribute("class")).toContain(
         "mr-0.5 inline size-3.5 align-middle",
       );

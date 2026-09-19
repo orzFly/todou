@@ -434,9 +434,19 @@ describe("rendering a reference to a moved card", () => {
       expect(tokens).toHaveLength(1);
       const token = tokens[0] as HTMLElement;
       // Reject using the input commentId: the HTTP alias maps 7 to 8.
-      expect(token.textContent).toBe("harbor/HB-30#comment-8");
-      expect(token.childNodes).toHaveLength(1);
-      expect(token.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+      const parts = [...token.querySelectorAll("[data-ref-part]")];
+      expect(parts.map((part) => part.textContent).join("")).toBe(
+        "harbor/HB-30#comment-8",
+      );
+      expect([...rich.querySelectorAll("[data-ref-part]")]).toEqual(parts);
+      for (const part of parts) {
+        expect(
+          part.closest("[hidden], [aria-hidden='true'], .hidden, .sr-only"),
+        ).toBeNull();
+        expect(getComputedStyle(part).display).not.toBe("none");
+        expect(getComputedStyle(part).visibility).not.toBe("hidden");
+        expect(getComputedStyle(part).visibility).not.toBe("collapse");
+      }
       expect(
         token.closest("[hidden], [aria-hidden='true'], .sr-only"),
       ).toBeNull();
@@ -446,9 +456,13 @@ describe("rendering a reference to a moved card", () => {
       expect(rich.textContent?.match(/#comment-\d+/g)).toEqual(["#comment-8"]);
       const authors = rich.querySelectorAll("[data-comment-author]");
       expect(authors).toHaveLength(1);
-      expect(authors[0]?.textContent).toBe(" · by User");
+      expect(authors[0]?.textContent).toBe(" by User");
       expect(token.contains(authors[0] ?? null)).toBe(false);
-      expect(rich.textContent).toContain("Moved parent");
+      expect(rich.textContent).toBe(
+        placement === "before"
+          ? "harbor/HB-30 Moved parent · #comment-8 by User"
+          : "Moved parent · harbor/HB-30#comment-8 by User",
+      );
       expect(rich.getAttribute("data-comment-link")).toBe("8");
       expect(rich.getAttribute("data-issue-link")).toBe("30");
       expect(rich.getAttribute("data-issue-project")).toBe("harbor");

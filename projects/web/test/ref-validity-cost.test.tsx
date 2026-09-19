@@ -142,11 +142,13 @@ describe("reference validity lookup cost", () => {
       );
       expect(anchors).toHaveLength(100);
       for (const anchor of anchors) {
-        expect(anchor.querySelector("[data-comment-ref]")?.textContent).toBe(
-          "C-7#comment-42",
-        );
+        expect(
+          [...anchor.querySelectorAll("[data-ref-part]")]
+            .map((part) => part.textContent)
+            .join(""),
+        ).toBe("C-7#comment-42");
         expect(anchor.querySelector("[data-comment-author]")?.textContent).toBe(
-          " · by Alice",
+          " by Alice",
         );
         expect(anchor.getAttribute("href")).toBe(
           `/projects/${SLUG}/issues/7#comment-42`,

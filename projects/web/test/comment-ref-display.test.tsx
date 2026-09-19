@@ -24,8 +24,8 @@ import {
 } from "../src/api/references.ts";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import {
-  RICH_CHIP_FIXED,
   RICH_CHIP_LABEL,
+  RICH_CHIP_STRUCTURE,
   RICH_CHIP_TITLE_CAP,
 } from "../src/components/shared/rich-chip.ts";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
@@ -200,15 +200,22 @@ const richLinks = (root: ParentNode, count: number) =>
   });
 
 function expectTitle(link: HTMLAnchorElement, shown: boolean, capped: boolean) {
-  const title = link.querySelector(".truncate");
+  const comment = link.hasAttribute("data-comment-link");
+  const title = link.querySelector(
+    comment ? "[data-comment-title]" : ".truncate",
+  );
   if (!shown) {
     expect(title).toBeNull();
     expect(link.textContent).not.toContain(TITLE);
     return;
   }
   expect(title?.textContent).toBe(TITLE);
-  for (const name of RICH_CHIP_LABEL.split(" ")) {
-    expect(title?.classList.contains(name)).toBe(true);
+  if (comment) {
+    expect(title?.classList.contains("comment-reference-title")).toBe(true);
+  } else {
+    for (const name of RICH_CHIP_LABEL.split(" ")) {
+      expect(title?.classList.contains(name)).toBe(true);
+    }
   }
   expect(title?.classList.contains(RICH_CHIP_TITLE_CAP)).toBe(capped);
 }
@@ -216,7 +223,8 @@ function expectTitle(link: HTMLAnchorElement, shown: boolean, capped: boolean) {
 function expectComment(
   link: HTMLAnchorElement,
   {
-    token = "T-7#comment-42",
+    current = false,
+    token = current ? "#comment-42" : "T-7#comment-42",
     id = 42,
     slug = "todou",
     name = "Alice",
@@ -224,6 +232,7 @@ function expectComment(
     placement = "before",
     capped = true,
   }: {
+    current?: boolean;
     token?: string;
     id?: number;
     slug?: string;
@@ -239,53 +248,162 @@ function expectComment(
   );
   expect(link.querySelectorAll("[data-comment-ref]")).toHaveLength(1);
   const identity = link.querySelector("[data-comment-ref]");
-  expect(identity?.parentElement).toBe(link);
-  // textContent alone would accept a token split across separately selectable
-  // nodes, or one that also swallowed the author's name.
-  expect(identity?.childNodes).toHaveLength(1);
-  expect(identity?.firstChild?.nodeType).toBe(Node.TEXT_NODE);
-  expect(identity?.firstChild?.textContent).toBe(token);
-  expect(identity?.classList.contains(RICH_CHIP_FIXED)).toBe(true);
-  for (let element = identity; element; element = element.parentElement) {
-    expect(element.hasAttribute("hidden")).toBe(false);
-    expect(element.getAttribute("aria-hidden")).not.toBe("true");
-    expect(getComputedStyle(element).display).not.toBe("none");
-    expect(getComputedStyle(element).visibility).not.toBe("hidden");
-    for (const name of [
-      "hidden",
-      "invisible",
-      "sr-only",
-      "truncate",
-      RICH_CHIP_TITLE_CAP,
-    ]) {
-      expect(element.classList.contains(name)).toBe(false);
+  const body = link.querySelector(".comment-reference-body");
+  expect(link.classList.contains("comment-link-body")).toBe(true);
+  expect(link.classList.contains("inline-flex")).toBe(false);
+  expect(body).not.toBeNull();
+  expect(identity?.parentElement).toBe(body);
+  const parts = [...link.querySelectorAll("[data-ref-part]")];
+  expect(parts.length).toBeGreaterThan(0);
+  expect(parts.map((part) => part.textContent).join("")).toBe(token);
+  for (const part of parts) {
+    expect(part.closest("[data-comment-ref]")).toBe(identity);
+    expect(part.querySelector("[data-ref-part]")).toBeNull();
+    expect(
+      part.closest(
+        "[data-comment-title], [data-comment-decoration], [data-comment-author]",
+      ),
+    ).toBeNull();
+  }
+  for (const node of [identity, ...parts]) {
+    for (let element = node; element; element = element.parentElement) {
+      expect(element.hasAttribute("hidden")).toBe(false);
+      expect(element.getAttribute("aria-hidden")).not.toBe("true");
+      expect(getComputedStyle(element).display).not.toBe("none");
+      expect(getComputedStyle(element).visibility).not.toBe("hidden");
+      for (const name of [
+        "hidden",
+        "invisible",
+        "sr-only",
+        "truncate",
+        RICH_CHIP_TITLE_CAP,
+      ]) {
+        expect(element.classList.contains(name)).toBe(false);
+      }
     }
   }
   expect(link.querySelectorAll("[data-comment-author]")).toHaveLength(1);
   const by = link.querySelector("[data-comment-author]");
-  expect(by?.parentElement).toBe(link);
-  expect(by?.textContent).toBe(` · by ${name}`);
-  expect(by?.classList.contains(RICH_CHIP_FIXED)).toBe(true);
+  expect(by?.parentElement).toBe(body);
+  expect(identity?.contains(by)).toBe(false);
+  expect(by?.textContent).toBe(` by ${name}`);
   expect(by?.classList.contains("truncate")).toBe(false);
   expect(by?.classList.contains(RICH_CHIP_TITLE_CAP)).toBe(false);
-  const labels = title
+  expect(by?.querySelector("[data-ref-part]")).toBeNull();
+  const suffix = `#comment-${id}`;
+  const issueRef = token.slice(0, -suffix.length);
+  const label = title
     ? placement === "before"
-      ? [token, TITLE]
-      : [TITLE, token]
-    : [token];
-  expect([...link.children].map((child) => child.textContent)).toEqual([
-    "",
-    ...labels,
-    ` · by ${name}`,
-  ]);
-  expect(link.textContent).toBe(`${labels.join("")} · by ${name}`);
+      ? `${issueRef} ${TITLE} · ${suffix}`
+      : `${TITLE} · ${token}`
+    : token;
+  const titleNode = link.querySelector("[data-comment-title]");
+  const decorations = [...link.querySelectorAll("[data-comment-decoration]")];
+  expect(decorations.map((node) => node.textContent).join("")).toBe(
+    title ? (placement === "before" ? "  · " : " · ") : "",
+  );
+  for (const decoration of decorations) {
+    expect(decoration.querySelector("[data-ref-part]")).toBeNull();
+    expect(decoration.closest("[data-comment-ref]")).toBe(identity);
+  }
+  if (title) {
+    expect(titleNode?.querySelector("[data-ref-part]")).toBeNull();
+    expect(titleNode?.closest("[data-comment-ref]")).toBe(identity);
+  }
+  expect(identity?.textContent).toBe(label);
+  const undecorated = identity?.cloneNode(true) as Element;
+  for (const decoration of undecorated.querySelectorAll(
+    "[data-comment-title], [data-comment-decoration]",
+  )) {
+    decoration.remove();
+  }
+  expect(undecorated.textContent).toBe(token);
+  expect(link.textContent).toBe(`${label} by ${name}`);
   expect(link.textContent).not.toContain("current");
+  if (current) {
+    expect(titleNode).toBeNull();
+    expect(issueRef).toBe("");
+  }
   expect(link.querySelectorAll("svg")).toHaveLength(1);
   expect(link.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
   expectTitle(link, title, capped);
 }
 
 describe.each(sources)("%s comment display through MarkdownView", (source) => {
+  it.each([
+    {
+      placement: "before",
+      current: false,
+      repeated: false,
+      expected: `T-7 ${TITLE} · #comment-42 by Alice`,
+    },
+    {
+      placement: "after",
+      current: false,
+      repeated: false,
+      expected: `${TITLE} · T-7#comment-42 by Alice`,
+    },
+    {
+      placement: "before",
+      current: false,
+      repeated: true,
+      expected: "T-7#comment-42 by Alice",
+    },
+    {
+      placement: "after",
+      current: false,
+      repeated: true,
+      expected: "T-7#comment-42 by Alice",
+    },
+    {
+      placement: "before",
+      current: true,
+      repeated: false,
+      expected: "#comment-42 by Alice",
+    },
+    {
+      placement: "after",
+      current: true,
+      repeated: false,
+      expected: "#comment-42 by Alice",
+    },
+    {
+      placement: "before",
+      current: true,
+      repeated: true,
+      expected: "#comment-42 by Alice",
+    },
+    {
+      placement: "after",
+      current: true,
+      repeated: true,
+      expected: "#comment-42 by Alice",
+    },
+  ] as const)(
+    "exact display: $placement, current=$current, repeated=$repeated",
+    async ({ placement, current, repeated, expected }) => {
+      const written = commentSource(source);
+      const view = renderWithProviders(
+        <MarkdownView
+          slug="todou"
+          issueNumber={current ? 7 : 8}
+          preview={source === "preview bare"}
+        >
+          {repeated ? `${written} then ${written}` : written}
+        </MarkdownView>,
+        seeded({ ref_placement_reference: placement }),
+      );
+      const links = await richLinks(view.container, repeated ? 2 : 1);
+      const link = links[repeated ? 1 : 0]!;
+      expect(link.textContent).toBe(expected);
+      expectComment(link, {
+        current,
+        title: !current && !repeated,
+        placement,
+      });
+    },
+  );
+
   for (const { context, issueNumber } of contexts) {
     it.each(preferences)(
       `${context}: repeated titles=$show_repeated_ref_title, placement=$ref_placement_reference, truncate=$truncate_ref_title`,
@@ -322,6 +440,7 @@ describe.each(sources)("%s comment display through MarkdownView", (source) => {
         );
         for (const [index, link] of links.slice(0, 2).entries()) {
           expectComment(link, {
+            current: context === "current",
             title:
               context !== "current" &&
               (index === 0 || prefs.show_repeated_ref_title),
@@ -346,8 +465,15 @@ describe.each(sources)("%s comment display through MarkdownView", (source) => {
           expect(link.getAttribute("href")).toBe("/projects/todou/issues/7");
           expect(link.hasAttribute("data-comment-link")).toBe(false);
           expect(
-            link.querySelector("[data-comment-ref], [data-comment-author]"),
+            link.querySelector(
+              "[data-comment-ref], [data-ref-part], [data-comment-title], [data-comment-decoration], [data-comment-author]",
+            ),
           ).toBeNull();
+          expect(link.classList.contains("comment-link-body")).toBe(false);
+          expect(link.querySelector(".comment-reference-body")).toBeNull();
+          for (const name of RICH_CHIP_STRUCTURE.split(" ")) {
+            expect(link.classList.contains(name)).toBe(true);
+          }
           expect([...link.children].map((child) => child.textContent)).toEqual([
             "",
             ...labels,
@@ -384,7 +510,11 @@ describe.each(sources)("%s comment display through MarkdownView", (source) => {
     );
     const links = await richLinks(view.container, 2);
     for (const [index, id] of [42, 43].entries()) {
-      expectComment(links[index]!, { id, token: `T-7#comment-${id}` });
+      expectComment(links[index]!, {
+        current: true,
+        id,
+        token: `#comment-${id}`,
+      });
     }
     expect(links[0]?.textContent).not.toBe(links[1]?.textContent);
     expect(links[0]?.getAttribute("href")).not.toBe(
@@ -430,7 +560,7 @@ describe.each(sources)("%s comment display through MarkdownView", (source) => {
       seeded({}, { displayName }),
     );
     const [link] = await richLinks(view.container, 1);
-    expectComment(link!, { name });
+    expectComment(link!, { current: true, name });
   });
 });
 
@@ -481,7 +611,7 @@ describe("comment reference source boundaries", () => {
       seeded(),
     );
     const [link] = await richLinks(view.container, 1);
-    expectComment(link!);
+    expectComment(link!, { current: true });
     expect(view.container.querySelector("strong")).toBeNull();
     expect(view.container.textContent).not.toContain("999");
   });

@@ -246,11 +246,13 @@ describe("stored id-anchored references", () => {
     const link = await anchor(view, 12);
     expect(link.getAttribute("href")).toBe("/projects/a/issues/12#comment-7");
     expect(link.getAttribute("data-comment-link")).toBe("7");
-    expect(link.querySelector("[data-comment-ref]")?.textContent).toBe(
-      "#12#comment-7",
-    );
+    expect(
+      [...link.querySelectorAll("[data-ref-part]")]
+        .map((part) => part.textContent)
+        .join(""),
+    ).toBe("#12#comment-7");
     expect(link.querySelector("[data-comment-author]")?.textContent).toBe(
-      " · by User",
+      " by User",
     );
   });
 });
@@ -362,8 +364,12 @@ describe("unconfirmed stored references", () => {
     expect(rich.textContent).toContain("Confirmed title");
     const token = rich.querySelector("[data-comment-ref]");
     const author = rich.querySelector("[data-comment-author]");
-    expect(token?.textContent).toBe("#12#comment-7");
-    expect(author?.textContent).toBe(" · by User");
+    expect(
+      [...rich.querySelectorAll("[data-ref-part]")]
+        .map((part) => part.textContent)
+        .join(""),
+    ).toBe("#12#comment-7");
+    expect(author?.textContent).toBe(" by User");
     expect(token?.contains(author)).toBe(false);
     expect(rich.getAttribute("href")).toBe("/projects/a/issues/12#comment-7");
     expect(rich.getAttribute("data-comment-link")).toBe("7");

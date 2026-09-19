@@ -1,8 +1,9 @@
 import { waitFor } from "@testing-library/react";
-import type {
-  IssueListItem,
-  TimelineComment,
-  TimelineEvent,
+import {
+  type IssueListItem,
+  MePrefs,
+  type TimelineComment,
+  type TimelineEvent,
 } from "@todou/shared";
 import { describe, expect, it } from "vitest";
 import {
@@ -10,6 +11,7 @@ import {
   issueRefQuery,
   type ResolvedCommentRef,
 } from "../src/api/issue-refs.ts";
+import { prefsQuery } from "../src/api/prefs.ts";
 import { IssueLink } from "../src/components/shared/issue-link.tsx";
 import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { CommentItem } from "../src/components/timeline/comment-item.tsx";
@@ -177,11 +179,13 @@ describe("comment permalinks in the timeline", () => {
       return el as HTMLAnchorElement;
     });
     expect(link.getAttribute("href")).toBe("/projects/p/issues/3#comment-42");
-    expect(link.querySelector("[data-comment-ref]")?.textContent).toBe(
-      "#3#comment-42",
-    );
+    expect(
+      [...link.querySelectorAll("[data-ref-part]")]
+        .map((part) => part.textContent)
+        .join(""),
+    ).toBe("#3#comment-42");
     expect(link.querySelector("[data-comment-author]")?.textContent).toBe(
-      " · by Alice",
+      " by Alice",
     );
   });
 });
@@ -214,13 +218,75 @@ describe("rich comment permalinks in markdown", () => {
       "/projects/todou/issues/38#comment-136",
     );
     expect(link.textContent).toContain("Permalink target");
-    expect(link.querySelector("[data-comment-ref]")?.textContent).toBe(
-      "#38#comment-136",
-    );
+    expect(
+      [...link.querySelectorAll("[data-ref-part]")]
+        .map((part) => part.textContent)
+        .join(""),
+    ).toBe("#38#comment-136");
     expect(link.querySelector("[data-comment-author]")?.textContent).toBe(
-      " · by Alice",
+      " by Alice",
     );
   });
+
+  it.each(["before", "after"] as const)(
+    "keeps a current-page permalink short with %s placement",
+    async (placement) => {
+      const client = testQueryClient();
+      client.setQueryData(
+        prefsQuery.queryKey,
+        MePrefs.parse({
+          ref_placement_reference: placement,
+          show_repeated_ref_title: true,
+        }),
+      );
+      client.setQueryData(
+        issueRefQuery("todou", 38).queryKey,
+        refItem(38, "Current parent title"),
+      );
+      client.setQueryData<ResolvedCommentRef | null>(
+        commentRefQuery("todou", 38, 136).queryKey,
+        () => ({
+          ...commentOf(136),
+          at: { slug: "todou", number: 38, commentId: 136 },
+        }),
+      );
+      const url = `${window.location.origin}/projects/todou/issues/38#comment-136`;
+      const view = renderWithProviders(
+        <MarkdownView slug="todou" issueNumber={38}>
+          {`see ${url} here`}
+        </MarkdownView>,
+        client,
+      );
+      const link = await waitFor(() => {
+        const anchor = view.container.querySelector<HTMLAnchorElement>(
+          "a[data-comment-link='136']",
+        );
+        expect(anchor).not.toBeNull();
+        return anchor as HTMLAnchorElement;
+      });
+      const tokens = link.querySelectorAll("[data-comment-ref]");
+      expect(tokens).toHaveLength(1);
+      expect(
+        [...link.querySelectorAll("[data-ref-part]")]
+          .map((part) => part.textContent)
+          .join(""),
+      ).toBe("#comment-136");
+      expect(link.textContent).toBe("#comment-136 by Alice");
+      expect(link.querySelector("[data-comment-author]")?.textContent).toBe(
+        " by Alice",
+      );
+      expect(tokens[0]?.querySelector("[data-comment-author]")).toBeNull();
+      expect(
+        link.querySelector("[data-comment-title], [data-comment-decoration]"),
+      ).toBeNull();
+      expect(link.textContent).not.toContain("#38");
+      expect(link.textContent).not.toContain("Current parent title");
+      expect(link.getAttribute("data-issue-link")).toBe("38");
+      expect(link.getAttribute("href")).toBe(
+        "/projects/todou/issues/38#comment-136",
+      );
+    },
+  );
 
   it("keeps custom text ordinary until a comment confirms the parent", async () => {
     const client = testQueryClient();

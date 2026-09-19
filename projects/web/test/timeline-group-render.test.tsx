@@ -218,9 +218,16 @@ function expectCommentSource(link: HTMLAnchorElement, spelling: string) {
   const tokens = link.querySelectorAll("[data-comment-ref]");
   expect(tokens).toHaveLength(1);
   const token = tokens[0] as HTMLElement;
-  expect(token.textContent).toBe(spelling);
-  expect(token.childNodes).toHaveLength(1);
-  expect(token.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+  const parts = [...token.querySelectorAll("[data-ref-part]")];
+  expect(parts.map((part) => part.textContent).join("")).toBe(spelling);
+  for (const part of parts) {
+    expect(
+      part.closest("[hidden], [aria-hidden='true'], .hidden, .sr-only"),
+    ).toBeNull();
+    expect(getComputedStyle(part).display).not.toBe("none");
+    expect(getComputedStyle(part).visibility).not.toBe("hidden");
+    expect(getComputedStyle(part).visibility).not.toBe("collapse");
+  }
   expect(
     token.closest("[hidden], [aria-hidden='true'], .hidden, .sr-only"),
   ).toBeNull();
@@ -228,15 +235,19 @@ function expectCommentSource(link: HTMLAnchorElement, spelling: string) {
   expect(getComputedStyle(token).visibility).not.toBe("hidden");
   const authors = link.querySelectorAll("[data-comment-author]");
   expect(authors).toHaveLength(1);
-  expect(authors[0]?.textContent).toBe(" · by Alice");
+  expect(authors[0]?.textContent).toBe(" by Alice");
   expect(token.contains(authors[0] ?? null)).toBe(false);
   expect(authors[0]?.contains(token)).toBe(false);
-  expect(link.textContent?.split(spelling)).toHaveLength(2);
+  expect([...link.querySelectorAll("[data-ref-part]")]).toEqual(parts);
+  expect(link.textContent?.match(/#comment-\d+/g)).toEqual([
+    spelling.match(/#comment-\d+$/)?.[0],
+  ]);
   expect(link.textContent).not.toContain("comment by");
   expect(link.className).toBe("font-medium hover:underline");
   expect(
     link.querySelector(".inline-flex, .border, .truncate, .flex-none"),
   ).toBeNull();
+  expect(link.querySelector(".comment-reference-body")).toBeNull();
   expect(link.querySelector("svg")?.getAttribute("class")).toContain(
     "mr-0.5 inline size-3.5 align-middle",
   );
@@ -638,7 +649,7 @@ describe("EventGroup", () => {
     ) as HTMLAnchorElement;
     expectCommentSource(commentLink, "T-7#comment-42");
     expect(commentLink.textContent).toBe(
-      "T-7#comment-42 First source · by Alice",
+      "T-7 First source · #comment-42 by Alice",
     );
     expect(commentLink.getAttribute("href")).toBe(
       "/projects/todou/issues/7#comment-42",
@@ -685,7 +696,7 @@ describe("EventGroup", () => {
       return anchor as HTMLAnchorElement;
     });
     expectCommentSource(link, "T-7#comment-42");
-    expect(link.textContent).toBe("T-7#comment-42 Only source · by Alice");
+    expect(link.textContent).toBe("T-7 Only source · #comment-42 by Alice");
     expect(link.getAttribute("href")).toBe(
       "/projects/todou/issues/7#comment-42",
     );
@@ -805,7 +816,7 @@ describe("EventGroup", () => {
       );
       expectCommentSource(link, "mirror/M-3#comment-42");
       expect(link.textContent).toBe(
-        "mirror/M-3#comment-42 Mirror source · by Alice",
+        "mirror/M-3 Mirror source · #comment-42 by Alice",
       );
       for (const key of [
         issueRefQuery("mirror", 3).queryKey,
