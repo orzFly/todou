@@ -34,6 +34,7 @@ import {
 import { Toaster } from "@/components/ui/sonner";
 import { statusOf } from "@/lib/http-status.ts";
 import { parseInsightsSearch } from "@/lib/insights-search.ts";
+import { INBOX_TABS, type InboxTab } from "@/lib/return-view.ts";
 import { parseSpecSearch } from "@/lib/spec-search.ts";
 import { hasUnsavedWork } from "@/lib/unsaved-guard.ts";
 import { AgentsSettingsPage } from "@/pages/agents-settings.tsx";
@@ -374,6 +375,10 @@ const inboxRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/inbox",
   component: InboxPage,
+  validateSearch: (search): { tab?: InboxTab } => {
+    const tab = INBOX_TABS.find((key) => key === search.tab);
+    return tab && tab !== "all" ? { tab } : {};
+  },
 });
 
 const mutedRoute = createRoute({

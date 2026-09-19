@@ -149,7 +149,12 @@ function CollectionLink({
         );
       case "inbox":
         return (
-          <Link to="/inbox" state={state} aria-label={name}>
+          <Link
+            to="/inbox"
+            search={{ tab: view.tab === "all" ? undefined : view.tab }}
+            state={state}
+            aria-label={name}
+          >
             {body}
           </Link>
         );

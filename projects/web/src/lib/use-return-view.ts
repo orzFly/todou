@@ -38,12 +38,10 @@ import {
 export type ReturnCollection = {
   /** Where this page is, rebuilt from the URL on every render. */
   target: ReturnTarget;
-  /** Page state the URL does not carry. */
+  /** Inbox tab to include in a detail page's return URL. */
   tab?: InboxTab;
   /** Who a user page is about, for the back link's accessible name. */
   userLabel?: string;
-  /** Put back the non-URL state a snapshot carries. */
-  applyTab?: (tab: InboxTab) => void;
   /** Whether the page's own rows are on screen and measurable. */
   ready: boolean;
 };
@@ -316,7 +314,6 @@ export function useReturnView(collection: ReturnCollection): {
       asked.current.clear();
       pendingNow.current = { view, locate };
       setPending({ view, locate, generation: generation.current });
-      if (view.tab !== undefined) latest.current.applyTab?.(view.tab);
     };
     read();
     return router.history.subscribe(({ action }) => {

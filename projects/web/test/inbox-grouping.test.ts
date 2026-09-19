@@ -73,6 +73,38 @@ describe("groupInboxItems", () => {
     expect(groups[0]?.items.map((i) => i.number)).toEqual([5, 3]);
     expect(groups[1]?.items.map((i) => i.number)).toEqual([9, 1]);
   });
+
+  it.each([
+    ["all", {}],
+    ["mentions", { mentions_you: true }],
+    ["comments", { unread_comments: 2 }],
+    ["specs", { pending_spec_review: true }],
+    ["questions", { open_questions: 1 }],
+  ] as const)(
+    "preserves project and row order after filtering %s",
+    (tab, reason) => {
+      const quiet = { unread_comments: 0, unread: false };
+      const items = [
+        makeItem("empty", 10, quiet),
+        makeItem("b", 9, { ...quiet, ...reason }),
+        makeItem("a", 8, { ...quiet, ...reason }),
+        makeItem("b", 7, { ...quiet, ...reason }),
+        makeItem("a", 6, { ...quiet, ...reason }),
+      ];
+      expect(
+        groupInboxItems(items.filter((item) => matchesTab(item, tab))).map(
+          (group) => [
+            group.project.slug,
+            group.items.map((item) => item.number),
+          ],
+        ),
+      ).toEqual([
+        ...(tab === "all" ? [["empty", [10]]] : []),
+        ["b", [9, 7]],
+        ["a", [8, 6]],
+      ]);
+    },
+  );
 });
 
 describe("matchesTab", () => {
@@ -90,9 +122,16 @@ describe("matchesTab", () => {
     unread_comments: 0,
     open_questions: 2,
   });
+  const mention = makeItem("p", 5, {
+    mentions_you: true,
+    unread: false,
+    unread_comments: 0,
+    open_questions: 0,
+    pending_spec_review: false,
+  });
 
   it("all passes everything", () => {
-    for (const item of [weak, strong, spec, question]) {
+    for (const item of [weak, strong, spec, question, mention]) {
       expect(matchesTab(item, "all")).toBe(true);
     }
   });
@@ -108,4 +147,18 @@ describe("matchesTab", () => {
     expect(matchesTab(question, "questions")).toBe(true);
     expect(matchesTab(spec, "questions")).toBe(false);
   });
+
+  it("mentions reads only mentions_you, even with no other reason", () => {
+    expect(matchesTab(mention, "mentions")).toBe(true);
+    for (const item of [weak, strong, spec, question]) {
+      expect(matchesTab(item, "mentions")).toBe(false);
+    }
+  });
+
+  it.each(["comments", "specs", "questions"] as const)(
+    "does not put a mention-only row in %s",
+    (tab) => {
+      expect(matchesTab(mention, tab)).toBe(false);
+    },
+  );
 });

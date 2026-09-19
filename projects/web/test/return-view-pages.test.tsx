@@ -1088,7 +1088,13 @@ const INBOX: InboxPageData = {
   unread_counts: { alpha: 2 },
 };
 
-function mountInbox({ pending }: { pending?: ReturnView } = {}) {
+function mountInbox({
+  pending,
+  path = "/inbox",
+}: {
+  pending?: ReturnView;
+  path?: string;
+} = {}) {
   vi.spyOn(api, "getInbox").mockResolvedValue(INBOX);
   vi.spyOn(api, "getReferenceDirectory").mockResolvedValue({
     entries: [],
@@ -1109,7 +1115,7 @@ function mountInbox({ pending }: { pending?: ReturnView } = {}) {
   });
   const router = createRouter({
     routeTree: rootRoute.addChildren([inboxRoute, issueRoute]),
-    history: historyAt("/inbox", { pending }),
+    history: historyAt(path, { pending }),
   });
   const view = render(
     <QueryClientProvider client={client}>
@@ -1119,16 +1125,17 @@ function mountInbox({ pending }: { pending?: ReturnView } = {}) {
   return { ...view, router, client };
 }
 
-/** The word on the tab whose button is the selected one. */
+/** The word on the selected tab link. */
 const selectedTab = (view: { getAllByRole: (role: string) => HTMLElement[] }) =>
   view
     .getAllByRole("tab")
     .find((tab) => tab.getAttribute("aria-selected") === "true")?.textContent;
 
-describe("the inbox tab, which no URL carries", () => {
-  it("comes back from the snapshot rather than resetting to All", async () => {
+describe("the inbox tab carried by its URL", () => {
+  it("restores the position on the tab named by the return URL", async () => {
     const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
     const view = mountInbox({
+      path: "/inbox?tab=specs",
       pending: snapshot({
         target: { kind: "inbox" },
         tab: "specs",
@@ -1155,6 +1162,7 @@ describe("the inbox tab, which no URL carries", () => {
   it("stays on the tab the reader picked when the rows refresh underneath", async () => {
     const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
     const view = mountInbox({
+      path: "/inbox?tab=specs",
       pending: snapshot({
         target: { kind: "inbox" },
         tab: "specs",
@@ -1178,6 +1186,37 @@ describe("the inbox tab, which no URL carries", () => {
     expect(rowIds(view.container)).toEqual(["41"]);
     expect(restoreScrolls(scrollTo)).toEqual([]);
     expect(entryOf(view.router).pending).toBeUndefined();
+  });
+
+  it("keeps the URL authoritative when history state remembers another tab", async () => {
+    const view = mountInbox({
+      path: "/inbox?tab=comments",
+      pending: snapshot({ target: { kind: "inbox" }, tab: "specs" }),
+    });
+    await settle(200);
+    expect(selectedTab(view)).toBe("Comments");
+    expect(rowIds(view.container)).toEqual(["41"]);
+    expect(view.router.state.location.search).toEqual({ tab: "comments" });
+  });
+
+  it("follows Back and Forward while snapshots are written on each entry", async () => {
+    // happy-dom incorrectly truncates forward entries on replaceState.
+    // The memory history here preserves the browser contract while the real
+    // ReturnViewProvider still samples and rewrites the entries.
+    const view = mountInbox({ path: "/inbox?tab=specs" });
+    await settle(200);
+    expect(selectedTab(view)).toBe("Specs");
+    fireEvent.click(view.getByRole("tab", { name: "Comments" }));
+    await settle(200);
+    expect(selectedTab(view)).toBe("Comments");
+    view.router.history.back();
+    await settle(200);
+    expect(selectedTab(view)).toBe("Specs");
+    expect(view.router.state.location.search).toEqual({ tab: "specs" });
+    view.router.history.forward();
+    await settle(200);
+    expect(selectedTab(view)).toBe("Comments");
+    expect(view.router.state.location.search).toEqual({ tab: "comments" });
   });
 });
 

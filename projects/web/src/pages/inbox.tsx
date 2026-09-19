@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import type { InboxItem } from "@todou/shared";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef } from "react";
 import { groupInboxItems, type InboxGroup, inboxQuery } from "@/api/inbox.ts";
 import { mutesQuery } from "@/api/mutes.ts";
 import { IssueRow, useIssueListGrid } from "@/components/issue/issue-row.tsx";
@@ -27,13 +27,11 @@ import { useReturnView } from "@/lib/use-return-view.ts";
 import { cn } from "@/lib/utils";
 
 /**
- * What each tab is called. `INBOX_TABS` decides which tabs exist and in which
- * order, because a snapshot restores one by name and two lists of them would
- * drift into a tab that validates but has no button (T-407). Keyed by the
- * type, so a tab added there cannot reach this page without a word for it.
+ * Labels for the canonical tab keys, also used in return snapshots.
  */
 const TAB_LABELS: Record<InboxTab, string> = {
   all: "All",
+  mentions: "Mentions",
   comments: "Comments",
   specs: "Specs",
   questions: "Questions",
@@ -61,6 +59,8 @@ export function matchesTab(item: InboxItem, tab: InboxTab): boolean {
   switch (tab) {
     case "all":
       return true;
+    case "mentions":
+      return item.mentions_you;
     case "comments":
       return item.unread_comments > 0;
     case "specs":
@@ -82,7 +82,9 @@ export function InboxPage() {
   const items = inbox.data?.items;
   const projects = useMemo(() => items?.map((item) => item.project), [items]);
   const refs = useProjectRefs(projects);
-  const [tab, setTab] = useState<InboxTab>("all");
+  // The test harness mounts this page at its own route, so read non-strictly.
+  const search = useSearch({ strict: false }) as Record<string, unknown>;
+  const tab = INBOX_TABS.find((key) => key === search.tab) ?? "all";
   const data = inbox.data;
   const hasContent = data !== undefined;
   const { replace, notice } = useReadFailure(
@@ -109,14 +111,12 @@ export function InboxPage() {
     inset: () => headerHeight,
     axis: "y",
   });
-  // The tab is the one thing about this page no URL carries, by decision, so
-  // the snapshot carries it instead and `applyTab` puts it back. A failed read
-  // stays not ready on purpose — the restore keeps waiting, so a reader who
-  // hits Retry still lands where they left off (T-407).
+  // The URL selects the tab. Keep it in the snapshot too so the detail page
+  // can build its return link, including snapshots captured before T-397.
+  // A failed read stays not ready so Retry can still restore the position.
   useReturnView({
     target: { kind: "inbox" },
     tab,
-    applyTab: setTab,
     ready: hasContent,
   });
 
@@ -151,25 +151,30 @@ export function InboxPage() {
         <h1 className="text-xl font-semibold">Inbox</h1>
         <div className="flex items-center gap-1" role="tablist">
           {INBOX_TABS.map((key) => (
-            <button
+            <Link
               key={key}
-              type="button"
+              to="."
+              search={{ tab: key === "all" ? undefined : key }}
               role="tab"
               aria-selected={tab === key}
               className={cn(
                 "cursor-pointer rounded-md px-3 py-1 text-sm text-muted-foreground hover:text-foreground",
                 tab === key && "bg-accent font-medium text-foreground",
               )}
-              onClick={() => {
-                // The reader choosing a tab outranks the one a restore is
-                // still trying to put back — and the rows it would have
-                // anchored to are not in this tab anyway (T-407).
+              onClick={(event) => {
+                if (
+                  event.metaKey ||
+                  event.ctrlKey ||
+                  event.shiftKey ||
+                  event.altKey
+                )
+                  return;
+                // Choosing a tab retires any pending position restore.
                 cancelRestore();
-                setTab(key);
               }}
             >
               {TAB_LABELS[key]}
-            </button>
+            </Link>
           ))}
         </div>
         {/* max-sm only: below the tabs' breakpoint this wraps onto a line
@@ -202,7 +207,9 @@ export function InboxPage() {
 
       {groups.length === 0 ? (
         <div className="rounded-lg border border-dashed p-10 text-center text-muted-foreground">
-          收件箱清空了 🥔
+          {data.items.length === 0
+            ? "收件箱清空了 🥔"
+            : "No issues match. 地里很干净 🥔"}
         </div>
       ) : (
         <div className="space-y-6">

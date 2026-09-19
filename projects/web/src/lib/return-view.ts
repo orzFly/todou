@@ -23,11 +23,16 @@ import { searchPageSchema } from "@/api/search.ts";
 export const RETURN_VIEW_VERSION = 1;
 
 /**
- * The tabs the inbox offers. Canonical here rather than on the page, because
- * a snapshot carries one and the page restores from it: two spellings of this
- * list would drift into a tab that validates but does not exist.
+ * The tabs the inbox offers, in display order. A snapshot also carries the
+ * selected tab so a detail page can build its return URL.
  */
-export const INBOX_TABS = ["all", "comments", "specs", "questions"] as const;
+export const INBOX_TABS = [
+  "all",
+  "mentions",
+  "comments",
+  "specs",
+  "questions",
+] as const;
 export type InboxTab = (typeof INBOX_TABS)[number];
 
 /**
@@ -139,7 +144,7 @@ const returnViewIdentitySchema = z.object({
    */
   snapshotId: z.string().min(1).max(64),
   target: returnTargetSchema,
-  /** Page state the URL does not carry, and by decision will not (T-407 q2). */
+  /** Inbox tab for the return URL; retained for pre-URL snapshots (T-397). */
   tab: z.enum(INBOX_TABS).optional(),
   /** Who a user-page target names, for the back link's accessible name. */
   userLabel: z.string().min(1).max(200).optional(),

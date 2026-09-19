@@ -749,18 +749,21 @@ describe("the spec page's own moves", () => {
 });
 
 describe("the inbox", () => {
-  const TABS = ["All", "Comments", "Specs", "Questions"] as const;
+  const TABS = ["All", "Mentions", "Comments", "Specs", "Questions"] as const;
 
   for (const tab of TABS) {
-    it(`comes back to the ${tab} tab, which no URL carries`, async () => {
+    it(`comes back to the ${tab} tab through its URL`, async () => {
       await startAt("/inbox");
       mount();
 
       fireEvent.click(await screen.findByRole("tab", { name: tab }));
+      const search = tab === "All" ? "" : `?tab=${tab.toLowerCase()}`;
+      await waitFor(() => expect(window.location.search).toBe(search));
       openWithTheMouse(await screen.findByRole("link", { name: DIG.title }));
 
       const back = await backLinkOn(DIG.title);
       expect(back.getAttribute("aria-label")).toBe("Back to Inbox");
+      expect(back.getAttribute("href")).toBe(`/inbox${search}`);
       fireEvent.click(back);
 
       await landedOn("/inbox");
@@ -769,12 +772,63 @@ describe("the inbox", () => {
           screen.getByRole("tab", { name: tab }).getAttribute("aria-selected"),
         ).toBe("true"),
       );
-      // The decision the card records: the tab is page state, and no URL
-      // parameter was added for it.
-      expect(window.location.search).toBe("");
+      expect(window.location.search).toBe(search);
       expectNoOriginInTheAddress();
     });
   }
+
+  it.each(["mentions", "comments", "specs", "questions", "all", "bogus"])(
+    "validates a direct tab=%s URL on the real route without rewriting it",
+    async (tab) => {
+      await startAt(`/inbox?tab=${tab}`);
+      mount();
+      const selected =
+        tab === "bogus" ? "All" : tab[0]?.toUpperCase() + tab.slice(1);
+      await waitFor(() =>
+        expect(
+          screen
+            .getByRole("tab", { name: selected })
+            .getAttribute("aria-selected"),
+        ).toBe("true"),
+      );
+      expect(window.location.search).toBe(`?tab=${tab}`);
+      const match = router.state.matches.at(-1);
+      expect(match?.routeId).toBe("/authed/inbox");
+      // TanStack retains raw search on matches; exercise the registered
+      // validator itself as well as the page reached through that route.
+      const validate = router.routesById["/authed/inbox"].options
+        .validateSearch as (search: Record<string, unknown>) => unknown;
+      expect(validate({ tab })).toEqual(
+        tab === "all" || tab === "bogus" ? {} : { tab },
+      );
+      expect(screen.getByRole("link", { name: DIG.title })).toBeTruthy();
+    },
+  );
+
+  it("follows browser Back between reason tabs", async () => {
+    await startAt("/inbox?tab=mentions");
+    mount();
+    fireEvent.click(await screen.findByRole("tab", { name: "Comments" }));
+    await waitFor(() => {
+      expect(window.location.search).toBe("?tab=comments");
+      expect(
+        screen
+          .getByRole("tab", { name: "Comments" })
+          .getAttribute("aria-selected"),
+      ).toBe("true");
+      expect(router.state.status).toBe("idle");
+    });
+    router.history.back();
+    await waitFor(() => {
+      expect(window.location.search).toBe("?tab=mentions");
+      expect(
+        screen
+          .getByRole("tab", { name: "Mentions" })
+          .getAttribute("aria-selected"),
+      ).toBe("true");
+      expect(router.state.status).toBe("idle");
+    });
+  });
 });
 
 describe("a user page", () => {
