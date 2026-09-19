@@ -22,7 +22,8 @@
  * thing it grades (a coverage failure).
  * Limitations: Chromium grades; Firefox is only measured, on the one path the
  * chosen inline layout was priced against (--firefox), where one reading is a
- * known and accepted partial — see runFirefoxPass. Safari/WebKit and real
+ * known and accepted partial — see runFirefoxPass, and FIREFOX_EXPECTED for
+ * the table that names a moved reading without grading it. Safari/WebKit and real
  * touch are neither exercised nor claimed. Headless browsers measure CSS
  * geometry, not painted pixels. A textarea is not proof about Word or VS Code.
  */
@@ -60,7 +61,9 @@ Usage:
 Options:
   --self-test  Prove each checker with an injected fault and a fresh page.
   --firefox    Measure the body-into-ref drag in Firefox instead. Recorded,
-               not graded: exits 2 only if a reading could not be taken.
+               not graded: exits 2 only if a reading could not be taken. A
+               reading that differs from FIREFOX_EXPECTED prints a note and
+               leaves the exit code alone.
   --keep       Keep the isolated stack directory after the run.
   --help       Print this help and exit.
 
@@ -1375,6 +1378,62 @@ const FIREFOX_PATHS = [
   { key: "ref-out-to-body", from: "mid", to: "close" },
 ];
 
+/**
+ * What each path reads today. Gecko's own gesture is the browser's business
+ * and stays out of the exit code (T-427), but a pass that only prints leaves
+ * a reading free to change one word among twenty-four with nothing pointing
+ * at it — and the two words that matter most here are opposites. The table
+ * turns that into a line of its own; the verdict it carries grades nothing.
+ */
+const FIREFOX_EXPECTED = {
+  "desktop/ordinary/across-forward": "complete",
+  "desktop/ordinary/across-reverse": "complete",
+  "desktop/ordinary/body-into-ref": "complete",
+  // Firefox answers a press on a link with a native drag rather than a
+  // selection, so a drag that starts inside the ref copies nothing at all.
+  "desktop/ordinary/ref-out-to-body": "no-selection",
+  "desktop/comment/across-forward": "complete",
+  "desktop/comment/across-reverse": "complete",
+  "desktop/comment/body-into-ref": "complete",
+  "desktop/comment/ref-out-to-body": "no-selection",
+  "desktop/mention/across-forward": "complete",
+  "desktop/mention/across-reverse": "complete",
+  "desktop/mention/body-into-ref": "complete",
+  "desktop/mention/ref-out-to-body": "no-selection",
+  "narrow/ordinary/across-forward": "complete",
+  "narrow/ordinary/across-reverse": "complete",
+  "narrow/ordinary/body-into-ref": "complete",
+  "narrow/ordinary/ref-out-to-body": "no-selection",
+  "narrow/comment/across-forward": "complete",
+  "narrow/comment/across-reverse": "complete",
+  // The accepted limitation runFirefoxPass describes: `complete` here is Gecko
+  // or our own structure having moved, not a check that started passing.
+  "narrow/comment/body-into-ref": "partial:3/13",
+  "narrow/comment/ref-out-to-body": "no-selection",
+  "narrow/mention/across-forward": "complete",
+  "narrow/mention/across-reverse": "complete",
+  "narrow/mention/body-into-ref": "complete",
+  "narrow/mention/ref-out-to-body": "no-selection",
+};
+
+/** One line per reading the table did not predict, in either direction. */
+function firefoxDrift(readings) {
+  const taken = new Set();
+  const drift = [];
+  for (const one of readings) {
+    const key = `${one.viewport}/${one.probe}/${one.path}`;
+    taken.add(key);
+    const expected = FIREFOX_EXPECTED[key];
+    if (expected === undefined)
+      drift.push(`${key}: read ${one.verdict}, and the table has no entry`);
+    else if (expected !== one.verdict)
+      drift.push(`${key}: expected ${expected}, read ${one.verdict}`);
+  }
+  for (const [key, expected] of Object.entries(FIREFOX_EXPECTED))
+    if (!taken.has(key)) drift.push(`${key}: expected ${expected}, no reading`);
+  return drift;
+}
+
 /** Which of the identity's characters a path actually produced. */
 function verdictFor(got, identity) {
   if (got === SENTINEL) return "no-selection";
@@ -1596,7 +1655,17 @@ async function main() {
             `dragstart=${one.dragstart}`,
         );
       }
-      report("firefox", { failures, notes: { readings: readings.length } });
+      const drift = firefoxDrift(readings);
+      for (const line of drift) console.log(`firefox note: ${line}`);
+      console.log(
+        `firefox expectations: ${drift.length} of ${
+          Object.keys(FIREFOX_EXPECTED).length
+        } off the table, recorded and not graded`,
+      );
+      report("firefox", {
+        failures,
+        notes: { readings: readings.length, drift: drift.length },
+      });
       // Coverage only: what Firefox's own gesture does is recorded, not
       // graded. A missing reading is the thing that would leave the
       // trade-off unpriced all over again.
