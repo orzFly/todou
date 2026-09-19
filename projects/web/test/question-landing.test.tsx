@@ -579,10 +579,18 @@ async function landed(view: View, scroll: Scrolling, id: number, count = 1) {
     () => {
       expect(view.router.state.location.hash).toBe(`comment-${id}`);
       const target = view.container.querySelector(`#comment-${id}`);
+      // Presence gets its own assertion: through an optional chain a missing
+      // row and a row that rendered without the flash both report
+      // `expected undefined to be true`, and the two need different fixes.
+      expect(target, `#comment-${id} never rendered`).not.toBeNull();
       expect(target?.classList.contains("anchor-flash")).toBe(true);
       expect(scroll.reveals(`comment-${id}`)).toBe(count);
     },
-    { timeout: 3_000 },
+    // C5 lands only after two sequential paginated fetches, which put it
+    // within a few hundred ms of the old 3s budget even on an idle machine
+    // and lost the race outright once the machine was busy. The budget is
+    // not what this helper is testing; the flash landing on the right row is.
+    { timeout: 15_000 },
   );
   expect(view.queryByText(LOCATE_FAILURE)).toBeNull();
   expect(view.queryByText(UNAVAILABLE)).toBeNull();
