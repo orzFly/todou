@@ -208,7 +208,11 @@ const SPEC_TOOLBAR_ROWS: {
     // a second line (T-206), so it is also what decides this row's height.
     className: "flex flex-wrap items-center gap-2 lg:flex-nowrap",
     left: [
-      { id: "back", className: "w-[62px]" },
+      {
+        id: "back",
+        className:
+          "w-[62px] min-[1440px]:absolute min-[1440px]:right-full min-[1440px]:mr-6",
+      },
       // Elastic, and gone below lg, like the real title.
       { id: "title", className: "hidden min-w-0 flex-1 lg:block" },
       { id: "review-status", className: "w-[103px]" },
@@ -271,7 +275,7 @@ function SpecSkeleton() {
           the real bar's `top` is a measured header height that this display-only
           component would otherwise have to go and measure. */}
       <div
-        className="-mx-2 space-y-1.5 border-b px-2 py-2"
+        className="relative -mx-2 space-y-1.5 border-b px-2 py-2"
         data-testid="spec-skeleton-toolbar"
       >
         {SPEC_TOOLBAR_ROWS.map((row) => (

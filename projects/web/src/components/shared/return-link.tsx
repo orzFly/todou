@@ -26,10 +26,12 @@ import { cn } from "@/lib/utils";
 
 function BackButton({
   slot,
+  floating,
   children,
 }: {
   /** The spec toolbar addresses its controls by slot; the issue row does not. */
   slot?: string;
+  floating?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -37,7 +39,11 @@ function BackButton({
       asChild
       size="sm"
       variant="ghost"
-      className="shrink-0"
+      className={cn(
+        "pointer-events-auto shrink-0",
+        floating &&
+          "min-[1440px]:absolute min-[1440px]:right-full min-[1440px]:mr-6",
+      )}
       data-toolbar-slot={slot}
     >
       {children}
@@ -58,15 +64,17 @@ function BackButton({
 export function IssueReturnLink({
   slug,
   slot,
+  floating,
 }: {
   /** The project to fall back to, which is the card's own. */
   slug: string;
   slot?: string;
+  floating?: boolean;
 }) {
   const origin = useReturnOrigin();
   if (origin === undefined) {
     return (
-      <BackButton slot={slot}>
+      <BackButton slot={slot} floating={floating}>
         <Link
           to="/projects/$slug"
           params={{ slug }}
@@ -78,14 +86,18 @@ export function IssueReturnLink({
       </BackButton>
     );
   }
-  return (
-    <BackButton slot={slot}>
-      <CollectionLink view={origin} />
-    </BackButton>
-  );
+  return <CollectionLink view={origin} slot={slot} floating={floating} />;
 }
 
-function CollectionLink({ view }: { view: ReturnView }) {
+function CollectionLink({
+  view,
+  slot,
+  floating,
+}: {
+  view: ReturnView;
+  slot?: string;
+  floating?: boolean;
+}) {
   const label = returnLabelOf(view.target);
   const name = returnAccessibleName(view);
   // The snapshot travels as state on this navigation, which is what the
@@ -97,61 +109,69 @@ function CollectionLink({ view }: { view: ReturnView }) {
       {label}
     </>
   );
-  switch (view.target.kind) {
-    case "list":
-      return (
-        <Link
-          to="/projects/$slug"
-          params={{ slug: view.target.slug }}
-          search={view.target.search}
-          state={state}
-          aria-label={name}
-        >
-          {body}
-        </Link>
-      );
-    case "board":
-      return (
-        <Link
-          to="/projects/$slug/board"
-          params={{ slug: view.target.slug }}
-          state={state}
-          aria-label={name}
-        >
-          {body}
-        </Link>
-      );
-    case "search":
-      return (
-        <Link
-          to="/projects/$slug/search"
-          params={{ slug: view.target.slug }}
-          search={view.target.search}
-          state={state}
-          aria-label={name}
-        >
-          {body}
-        </Link>
-      );
-    case "inbox":
-      return (
-        <Link to="/inbox" state={state} aria-label={name}>
-          {body}
-        </Link>
-      );
-    case "user":
-      return (
-        <Link
-          to="/users/$ref"
-          params={{ ref: view.target.ref }}
-          search={view.target.search}
-          state={state}
-          aria-label={name}
-        >
-          {body}
-        </Link>
-      );
-  }
+  // Slot props must reach the actual anchor, not stop at this component.
+  const link = (() => {
+    switch (view.target.kind) {
+      case "list":
+        return (
+          <Link
+            to="/projects/$slug"
+            params={{ slug: view.target.slug }}
+            search={view.target.search}
+            state={state}
+            aria-label={name}
+          >
+            {body}
+          </Link>
+        );
+      case "board":
+        return (
+          <Link
+            to="/projects/$slug/board"
+            params={{ slug: view.target.slug }}
+            state={state}
+            aria-label={name}
+          >
+            {body}
+          </Link>
+        );
+      case "search":
+        return (
+          <Link
+            to="/projects/$slug/search"
+            params={{ slug: view.target.slug }}
+            search={view.target.search}
+            state={state}
+            aria-label={name}
+          >
+            {body}
+          </Link>
+        );
+      case "inbox":
+        return (
+          <Link to="/inbox" state={state} aria-label={name}>
+            {body}
+          </Link>
+        );
+      case "user":
+        return (
+          <Link
+            to="/users/$ref"
+            params={{ ref: view.target.ref }}
+            search={view.target.search}
+            state={state}
+            aria-label={name}
+          >
+            {body}
+          </Link>
+        );
+    }
+  })();
+  return (
+    <BackButton slot={slot} floating={floating}>
+      {link}
+    </BackButton>
+  );
 }
 
 /**
@@ -164,14 +184,16 @@ export function SpecReturnLink({
   slug,
   number,
   slot,
+  floating,
 }: {
   slug: string;
   number: number;
   slot?: string;
+  floating?: boolean;
 }) {
   const state = useReturnLinkState();
   return (
-    <BackButton slot={slot}>
+    <BackButton slot={slot} floating={floating}>
       <Link
         to="/projects/$slug/issues/$number"
         params={{ slug, number: String(number) }}

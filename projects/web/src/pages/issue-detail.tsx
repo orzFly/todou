@@ -100,9 +100,8 @@ export function IssueDetailPage() {
   // return row's title mirror is unaffected by the block swapping itself for
   // the rename form.
   const titleRef = useRef<HTMLDivElement>(null);
-  // Both overlays cover the timeline, so every anchor landing on this page has
-  // to clear them (T-299). The return row is on screen at every scroll
-  // position, so it covers the timeline whatever the reader has done (T-407).
+  // Reserve clearance for the title mirror and composer when jumping to a
+  // timeline anchor, including before the mirror becomes visible (T-299).
   const rowRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   useScrollInsets({ top: [rowRef], bottom: [composerRef] });
@@ -133,11 +132,8 @@ export function IssueDetailPage() {
             entries live in and the Composer they write into. */}
         <QuoteReplyProvider>
           <div className="min-w-0">
-            {/* The card's one back control, and the only floating bar this
-                page wears — nothing below may grow a second one (T-407). A
-                sibling of the space-y block rather than its first child: the
-                row is the column's chrome, not one of its contents, and it
-                carries its own gap. */}
+            {/* The wide-screen return link sits in the main container's gutter;
+                its title mirror overlays this column once the heading leaves. */}
             <IssueReturnRow
               slug={slug}
               issue={issue.data}

@@ -1034,11 +1034,12 @@ function SpecViewBody({
             identity is shrink-0: one shrinkable item cannot absorb a narrow
             viewport on its own, so a wrap is the only graceful answer left. */}
         <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
-          {/* A direct child of this row, ungrouped: the row's layout contract
-              is read off `back`'s own parent, and the back control must also
-              stay outside the identity's shrinking box, or the way home would
-              be the first thing a long title eats (T-407). */}
-          <SpecReturnLink slug={slug} number={issueNumber} slot="back" />
+          <SpecReturnLink
+            slug={slug}
+            number={issueNumber}
+            slot="back"
+            floating
+          />
           {/* The row's one shrinkable item, and it must remain the only one:
               shrink-only (the flex default), not flex-1, so a short title lets
               the badge sit right beside it rather than stranding it. `flex-1

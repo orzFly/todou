@@ -206,7 +206,7 @@ describe("IssueReturnRow (T-154)", () => {
     // observer is rebuilt with the measurement.
     await waitFor(() => {
       expect(observerOptions?.rootMargin).toBe("-97px 0px 0px 0px");
-      expect(bar.parentElement?.style.top).toBe("97px");
+      expect(bar.closest<HTMLElement>(".sticky")?.style.top).toBe("97px");
     });
   });
 
@@ -501,9 +501,8 @@ describe("the way back (T-407)", () => {
     row.getBoundingClientRect = () => ({ height: 40 }) as DOMRect;
     act(() => window.dispatchEvent(new Event("resize")));
 
-    // 8px of breathing room, the shell header and this row. Unlike the bar it
-    // replaced, this row is on screen at every scroll position, so its height
-    // is what a comment anchor followed from the top of the card must clear.
+    // Keep clearance for the mirror even while its wide-screen host takes
+    // no space, so a jump from the page top cannot land behind it.
     expect(document.documentElement.style.scrollPaddingTop).toBe("104px");
   });
 });
@@ -586,6 +585,12 @@ describe("where the way back goes (T-407)", () => {
       const view = renderWithOrigin(origin);
       const link = await view.findByRole("link", { name });
       expect(link.textContent).toBe(label);
+      // The styled slot must reach the anchor for remembered origins too.
+      expect(link.dataset.slot).toBe("button");
+      expect(link.dataset.variant).toBe("ghost");
+      expect(link.dataset.size).toBe("sm");
+      expect(link.classList.contains("inline-flex")).toBe(true);
+      expect(link.classList.contains("whitespace-nowrap")).toBe(true);
       // Exactly this, with nothing appended: the snapshot rides the
       // navigation as history state, so a new tab opened from here lands on
       // the same filters and no reading position.
