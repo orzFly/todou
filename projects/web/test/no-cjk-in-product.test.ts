@@ -26,8 +26,18 @@ const PROJECTS = resolve(process.cwd(), "..");
  *   database, a fixture, a dependency — is outside its reach entirely.
  * - HTML comments are not recognised, so CJK in one is reported as copy.
  *   That errs loud, which is the safe direction.
- * - An interpolation holding its own backtick ends the template early for
- *   the rest of the file, which errs quiet.
+ * - Regex literals are not recognised, so a backtick inside one reads as a
+ *   template opening, and an interpolation holding its own backtick ends
+ *   the template early. Either way the rest of the file is parsed against
+ *   the wrong state, which can err in both directions — so a file that
+ *   ends mid-comment or mid-template is reported by UNPARSED below rather
+ *   than trusted.
+ *
+ * Two deliberate uses of 土豆 sit outside the scan and should stay: the
+ * root README's opening line and package.json's description both explain
+ * that "todou" reads as To-Do and sounds like the word for potato. The
+ * characters are what the sentence is about, so there is nothing to
+ * translate.
  */
 const EXTENSIONS = /\.(?:tsx?|css)$/;
 const CJK =
@@ -50,6 +60,38 @@ const DECLARED: Array<{ file: string; reason: string; lines: string[] }> = [
     lines: [
       "const ATTACHES_LEFT = /^(?:[\\p{Pe}\\p{Pf}]|[,.;:!?~，。、；：！？～…])$/u;",
     ],
+  },
+];
+
+/**
+ * Files the scanner cannot follow to the end, each with what defeats it.
+ * Their lines are read raw instead, so their comments are searched along
+ * with their code: over-reporting a comment is an argument, while skipping
+ * a template's copy is a hole nobody sees.
+ *
+ * Fixing the source is not the point of an entry here — these regexes are
+ * written correctly, and escaping a backtick to suit a test would be the
+ * tail wagging the dog. An entry records that one file's stripping is not
+ * to be trusted.
+ */
+const UNPARSED: Array<{ file: string; reason: string }> = [
+  {
+    file: "cli/src/resolve.ts",
+    reason:
+      "`shellArg` nests a template inside its own interpolation, which " +
+      "closes the outer one early",
+  },
+  {
+    file: "server/src/http/content-disposition.ts",
+    reason: "RFC 5987's attr-char set lists a backtick inside a regex class",
+  },
+  {
+    file: "shared/src/resolve-links.ts",
+    reason: "the markdown fence regex matches a run of backticks",
+  },
+  {
+    file: "web/src/lib/slash-commands.ts",
+    reason: "the markdown fence regex matches a run of backticks",
   },
 ];
 
@@ -94,10 +136,10 @@ function productFiles(): string[] {
  * markdown, and a bullet opens with `*` exactly as a JSDoc continuation
  * does, so product copy read as a comment.
  */
-function codeOnly(source: string): string[] {
+function codeOnly(source: string): { code: string[]; balanced: boolean } {
   let block = false;
   let template = false;
-  return source.split("\n").map((raw) => {
+  const code = source.split("\n").map((raw) => {
     let kept = "";
     // A plain string cannot span lines, so it never survives into the next.
     let quote: string | null = null;
@@ -138,20 +180,30 @@ function codeOnly(source: string): string[] {
     }
     return kept;
   });
+  // Ending inside a comment or a template means some earlier character was
+  // misread, so every line after it was measured against the wrong state.
+  return { code, balanced: !block && !template };
 }
 
-const FOUND: Line[] = productFiles().flatMap((path) => {
+const SCANNED = productFiles().map((path) => {
   const source = readFileSync(path, "utf8");
-  const code = codeOnly(source);
-  const file = relative(PROJECTS, path).replaceAll("\\", "/");
-  return source
-    .split("\n")
-    .flatMap((raw, index) =>
-      CJK.test(code[index] ?? "")
-        ? [{ file, line: index + 1, text: raw.trim() }]
-        : [],
-    );
+  const { code, balanced } = codeOnly(source);
+  const raw = source.split("\n");
+  return {
+    file: relative(PROJECTS, path).replaceAll("\\", "/"),
+    raw,
+    code: balanced ? code : raw,
+    balanced,
+  };
 });
+
+const FOUND: Line[] = SCANNED.flatMap(({ file, raw, code }) =>
+  raw.flatMap((text, index) =>
+    CJK.test(code[index] ?? "")
+      ? [{ file, line: index + 1, text: text.trim() }]
+      : [],
+  ),
+);
 
 const declaredIn = (file: string) =>
   DECLARED.find((entry) => entry.file === file)?.lines ?? [];
@@ -169,6 +221,33 @@ describe("the product interface is written in English", () => {
         "the code reasons about rather than words anybody reads, add the " +
         "line to DECLARED above with the reason:\n" +
         offenders.join("\n"),
+    ).toEqual([]);
+  });
+
+  it("says so when its own scan loses the thread", () => {
+    const known = new Set(UNPARSED.map((entry) => entry.file));
+    const surprises = SCANNED.filter(
+      ({ file, balanced }) => !balanced && !known.has(file),
+    ).map(({ file }) => file);
+    expect(
+      surprises,
+      "The scan of these files ended inside a comment or a template, so " +
+        "everything after the character it misread was measured against " +
+        "the wrong state — quietly, in both directions. Find what it could " +
+        "not follow (a backtick in a regex, a nested interpolation) and " +
+        "add the file to UNPARSED above with that reason:\n" +
+        surprises.join("\n"),
+    ).toEqual([]);
+
+    const settled = UNPARSED.map((entry) => entry.file).filter((file) =>
+      SCANNED.some((scan) => scan.file === file && scan.balanced),
+    );
+    expect(
+      settled,
+      "These parse cleanly now, so the scanner can strip their comments " +
+        "again; drop them from UNPARSED and let them be read like every " +
+        "other file:\n" +
+        settled.join("\n"),
     ).toEqual([]);
   });
 
