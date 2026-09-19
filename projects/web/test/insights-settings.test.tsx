@@ -168,6 +168,164 @@ describe("InsightsSettings", () => {
     expect(saveButton(view).disabled).toBe(true);
   });
 
+  it("shows an unknown role as selected without making an untouched form dirty", () => {
+    const settings = {
+      ...SETTINGS,
+      roles: SETTINGS.roles.map((entry) =>
+        entry.status_id === 1 ? { ...entry, role: "future-role" } : entry,
+      ),
+    } as Settings;
+    const { calls } = mockServer(() => response(settings));
+    const { view, client } = renderSection(settings);
+    const unknown = view.getByRole("radio", {
+      name: "Unknown role: future-role",
+    }) as HTMLInputElement;
+    expect(unknown.checked).toBe(true);
+    expect(unknown.disabled).toBe(true);
+    expect(radio(view, "Todo", "open", "Remaining").checked).toBe(false);
+    expect(saveButton(view).disabled).toBe(true);
+    act(() => {
+      client.setQueryData(insightsKeys.settings("todou"), {
+        ...settings,
+        roles: settings.roles.map((entry) => ({ ...entry })),
+      });
+    });
+    expect(view.getByRole("status").textContent).toBe("No unsaved changes");
+    expect(view.queryByRole("alert")).toBeNull();
+    fireEvent.submit(view.container.querySelector("form")!);
+    expect(calls.filter((call) => call.method === "PUT")).toEqual([]);
+  });
+
+  it.each(["another row", "Default roles", "By open/closed category"])(
+    "preserves the exact unknown role in the request after editing %s",
+    async (action) => {
+      const settings = {
+        ...SETTINGS,
+        roles: SETTINGS.roles.map((entry) =>
+          entry.status_id === 4 ? { ...entry, role: "future-role" } : entry,
+        ),
+      } as Settings;
+      const { calls } = mockServer(() => response(settings));
+      const { view } = renderSection(settings);
+      // Make the form dirty even when the preset matches all known roles.
+      fireEvent.click(radio(view, "Todo", "open", "Excluded"));
+      if (action !== "another row") {
+        fireEvent.click(view.getByRole("button", { name: action }));
+        fireEvent.click(radio(view, "Todo", "open", "Excluded"));
+      }
+      fireEvent.click(saveButton(view));
+      await waitFor(() =>
+        expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1),
+      );
+      const sent = JSON.parse(
+        calls.find((call) => call.method === "PUT")!.body!,
+      );
+      expect(sent.roles).toContainEqual({
+        status_id: 4,
+        role: "future-role",
+      });
+      await waitFor(() => expect(saveButton(view).disabled).toBe(true));
+    },
+  );
+
+  it("replaces an unknown role only after an explicit choice on that row", async () => {
+    const settings = {
+      ...SETTINGS,
+      roles: SETTINGS.roles.map((entry) =>
+        entry.status_id === 1 ? { ...entry, role: "future-role" } : entry,
+      ),
+    } as Settings;
+    const saved = {
+      ...settings,
+      roles: SETTINGS.roles,
+    };
+    const { calls } = mockServer(() => response(saved));
+    const { view } = renderSection(settings);
+    fireEvent.click(radio(view, "Todo", "open", "Remaining"));
+    expect(view.queryByRole("radio", { name: /Unknown role:/ })).toBeNull();
+    expect(saveButton(view).disabled).toBe(false);
+    fireEvent.click(saveButton(view));
+    await waitFor(() =>
+      expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1),
+    );
+    expect(
+      JSON.parse(calls.find((call) => call.method === "PUT")!.body!).roles,
+    ).toContainEqual({ status_id: 1, role: "remaining" });
+    await waitFor(() => expect(saveButton(view).disabled).toBe(true));
+  });
+
+  it.each(["default", "category"] as const)(
+    "keeps a role when the %s preset cannot recognize its category",
+    (preset) => {
+      const entries = [
+        {
+          ...SETTINGS.roles[4]!,
+          category: "future-category",
+          role: "excluded",
+        },
+      ] as unknown as Settings["roles"];
+      expect(insightsRolePreset(entries, preset)[0]?.role).toBe("excluded");
+    },
+  );
+
+  it("does not label an unknown settings source as saved", () => {
+    const { view } = renderSection({
+      ...SETTINGS,
+      source: "future-source",
+    } as unknown as Settings);
+    expect(view.container.textContent).toContain(
+      "Unknown settings source: future-source",
+    );
+    expect(view.container.textContent).not.toContain("Using saved roles.");
+  });
+
+  it("keeps an unknown role visible for readers without permitting writes", () => {
+    const settings = {
+      ...SETTINGS,
+      roles: [{ ...SETTINGS.roles[0]!, role: "future-role" }],
+    } as unknown as Settings;
+    const { calls } = mockServer(() => response(settings));
+    const { view } = renderSection(settings, "reader");
+    const unknown = view.getByRole("radio", {
+      name: "Unknown role: future-role",
+    }) as HTMLInputElement;
+    expect(unknown.checked).toBe(true);
+    expect(unknown.disabled).toBe(true);
+    fireEvent.submit(view.container.querySelector("form")!);
+    expect(calls.filter((call) => call.method === "PUT")).toEqual([]);
+  });
+
+  it.each([undefined, null, "", 42])(
+    "rejects a malformed required insights role %s instead of displaying unknown",
+    (role) => {
+      const settings = {
+        ...SETTINGS,
+        roles: [{ ...SETTINGS.roles[0]!, role }],
+      } as unknown as Settings;
+      expect(() => renderSection(settings)).toThrow(
+        "insights role must be a non-empty string",
+      );
+      expect(() => insightsRolePreset(settings.roles, "category")).toThrow(
+        "insights role must be a non-empty string",
+      );
+    },
+  );
+
+  it.each([undefined, null, "", 42])(
+    "rejects a malformed source or preset category %s",
+    (value) => {
+      expect(() =>
+        renderSection({ ...SETTINGS, source: value } as unknown as Settings),
+      ).toThrow("insights settings source must be a non-empty string");
+      expect(() =>
+        insightsRolePreset(
+          [{ ...SETTINGS.roles[0]!, category: value }] as Settings["roles"],
+          "category",
+        ),
+      ).toThrow("status category must be a non-empty string");
+    },
+  );
+
   it("uses exact default names and category fallback, while category excludes nothing", () => {
     const entries: Settings["roles"] = [
       { ...SETTINGS.roles[0]!, name: "Shipped" },

@@ -4,6 +4,7 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import {
+  enumValue,
   type PutSettings,
   Role,
   type Settings,
@@ -30,18 +31,21 @@ export function insightsRolePreset(
   entries: Settings["roles"],
   preset: "default" | "category",
 ): Settings["roles"] {
-  return entries.map((entry) => ({
-    ...entry,
-    role:
-      preset === "default" && entry.name === "Invalid"
-        ? "excluded"
-        : preset === "default" &&
-            (entry.name === "Shipped" || entry.name === "Done")
-          ? "completed"
-          : entry.category === "closed"
-            ? "completed"
-            : "remaining",
-  }));
+  return entries.map((entry) => {
+    const role = enumValue(entry.role, "insights role");
+    const category = enumValue(entry.category, "status category");
+    // A preset cannot interpret a future role; only a choice on this row can
+    // replace it. The request preserves the original string for untouched rows.
+    if (!Role.safeParse(role).success) return entry;
+    if (preset === "default") {
+      if (entry.name === "Invalid") return { ...entry, role: "excluded" };
+      if (entry.name === "Shipped" || entry.name === "Done")
+        return { ...entry, role: "completed" };
+    }
+    if (category === "closed") return { ...entry, role: "completed" };
+    if (category === "open") return { ...entry, role: "remaining" };
+    return entry;
+  });
 }
 
 export function InsightsSettings({ slug }: { slug: string }) {
@@ -66,6 +70,7 @@ function SettingsEditor({
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const current = draft ?? settings;
+  const source = enumValue(settings.source, "insights settings source");
   const definitionsChanged =
     draft !== null &&
     (draft.roles.length !== settings.roles.length ||
@@ -160,9 +165,11 @@ function SettingsEditor({
         roles.
       </p>
       <p className="text-xs text-muted-foreground">
-        {settings.source === "default"
+        {source === "default"
           ? "Using default roles."
-          : "Using saved roles."}
+          : source === "saved"
+            ? "Using saved roles."
+            : `Unknown settings source: ${source}`}
       </p>
       {!canWrite && (
         <p className="text-sm text-muted-foreground">
@@ -210,6 +217,9 @@ function SettingsEditor({
             </Button>
             <span className="text-xs text-muted-foreground">
               Presets are not saved until you choose Save.
+              {current.roles.some(
+                (entry) => !Role.safeParse(entry.role).success,
+              ) && " Unknown roles are kept until you choose a replacement."}
             </span>
           </div>
         )}
@@ -227,6 +237,19 @@ function SettingsEditor({
                 </span>
               </legend>
               <div className="flex flex-wrap gap-4">
+                {!Role.safeParse(enumValue(entry.role, "insights role"))
+                  .success && (
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name={`${id}-${entry.status_id}`}
+                      value={entry.role}
+                      checked
+                      disabled
+                    />
+                    Unknown role: {entry.role}
+                  </label>
+                )}
                 {Role.options.map((role) => (
                   <label key={role} className="flex items-center gap-2 text-sm">
                     <input

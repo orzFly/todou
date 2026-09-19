@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { can, type SpecInfo } from "@todou/shared";
+import { can, enumLookup, type SpecInfo } from "@todou/shared";
 import { useState } from "react";
 import { projectQuery } from "@/api/queries.ts";
 import { useWithdrawSpec } from "@/api/spec.ts";
@@ -11,6 +11,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+
+const reviewDisabledReasons = {
+  unreviewed: null,
+  approved: "This version has already been reviewed and cannot be withdrawn.",
+  changes_requested:
+    "This version has already been reviewed and cannot be withdrawn.",
+  withdrawn: null,
+} satisfies Record<SpecInfo["review_status"], string | null>;
 
 type WithdrawalDraft = {
   slug: string;
@@ -34,6 +42,12 @@ export function WithdrawSpec({
   const canWithdraw = can(project.data?.viewer_role ?? null, "spec.withdraw");
   const withdraw = useWithdrawSpec();
   const [draft, setDraft] = useState<WithdrawalDraft | null>(null);
+  const reviewDisabledReason = enumLookup(
+    reviewDisabledReasons,
+    spec.review_status,
+    (value) => `Withdrawal is unavailable for review status: ${value}.`,
+    "spec review status",
+  );
   const eligible =
     canWithdraw &&
     version === spec.current_version &&
@@ -50,11 +64,10 @@ export function WithdrawSpec({
       ? "This version is no longer current. Your reason has been kept."
       : !canWithdraw
         ? "You no longer have permission to withdraw this spec."
-        : spec.review_status !== "unreviewed" && !alreadyWithdrawn
-          ? "This version has already been reviewed and cannot be withdrawn."
-          : (draft?.reason.trim().length ?? 0) > 2000
+        : (reviewDisabledReason ??
+          ((draft?.reason.trim().length ?? 0) > 2000
             ? "The reason must be at most 2000 characters."
-            : undefined;
+            : undefined));
 
   return (
     <>

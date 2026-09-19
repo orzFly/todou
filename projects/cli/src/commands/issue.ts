@@ -803,7 +803,7 @@ export class IssueEventsCommand extends ProjectCommand {
           // comment` entry needs no such qualifier — the comment renderer
           // heads it `#comment-<id>`, which says which sequence it is.
           ...events.map((item) =>
-            item.type === "comment"
+            item.type !== "event"
               ? renderTimelineItem(item, paint, {
                   issueNumber: number,
                   ...spelling,

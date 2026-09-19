@@ -148,6 +148,30 @@ describe("mentionCompletionSource", () => {
     expect(human?.type).toBe("mention-user");
   });
 
+  it.each(["future_user_kind", "constructor", "__proto__"])(
+    "keeps unknown user kind %s neutral and mentionable",
+    async (kind) => {
+      const candidate = member(4, "newcomer", "Newcomer");
+      candidate.user.kind = kind as typeof candidate.user.kind;
+      const result = await completeAt(seededClient([candidate]), "@");
+      const option = result?.options[0];
+      expect(option?.type).toBe("mention-unknown");
+      expect(option?.detail).toBe("Newcomer");
+      expect(acceptInto(option!, "@", 0, 1)).toBe("@newcomer ");
+    },
+  );
+
+  it.each([undefined, null, "", 42])(
+    "rejects a missing or malformed user kind %j",
+    async (kind) => {
+      const candidate = member(4, "newcomer", "Newcomer");
+      candidate.user.kind = kind as typeof candidate.user.kind;
+      await expect(completeAt(seededClient([candidate]), "@")).rejects.toThrow(
+        TypeError,
+      );
+    },
+  );
+
   it("stays shut without an @, and on npm scopes and emails", async () => {
     const client = seededClient();
     expect(await completeAt(client, "plain prose")).toBeNull();

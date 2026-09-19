@@ -6,10 +6,12 @@ import {
   useSearch,
 } from "@tanstack/react-router";
 import {
+  enumLookup,
   formatRef,
   parseSearchQuery,
   type SearchDiagnostic,
   type SearchDomain,
+  type SearchField,
   type SearchItem,
 } from "@todou/shared";
 import { ArrowRightIcon, ExternalLinkIcon, SearchIcon } from "lucide-react";
@@ -52,11 +54,26 @@ const DOMAIN_LABELS: Array<{ value: SearchDomain; label: string }> = [
 
 /** What a hit is called in its row, and where reading it continues. */
 function whereLabel(item: SearchItem): string {
-  if (item.kind === "comment") {
-    return item.comment_id === null ? "comment" : `#comment-${item.comment_id}`;
-  }
-  if (item.kind === "spec") return item.spec_path ?? "spec";
-  return item.field === "title" ? "title" : "body";
+  const field = enumLookup(
+    { title: "title", body: "body", path: "path" } satisfies Record<
+      SearchField,
+      string
+    >,
+    item.field,
+    () => "unknown",
+    "SearchItem.field",
+  );
+  return enumLookup(
+    {
+      issue: field,
+      comment:
+        item.comment_id === null ? "comment" : `#comment-${item.comment_id}`,
+      spec: item.spec_path ?? "spec",
+    } satisfies Record<SearchItem["kind"], string>,
+    item.kind,
+    () => "unknown",
+    "SearchItem.kind",
+  );
 }
 
 /**

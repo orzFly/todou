@@ -165,6 +165,16 @@ describe("spec wait: the verdict that is already in", () => {
       "approved · spec v2 · 1 unresolved annotation",
     );
   });
+
+  it.each([undefined, null, "", 42])(
+    "rejects malformed required review status %j",
+    async (review_status) => {
+      const { run } = await settled(specInfo({ review_status }));
+      expect(run.exitCode).toBe(1);
+      expect(run.stderr).toContain("review_status must be a non-empty string");
+      expect(run.stdout).not.toContain("changes requested");
+    },
+  );
 });
 
 describe("spec wait: blocking", () => {
@@ -211,6 +221,30 @@ describe("spec wait: blocking", () => {
     expect(run.stdout).toContain("cursor: c41 (spec wait 23 --since <cursor>)");
     expect(outcomeOf(run.stdout)).toBe("feedback · no verdict on spec v2 yet");
   });
+
+  it.each(["future_review_status", "constructor", "__proto__"])(
+    "does not treat carried annotations on %s as a changes-requested verdict",
+    async (review_status) => {
+      const { routes, drains } = wakesOnce(
+        specInfo({
+          review_status,
+          unresolved_comments: 2,
+          unresolved_carried_comments: 2,
+        }),
+      );
+      const { fetchImpl } = fakeFetch(routes);
+      const run = await runCli(
+        ["spec", "wait", "23", "--debounce", "0", "--interval", "2"],
+        { fetchImpl, env: loggedInEnv("proj"), clock: virtualClock() },
+      );
+      expect(run.exitCode).toBe(0);
+      expect(drains()).toBeGreaterThanOrEqual(2);
+      expect(outcomeOf(run.stdout)).toBe(
+        "feedback · no verdict on spec v2 yet",
+      );
+      expect(run.stdout).not.toContain("changes requested");
+    },
+  );
 
   /**
    * A reference is the entry whose whole point is the card it came from, and

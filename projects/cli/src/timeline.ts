@@ -8,6 +8,7 @@ import type {
 import {
   BlockClearedPayload,
   BlockEdgePayload,
+  enumValue,
   formatRef,
   isHidden,
   ProjectSlug,
@@ -249,6 +250,7 @@ export function renderTimelineItem(
   paint: Painter,
   ctx: TimelineRenderContext,
 ): string {
+  const type = enumValue(item.type, "timeline item type");
   const when = relativeTime(item.created_at);
   const who = (user: { display_name?: string; login: string }): string =>
     personLabel(user, item.agent_context, paint);
@@ -286,7 +288,11 @@ export function renderTimelineItem(
     }
     return `${id}${who(item.author)} commented${edited}${away} ${when}:\n${body}${questions}`;
   }
-  const answered = item.type === "event" ? decodeAnswerEvent(item) : null;
+  if (item.type !== "event") {
+    return paint("dim", `Unknown timeline item: ${type} ${when}`);
+  }
+  enumValue(item.event_type, "event_type");
+  const answered = decodeAnswerEvent(item);
   if (answered !== null) {
     return [
       `${who(item.actor)} answered ${commentRef(answered.comment_id)} ${when}:`,
@@ -351,6 +357,7 @@ export function renderActivityLine(
   paint: Painter,
   ctx: ActivityLineContext,
 ): string {
+  const type = enumValue(item.type, "timeline item type");
   const ref = paint("bold", ctx.refLabel);
   const when = relativeTime(item.created_at);
   const who = (user: { display_name?: string; login: string }): string =>
@@ -381,6 +388,10 @@ export function renderActivityLine(
       : `${bodyBlock(item.body, ctx.summaryChars)}${asked}`;
     return `${ref} ${paint("dim", commentRef(item.id))} ${who(item.author)} commented${where}${edited} ${when}${questions}: ${said}`;
   }
+  if (item.type !== "event") {
+    return `${ref} ${paint("dim", `Unknown timeline item: ${type} ${when}`)}`;
+  }
+  enumValue(item.event_type, "event_type");
   const answered = decodeAnswerEvent(item);
   if (answered !== null) {
     const answers = answered.answers

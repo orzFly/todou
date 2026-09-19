@@ -82,6 +82,39 @@ describe("todou search", () => {
     expect(url.searchParams.get("in")).toBeNull();
   });
 
+  it.each(["future_search_kind", "constructor", "__proto__"])(
+    "prints unknown search kind %s without relabeling it as an issue",
+    async (kind) => {
+      const { fetchImpl } = fakeFetch(
+        routes({ items: [hit({ kind })], has_more: false }),
+      );
+      const result = await runCli(["search", "x"], {
+        fetchImpl,
+        env: loggedInEnv("todou"),
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain(`unknown kind: ${kind}`);
+      expect(result.stdout).not.toMatch(/T-141\s+issue\s/);
+    },
+  );
+
+  it.each([undefined, null, "", 42])(
+    "rejects missing or malformed search kind %j",
+    async (kind) => {
+      const { fetchImpl } = fakeFetch(
+        routes({ items: [hit({ kind })], has_more: false }),
+      );
+      const result = await runCli(["search", "x"], {
+        fetchImpl,
+        env: loggedInEnv("todou"),
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("search kind must be a non-empty string");
+      expect(result.stdout).toBe("");
+    },
+  );
+
   it("exits 0 on no matches", async () => {
     const { fetchImpl } = fakeFetch(routes({ items: [], has_more: false }));
     const res = await runCli(["search", "nothing"], {

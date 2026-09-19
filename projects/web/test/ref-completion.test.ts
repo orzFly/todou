@@ -391,6 +391,37 @@ describe("refCompletionSource", () => {
     ]);
   });
 
+  it.each(["future_category", "constructor", "__proto__"])(
+    "keeps a candidate with unknown category %s neutral and insertable",
+    async (category) => {
+      const candidate = item(7, "Future status");
+      candidate.status.category = category as typeof candidate.status.category;
+      const result = await completeAt(
+        seededClient({ pages: { todou: [candidate] } }),
+        "todou",
+        "#",
+      );
+      expect(result?.options[0]?.type).toBe("issue-unknown");
+      expect(result?.options[0]?.detail).toBe("Future status");
+      expect(applyFirst(result, "#")).toBe("#7 ");
+    },
+  );
+
+  it.each([undefined, null, "", 42])(
+    "rejects a missing or malformed candidate category %j",
+    async (category) => {
+      const candidate = item(7, "Invalid status");
+      candidate.status.category = category as typeof candidate.status.category;
+      await expect(
+        completeAt(
+          seededClient({ pages: { todou: [candidate] } }),
+          "todou",
+          "#",
+        ),
+      ).rejects.toThrow(TypeError);
+    },
+  );
+
   it("never offers a project the viewer cannot read", async () => {
     const client = seededClient({
       projects: ["todou"],

@@ -84,13 +84,18 @@ function yearGeometry(year: number) {
 }
 
 function dayLabel(date: string, day: ActivityDay | undefined, today: string) {
-  const value = !day
-    ? "No data"
-    : day.state === "recorded"
-      ? `${day.count} active ${day.count === 1 ? "card" : "cards"}`
-      : day.state === "future"
-        ? "Future date"
-        : "Not applicable";
+  const value = day
+    ? enumLookup(
+        {
+          recorded: `${day.count} active ${day.count === 1 ? "card" : "cards"}`,
+          future: "Future date",
+          not_applicable: "Not applicable",
+        } satisfies Record<ActivityDay["state"], string>,
+        day.state,
+        () => "Unknown activity state",
+        "ActivityDay.state",
+      )
+    : "No data";
   return `${date}: ${value}${date === today ? ", today" : ""}`;
 }
 

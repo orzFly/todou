@@ -562,7 +562,21 @@ export function renderEvent(
     case "block_removed": {
       // `role` is which end of the edge this card is, so one event type
       // serves both timelines (T-377).
-      const blocked = payload.role !== "blocker";
+      const role = enumValue(payload.role, "block role");
+      if (role !== "blocked" && role !== "blocker") {
+        const details = Object.entries(payload)
+          .filter(
+            ([, value]) =>
+              typeof value === "string" ||
+              typeof value === "number" ||
+              typeof value === "boolean",
+          )
+          .map(([key, value]) => `${key}=${String(value)}`)
+          .join(", ");
+        const text = `logged event: ${event.event_type} (${details})`;
+        return { node: text, text };
+      }
+      const blocked = role === "blocked";
       const added = event.event_type === "block_added";
       const verb = added
         ? blocked

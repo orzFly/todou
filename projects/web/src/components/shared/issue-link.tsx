@@ -1,7 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { formatRef, type LinkTarget, parseInternalHref } from "@todou/shared";
-import { CircleDotIcon, CircleSlashIcon } from "lucide-react";
+import {
+  enumLookup,
+  formatRef,
+  type LinkTarget,
+  parseInternalHref,
+} from "@todou/shared";
+import { CircleDotIcon, CircleIcon, CircleSlashIcon } from "lucide-react";
 import { type ComponentProps, Fragment, type ReactNode } from "react";
 import {
   commentLocationQuery,
@@ -287,18 +292,31 @@ export function IssueLink({
     >
       {item && (
         <>
-          {item.status.category === "closed" ? (
-            <CircleSlashIcon
-              aria-hidden
-              className={iconClass}
-              style={{ color: item.status.color }}
-            />
-          ) : (
-            <CircleDotIcon
-              aria-hidden
-              className={iconClass}
-              style={{ color: item.status.color }}
-            />
+          {enumLookup(
+            {
+              open: (
+                <CircleDotIcon
+                  aria-hidden
+                  className={iconClass}
+                  style={{ color: item.status.color }}
+                />
+              ),
+              closed: (
+                <CircleSlashIcon
+                  aria-hidden
+                  className={iconClass}
+                  style={{ color: item.status.color }}
+                />
+              ),
+            },
+            item.status.category,
+            () => (
+              <CircleIcon
+                aria-hidden
+                className={cn(iconClass, "text-muted-foreground")}
+              />
+            ),
+            "issue status category",
           )}
           {isComment && (
             <CommentReference

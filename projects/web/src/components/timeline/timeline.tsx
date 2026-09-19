@@ -1,6 +1,6 @@
 import { useRouterState } from "@tanstack/react-router";
 import type { TimelineComment, TimelineItem } from "@todou/shared";
-import { answersByComment } from "@todou/shared";
+import { answersByComment, enumValue } from "@todou/shared";
 import { ArrowDownIcon } from "lucide-react";
 import {
   useCallback,
@@ -305,29 +305,36 @@ export function Timeline({
     head.fetchNextPage({ cancelRefetch: false });
   }, [head.fetchNextPage]);
 
-  const renderItem = (item: TimelineItem) => (
-    <div key={`${item.type}-${item.id}`} className="pb-2">
-      {item.type === "comment" ? (
-        <CommentItem
-          slug={slug}
-          issueNumber={issueNumber}
-          comment={item}
-          viewer={viewer}
-        />
-      ) : (
-        <>
-          <EventRow event={item} slug={slug} issueNumber={issueNumber} />
-          {item.event_type === "spec_pushed" && (
-            <SpecVersionCard
-              slug={slug}
-              issueNumber={issueNumber}
-              payload={item.payload}
-            />
-          )}
-        </>
-      )}
-    </div>
-  );
+  const renderItem = (item: TimelineItem) => {
+    const type = enumValue(item.type, "timeline item type");
+    return (
+      <div key={`${type}-${item.id}`} className="pb-2">
+        {item.type === "comment" ? (
+          <CommentItem
+            slug={slug}
+            issueNumber={issueNumber}
+            comment={item}
+            viewer={viewer}
+          />
+        ) : item.type === "event" ? (
+          <>
+            <EventRow event={item} slug={slug} issueNumber={issueNumber} />
+            {item.event_type === "spec_pushed" && (
+              <SpecVersionCard
+                slug={slug}
+                issueNumber={issueNumber}
+                payload={item.payload}
+              />
+            )}
+          </>
+        ) : (
+          <div className="py-1.5 pl-1 text-sm text-muted-foreground">
+            {`Unknown timeline item: ${type}`}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // Merged runs (T-92) render as one collapsed row. A `#event-N` permalink
   // whose target sits inside a group must force it open — the sub-row is

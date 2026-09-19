@@ -1,6 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { Agent, Me, Member, MemberRole, UserRef } from "@todou/shared";
+import { Component, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentsQuery, api, membersQuery, meQuery } from "../src/api/queries.ts";
 import { MembersSection } from "../src/pages/project-settings.tsx";
@@ -106,6 +107,22 @@ const removeButton = (container: HTMLElement, name: string) =>
     `button[aria-label='remove ${name}']`,
   ) as HTMLButtonElement | null;
 
+class MemberErrorBoundary extends Component<
+  { children: ReactNode; onError: (error: Error) => void },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error: Error) {
+    this.props.onError(error);
+  }
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
 describe("MembersSection as an indented tree (T-340)", () => {
   it("files each machine under its owner and sorts by display name", async () => {
     const container = await renderSection(
@@ -125,6 +142,55 @@ describe("MembersSection as an indented tree (T-340)", () => {
       "bob-bot",
     ]);
   });
+
+  it.each(["future_user_kind", "constructor", "__proto__"])(
+    "keeps a member of unknown kind %s as a visible independent row",
+    async (kind) => {
+      const future = {
+        ...human(21, "newcomer"),
+        kind,
+        owner: { id: ALICE.id, login: ALICE.login },
+      } as UserRef;
+      const container = await renderSection(
+        [
+          member(ALICE, "admin"),
+          member(ALICE_BOT, "reader", "admin"),
+          member(future, "reader"),
+        ],
+        meFrom(ALICE),
+      );
+      expect(rowLogins(container)).toEqual(["alice", "alice-bot", "newcomer"]);
+      expect(rowOf(container, "newcomer")?.textContent).toContain("reader");
+      expect(rowOf(container, "newcomer")?.textContent).not.toContain("agent");
+    },
+  );
+
+  it.each([undefined, null, "", 42])(
+    "rejects malformed required member kind %j instead of losing the row",
+    async (kind) => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const client = new QueryClient();
+      const invalid = { ...human(21, "newcomer"), kind } as UserRef;
+      client.setQueryData(membersQuery("todou").queryKey, [
+        member(ALICE, "admin"),
+        member(invalid, "reader"),
+      ]);
+      client.setQueryData(agentsQuery.queryKey, []);
+      client.setQueryData(meQuery.queryKey, meFrom(ALICE));
+      const onError = vi.fn();
+      renderWithProviders(
+        <MemberErrorBoundary onError={onError}>
+          <MembersSection slug="todou" />
+        </MemberErrorBoundary>,
+        client,
+      );
+      await waitFor(() => expect(onError).toHaveBeenCalled());
+      expect(onError.mock.calls[0]?.[0]).toBeInstanceOf(TypeError);
+      expect(onError.mock.calls[0]?.[0].message).toBe(
+        "user kind must be a non-empty string",
+      );
+    },
+  );
 
   it("keeps a machine whose owner is an instance admin in the main list", async () => {
     const container = await renderSection(

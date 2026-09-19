@@ -1,4 +1,10 @@
-import type { MuteReason } from "@todou/shared";
+import { enumLookup, type MuteReason } from "@todou/shared";
+
+const muteSuffixes = {
+  project: " — the whole project is muted",
+  forever: " — this card is muted",
+  until_activity: " — this card is muted",
+} satisfies Record<MuteReason, string>;
 
 /**
  * Three-state unread marker (T-77): a count badge when foreign comments are
@@ -23,9 +29,12 @@ export function UnreadMarker({
   const suffix =
     muted === null
       ? ""
-      : muted === "project"
-        ? " — the whole project is muted"
-        : " — this card is muted";
+      : enumLookup(
+          muteSuffixes,
+          muted,
+          (value) => ` — mute reason: ${value}`,
+          "mute reason",
+        );
   if (unreadComments > 0) {
     // Cap is display-only; the tooltip keeps the exact count. One shade
     // darker than the ring so the white digits stay readable (T-77).

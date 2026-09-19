@@ -1,5 +1,5 @@
 import type { SearchDiagnostic, SearchItem, TodouClient } from "@todou/shared";
-import { formatRef, parseSearchQuery } from "@todou/shared";
+import { enumValue, formatRef, parseSearchQuery } from "@todou/shared";
 import { Command, Option } from "clipanion";
 import { ProjectCommand } from "../api-command.ts";
 import { makePainter, type Painter, plural, table } from "../format.ts";
@@ -70,10 +70,11 @@ function diagnosticLine(diagnostic: SearchDiagnostic): string {
 
 /** The addressable handle for a hit: what you would read next to see it. */
 function locator(item: SearchItem): string {
+  const kind = enumValue(item.kind, "search kind");
   // The id is nullable per the wire schema — which cannot say "present
   // exactly when kind is comment" — so the bare kind is the fallback rather
   // than a handle spelled around a null.
-  if (item.kind === "comment") {
+  if (kind === "comment") {
     if (item.comment_id === null) return "comment";
     // Search reaches across hidden comments while a timeline read does not,
     // so the row has to say where the reader will and will not find it
@@ -81,8 +82,9 @@ function locator(item: SearchItem): string {
     const away = item.hidden ? " (hidden)" : "";
     return `${commentRef(item.comment_id)}${away}`;
   }
-  if (item.kind === "spec") return `spec ${item.spec_path}`;
-  return "issue";
+  if (kind === "spec") return `spec ${item.spec_path}`;
+  if (kind === "issue") return "issue";
+  return `unknown kind: ${kind}`;
 }
 
 export class SearchCommand extends ProjectCommand {

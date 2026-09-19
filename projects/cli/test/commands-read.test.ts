@@ -1627,6 +1627,45 @@ describe("issue events", () => {
     expect(calls.filter((c) => c.url.includes("/read"))).toHaveLength(0);
   });
 
+  it.each(["future_item", "constructor", "__proto__"])(
+    "keeps future container %s neutral through the events command",
+    async (type) => {
+      const { fetchImpl } = fakeFetch([
+        [
+          "GET",
+          "/api/projects/todou/issues/3/timeline",
+          {
+            ...page,
+            items: [
+              referenced,
+              { type, id: 71, created_at: "2026-08-11T10:45:00Z" },
+              {
+                ...event(72, "title_changed", { from: "Old", to: "New" }),
+                type,
+              },
+            ],
+          },
+        ],
+      ]);
+      const result = await runCli(["issue", "events", "3"], {
+        fetchImpl,
+        env: loggedInEnv("todou"),
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("event 3 · Claude referenced (by #9)");
+      const unknownLines = result.stdout
+        .split("\n")
+        .filter((line) => line.includes("Unknown timeline item:"));
+      expect(unknownLines).toHaveLength(2);
+      for (const line of unknownLines) {
+        expect(line).toMatch(new RegExp(`^Unknown timeline item: ${type} `));
+      }
+      expect(result.stdout).not.toMatch(
+        /event (71|72) ·|title_changed|renamed/,
+      );
+    },
+  );
+
   it("--type filters server-side", async () => {
     const { fetchImpl, calls } = fakeFetch([
       [

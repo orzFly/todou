@@ -96,18 +96,46 @@ function scope(parents: t.Node[]): t.Node {
   return found;
 }
 
-function containsRecord(node: t.Node | null | undefined): boolean {
+function recordType(node: t.Node | null | undefined): boolean {
   if (!node) return false;
-  if (
-    node.type === "TSTypeReference" &&
-    node.typeName.type === "Identifier" &&
-    node.typeName.name === "Record"
-  )
-    return true;
-  return Object.values(node).some((value) =>
-    (Array.isArray(value) ? value : [value]).some(
-      (child) => isNode(child) && containsRecord(child),
-    ),
+  if (node.type === "TSTypeAnnotation" || node.type === "TSParenthesizedType")
+    return recordType(node.typeAnnotation);
+  if (node.type === "TSUnionType" || node.type === "TSIntersectionType")
+    return node.types.some(recordType);
+  if (node.type !== "TSTypeReference" || node.typeName.type !== "Identifier")
+    return false;
+  if (node.typeName.name === "Record") return true;
+  // These wrappers preserve a dictionary result. An array, callback, object
+  // property or arbitrary generic containing Record does not.
+  return (
+    ["Readonly", "Partial", "Required"].includes(node.typeName.name) &&
+    recordType(node.typeParameters?.params[0])
+  );
+}
+
+function initializerDeclaration(
+  entry: Entry,
+): t.VariableDeclarator | undefined {
+  return entry.parents.find(
+    (node): node is t.VariableDeclarator =>
+      node.type === "VariableDeclarator" &&
+      !!node.init &&
+      unwrap(node.init) === entry.node,
+  );
+}
+
+function recordResult(entry: Entry): boolean {
+  const declaration = initializerDeclaration(entry);
+  return (
+    (declaration?.id.type === "Identifier" &&
+      recordType(declaration.id.typeAnnotation)) ||
+    entry.parents.some(
+      (node) =>
+        (node.type === "TSAsExpression" ||
+          node.type === "TSSatisfiesExpression") &&
+        unwrap(node) === entry.node &&
+        recordType(node.typeAnnotation),
+    )
   );
 }
 
@@ -151,6 +179,12 @@ export function scanSources(sources: Source[]): Site[] {
             name: node.id.name,
             scope: scope(parents),
           });
+        if (node.type === "FunctionDeclaration" && node.id)
+          bindings.push({
+            ...entry,
+            name: node.id.name,
+            scope: scope(parents),
+          });
         if (node.type === "ImportSpecifier")
           bindings.push({
             ...entry,
@@ -160,11 +194,17 @@ export function scanSources(sources: Source[]): Site[] {
         // Parameters shadow module-level maps; never attribute their reads to that map.
         if (/Function|Method/.test(node.type) && "params" in node) {
           for (const parameter of node.params) {
-            if (parameter.type === "Identifier")
+            const identifier =
+              parameter.type === "AssignmentPattern"
+                ? parameter.left
+                : parameter.type === "RestElement"
+                  ? parameter.argument
+                  : parameter;
+            if (identifier.type === "Identifier")
               bindings.push({
                 ...entry,
-                node: parameter,
-                name: parameter.name,
+                node: identifier,
+                name: identifier.name,
                 scope: node,
               });
           }
@@ -229,6 +269,11 @@ export function scanSources(sources: Source[]): Site[] {
         if (result) return result;
       }
       if (statement.type !== "ExportNamedDeclaration") continue;
+      if (
+        statement.declaration?.type === "FunctionDeclaration" &&
+        statement.declaration.id?.name === name
+      )
+        return byDeclaration.get(statement.declaration);
       if (statement.declaration?.type === "VariableDeclaration") {
         const declaration = statement.declaration.declarations.find(
           (declaration) =>
@@ -267,6 +312,70 @@ export function scanSources(sources: Source[]): Site[] {
     exportedResults.set(key, result);
     return result;
   }
+  function importedBinding(
+    binding: Binding,
+    seen = new Set<t.Node>(),
+  ): Binding | undefined {
+    if (binding.node.type !== "ImportSpecifier") return binding;
+    if (seen.has(binding.node)) return undefined;
+    seen.add(binding.node);
+    const declaration = binding.parents.find(
+      (parent) => parent.type === "ImportDeclaration",
+    );
+    if (declaration?.type !== "ImportDeclaration") return undefined;
+    const file = resolveModule(binding.source.file, declaration.source.value);
+    const imported = binding.node.imported;
+    const target = file
+      ? exported(
+          file,
+          imported.type === "Identifier" ? imported.name : imported.value,
+        )
+      : undefined;
+    return target ? importedBinding(target, seen) : undefined;
+  }
+
+  function recordFactory(
+    node: t.Node,
+    entry: Entry,
+    seen = new Set<t.Node>(),
+  ): boolean {
+    node = unwrap(node);
+    if (seen.has(node)) return false;
+    seen.add(node);
+    if (
+      node.type === "FunctionDeclaration" ||
+      node.type === "FunctionExpression" ||
+      node.type === "ArrowFunctionExpression"
+    )
+      return recordType(node.returnType);
+    if (node.type !== "Identifier") return false;
+    let binding = findBinding(node.name, entry);
+    if (binding?.node.type === "ImportSpecifier")
+      binding = importedBinding(binding);
+    if (!binding) return false;
+    if (binding.node.type === "VariableDeclarator" && binding.node.init)
+      return recordFactory(binding.node.init, binding, seen);
+    if (binding.node.type === "FunctionDeclaration")
+      return recordType(binding.node.returnType);
+    return false;
+  }
+
+  function factoryMapping(entry: Entry): boolean {
+    const node = entry.node;
+    if (node.type !== "CallExpression") return false;
+    const callee = unwrap(node.callee);
+    return (
+      recordResult(entry) ||
+      (callee.type === "MemberExpression" &&
+        !callee.computed &&
+        callee.object.type === "Identifier" &&
+        callee.object.name === "Object" &&
+        !findBinding("Object", entry) &&
+        callee.property.type === "Identifier" &&
+        callee.property.name === "fromEntries") ||
+      recordFactory(callee, entry)
+    );
+  }
 
   function resolve(
     node: t.Node,
@@ -277,24 +386,15 @@ export function scanSources(sources: Source[]): Site[] {
     if (seen.has(node)) return undefined;
     seen.add(node);
     if (fixedObject(node)) return byNode.get(node);
+    const call = byNode.get(node);
+    if (call && factoryMapping(call)) return call;
     if (node.type !== "Identifier") return undefined;
     const binding = findBinding(node.name, entry);
     if (!binding) return undefined;
     if (binding.node.type === "VariableDeclarator" && binding.node.init)
       return resolve(binding.node.init, binding, seen);
     if (binding.node.type === "ImportSpecifier") {
-      const declaration = binding.parents.find(
-        (parent) => parent.type === "ImportDeclaration",
-      );
-      if (declaration?.type !== "ImportDeclaration") return undefined;
-      const file = resolveModule(binding.source.file, declaration.source.value);
-      const imported = binding.node.imported;
-      const target = file
-        ? exported(
-            file,
-            imported.type === "Identifier" ? imported.name : imported.value,
-          )
-        : undefined;
+      const target = importedBinding(binding);
       if (target?.node.type === "VariableDeclarator" && target.node.init)
         return resolve(target.node.init, target, seen);
     }
@@ -305,52 +405,21 @@ export function scanSources(sources: Source[]): Site[] {
   function mapping(object: Entry): Mapping {
     const existing = mappings.get(object.node);
     if (existing) return existing;
-    const declaration = object.parents.find(
-      (parent) =>
-        parent.type === "VariableDeclarator" &&
-        parent.init &&
-        unwrap(parent.init) === object.node,
-    );
+    const declaration = initializerDeclaration(object);
     const name =
       declaration?.type === "VariableDeclarator" &&
       declaration.id.type === "Identifier"
         ? declaration.id.name
         : `<inline:${text(object).slice(0, 100)}>`;
-    const record =
-      (declaration?.type === "VariableDeclarator" &&
-        declaration.id.type === "Identifier" &&
-        containsRecord(declaration.id.typeAnnotation)) ||
-      object.parents
-        .slice(0, 2)
-        .some(
-          (parent) =>
-            (parent.type === "TSAsExpression" ||
-              parent.type === "TSSatisfiesExpression") &&
-            containsRecord(parent.typeAnnotation),
-        );
+    const record = recordResult(object);
     const result = { ...object, name, record };
     mappings.set(object.node, result);
     return result;
   }
   for (const entry of entries) {
-    if (!fixedObject(entry.node)) continue;
-    const parent = entry.parents.find(
-      (node) =>
-        node.type === "VariableDeclarator" &&
-        node.init &&
-        unwrap(node.init) === entry.node,
-    );
     if (
-      (parent?.type === "VariableDeclarator" &&
-        parent.id.type === "Identifier" &&
-        containsRecord(parent.id.typeAnnotation)) ||
-      entry.parents.some(
-        (node) =>
-          (node.type === "TSAsExpression" ||
-            node.type === "TSSatisfiesExpression") &&
-          unwrap(node) === entry.node &&
-          containsRecord(node.typeAnnotation),
-      )
+      (fixedObject(entry.node) && recordResult(entry)) ||
+      (initializerDeclaration(entry) && factoryMapping(entry))
     )
       mapping(entry);
   }
@@ -557,7 +626,7 @@ export function scanSources(sources: Source[]): Site[] {
       used.has(owner.node),
       used.has(owner.node)
         ? "consumers inventoried individually (or explicit enumLookup consumer)"
-        : "fixed-key Record without a resolved lookup; declare its non-dispatch purpose",
+        : "Record or factory mapping without a resolved lookup; declare its non-dispatch purpose",
     );
   }
   return sites.sort((a, b) => a.id.localeCompare(b.id));

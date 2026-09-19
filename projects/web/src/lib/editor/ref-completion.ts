@@ -11,7 +11,7 @@ import { syntaxTree } from "@codemirror/language";
 import { type Extension, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
-import type { IssueListItem } from "@todou/shared";
+import { enumLookup, type IssueListItem } from "@todou/shared";
 import { useMemo } from "react";
 import {
   issueCompletionQuery,
@@ -92,7 +92,12 @@ function toOption(anchor: string, item: IssueListItem): Completion {
   return {
     label: spelling,
     detail: item.title,
-    type: item.status.category === "closed" ? "issue-closed" : "issue-open",
+    type: enumLookup(
+      { closed: "issue-closed", open: "issue-open" },
+      item.status.category,
+      () => "issue-unknown",
+      "status category",
+    ),
     // The chosen spelling survives, followed by a pending separator space.
     apply: applyWithSpace(spelling),
   };
@@ -291,6 +296,14 @@ export const completionTheme = EditorView.theme({
   },
   ".cm-completionIcon-issue-closed::after": {
     content: "'●'",
+    color: "var(--muted-foreground)",
+  },
+  ".cm-completionIcon-issue-unknown::after": {
+    content: "'?'",
+    color: "var(--muted-foreground)",
+  },
+  ".cm-completionIcon-mention-unknown::after": {
+    content: "'?'",
     color: "var(--muted-foreground)",
   },
   ".cm-completionIcon-command::after": {

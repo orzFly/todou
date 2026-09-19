@@ -1,4 +1,4 @@
-import type { Bucket, RoleEntry } from "@todou/shared";
+import { type Bucket, enumValue, type RoleEntry } from "@todou/shared";
 import {
   ChartFrame,
   ChartYAxis,
@@ -46,7 +46,9 @@ export function statusFlowBucketRead(
   statuses: readonly RoleEntry[],
 ): string {
   return statuses
-    .filter((status) => status.category !== "closed")
+    .filter(
+      (status) => enumValue(status.category, "status category") === "open",
+    )
     .map((status) => {
       const value =
         !bucket.stock ||
@@ -65,7 +67,9 @@ export function StatusFlowChart(props: InsightsBucketProps) {
   const { buckets, statuses } = props.data;
   // Actual status category defines this chart independently of configured burn roles.
   const open = statuses
-    .filter((status) => status.category !== "closed")
+    .filter(
+      (status) => enumValue(status.category, "status category") === "open",
+    )
     .sort((a, b) => a.position - b.position || a.status_id - b.status_id);
   const counts = buckets.map((bucket) => {
     if (

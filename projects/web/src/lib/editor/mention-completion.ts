@@ -6,6 +6,7 @@ import type {
 } from "@codemirror/autocomplete";
 import { syntaxTree } from "@codemirror/language";
 import type { QueryClient } from "@tanstack/react-query";
+import { enumLookup } from "@todou/shared";
 import { membersQuery } from "@/api/queries.ts";
 import { inCodeContext } from "@/lib/editor/code-context.ts";
 import { applyWithSpace } from "@/lib/editor/completion-space.ts";
@@ -44,12 +45,9 @@ export function mentionTriggerAt(
 }
 
 /** How the candidates order themselves against what was typed. */
-export function rankMembers(
-  members: {
-    user: { login: string; display_name: string; kind?: string };
-  }[],
-  query: string,
-) {
+export function rankMembers<
+  T extends { user: { login: string; display_name: string; kind?: string } },
+>(members: T[], query: string) {
   const lower = query.toLowerCase();
   return [...members]
     .filter(
@@ -95,7 +93,12 @@ export function mentionCompletionSource(
           label: `@${m.user.login}`,
           detail: m.user.display_name,
           // The panel's icon separates people from agents at a glance.
-          type: m.user.kind === "machine" ? "mention-agent" : "mention-user",
+          type: enumLookup(
+            { machine: "mention-agent", human: "mention-user" },
+            m.user.kind,
+            () => "mention-unknown",
+            "user kind",
+          ),
           apply: applyWithSpace(`@${m.user.login}`),
         }),
       );

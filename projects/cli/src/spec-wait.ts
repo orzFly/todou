@@ -4,7 +4,7 @@ import type {
   TimelineItem,
   TodouClient,
 } from "@todou/shared";
-import { formatRef } from "@todou/shared";
+import { enumValue, formatRef } from "@todou/shared";
 import { NO_CARDS, resolveActivityCards } from "./activity-cards.ts";
 import { cursorRecord } from "./api-command.ts";
 import { openChangeNudges } from "./change-nudges.ts";
@@ -58,6 +58,7 @@ export type SpecOutcome = {
  * would replace. `null` means nobody has judged this version yet.
  */
 export function judgeSpec(info: SpecInfo): SpecOutcome | null {
+  enumValue(info.review_status, "review_status");
   const state = {
     review_status: info.review_status,
     unresolved_comments: info.unresolved_comments,
@@ -84,7 +85,7 @@ export function judgeSpec(info: SpecInfo): SpecOutcome | null {
   // addressed. Annotations anchored to the current version are the other
   // case entirely — only a `comment` review can have left them there
   // (T-277), and that round judged nothing, so it belongs in `feedback`.
-  if (state.carried_comments > 0) {
+  if (info.review_status === "unreviewed" && state.carried_comments > 0) {
     return { outcome: "changes_requested", ...state };
   }
   return null;

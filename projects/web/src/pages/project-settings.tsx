@@ -7,6 +7,7 @@ import {
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
   type AccessDenial,
+  enumValue,
   formatRef,
   MEMBER_ROLES,
   type Member,
@@ -655,9 +656,13 @@ export function MembersSection({ slug }: { slug: string }) {
  * which `roleControl` renders read-only.
  */
 function groupByOwner(rows: Member[]): { groups: Group[]; orphans: Group[] } {
-  const humans = new Map<number, Member>();
+  // Only known machines join an owner's group. Future kinds retain a normal
+  // membership row without being classified as a person or an agent.
+  const standalone = new Map<number, Member>();
   for (const row of rows) {
-    if (row.user.kind === "human") humans.set(row.user.id, row);
+    if (enumValue(row.user.kind, "user kind") !== "machine") {
+      standalone.set(row.user.id, row);
+    }
   }
   const byOwner = new Map<number, Group>();
   const orphanOwners = new Set<number>();
@@ -668,8 +673,8 @@ function groupByOwner(rows: Member[]): { groups: Group[]; orphans: Group[] } {
     if (!group) {
       group = {
         key: owner.id,
-        owner: humans.get(owner.id) ?? null,
-        ownerRef: humans.get(owner.id)?.user ?? owner,
+        owner: standalone.get(owner.id) ?? null,
+        ownerRef: standalone.get(owner.id)?.user ?? owner,
         machines: [],
       };
       byOwner.set(owner.id, group);
@@ -677,7 +682,7 @@ function groupByOwner(rows: Member[]): { groups: Group[]; orphans: Group[] } {
     group.machines.push(row);
     if (row.owner_role === null) orphanOwners.add(owner.id);
   }
-  for (const [id, row] of humans) {
+  for (const [id, row] of standalone) {
     if (!byOwner.has(id)) {
       byOwner.set(id, {
         key: id,

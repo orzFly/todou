@@ -1,0 +1,802 @@
+{
+  "revision": "5db8c5c",
+  "sites": [
+    {
+      "id": "projects/cli/src/commands/attach.ts :: mapping MIME_BY_EXTENSION #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/cli/src/commands/attach.ts :: read MIME_BY_EXTENSION[extname(path).toLowerCase()] #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/cli/src/commands/config.ts :: switch report.context.project_source #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/cli/src/commands/config.ts :: switch report.context.server_source #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/cli/src/commands/config.ts :: switch token_source #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/cli/src/commands/spec.ts :: mapping verdicts #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/cli/src/commands/spec.ts :: mapping verdicts #2",
+      "guarded": true
+    },
+    {
+      "id": "projects/cli/src/commands/whoami.ts :: switch this.ctx.tokenSource #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/cli/src/follow-advice.ts :: mapping BACKGROUNDED #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/cli/src/follow-advice.ts :: read BACKGROUNDED[harness] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/cli/src/follow-advice.ts :: read HARNESS_LABELS[harness] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/cli/src/follow-advice.ts :: read HARNESS_LABELS[harness] #2",
+      "guarded": false
+    },
+    {
+      "id": "projects/cli/src/harness/index.ts :: mapping HARNESS_LABELS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/cli/src/harness/messaging.ts :: switch detectHarnessId(env, io) #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/cli/src/harness/process-tree.ts :: switch io?.platform ?? process.platform #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/cli/src/harness/process-tree.ts :: switch io?.platform ?? process.platform #2",
+      "guarded": true
+    },
+    {
+      "id": "projects/cli/src/hide.ts :: mapping CROSSED_EFFECT #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/cli/src/hide.ts :: read CROSSED_EFFECT[entry.reason] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/cli/src/hide.ts :: read SKIP_REASON_LABEL[entry.reason] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/cli/src/hide.ts :: read SKIP_REASON_LABEL[entry.reason] #2",
+      "guarded": false
+    },
+    {
+      "id": "projects/cli/src/timeline.ts :: mapping <inline:{ approve: \"approved\", request_changes: \"changes requested\", comment: \"commented\", }> #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/cli/src/timeline.ts :: read { approve: \"approved\", request_changes: \"changes requested\", comment: \"commented\", }[verdict] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/cli/src/timeline.ts :: switch event.event_type #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/cli/src/watch-follow.ts :: mapping REJECTION_HINT #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/cli/src/watch-follow.ts :: read REJECTION_HINT[why.status] #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/auth/oidc.ts :: mapping CLIENT_AUTH_IMPLS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/auth/oidc.ts :: read CLIENT_AUTH_IMPLS[method] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/db/driver.ts :: mapping MIGRATIONS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/db/driver.ts :: read MIGRATIONS[tier] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/db/driver.ts :: read MIGRATIONS[tier] #2",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/db/pglite-worker.ts :: switch msg.op #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/http/content-type.ts :: mapping KEPT_TYPES #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/http/content-type.ts :: mapping TEXT_LIKE_APPLICATION #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/http/content-type.ts :: mapping VIEWABLE_TYPES #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/http/content-type.ts :: read KEPT_TYPES[base] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/http/content-type.ts :: read TEXT_LIKE_APPLICATION[base] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/http/content-type.ts :: read VIEWABLE_TYPES[base] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/activity-calendar/evidence.ts :: mapping rules #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/services/activity-calendar/evidence.ts :: read rules[kind] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/agents.ts :: read ROLE_RANK[role] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/attachment-names.ts :: mapping COMPOUND_EXTENSIONS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/services/attachment-names.ts :: mapping COMPRESSION_SUFFIXES #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/services/attachment-names.ts :: read COMPOUND_EXTENSIONS[`${before}.${last}`.toLowerCase()] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/attachment-names.ts :: read COMPRESSION_SUFFIXES[last] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/attachment-relabel.ts :: switch subject.kind #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/cli-auth.ts :: switch target.kind #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/commands.ts :: switch command.type #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/commands.ts :: switch command.type #2",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/insights/aggregate.ts :: mapping ENTRY_UNKNOWN_KEYS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/services/insights/aggregate.ts :: read ENTRY_UNKNOWN_KEYS[point.kind] #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/services/insights/buckets.ts :: mapping FIXED_MS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/services/insights/buckets.ts :: read FIXED_MS[grain] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/insights/buckets.ts :: read FIXED_MS[resolved] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/insights/buckets.ts :: read FIXED_MS[resolved] #2",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/issues.ts :: mapping <inline:{ created: issues.createdAt, updated: issues.updatedAt, number: issues.number, }> #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/services/issues.ts :: mapping counts #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/services/issues.ts :: read { created: issues.createdAt, updated: issues.updatedAt, number: issues.number, }[query.sort] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/issues.ts :: read counts[row.category] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/members.ts :: read ROLE_RANK[before] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/members.ts :: read ROLE_RANK[ceiling] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/members.ts :: read ROLE_RANK[ceiling] #2",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/members.ts :: read ROLE_RANK[effect.role] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/members.ts :: read ROLE_RANK[effect.role] #2",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/members.ts :: read ROLE_RANK[effect.role] #3",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/members.ts :: read ROLE_RANK[machine.role] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/members.ts :: read ROLE_RANK[role] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/move/copy.ts :: switch type #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/services/refs-migrate.ts :: switch segment.subject.kind #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/search.ts :: mapping WEIGHT #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/services/search.ts :: read WEIGHT[\"issue-title\"] #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/services/search.ts :: switch filter.key #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/timeline.ts :: switch item.event_type #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/server/src/services/users.ts :: read ROLE_RANK[a.role] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/services/users.ts :: read ROLE_RANK[b.role] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/server/src/storage/s3.ts :: mapping headers #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/shared/src/client.ts :: mapping headers #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/shared/src/hide-policy.ts :: mapping SKIP_REASON_LABEL #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/shared/src/permissions.ts :: mapping ROLE_RANK #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/shared/src/permissions.ts :: read ROLE_RANK[min] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/shared/src/search-query.ts :: mapping SEARCH_DOMAIN_IS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/shared/src/search-query.ts :: mapping SEARCH_IS_DOMAIN #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/shared/src/search-query.ts :: mapping SEARCH_QUALIFIER_KEYS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/shared/src/search-query.ts :: mapping SEARCH_QUALIFIERS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/shared/src/search-query.ts :: read SEARCH_IS_DOMAIN[canonical] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/shared/src/search-query.ts :: read SEARCH_QUALIFIER_KEYS[typed] #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/shared/src/search-query.ts :: read SEARCH_QUALIFIERS[key] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/shared/src/search-query.ts :: read SEARCH_QUALIFIERS[key] #2",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/api/issues.ts :: mapping next #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/api/issues.ts :: read next[from.category] #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/api/issues.ts :: read next[to.category] #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/api/mutes.ts :: mapping issueMuteLabels #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/api/search.ts :: read SEARCH_DOMAIN_IS[d] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/api/useUserEvents.ts :: switch event.entity #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/api/useUserEvents.ts :: switch event.entity #2",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/api/useUserEvents.ts :: switch event.entity #3",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/api/useUserEvents.ts :: switch event.kind #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/api/useUserEvents.ts :: switch verdict.verdict #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/api/useUserEvents.ts :: switch verdict.verdict #2",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/activity-calendar/activity-calendar.tsx :: mapping ARROW_STEPS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/insights/chart-frame.tsx :: switch event.key #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/insights/insights-settings.tsx :: mapping ROLE_LABELS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/insights/insights-settings.tsx :: read ROLE_LABELS[role] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/issue/metadata-dialog.tsx :: mapping PARSERS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/issue/metadata-dialog.tsx :: read PARSERS[t] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/issue/metadata-dialog.tsx :: read PARSERS[tab] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/issue/spec-entry.tsx :: mapping STATUS_LABEL #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/issue/spec-entry.tsx :: mapping STATUS_STYLE #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/page-skeleton.tsx :: switch kind #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/search-box.tsx :: mapping COMPLETION_ICON #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/search-box.tsx :: read COMPLETION_ICON[row.row.icon] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/search/highlight.tsx :: mapping VALUE_CLASS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/search/highlight.tsx :: read SEARCH_QUALIFIERS[key] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/search/highlight.tsx :: read VALUE_CLASS[verdictOf(part.key, value.value, known)] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/search/suggestions.ts :: mapping KEY_HINT #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/search/suggestions.ts :: read KEY_HINT[key] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/search/suggestions.ts :: read SEARCH_QUALIFIERS[key] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/shared/agent-projects-dialog.tsx :: read ROLE_RANK[option] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/shared/pierre.tsx :: mapping FENCE_TAG_EXTENSION #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/shared/pierre.tsx :: read FENCE_TAG_EXTENSION[tag.toLowerCase()] #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/shared/return-link.tsx :: switch view.target.kind #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/shared/role-permissions-table.tsx :: read ROLE_RANK[highest] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/shared/role-permissions-table.tsx :: read ROLE_RANK[min] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/spec/use-review-completion.ts :: mapping REVIEW_VERDICT_LABELS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/timeline/event-group.tsx :: switch family #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/timeline/event-row.tsx :: mapping ICONS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/timeline/event-row.tsx :: mapping labels #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/timeline/event-row.tsx :: switch event.event_type #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/timeline/group-events.ts :: mapping FAMILY_BY_TYPE #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/timeline/group-events.ts :: mapping listed #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/timeline/group-events.ts :: mapping net #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/timeline/group-events.ts :: mapping touched #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/timeline/group-events.ts :: read listed[side] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/timeline/group-events.ts :: read listed[side] #2",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/timeline/group-events.ts :: read net[end.last] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/timeline/group-events.ts :: read touched[side] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/timeline/spec-version-card.tsx :: mapping CHANGE_BADGE #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/components/timeline/spec-version-card.tsx :: read CHANGE_BADGE[row.change] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/components/title-controller.tsx :: switch routeId #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/lib/avatar-resize.ts :: mapping EXTENSIONS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/lib/avatar-resize.ts :: read EXTENSIONS[blob.type] #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/lib/editor/code-context.ts :: mapping LITERAL_NODES #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/lib/editor/code-context.ts :: mapping RAW_HTML_NODES #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/lib/harness.ts :: mapping HARNESS_META #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/lib/harness.ts :: read HARNESS_META[agent as HarnessId] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/lib/insights-search.ts :: mapping <inline:{ \"7d\": 7, \"30d\": 30, \"90d\": 90 }> #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/lib/insights-search.ts :: read { \"7d\": 7, \"30d\": 30, \"90d\": 90 }[preset] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/lib/rehype-decorations.ts :: mapping <inline:{ paragraph: \"p\", table: \"table\", tableRow: \"tr\", blockquote: \"blockquote\", image: \"img\", }> #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/lib/rehype-decorations.ts :: mapping CLASS_OF #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/lib/rehype-decorations.ts :: mapping TAG_OF #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/lib/rehype-decorations.ts :: read ( { paragraph: \"p\", table: \"table\", tableRow: \"tr\", blockquote: \"blockquote\", image: \"img\", } as Record<string, string> )[ref.type] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/lib/rehype-decorations.ts :: read CLASS_OF[kind] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/lib/rehype-decorations.ts :: read TAG_OF[kind] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/lib/rehype-decorations.ts :: switch parent.tagName #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/lib/rehype-decorations.ts :: switch ref.type #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/lib/remark-frontmatter-table.ts :: mapping SEPARATOR #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/lib/remark-frontmatter-table.ts :: read SEPARATOR[child.type] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/lib/remark-issue-refs.ts :: switch segment.type #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/lib/return-view.ts :: switch target.kind #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/lib/roles.ts :: mapping ROLE_DOT #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/lib/slash-commands.ts :: mapping CROSSED_SUMMARY #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/lib/slash-commands.ts :: read CROSSED_SUMMARY[reason] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/lib/slash-commands.ts :: read SKIP_REASON_LABEL[entry.reason] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/lib/slash-commands.ts :: switch command.type #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/lib/spec-baseline-tree.ts :: switch node.tagName #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/lib/spec-source-index.ts :: mapping FRONTMATTER_BLOCKS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/lib/spec-source-index.ts :: read FRONTMATTER_BLOCKS[node.type] #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/pages/cli-auth.tsx :: switch target.kind #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/pages/inbox.tsx :: mapping TAB_LABELS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/pages/inbox.tsx :: read TAB_LABELS[key] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/pages/inbox.tsx :: switch tab #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/pages/insights.tsx :: mapping <inline:{ \"1h\": 1, \"6h\": 6, \"12h\": 12 }> #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/pages/insights.tsx :: mapping GRAIN_LABELS #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/pages/insights.tsx :: read { \"1h\": 1, \"6h\": 6, \"12h\": 12 }[grain] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/pages/insights.tsx :: read GRAIN_LABELS[grain] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/pages/login.tsx :: switch code #1",
+      "guarded": true
+    },
+    {
+      "id": "projects/web/src/pages/project-settings.tsx :: read ROLE_RANK[role] #1",
+      "guarded": false
+    },
+    {
+      "id": "projects/web/src/pages/project-settings.tsx :: read ROLE_RANK[role] #2",
+      "guarded": false
+    }
+  ],
+  "declared": [
+    "projects/cli/src/follow-advice.ts :: read BACKGROUNDED[harness] #1",
+    "projects/cli/src/follow-advice.ts :: read HARNESS_LABELS[harness] #1",
+    "projects/cli/src/follow-advice.ts :: read HARNESS_LABELS[harness] #2",
+    "projects/cli/src/hide.ts :: read CROSSED_EFFECT[entry.reason] #1",
+    "projects/cli/src/hide.ts :: read SKIP_REASON_LABEL[entry.reason] #1",
+    "projects/cli/src/hide.ts :: read SKIP_REASON_LABEL[entry.reason] #2",
+    "projects/cli/src/timeline.ts :: read { approve: \"approved\", request_changes: \"changes requested\", comment: \"commented\", }[verdict] #1",
+    "projects/server/src/auth/oidc.ts :: read CLIENT_AUTH_IMPLS[method] #1",
+    "projects/server/src/db/driver.ts :: read MIGRATIONS[tier] #1",
+    "projects/server/src/db/driver.ts :: read MIGRATIONS[tier] #2",
+    "projects/server/src/db/pglite-worker.ts :: switch msg.op #1",
+    "projects/server/src/http/content-type.ts :: read KEPT_TYPES[base] #1",
+    "projects/server/src/http/content-type.ts :: read TEXT_LIKE_APPLICATION[base] #1",
+    "projects/server/src/http/content-type.ts :: read VIEWABLE_TYPES[base] #1",
+    "projects/server/src/services/activity-calendar/evidence.ts :: read rules[kind] #1",
+    "projects/server/src/services/agents.ts :: read ROLE_RANK[role] #1",
+    "projects/server/src/services/attachment-names.ts :: read COMPOUND_EXTENSIONS[`${before}.${last}`.toLowerCase()] #1",
+    "projects/server/src/services/attachment-names.ts :: read COMPRESSION_SUFFIXES[last] #1",
+    "projects/server/src/services/attachment-relabel.ts :: switch subject.kind #1",
+    "projects/server/src/services/cli-auth.ts :: switch target.kind #1",
+    "projects/server/src/services/commands.ts :: switch command.type #1",
+    "projects/server/src/services/commands.ts :: switch command.type #2",
+    "projects/server/src/services/insights/buckets.ts :: read FIXED_MS[grain] #1",
+    "projects/server/src/services/insights/buckets.ts :: read FIXED_MS[resolved] #1",
+    "projects/server/src/services/insights/buckets.ts :: read FIXED_MS[resolved] #2",
+    "projects/server/src/services/issues.ts :: read { created: issues.createdAt, updated: issues.updatedAt, number: issues.number, }[query.sort] #1",
+    "projects/server/src/services/issues.ts :: read counts[row.category] #1",
+    "projects/server/src/services/members.ts :: read ROLE_RANK[before] #1",
+    "projects/server/src/services/members.ts :: read ROLE_RANK[ceiling] #1",
+    "projects/server/src/services/members.ts :: read ROLE_RANK[ceiling] #2",
+    "projects/server/src/services/members.ts :: read ROLE_RANK[effect.role] #1",
+    "projects/server/src/services/members.ts :: read ROLE_RANK[effect.role] #2",
+    "projects/server/src/services/members.ts :: read ROLE_RANK[effect.role] #3",
+    "projects/server/src/services/members.ts :: read ROLE_RANK[machine.role] #1",
+    "projects/server/src/services/members.ts :: read ROLE_RANK[role] #1",
+    "projects/server/src/services/refs-migrate.ts :: switch segment.subject.kind #1",
+    "projects/server/src/services/search.ts :: switch filter.key #1",
+    "projects/server/src/services/users.ts :: read ROLE_RANK[a.role] #1",
+    "projects/server/src/services/users.ts :: read ROLE_RANK[b.role] #1",
+    "projects/shared/src/client.ts :: mapping headers #1",
+    "projects/shared/src/permissions.ts :: read ROLE_RANK[min] #1",
+    "projects/shared/src/search-query.ts :: read SEARCH_IS_DOMAIN[canonical] #1",
+    "projects/shared/src/search-query.ts :: read SEARCH_QUALIFIERS[key] #1",
+    "projects/shared/src/search-query.ts :: read SEARCH_QUALIFIERS[key] #2",
+    "projects/web/src/api/search.ts :: read SEARCH_DOMAIN_IS[d] #1",
+    "projects/web/src/api/useUserEvents.ts :: switch event.entity #1",
+    "projects/web/src/api/useUserEvents.ts :: switch event.entity #2",
+    "projects/web/src/api/useUserEvents.ts :: switch event.kind #1",
+    "projects/web/src/api/useUserEvents.ts :: switch verdict.verdict #1",
+    "projects/web/src/api/useUserEvents.ts :: switch verdict.verdict #2",
+    "projects/web/src/components/insights/insights-settings.tsx :: read ROLE_LABELS[role] #1",
+    "projects/web/src/components/issue/metadata-dialog.tsx :: read PARSERS[t] #1",
+    "projects/web/src/components/issue/metadata-dialog.tsx :: read PARSERS[tab] #1",
+    "projects/web/src/components/page-skeleton.tsx :: switch kind #1",
+    "projects/web/src/components/search-box.tsx :: read COMPLETION_ICON[row.row.icon] #1",
+    "projects/web/src/components/search/highlight.tsx :: read SEARCH_QUALIFIERS[key] #1",
+    "projects/web/src/components/search/highlight.tsx :: read VALUE_CLASS[verdictOf(part.key, value.value, known)] #1",
+    "projects/web/src/components/search/suggestions.ts :: read KEY_HINT[key] #1",
+    "projects/web/src/components/search/suggestions.ts :: read SEARCH_QUALIFIERS[key] #1",
+    "projects/web/src/components/shared/agent-projects-dialog.tsx :: read ROLE_RANK[option] #1",
+    "projects/web/src/components/shared/return-link.tsx :: switch view.target.kind #1",
+    "projects/web/src/components/shared/role-permissions-table.tsx :: read ROLE_RANK[highest] #1",
+    "projects/web/src/components/shared/role-permissions-table.tsx :: read ROLE_RANK[min] #1",
+    "projects/web/src/components/timeline/event-group.tsx :: switch family #1",
+    "projects/web/src/components/timeline/group-events.ts :: read listed[side] #1",
+    "projects/web/src/components/timeline/group-events.ts :: read listed[side] #2",
+    "projects/web/src/components/timeline/group-events.ts :: read net[end.last] #1",
+    "projects/web/src/components/timeline/group-events.ts :: read touched[side] #1",
+    "projects/web/src/components/timeline/spec-version-card.tsx :: read CHANGE_BADGE[row.change] #1",
+    "projects/web/src/lib/editor/code-context.ts :: mapping LITERAL_NODES #1",
+    "projects/web/src/lib/editor/code-context.ts :: mapping RAW_HTML_NODES #1",
+    "projects/web/src/lib/harness.ts :: read HARNESS_META[agent as HarnessId] #1",
+    "projects/web/src/lib/insights-search.ts :: read { \"7d\": 7, \"30d\": 30, \"90d\": 90 }[preset] #1",
+    "projects/web/src/lib/rehype-decorations.ts :: read ( { paragraph: \"p\", table: \"table\", tableRow: \"tr\", blockquote: \"blockquote\", image: \"img\", } as Record<string, string> )[ref.type] #1",
+    "projects/web/src/lib/rehype-decorations.ts :: read CLASS_OF[kind] #1",
+    "projects/web/src/lib/rehype-decorations.ts :: read TAG_OF[kind] #1",
+    "projects/web/src/lib/remark-frontmatter-table.ts :: read SEPARATOR[child.type] #1",
+    "projects/web/src/lib/return-view.ts :: switch target.kind #1",
+    "projects/web/src/lib/slash-commands.ts :: read CROSSED_SUMMARY[reason] #1",
+    "projects/web/src/lib/slash-commands.ts :: read SKIP_REASON_LABEL[entry.reason] #1",
+    "projects/web/src/pages/cli-auth.tsx :: switch target.kind #1",
+    "projects/web/src/pages/inbox.tsx :: read TAB_LABELS[key] #1",
+    "projects/web/src/pages/inbox.tsx :: switch tab #1",
+    "projects/web/src/pages/insights.tsx :: read { \"1h\": 1, \"6h\": 6, \"12h\": 12 }[grain] #1",
+    "projects/web/src/pages/insights.tsx :: read GRAIN_LABELS[grain] #1",
+    "projects/web/src/pages/project-settings.tsx :: read ROLE_RANK[role] #1",
+    "projects/web/src/pages/project-settings.tsx :: read ROLE_RANK[role] #2"
+  ]
+}
