@@ -310,6 +310,7 @@ export function useReturnView(collection: ReturnCollection): {
       if (view === undefined) return;
       if (!sameTarget(view.target, latest.current.target)) return;
       generation.current += 1;
+      placing.current = false;
       const locate = entry.pending?.locate ?? true;
       asked.current.clear();
       pendingNow.current = { view, locate };
@@ -459,6 +460,7 @@ export function useReturnView(collection: ReturnCollection): {
     if (!owedTo.locate) {
       // Nothing left to position, and the pages are in: the entry now
       // describes the page as it stands rather than as it was asked to be.
+      placing.current = false;
       pendingNow.current = null;
       setPending(null);
       return;
@@ -474,6 +476,16 @@ export function useReturnView(collection: ReturnCollection): {
     const view = owedTo.view;
     let attempts = 0;
     const place = () => {
+      // A gesture can retire positioning after this frame was queued. Read
+      // the synchronous authority again before touching the viewport, even
+      // when React has not committed the takeover yet. A cancelled/replaced
+      // restore must not let its old frame finish a different restore either.
+      if (pendingNow.current !== owedTo) return;
+      if (!owedTo.locate) {
+        placing.current = false;
+        step.current();
+        return;
+      }
       attempts += 1;
       const unplaced: { area: ScrollArea; remembered: ScrollRegion }[] = [];
       for (const area of registry?.areas.values() ?? []) {

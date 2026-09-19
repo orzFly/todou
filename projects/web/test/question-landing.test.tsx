@@ -188,17 +188,21 @@ function pagedItems(items: IssueQuestionsItem[], count = 200) {
   ]);
 }
 
-function timelinePage(items: TimelineItem[], url: URL): TimelinePage {
+function timelinePage(
+  items: TimelineItem[],
+  url: URL,
+  pageSize = 50,
+): TimelinePage {
   const after = url.searchParams.get("after");
   const start = url.searchParams.has("last")
-    ? Math.max(0, items.length - 50)
+    ? Math.max(0, items.length - pageSize)
     : after === null
       ? 0
       : Number(/^cursor-(\d+)$/.exec(after)?.[1]);
   if (!Number.isInteger(start) || start < 0 || start > items.length) {
     throw new Error(`Unexpected timeline cursor: ${url.search}`);
   }
-  const slice = items.slice(start, start + 50);
+  const slice = items.slice(start, start + pageSize);
   return {
     items: slice,
     prev_cursor: start === 0 ? null : `before-${start}`,
@@ -216,6 +220,7 @@ type Reply = Response | Promise<Response>;
 type Card = {
   questions: IssueQuestions;
   items: TimelineItem[];
+  pageSize?: number;
   questionReply?: () => Reply;
   timelineReply?: (url: URL) => Reply;
   issueReply?: () => Reply;
@@ -225,6 +230,26 @@ function card(
   timeline = questionItems(items),
 ): Card {
   return { questions: questions(items), items: timeline };
+}
+
+/** Recovery follows cursors/counts, not response length. Keep the real
+ * limit=50 request but serve two-row windows at the HTTP boundary; production
+ * normally fills that limit. Seven rows are the minimum for a target outside
+ * the head/tail that needs two after pages: [1,2], [3,4], [target,200],
+ * tail [200,201]. The overlap also exercises seam deduplication. */
+function recoveryCard(
+  items: IssueQuestionsItem[],
+  timeline = ordered([
+    comment(1),
+    comment(2),
+    comment(3),
+    comment(4),
+    ...questionItems(items),
+    comment(200),
+    comment(201),
+  ]),
+): Card {
+  return { ...card(items, timeline), pageSize: 2 };
 }
 
 function issue(number: number, model: Card): Issue {
@@ -352,7 +377,7 @@ function serve(
                 expect(call.url.searchParams.get("limit")).toBe("50");
                 return (
                   model.timelineReply?.(call.url) ??
-                  json(timelinePage(model.items, call.url))
+                  json(timelinePage(model.items, call.url, model.pageSize))
                 );
               }
               if (resource === "metadata") return json({ entries: [] });
@@ -521,6 +546,11 @@ async function navigate(view: View, hash: string, number = 7, slug = "p") {
 
 type Scrolling = {
   events: string[];
+  commits: Array<{
+    element: Element;
+    current: HTMLElement | null;
+    connected: boolean;
+  }>;
   reveals: (id: string) => number;
   bottoms: () => number;
   userAt: (y: number) => void;
@@ -532,6 +562,7 @@ type Scrolling = {
  * event; releasing landing ownership must reconcile follow-bottom itself. */
 function scrolling(): Scrolling {
   const state = { y: 0, height: 10_000, events: [] as string[] };
+  const commits: Scrolling["commits"] = [];
   vi.spyOn(window, "innerHeight", "get").mockReturnValue(800);
   vi.spyOn(window, "scrollY", "get").mockImplementation(() => state.y);
   vi.spyOn(document.documentElement, "scrollHeight", "get").mockImplementation(
@@ -559,10 +590,16 @@ function scrolling(): Scrolling {
     this: Element,
   ) {
     state.events.push(`reveal:${this.id}`);
+    commits.push({
+      element: this,
+      current: document.getElementById(this.id),
+      connected: this.isConnected,
+    });
     state.y = 1_500;
   });
   return {
     events: state.events,
+    commits,
     reveals: (id: string) =>
       state.events.filter((event) => event === `reveal:${id}`).length,
     bottoms: () => state.events.filter((event) => event === "bottom").length,
@@ -585,12 +622,15 @@ async function landed(view: View, scroll: Scrolling, id: number, count = 1) {
       expect(target, `#comment-${id} never rendered`).not.toBeNull();
       expect(target?.classList.contains("anchor-flash")).toBe(true);
       expect(scroll.reveals(`comment-${id}`)).toBe(count);
+      const commits = scroll.commits.filter(
+        ({ element }) => element.id === `comment-${id}`,
+      );
+      expect(commits).toHaveLength(count);
+      expect(commits.at(-1)?.element).toBe(target);
+      expect(commits.at(-1)?.current).toBe(target);
+      expect(commits.at(-1)?.connected).toBe(true);
     },
-    // C5 lands only after two sequential paginated fetches, which put it
-    // within a few hundred ms of the old 3s budget even on an idle machine
-    // and lost the race outright once the machine was busy. The budget is
-    // not what this helper is testing; the flash landing on the right row is.
-    { timeout: 15_000 },
+    { timeout: 3_000 },
   );
   expect(view.queryByText(LOCATE_FAILURE)).toBeNull();
   expect(view.queryByText(UNAVAILABLE)).toBeNull();
@@ -633,32 +673,46 @@ describe("question landing through the real issue route", () => {
   });
 
   it("C5 selects the earliest unanswered by question time and id across two after pages", async () => {
+    // The lower id is later; the equal-time contender has the higher id.
+    // Choosing by id alone, newest time, or the other tie must not land.
     const items = [
       answered(question(10), 11),
       question(125),
       question(126, timestamp(125)),
-      question(180),
+      question(5, timestamp(180)),
     ];
-    const model = card(items, pagedItems(items));
+    const model = recoveryCard(
+      items,
+      ordered([...questionItems(items), comment(20), comment(30)]),
+    );
     const server = serve({ "p/7": model });
     const scroll = scrolling();
     const view = renderAt();
 
     await landed(view, scroll, 125);
+    await waitFor(() => expect(view.client.isFetching()).toBe(0));
+    const target = view.container.querySelector("#comment-125");
+    view.rerender(view.ui);
+    await act(async () => {});
+    await landed(view, scroll, 125);
+    expect(view.container.querySelector("#comment-125")).toBe(target);
+    // The final head page overlaps the tail at the equal-time contender.
+    expect(view.container.querySelectorAll("#comment-126")).toHaveLength(1);
 
     expect(view.getByText("Decision 125?")).toBeTruthy();
+    expect(server.questions()).toHaveLength(1);
     expect(
       server
         .timeline()
         .map(({ url }) => url.searchParams.get("after"))
         .filter(Boolean),
-    ).toEqual(["cursor-50", "cursor-100"]);
+    ).toEqual(["cursor-2", "cursor-4"]);
     expect(
       server.timeline().filter(({ url }) => url.searchParams.has("last")),
     ).toHaveLength(1);
     expect(scroll.reveals("comment-10")).toBe(0);
     expect(scroll.reveals("comment-126")).toBe(0);
-    expect(scroll.reveals("comment-180")).toBe(0);
+    expect(scroll.reveals("comment-5")).toBe(0);
     // Head prepend compensation is allowed before the final anchor reveal.
     expect(scroll.events.at(-1)).toBe("reveal:comment-125");
   });
@@ -1056,22 +1110,20 @@ describe("question landing through the real issue route", () => {
     expect(server.questions("q/8").length).toBeGreaterThan(0);
   });
 
-  // Each recovery renders 150–200 real comments across multiple requests,
-  // then resolves a second intent. Keep per-step deadlines; allow their sum.
+  // Two-row responses retain the multi-page recovery and real comment DOM
+  // without repeatedly rendering 150–200 comments per intent.
   it("C10 reports a deleted target only after head readiness and bounded exhaustion, then Retry reselects", async () => {
     const gone = question(125);
     const next = question(175);
-    const model = card(
-      [gone, next],
-      pagedItems([gone, next]).filter(
-        (item) => item.type !== "comment" || item.id !== 125,
-      ),
+    const model = recoveryCard([gone, next]);
+    model.items = model.items.filter(
+      (item) => item.type !== "comment" || item.id !== gone.comment_id,
     );
     const pendingHead = deferred<Response>();
     model.timelineReply = (url) =>
       !url.searchParams.has("last") && !url.searchParams.has("after")
         ? pendingHead.promise
-        : json(timelinePage(model.items, url));
+        : json(timelinePage(model.items, url, model.pageSize));
     const server = serve({ "p/7": model });
     const scroll = scrolling();
     const view = renderAt();
@@ -1084,7 +1136,13 @@ describe("question landing through the real issue route", () => {
 
     await release(
       pendingHead,
-      json(timelinePage(model.items, new URL("http://todou.example/"))),
+      json(
+        timelinePage(
+          model.items,
+          new URL("http://todou.example/"),
+          model.pageSize,
+        ),
+      ),
     );
     await view.findByText(UNAVAILABLE, {}, { timeout: 3_000 });
     expect(
@@ -1092,23 +1150,27 @@ describe("question landing through the real issue route", () => {
         .timeline()
         .map(({ url }) => url.searchParams.get("after"))
         .filter(Boolean),
-    ).toEqual(["cursor-50", "cursor-100"]);
+    ).toEqual(["cursor-2", "cursor-4"]);
     expect(view.queryByText(/Couldn't refresh the timeline/)).toBeNull();
+    expect(scroll.reveals("comment-125")).toBe(0);
+    expect(view.container.querySelectorAll("#comment-200")).toHaveLength(1);
     const before = server.questions().length;
     model.questions = questions([next]);
     fireEvent.click(retryFor(view, UNAVAILABLE));
     await landed(view, scroll, 175);
     expect(server.questions()).toHaveLength(before + 1);
-  }, 15_000);
+    expect(scroll.reveals("comment-125")).toBe(0);
+    expect(server.timeline()).toHaveLength(4);
+  });
 
   it("C10 pagination failure stays a timeline error and its Retry resumes the selected question", async () => {
     const item = question(125);
-    const model = card([item], pagedItems([item]));
+    const model = recoveryCard([item]);
     let failPage = true;
     model.timelineReply = (url) =>
-      failPage && url.searchParams.get("after") === "cursor-50"
+      failPage && url.searchParams.get("after") === "cursor-2"
         ? failure("middle page unavailable")
-        : json(timelinePage(model.items, url));
+        : json(timelinePage(model.items, url, model.pageSize));
     const server = serve({ "p/7": model });
     const scroll = scrolling();
     const view = renderAt();
@@ -1121,6 +1183,7 @@ describe("question landing through the real issue route", () => {
     expect(view.queryByText(UNAVAILABLE)).toBeNull();
     expect(view.queryByText(LOCATE_FAILURE)).toBeNull();
     expect(view.router.state.location.hash).toBe("comment-125");
+    expect(scroll.reveals("comment-125")).toBe(0);
     const questionReads = server.questions().length;
     failPage = false;
     fireEvent.click(retryFor(view, /Couldn't refresh the timeline/));
@@ -1132,12 +1195,13 @@ describe("question landing through the real issue route", () => {
         .timeline()
         .map(({ url }) => url.searchParams.get("after"))
         .filter(Boolean),
-    ).toEqual(["cursor-50", "cursor-50", "cursor-100"]);
-  }, 15_000);
+    ).toEqual(["cursor-2", "cursor-2", "cursor-4"]);
+    expect(view.container.querySelectorAll("#comment-200")).toHaveLength(1);
+  });
 
   it("C10 no-progress pagination is bounded and reports a retryable locating failure", async () => {
     const item = question(125);
-    const model = card([item], pagedItems([item]));
+    const model = recoveryCard([item]);
     // A successful but anomalous page repeats the loaded head. It cannot
     // establish deletion, and repeating this cursor forever is not recovery.
     model.timelineReply = (url) =>
@@ -1147,6 +1211,7 @@ describe("question landing through the real issue route", () => {
           url.searchParams.has("after")
             ? new URL("http://todou.example/")
             : url,
+          model.pageSize,
         ),
       );
     const server = serve({ "p/7": model });
@@ -1155,12 +1220,14 @@ describe("question landing through the real issue route", () => {
 
     await view.findByText(LOCATE_FAILURE, {}, { timeout: 3_000 });
     expect(view.queryByText(UNAVAILABLE)).toBeNull();
+    expect(view.router.state.location.hash).toBe("comment-125");
+    expect(scroll.reveals("comment-125")).toBe(0);
     expect(
       server
         .timeline()
         .map(({ url }) => url.searchParams.get("after"))
         .filter(Boolean),
-    ).toEqual(["cursor-50"]);
+    ).toEqual(["cursor-2"]);
     const reads = server.questions().length;
     model.timelineReply = undefined;
     fireEvent.click(retryFor(view, LOCATE_FAILURE));
@@ -1171,8 +1238,9 @@ describe("question landing through the real issue route", () => {
         .timeline()
         .map(({ url }) => url.searchParams.get("after"))
         .filter(Boolean),
-    ).toEqual(["cursor-50", "cursor-50", "cursor-100"]);
-  }, 15_000);
+    ).toEqual(["cursor-2", "cursor-2", "cursor-4"]);
+    expect(view.container.querySelectorAll("#comment-200")).toHaveLength(1);
+  });
 
   it("C11 a warm tail racing the question handoff cannot overwrite reveal and later bottom following resumes", async () => {
     const item = question(10);
@@ -1236,13 +1304,21 @@ describe("question landing through the real issue route", () => {
   });
 
   it("C11 selected comment keeps scroll ownership while paging and a tail refetch completes", async () => {
-    const item = question(125);
-    const model = card([item], pagedItems([item]));
+    const items = [
+      answered(question(10), 11),
+      question(125),
+      question(126, timestamp(125)),
+      question(5, timestamp(180)),
+    ];
+    const model = recoveryCard(
+      items,
+      ordered([...questionItems(items), comment(20), comment(30)]),
+    );
     const pendingMiddle = deferred<Response>();
     model.timelineReply = (url) =>
-      url.searchParams.get("after") === "cursor-50"
+      url.searchParams.get("after") === "cursor-2"
         ? pendingMiddle.promise
-        : json(timelinePage(model.items, url));
+        : json(timelinePage(model.items, url, model.pageSize));
     const server = serve({ "p/7": model });
     const scroll = scrolling();
     const view = renderAt();
@@ -1250,27 +1326,59 @@ describe("question landing through the real issue route", () => {
       expect(
         server
           .timeline()
-          .some(({ url }) => url.searchParams.get("after") === "cursor-50"),
+          .some(({ url }) => url.searchParams.get("after") === "cursor-2"),
       ).toBe(true),
     );
     expect(view.router.state.location.hash).toBe("comment-125");
-    model.items = [...model.items, comment(201)];
+    expect(view.container.querySelector("#comment-125")).toBeNull();
+    expect(scroll.reveals("comment-125")).toBe(0);
+    model.items = [...model.items, comment(202)];
     await refetchTail(view);
-    await view.findByText("comment body 201");
+    await view.findByText("comment body 202");
     expect(scroll.bottoms()).toBe(0);
     expect(view.queryByText(UNAVAILABLE)).toBeNull();
+    expect(view.router.state.location.hash).toBe("comment-125");
+    expect(view.container.querySelector("#comment-125")).toBeNull();
+    expect(scroll.reveals("comment-125")).toBe(0);
+    expect(
+      server
+        .timeline()
+        .map(({ url }) => url.searchParams.get("after"))
+        .filter(Boolean),
+    ).toEqual(["cursor-2"]);
     await release(
       pendingMiddle,
       json(
         timelinePage(
           model.items,
-          new URL("http://todou.example/?after=cursor-50"),
+          new URL("http://todou.example/?after=cursor-2"),
+          model.pageSize,
         ),
       ),
     );
     await landed(view, scroll, 125);
     expect(scroll.events.at(-1)).toBe("reveal:comment-125");
     expect(scroll.bottoms()).toBe(0);
+    expect(
+      server
+        .timeline()
+        .map(({ url }) => url.searchParams.get("after"))
+        .filter(Boolean),
+    ).toEqual(["cursor-2", "cursor-4"]);
+    const target = view.container.querySelector("#comment-125");
+    view.rerender(view.ui);
+    model.items = [...model.items, comment(203)];
+    await refetchTail(view);
+    await view.findByText("comment body 203");
+    expect(view.container.querySelector("#comment-125")).toBe(target);
+    expect(view.router.state.location.hash).toBe("comment-125");
+    expect(scroll.reveals("comment-125")).toBe(1);
+    expect(scroll.reveals("comment-10")).toBe(0);
+    expect(scroll.reveals("comment-126")).toBe(0);
+    expect(scroll.reveals("comment-5")).toBe(0);
+    expect(server.questions()).toHaveLength(1);
+    expect(scroll.bottoms()).toBe(0);
+    expect(scroll.position()).toBe(1_500);
   });
 
   it("C12 replaces the semantic history entry so Back returns to source and Forward keeps the concrete comment", async () => {

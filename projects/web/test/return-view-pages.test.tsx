@@ -760,23 +760,158 @@ describe("the three ways a reader takes a restore over", () => {
   it("scrolling keeps the pages coming and stops the positioning", async () => {
     const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
     const server = flatServer();
-    mountFlat(3, {
+    const listeners = vi.spyOn(window, "addEventListener");
+    server.hold("c1");
+    server.hold("c2");
+    const view = mountFlat(3, {
       pending: snapshot({
         pages: [{ lane: "flat", extraPages: 3 }],
         scroll: [region({ region: "window", y: 900 })],
       }),
     });
-    // A wheel before the first replayed page has landed: the reader read far
-    // enough to load those pages once, so the pages still come — but nothing
-    // may move the viewport out from under them afterwards.
+    await waitFor(() => {
+      expect(listeners.mock.calls.some(([type]) => type === "wheel")).toBe(
+        true,
+      );
+      expect(cursorsOf(server)).toEqual(["c1"]);
+    });
+    // T-456: the reader takes over while the response is held, independently
+    // of how long rendering this page takes.
     act(() => {
       window.dispatchEvent(new Event("wheel"));
     });
-    await settle(250);
+    expect(entryOf(view.router).pending?.locate).toBe(false);
+    await act(async () => server.release("c1"));
+    await waitFor(() => {
+      expect(cursorsOf(server)).toEqual(["c1", "c2"]);
+      expect(rowIds(view.container)).toEqual(["101", "102", "103", "104"]);
+    });
+    expect(entryOf(view.router).pending?.locate).toBe(false);
+    expect(server.pagesInFlight).toBe(1);
+    expect(restoreScrolls(scrollTo)).toEqual([]);
+    await act(async () => server.release("c2"));
+    await waitFor(() => {
+      expect(rowIds(view.container)).toEqual([
+        "101",
+        "102",
+        "103",
+        "104",
+        "105",
+        "106",
+        "107",
+        "108",
+      ]);
+      expect(entryOf(view.router).pending).toBeUndefined();
+    });
 
     expect(cursorsOf(server)).toEqual(["c1", "c2", "c3"]);
+    expect(server.peakPagesInFlight).toBe(1);
+    expect(server.pagesInFlight).toBe(0);
     expect(restoreScrolls(scrollTo)).toEqual([]);
   });
+
+  it.each(["none", "gesture", "committed gesture", "replacement"])(
+    "a queued placement respects %s before its frame runs",
+    async (timing) => {
+      const scrollTo = vi
+        .spyOn(window, "scrollTo")
+        .mockImplementation(() => {});
+      const frames = new Map<number, FrameRequestCallback>();
+      let frameId = 0;
+      vi.spyOn(window, "requestAnimationFrame").mockImplementation(
+        (callback) => {
+          frames.set(++frameId, callback);
+          return frameId;
+        },
+      );
+      vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
+        frames.delete(id);
+      });
+      vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(
+        5_000,
+      );
+      vi.spyOn(window, "innerHeight", "get").mockReturnValue(800);
+      const runFrame = () => {
+        const queued = [...frames.values()];
+        frames.clear();
+        for (const callback of queued) callback(performance.now());
+      };
+      const listeners = vi.spyOn(window, "addEventListener");
+      const server = flatServer();
+      server.hold("c1");
+      const view = mountFlat(1, {
+        pending: snapshot({
+          pages: [{ lane: "flat", extraPages: 1 }],
+          scroll: [region({ region: "window", y: 900 })],
+        }),
+      });
+      const restoreAnotherEntry = async () => {
+        await act(async () => {
+          writeReturnEntry(view.router, {
+            pending: {
+              view: snapshot({
+                snapshotId: "next-restore",
+                pages: [{ lane: "flat", extraPages: 1 }],
+                scroll: [region({ region: "window", y: 1_200 })],
+              }),
+              locate: true,
+            },
+          });
+          // POP the same route, so this is a new restore in the same hook,
+          // without a filter click or an unmount cancelling the old frame.
+          view.router.history.push(view.router.history.location.href);
+          view.router.history.back();
+          view.router.history.flush();
+        });
+      };
+      await waitFor(() => {
+        expect(listeners.mock.calls.some(([type]) => type === "wheel")).toBe(
+          true,
+        );
+        expect(cursorsOf(server)).toEqual(["c1"]);
+      });
+      await act(async () => server.release("c1"));
+      await waitFor(() => {
+        expect(rowIds(view.container)).toEqual(["101", "102", "103", "104"]);
+        expect(frames.size).toBeGreaterThan(0);
+      });
+      expect(entryOf(view.router).pending?.locate).toBe(true);
+      expect(restoreScrolls(scrollTo)).toEqual([]);
+      if (timing === "committed gesture") {
+        act(() => window.dispatchEvent(new Event("wheel")));
+        await waitFor(() =>
+          expect(entryOf(view.router).pending).toBeUndefined(),
+        );
+      }
+      if (timing === "replacement") await restoreAnotherEntry();
+      // The gesture can also arrive in the same turn as the frame, before
+      // React commits. Both timings must revoke its positioning authority.
+      act(() => {
+        if (timing === "gesture") window.dispatchEvent(new Event("wheel"));
+        runFrame();
+      });
+      await waitFor(() => expect(entryOf(view.router).pending).toBeUndefined());
+      expect(cursorsOf(server)).toEqual(["c1"]);
+      expect(rowIds(view.container)).toEqual(["101", "102", "103", "104"]);
+      expect(server.peakPagesInFlight).toBe(1);
+      expect(restoreScrolls(scrollTo)).toEqual(
+        timing === "none"
+          ? [{ top: 900 }]
+          : timing === "replacement"
+            ? [{ top: 1_200 }]
+            : [],
+      );
+      if (timing === "committed gesture") {
+        await restoreAnotherEntry();
+        await waitFor(() => expect(frames.size).toBeGreaterThan(0));
+        act(runFrame);
+        await waitFor(() =>
+          expect(entryOf(view.router).pending).toBeUndefined(),
+        );
+        expect(restoreScrolls(scrollTo)).toEqual([{ top: 1_200 }]);
+      }
+    },
+  );
 
   it("a filter change stops the replay outright", async () => {
     const server = flatServer({
