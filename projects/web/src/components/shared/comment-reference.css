@@ -3,7 +3,13 @@
   display: inline;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
-  line-height: 1.2;
+  /* The body's own leading, spelled out because a tighter one here lands the
+     title 2.59px below the prose: `overflow: hidden` degrades the title's
+     baseline to its bottom edge, `vertical-align: bottom` puts that edge on
+     the line box's bottom, and only a box as tall as the line box has its
+     text baseline there. An inline chip cannot grow the line it shares with
+     the strut, so matching the strut costs nothing. */
+  line-height: inherit;
   white-space: normal;
   overflow-wrap: anywhere;
 }
@@ -40,7 +46,15 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  /* Inline overflow boxes otherwise use their bottom border as a baseline. */
+  /* Inline overflow boxes otherwise use their bottom border as a baseline.
+     `bottom` equals baseline alignment only while the box's leading matches
+     the strut of the line box it lands in, which is why the title above needs
+     the paragraph's own — it lands in the paragraph, and the chip used to give
+     it a leading of its own. This one lands in .comment-reference-segment and
+     can only inherit what that box inherits, so the two move together whatever
+     the value is. Handing it a leading of its own is what breaks it: 1.2 here
+     sinks it 2.59px, and 1.6 grows the segment's line to 23.26px and lifts the
+     identity 2.59px the other way (both measured, T-460). */
   vertical-align: bottom;
 }
 

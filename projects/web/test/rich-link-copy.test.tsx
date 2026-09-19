@@ -19,8 +19,9 @@ import { MarkdownView } from "../src/components/shared/markdown-view.tsx";
 import { RICH_CHIP_SKIN } from "../src/components/shared/rich-chip.ts";
 import { EventRow } from "../src/components/timeline/event-row.tsx";
 import { renderWithProviders, testQueryClient } from "./render.tsx";
-// A module-graph edge to the sheet the second half of this file reads, so
+// A module-graph edge to the sheets the second half of this file reads, so
 // `vitest related src/components/shared/rich-chip.css` names this file.
+import "../src/components/shared/comment-reference.css";
 import "../src/components/shared/rich-chip.css";
 
 /**
@@ -370,5 +371,27 @@ describe("the sheet says which parts are selectable (T-427)", () => {
     expect(blocks.get(".ref-chip-body .ref-chip-title")).toContain(
       "calc(100% - var(--ref-chip-inset))",
     );
+  });
+
+  // A leading of the chip's own drops the title below the prose, because
+  // `overflow: hidden` makes its bottom edge the baseline and
+  // `vertical-align: bottom` only lands that edge on the line's baseline
+  // when the box is as tall as the line box (T-460 measured 2.59px at 320,
+  // 390 and 1280px). Both chips carry the rule, and a sheet that quietly
+  // gets its own leading back is the shape the browser smoke grades.
+  it.each([
+    [".ref-chip-body", "rich-chip.css"],
+    [".comment-link-body", "comment-reference.css"],
+  ])("gives %s the body's own leading", (selector, file) => {
+    const sheet = readFileSync(
+      resolve(process.cwd(), `src/components/shared/${file}`),
+      "utf8",
+    ).replace(/\/\*[\s\S]*?\*\//g, "");
+    let body: string | undefined;
+    for (const [, one, rule] of sheet.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if ((one ?? "").trim() === selector) body = (body ?? "") + (rule ?? "");
+    }
+    expect(body, `no rule for ${selector} in ${file}`).toBeDefined();
+    expect(body).toMatch(/(^|[;{\s])line-height:\s*inherit\s*;/);
   });
 });

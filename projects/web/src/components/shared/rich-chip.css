@@ -3,7 +3,11 @@
   display: inline;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
-  line-height: 1.2;
+  /* See comment-reference.css: a leading of its own drops the truncating
+     title 2.59px below the prose, because `vertical-align: bottom` only puts
+     an overflow box's text on the baseline when the box is as tall as the
+     line box it sits in. */
+  line-height: inherit;
   white-space: normal;
   overflow-wrap: anywhere;
 }
