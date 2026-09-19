@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +21,7 @@ function FailureRow({
   detail,
   onRetry,
   retrying,
+  retryRef,
   size,
   className,
   textClassName,
@@ -29,6 +30,7 @@ function FailureRow({
   detail: string | undefined;
   onRetry: () => void;
   retrying: boolean;
+  retryRef?: Ref<HTMLButtonElement>;
   size: "sm" | "xs";
   className?: string;
   textClassName: string;
@@ -45,6 +47,7 @@ function FailureRow({
     >
       <span title={detail}>{message}</span>
       <Button
+        ref={retryRef}
         variant="outline"
         size={size}
         onClick={onRetry}
@@ -60,6 +63,7 @@ export function LoadFailure({
   detail,
   onRetry,
   retrying,
+  retryRef,
   size = "sm",
   className,
 }: {
@@ -67,6 +71,12 @@ export function LoadFailure({
   detail: string | undefined;
   onRetry: () => void;
   retrying: boolean;
+  /**
+   * Retry is the only control a surface with nothing to display still offers,
+   * which makes it the place focus has to go when an overlay opened from that
+   * surface closes and its own opener is gone (T-430).
+   */
+  retryRef?: Ref<HTMLButtonElement>;
   size?: "sm" | "xs";
   className?: string;
 }) {
@@ -76,6 +86,7 @@ export function LoadFailure({
       detail={detail}
       onRetry={onRetry}
       retrying={retrying}
+      retryRef={retryRef}
       size={size}
       className={className}
       textClassName="text-destructive"

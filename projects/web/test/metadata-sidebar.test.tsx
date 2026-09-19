@@ -465,3 +465,90 @@ describe("the metadata dialog's focus restore (T-413)", () => {
     await waitFor(() => expect(document.activeElement).toBe(heading));
   });
 });
+
+describe("the metadata dialog's focus restore with both doors gone (T-430)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Both entrances are queried off the section node rather than by role: the
+   * dialog is still open at that point and `hideOthers` has marked the rest of
+   * the page aria-hidden, which is enough on its own to make `queryByRole`
+   * answer null.
+   */
+  const doorsGone = (sidebar: HTMLElement) => ({
+    summary: sidebar.querySelector('[data-testid="metadata-open"]'),
+    heading: sidebar.querySelector('[aria-label="Edit metadata"]'),
+  });
+
+  it("lands on Retry once the read that took both doors away has failed", async () => {
+    vi.spyOn(api, "writeIssueMetadata").mockResolvedValue({ entries: [] });
+    const get = vi
+      .spyOn(api, "getIssueMetadata")
+      .mockResolvedValue({ entries: [entry("orch", "phase", "plan")] });
+    const client = mount([entry("orch", "phase", "plan")]);
+    const summary = await screen.findByTestId("metadata-open");
+    summary.focus();
+    fireEvent.click(summary);
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+
+    get.mockResolvedValue({ entries: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Delete orch/phase" }));
+    await waitFor(() =>
+      expect(screen.queryByTestId("metadata-open")).toBeNull(),
+    );
+
+    get.mockRejectedValue(new Error("metadata unreachable"));
+    await act(async () => {
+      await client.invalidateQueries({
+        queryKey: issueMetadataQuery(SLUG, NUMBER).queryKey,
+      });
+    });
+    // The open dialog carries a failure face of its own, so the section is
+    // the only place this can be read without matching two of everything.
+    const sidebar = screen.getByTestId("metadata-sidebar");
+    await waitFor(() =>
+      expect(doorsGone(sidebar)).toEqual({ summary: null, heading: null }),
+    );
+    expect(sidebar.textContent).toContain("Failed to load metadata.");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const retry = within(sidebar).getByRole("button", { name: "Retry" });
+    await waitFor(() => expect(document.activeElement).toBe(retry));
+  });
+
+  it("lands on the section when a reader's last entry goes and leaves nothing", async () => {
+    const get = vi
+      .spyOn(api, "getIssueMetadata")
+      .mockResolvedValue({ entries: [entry("orch", "phase", "plan")] });
+    const client = mount([entry("orch", "phase", "plan")], "reader");
+    const summary = await screen.findByTestId("metadata-open");
+    summary.focus();
+    fireEvent.click(summary);
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+
+    // Someone else cleared the card. A reader's heading button is gated on
+    // there being entries, so this takes both doors and offers no Retry —
+    // the read succeeded.
+    get.mockResolvedValue({ entries: [] });
+    await act(async () => {
+      await client.invalidateQueries({
+        queryKey: issueMetadataQuery(SLUG, NUMBER).queryKey,
+      });
+    });
+    const sidebar = screen.getByTestId("metadata-sidebar");
+    await waitFor(() =>
+      expect(doorsGone(sidebar)).toEqual({ summary: null, heading: null }),
+    );
+    expect(sidebar.querySelector("button")).toBeNull();
+    // happy-dom focuses anything that is connected, so the attribute that
+    // makes this reachable in a browser has to be asserted separately.
+    expect(sidebar.getAttribute("tabindex")).toBe("-1");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(sidebar));
+  });
+});

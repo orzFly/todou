@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 
 /**
  * One header row for every section of the issue sidebar (T-403): the title,
@@ -17,6 +17,7 @@ export function SidebarSection({
   title,
   action,
   testId,
+  focusRef,
   children,
 }: {
   /** The `data-sidebar-section` value the order test reads. */
@@ -24,11 +25,26 @@ export function SidebarSection({
   title: ReactNode;
   action?: ReactNode;
   testId?: string;
+  /**
+   * Takes focus coming back from an overlay whose opener has unmounted while
+   * it was up, which is the section's last resort once nothing inside it
+   * survives (T-430). The `tabIndex` and the ring ride along rather than being
+   * props of their own: without the first `.focus()` does nothing, without the
+   * second a keyboard user is given no sign of where focus went, and the
+   * sections needing none of it keep an unfocusable `<section>`.
+   */
+  focusRef?: Ref<HTMLElement>;
   children?: ReactNode;
 }) {
   return (
     <section
-      className="space-y-2"
+      ref={focusRef}
+      tabIndex={focusRef === undefined ? undefined : -1}
+      className={
+        focusRef === undefined
+          ? "space-y-2"
+          : "space-y-2 rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+      }
       data-sidebar-section={name}
       data-testid={testId}
     >

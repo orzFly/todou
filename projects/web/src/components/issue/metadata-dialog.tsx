@@ -406,7 +406,10 @@ export function MetadataDialog({
         aria-describedby={undefined}
         onCloseAutoFocus={(event) => {
           const trigger = restoreFocusTo?.() ?? null;
-          // With no live target, leave focus restoration to Radix.
+          // Null once the surface that opened this is itself gone. Radix then
+          // preventDefaults and focuses a DialogTrigger these plain buttons
+          // never had, leaving focus on body — with nothing left on screen to
+          // hand it to, there is no landing to prefer over that (T-430).
           if (trigger === null) return;
           // Radix takes the focus back after this handler runs, so handing it
           // over synchronously here would be overwritten; a frame later the

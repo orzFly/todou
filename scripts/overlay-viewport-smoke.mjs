@@ -8,6 +8,10 @@
  *       every edge, and is not `visibility: hidden`
  *   I3  closing an overlay does not move `window.scrollY`
  *
+ * The metadata dialog is held to I3 alone, because its focus restore is code
+ * of its own rather than the shared overlay one (T-430) while its size is
+ * deliberately nothing I2 would accept.
+ *
  * Deliberately outside `pnpm test` and outside CI. `projects/web` runs on
  * happy-dom, which has no layout: nothing there can read a bounding box or a
  * scroll offset, and standing up vitest browser mode for three assertions was
@@ -68,9 +72,9 @@ const KNOWN_FAILURES = [];
  * The checks each trigger has to contribute before a run counts as having
  * covered it. A trigger that stops resolving does not fail anything by itself
  * — its samples move quietly into "out of reach" — so without a floor the
- * check can lose whole surfaces and still exit 0. `displaced-close` matters
- * most: it is the only probe that can tell this change's focus restore from
- * Radix's own.
+ * check can lose whole surfaces and still exit 0. `displaced-close` and
+ * `metadata-close` matter most: they are the only probes that can tell a
+ * focus restore of ours from Radix's own.
  *
  * Enforced only on a full default scan with no fault seeded, because a
  * narrowed --scan-height and a short-circuited fault pass both measure less
@@ -92,6 +96,9 @@ const MIN_CHECKS = {
   more: 4, // 6
   comment: 3, // 4
   submenu: 3, // 4
+  // One per viewport, and no margin: this probe either finds the sidebar
+  // block at some scroll position or it does not.
+  "metadata-close": 3,
   // 2 observed, and no margin on purpose. The third sample is lost on
   // 360×520, and not to geometry: that viewport does find a sidebar trigger
   // (labels) and does open its menu — `displace()` then returns false,
@@ -236,7 +243,33 @@ async function seed(serverPort) {
     status_id: shipped.id,
   });
 
-  return { slug, number: issue.number, cookie, status: shipped.name };
+  // The metadata probe gets a card of its own. Entries on the scanned card
+  // would lengthen its sidebar, and every scan position is measured from the
+  // foot of the document — one extra summary line moves all of them, and the
+  // probes calibrated against those positions would quietly measure a
+  // different page.
+  const withMetadata = await call("POST", `/projects/${slug}/issues`, {
+    title: "the card the metadata dialog sits on",
+    body: seedBody(),
+  });
+  await call(
+    "PATCH",
+    `/projects/${slug}/issues/${withMetadata.number}/metadata`,
+    {
+      entries: [
+        { namespace: "orch", key: "phase", value: "impl" },
+        { namespace: "ci", key: "run", value: "green" },
+      ],
+    },
+  );
+
+  return {
+    slug,
+    number: issue.number,
+    metadataNumber: withMetadata.number,
+    cookie,
+    status: shipped.name,
+  };
 }
 
 // ------------------------------------------------------------- the page probes
@@ -285,6 +318,8 @@ function pageHelpers() {
           )[0] ?? null
         );
       }
+      case "metadata":
+        return document.querySelector('[data-testid="metadata-open"]');
       case "submenu-trigger":
         return byText(
           '[data-slot="dropdown-menu-sub-trigger"]',
@@ -295,9 +330,13 @@ function pageHelpers() {
     }
   };
 
+  // The dialog is here for `settled()` and `outsidePoint()` — the metadata
+  // probe below needs both — and never reaches `clipped()`, which grades a
+  // popper against the viewport and would read a deliberately large modal as
+  // an overflowing menu.
   const OVERLAYS =
     '[data-slot="dropdown-menu-content"],[data-slot="popover-content"],' +
-    '[data-slot="dropdown-menu-sub-content"]';
+    '[data-slot="dropdown-menu-sub-content"],[data-slot="dialog-content"]';
 
   // A dismissal tap is aimed blind, and a popover is non-modal, so the tap
   // reaches whatever is under it. Following a link from there would be scored
@@ -430,6 +469,9 @@ function pageHelpers() {
      * `submenu-trigger` is absent here because it only exists once the
      * comment menu is open; MIN_CHECKS is what guards that one.
      */
+    /** One trigger, for a page `ready()` deliberately says nothing about. */
+    has: (name) => find(name) !== null,
+
     ready() {
       return [
         "status",
@@ -477,6 +519,23 @@ const FAULTS = {
           }
         }
       }).observe(document, { childList: true, subtree: true });
+    },
+  },
+  "restore-scrolls": {
+    invariant: "I3",
+    // The scan's own I3 samples would satisfy `stopWhen` long before a
+    // displaced close, and a displaced close is the only shape that grades
+    // the restore rather than the lock that held the page while it was open.
+    stops: (failure) => failure.key.includes("metadata-close"),
+    // An arrow, not a method: this is stringified into the page, and
+    // `inject() {…}` is a method shorthand rather than an expression there.
+    inject: () => {
+      const focus = HTMLElement.prototype.focus;
+      // `preventScroll` dropped from the call — the one-word edit the
+      // argument exists to stop from landing unnoticed.
+      HTMLElement.prototype.focus = function () {
+        return focus.call(this);
+      };
     },
   },
   geometry: {
@@ -769,6 +828,68 @@ async function probeDisplacedClose(page, viewport, how) {
   };
 }
 
+/**
+ * The same shape for the metadata dialog, whose restore is its own code rather
+ * than the shared overlay one (T-430): the opener is displaced out of the
+ * viewport while the dialog is up, so only a restore that scrolls can move the
+ * page. A modal is graded on I3 alone — `clipped()` measures a popper against
+ * the viewport, and a dialog is meant to be large.
+ *
+ * It looks for its own scroll position instead of taking the foot of the
+ * document: the sidebar stacks below the timeline on these widths, and where
+ * the section lands is a layout question this check has no business pinning.
+ * On its own card, too — see `seed`.
+ */
+async function probeMetadataClose(page, target, viewport, how) {
+  const where = `${viewport.width}×${viewport.height} metadata-close`;
+  await page.cdp.send(
+    "Page.navigate",
+    {
+      url: `${target.url}/projects/${target.slug}/issues/${target.metadataNumber}`,
+    },
+    page.sessionId,
+  );
+  const deadline = Date.now() + 30000;
+  while (
+    (await evaluate(page, () => window.__smoke?.has?.("metadata"))) !== true
+  ) {
+    if (Date.now() > deadline)
+      return { inert: "the metadata card never rendered", where };
+    await sleep(200);
+  }
+  const bottom = await evaluate(page, () => window.__smoke.bottom());
+  let point = null;
+  for (let offset = 0; offset <= 1200; offset += 100) {
+    await evaluate(
+      page,
+      (to) => window.__smoke.scrollTo(to),
+      Math.max(0, bottom - offset),
+    );
+    point = await evaluate(page, () => window.__smoke.tapPoint("metadata"));
+    if (point !== null) break;
+  }
+  if (point === null) return { skipped: "metadata block out of reach", where };
+
+  await tap(page, point);
+  if ((await waitForOverlays(page, 1)).length === 0) {
+    return { inert: "the metadata dialog did not open", where };
+  }
+  const displaced = await evaluate(
+    page,
+    (pixels) => window.__smoke.displace("metadata", pixels),
+    3000,
+  );
+  const before = await evaluate(page, () => window.__smoke.scrollY());
+  await closeOverlay(page, how);
+  const after = await scrollYAfterClose(page);
+  if (!displaced) return { skipped: "the block stayed on screen", where };
+  return {
+    where,
+    failures:
+      after === before ? [] : [moved("I3", where, "close", before, after)],
+  };
+}
+
 // ------------------------------------------------------------------- one pass
 
 async function runPass(page, target, opts, { stopWhen = null } = {}) {
@@ -892,6 +1013,13 @@ async function runPass(page, target, opts, { stopWhen = null } = {}) {
     record(
       "displaced-close",
       await probeDisplacedClose(page, viewport, opts.close),
+    );
+    if (done()) return tally;
+
+    // Last in the viewport, because it navigates away from the scanned card.
+    record(
+      "metadata-close",
+      await probeMetadataClose(page, target, viewport, opts.close),
     );
     if (done()) return tally;
   }
@@ -1023,7 +1151,12 @@ async function run() {
       },
     });
     const url = stack.webUrl;
-    const target = { url, slug: seeded.slug, number: seeded.number };
+    const target = {
+      url,
+      slug: seeded.slug,
+      number: seeded.number,
+      metadataNumber: seeded.metadataNumber,
+    };
     console.log(
       `issue ${seeded.slug}#${seeded.number} on ${seeded.status}, web ${url}, ` +
         `scan ${opts.scanHeight}px up in ${opts.scanStep}px steps, ` +
@@ -1065,11 +1198,15 @@ async function run() {
       failure.invariant === invariant && !already.has(failure.key);
 
     const faulted = {};
-    for (const [fault, { invariant }] of Object.entries(FAULTS)) {
+    for (const [fault, { invariant, stops }] of Object.entries(FAULTS)) {
       await arm(page, fault);
+      const stopWhen =
+        stops === undefined
+          ? isNew(invariant)
+          : (failure) => isNew(invariant)(failure) && stops(failure);
       faulted[fault] = report(
         `fault:${fault}`,
-        await runPass(page, target, opts, { stopWhen: isNew(invariant) }),
+        await runPass(page, target, opts, { stopWhen }),
       );
     }
 
@@ -1086,6 +1223,16 @@ async function run() {
       [
         "fault:geometry breaks I2 anew",
         faulted.geometry.failures.some(isNew("I2")),
+      ],
+      // Keyed on the metadata sample rather than on I3 at large: the fault
+      // reaches every restore on the page, and a menu going red would sign
+      // this one off without the dialog's own restore ever being graded.
+      [
+        "fault:restore-scrolls breaks I3 at the metadata dialog anew",
+        faulted["restore-scrolls"].failures.some(
+          (failure) =>
+            isNew("I3")(failure) && failure.key.includes("metadata-close"),
+        ),
       ],
     ];
     console.log("");

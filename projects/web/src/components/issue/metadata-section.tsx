@@ -54,6 +54,8 @@ export function MetadataSection({
   // whichever was clicked, not a ref bound to either of them.
   const opener = useRef<HTMLButtonElement | null>(null);
   const heading = useRef<HTMLButtonElement>(null);
+  const retry = useRef<HTMLButtonElement>(null);
+  const section = useRef<HTMLElement>(null);
   const metadata = useQuery(issueMetadataQuery(slug, issueNumber));
   const canWrite = useCan(slug, "metadata.write");
   const groups = groupMetadata(metadata.data?.entries ?? []);
@@ -73,6 +75,7 @@ export function MetadataSection({
       name="metadata"
       title="Metadata"
       testId="metadata-sidebar"
+      focusRef={section}
       action={
         canOpen && (
           <Button
@@ -100,6 +103,7 @@ export function MetadataSection({
           detail={metadata.error.message}
           onRetry={() => metadata.refetch()}
           retrying={metadata.isFetching}
+          retryRef={retry}
         />
       ) : empty ? null : (
         <button
@@ -139,7 +143,14 @@ export function MetadataSection({
           // The clicked node may have unmounted after deleting every entry.
           // Unlike opener, heading is managed by React and cleared on unmount.
           const clicked = opener.current;
-          return clicked?.isConnected === true ? clicked : heading.current;
+          if (clicked?.isConnected === true) return clicked;
+          if (heading.current !== null) return heading.current;
+          // Both doors gone, which the next read failing does on its own.
+          // Retry is then the whole of what this section still offers, and it
+          // is the control that brings the doors back; the read-only card
+          // whose last entry someone else deleted keeps neither and is left
+          // with the section itself (T-430).
+          return retry.current ?? section.current;
         }}
       />
     </SidebarSection>
