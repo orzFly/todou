@@ -3,7 +3,13 @@
   display: inline;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
-  line-height: 1.2;
+  /* The body's own leading, spelled out because a tighter one here lands the
+     title 2.59px below the prose: `overflow: hidden` degrades the title's
+     baseline to its bottom edge, `vertical-align: bottom` puts that edge on
+     the line box's bottom, and only a box as tall as the line box has its
+     text baseline there. An inline chip cannot grow the line it shares with
+     the strut, so matching the strut costs nothing. */
+  line-height: inherit;
   white-space: normal;
   overflow-wrap: anywhere;
 }
