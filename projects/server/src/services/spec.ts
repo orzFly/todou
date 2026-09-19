@@ -910,10 +910,8 @@ export async function submitSpecReview(
     await tx
       .update(issues)
       .set({
-        // A `comment` round leaves the status untouched: the card still owes
-        // a verdict, so the badge stays "awaiting review" and the inbox keeps
-        // listing it as pending. Annotations still count — where they came
-        // from does not change that they are unhandled.
+        // A `comment` round preserves the current review status, including
+        // approved and withdrawn. Its annotations still count as unhandled.
         ...(input.verdict === "comment"
           ? {}
           : {

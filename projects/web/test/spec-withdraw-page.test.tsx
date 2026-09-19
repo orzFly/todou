@@ -146,11 +146,12 @@ function pageFixture(options: FixtureOptions = {}) {
       writes.push({ path, body });
       if (path === `${base}/spec/withdraw`) {
         if (withdrawalConflict) return conflict();
+        const unchanged = spec.review_status === "withdrawn";
         spec = { ...spec, review_status: "withdrawn" };
         return Response.json({
           version: spec.current_version,
           review_status: "withdrawn",
-          unchanged: false,
+          unchanged,
           cursor: "withdrawn-cursor",
         });
       }
@@ -244,6 +245,9 @@ function pageFixture(options: FixtureOptions = {}) {
     writes,
     reviews,
     advance,
+    setStatus(review_status: SpecInfo["review_status"]) {
+      spec = { ...spec, review_status };
+    },
     specReads: () => reads.filter((path) => path === `${base}/spec`).length,
     conflictOnReview(next: "withdrawn" | "newer") {
       reviewConflict = next;
@@ -464,12 +468,59 @@ describe("withdrawal on the actual SpecViewPage and review session", () => {
     );
     const submit = within(dialog).getByRole("button", { name: "Withdraw" });
     expectDisabled(submit, true);
+    expect(submit.title).toContain("no longer current");
     fireEvent.click(submit);
     await act(async () => {});
     expect(page.writes).toEqual([
       { path: `${page.base}/spec/withdraw`, body: { version: 1, reason } },
     ]);
   });
+
+  it.each(["withdrawn", "approved", "changes_requested"] as const)(
+    "explains a live %s transition while the withdrawal dialog stays open",
+    async (status) => {
+      const page = await mountPage();
+      fireEvent.click(screen.getByRole("button", { name: "Withdraw" }));
+      const dialog = await screen.findByRole("dialog", {
+        name: "Withdraw spec v1",
+      });
+      const reason = "Keep my local reason";
+      fireEvent.change(within(dialog).getByLabelText("Reason (optional)"), {
+        target: { value: reason },
+      });
+      const before = page.specReads();
+      page.setStatus(status);
+      await act(async () => {
+        await page.client.invalidateQueries({
+          queryKey: ["spec", "demo", page.issueNumber],
+        });
+      });
+      await expectRefreshed(page, before, 1, status);
+      const message = await within(dialog).findByRole("status");
+      expect(within(dialog).getByLabelText("Reason (optional)")).toHaveProperty(
+        "value",
+        reason,
+      );
+      const submit = within(dialog).getByRole("button", { name: "Withdraw" });
+      if (status === "withdrawn") {
+        expect(message.textContent).toContain("keeps the original reason");
+        expectDisabled(submit, false);
+        fireEvent.click(submit);
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+        expect(page.writes).toEqual([
+          { path: `${page.base}/spec/withdraw`, body: { version: 1, reason } },
+        ]);
+      } else {
+        expect(message.textContent).toContain("already been reviewed");
+        expectDisabled(submit, true);
+        expect(submit.title).toBe(message.textContent);
+        fireEvent.click(submit);
+        fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
+        await act(async () => {});
+        expect(page.writes).toHaveLength(0);
+      }
+    },
+  );
 
   it.each(["", "  Superseded design  "])(
     "withdraws successfully with reason %j and creates no review or comment",

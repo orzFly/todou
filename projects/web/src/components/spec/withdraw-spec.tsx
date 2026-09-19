@@ -43,6 +43,18 @@ export function WithdrawSpec({
     (draft.slug !== slug ||
       draft.issueNumber !== issueNumber ||
       draft.version !== spec.current_version);
+  const alreadyWithdrawn = spec.review_status === "withdrawn";
+  const disabledReason = withdraw.isPending
+    ? "Withdrawal is being submitted."
+    : stale
+      ? "This version is no longer current. Your reason has been kept."
+      : !canWithdraw
+        ? "You no longer have permission to withdraw this spec."
+        : spec.review_status !== "unreviewed" && !alreadyWithdrawn
+          ? "This version has already been reviewed and cannot be withdrawn."
+          : (draft?.reason.trim().length ?? 0) > 2000
+            ? "The reason must be at most 2000 characters."
+            : undefined;
 
   return (
     <>
@@ -71,15 +83,7 @@ export function WithdrawSpec({
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              if (
-                draft === null ||
-                withdraw.isPending ||
-                stale ||
-                !canWithdraw ||
-                spec.review_status !== "unreviewed" ||
-                draft.reason.trim().length > 2000
-              )
-                return;
+              if (draft === null || disabledReason !== undefined) return;
               const reason = draft.reason.trim();
               withdraw.mutate(
                 {
@@ -107,9 +111,12 @@ export function WithdrawSpec({
               }}
             />
             {withdraw.error && <p role="alert">{withdraw.error.message}</p>}
-            {stale && (
+            {!withdraw.isPending && disabledReason && (
+              <p role="status">{disabledReason}</p>
+            )}
+            {!stale && alreadyWithdrawn && (
               <p role="status">
-                This version is no longer current. Your reason has been kept.
+                Already withdrawn. Submitting again keeps the original reason.
               </p>
             )}
             <Button
@@ -122,13 +129,8 @@ export function WithdrawSpec({
             </Button>
             <Button
               type="submit"
-              disabled={
-                withdraw.isPending ||
-                stale ||
-                !canWithdraw ||
-                spec.review_status !== "unreviewed" ||
-                (draft?.reason.trim().length ?? 0) > 2000
-              }
+              disabled={disabledReason !== undefined}
+              title={disabledReason}
             >
               {withdraw.isPending ? "Withdrawing…" : "Withdraw"}
             </Button>
