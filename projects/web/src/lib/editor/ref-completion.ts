@@ -30,6 +30,10 @@ import {
 } from "@/lib/editor/completion-space.ts";
 import { mentionCompletionSource } from "@/lib/editor/mention-completion.ts";
 import {
+  snippetFieldKeys,
+  tagCompletionSource,
+} from "@/lib/editor/tag-completion.ts";
+import {
   type ProjectRefOption,
   projectSpellings,
 } from "@/lib/project-spellings.ts";
@@ -207,11 +211,17 @@ export function refCompletionSource(
  * the browser free to move focus as it always has. Shift-Tab is left
  * unbound for the same reason, and Enter is left to `completionKeymap`,
  * where a project row and a card row are accepted by the same rule.
+ *
+ * Tag templates need no inputs, so every caller gets the source here.
+ * The snippet facet lives beside the Tab binding whose priority it arbitrates.
  */
 export function completionWith(sources: CompletionSource[]): Extension {
   return [
     Prec.high(keymap.of([{ key: "Tab", run: acceptCompletion }])),
-    autocompletion({ override: sources }),
+    snippetFieldKeys,
+    // With filter:false CodeMirror ignores boost and preserves source order.
+    // Put tags first so <det selects the template while retaining project rows.
+    autocompletion({ override: [tagCompletionSource, ...sources] }),
     spaceAfterAccept,
     completionTheme,
   ];
@@ -285,6 +295,10 @@ export const completionTheme = EditorView.theme({
   },
   ".cm-completionIcon-command::after": {
     content: "'/'",
+    color: "var(--primary)",
+  },
+  ".cm-completionIcon-tag::after": {
+    content: "'<'",
     color: "var(--primary)",
   },
   ".cm-completionIcon-project-ref::after": {

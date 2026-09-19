@@ -299,8 +299,8 @@ function NewIssueForm({
             ariaLabel="Description"
             placeholder={
               canTriage
-                ? "Markdown supported. #N references other issues, / runs a command; paste or drop files."
-                : "Markdown supported. Reference other issues with #N; paste or drop files."
+                ? "Markdown supported. #N references other issues, / runs a command, < inserts a collapsible block; paste or drop files."
+                : "Markdown supported. Reference other issues with #N, < inserts a collapsible block; paste or drop files."
             }
             className="min-h-56"
             extensions={extensions}

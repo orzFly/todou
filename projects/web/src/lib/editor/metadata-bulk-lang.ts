@@ -132,6 +132,9 @@ export const metadataBulkHighlighting = HighlightStyle.define([
  * of its own that would out-shout any ordinary `keymap.of` — tests rely on
  * exactly this: a Tab rebinding done on the wrong facet is silently
  * ignored, and a tab-through case then passes for the wrong reason.
+ * This facet takes only its first value. Markdown's completionWith installs
+ * its own snippet keys in a separate editor; do not combine both supports
+ * in one EditorState without reconciling their bindings.
  */
 export const metadataBulkSupport: Extension = [
   bulkLanguage,

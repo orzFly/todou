@@ -138,7 +138,7 @@ describe("pending completion spaces", () => {
     expect(docOf(view)).toBe("@alice  ");
   });
 
-  it.each(["你", "你，"])("keeps the separator before %s", (text) => {
+  it.each(["你", "你，", "<"])("keeps the separator before %s", (text) => {
     const view = accepted();
     expect(input(view, text)).toBe(false);
     expect(docOf(view)).toBe(`@alice ${text}`);
@@ -169,26 +169,30 @@ describe("pending completion spaces", () => {
 });
 
 describe("IME composition boundaries", () => {
-  it("does not handle a DOM change during active composition", () => {
-    const view = accepted();
-    fireEvent.compositionStart(view.contentDOM);
-    expect(view.compositionStarted).toBe(true);
-    // Observable before the first DOM change, but the helper mirrors
-    // applyDOMChangeInner's increment before it invokes input handlers.
-    expect(view.composing).toBe(false);
+  it.each(["，", " "])(
+    "does not handle %j during active composition",
+    (text) => {
+      const view = accepted();
+      fireEvent.compositionStart(view.contentDOM);
+      expect(view.compositionStarted).toBe(true);
+      // Observable before the first DOM change, but the helper mirrors
+      // applyDOMChangeInner's increment before it invokes input handlers.
+      expect(view.composing).toBe(false);
 
-    const dispatch = vi.spyOn(view, "dispatch");
-    expect(handleViewInput(view, "，")).toBe(false);
-    expect(view.composing).toBe(true);
-    expect(dispatch).not.toHaveBeenCalled();
-    expect(docOf(view)).toBe("@alice ");
-    expect(pendingSpaceAt(view.state)).toBe(6);
-    dispatch.mockRestore();
+      const dispatch = vi.spyOn(view, "dispatch");
+      expect(handleViewInput(view, text)).toBe(false);
+      expect(view.composing).toBe(true);
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(docOf(view)).toBe("@alice ");
+      expect(pendingSpaceAt(view.state)).toBe(6);
+      dispatch.mockRestore();
 
-    defaultInput(view, "，");
-    expect(docOf(view)).toBe("@alice ，");
-    expect(pendingSpaceAt(view.state)).toBeNull();
-  });
+      defaultInput(view, text);
+      expect(docOf(view)).toBe(`@alice ${text}`);
+      expect(view.state.selection.main.head).toBe(7 + text.length);
+      expect(pendingSpaceAt(view.state)).toBeNull();
+    },
+  );
 
   it("handles end input only while an unchanged pending space is valid", () => {
     const view = accepted();
@@ -202,7 +206,8 @@ describe("IME composition boundaries", () => {
   it("does not restore pending state after an active composition changed the doc", () => {
     const view = accepted();
     fireEvent.compositionStart(view.contentDOM);
-    defaultInput(view, "你");
+    expect(input(view, "你")).toBe(false);
+    expect(view.composing).toBe(true);
     expect(pendingSpaceAt(view.state)).toBeNull();
     fireEvent.compositionEnd(view.contentDOM);
     expect(handleViewInput(view, "，")).toBe(false);

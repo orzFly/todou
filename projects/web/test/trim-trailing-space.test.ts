@@ -86,19 +86,23 @@ describe("trimTrailingSpaceOnEnter", () => {
     expect(result.state.doc.toString()).toBe("foo ");
   });
 
-  it("does not trim whitespace in a code context", () => {
-    syntaxTreeMock.mockReturnValue(treeAt(4, "FencedCode"));
-    const state = EditorState.create({
-      doc: "foo ",
-      selection: { anchor: 4 },
-    });
+  it.each(["FencedCode", "HTMLBlock", "HTMLTag"])(
+    "does not trim whitespace in a %s code context",
+    (name) => {
+      // HTML must retain inCodeContext's protection when tag completion is enabled.
+      syntaxTreeMock.mockReturnValue(treeAt(4, name));
+      const state = EditorState.create({
+        doc: "foo ",
+        selection: { anchor: 4 },
+      });
 
-    const result = runCommand(state);
+      const result = runCommand(state);
 
-    expect(result.handled).toBe(false);
-    expect(result.dispatch).not.toHaveBeenCalled();
-    expect(result.state.doc.toString()).toBe("foo ");
-  });
+      expect(result.handled).toBe(false);
+      expect(result.dispatch).not.toHaveBeenCalled();
+      expect(result.state.doc.toString()).toBe("foo ");
+    },
+  );
 
   it("uses the absolute trim start for both indentation inputs", () => {
     const calls: Array<{ pos: number; simulatedBreak: number | null }> = [];

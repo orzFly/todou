@@ -536,7 +536,7 @@ export function Composer({
         <MarkdownEditor
           ref={editor}
           ariaLabel="Write a comment"
-          placeholder="Write a comment… (#N references other issues, / runs a command; paste or drop files)"
+          placeholder="Write a comment… (#N references other issues, / runs a command, < inserts a collapsible block; paste or drop files)"
           // Sticky at the viewport bottom: an auto-growing draft must not
           // swallow the page, especially on small/mobile viewports.
           className="max-h-[40dvh] min-h-16"
