@@ -785,6 +785,11 @@ describe("the way back and the identity beside it (T-407)", () => {
       expect(ref.className).toContain("shrink-0");
       expect(title.className).toContain("truncate");
       expect(title.contains(ref)).toBe(false);
+      // Whichever side the ref takes, the title is never inside the way back
+      // (T-461). This is the reason the merge is refused while the ref trails
+      // the title: the two halves are not adjacent there, and one control
+      // spanning them would take the whole title into its hit area.
+      expect(title.closest("a")).toBeNull();
     },
   );
 

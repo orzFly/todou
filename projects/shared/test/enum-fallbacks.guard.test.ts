@@ -158,6 +158,20 @@ const DECLARED: Readonly<Record<string, string>> = {
     "Closed qualifier producer: KEYS = Object.keys(SEARCH_QUALIFIERS), or parsed search parts accepted by the hasOwn-checked qualifier registry; key selects labels/specs.",
   "projects/web/src/components/shared/agent-projects-dialog.tsx :: read ROLE_RANK[option] #1":
     "Closed UI options: option comes from MemberRole.options. Current API role and ceiling are separately checked with roleRankOf; neither is the raw map key here.",
+  "projects/web/src/components/shared/return-link.tsx :: read ARROW[back.scale] #1":
+    "Closed client prop: BackScale is a local union and ARROW is a total Record of it; every render site writes the scale as a literal — nav inside NavBackControl, heading at issue-detail.tsx, compact at issue-return-row.tsx and spec-view.tsx. IssueReturnLink hands its own prop through unchanged on the no-origin arrow.",
+  "projects/web/src/components/shared/return-link.tsx :: read ARROW[back.scale] #2":
+    "Closed client prop: BackScale is a local union and ARROW is a total Record of it; every render site writes the scale as a literal — nav inside NavBackControl, heading at issue-detail.tsx, compact at issue-return-row.tsx and spec-view.tsx. CollectionLink is reached only by spread from IssueReturnLink, carrying that same prop.",
+  "projects/web/src/components/shared/return-link.tsx :: read ARROW[back.scale] #3":
+    "Closed client prop: BackScale is a local union and ARROW is a total Record of it; every render site writes the scale as a literal — nav inside NavBackControl, heading at issue-detail.tsx, compact at issue-return-row.tsx and spec-view.tsx. SpecReturnLink is rendered by NavBackControl and by spec-view.tsx, each with one of those literals.",
+  "projects/web/src/components/shared/return-link.tsx :: read ARROW[back.scale] #4":
+    "Closed client prop: BackScale is a local union and ARROW is a total Record of it; every render site writes the scale as a literal — nav inside NavBackControl, heading at issue-detail.tsx, compact at issue-return-row.tsx and spec-view.tsx. ProjectReturnLink is rendered only by NavBackControl, with the nav literal.",
+  "projects/web/src/components/shared/return-link.tsx :: read ARROW[back.scale] #5":
+    "Closed client prop: BackScale is a local union and ARROW is a total Record of it; every render site writes the scale as a literal — nav inside NavBackControl, heading at issue-detail.tsx, compact at issue-return-row.tsx and spec-view.tsx. ProjectsReturnLink is rendered only by NavBackControl, with the nav literal.",
+  "projects/web/src/components/shared/return-link.tsx :: read BOX[scale] #1":
+    "Closed client prop, narrowed: the same literal-written BackScale, minus nav — BackButton returns the tab-strip form before this line, leaving heading and compact, which BOX declares in full.",
+  "projects/web/src/components/shared/return-link.tsx :: switch kind #1":
+    "Closed router metadata: shell.tsx reads staticData.backControl, which router.tsx authors as one of the four BackControlKind literals; it is not a server value, and every member returns an element.",
   "projects/web/src/components/shared/return-link.tsx :: switch view.target.kind #1":
     "Parsed history state: readReturnEntry calls parseReturnView; returnTargetSchema validates the destination discriminatedUnion before view.target.kind reaches CollectionLink.",
   "projects/web/src/components/shared/role-permissions-table.tsx :: read ROLE_RANK[highest] #1":

@@ -1131,9 +1131,15 @@ describe("where the back control stands (T-461)", () => {
     expect(ways).toHaveLength(1);
     const back = ways[0] as HTMLElement;
     expect(back.closest("header") !== null).toBe(host === "header");
-    expect(back.closest("[data-testid='issue-title-block']") !== null).toBe(
-      host === "block",
-    );
+    // Sibling of the heading, not merely somewhere above the testid: what the
+    // band above `sm` asks for is that the control and the title share a box,
+    // and a testid that had drifted onto an outer wrapper would still answer
+    // yes to an ancestor query.
+    const heading = screen.getByRole("heading", {
+      level: 1,
+      name: new RegExp(DIG.title),
+    });
+    expect(back.parentElement?.contains(heading)).toBe(host === "block");
   });
 
   it("hangs it in the gutter only where there is a gutter", async () => {
