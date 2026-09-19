@@ -257,6 +257,11 @@ function BodyReferencesSection() {
           These reach references inside descriptions and comments. Timeline rows
           keep their own look whatever is set here.
         </p>
+        <p className="text-sm text-muted-foreground">
+          Reference slugs and issue prefixes shorten to fit their parent
+          container, independently of the title setting. Copying preserves the
+          full reference.
+        </p>
       </div>
       <ToggleRow
         id="boxed-ref-links"
@@ -268,7 +273,6 @@ function BodyReferencesSection() {
       <ToggleRow
         id="truncate-ref-title"
         label="Shorten long titles"
-        description="Comment IDs and author names stay complete. Long project names in references may shorten visually; copying keeps their original text."
         checked={truncate}
         disabled={pending}
         onChange={(checked) => patch.mutate({ truncate_ref_title: checked })}

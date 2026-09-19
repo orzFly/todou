@@ -237,6 +237,29 @@ describe("references-in-text preferences (T-371)", () => {
     expect(await state("Title on every mention")).toBe("checked");
   });
 
+  it.each([true, false])(
+    "explains width-based reference shortening outside the title toggle when enabled=%s",
+    async (enabled) => {
+      const view = renderSettings({ truncate_ref_title: enabled });
+      const toggle = await view.findByRole("switch", {
+        name: "Shorten long titles",
+      });
+      expect(toggle.dataset.state).toBe(enabled ? "checked" : "unchecked");
+      const section = view.getByRole("heading", {
+        name: "References in text",
+      }).parentElement;
+      expect(section).not.toBeNull();
+      const note = within(section as HTMLElement).getByText(
+        "Reference slugs and issue prefixes shorten to fit their parent container, independently of the title setting. Copying preserves the full reference.",
+      );
+      expect(note.tagName).toBe("P");
+      // The title switch must not claim control of width-driven identity
+      // shortening. Its label is sufficient; this rule belongs to the section.
+      expect(toggle.parentElement?.querySelector("p")).toBeNull();
+      expect(toggle.parentElement?.contains(note)).toBe(false);
+    },
+  );
+
   for (const [name, key, next] of SWITCHES) {
     it(`patches ${key} alone`, async () => {
       const spy = vi
